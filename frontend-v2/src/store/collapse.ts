@@ -1,5 +1,6 @@
 import { createSignal, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Per-browser collapse state for sidebar groups. Deliberately NOT roamed (it is
@@ -17,7 +18,7 @@ function storageKey(user: string): string {
 
 function load(user: string): Set<string> {
   try {
-    const raw = localStorage.getItem(storageKey(user));
+    const raw = lsGet(storageKey(user));
     if (!raw) return new Set();
     const arr = JSON.parse(raw);
     return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === "string") : []);
@@ -27,11 +28,7 @@ function load(user: string): Set<string> {
 }
 
 function persist(user: string, set: Set<string>): void {
-  try {
-    localStorage.setItem(storageKey(user), JSON.stringify([...set]));
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(storageKey(user), JSON.stringify([...set]));
 }
 
 export interface CollapseStore {

@@ -7,7 +7,6 @@ import {
   deleteProject,
   deriveSidebar,
   materializeGroup,
-  moveGroup,
   moveSession,
   moveSessionToAnchor,
   removeSessionFromLayout,
@@ -22,7 +21,7 @@ import {
   applySessionOrder,
   captureVisibleOrder,
   type SessionOrder,
-} from "../components/order.logic";
+} from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import type { DropSpot } from "../mobile/reorder";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
@@ -47,6 +46,8 @@ import {
   rememberPromptLine,
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
+import { STATES_KEY } from "./visits";
+import { lsGet, lsSet } from "../lib/storage";
 
 export interface SelectedSession {
   name: string;
@@ -130,7 +131,6 @@ export interface LobbyStore {
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
-  moveGroupBy(groupName: string, dir: -1 | 1): Promise<void>;
   reorderGroupsTo(from: number, to: number): Promise<void>;
   createProject(name: string, dir?: string): Promise<boolean>;
   /** Ask for a Claude session started ahead of a create, in this directory.
@@ -209,16 +209,19 @@ const LAYOUT_GRACE_MS = 4000;
  */
 const MAX_POLL_INTERVAL_MS = 30000;
 
-/**
- * Vanilla's STATES_KEY (frontend/index.html `trackStateChanges`): epoch ms at
- * which each live session was FIRST seen in its current Claude state. No
- * backend exposes a real state-change time — a session object carries only
- * created/lastActivity — so this observation is the only anchor the working
- * timer has, and it must outlive the page or every reload restarts a
- * long-running session's clock at 0:00.
- */
-const STATES_KEY = "tl:session-states:v1";
+// `STATES_KEY`, declared in ./visits and used by both stores, holds the epoch ms
+// at which each live session was FIRST seen in its current Claude state. No
+// backend exposes a real state-change time — a session object carries only
+// created/lastActivity — so this observation is the only anchor the working
+// timer has, and it must outlive the page or every reload restarts a
+// long-running session's clock at 0:00.
+//
+// This store writes the key and ./visits reads it, so the constant lives there
+// and is imported here. It used to be declared on both sides, which meant
+// bumping the version in one place left the other reading an orphaned key with
+// every test still green.
 
+/** One session's state stamp, as persisted under `STATES_KEY`. */
 interface StateStamp {
   state: string;
   at: number;
@@ -227,7 +230,7 @@ interface StateStamp {
 function loadStates(): Record<string, StateStamp> {
   const out: Record<string, StateStamp> = {};
   try {
-    const raw = localStorage.getItem(STATES_KEY);
+    const raw = lsGet(STATES_KEY);
     if (!raw) return out;
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return out;
@@ -243,11 +246,7 @@ function loadStates(): Record<string, StateStamp> {
 }
 
 function persistStates(states: Record<string, StateStamp>): void {
-  try {
-    localStorage.setItem(STATES_KEY, JSON.stringify(states));
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(STATES_KEY, JSON.stringify(states));
 }
 
 export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
@@ -948,10 +947,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (!ok && handBack) opts.setSessionOrder?.(wasOrder);
   }
 
-  async function moveGroupBy(groupName: string, dir: -1 | 1): Promise<void> {
-    await saveLayout(moveGroup(layout(), groupName, dir));
-  }
-
   async function reorderGroupsTo(from: number, to: number): Promise<void> {
     await saveLayout(reorderGroups(layout(), from, to));
   }
@@ -1106,7 +1101,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     rename,
     kill,
     move,
-    moveGroupBy,
     reorderGroupsTo,
     createProject,
     prewarm,

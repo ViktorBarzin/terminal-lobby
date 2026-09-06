@@ -47,6 +47,13 @@ if ! sed -e 's/#.*//' "$MAP" | cut -d= -f2- | sed -e 's/:.*//' -e 's/[[:space:]]
   die "'$u' is not a terminal user (not in $MAP)"
 fi
 
+# The binary this wrapper exists to reach ships in another package, and no
+# reconciled installer declared it until 2026-09-05 (see release/privsurface.go).
+# A box rebuilt without it has the root grant, the /var/lib/tmux-persist tree and
+# nothing to run, so say which dependency is missing rather than failing four
+# lines further down as "command not found".
+[[ -x "$TMUX_PERSIST" ]] || die "missing dependency: $TMUX_PERSIST is not installed or not executable"
+
 valid_ts() { [[ "$1" =~ ^[0-9]{8}T[0-9]{6}$ ]]; }
 valid_name() { [[ "$1" =~ ^[a-zA-Z0-9_-]{1,32}$ ]]; }
 

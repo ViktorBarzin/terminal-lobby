@@ -16,9 +16,11 @@
 //     (main.go's Slug, resurrect.go's free-name walk), which is what keeps this
 //     half alive.
 //
-// vectors.json pins the derivation. It used to be read by both this package's
-// tests and the frontend's; the TypeScript side lost its copy of FromTitle with
-// the lobby's use of it, so the file is a Go-only fixture now.
+// vectors.json holds two lists. `cases` pins the derivation and only this
+// package reads it, because the TypeScript side lost its copy of FromTitle with
+// the lobby's use of it. `cleanTitleCases` pins CleanTitle, which the browser
+// still has its own copy of, so frontend-v2/test/title.test.ts reads that half
+// and the two implementations cannot drift apart by editing one list.
 package slug
 
 import (

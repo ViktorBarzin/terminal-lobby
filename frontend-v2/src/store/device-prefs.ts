@@ -24,6 +24,7 @@
 import { PREFS_PATH } from "../lib/config";
 import { apiUrl } from "../lib/config";
 import { PREF_DEFAULTS, composeDoc } from "./prefs";
+import { closeSharedTranscriptDb } from "./transcript-cache";
 
 /** Terminal flow control (XON/XOFF back-pressure). "off" disables it here. */
 export const FLOW_KILL_KEY = "tl-flow-control";
@@ -90,6 +91,56 @@ export function gesturesEnabled(): boolean {
  *  somebody else's and is left alone. */
 const OWNED_PREFIXES = ["tl:", "tl-", "tmux-"];
 
+/**
+ * Every IndexedDB database this app owns. The big one is `tl-transcripts`, up
+ * to twelve sessions at two thousand events each, which the prefix sweep below
+ * never touched because it only ever looked at localStorage.
+ */
+const OWNED_DATABASES = ["tl-transcripts", "tl-notif", "tl-badge"];
+
+/** How long one deleteDatabase gets before the wipe gives up on it. */
+const IDB_DELETE_TIMEOUT_MS = 1_500;
+
+/**
+ * Delete one database, and come back either way.
+ *
+ * `deleteDatabase` does not fail when something else holds the database open.
+ * It fires `blocked` and then waits, indefinitely, for the last connection to
+ * close. `tl-transcripts` IS held open, by the module singleton in
+ * transcript-cache.ts, so the wipe closes that handle first and the delete then
+ * runs for real — that is the database the confirm text names, and the one
+ * worth up to twelve sessions of events.
+ *
+ * `tl-notif` is held by the service worker, which is another execution context
+ * this page cannot close, so its delete can still block. Waiting on it would
+ * strand the reload the user is waiting on, so a blocked delete degrades to a
+ * no-op: the request stays outstanding and, in practice, completes once the
+ * page goes away. Nothing here verifies that last part.
+ *
+ * `abort` is listened for as well as `error`, because a transaction can abort
+ * without ever firing an error, and a promise with no abort path stays pending
+ * forever. The timeout is the backstop for whatever neither covers.
+ */
+function deleteDatabase(name: string, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve) => {
+    let req: IDBOpenDBRequest;
+    try {
+      req = indexedDB.deleteDatabase(name);
+    } catch {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, timeoutMs);
+    const done = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    for (const event of ["success", "error", "blocked", "abort"]) {
+      req.addEventListener(event, done);
+    }
+  });
+}
+
 export interface ClearLocalDataOptions {
   /** Also PUT the default doc to /prefs, resetting the account's roamed
    *  settings on every other device too. */
@@ -100,6 +151,8 @@ export interface ClearLocalDataOptions {
   fetchImpl?: (input: string, init?: RequestInit) => Promise<{ ok: boolean }>;
   /** Called when the roamed reset fails; the local wipe still proceeds. */
   onError?: (message: string) => void;
+  /** Injected in tests; defaults to IDB_DELETE_TIMEOUT_MS. */
+  idbTimeoutMs?: number;
 }
 
 /**
@@ -157,6 +210,13 @@ export async function clearLocalData(opts: ClearLocalDataOptions): Promise<void>
     sessionStorage.clear();
   } catch {
     /* ditto */
+  }
+  if (typeof indexedDB !== "undefined") {
+    // Let go of the transcript handle first, or its delete only fires `blocked`
+    // and the transcripts the confirm text promised to clear survive the reload.
+    await closeSharedTranscriptDb();
+    const timeout = opts.idbTimeoutMs ?? IDB_DELETE_TIMEOUT_MS;
+    await Promise.all(OWNED_DATABASES.map((name) => deleteDatabase(name, timeout)));
   }
   reload();
 }

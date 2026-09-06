@@ -103,7 +103,6 @@ export const Mermaid: Component<{ code: string }> = (props) => {
       when={!failed()}
       fallback={<pre class="tl-code tl-mermaid-fallback">{props.code}</pre>}
     >
-      {/* eslint-disable-next-line solid/no-innerhtml */}
       <div class="tl-mermaid" innerHTML={svg()} />
     </Show>
   );

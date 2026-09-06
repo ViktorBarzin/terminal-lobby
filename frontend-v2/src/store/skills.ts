@@ -31,6 +31,7 @@ import {
   type SourceInfo,
 } from "../lib/skills-api";
 import { toasts } from "./toast";
+import { humanBytes } from "./skills.logic";
 
 export interface SkillsStore {
   inventory: Accessor<Inventory | null>;
@@ -66,7 +67,6 @@ export interface SkillsStore {
   load: () => Promise<void>;
   toggleExpanded: (owner: string, name: string) => void;
   showDiff: (owner: string, name: string) => Promise<void>;
-  clearDiff: () => void;
   install: (owner: string, name: string, replace?: boolean) => Promise<void>;
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   remove: (name: string) => Promise<void>;
@@ -212,7 +212,6 @@ export function createSkillsStore(): SkillsStore {
         toasts.push({ kind: "error", message: message(e) });
       }
     },
-    clearDiff: () => setDiff(null),
     install: async (owner, name, replace = false) =>
       act(rowKey(owner, name), async () => {
         const res = await installSkill(owner, name, replace);
@@ -243,7 +242,7 @@ export function createSkillsStore(): SkillsStore {
         const backups = d?.purgedBackups
           ? `, with ${d.purgedBackups} backup${d.purgedBackups === 1 ? "" : "s"}`
           : "";
-        return `Deleted ${name} permanently${backups} — ${human(d?.bytes ?? 0)} freed.`;
+        return `Deleted ${name} permanently${backups} — ${humanBytes(d?.bytes ?? 0, "nothing")} freed.`;
       }),
     update: async (plugin) =>
       act(plugin, async () => {
@@ -255,7 +254,7 @@ export function createSkillsStore(): SkillsStore {
         const res = await uninstallPlugin(plugin);
         const name = plugin.split("@")[0];
         return res.freed
-          ? `Uninstalled ${name} — ${human(res.freed)} freed.`
+          ? `Uninstalled ${name} — ${humanBytes(res.freed, "nothing")} freed.`
           : `Uninstalled ${name}.`;
       }),
     source,
@@ -325,15 +324,6 @@ function loadMessage(e: unknown): string {
     return "Nothing is answering /skills — the skills service is not reachable from here.";
   }
   return message(e);
-}
-
-/** human is a size for a sentence, not a table: whole units, no decimals below a
- *  megabyte. */
-function human(bytes: number): string {
-  if (bytes <= 0) return "nothing";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /** short trims a backup path to the part a person reads: the last two segments. */

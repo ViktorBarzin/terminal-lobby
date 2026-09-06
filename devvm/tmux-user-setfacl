@@ -10,24 +10,53 @@
 # partially and, worse, could not fully REVOKE a departed member's access to the
 # files they created. Root makes both grant and revoke complete.
 #
-# Trust model (Viktor, 2026-07-17): NO denylist/allowlist "armor" — the owner is
-# trusted to share only what should be shared. The guardrails here are ordinary
-# input validation, so this root tool can't be turned into an arbitrary-path
-# ACL-writer: the dir must be an absolute, REAL directory, canonical (no symlink
-# components), strictly BELOW a /home/<user> (never a home root itself), the
-# members must be real existing users, and the tree is inode-capped.
+# Trust model (Viktor, 2026-07-17; containment tightened 2026-09-05): NO
+# denylist/allowlist "armor" over WHAT is shared — the owner is trusted to share
+# only what should be shared. What this tool does enforce is WHOSE tree it may
+# touch and WHO may be granted:
+#   * the dir must be absolute, a REAL directory, and already canonical, so no
+#     symlink component can walk the ACL out of the intended tree;
+#   * the dir must sit strictly below the OWNER's home, and that home comes from
+#     getent passwd for the owner named in argv[4] — not from parsing the path,
+#     which would make the check self-fulfilling;
+#   * the owner and every grantee must be terminal users listed in
+#     /etc/ttyd-user-map, the same re-check tmux-restore-user and
+#     tmux-persist-forget do, so a system account can never be a grantee;
+#   * only regular files and directories INSIDE the tree are handed to setfacl.
+#     Without -R, setfacl follows a symlink argument and writes the ACL on the
+#     target, so an unfiltered `find` would let anyone who can plant a symlink
+#     in the tree redirect a root ACL write to any path on the box;
+#   * a grant is inode-capped. A revoke is not: refusing a revoke for size would
+#     leave a departed member's access in place permanently.
 #
-# Usage: tmux-user-setfacl grant|revoke <absolute-dir> <user>[,<user>...]
+# Usage: tmux-user-setfacl grant|revoke <absolute-dir> <user>[,<user>...] <owner>
 set -euo pipefail
 
 action="${1:-}"
 dir="${2:-}"
 users_csv="${3:-}"
+owner="${4:-}"
+MAP=/etc/ttyd-user-map
 USER_RE='^[a-z_][a-z0-9_-]{0,31}$'
 CAP=200000
 
-[[ "$action" == "grant" || "$action" == "revoke" ]] || { echo "usage: grant|revoke <dir> <users>" >&2; exit 2; }
+# os_user = right-hand side of the map, minus any optional :cwd suffix, and
+# never a comment line (mirrors tmux-api's loadUserMap, tmux-restore-user:45-48
+# and tmux-persist-forget:61-65).
+is_terminal_user() {
+    sed -e 's/#.*//' "$MAP" | cut -d= -f2- | sed -e 's/:.*//' -e 's/[[:space:]]//g' | grep -qxF "$1"
+}
+
+[[ "$action" == "grant" || "$action" == "revoke" ]] || { echo "usage: grant|revoke <dir> <users> <owner>" >&2; exit 2; }
 [[ "$dir" == /* ]] || { echo "dir must be absolute" >&2; exit 2; }
+
+# The owner is the user whose tree this is. Their home bounds every path we
+# touch, so resolve it from the passwd database rather than from the dir string.
+[[ "$owner" =~ $USER_RE ]] || { echo "bad owner '$owner'" >&2; exit 2; }
+is_terminal_user "$owner" || { echo "owner '$owner' is not a terminal user (not in $MAP)" >&2; exit 2; }
+home="$(getent passwd "$owner" | cut -d: -f6)"
+[[ "$home" == /* ]] || { echo "no home directory for '$owner'" >&2; exit 2; }
+home="$(realpath -e -- "$home" 2>/dev/null)" || { echo "home of '$owner' does not exist" >&2; exit 2; }
 
 # Resolve physically and require the input to already be canonical — this
 # rejects any symlink in the path (realpath would otherwise silently follow one
@@ -35,22 +64,24 @@ CAP=200000
 real="$(realpath -e -- "$dir" 2>/dev/null)" || { echo "dir does not exist" >&2; exit 2; }
 [[ "$real" == "$dir" ]] || { echo "dir must be a canonical path (symlink component?)" >&2; exit 2; }
 [[ -d "$real" ]] || { echo "not a directory" >&2; exit 2; }
-# Strictly below a home: /home/<user>/<at least one more component>.
-[[ "$real" =~ ^/home/[^/]+/.+ ]] || { echo "dir must be under a user home, not a home root" >&2; exit 2; }
-home="/home/$(printf '%s' "$real" | cut -d/ -f3)"
+# Strictly below the owner's own home — never the home root itself, and never
+# another user's tree.
+[[ "$real" == "$home/"?* ]] || { echo "dir must be strictly under $owner's home ($home)" >&2; exit 2; }
 
 IFS=',' read -r -a users <<< "$users_csv"
 [[ "${#users[@]}" -ge 1 ]] || { echo "no users" >&2; exit 2; }
 for u in "${users[@]}"; do
     [[ "$u" =~ $USER_RE ]] || { echo "bad user '$u'" >&2; exit 2; }
     id "$u" >/dev/null 2>&1 || { echo "no such user '$u'" >&2; exit 2; }
+    is_terminal_user "$u" || { echo "'$u' is not a terminal user (not in $MAP)" >&2; exit 2; }
 done
 
-# Inode-cap the tree (DoS guard); prune the heavy/irrelevant dirs we also skip
-# when applying ACLs.
+# Prune the heavy/irrelevant dirs we skip when applying ACLs; the same list
+# bounds the inode count.
 prune=( -path '*/node_modules' -o -path '*/.git' -o -path '*/.venv' -o -path '*/target' -o -path '*/dist' )
-count="$(find "$real" -xdev \( "${prune[@]}" \) -prune -o -print 2>/dev/null | head -n $((CAP + 1)) | wc -l)"
-[[ "$count" -le "$CAP" ]] || { echo "tree too large ($count > $CAP inodes) — refusing" >&2; exit 3; }
+# Only regular files and directories ever reach setfacl. A symlink argument
+# would have its ACL applied to the TARGET, anywhere on the box.
+types=( -type f -o -type d )
 
 acc_spec=""
 def_spec=""
@@ -66,9 +97,17 @@ done
 acc_spec="${acc_spec%,}"
 def_spec="${def_spec%,}"
 
-logger -t tmux-user-setfacl "action=$action dir=$real home=$home users='$users_csv' inodes=$count"
+logger -t tmux-user-setfacl "action=$action dir=$real owner=$owner home=$home users='$users_csv'"
 
 if [[ "$action" == "grant" ]]; then
+    # Inode-cap the tree (DoS guard). Grant only: a revoke that refused for size
+    # would leave a departed member's access in place forever. The `|| true`
+    # absorbs find's SIGPIPE when head closes the pipe early, which pipefail
+    # would otherwise turn into an abort before the message below prints.
+    count="$( { find "$real" -xdev \( "${prune[@]}" \) -prune -o -print 2>/dev/null || true; } | head -n $((CAP + 1)) | wc -l)"
+    [[ "$count" -le "$CAP" ]] || { echo "tree too large ($count > $CAP inodes) — refusing" >&2; exit 3; }
+    logger -t tmux-user-setfacl "grant dir=$real inodes=$count"
+
     # Open traverse (x) on each ancestor from just below the home down to the
     # dir's parent, so members can reach the shared dir. Home itself is 0711
     # already (world-traversable), so we never touch it.
@@ -76,21 +115,24 @@ if [[ "$action" == "grant" ]]; then
     while :; do
         p="$(dirname "$p")"
         [[ "$p" == "$home" || "$p" == "/" ]] && break
-        for u in "${users[@]}"; do setfacl -m "u:$u:x" -- "$p"; done
+        for u in "${users[@]}"; do setfacl -P -m "u:$u:x" -- "$p"; done
     done
     # Recursive rwX (access) on everything, plus default ACLs on directories so
     # new files inherit access for every member.
-    find "$real" -xdev \( "${prune[@]}" \) -prune -o -print0 \
-        | xargs -0 -r setfacl -m "$acc_spec" --
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o \( "${types[@]}" \) -print0 \
+        | xargs -0 -r setfacl -P -m "$acc_spec" --
     find "$real" -xdev \( "${prune[@]}" \) -prune -o -type d -print0 \
-        | xargs -0 -r setfacl -d -m "$def_spec" --
+        | xargs -0 -r setfacl -P -d -m "$def_spec" --
 else
     # Remove the members' access + default entries. Ancestor traverse grants are
     # left in place (harmless: siblings keep their own perms; re-shares reuse
     # them) — a deliberate v1 simplification under the trust model.
-    find "$real" -xdev \( "${prune[@]}" \) -prune -o -print0 \
-        | xargs -0 -r setfacl -x "$acc_spec" -- 2>/dev/null || true
+    #
+    # Failures propagate. A silently half-finished revoke is a departed member
+    # who still has rwX, which is the one outcome root is here to prevent.
+    find "$real" -xdev \( "${prune[@]}" \) -prune -o \( "${types[@]}" \) -print0 \
+        | xargs -0 -r setfacl -P -x "$acc_spec" --
     find "$real" -xdev \( "${prune[@]}" \) -prune -o -type d -print0 \
-        | xargs -0 -r setfacl -d -x "$def_spec" -- 2>/dev/null || true
+        | xargs -0 -r setfacl -P -d -x "$def_spec" --
 fi
 echo "ok"

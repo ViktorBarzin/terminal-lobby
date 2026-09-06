@@ -12,6 +12,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"terminal-lobby/authuser"
 )
 
 // The lobby's own API, at 127.0.0.1:7684. The syncer reaches for it rather than
@@ -35,14 +37,11 @@ const defaultTmuxAPIEndpoint = "http://127.0.0.1:7684"
 // trusted because tmux-api is not reachable from outside the box.
 //
 // The name is configuration (TL_AUTH_HEADER), and this client has to agree with
-// the server about it, so it reads the same variable from the same
-// EnvironmentFile rather than hard-coding a second answer.
-func tmuxAuthHeader() string {
-	if h := strings.TrimSpace(os.Getenv("TL_AUTH_HEADER")); h != "" {
-		return h
-	}
-	return "X-Forwarded-User"
-}
+// the SERVER about it. It asks authuser, which is what the server resolves by,
+// rather than reading the variable a second time and carrying its own fallback:
+// the fallback was the copy that could drift, and a client naming the wrong
+// header gets a 401 that looks like any other failed sync.
+func tmuxAuthHeader() string { return authuser.ConfigFromEnv().Header() }
 
 // tmuxProxySecret is sent when the services are configured to require one.
 // Empty means the server is not checking, which is the default.
@@ -50,8 +49,11 @@ func tmuxProxySecret() string { return os.Getenv("TL_PROXY_SECRET") }
 
 // DefaultUserMapPath is the identity→OS-user map tmux-api itself reads. The
 // syncer reads it backwards: it knows its OS user and needs the auth identity
-// that maps to it.
-const DefaultUserMapPath = "/etc/ttyd-user-map"
+// that maps to it. The path is the gate's, not a second literal: the file's
+// existence is also what puts the whole box into multi-user mode, so a syncer
+// looking at a different path would disagree with every service about which
+// mode it is in.
+const DefaultUserMapPath = authuser.DefaultMapPath
 
 // sessionNameRe is tmux-api's own accepted session name, copied so a bad name
 // fails here with a useful message instead of as a 400 from the far side.

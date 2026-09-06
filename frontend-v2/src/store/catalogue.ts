@@ -1,4 +1,4 @@
-import type { SlashCommand } from "../components/compose.logic";
+import type { SlashCommand } from "../logic/compose.logic";
 
 /**
  * The session's own slash commands, and whether reading them worked.

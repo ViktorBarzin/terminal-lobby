@@ -14,7 +14,7 @@ import {
   WEAK_RANK,
   mergeCommands,
   type SlashCommand,
-} from "../src/components/compose.logic";
+} from "../src/logic/compose.logic";
 
 const values = (c: { items: { value: string }[] } | null): string[] =>
   (c?.items ?? []).map((i) => i.value);

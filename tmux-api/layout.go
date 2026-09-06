@@ -51,6 +51,12 @@ type DockState struct {
 	Dir     string `json:"dir,omitempty"`
 }
 
+// Project is the per-user half of a project: this member's own ordering of
+// the sessions inside it, stored in this member's layout document and written
+// by PUT /layout. The project itself is GlobalProject in projects.go, in the
+// store every member shares, and that is where id, members, attach mode and
+// the co-owned flag live. A field that describes the project rather than one
+// member's arrangement of it belongs there, not here.
 type Project struct {
 	Name     string   `json:"name"`
 	Sessions []string `json:"sessions"`

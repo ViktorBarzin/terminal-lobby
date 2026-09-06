@@ -7,9 +7,19 @@ import solid from "vite-plugin-solid";
 export default defineConfig({
   plugins: [solid()],
   resolve: { conditions: ["development", "browser"] },
-  // frontend/term.html lives one level up, outside this package. Tests that
-  // assert against the shipped page import it with `?raw`, and Vite refuses to
-  // read outside the project root unless the sibling is allowed here.
+  // Allows Vite to serve files from the parent directory, where two siblings of
+  // this package live: frontend/diag.js, imported for its side effects by three
+  // diag tests, and slug/vectors.json, the shared CleanTitle cases that
+  // test/title.test.ts and slug/slug_test.go both read so the Go and TypeScript
+  // copies of that function cannot drift apart.
+  //
+  // The comment here used to name frontend/term.html as the only reason, which
+  // would make this line look safe to delete with that page. It is not: no test
+  // imports term.html today, and the slug fixture outlives the cutover.
+  //
+  // Measured 2026-09-06: both imports above still resolve with `allow: []`,
+  // because vite-node transforms them rather than the dev server serving them.
+  // Kept for the dev server and for any future `?raw` import of a sibling.
   server: { fs: { allow: [".."] } },
   define: { __TL_BUILD__: JSON.stringify("test") },
   test: {

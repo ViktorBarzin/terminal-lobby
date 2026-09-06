@@ -22,7 +22,7 @@
  *    have to change is handed back as the same object.
  */
 import type { Layout, Session } from "../types/lobby";
-import type { SidebarModel } from "./lobby.logic";
+import type { SidebarModel } from "../components/lobby.logic";
 
 /** Which order the session list is in. */
 export type SessionOrder = "manual" | "created" | "active";

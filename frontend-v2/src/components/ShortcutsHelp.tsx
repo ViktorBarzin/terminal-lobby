@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, type Accessor, type Component } from "solid-js";
 import { track } from "../telemetry/track";
+import { dismissOnPress } from "./overlay";
 
 /**
  * The keyboard-shortcuts help overlay (feature-inventory Cat.2 "Keyboard-
@@ -69,6 +70,7 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         [[`${ALT} (hold)`], "Preview session numbers"],
         [[`${ALT}+Shift+[`, `${ALT}+Shift+]`], "Previous / next session"],
         [[`${ALT}+Shift+Enter`], "Next session awaiting input"],
+        [[`${ALT}+Shift+U`], "Next session with unread output"],
       ],
     ],
     [
@@ -109,6 +111,10 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
           [`${MOD}+J`],
           "Scratch shell at the foot of the screen (desktop only; always on)",
         ],
+        // Find has no Ctrl/Cmd+F row because Ctrl+F belongs to the TUI. This
+        // chord is the only keyboard way in, which is why leaving it out of
+        // the table hid the feature entirely.
+        [[`${ALT}+Shift+F`], "Find in the open session (Text view)"],
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.
@@ -182,13 +188,11 @@ export const ShortcutsHelp: Component<{
   return (
     <div
       class="tl-cmdpalette-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) props.controller.close();
-      }}
-      onKeyDown={onKeyDown}
+      ref={dismissOnPress(() => props.controller.close(), { surfaceOnly: true })}
     >
       <div
         ref={dialogEl}
+        onKeyDown={onKeyDown}
         class="tl-schelp"
         role="dialog"
         aria-modal="true"

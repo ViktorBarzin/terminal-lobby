@@ -13,7 +13,7 @@ import {
   completionFor,
   rankCommands,
   type SlashCommand,
-} from "../src/components/compose.logic";
+} from "../src/logic/compose.logic";
 
 const cmd = (name: string, source: string, description = ""): SlashCommand => ({
   name,

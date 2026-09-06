@@ -13,23 +13,30 @@
 #                            gets its images back (marker dropped).
 #   store/<user>/_unsorted/  no session to tie a lifetime to: files age
 #                            out after 90 days.
-#   /tmp/clipboard-files     dropped-file transfer conveniences: 7 days,
-#                            exactly as the old find sweep did.
-#                            /tmp/clipboard-images only holds pre-store
-#                            leftovers (nothing writes there any more)
-#                            and rides the same sweep until empty.
+#   /run/clipboard-files     dropped-file transfer conveniences: 7 days,
+#                            exactly as the old find sweep did. The two
+#                            /tmp/clipboard-* paths held the same files
+#                            before TL-7 and ride the sweep until empty.
 #
 # Liveness errs on the side of keeping: an unreachable tmux-api only makes
 # a session LOOK dead this run, which merely starts (or continues) the
 # 30-day grace — the next healthy run removes the marker again.
 set -u
 
-STORE=/var/lib/clipboard-store
-MAP=/etc/ttyd-user-map
-LAYOUT_DIR=/var/lib/tmux-api/layout
-SESSIONS_URL=http://127.0.0.1:7684/sessions
-GRACE_DAYS=30
-UNSORTED_DAYS=90
+# Every path and endpoint below is overridable purely as a test seam, the same
+# reason clipboard-upload keeps storeRoot and fileDir as vars rather than
+# consts. clipboard-cleanup.service sets no Environment= and reads no
+# EnvironmentFile, so production always takes the defaults.
+STORE=${STORE:-/var/lib/clipboard-store}
+MAP=${MAP:-/etc/ttyd-user-map}
+LAYOUT_DIR=${LAYOUT_DIR:-/var/lib/tmux-api/layout}
+SESSIONS_URL=${SESSIONS_URL:-http://127.0.0.1:7684/sessions}
+# Transfer conveniences, aged out on a fixed clock. /run/clipboard-files is
+# clipboard-upload's RuntimeDirectory; the two /tmp paths are where those files
+# lived before TL-7 moved them, and are swept until the last box has rebooted.
+EPHEMERAL_DIRS=${EPHEMERAL_DIRS:-"/run/clipboard-files /tmp/clipboard-files /tmp/clipboard-images"}
+GRACE_DAYS=${GRACE_DAYS:-30}
+UNSORTED_DAYS=${UNSORTED_DAYS:-90}
 
 # authentik_for <os_user> — reverse-map an OS user to an Authentik login by
 # scanning ttyd-user-map ("<auth>=<os_user>[:<cwd>]" per line, comments and
@@ -91,13 +98,23 @@ session_alive() {
 if [ -d "$STORE" ]; then
     for userdir in "$STORE"/*/; do
         [ -d "$userdir" ] || continue
+        # [ -d ] follows symlinks and the glob matches a symlink to a
+        # directory, so without this the sweep walks, marks and eventually
+        # rm -rf's whatever tree a link points at. The trailing slash the glob
+        # leaves has to come off first, or -L tests the target (TL-24).
+        [ -L "${userdir%/}" ] && continue
         user=$(basename "$userdir")
 
         for sessdir in "$userdir"*/; do
             [ -d "$sessdir" ] || continue
+            [ -L "${sessdir%/}" ] && continue
             session=$(basename "$sessdir")
             [ "$session" = "_unsorted" ] && continue
             marker="$sessdir.deleted-at"
+            # sh has no O_NOFOLLOW: a marker that is itself a symlink would
+            # send the epoch write below to the link's target. Unlinking it
+            # first is the no-follow open, and costs one grace period.
+            [ -L "$marker" ] && rm -f "$marker"
 
             if session_alive "$user" "$session"; then
                 rm -f "$marker"
@@ -118,7 +135,9 @@ if [ -d "$STORE" ]; then
 fi
 
 # Dropped-file transfer conveniences stay ephemeral (7 days, as the old
-# sweep); /tmp/clipboard-images holds only pre-store leftovers.
-find /tmp/clipboard-files /tmp/clipboard-images -type f -mtime +7 -delete 2>/dev/null
+# sweep); /tmp/clipboard-images holds only pre-store leftovers. Unquoted on
+# purpose: EPHEMERAL_DIRS is a list of paths, none of which contains a space.
+# shellcheck disable=SC2086
+find $EPHEMERAL_DIRS -type f -mtime +7 -delete 2>/dev/null
 
 exit 0

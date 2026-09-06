@@ -190,8 +190,11 @@ func TestCreateAndListProjects(t *testing.T) {
 	me, other := twoLocalUsers(t)
 	withUserMap(t, me+"="+me+"\n"+other+"="+other+"\n")
 
+	// A project dir is bound to the caller's own home (TL-2), so the fixture
+	// has to sit under it.
+	dir := homeOfUser(me) + "/code/tripit"
 	rec := httptest.NewRecorder()
-	handleProjects(rec, projectsReq(http.MethodPost, "/projects", `{"name":"tripit","dir":"/home"}`, me))
+	handleProjects(rec, projectsReq(http.MethodPost, "/projects", `{"name":"tripit","dir":"`+dir+`"}`, me))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create: got %d, want 201; body=%s", rec.Code, rec.Body.String())
 	}
@@ -199,7 +202,7 @@ func TestCreateAndListProjects(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created: %v", err)
 	}
-	if created.ID == "" || created.Name != "tripit" || created.Dir != "/home" {
+	if created.ID == "" || created.Name != "tripit" || created.Dir != dir {
 		t.Fatalf("bad created project: %+v", created)
 	}
 	if len(created.Members) != 1 || created.Members[0].OSUser != me || created.CreatedBy != me {
@@ -286,9 +289,10 @@ func TestPatchProjectUpdatesFields(t *testing.T) {
 	withUserMap(t, me+"="+me+"\n")
 	p := createProjectVia(t, me, `{"name":"tripit"}`)
 
+	dir := homeOfUser(me) + "/code/tripit"
 	rec := httptest.NewRecorder()
 	handleProjectByID(rec, projectsReq(http.MethodPatch, "/projects/"+p.ID,
-		`{"name":"trip","dir":"/home/wizard/code/tripit","attachMode":"rw"}`, me))
+		`{"name":"trip","dir":"`+dir+`","attachMode":"rw"}`, me))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch: got %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -296,7 +300,7 @@ func TestPatchProjectUpdatesFields(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil {
 		t.Fatal(err)
 	}
-	if up.Name != "trip" || up.Dir != "/home/wizard/code/tripit" || up.AttachMode != "rw" {
+	if up.Name != "trip" || up.Dir != dir || up.AttachMode != "rw" {
 		t.Fatalf("patch result: %+v", up)
 	}
 }

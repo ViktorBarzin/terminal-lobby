@@ -17,17 +17,16 @@ import (
 
 // The tests run the REAL handler → op → skillscan path. Two seams make that
 // possible without sudo and without touching a real home: homeBase points at a
-// temp directory, and selfUser is cleared, which makes run() perform every op
-// inline rather than re-execing (privop.go). So a "peer" here is another
-// directory under the same temp root, which is exactly the shape production
-// reaches through sudo.
+// temp directory, and forceInline makes run() perform every op inline rather
+// than re-execing (privop.go). So a "peer" here is another directory under the
+// same temp root, which is exactly the shape production reaches through sudo.
 
 func withHomeBase(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	oldBase, oldSelf := homeBase, selfUser
-	homeBase, selfUser = dir, ""
-	t.Cleanup(func() { homeBase, selfUser = oldBase, oldSelf })
+	oldBase, oldForce := homeBase, forceInline
+	homeBase, forceInline = dir, true
+	t.Cleanup(func() { homeBase, forceInline = oldBase, oldForce })
 	return dir
 }
 

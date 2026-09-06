@@ -186,6 +186,16 @@ describe("config wiring under ?as=bob", () => {
     expect(c.clipboardListUrl("main")).toBe("/clipboard/list?session=main");
   });
 
+  it("keeps telemetry off the switch, but still on the ?api= origin", async () => {
+    // The intake attributes a batch by the forward-auth header on the request,
+    // so appending as=bob would file the watcher's own telemetry against the
+    // person being watched. The ORIGIN override still has to apply, or a tab
+    // pointed at a canary posts its diagnostics to the wrong backend.
+    const c = await load("?as=bob&api=https%3A%2F%2Fd");
+    expect(c.telemetryUrl()).toBe("https://d/api/sessions/telemetry");
+    expect(c.apiUrl("/telemetry")).toBe("https://d/api/sessions/telemetry?as=bob");
+  });
+
   it("keeps push off the switch", async () => {
     // Push subscriptions must never follow: the SPA refreshes its registration
     // on boot, so an as-bob tab would otherwise enrol this browser as one of

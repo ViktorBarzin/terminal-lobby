@@ -4,7 +4,9 @@
  *   - session-events — the normalized event stream + prompt/cancel control
  *     channel, served at the ROOT paths /events, /prompt, /cancel (see
  *     session-events/main.go). Its web-mediated PERMISSION broker was removed
- *     in 575d4f5 — see permissionUrl() below.
+ *     in 575d4f5, and the URL builder that fed it went on 2026-09-06 — the
+ *     reasoning it carried now lives in PermissionPanel.tsx, which is the rest
+ *     of the client half.
  *   - tmux-api — the lobby data API (sessions, layout, whoami, projects …),
  *     reached under the /api/sessions/* prefix (the PROD ingress is
  *     `PathPrefix /api/sessions/` → tmux-api, stripping the whole prefix so
@@ -83,9 +85,11 @@ function withActAs(url: string): string {
  * The tmux-api prefix. Every lobby data call built with `apiUrl` lives under it.
  * The PROD ingress routes `PathPrefix /api/sessions/` → tmux-api and STRIPS the
  * whole prefix, so tmux-api serves /whoami, /sessions, /layout, /prefs, … at its
- * root — exactly what the vanilla frontend/index.html calls. Web Push rides the
- * same /api/sessions/ prefix but is spelled out verbatim in pwa/push.ts (NOT via
- * apiUrl), so it is unaffected by this constant.
+ * root — exactly what the vanilla frontend/index.html calls.
+ *
+ * Two routes ride this prefix without going through `apiUrl`, both because they
+ * must not carry `?as=`: Web Push, spelled out verbatim in pwa/push.ts, and the
+ * telemetry intake, which has `telemetryUrl` below.
  */
 export const TMUX_API_PREFIX = "/api/sessions";
 
@@ -118,22 +122,6 @@ export function eventsUrl(session: string, lastEventId: number): string {
   const turns = openWindowTurns(effectiveTier());
   if (turns !== 20) params.push(`turns=${turns}`);
   return withActAs(`${u}?${params.join("&")}`);
-}
-
-/**
- * POST target for resolving a permission request by its reqId (session-events).
- *
- * @deprecated DEAD ROUTE — session-events no longer serves it. 575d4f5 removed
- * the web-mediated PreToolUse permission broker: it answered "ask" for any
- * session nobody was watching in Text mode, and a PreToolUse "ask" OVERRIDES
- * the allowlist rather than deferring to it, so it forced a prompt on every
- * tool call in every session on the shared devvm. The prod ingress no longer
- * routes it either. Kept — with PermissionPanel.tsx — so a future re-enable
- * behind a per-session gate does not have to rebuild the client half; calling
- * it today gets a 404.
- */
-export function permissionUrl(reqId: string): string {
-  return `${API_BASE}/permission/${encodeURIComponent(reqId)}`;
 }
 
 /** POST target to inject a prompt into the session's Claude (session-events).
@@ -200,6 +188,22 @@ export function commandsUrl(session: string): string {
   return withActAs(`${API_BASE}/commands/${encodeURIComponent(session)}`);
 }
 
+/**
+ * GET target for the slash commands a session started in `dir` WOULD have,
+ * for the new-session composer's `/` menu. There is no session to name yet.
+ *
+ * Under /commands/ rather than at a bare /commands: the production ingress
+ * matches PathPrefix(`/commands/`), trailing slash included, so a bare path
+ * would miss the rule and land on ttyd. `_new` cannot be a session — a name is
+ * a 12-character base32 id and that alphabet has no underscore.
+ *
+ * An empty dir is Ungrouped, and the server answers the user's own half.
+ */
+export function newSessionCommandsUrl(dir: string): string {
+  const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+  return withActAs(`${API_BASE}/commands/_new${q}`);
+}
+
 /** GET target for what the session's pane currently shows, plus its state. */
 export function paneUrl(session: string): string {
   return withActAs(`${API_BASE}/pane/${encodeURIComponent(session)}`);
@@ -238,6 +242,20 @@ export function answerTextUrl(session: string): string {
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   return withActAs(`${API_BASE}${TMUX_API_PREFIX}${p}`);
+}
+
+/**
+ * POST target for the diagnostics batch (telemetry/diag.ts, ADR-0008).
+ *
+ * Under the tmux-api prefix like everything else, and it picks up `?api=` so a
+ * tab pointed at a canary or a remote devvm reports to THAT backend rather than
+ * to whatever origin served the page. It deliberately omits `?as=`, which is
+ * why it is not `apiUrl("/telemetry")`: the intake attributes a batch by the
+ * forward-auth header on the request, so appending `as=` would file an admin's
+ * own telemetry against the person they are watching.
+ */
+export function telemetryUrl(): string {
+  return `${API_BASE}${TMUX_API_PREFIX}/telemetry`;
 }
 
 /**

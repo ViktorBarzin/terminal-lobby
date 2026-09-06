@@ -16,6 +16,13 @@ EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Fallback for a box with no config file yet: Environment= is applied
 # BEFORE EnvironmentFile, so the file wins wherever it sets the same key.
 Environment=TL_AUTH_HEADER=X-Forwarded-User
+# Same fallback for the listen address, and it is load-bearing rather than
+# tidy: systemd substitutes an unset ${TL_BIND} as an EMPTY argument, and ttyd
+# refuses to start on `-i ""`. Loopback, matching the shipped conffile and the
+# five services' compiled defaults, so a box that reaches no config file at all
+# fails closed. Widening is the operator's explicit act, made in
+# /etc/terminal-lobby.local.conf where TL_PROXY_SECRET is set alongside it.
+Environment=TL_BIND=127.0.0.1
 # Truecolor hint for the spawned tmux client (Task 1.14). INERT on the
 # current tmux 3.4 — upstream only added "Set and check COLORTERM as a
 # hint for RGB colour" in tmux 3.6 — so /etc/tmux.conf (terminal-features
@@ -30,7 +37,14 @@ Environment=COLORTERM=truecolor
 # Cloudflare's ~100s WS idle, so an idle terminal never churns reconnects.
 # The frontend also drops the socket entirely after the tab is hidden 60s
 # (see frontend/index.html battery saver) — this covers foreground-idle.
-ExecStart=/usr/local/bin/ttyd -W -a -H ${TL_AUTH_HEADER} -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
+# -i ${TL_BIND}: ttyd honours the same listen address the five HTTP services
+# do. It cannot honour TL_PROXY_SECRET — the -H header is the whole of its
+# authentication, and there is no second header to check — so where it listens
+# is the only lever this port has. Narrowing TL_BIND therefore takes 7681 with
+# it, and leaving it wide means 7681 must be reachable from the proxy alone.
+# Verified against ttyd 1.7.7-40e79c7 rather than assumed: -i 127.0.0.1 binds
+# loopback and -i 0.0.0.0 binds everything, both read back from ss.
+ExecStart=/usr/local/bin/ttyd -i ${TL_BIND} -W -a -H ${TL_AUTH_HEADER} -P 30 -t enableClipboard=true -I /usr/local/share/ttyd/index.html -p 7681 /usr/local/bin/tmux-attach.sh
 Restart=always
 User=wizard
 

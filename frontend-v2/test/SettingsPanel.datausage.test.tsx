@@ -12,12 +12,12 @@ import {
 import {
   NET_LAN,
   NET_UNKNOWN,
+  NETWORKS_SHOWN,
   emptyStore,
   foldInto,
   rememberNet,
-  resetStore,
-  writeStore,
 } from "../src/diagnostics/usage";
+import { resetStore, writeStore } from "../src/diagnostics/usage-store";
 import {
   NETWORK_STORAGE_KEY,
   resetNetworkState,
@@ -396,3 +396,54 @@ describe("Data used — what Auto measured", () => {
  * The network split — what someone opens this panel for while roaming. Two
  * questions: how much of the month went over cellular, and what ate it.
  */
+
+/**
+ * A network row narrows the breakdown, and it used to do that for a pointer
+ * only: a plain div with an onClick, no role, no tab stop. It is a button now,
+ * announced as one and pressed with either key that presses a button.
+ */
+describe("Data used — a network row answers the keyboard", () => {
+  const polkomtel = (c: HTMLElement) =>
+    netRows(c).find((r) => r.textContent?.includes("Polkomtel")) as HTMLElement;
+
+  it("selects on Enter, as a tap does", async () => {
+    seedTwoNetworks();
+    const { container } = await openPanel();
+    expect(polkomtel(container).getAttribute("aria-pressed")).toBe("false");
+
+    fireEvent.keyDown(polkomtel(container), { key: "Enter" });
+
+    await waitFor(() =>
+      expect(polkomtel(container).getAttribute("aria-pressed")).toBe("true"),
+    );
+  });
+
+  it("selects on Space too, and Space does not scroll the panel away", async () => {
+    seedTwoNetworks();
+    const { container } = await openPanel();
+    const ev = new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true });
+    polkomtel(container).dispatchEvent(ev);
+
+    expect(ev.defaultPrevented).toBe(true);
+    await waitFor(() =>
+      expect(polkomtel(container).getAttribute("aria-pressed")).toBe("true"),
+    );
+  });
+
+  it("leaves the row that selects nothing out of the tab order", async () => {
+    // Past NETWORKS_SHOWN the tail folds into one "Other (n networks)" row,
+    // which selects nothing. It is a figure, so it is not announced or reached
+    // as a control.
+    let store = emptyStore();
+    for (let i = 0; i < NETWORKS_SHOWN + 2; i += 1) {
+      store = foldInto(store, { app: 1_000_000 - i * 1000 }, new Date(), `as${i}`);
+    }
+    writeStore(store);
+    const { container } = await openPanel();
+
+    const other = netRows(container).find((r) => r.textContent?.includes("Other ("));
+    expect(other, "the folded tail row").toBeTruthy();
+    expect(other!.getAttribute("role")).toBeNull();
+    expect(other!.getAttribute("tabindex")).toBeNull();
+  });
+});

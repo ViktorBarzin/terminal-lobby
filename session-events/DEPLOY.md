@@ -54,8 +54,11 @@ Gone with the broker: its hook and resolve routes, `registry.permResolve`,
 `fileSource.subscriberCount`, and the ingress route that fronted them.
 `claude-se-hook` is session-start-only. The `permission_request` /
 `permission_resolved` event kinds survive in `event.go` as unused vocabulary,
-as do the client-side `PermissionPanel.tsx` + `permissionUrl()` in frontend-v2
-(both annotated as inert, kept for a possible gated re-enable).
+as does the client-side `PermissionPanel.tsx` in frontend-v2 (annotated as
+inert, kept for a possible gated re-enable). The URL builder it posted to,
+`permissionUrl()`, was deleted on 2026-09-06 because the route it addressed is
+not routed, so every Allow and Deny it produced was a 404. A gated re-enable
+rebuilds it.
 
 **Any `PreToolUse` wiring needs Viktor's explicit go.** It fires in every Claude
 session of every user on this box and is *blocking*: a misconfig adds latency or

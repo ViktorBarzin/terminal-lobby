@@ -114,7 +114,7 @@ func TestPrivReaderFullResult(t *testing.T) {
 // The sudoers grant is written against this exact command line.
 func TestPrivReaderSpawnCommandShape(t *testing.T) {
 	got := privopCommand("bob", "/usr/local/bin/session-events")
-	want := []string{"sudo", "-n", "-u", "bob", "/usr/local/bin/session-events", "-privop"}
+	want := []string{"/usr/bin/sudo", "-n", "-u", "bob", "/usr/local/bin/session-events", "-privop"}
 	if len(got) != len(want) {
 		t.Fatalf("got %v want %v", got, want)
 	}

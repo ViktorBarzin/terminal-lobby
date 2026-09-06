@@ -63,6 +63,12 @@ TL_AUTH_HEADER=X-Forwarded-User
 # the check is off: any caller that can reach the ports below may send
 # TL_AUTH_HEADER and be treated as that user. Set this AND configure your proxy
 # to send it in the same change, or the next restart refuses every request.
+#
+# It covers the five HTTP services (7683 clipboard-upload, 7684 tmux-api, 7685
+# session-events, 7686 file-api, 7688 skills-api) and nothing else. ttyd on
+# 7681 has no way to check a second header, so the secret does not reach the
+# one port that hands out a shell: keep 7681 reachable from the proxy alone,
+# via TL_BIND below or a firewall rule.
 #TL_PROXY_SECRET=
 
 # auto  multi-user when /etc/ttyd-user-map exists, single-user otherwise
@@ -70,11 +76,18 @@ TL_AUTH_HEADER=X-Forwarded-User
 # off   force single-user: everything runs as the invoking user, no sudo
 TL_MULTI_USER=auto
 
-# Listen address for the services. The default admits only a proxy on this same
-# host, which is the arrangement that needs no shared secret at all. Widen it to
-# 0.0.0.0 when the proxy is somewhere else — an ingress in a cluster, say — and
-# set TL_PROXY_SECRET in the same change, because a service reachable from the
-# network trusts TL_AUTH_HEADER from anything that reaches it.
+# Listen address for the services, ttyd included, whose unit passes this to
+# ttyd's -i. The default keeps the ports off the network, and that is the whole
+# of what it buys. It is not a boundary between the accounts ON this box: every
+# OS user here reaches loopback and nothing checks where a request came from, so
+# on a multi-user box a local account can send TL_AUTH_HEADER and be treated as
+# any mapped user until TL_PROXY_SECRET is set. Set the secret whenever
+# TL_MULTI_USER resolves to true, whatever this is narrowed to.
+#
+# Widen it to 0.0.0.0 when the proxy lives somewhere else, an ingress in a
+# cluster say, and set TL_PROXY_SECRET in the same change, because a service
+# reachable from the network trusts TL_AUTH_HEADER from anything that reaches
+# it. Widening also opens 7681, which the secret cannot cover.
 TL_BIND=127.0.0.1
 `
 }
@@ -102,6 +115,10 @@ type Manifest struct {
 	// tab on the previous build — or a rollback — still requests the old names.
 	AssetPayload string
 	// External lists paths a unit watches that another package installs.
+	//
+	// It is the narrow case: watched, so a restart depends on it. The wider
+	// list of things this package depends on without installing them —
+	// including the two that run as root — is PrivilegedDeps.
 	External []string
 	// Checks is what the box runs after installing, to decide whether to keep
 	// the version or revert to the previous one.
@@ -160,6 +177,12 @@ var Package = Manifest{
 		// ttyd is launched with -H X-authentik-username, so an unauthenticated
 		// request is refused by the proxy-auth layer with 407, not 401. Verified
 		// against the live service rather than assumed.
+		//
+		// The probe is loopback, and ttyd now listens where TL_BIND says. Both
+		// values a box actually carries — the shipped 127.0.0.1 and the 0.0.0.0
+		// an off-host proxy needs — include loopback. A TL_BIND naming one
+		// specific address would not, and this probe would have to follow it
+		// there.
 		{Unit: "ttyd", Name: "ttyd refuses anonymous", URL: "http://127.0.0.1:7681/", WantStatus: 407},
 	},
 	Files: []File{
@@ -230,6 +253,12 @@ var Package = Manifest{
 		// /etc/terminal-lobby.users would make the package a writer of identity
 		// data, which is the thing that revoked two users' terminals.
 		{Src: "devvm/terminal-lobby.users.template", Dest: "/usr/share/terminal-lobby/terminal-lobby.users.template", Mode: 0o644, Unmanaged: true},
+		// The two sudo grants, as references beside the users template and for
+		// the same reason. Both name accounts, so both are rendered on the box
+		// and neither is installed onto its live path. Grants says who writes
+		// each one.
+		{Src: "devvm/sudoers.d-ttyd-users.template", Dest: "/usr/share/terminal-lobby/sudoers.d-ttyd-users.template", Mode: 0o644, Unmanaged: true},
+		{Src: "devvm/sudoers.d-tl-reconcile.template", Dest: "/usr/share/terminal-lobby/sudoers.d-tl-reconcile.template", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
@@ -316,6 +345,11 @@ const LocalConfigPath = "/etc/terminal-lobby.local.conf"
 //
 // TL_LOCAL_CONF and TL_USER_MAP are overridable so the test can run this
 // against a fake root rather than asserting on the text of it.
+//
+// The path below is a literal rather than authuser.DefaultMapPath because this
+// is shell text the package SHIPS, not Go the package runs, and the packaging
+// module does not otherwise depend on the identity gate. It is defined in
+// authuser/resolve.go and the two must agree.
 const MigrateConfigSnippet = `
 : "${TL_LOCAL_CONF:=/etc/terminal-lobby.local.conf}"
 : "${TL_USER_MAP:=/etc/ttyd-user-map}"
@@ -333,12 +367,20 @@ TL_AUTH_HEADER=X-Authentik-Username
 
 # This box was already serving before TL_BIND had a default, and its proxy is
 # not on this host, so narrowing to 127.0.0.1 would take the lobby down. Set to
-# what it was. If your proxy can send a shared secret, set TL_PROXY_SECRET here
-# and have it send X-TL-Proxy-Secret — that is what closes the network path.
+# what it was.
 TL_BIND=0.0.0.0
+
+# Which leaves the ports open to anything that can route here: with no secret,
+# the identity header alone says which user a request acts as, and the caller
+# writes that header. Closing it takes two halves, in this order — have the
+# proxy send X-TL-Proxy-Secret: <value>, then uncomment this line with the same
+# value and restart. Doing it the other way round refuses every request in
+# between, which is why the package cannot set it for you.
+#TL_PROXY_SECRET=
 TLEOF
   chmod 0644 "$TL_LOCAL_CONF"
   echo "terminal-lobby: pinned TL_AUTH_HEADER=X-Authentik-Username in $TL_LOCAL_CONF (existing multi-user box)"
+  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681 and 7683-7688 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
 fi
 `
 
@@ -355,6 +397,14 @@ set -e
 # never runs sudo — so its absence is not a failure.
 if [ -e /etc/sudoers.d/ttyd-users ] && ! visudo -cf /etc/sudoers.d/ttyd-users >/dev/null; then
   echo "terminal-lobby: /etc/sudoers.d/ttyd-users is malformed; refusing to configure" >&2
+  exit 1
+fi
+
+# The deploy grant, same treatment. It is the file behind the forced command on
+# the deploy key, so a malformed one takes away the way this box is updated —
+# and the update that would repair it. Absent on a box that takes no CI deploys.
+if [ -e /etc/sudoers.d/tl-reconcile ] && ! visudo -cf /etc/sudoers.d/tl-reconcile >/dev/null; then
+  echo "terminal-lobby: /etc/sudoers.d/tl-reconcile is malformed; refusing to configure" >&2
   exit 1
 fi
 

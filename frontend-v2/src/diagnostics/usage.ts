@@ -38,15 +38,17 @@
  * counted before any of this was measured; it never grows and ages out with
  * everything else. Both sit in the totals and in neither named network.
  *
- * WHAT THIS MODULE OWNS. Persistence and arithmetic only: day, month and
- * network bucketing, pruning, aggregation over periods, and formatting. Which
- * network is current lives in network.ts; measurement lives in
- * frontend/diag.js, inlined into the lobby's <head> and bound once
- * (telemetry/diag.ts:72-95). The terminal's socket is opened in that same
- * document, so the wrapper diag.js puts over `window.WebSocket` counts it
- * alongside everything else. term.html bound its own copy and posted each
- * closed window up to the lobby (a2dbd86:frontend/term.html:2285-2292) until
- * 2026-09-05; there is no hop left for a window to go missing on.
+ * WHAT THIS MODULE OWNS. The arithmetic, and nothing that touches a store:
+ * day, month and network bucketing, pruning, and aggregation over periods.
+ * Reading and writing localStorage is usage-store.ts, one import away, so this
+ * half can be exercised as pure functions over plain objects. Which network is
+ * current lives in network.ts; measurement lives in frontend/diag.js, inlined
+ * into the lobby's <head> and bound once (telemetry/diag.ts, `core.bind`). The
+ * terminal's socket is opened in that same document, so the wrapper diag.js
+ * puts over `window.WebSocket` counts it alongside everything else. term.html
+ * bound its own copy and posted each closed window up to the lobby
+ * (a2dbd86:frontend/term.html:2285-2292) until 2026-09-05; there is no hop left
+ * for a window to go missing on.
  */
 
 /** The five feature buckets the panel reports, each named after something that
@@ -116,7 +118,7 @@ export const MONTHS_KEPT = 12;
  *  and covers a trip; the store keeps every network regardless. */
 export const NETWORKS_SHOWN = 6;
 
-const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 3;
 
 const MONTH_NAMES = [
   "January",
@@ -144,7 +146,7 @@ export function monthKey(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 }
 
-function zeroTotals(): BucketTotals {
+export function zeroTotals(): BucketTotals {
   return { term: 0, app: 0, text: 0, files: 0, api: 0 };
 }
 
@@ -201,7 +203,7 @@ function addNet(into: NetTotals, w: WindowBytes, net: string): NetTotals {
 /** A network id we are willing to store. Anything else — an empty string, a
  *  value from a hand-edited store — becomes `unknown` rather than minting a row
  *  nobody can read. */
-const cleanNet = (net: unknown): string =>
+export const cleanNet = (net: unknown): string =>
   typeof net === "string" && /^[a-z0-9-]{1,40}$/.test(net) ? net : NET_UNKNOWN;
 
 /**
@@ -274,7 +276,7 @@ export function resetSince(store: UsageStore, now: Date = new Date()): UsageStor
  * until the next lookup happened to land. The window matches the daily one, so
  * a name outlives the bytes it belongs to by exactly as long as they last.
  */
-function pruneNets(store: UsageStore, now: number = Date.now()): UsageStore {
+export function pruneNets(store: UsageStore, now: number = Date.now()): UsageStore {
   const live = new Set<string>();
   for (const map of [store.days, store.months]) {
     for (const period of Object.values(map)) for (const id of Object.keys(period)) live.add(id);
@@ -456,201 +458,4 @@ export function aggregate(
     net,
     sinceAt: store.since.at,
   };
-}
-
-// ---- persistence -------------------------------------------------------------
-
-type MinStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** Coerce one network's stored buckets. A hand-edited or half-written payload
- *  becomes zeroes rather than a source of NaN that would silently poison every
- *  total downstream. */
-function readTotals(v: unknown): BucketTotals {
-  const totals = zeroTotals();
-  if (!isPlainObject(v)) return totals;
-  for (const b of BUCKETS) {
-    const n = v[b];
-    if (typeof n === "number" && Number.isFinite(n) && n > 0) totals[b] = n;
-  }
-  return totals;
-}
-
-function readNetTotals(v: unknown): NetTotals {
-  if (!isPlainObject(v)) return {};
-  const out: NetTotals = {};
-  for (const [id, raw] of Object.entries(v)) {
-    if (cleanNet(id) !== id) continue;
-    out[id] = readTotals(raw);
-  }
-  return out;
-}
-
-function readMap(v: unknown): Record<string, NetTotals> {
-  if (!isPlainObject(v)) return {};
-  const out: Record<string, NetTotals> = {};
-  for (const [k, raw] of Object.entries(v)) {
-    if (isPlainObject(raw)) out[k] = readNetTotals(raw);
-  }
-  return out;
-}
-
-function readNets(v: unknown): Record<string, NetMeta> {
-  if (!isPlainObject(v)) return {};
-  const out: Record<string, NetMeta> = {};
-  for (const [id, raw] of Object.entries(v)) {
-    if (cleanNet(id) !== id || !isPlainObject(raw)) continue;
-    out[id] = {
-      label: typeof raw.label === "string" ? raw.label.slice(0, 60) : "",
-      cc: typeof raw.cc === "string" ? raw.cc.slice(0, 4) : "",
-      seen: typeof raw.seen === "number" && Number.isFinite(raw.seen) ? raw.seen : 0,
-    };
-  }
-  return out;
-}
-
-/**
- * Lift a store written before bytes were attributed to a network.
- *
- * Schema 1 held one flat bucket set per period; schema 2 split it three ways by
- * a WiFi/cellular/unknown kind that no longer exists. Neither can be turned
- * into a network without inventing data, so all of it lands in `earlier` — a
- * row that says plainly "counted before this was measured" rather than a name
- * nobody chose. Discarding it instead would cost whoever upgrades mid-month
- * their month.
- */
-function liftLegacyMap(v: unknown, version: number): Record<string, NetTotals> {
-  if (!isPlainObject(v)) return {};
-  const out: Record<string, NetTotals> = {};
-  for (const [k, raw] of Object.entries(v)) {
-    if (!isPlainObject(raw)) continue;
-    const totals = zeroTotals();
-    if (version === 1) {
-      const t = readTotals(raw);
-      for (const b of BUCKETS) totals[b] += t[b];
-    } else {
-      for (const kind of ["wifi", "cell", "unknown"]) {
-        const t = readTotals(raw[kind]);
-        for (const b of BUCKETS) totals[b] += t[b];
-      }
-    }
-    out[k] = { [NET_EARLIER]: totals };
-  }
-  return out;
-}
-
-export function readStore(store: MinStorage | null = storage()): UsageStore {
-  try {
-    const raw = store?.getItem(USAGE_STORAGE_KEY);
-    if (!raw) return emptyStore();
-    const parsed: unknown = JSON.parse(raw);
-    if (!isPlainObject(parsed)) return emptyStore();
-    if (parsed.v === 1 || parsed.v === 2) {
-      const v = parsed.v;
-      return {
-        ...emptyStore(),
-        days: liftLegacyMap(parsed.days, v),
-        months: liftLegacyMap(parsed.months, v),
-      };
-    }
-    if (parsed.v !== SCHEMA_VERSION) return emptyStore();
-    const since = isPlainObject(parsed.since) ? parsed.since : {};
-    return {
-      v: SCHEMA_VERSION,
-      days: readMap(parsed.days),
-      months: readMap(parsed.months),
-      nets: readNets(parsed.nets),
-      since: {
-        at: typeof since.at === "number" && Number.isFinite(since.at) && since.at > 0 ? since.at : 0,
-        totals: readNetTotals(since.totals),
-      },
-    };
-  } catch {
-    return emptyStore();
-  }
-}
-
-function storage(): MinStorage | null {
-  try {
-    return typeof localStorage === "undefined" ? null : localStorage;
-  } catch {
-    return null; // partitioned or blocked storage — the feature degrades to this page life
-  }
-}
-
-export function writeStore(next: UsageStore, store: MinStorage | null = storage()): void {
-  try {
-    store?.setItem(USAGE_STORAGE_KEY, JSON.stringify(pruneNets(next)));
-  } catch {
-    /* a quota-full or blocked store costs history, not the running counter */
-  }
-}
-
-export function resetStore(store: MinStorage | null = storage()): void {
-  try {
-    store?.removeItem(USAGE_STORAGE_KEY);
-  } catch {
-    /* nothing further to do; the panel will simply keep showing what it has */
-  }
-}
-
-/**
- * Run a read-modify-write against the store under a cross-tab lock. Several
- * tabs fold into one key, so an unguarded sequence drops whichever writer lost
- * the race. Web Locks is available on every browser this app targets, iOS
- * Safari included; a browser without it falls back to the unguarded path, which
- * can lose a write under concurrent tabs and is acceptable for a diagnostic.
- */
-async function locked(
-  change: (cur: UsageStore) => UsageStore,
-  store: MinStorage | null,
-): Promise<void> {
-  const apply = () => writeStore(change(readStore(store)), store);
-  try {
-    const locks = navigator?.locks;
-    if (!locks?.request) return void apply();
-    await locks.request(USAGE_STORAGE_KEY, apply);
-  } catch {
-    apply();
-  }
-}
-
-/** Persist one window's bytes under the network they crossed. */
-export function commitWindow(
-  w: WindowBytes,
-  net: string = NET_UNKNOWN,
-  now: Date = new Date(),
-  store: MinStorage | null = storage(),
-): Promise<void> {
-  return locked((cur) => foldInto(cur, w, now, net), store);
-}
-
-/** Persist what a network is called, so its row stays readable later. */
-export function commitNetName(
-  net: string,
-  meta: { label?: string; cc?: string },
-  now: Date = new Date(),
-  store: MinStorage | null = storage(),
-): Promise<void> {
-  return locked((cur) => rememberNet(cur, net, meta, now), store);
-}
-
-/** Rebaseline the resettable period, leaving every other figure standing. */
-export function commitResetSince(
-  now: Date = new Date(),
-  store: MinStorage | null = storage(),
-): Promise<void> {
-  return locked((cur) => resetSince(cur, now), store);
-}
-
-/** Decimal units, because that is how a data plan is billed. */
-export function formatBytes(n: number): string {
-  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "0 B";
-  if (n < 1_000) return `${Math.round(n)} B`;
-  if (n < 1_000_000) return `${(n / 1_000).toFixed(1)} kB`;
-  if (n < 1_000_000_000) return `${(n / 1_000_000).toFixed(1)} MB`;
-  return `${(n / 1_000_000_000).toFixed(1)} GB`;
 }

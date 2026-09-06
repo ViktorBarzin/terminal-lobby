@@ -1,5 +1,8 @@
 
-import { track } from "../telemetry/track";/**
+import { track } from "../telemetry/track";
+import { lsGet, lsSet } from "../lib/storage";
+
+/**
  * Per-browser notification opt-in (inventory Cat.9). The bell toggle is the ONLY
  * place OS-notification permission is requested; this is the local flag it
  * persists. Deliberately per-BROWSER (localStorage `tl:notify:v1`, the same key
@@ -10,19 +13,10 @@ import { track } from "../telemetry/track";/**
 export const NOTIFY_KEY = "tl:notify:v1";
 
 export function notifyOptedIn(): boolean {
-  try {
-    return typeof localStorage !== "undefined" &&
-      localStorage.getItem(NOTIFY_KEY) === "1";
-  } catch {
-    return false;
-  }
+  return lsGet(NOTIFY_KEY) === "1";
 }
 
 export function setNotifyOptIn(on: boolean): void {
   track("notify.opt_in", { "tl.to": on });
-  try {
-    localStorage.setItem(NOTIFY_KEY, on ? "1" : "0");
-  } catch {
-    /* private mode / no storage */
-  }
+  lsSet(NOTIFY_KEY, on ? "1" : "0");
 }

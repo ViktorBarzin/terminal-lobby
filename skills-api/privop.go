@@ -32,7 +32,20 @@ import (
 // files. Every name it does take is re-validated by skillscan.
 
 // selfUser is the OS user this service runs as; requests for it skip sudo.
+// main refuses to start when it cannot be resolved: an unnamed service cannot
+// tell its own user from anyone else's, and answering "everyone is me" there
+// drops the sudo boundary while still pointing the op at the target's home.
 var selfUser string
+
+// forceInline runs every op in this process instead of re-execing through sudo.
+// TEST SEAM only, in the same family as homeBase and sudoBinary: the handler
+// tests point homeBase at a temp tree and exercise the peer paths inside it,
+// which no real sudo could reach. Production never assigns it.
+var forceInline bool
+
+// inline reports whether an op for osUser may run in this process. Exactly
+// tmux-api's comparison, so all three services now answer this the same way.
+func inline(osUser string) bool { return forceInline || osUser == selfUser }
 
 // sudoBinary is a test seam, as in tmux-api: tests swap it for a stub that
 // records its argv. Production never reassigns it.
@@ -118,14 +131,14 @@ type statRow struct {
 // run performs one op as osUser: inline when that is this service's own user,
 // through sudo otherwise.
 func run(osUser, op string, req request) result {
-	if osUser == selfUser || selfUser == "" {
+	if inline(osUser) {
 		return perform(op, userHome(osUser), req)
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return result{Status: 500, Error: "internal error"}
 	}
-	cmd := exec.Command(sudoBinary, "-n", "-u", osUser, exeSelf(), "-privop", op)
+	cmd := privopCommand(osUser, op)
 	cmd.Stdin = bytes.NewReader(body)
 	cmd.Stderr = os.Stderr // a sudo refusal belongs in the service's journal
 	out, err := cmd.Output()
@@ -141,14 +154,34 @@ func run(osUser, op string, req request) result {
 	return res
 }
 
-// exeSelf resolves this binary for the sudo re-exec. The sudoers grant is keyed
-// on /usr/local/bin/skills-api, which is where production resolves; the fallback
-// keeps a dev build self-consistent.
+// privopCommand is the exact command line the sudoers grant is written against.
+// Named, like session-events' and file-api's, so a test can assert the argv
+// directly: sudo matches the TARGET BINARY against the grant, and every other
+// value has to arrive as its own argv element rather than inside a shell string.
+//
+// The child is handed ONE op name and nothing else. No home, no path, no
+// third-party user: the grant carries no argument spec, so anything argv could
+// name is something the caller would be choosing for a privileged process. The
+// request body goes on stdin and the child re-validates it against the home it
+// reads from its own uid.
+func privopCommand(osUser, op string) *exec.Cmd {
+	return exec.Command(sudoBinary, "-n", "-u", osUser, exeSelf(), "-privop", op)
+}
+
+// installPath is where the package puts this binary, and so the path the
+// sudoers grant is keyed on. privop_test pins it against the grant template,
+// because a re-exec sudo has not been told to permit fails as a permission
+// error with nothing to point at.
+const installPath = "/usr/local/bin/skills-api"
+
+// exeSelf resolves this binary for the sudo re-exec. Production resolves to
+// installPath, which is what the grant names; the fallback keeps a dev build
+// self-consistent.
 func exeSelf() string {
 	if p, err := os.Executable(); err == nil {
 		return p
 	}
-	return "/usr/local/bin/skills-api"
+	return installPath
 }
 
 // runPrivopChild is the -privop entrypoint: read the request, perform the op in
@@ -279,6 +312,9 @@ func perform(op, home string, req request) result {
 		return result{Status: 200, Output: out, Freed: freed}
 
 	case opInspect:
+		if err := validSource(req.Owner, req.Repo); err != nil {
+			return result{Status: 400, Error: err.Error()}
+		}
 		info, err := inspectSource(home, req.Owner, req.Repo)
 		if err != nil {
 			return result{Status: 400, Error: err.Error()}
@@ -286,6 +322,9 @@ func perform(op, home string, req request) result {
 		return result{Status: 200, Source: &info}
 
 	case opSource:
+		if err := validSource(req.Owner, req.Repo); err != nil {
+			return result{Status: 400, Error: err.Error()}
+		}
 		out, err := installFromSource(home, req.Owner, req.Repo, req.Kind, req.Names)
 		if err != nil {
 			return result{Status: 502, Error: err.Error(), Output: out}

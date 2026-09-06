@@ -25,6 +25,26 @@ export interface DismissableMenu {
  *  - a pointerdown outside the anchor closes it, as the vanilla page does with
  *    its single `openMenuEl`.
  */
+/**
+ * A popup menu is rendered inside the row that opens it, and that row is often
+ * a `role="button"` with handlers of its own (a session card, a project
+ * header). An activation from inside the menu must not reach it. A mouse press
+ * arrives as `click`, which `stopMenuClick` has always stopped; a keyboard
+ * Enter or Space arrives as `keydown` first, and the row's handler calls
+ * `preventDefault()`, which cancels the button's synthesised click. So until
+ * `stopMenuActivationKey` was added, Enter on "Rename" selected the session
+ * behind the menu and never ran the item at all.
+ *
+ * Both are written as static JSX attributes so Solid delegates them: stopping
+ * propagation inside a delegated handler holds back the other delegated
+ * handlers above it and nothing else, so a document-level chord still fires.
+ */
+export const stopMenuClick = (e: Event): void => e.stopPropagation();
+
+export const stopMenuActivationKey = (e: KeyboardEvent): void => {
+  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+};
+
 export function createDismissableMenu(hold: () => () => void): DismissableMenu {
   const [open, setOpen] = createSignal(false);
   let release: (() => void) | null = null;

@@ -124,6 +124,17 @@ command="sudo -n /usr/local/bin/tl-reconcile",no-agent-forwarding,no-port-forwar
 wizard ALL=(root) NOPASSWD: /usr/local/bin/tl-reconcile
 ```
 
+`sudo tl-users apply -deploy-grant -service-user wizard` writes that file. Name
+the account: the line has to carry the account the key sits in, and without the
+flag the grant is rendered for whoever invoked `sudo`. Where a roster owns
+`/etc/ttyd-user-map` and `/etc/sudoers.d/ttyd-users`, as on the devvm, that run
+writes the deploy grant alone and prints that the other two are still the
+roster's. `devvm/sudoers.d-tl-reconcile.template` is the annotated reference the
+package ships to `/usr/share/terminal-lobby/`. The package never installs the
+live path: the line names one account, so a copy landing on a box with a
+different service user would grant root to whoever holds that name there. `postinst` does validate
+it with `visudo -cf` when it exists, alongside `ttyd-users`.
+
 Every restriction matters: without `command=` this key is a shell. It was
 installed unrestricted before 2026-08-29, which is what that audit found.
 

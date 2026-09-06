@@ -13,6 +13,7 @@ import type { PreviewStore } from "../store/preview";
 import { HTML_SANDBOX, dirname } from "../store/preview.logic";
 import { IMAGE_DECODE_MESSAGE, contentUrl, imageErrorMessage } from "../lib/file-api";
 import { Markdown } from "./Markdown";
+import { dismissOnPress } from "./overlay";
 import { CodeView } from "./CodeView";
 import { CodeEditor } from "./CodeEditor";
 import { wrapTab } from "../lib/focus-trap";
@@ -155,9 +156,7 @@ export const FilePreview: Component<{ store: PreviewStore }> = (props) => {
   return (
     <div
       class="tl-preview-backdrop"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) s.close();
-      }}
+      ref={dismissOnPress(() => s.close(), { surfaceOnly: true })}
     >
       {/* data-kind lets the stylesheet treat a picture differently from a
           document. The panel is otherwise a fixed 85vh whatever it holds, which

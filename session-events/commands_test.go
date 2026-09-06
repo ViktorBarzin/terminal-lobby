@@ -242,3 +242,50 @@ func names(c []Command) []string {
 	}
 	return out
 }
+
+// TL-18, the leg the first fix missed. The catalogue walk has two call sites:
+// the privileged child (privop.go, bounded there) and this process's own inline
+// Discover. The cwd they both take is stored from the session-start hook body,
+// a route any local account on the box can post to, so it is untrusted on both
+// legs and the inline one walks it as the service user.
+//
+// A refusal is the whole catalogue, not "the home half anyway", because the
+// child answers a refusal by failing the op and the two legs have to agree.
+func TestCatalogueCWDIsBoundedToTheUsersOwnHome(t *testing.T) {
+	home := t.TempDir()
+	inside := filepath.Join(home, "code", "proj")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if cwd, ok := catalogueCWD(home, inside); !ok || cwd != inside {
+		t.Errorf("a directory inside the home = (%q,%v), want it kept", cwd, ok)
+	}
+	// No cwd is "no project directory", which is what every caller sends today.
+	if cwd, ok := catalogueCWD(home, ""); !ok || cwd != "" {
+		t.Errorf("an empty cwd = (%q,%v), want it accepted as no project", cwd, ok)
+	}
+	refused := []string{
+		"/etc",
+		"/home/someone-else/.claude",
+		filepath.Dir(home),                  // the parent, one level out
+		home + "-sibling",                   // a name the home is a prefix of
+		filepath.Join(home, "..", "escape"), // a traversal that Clean resolves out
+		"code/proj",                         // relative, so nothing bounds it
+	}
+	for _, cwd := range refused {
+		if got, ok := catalogueCWD(home, cwd); ok {
+			t.Errorf("catalogueCWD(%q) = (%q,true); the inline walk must refuse it the way the child does", cwd, got)
+		}
+	}
+	// And the child is the other leg. Same input, same answer, or the two
+	// roots have drifted apart again, which is the whole point of the batch.
+	root := filepath.Join(home, ".claude", "projects")
+	for _, cwd := range refused {
+		if res := handlePrivop(privRequest{Op: "catalogue", CWD: cwd}, home, root); res.OK {
+			t.Errorf("the privileged child accepted cwd %q that the inline leg refuses", cwd)
+		}
+	}
+	if res := handlePrivop(privRequest{Op: "catalogue", CWD: inside}, home, root); !res.OK {
+		t.Errorf("the privileged child refused cwd %q that the inline leg keeps: %q", inside, res.Err)
+	}
+}

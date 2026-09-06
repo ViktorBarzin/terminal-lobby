@@ -1,34 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { cleanTitle, MAX_TITLE_RUNES } from "../src/lib/title";
+import vectors from "../../slug/vectors.json";
 
 /**
  * cleanTitle mirrors Go's slug.CleanTitle, which tmux-api runs on every title
- * that reaches it (TestCleanTitle* in slug/slug_test.go holds the same cases).
- * The browser shows what was typed optimistically and the server stores what it
- * stamped, so the two disagreeing would make a card change under the person who
- * just retitled it.
+ * that reaches it. The browser shows what was typed optimistically and the
+ * server stores what it stamped, so the two disagreeing would make a card
+ * change under the person who just retitled it.
  *
- * Name DERIVATION used to be tested here against slug/vectors.json. ADR-0019
- * ended it: a session name is a minted id now (lib/session-id.ts, with its own
- * test file), derived from nothing.
+ * The cases are NOT written here. Both suites read `cleanTitleCases` out of
+ * slug/vectors.json, which is what makes them the same cases: they were
+ * hand-copied into each language before, so adding a case to one list left the
+ * other implementation unpinned against it. Vite reaches the sibling directory
+ * because vitest.config.ts allows it.
+ *
+ * Name DERIVATION used to be tested here against the `cases` list in the same
+ * file. ADR-0019 ended it: a session name is a minted id now (lib/session-id.ts,
+ * with its own test file), derived from nothing.
  */
 
 describe("cleanTitle", () => {
-  it.each([
-    ["Deploy the thing", "Deploy the thing"],
-    ["  padded  ", "padded"],
-    ["collapses   inner   runs", "collapses inner runs"],
-    ["tab\tand\nnewline", "tab and newline"],
-    ["bell\u0007and\u001Bescape", "bell and escape"], // BEL, ESC
-    ["c1\u0085control", "c1 control"], // NEL - a C1 control
-    ["", ""],
-    ["   ", ""],
-    ["кирилица остава", "кирилица остава"],
-    ["emoji 🚀 stays", "emoji 🚀 stays"],
-    ["pipe | stays", "pipe | stays"],
-  ])("%j → %j", (input, want) => {
-    expect(cleanTitle(input)).toBe(want);
+  it("reads a non-empty shared list (an unresolved fixture must not pass silently)", () => {
+    expect(vectors.cleanTitleCases.length).toBeGreaterThan(0);
   });
+
+  it.each(vectors.cleanTitleCases.map((c) => [c.in, c.want] as const))(
+    "%j → %j",
+    (input, want) => {
+      expect(cleanTitle(input)).toBe(want);
+    },
+  );
 
   it("caps on code points, not UTF-16 units", () => {
     // 70 emoji is 140 UTF-16 units. Slicing on .length would cut a surrogate

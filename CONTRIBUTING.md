@@ -22,6 +22,19 @@ publishing your fork is enough.
 - **Run the suites.** `go test ./...` in each Go module, and
   `npx vitest run` in `frontend-v2/`. Both are green on master and should stay
   that way.
+- **Run the frontend gates.** In `frontend-v2/`: `npm run lint` (biome, six
+  curated rules), `npm run lint:exports` (knip, unused value exports) and
+  `npm run format:changed` (formats only the files your branch touched). The
+  last one is a ratchet on purpose. If it complains, the fix command is in its
+  own failure message, and a tree-wide `biome format --write` is the wrong
+  answer.
+- **The formatting check is yours alone.** Lint, knip, typecheck and the test
+  suites all run in CI; `format:changed` does not, and CI does not run it. The
+  release workflow only builds pushes to master, where the ratchet's base is
+  the commit being built and it would have nothing to compare. So a branch you
+  never ran it on merges unformatted. Run it. It compares against
+  `origin/master` by default and takes `TL_FORMAT_SINCE` for any other base,
+  e.g. `TL_FORMAT_SINCE=HEAD~3 npm run format:changed`.
 - **Keep the commit message useful.** The subject says what changed, the body
   says why in plain words.
 - **No lint or type suppressions**, and no `any` where a real type exists.

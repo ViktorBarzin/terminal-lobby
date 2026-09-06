@@ -1,12 +1,33 @@
 {
   "_comment": [
-    "Shared title→name test vectors. Read by BOTH slug/slug_test.go (Go) and",
-    "frontend-v2/test/slug.test.ts (vitest), because the browser derives a name",
-    "when it creates a session and tmux-api derives one when it retitles, and a",
-    "disagreement between the two would create or rename the wrong session.",
+    "Two sets of shared test vectors, each read by both languages.",
+    "",
+    "`cases` pins FromTitle (title→session name). Only Go reads it now:",
+    "slug/slug_test.go. The browser stopped deriving names with ADR-0019, so",
+    "t3-bridge is the caller FromTitle still serves.",
     "An empty want means the title yields nothing usable and the caller supplies",
     "its own fallback (session-N in the lobby, 'claude' in t3-bridge).",
+    "",
+    "`cleanTitleCases` pins CleanTitle, which has TWO implementations that must",
+    "agree: Go's slug.CleanTitle, which tmux-api runs on every title that reaches",
+    "it, and frontend-v2/src/lib/title.ts, which the browser runs to show what was",
+    "typed. Read by slug/slug_test.go and frontend-v2/test/title.test.ts. The two",
+    "disagreeing makes a card change under the person who just retitled it.",
+    "",
     "Add a case here rather than to either language's test file."
+  ],
+  "cleanTitleCases": [
+    { "in": "Deploy the thing", "want": "Deploy the thing" },
+    { "in": "  padded  ", "want": "padded" },
+    { "in": "collapses   inner   runs", "want": "collapses inner runs" },
+    { "in": "tab\tand\nnewline", "want": "tab and newline" },
+    { "in": "bell\u0007and\u001bescape", "want": "bell and escape" },
+    { "in": "c1\u0085control", "want": "c1 control" },
+    { "in": "", "want": "" },
+    { "in": "   ", "want": "" },
+    { "in": "кирилица остава", "want": "кирилица остава" },
+    { "in": "emoji 🚀 stays", "want": "emoji 🚀 stays" },
+    { "in": "pipe | stays", "want": "pipe | stays" }
   ],
   "cases": [
     { "title": "Deploy the thing", "want": "deploy-the-thing" },

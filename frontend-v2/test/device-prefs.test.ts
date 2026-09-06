@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 import {
   FLOW_KILL_KEY,
   GESTURES_KILL_KEY,
@@ -7,6 +7,7 @@ import {
   gesturesEnabled,
   setFlowControlEnabled,
 } from "../src/store/device-prefs";
+import { closeSharedTranscriptDb, sharedIndexedDbBackend } from "../src/store/transcript-cache";
 
 beforeEach(() => localStorage.clear());
 
@@ -168,6 +169,81 @@ describe("clearLocalData", () => {
     expect(body.gestures.wheelSmooth).toBe(true);
   });
 
+  /**
+   * A fake indexedDB whose deletes never complete on their own. jsdom has no
+   * IndexedDB at all, so the stub is also what makes the sweep reachable here.
+   */
+  const fakeIDB = (behaviour: "blocked" | "abort" | "success" | "throw") => {
+    const asked: string[] = [];
+    const idb = {
+      deleteDatabase(name: string) {
+        asked.push(name);
+        if (behaviour === "throw") throw new DOMException("denied");
+        const req = new EventTarget() as EventTarget & { result: unknown };
+        if (behaviour !== "blocked") {
+          queueMicrotask(() => req.dispatchEvent(new Event(behaviour)));
+        }
+        return req;
+      },
+    };
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+    Object.defineProperty(globalThis, "indexedDB", { value: idb, configurable: true });
+    onTestFinished(() => {
+      if (prev) Object.defineProperty(globalThis, "indexedDB", prev);
+      else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+    });
+    return asked;
+  };
+
+  it("deletes the three databases this app owns", async () => {
+    const asked = fakeIDB("success");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 50 });
+    expect(asked.sort()).toEqual(["tl-badge", "tl-notif", "tl-transcripts"]);
+    expect(reload).toHaveBeenCalled();
+  });
+
+  /**
+   * The one that matters. `deleteDatabase` fires `blocked` and then sits there
+   * for as long as another context holds the database open, and two of the
+   * three ARE held open: tl-transcripts by a module-level memo in
+   * transcript-cache, tl-notif by the service worker. A sweep that waits for
+   * those never reloads, and the user is left staring at a dead button.
+   */
+  it("still reloads when every delete blocks", async () => {
+    fakeIDB("blocked");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(reload).toHaveBeenCalled();
+  });
+
+  // A transaction can abort WITHOUT ever firing error. No `abort` listener and
+  // the promise stays pending for the whole timeout, or forever if the timeout
+  // were dropped.
+  it("still reloads when a delete aborts without an error", async () => {
+    fakeIDB("abort");
+    const reload = vi.fn();
+    const started = Date.now();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 5_000 });
+    expect(reload).toHaveBeenCalled();
+    expect(Date.now() - started).toBeLessThan(4_000);
+  });
+
+  it("still clears the rest when indexedDB itself refuses", async () => {
+    seed();
+    fakeIDB("throw");
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(localStorage.getItem("tl:prefs:v1")).toBeNull();
+    expect(reload).toHaveBeenCalled();
+  });
+
+  it("does not fall over on a browser with no indexedDB at all", async () => {
+    const reload = vi.fn();
+    await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 20 });
+    expect(reload).toHaveBeenCalled();
+  });
+
   it("still clears this browser when the server reset fails", async () => {
     seed();
     const reload = vi.fn();
@@ -183,5 +259,86 @@ describe("clearLocalData", () => {
     expect(onError).toHaveBeenCalled();
     expect(localStorage.getItem("tl:prefs:v1")).toBeNull();
     expect(reload).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The confirm text names "cached session transcripts", and `tl-transcripts` is
+ * the one database the page itself holds open: transcript-cache memoises an
+ * IDBDatabase for the life of the tab, so the delete would fire `blocked`,
+ * degrade to a no-op, and reload with every transcript still on disk. The
+ * service worker's `tl-notif` is genuinely another execution context and stays
+ * on the blocked path; this one is ours to close.
+ */
+describe("clearLocalData closes the transcript handle it can close", () => {
+  /** Enough of IndexedDB for transcript-cache to open a database and read from
+   *  it, recording the order of `close` against each `deleteDatabase`. */
+  const fakeIDBWithOpen = () => {
+    const order: string[] = [];
+    const req = <T>(result: T): IDBRequest<T> => {
+      const r = { onsuccess: null, onerror: null, result } as unknown as IDBRequest<T> & {
+        onsuccess: (() => void) | null;
+      };
+      queueMicrotask(() => r.onsuccess?.(new Event("success") as never));
+      return r;
+    };
+    const store = {
+      get: () => req(undefined),
+      put: () => req(undefined),
+      delete: () => req(undefined),
+      getAll: () => req([]),
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      createObjectStore: () => store,
+      transaction: () => ({ objectStore: () => store, onabort: null, error: null }),
+      close: () => order.push("close"),
+    };
+    const idb = {
+      open() {
+        const r = {
+          onsuccess: null,
+          onerror: null,
+          onblocked: null,
+          onupgradeneeded: null,
+          result: database,
+        } as unknown as IDBOpenDBRequest & { onsuccess: (() => void) | null };
+        queueMicrotask(() => r.onsuccess?.(new Event("success") as never));
+        return r;
+      },
+      deleteDatabase(name: string) {
+        order.push(`delete:${name}`);
+        const r = new EventTarget();
+        queueMicrotask(() => r.dispatchEvent(new Event("success")));
+        return r;
+      },
+    };
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+    Object.defineProperty(globalThis, "indexedDB", { value: idb, configurable: true });
+    onTestFinished(() => {
+      if (prev) Object.defineProperty(globalThis, "indexedDB", prev);
+      else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+    });
+    return order;
+  };
+
+  it("closes the memoised handle BEFORE deleting tl-transcripts", async () => {
+    const order = fakeIDBWithOpen();
+    const backend = sharedIndexedDbBackend();
+    expect(backend).not.toBeNull();
+    await backend?.read("some-session"); // forces the open the wipe has to undo
+
+    await clearLocalData({ alsoRoamed: false, reload: () => {}, idbTimeoutMs: 20 });
+
+    expect(order.indexOf("close")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("close")).toBeLessThan(order.indexOf("delete:tl-transcripts"));
+  });
+
+  it("reopens on the next read, so a wipe does not leave the cache dead", async () => {
+    fakeIDBWithOpen();
+    const backend = sharedIndexedDbBackend();
+    await backend?.read("s");
+    await closeSharedTranscriptDb();
+    await expect(backend?.read("s")).resolves.toBeNull();
   });
 });

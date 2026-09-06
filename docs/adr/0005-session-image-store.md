@@ -27,7 +27,7 @@ Five decisions were interview-locked:
    (the frontend routes any dropped `image/*` file onto the same
    `image` upload field as a paste) AND `show-image` renders
    (registered by the script itself). Only NON-image drops stay
-   ephemeral transfer conveniences in `/tmp/clipboard-files`: they are
+   ephemeral transfer conveniences in `/run/clipboard-files`: they are
    arbitrary file handoffs into a shell command, not gallery content.
 2. **Where** — `/var/lib/clipboard-store/<osUser>/<session>/` on the
    devvm's durable disk, one flat directory per (OS user, session).
@@ -92,8 +92,13 @@ image written ──► session alive (tmux OR saved layout)? ──► stays, m
 `clipboard-cleanup.timer`) implements this; liveness errs toward
 keeping — an unreachable tmux-api just starts/continues grace, never
 deletes early. `_unsorted`: 90 days. Non-image drops: unchanged
-7-day `/tmp/clipboard-files` sweep, now the final step of the same
+7-day `/run/clipboard-files` sweep, now the final step of the same
 script (dropped images ride the store lifecycle above, like pastes).
+That directory moved from `/tmp` to `/run` on 2026-09-05 (TL-7), where
+it is `clipboard-upload.service`'s `RuntimeDirectory=`: systemd creates
+it under the service account before the service starts, so nothing can
+claim the name first. Its mode stays 0755 for the reason above, since
+the path is handed to the user's own shell.
 
 ## The typed-path contract
 

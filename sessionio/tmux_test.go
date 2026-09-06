@@ -1,8 +1,10 @@
 package sessionio
 
 import (
+	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -365,12 +367,12 @@ func TestVerbsStillWorkOnAnExactName(t *testing.T) {
 func TestKeysRefusesAnythingOutsideTheAnswerAlphabet(t *testing.T) {
 	in := NewInjectorOnSocket("nobody", "tl-never")
 	for _, bad := range [][]string{
-		{"C-c"},                      // interrupt has its own verb, with its own state handling
-		{"rm -rf /"},                 // not a key name at all
-		{"Enter; tmux kill-server"},  // no shell here, but the shape must still be refused
-		{"1", "Enter", "C-u"},        // one bad key spoils the batch
-		{},                           // nothing to send
-		make([]string, MaxKeys+1),    // unbounded batches are not an answer
+		{"C-c"},                     // interrupt has its own verb, with its own state handling
+		{"rm -rf /"},                // not a key name at all
+		{"Enter; tmux kill-server"}, // no shell here, but the shape must still be refused
+		{"1", "Enter", "C-u"},       // one bad key spoils the batch
+		{},                          // nothing to send
+		make([]string, MaxKeys+1),   // unbounded batches are not an answer
 	} {
 		if err := in.Keys("nobody", "s", bad); err == nil {
 			t.Fatalf("Keys accepted %q", bad)
@@ -402,5 +404,140 @@ func TestCapturePaneRefusesAMissingSession(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
 	if _, err := in.CapturePane(osUser, "nope"); err == nil {
 		t.Fatal("capture-pane on a missing session must fail, not return another session's screen")
+	}
+}
+
+// TL-22. The privileged call must not let PATH choose which binary runs as
+// another user. tmux-api and file-api already pin theirs; this package was the
+// one that still asked PATH.
+func TestCommandPinsItsBinariesByAbsolutePath(t *testing.T) {
+	in := NewInjector("wizard")
+
+	own := in.Command("wizard", "list-sessions")
+	if !filepath.IsAbs(own.Args[0]) {
+		t.Errorf("own-user tmux is %q, want an absolute path", own.Args[0])
+	}
+	other := in.Command("bob", "list-sessions")
+	if !filepath.IsAbs(other.Args[0]) {
+		t.Errorf("sudo is %q, want an absolute path", other.Args[0])
+	}
+	want := []string{sudoBinary, "-n", "-u", "bob", tmuxBinary, "list-sessions"}
+	if strings.Join(other.Args, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", other.Args, want)
+	}
+}
+
+// recordingInjector returns an Injector whose tmux is a stub that records the
+// argv of every call, plus a reader of what it recorded. It is the seam for the
+// assertions that have to be about what was RUN rather than about what came
+// back, which is every assertion where "tmux failed" and "we refused" would
+// otherwise look identical.
+func recordingInjector(t *testing.T) (*Injector, func() [][]string) {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "argv")
+	stub := filepath.Join(dir, "tmux")
+	script := "#!/bin/sh\nfor a in \"$@\"; do printf '%s\\n' \"$a\" >>" + logPath +
+		"; done\nprintf -- '--END--\\n' >>" + logPath + "\n"
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	in := NewInjector("wizard")
+	// Both seams point at the stub so a call that unexpectedly takes the sudo
+	// branch shows up as a wrong argv rather than as a silent miss.
+	in.Binary, in.Sudo = stub, stub
+	return in, func() [][]string {
+		t.Helper()
+		b, err := os.ReadFile(logPath)
+		if err != nil {
+			return nil // nothing ran at all
+		}
+		var runs [][]string
+		var cur []string
+		for _, line := range strings.Split(strings.TrimSuffix(string(b), "\n"), "\n") {
+			if line == "--END--" {
+				runs = append(runs, cur)
+				cur = nil
+				continue
+			}
+			cur = append(cur, line)
+		}
+		return runs
+	}
+}
+
+// TL-22, the latent half. Option interpolates the name into a tmux FORMAT
+// string, where #{...} is a directive rather than inert text: measured on tmux
+// 3.4, a name of `}#{pane_current_command}#{` makes `display-message -p` print
+// the pane's command, so an unchecked name reads whatever the format language
+// can reach and can break the two-line reply Option validates itself against.
+//
+// The assertion is on the ARGV, not on the return value. Option answers
+// ("", false) for every failed tmux call, which is also what a missing session
+// gives, so "tmux was never run" is the only thing that separates a refusal
+// from a tmux that happened to error.
+func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
+	in, argv := recordingInjector(t)
+	for _, name := range []string{
+		"}#(touch /tmp/tl-tl22)#{",
+		"}#{pane_current_command}#{",
+		"@thread #{pane_id}",
+		"",
+	} {
+		if v, ok := in.Option("wizard", "demo", name); ok || v != "" {
+			t.Errorf("Option(%q) = (%q,%v), want a refusal", name, v, ok)
+		}
+	}
+	if runs := argv(); len(runs) != 0 {
+		t.Fatalf("a refused name still reached tmux: %v", runs)
+	}
+	// The recorder is what makes the assertion above mean anything, so prove a
+	// name the guard ALLOWS does reach it.
+	in.Option("wizard", "demo", OptionThread)
+	if runs := argv(); len(runs) != 1 {
+		t.Fatalf("the recorder saw %d runs for a legal name, want 1, so the refusals above prove nothing", len(runs))
+	}
+}
+
+// TL-22, the other latent half. The `--` is defence in depth rather than a fix
+// for a live bug: tmux 3.4 stores the positional after the name verbatim
+// however it looks (measured — `set-option -t demo @t3_thread -g` stores "-g").
+// So a round-trip through a real tmux passes with the `--` deleted, and the
+// argv is the only place the marker is visible.
+func TestSetOptionPinsTheValueBehindAnEndOfFlagsMarker(t *testing.T) {
+	in, argv := recordingInjector(t)
+	if err := in.SetOption("wizard", "demo", OptionThread, "-not-a-flag"); err != nil {
+		t.Fatalf("SetOption: %v", err)
+	}
+	runs := argv()
+	if len(runs) != 1 {
+		t.Fatalf("tmux ran %d times, want 1: %v", len(runs), runs)
+	}
+	want := []string{"set-option", "-t", "=demo:", "--", OptionThread, "-not-a-flag"}
+	if strings.Join(runs[0], " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", runs[0], want)
+	}
+}
+
+// The two binaries are a seam a caller may pin, so a service that already keeps
+// its own test-overridable paths can hand them over instead of rebuilding the
+// sudo rule. Empty means this package's own absolute defaults.
+func TestCommandTakesTheCallersBinaries(t *testing.T) {
+	in := NewInjector("wizard")
+	in.Binary, in.Sudo = "/opt/stub/tmux", "/opt/stub/sudo"
+
+	if own := in.Command("wizard", "list-sessions"); own.Args[0] != "/opt/stub/tmux" {
+		t.Errorf("own-user argv = %v, want the caller's tmux", own.Args)
+	}
+	other := in.Command("bob", "list-sessions")
+	want := []string{"/opt/stub/sudo", "-n", "-u", "bob", "/opt/stub/tmux", "list-sessions"}
+	if strings.Join(other.Args, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", other.Args, want)
+	}
+
+	bare := NewInjector("wizard").Command("bob", "list-sessions")
+	fallback := []string{sudoBinary, "-n", "-u", "bob", tmuxBinary, "list-sessions"}
+	if strings.Join(bare.Args, " ") != strings.Join(fallback, " ") {
+		t.Errorf("unset argv = %v, want the package defaults %v", bare.Args, fallback)
 	}
 }
