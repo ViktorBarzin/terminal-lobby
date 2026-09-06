@@ -188,6 +188,22 @@ export function commandsUrl(session: string): string {
   return withActAs(`${API_BASE}/commands/${encodeURIComponent(session)}`);
 }
 
+/**
+ * GET target for the slash commands a session started in `dir` WOULD have,
+ * for the new-session composer's `/` menu. There is no session to name yet.
+ *
+ * Under /commands/ rather than at a bare /commands: the production ingress
+ * matches PathPrefix(`/commands/`), trailing slash included, so a bare path
+ * would miss the rule and land on ttyd. `_new` cannot be a session — a name is
+ * a 12-character base32 id and that alphabet has no underscore.
+ *
+ * An empty dir is Ungrouped, and the server answers the user's own half.
+ */
+export function newSessionCommandsUrl(dir: string): string {
+  const q = dir ? `?dir=${encodeURIComponent(dir)}` : "";
+  return withActAs(`${API_BASE}/commands/_new${q}`);
+}
+
 /** GET target for what the session's pane currently shows, plus its state. */
 export function paneUrl(session: string): string {
   return withActAs(`${API_BASE}/pane/${encodeURIComponent(session)}`);

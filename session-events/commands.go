@@ -282,6 +282,40 @@ func (rg *registry) catalogue(osUser, session string) ([]Command, bool) {
 	if !ok {
 		return nil, false
 	}
+	return rg.catalogueIn(osUser, info.CWD, session)
+}
+
+// catalogueForDir answers the catalogue for a directory a session has not been
+// created in yet.
+//
+// The new-session composer needs this because its `/` menu has the same job as
+// the live one's and none of its inputs: there is no session, so there is no
+// registration and no stored cwd, and the session route above can only 404. The
+// composer does know the directory, because its project selector picked it, and
+// a directory is all the session route ever wanted the session for.
+//
+// The dir arrives from the CLIENT rather than from the session-start hook, so
+// it is bounded by exactly the same catalogueIn check. An empty dir is not an
+// error: it means Ungrouped, and Discover then answers the user's own half —
+// their skills, commands and plugins — with no project half, which is the right
+// answer for a session that will start in their home.
+func (rg *registry) catalogueForDir(osUser, dir string) ([]Command, bool) {
+	// Checked HERE as well as inside catalogueIn, and the two differ on
+	// purpose. A stored cwd that has drifted outside the home is the session
+	// route's problem and answers "no catalogue", because the session is real
+	// and the composer should still get its built-ins. A dir outside the home
+	// arrived in a query string, which is a caller asking for something it may
+	// not have, and that is a refusal.
+	if _, ok := catalogueCWD(filepath.Join(rg.homeBase, osUser), dir); !ok {
+		return nil, false
+	}
+	return rg.catalogueIn(osUser, dir, "<new>")
+}
+
+// catalogueIn is the half both callers share: bound the directory to the user's
+// home, then walk it as them. `label` names the caller in log lines only.
+func (rg *registry) catalogueIn(osUser, cwdIn, label string) ([]Command, bool) {
+	us := rg.user(osUser)
 	// The cwd is bounded BEFORE either leg walks it. It is stored from the
 	// session-start hook body (registry.go), a route any local account on the
 	// box can post to, and the walk reads the first prose line out of every
@@ -290,9 +324,9 @@ func (rg *registry) catalogue(osUser, session string) ([]Command, bool) {
 	// again on its own side, because that is where the privilege is; this is
 	// what bounds the leg that runs Discover inline in the service process.
 	home := filepath.Join(rg.homeBase, osUser)
-	cwd, ok := catalogueCWD(home, info.CWD)
+	cwd, ok := catalogueCWD(home, cwdIn)
 	if !ok {
-		log.Printf("catalogue: %s/%s: cwd %q is outside %s", osUser, session, info.CWD, home)
+		log.Printf("catalogue: %s/%s: cwd %q is outside %s", osUser, label, cwdIn, home)
 		return nil, true
 	}
 	// Another user's skills and commands live inside their 0750 home, so the
@@ -302,7 +336,7 @@ func (rg *registry) catalogue(osUser, session string) ([]Command, bool) {
 	if us.priv != nil {
 		cmds, err := us.priv.Catalogue(cwd)
 		if err != nil {
-			log.Printf("catalogue: %s/%s: %v", osUser, session, err)
+			log.Printf("catalogue: %s/%s: %v", osUser, label, err)
 			return nil, true
 		}
 		return cmds, true

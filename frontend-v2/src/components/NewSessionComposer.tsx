@@ -8,6 +8,10 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { readCatalogue } from "../store/catalogue";
+import { newSessionCommandsUrl } from "../lib/config";
+import type { SlashCommand } from "../logic/compose.logic";
+import type { Catalogue } from "../store/catalogue";
 import type { LobbyStore } from "../store/lobby";
 import type { SessionTool } from "../types/lobby";
 import type { NewCommand, PrefsStore } from "../store/prefs";
@@ -82,6 +86,11 @@ const HELD_PATH_PREFIX = "held:";
  * conversation to prompt or to summarise, and it is the case where someone most
  * likely wanted to name the thing.
  */
+/** The real catalogue read: what a session started in `dir` would offer. */
+function fetchCatalogue(dir: string): Promise<Catalogue> {
+  return readCatalogue(() => fetch(newSessionCommandsUrl(dir)));
+}
+
 export const NewSessionComposer: Component<{
   store: LobbyStore;
   prefs: PrefsStore;
@@ -103,6 +112,9 @@ export const NewSessionComposer: Component<{
    *  given its first prompt, and how held files reach its store. */
   deliver?: typeof deliverFirstPrompt;
   upload?: typeof uploadAttachments;
+  /** How the `/` menu's catalogue is read, for the directory a session would
+   *  start in. Injected by tests; the default is the real endpoint. */
+  catalogue?: (dir: string) => Promise<Catalogue>;
   setModel?: typeof setSessionModel;
 }> = (props) => {
   const avail = (): CommandAvailability => props.available?.() ?? {};
@@ -116,6 +128,27 @@ export const NewSessionComposer: Component<{
   const projects = () => props.store.layout().projects;
   const dirFor = (name: string): string | undefined =>
     projects().find((p) => p.name === name)?.dir || undefined;
+
+  // ---- the `/` menu --------------------------------------------------------
+  // The live composer gets its catalogue from the SESSION (/commands/{session}).
+  // This one has no session, so without this it fell back to the built-ins
+  // alone and typing `/` offered none of your skills — which is what a person
+  // reaching for `/publish-page` in a brand-new session actually wants.
+  //
+  // Keyed on the selected project, because half the answer is that directory:
+  // its .claude/skills and .claude/commands are what the session would see.
+  // Re-fetched when the project changes for the same reason. Once per change
+  // rather than polled, matching the live composer — these are files on disk.
+  const [commands, setCommands] = createSignal<SlashCommand[]>([]);
+  const [commandsOk, setCommandsOk] = createSignal(true);
+  createEffect(() => {
+    const dir = dirFor(props.project()) ?? "";
+    const read = props.catalogue ?? fetchCatalogue;
+    void read(dir).then((c) => {
+      setCommands(c.commands);
+      setCommandsOk(c.ok);
+    });
+  });
 
   let nameEl: HTMLInputElement | undefined;
   const [name, setName] = createSignal("");
@@ -318,6 +351,8 @@ export const NewSessionComposer: Component<{
             placeholder="What do you want to do?"
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
+          commands={commands()}
+          commandsOk={commandsOk()}
             // A desktop lands here ready to type. A coarse pointer deliberately
             // does not: this is the phone's LANDING view, and focusing it would
             // throw a keyboard over the screen before anyone asked for one.

@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
+import type { SlashCommand } from "../src/logic/compose.logic";
 import { NewSessionComposer } from "../src/components/NewSessionComposer";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
@@ -97,6 +98,10 @@ interface Wire {
   chips: DraftAttachment[][];
   /** What each delivery answers with, in order; the last answer repeats. */
   results: boolean[];
+  /** What the `/` menu's catalogue read answers, and the dirs it was asked for. */
+  catalogue: SlashCommand[];
+  catalogueOk: boolean;
+  catalogueDirs: string[];
 }
 
 function mount(
@@ -123,6 +128,10 @@ function mount(
         onProject={(name) => {
           setPreset(name);
           prefs.setPref({ session: { newProject: name } });
+        }}
+        catalogue={async (dir) => {
+          wire.catalogueDirs.push(dir);
+          return { commands: wire.catalogue, ok: wire.catalogueOk };
         }}
         upload={async (files, session) => {
           wire.uploads.push({ files, session });
@@ -161,6 +170,9 @@ const emptyWire = (): Wire => ({
   uploads: [],
   chips: [[]],
   results: [true],
+  catalogue: [],
+  catalogueOk: true,
+  catalogueDirs: [],
 });
 
 /** Hand a picked file to the composer's tray, the way the file input does. */
@@ -932,6 +944,59 @@ describe("<NewSessionComposer> — attachments", () => {
     // into ITS field rather than back into one that has been unmounted.
     await waitFor(() => expect(loadDraft(created(api))?.text).toBe("Fix the deploy"));
     expect(toasts.toasts().map((t) => t.message).join(" ")).toContain("waiting in the composer");
+    m.store.dispose();
+  });
+});
+
+// The `/` menu. The live composer reads its catalogue off the SESSION, and this
+// one has no session — which is why it silently offered the built-ins alone and
+// none of your skills. Viktor, 2026-09-06: "i dont see the skills being auto
+// suggested when typing / in the new sesion promot".
+describe("<NewSessionComposer> — the / menu", () => {
+  const withProjects = (api: FakeApi): void => {
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [
+        { name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" },
+        { name: "beta", sessions: [], dir: "/home/wizard/code/beta" },
+      ],
+    };
+  };
+
+  const skill = (name: string): SlashCommand => ({
+    name,
+    description: `does ${name}`,
+    source: "skill",
+  });
+
+  it("offers a skill from the catalogue, not just the built-ins", async () => {
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    m.wire.catalogue.push(skill("/publish-page"));
+    await m.store.refresh();
+    await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(0));
+
+    type(field(m.container)!, "/publi");
+    await waitFor(() =>
+      expect(m.container.querySelector(".tl-complete")?.textContent).toContain("/publish-page"),
+    );
+    m.store.dispose();
+  });
+
+  it("asks for the SELECTED project's directory, since half the answer is that dir", async () => {
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(0));
+
+    const before = m.wire.catalogueDirs.length;
+    fireEvent.change(pick(m.container, "Project for new session"), {
+      target: { value: "alpha" },
+    });
+    // A different project is a different .claude/skills, so it re-reads.
+    await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(before));
     m.store.dispose();
   });
 });
