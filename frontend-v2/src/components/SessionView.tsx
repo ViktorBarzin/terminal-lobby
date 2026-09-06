@@ -970,7 +970,7 @@ export const SessionView: Component<{
         </section>
       </main>
 
-      {/* TERMINAL view only. The keys are terminal affordances — Esc, Tab, the
+      {/* TERMINAL view only. The keys are terminal affordances — Tab, Esc, the
           arrows, Copy, Paste — and text mode has a text field, not a pty: they
           took a row above the keyboard for nothing (Viktor, 2026-08-17).
           Unmounting rather than hiding, so the toolbar's own cleanup hands

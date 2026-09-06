@@ -1,7 +1,7 @@
 /**
  * The soft-key toolbar belongs to the TERMINAL view.
  *
- * Its keys are terminal affordances — Esc, Tab, the arrows, Copy, Paste. Text
+ * Its keys are terminal affordances — Tab, Esc, the arrows, Copy, Paste. Text
  * mode has a text field and a Send button, not a pty, so on a phone the row sat
  * above the keyboard doing nothing for the view it was in. Viktor asked for
  * text mode to be just the text area (2026-08-17).

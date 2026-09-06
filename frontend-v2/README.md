@@ -643,7 +643,7 @@ src/
                               and came back as a rail page with the room that
                               overlay was for
     SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only). ONE
-                         row since 2026-09-06: Esc, Tab, the four arrows, Copy,
+                         row since 2026-09-06: Tab, Esc, the four arrows, Copy,
                          Paste, and a pinned keyboard-dismiss. The ⋯ overflow
                          tier, ⇧Tab and the soft Ctrl/Alt went with it, on 28
                          days of terminal.softkey telemetry — the glyph keys had
@@ -789,7 +789,7 @@ All of the following ship in the deployed build:
   browser and the server's VAPID key allow it. A tap routes to the session that
   called (ADR-0014).
 - **Mobile** — a coarse-pointer soft-key row (raw byte sequences a phone
-  keyboard cannot produce: Esc, Tab, the arrows) with Copy, Paste and a
+  keyboard cannot produce: Tab, Esc, the arrows) with Copy, Paste and a
   keyboard-dismiss, and visualViewport plumbing so the soft keyboard cannot
   cover the composer.
 - **Settings** — one overlay, navigated by a category rail with a single page
