@@ -11,6 +11,8 @@
  *   arg4  session OWNER for a SHARED/foreign attach (a different OS user)
  *   arg5  Watch mode: "ro" to attach without driving (a REQUEST — the server
  *         resolves it downgrade-only and sources `-r` from its own answer)
+ *   arg6  model a NEW session launches on ("opus", "gpt-5.6-terra", …)
+ *   arg7  effort a NEW session launches at ("max", "xhigh", …)
  *
  * A dir must land at arg3, an owner at arg4 and a watch request at arg5, so
  * whenever a later arg is sent the earlier ones are emitted too ('default' as
@@ -35,6 +37,22 @@ export interface TerminalUrlOpts {
    *  session and never moves its grid. Works on your own session as well as a
    *  shared one. Absent/false keeps today's read-write behaviour. */
   watch?: boolean;
+  /**
+   * arg6/arg7 — the model and effort a NEW session launches on, as FLAGS on the
+   * process rather than a `/model` typed into it once it is up.
+   *
+   * Measured on this box 2026-09-06: launching with them costs what launching
+   * without costs (2.40/2.54/2.84s bare against 2.49/2.42/4.49s flagged), while
+   * driving the CLI's own picker afterwards costs 3.83/4.20/3.99s on a
+   * browser-sized pane. The flags are free; the drive is four seconds and a
+   * visible `/model` line in a conversation that has not started yet.
+   *
+   * Empty is the absence of a choice, and it is what every attach that is not a
+   * fresh create sends: `tmux new-session -A` ignores the command entirely for
+   * a session that already exists, so these only ever take effect on a create.
+   */
+  model?: string;
+  effort?: string;
 }
 
 /**
@@ -56,6 +74,31 @@ export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): str
   const cmd = opts.cmd && opts.cmd.length > 0 ? opts.cmd : "default";
   const owner = opts.owner ?? "";
   const dir = opts.dir ?? "";
+  const model = opts.model ?? "";
+  const effort = opts.effort ?? "";
+  if (model || effort) {
+    // The deepest slots there are, so EVERY earlier one is emitted — including
+    // the two that are usually absent. arg4 stays blank for your own session
+    // (tmux-attach.sh reads a blank owner as "mine") and arg5 carries the watch
+    // request only when there is one, because MODE_RE takes ro/rw and nothing
+    // else. arg7 is emitted even when only the model was chosen, so that an
+    // effort on its own cannot land on $6.
+    const tail = effort ? "&arg=" + encodeURIComponent(effort) : "";
+    return (
+      u +
+      "&arg=" +
+      encodeURIComponent(cmd) +
+      "&arg=" +
+      encodeURIComponent(dir || "default") +
+      "&arg=" +
+      encodeURIComponent(owner) +
+      "&arg=" +
+      (opts.watch ? "ro" : "") +
+      "&arg=" +
+      encodeURIComponent(model) +
+      tail
+    );
+  }
   if (opts.watch) {
     // Deepest slot: emit ALL of arg2..arg4 so "ro" lands on $5. The owner slot
     // is deliberately empty for your own session — tmux-attach.sh reads a blank

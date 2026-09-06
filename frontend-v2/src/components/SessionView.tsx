@@ -112,6 +112,11 @@ export const SessionView: Component<{
   lens?: () => string;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
+  /** The model and effort a NEWLY-CREATED session launches on, as flags on the
+   *  command (lib/terminal-url.ts). Like `newCommand`, only meaningful while
+   *  `creating`: `tmux new-session -A` ignores the command for a session that
+   *  already exists, so an attach to a live one carries neither. */
+  newLaunch?: () => { model: string; effort: string };
   /** Which CLI this session is running, from the session list's own `tool`
    *  (tmux-api reads it off the pane's process tree). It decides which model
    *  and effort lists the composer's chip offers, and a session running a plain
@@ -914,6 +919,8 @@ export const SessionView: Component<{
           <TerminalNative
             args={terminalFrameArgs(session, {
               cmd: props.creating ? props.newCommand?.() : undefined,
+              model: props.creating ? props.newLaunch?.().model : undefined,
+              effort: props.creating ? props.newLaunch?.().effort : undefined,
               dir: props.dir || undefined,
               owner: props.owner || undefined,
               watch: watch(),
