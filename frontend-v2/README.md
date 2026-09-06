@@ -642,7 +642,12 @@ src/
                               outgrew it into its own overlay in August 2026,
                               and came back as a rail page with the room that
                               overlay was for
-    SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
+    SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only). ONE
+                         row since 2026-09-06: Esc, Tab, the four arrows, Copy,
+                         Paste, and a pinned keyboard-dismiss. The ⋯ overflow
+                         tier, ⇧Tab and the soft Ctrl/Alt went with it, on 28
+                         days of terminal.softkey telemetry — the glyph keys had
+                         no taps at all and Ctrl could not reach a letter
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
@@ -679,7 +684,10 @@ src/
   mobile/
     pointer.ts           Coarse-pointer gate for every mobile affordance
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys
-    softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
+    softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine. No live
+                         caller since the key row dropped Ctrl/Alt; terminal/
+                         keys.ts reduces through it and is where wiring it to
+                         the system keyboard would land
     compose.ts           PURE bracketed-paste + trailing-submit split
     softkeys-reserve.ts  body.has-soft-keys, the height both views reserve for
                          the toolbar and the keyboard. Installed once per APP:
@@ -780,9 +788,10 @@ All of the following ship in the deployed build:
   and background **Web Push** via `/sw.js` + `/api/sessions/push/*` when the
   browser and the server's VAPID key allow it. A tap routes to the session that
   called (ADR-0014).
-- **Mobile** — a coarse-pointer soft-key toolbar (raw byte sequences a phone
-  keyboard cannot produce), soft Ctrl/Alt modifiers, and visualViewport
-  plumbing so the soft keyboard cannot cover the composer.
+- **Mobile** — a coarse-pointer soft-key row (raw byte sequences a phone
+  keyboard cannot produce: Esc, Tab, the arrows) with Copy, Paste and a
+  keyboard-dismiss, and visualViewport plumbing so the soft keyboard cannot
+  cover the composer.
 - **Settings** — one overlay, navigated by a category rail with a single page
   showing: Appearance, Terminal, Sessions, Keyboard, Notifications, Network,
   Privacy, then Skills, then Act as user for an admin. ↑↓ walk the rail, Enter

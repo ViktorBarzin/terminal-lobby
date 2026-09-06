@@ -1,25 +1,7 @@
-import {
-  createSignal,
-  onCleanup,
-  For,
-  Show,
-  type Component,
-  type JSX,
-} from "solid-js";
-import {
-  applyMods,
-  consumeSoftMods,
-  idleMods,
-  revertArmed,
-  tapMod,
-  DOUBLE_TAP_MS,
-  type ModName,
-  type ModState,
-  type SoftMods,
-} from "../mobile/softmods";
+import { onCleanup, For, Show, type Component, type JSX } from "solid-js";
 import { keyBytes, type KeyName } from "../mobile/keybytes";
+import { CopyIcon, ClipboardIcon } from "./Icons";
 import { track } from "../telemetry/track";
-import { lsGet, lsSet } from "../lib/storage";
 
 /**
  * Mobile soft-key toolbar (design pillar #2 — Mobile/Touch), ported from the
@@ -28,19 +10,43 @@ import { lsGet, lsSet } from "../lib/storage";
  * so the surface above it shrinks by a real height, which is what lets the
  * terminal's FitAddon measure a true box.
  *
- * Two tiers (IR.3 layout):
- *   - always-visible `.sk-line` = the primary row (Esc ⇧Tab · arrows) + the
- *     pinned ⋯ overflow toggle + the pinned ⌨ keyboard-dismiss, both direct
- *     children so they can never scroll out of reach;
- *   - `.sk-extra` overflow tier (⋯-toggled) = Tab · Ctrl · Alt / glyphs / Copy ·
- *     Paste.
+ * ONE ROW (2026-09-06). It was two tiers — a primary line plus a ⋯-toggled
+ * overflow tier — and the second tier cost a permanent strip of screen above
+ * the keyboard. What survived the flatten is what 28 days of `terminal.softkey`
+ * telemetry says gets pressed, 1,121 taps:
  *
- * Byte contract: pre-baked bytes (keybytes.ts) run through `applyMods` (the
- * armed/latched Ctrl/Alt remap) then the injected `send` sink, then
- * `consumeSoftMods` drops one-shot modifiers. The sink is where the parent
- * routes bytes: to the pty via SessionView's `sendBytesToPty`, which calls the
- * `window.__tlSendToTerminal` bridge TerminalNative owns, or to the composer.
- * It was a postMessage into the terminal iframe until 2026-09-05.
+ *   ↓ 702 · ← 228 · ↑ 90 · Tab 71 · Esc 13 · → 11 · Paste ~11 · Copy 6
+ *
+ * and what came out, with the reason each one earned:
+ *
+ *   - `/` `-` `|` `` ` `` — zero taps in 28 days. The system soft keyboard has
+ *     all four, one shift away.
+ *   - Ctrl and Alt — Ctrl was a NO-OP. `applyMods` only ever saw this
+ *     toolbar's own pre-baked bytes, none of which begin with an ASCII letter,
+ *     and `TerminalNative` holds `keyState.mods = null` on every device, so a
+ *     letter typed on the system keyboard was never remapped either. Ctrl+C
+ *     from a phone has never worked here. The machine itself (`mobile/softmods`)
+ *     stays: `terminal/keys.ts` reduces through it and is the place that would
+ *     wire it up for real.
+ *   - ⇧Tab — 6 taps, and the permission-mode cycle it existed for has its own
+ *     chip in the Text view's composer, which presses BTab server-side.
+ *   - ⋯ — nothing left to hide behind it.
+ *
+ * Copy and Paste stayed and moved into the row as icons: 17 taps a month is
+ * rare, but on a phone in terminal mode this row is the ONLY route to either
+ * (the header's Paste button is `!coarse()`, desktop-only).
+ *
+ * The row is [scrolling keys] + [pinned ⌨]. The dismiss key is a direct child
+ * of `.sk-line` rather than of the scroller, so it can never scroll out of
+ * reach on a narrow screen. Measured at 390px: 334px of keys against 336px of
+ * room, so nothing scrolls on a phone that size and a narrower one degrades to
+ * the edge-faded scroll the row already had.
+ *
+ * Byte contract: pre-baked bytes (keybytes.ts) go straight to the injected
+ * `send` sink. That is where the parent routes them: to the pty via
+ * SessionView's `sendBytesToPty`, which calls the `window.__tlSendToTerminal`
+ * bridge TerminalNative owns. It was a postMessage into the terminal iframe
+ * until 2026-09-05.
  *
  * Wiring disciplines ported verbatim:
  *   - preventDefault on pointerdown for EVERY key (keep focus on the input so
@@ -54,16 +60,15 @@ import { lsGet, lsSet } from "../lib/storage";
 const TAP_COMMIT_MAX_TRAVEL_PX = 10;
 const REPEAT_DELAY_MS = 500;
 const REPEAT_INTERVAL_MS = 60;
-const KEY_ROW_EXPANDED_KEY = "tl:input.keyRowExpanded:v1";
 
 export interface SoftKeysProps {
-  /** Byte sink — receives the FINAL bytes (modifier remap already applied). */
+  /** Byte sink — receives the pre-baked bytes. */
   send: (bytes: string) => void;
   /** Copy delegate (server-side touch copy / selection copy lives in the parent). */
   onCopy?: () => void;
   /** Paste delegate (image-aware paste lives in the parent). */
   onPaste?: () => void;
-  /** Dismiss the soft keyboard (blur the focused input). Pinned ⌨ + row key. */
+  /** Dismiss the soft keyboard (blur the focused input). Pinned ⌨. */
   onDismissKeyboard?: () => void;
   /** Whether hold-to-repeat is enabled (roamed gestures.keyRepeat). Default on. */
   keyRepeat?: () => boolean;
@@ -78,38 +83,10 @@ interface KeyDef {
 }
 
 export const SoftKeys: Component<SoftKeysProps> = (props) => {
-  const [mods, setMods] = createSignal<SoftMods>(idleMods());
-  const [expanded, setExpanded] = createSignal(
-    lsGet(KEY_ROW_EXPANDED_KEY) === "1",
-  );
-
-  // ---- modifier machine (tri-state + 400ms double-tap auto-revert) --------
-  const modTimers: Record<ModName, ReturnType<typeof setTimeout> | undefined> = {
-    ctrl: undefined,
-    alt: undefined,
-  };
-  const onTapMod = (name: ModName) => {
-    if (modTimers[name]) clearTimeout(modTimers[name]);
-    const next = tapMod(mods(), name);
-    setMods(next);
-    if (next[name] === "armed") {
-      // Auto-revert to idle if no second tap latches within the window.
-      modTimers[name] = setTimeout(() => {
-        setMods(revertArmed(mods(), name));
-      }, DOUBLE_TAP_MS);
-    }
-  };
-  onCleanup(() => {
-    if (modTimers.ctrl) clearTimeout(modTimers.ctrl);
-    if (modTimers.alt) clearTimeout(modTimers.alt);
-  });
-
-  // ---- send a pre-baked key: applyMods → sink → consume -------------------
+  // ---- send a pre-baked key ----------------------------------------------
   const sendKey = (name: KeyName) => {
     track("terminal.softkey", { "tl.key": name });
-    const raw = keyBytes(name);
-    props.send(applyMods(raw, mods()));
-    setMods(consumeSoftMods(mods()));
+    props.send(keyBytes(name));
   };
 
   // ---- hold-to-repeat (single slot) --------------------------------------
@@ -129,11 +106,11 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
   };
   onCleanup(stopRepeat);
 
-  // ---- tap-commit travel guard (shared by key + modifier buttons) --------
-  // A non-repeat key/modifier fires on pointerUP only when the SAME pointer
-  // travelled < 10px, so a horizontal row-scroll that happens to start on a
-  // button never misfires it. preventDefault on pointerdown keeps focus on the
-  // active input (else the soft keyboard collapses between keystrokes).
+  // ---- tap-commit travel guard -------------------------------------------
+  // A non-repeat key fires on pointerUP only when the SAME pointer travelled
+  // < 10px, so a horizontal row-scroll that happens to start on a button never
+  // misfires it. preventDefault on pointerdown keeps focus on the active input
+  // (else the soft keyboard collapses between keystrokes).
   const tapCommit = (fire: () => void) => {
     let pending: { id: number; x: number; y: number } | null = null;
     return {
@@ -156,7 +133,7 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
   // ---- key button (tap-commit vs down-fire) ------------------------------
   const keyButton = (def: KeyDef): JSX.Element => {
     const fire = () => sendKey(def.bytes as KeyName);
-    const cls = def.narrow ? "sk-narrow" : undefined;
+    const cls = def.narrow ? "sk-narrow" : "sk-word";
 
     if (def.repeat) {
       // Repeat keys keep the down-fire path: initial send at pointerdown, then
@@ -195,42 +172,9 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
     );
   };
 
-  // A modifier button reflects armed/latched from the signal (data-mod so tests
-  // and CSS can find it). Tap-commit toggles the tri-state (no focus change, no
-  // repeat) so a scroll starting on Ctrl/Alt never arms it accidentally.
-  const modButton = (name: ModName, label: string): JSX.Element => {
-    const state = (): ModState => mods()[name];
-    const h = tapCommit(() => onTapMod(name));
-    return (
-      <button
-        type="button"
-        class="sk-mod"
-        data-mod={name}
-        aria-label={`${label} modifier`}
-        aria-pressed={state() !== "idle"}
-        classList={{ armed: state() === "armed", latched: state() === "latched" }}
-        onPointerDown={h.onPointerDown}
-        onPointerUp={h.onPointerUp}
-        onPointerCancel={h.onPointerCancel}
-        onPointerLeave={h.onPointerLeave}
-      >
-        {label}
-      </button>
-    );
-  };
-
-  const glyphButton = (label: string, bytes: KeyName): JSX.Element =>
-    keyButton({ label, bytes, narrow: true });
-
-  const toggleExpanded = () => {
-    const next = !expanded();
-    setExpanded(next);
-    lsSet(KEY_ROW_EXPANDED_KEY, next ? "1" : "0");
-  };
-
   const primaryKeys: KeyDef[] = [
     { label: "Esc", bytes: "esc", ariaLabel: "Escape" },
-    { label: "⇧Tab", bytes: "backTab", ariaLabel: "Shift+Tab (back-tab)" },
+    { label: "Tab", bytes: "tab", ariaLabel: "Tab", repeat: true },
   ];
   const arrowKeys: KeyDef[] = [
     { label: "↑", bytes: "up", ariaLabel: "Up arrow", repeat: true, narrow: true },
@@ -244,12 +188,12 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
    * views above it reserve (app.css, `body.has-soft-keys .tl-views`).
    *
    * A ResizeObserver rather than the viewport listeners alone: the row changes
-   * height without any window resize behind it — the overflow tier expands and
-   * collapses under the ⋯ toggle, and the key rows re-wrap when a longer label
-   * renders. viewport.ts writes the same property from window/visualViewport
-   * events, which seeds it before this mounts and zeroes it after; both read
-   * the same element, so they agree. On cleanup the toolbar is gone, so the
-   * space it was reserving goes back to the views.
+   * height without any window resize behind it — it re-wraps when a longer
+   * label renders, and the text-scale setting moves it. viewport.ts writes the
+   * same property from window/visualViewport events, which seeds it before this
+   * mounts and zeroes it after; both read the same element, so they agree. On
+   * cleanup the toolbar is gone, so the space it was reserving goes back to the
+   * views.
    */
   const measure = (el: HTMLDivElement): void => {
     const write = () =>
@@ -265,59 +209,7 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
   };
 
   return (
-    <div
-      id="soft-keys"
-      ref={measure}
-      role="toolbar"
-      aria-label="Terminal keys"
-      classList={{ expanded: expanded() }}
-    >
-      {/* Overflow tier — ⋯-toggled, stacked ABOVE the always-visible line. */}
-      <div class="sk-row sk-extra">
-        <div class="sk-group">
-          {keyButton({ label: "Tab", bytes: "tab", repeat: true })}
-          {modButton("ctrl", "Ctrl")}
-          {modButton("alt", "Alt")}
-        </div>
-        <div class="sk-sep" />
-        <div class="sk-group">
-          <button
-            type="button"
-            aria-label="Copy"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => {
-              track("terminal.copied", { "tl.kind": "softkey" });
-              props.onCopy?.();
-            }}
-          >
-            Copy
-          </button>
-          <button
-            type="button"
-            aria-label="Paste"
-            onPointerDown={(e) => e.preventDefault()}
-            onClick={() => {
-              // No terminal.pasted here: the paste routine emits that itself,
-              // once it has actually read something, and a paste_failed when
-              // the browser refuses. Recording success on the TAP made a
-              // refused paste indistinguishable from a completed one — which
-              // is exactly the signal this bug needed.
-              props.onPaste?.();
-            }}
-          >
-            Paste
-          </button>
-        </div>
-        <div class="sk-sep" />
-        <div class="sk-group">
-          {glyphButton("/", "slash")}
-          {glyphButton("-", "dash")}
-          {glyphButton("|", "pipe")}
-          {glyphButton("`", "backtick")}
-        </div>
-      </div>
-
-      {/* Always-visible line: scrolling primary row + pinned ⋯ + pinned ⌨. */}
+    <div id="soft-keys" ref={measure} role="toolbar" aria-label="Terminal keys">
       <div class="sk-line">
         <div class="sk-row sk-primary">
           <div class="sk-group">
@@ -326,18 +218,37 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
           <div class="sk-group">
             <For each={arrowKeys}>{(k) => keyButton(k)}</For>
           </div>
+          <div class="sk-group">
+            <button
+              type="button"
+              class="sk-narrow"
+              aria-label="Copy"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                track("terminal.copied", { "tl.kind": "softkey" });
+                props.onCopy?.();
+              }}
+            >
+              <CopyIcon size={18} />
+            </button>
+            <button
+              type="button"
+              class="sk-narrow"
+              aria-label="Paste"
+              onPointerDown={(e) => e.preventDefault()}
+              onClick={() => {
+                // No terminal.pasted here: the paste routine emits that itself,
+                // once it has actually read something, and a paste_failed when
+                // the browser refuses. Recording success on the TAP made a
+                // refused paste indistinguishable from a completed one — which
+                // is exactly the signal this bug needed.
+                props.onPaste?.();
+              }}
+            >
+              <ClipboardIcon size={18} />
+            </button>
+          </div>
         </div>
-        <button
-          type="button"
-          class="sk-narrow sk-more"
-          aria-label="More keys"
-          aria-pressed={expanded()}
-          classList={{ armed: expanded() }}
-          onPointerDown={(e) => e.preventDefault()}
-          onClick={toggleExpanded}
-        >
-          ⋯
-        </button>
         <Show when={props.onDismissKeyboard}>
           <button
             type="button"

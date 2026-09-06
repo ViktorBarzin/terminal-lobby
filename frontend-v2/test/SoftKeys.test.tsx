@@ -31,13 +31,37 @@ function tap(el: Element): void {
 }
 
 describe("<SoftKeys>", () => {
-  it("renders the always-visible primary keys", () => {
+  it("renders the eight keys of the single row, and nothing else", () => {
     const send = vi.fn();
-    const { getByText, getByLabelText } = render(() => <SoftKeys send={send} />);
+    const { container, getByText, getByLabelText } = render(() => (
+      <SoftKeys send={send} onCopy={() => {}} onPaste={() => {}} onDismissKeyboard={() => {}} />
+    ));
     expect(getByText("Esc")).toBeInTheDocument();
-    expect(getByText("⇧Tab")).toBeInTheDocument();
-    expect(getByLabelText("Up arrow")).toBeInTheDocument();
-    expect(getByLabelText("Right arrow")).toBeInTheDocument();
+    expect(getByText("Tab")).toBeInTheDocument();
+    for (const arrow of ["Up", "Down", "Left", "Right"]) {
+      expect(getByLabelText(`${arrow} arrow`)).toBeInTheDocument();
+    }
+    expect(getByLabelText("Copy")).toBeInTheDocument();
+    expect(getByLabelText("Paste")).toBeInTheDocument();
+    expect(getByLabelText("Dismiss keyboard")).toBeInTheDocument();
+    expect(container.querySelectorAll("#soft-keys button")).toHaveLength(9);
+  });
+
+  it("has no second tier and no ⋯ toggle to open one", () => {
+    // The whole point of the 2026-09-06 flatten: one line above the keyboard.
+    const send = vi.fn();
+    const { container, queryByLabelText } = render(() => <SoftKeys send={send} />);
+    expect(container.querySelector(".sk-extra")).toBeNull();
+    expect(queryByLabelText("More keys")).toBeNull();
+    expect(container.querySelectorAll("#soft-keys .sk-line")).toHaveLength(1);
+  });
+
+  it("carries no Ctrl/Alt modifier buttons", () => {
+    // They remapped only this toolbar's own bytes, none of which start with a
+    // letter, so Ctrl was a no-op on every device it ever shipped to.
+    const send = vi.fn();
+    const { container } = render(() => <SoftKeys send={send} />);
+    expect(container.querySelector("[data-mod]")).toBeNull();
   });
 
   it("sends the pre-baked bytes on a committed tap (Esc → ESC)", () => {
@@ -46,14 +70,6 @@ describe("<SoftKeys>", () => {
     tap(getByText("Esc"));
     expect(send).toHaveBeenCalledTimes(1);
     expect(send).toHaveBeenCalledWith("\x1b");
-  });
-
-  it("sends CSI Z for ⇧Tab (the only mobile back-tab route)", () => {
-    const send = vi.fn();
-    const { getByText } = render(() => <SoftKeys send={send} />);
-    tap(getByText("⇧Tab"));
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("\x1b[Z");
   });
 
   it("does NOT fire when the tap travels ≥10px (a row-scroll, not a tap)", () => {
@@ -77,55 +93,19 @@ describe("<SoftKeys>", () => {
     expect(send).toHaveBeenCalledWith("\x1b[A");
   });
 
-  it("⋯ toggles the overflow tier and its glyph keys become tappable", () => {
+  it("Tab keeps its hold-to-repeat down-fire after the promotion out of ⋯", () => {
     const send = vi.fn();
-    const { getByLabelText, container } = render(() => <SoftKeys send={send} />);
-    const toolbar = container.querySelector("#soft-keys")!;
-    expect(toolbar.classList.contains("expanded")).toBe(false);
-    fireEvent.click(getByLabelText("More keys"));
-    expect(toolbar.classList.contains("expanded")).toBe(true);
-    tap(getByLabelText("More keys") /* keeps focus behavior */);
-    // The pipe glyph lives in the overflow tier.
-    const pipe = container.querySelector(".sk-extra")!;
-    expect(pipe.textContent).toContain("|");
-  });
-
-  it("Ctrl cycles idle → armed → latched via the tri-state paint", () => {
-    const send = vi.fn();
-    const { getByLabelText, container } = render(() => <SoftKeys send={send} />);
-    fireEvent.click(getByLabelText("More keys")); // reveal the modifiers
-    const ctrl = container.querySelector('[data-mod="ctrl"]')!;
-    expect(ctrl.classList.contains("armed")).toBe(false);
-    tap(ctrl); // tap-commit toggles the tri-state
-    expect(ctrl.classList.contains("armed")).toBe(true);
-    tap(ctrl);
-    expect(ctrl.classList.contains("latched")).toBe(true);
-    tap(ctrl);
-    expect(ctrl.classList.contains("armed")).toBe(false);
-    expect(ctrl.classList.contains("latched")).toBe(false);
-  });
-
-  it("armed Alt ESC-prefixes the next key, then consumes (one-shot)", () => {
-    const send = vi.fn();
-    const { getByLabelText, container } = render(() => (
+    const { getByText } = render(() => (
       <SoftKeys send={send} keyRepeat={() => false} />
     ));
-    fireEvent.click(getByLabelText("More keys"));
-    const alt = container.querySelector('[data-mod="alt"]')!;
-    tap(alt); // arm Alt (tap-commit)
-    expect(alt.classList.contains("armed")).toBe(true);
-
-    const up = getByLabelText("Up arrow");
-    firePointer(up, "pointerdown", { pointerId: 1 });
-    firePointer(up, "pointerup", { pointerId: 1 });
-    // Alt + Up = ESC then the up sequence.
+    const tabKey = getByText("Tab");
+    firePointer(tabKey, "pointerdown", { pointerId: 1 });
+    firePointer(tabKey, "pointerup", { pointerId: 1 });
     expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith("\x1b\x1b[A");
-    // One-shot: armed Alt is consumed after the key.
-    expect(alt.classList.contains("armed")).toBe(false);
+    expect(send).toHaveBeenCalledWith("\t");
   });
 
-  it("Copy / Paste / dismiss delegate to their callbacks", () => {
+  it("Copy / Paste / dismiss delegate to their callbacks from the row itself", () => {
     const send = vi.fn();
     const onCopy = vi.fn();
     const onPaste = vi.fn();
@@ -138,12 +118,25 @@ describe("<SoftKeys>", () => {
         onDismissKeyboard={onDismissKeyboard}
       />
     ));
-    fireEvent.click(getByLabelText("More keys"));
+    // No ⋯ press first: on a phone in terminal mode this row is the only route
+    // to either clipboard action, so both are one tap away.
     fireEvent.click(getByLabelText("Copy"));
     fireEvent.click(getByLabelText("Paste"));
     fireEvent.click(getByLabelText("Dismiss keyboard"));
     expect(onCopy).toHaveBeenCalledOnce();
     expect(onPaste).toHaveBeenCalledOnce();
     expect(onDismissKeyboard).toHaveBeenCalledOnce();
+  });
+
+  it("pins the dismiss key outside the scrolling row", () => {
+    // .sk-row is the overflow-x:auto scroller; ⌨ must not live in it or a
+    // narrow screen scrolls it out of reach.
+    const send = vi.fn();
+    const { container } = render(() => (
+      <SoftKeys send={send} onDismissKeyboard={() => {}} />
+    ));
+    const dismiss = container.querySelector(".sk-dismiss")!;
+    expect(dismiss.closest(".sk-row")).toBeNull();
+    expect(dismiss.parentElement?.classList.contains("sk-line")).toBe(true);
   });
 });
