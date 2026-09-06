@@ -73,7 +73,7 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 		if err := in.openPicker(ctx, osUser, session, "/model", "Select model"); err != nil {
 			return ModelState{}, err
 		}
-		if err := in.walkTo(ctx, osUser, session, want.Model); err != nil {
+		if err := in.walkTo(ctx, osUser, session, want.Model, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -106,13 +106,15 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 	return ModelState{Model: want.Model, Effort: ClaudeEffortHint(pane)}, nil
 }
 
-// confirmSwitch answers the "Switch model?" dialog, when there is one.
+// confirmSwitch answers the warm-cache confirmation, when there is one.
 //
 // It appears only when the conversation already has a warm cache — a session
 // that has taken a turn — and it appears AFTER the picker has committed, so
 // nothing before this point can see it. Left unanswered it sits on the pane
 // blocking the session, with the driver having reported success: measured on
-// 2026-09-05, driving a session from Haiku to Opus from the chip.
+// 2026-09-05, first driving a session from Haiku to Opus from the chip, then
+// again on the effort path, which raises the same dialog under its own
+// heading (see SwitchPrompt).
 //
 // A short look, not a wait. Most switches raise nothing at all, and spending
 // the picker's whole deadline on every one of them would make the common case
@@ -124,14 +126,14 @@ func (in *Injector) confirmSwitch(ctx context.Context, osUser, session string) e
 		if err == nil {
 			yes, ok := SwitchPrompt(pane)
 			if ok {
-				if err := in.walkTo(ctx, osUser, session, yes); err != nil {
+				if err := in.walkTo(ctx, osUser, session, yes, pickerRows); err != nil {
 					in.escape(osUser, session)
 					return fmt.Errorf("confirming the switch: %w", err)
 				}
 				if err := in.rawKeys(osUser, session, "Enter"); err != nil {
 					return fmt.Errorf("confirming the switch: %w", err)
 				}
-				return in.awaitClosed(ctx, osUser, session, "Switch model?")
+				return in.awaitClosed(ctx, osUser, session, switchCacheWarning)
 			}
 		}
 		if !time.Now().Before(deadline) || ctx.Err() != nil {
@@ -181,7 +183,13 @@ func (in *Injector) setClaudeEffort(ctx context.Context, osUser, session, effort
 	if err := in.rawKeys(osUser, session, "s"); err != nil {
 		return fmt.Errorf("set effort: %w", err)
 	}
-	return in.awaitClosed(ctx, osUser, session, "←/→ to adjust")
+	if err := in.awaitClosed(ctx, osUser, session, "←/→ to adjust"); err != nil {
+		return err
+	}
+	// The same warm-cache confirmation the model raises. It cost the effort
+	// change entirely until 2026-09-05: the slider committed, this went
+	// unanswered, and the route reported an empty reading as success.
+	return in.confirmSwitch(ctx, osUser, session)
 }
 
 // setCodexModel drives codex's one flow, which asks both questions in a row:
@@ -193,7 +201,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 		return ModelState{}, err
 	}
 	if want.Model != "" {
-		if err := in.walkTo(ctx, osUser, session, want.Model); err != nil {
+		if err := in.walkTo(ctx, osUser, session, want.Model, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -213,7 +221,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 		if CodexEffortIsAdvanced(want.Effort) {
 			// Max and Ultra are not on this screen. "More reasoning…" is the
 			// row that opens the one they are on.
-			if err := in.walkTo(ctx, osUser, session, "More reasoning…"); err != nil {
+			if err := in.walkTo(ctx, osUser, session, "More reasoning…", PickerOptions); err != nil {
 				in.escape(osUser, session)
 				return ModelState{}, err
 			}
@@ -224,7 +232,7 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 				return ModelState{}, err
 			}
 		}
-		if err := in.walkTo(ctx, osUser, session, row); err != nil {
+		if err := in.walkTo(ctx, osUser, session, row, PickerOptions); err != nil {
 			in.escape(osUser, session)
 			return ModelState{}, err
 		}
@@ -301,6 +309,13 @@ func (in *Injector) awaitClosed(ctx context.Context, osUser, session, phrase str
 	}
 }
 
+// rowReader is how a screen's numbered rows are read off the pane. A picker
+// has a select-widget footer and PickerOptions insists on it, which is what
+// keeps a stray "1." in prose from being walked. The warm-cache confirmation
+// draws the same rows with no footer at all, so it reads them with the guard
+// off — it has already been identified by SwitchPrompt at that point.
+type rowReader func(pane string) []PickerOption
+
 // walkTo moves the picker's cursor onto a row by NAME.
 //
 // It pins the list at its first row and then steps down one at a time, reading
@@ -309,24 +324,29 @@ func (in *Injector) awaitClosed(ctx context.Context, osUser, session, phrase str
 // is wanted may not be on screen to count to — and pressing a digit is not a
 // move in Claude Code, it is a commit, and the thing it commits is the account
 // default.
-func (in *Injector) walkTo(ctx context.Context, osUser, session, label string) error {
+func (in *Injector) walkTo(ctx context.Context, osUser, session, label string, rows rowReader) error {
 	if err := in.rawKeys(osUser, session, repeat("Up", saturate)...); err != nil {
 		return fmt.Errorf("walking to %q: %w", label, err)
 	}
 	// Every row the cursor has stood on. Coming back to one is how the walk
-	// knows it has seen the whole list, and it covers both shapes: Claude's
-	// picker saturates at its last row, codex's wraps to its first.
+	// knows it has been round the whole list, and it covers both shapes:
+	// Claude's picker saturates at its last row, codex's wraps to its first.
 	seen := map[string]bool{}
-	for step := 0; step < maxWalk; step++ {
+	last := ""
+	deadline := time.Now().Add(pickerWait)
+	for moves := 0; moves < maxWalk; {
 		time.Sleep(keySettle)
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("walking to %q: %w", label, err)
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("walking to %q: the picker stopped responding", label)
 		}
 		pane, err := in.CapturePane(osUser, session)
 		if err != nil {
 			return fmt.Errorf("walking to %q: %w", label, err)
 		}
-		opts := PickerOptions(pane)
+		opts := rows(pane)
 		if len(opts) == 0 {
 			return fmt.Errorf("walking to %q: the picker closed", label)
 		}
@@ -337,13 +357,27 @@ func (in *Injector) walkTo(ctx context.Context, osUser, session, label string) e
 		if strings.EqualFold(cur.Label, label) {
 			return nil
 		}
-		if seen[cur.Label] {
-			return fmt.Errorf("%q is not offered here — this session lists %s", label, labels(opts))
+		// A row the cursor has already stood on means one of two things, and
+		// they need telling apart: the walk has nowhere left to go, or the
+		// picker has simply not redrawn yet. What separates them is whether the
+		// wanted row is on screen — if it is, the list still has somewhere to
+		// go and this read was early, so the answer is to READ AGAIN rather
+		// than press again. Measured 2026-09-05 on a loaded box: a repaint
+		// slower than the settle first turned an offered model into "not
+		// offered here", and then, once that was guarded, spent the whole step
+		// budget pressing Down at a cursor that had not moved yet.
+		_, onScreen := FindOption(opts, label)
+		if cur.Label == last || seen[cur.Label] {
+			if !onScreen {
+				return fmt.Errorf("%q is not offered here — this session lists %s", label, labels(opts))
+			}
+			continue
 		}
-		seen[cur.Label] = true
+		seen[cur.Label], last = true, cur.Label
 		if err := in.rawKeys(osUser, session, "Down"); err != nil {
 			return fmt.Errorf("walking to %q: %w", label, err)
 		}
+		moves++
 	}
 	return fmt.Errorf("walking to %q: gave up after %d steps", label, maxWalk)
 }

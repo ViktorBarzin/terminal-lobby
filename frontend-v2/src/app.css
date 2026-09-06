@@ -1111,7 +1111,17 @@ label.tl-set-row-label {
    wrapper out of the layout, so the session view is still a flex child of the
    shell body exactly as it was when only one could exist; `.tl-hidden` on the
    slot takes the whole session off screen without unmounting it, which is what
-   makes switching back free. */
+   makes switching back free.
+
+   MEASURING one of these terminals means scoping the query to a slot. Several
+   are mounted at once, the hidden ones keep their whole DOM, and the slot you
+   are NOT looking at comes first in document order, so a bare
+   `document.querySelector('.xterm-selection')` reads a `display: none`
+   terminal. Measured on the deployed build with two sessions visited: the bare
+   query returned 0 rects while the visible terminal held 2 and Ctrl+C copied
+   the row. That reading was filed as "selection is unreachable" and cost a day.
+   TerminalNative.tsx scopes its own `.xterm-screen` lookup for the same reason
+   (`screenOf`, and the `insideScreen` docblock beside it). */
 .tl-session-slot {
   display: contents;
 }
@@ -3753,9 +3763,11 @@ body.tl-kb-up {
   cursor: pointer;
   white-space: nowrap;
   /* A phone's composer bar holds the mode chip, this, the meter and Send. The
-     model name is the one that grows — "gpt-5.6-terra · medium" — so it is the
-     one that gives way. */
-  max-width: 14ch;
+     model name is the one that grows — a slug runs to
+     "claude-haiku-4-5-20251001 · max" — so it is the one that gives way. The
+     ceiling fits the common slugs on a desktop and ellipsises the rest; the
+     title attribute carries the whole thing either way. */
+  max-width: min(26ch, 40vw);
   overflow: hidden;
   text-overflow: ellipsis;
 }

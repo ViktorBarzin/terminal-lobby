@@ -67,7 +67,7 @@ export const ModelMenu: Component<{
     }
     menu.toggle();
   };
-  const summary = (): string => summarise(props.harness, props.state());
+  const summary = (): string => summarise(props.state());
   const chosen = (field: ModelField, id: string): boolean =>
     field === "model"
       ? isCurrentModel(props.harness, id, props.state()?.model)
