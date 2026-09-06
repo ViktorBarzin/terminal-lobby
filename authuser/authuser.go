@@ -22,10 +22,20 @@
 //     unreadable file yields NO admins, so the feature becomes unavailable
 //     rather than open.
 //
-// Nothing client-supplied decides anything here. The caller is derived from
-// the Authentik header, which Traefik strips from the incoming request and
-// re-sets from its own auth result; the admin list is on disk; and the target
-// must already be a mapped terminal account.
+// The identity header is client-supplied, and this package is not what makes it
+// trustworthy. Resolve reads it straight off the request and applies no check on
+// where the request came from. Two things outside the package supply that. The
+// proxy in front strips whatever header arrived and re-sets it from its own auth
+// result, and TL_PROXY_SECRET makes a service refuse any request that does not
+// also carry the proxy's shared secret in X-TL-Proxy-Secret. The secret is the
+// control this repo owns, and with it unset anything that can reach the port may
+// claim to be anyone, which Configure logs at startup. A loopback-only bind is
+// not a substitute on a multi-user box, where every local account reaches
+// loopback.
+//
+// What this package does decide for itself: the admin list is read from a
+// root-owned file on disk, and an act-as target must already be a mapped
+// terminal account.
 package authuser
 
 import (

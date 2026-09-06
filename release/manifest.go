@@ -76,13 +76,18 @@ TL_AUTH_HEADER=X-Forwarded-User
 # off   force single-user: everything runs as the invoking user, no sudo
 TL_MULTI_USER=auto
 
-# Listen address for the services, ttyd included — its unit passes this to
-# ttyd's -i. The default admits only a proxy on this same host, which is the
-# arrangement that needs no shared secret at all. Widen it to 0.0.0.0 when the
-# proxy is somewhere else — an ingress in a cluster, say — and set
-# TL_PROXY_SECRET in the same change, because a service reachable from the
-# network trusts TL_AUTH_HEADER from anything that reaches it. Widening also
-# opens 7681, which the secret cannot cover.
+# Listen address for the services, ttyd included, whose unit passes this to
+# ttyd's -i. The default keeps the ports off the network, and that is the whole
+# of what it buys. It is not a boundary between the accounts ON this box: every
+# OS user here reaches loopback and nothing checks where a request came from, so
+# on a multi-user box a local account can send TL_AUTH_HEADER and be treated as
+# any mapped user until TL_PROXY_SECRET is set. Set the secret whenever
+# TL_MULTI_USER resolves to true, whatever this is narrowed to.
+#
+# Widen it to 0.0.0.0 when the proxy lives somewhere else, an ingress in a
+# cluster say, and set TL_PROXY_SECRET in the same change, because a service
+# reachable from the network trusts TL_AUTH_HEADER from anything that reaches
+# it. Widening also opens 7681, which the secret cannot cover.
 TL_BIND=127.0.0.1
 `
 }

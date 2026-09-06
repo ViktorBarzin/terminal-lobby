@@ -51,7 +51,7 @@ Everything lives in `/etc/terminal-lobby.conf`. Your own settings go in
 | `TL_AUTH_HEADER` | `X-Forwarded-User` | the header your proxy puts the username in |
 | `TL_PROXY_SECRET` | unset | a shared secret the proxy must also send, in `X-TL-Proxy-Secret`; covers the five HTTP services, not ttyd |
 | `TL_MULTI_USER` | `auto` | `auto` (multi-user when `/etc/ttyd-user-map` exists), `on`, `off` |
-| `TL_BIND` | `127.0.0.1` | listen address for the services and ttyd; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change |
+| `TL_BIND` | `127.0.0.1` from the shipped conffile, `0.0.0.0` compiled in | listen address for the services and ttyd; widen to `0.0.0.0` when the proxy is on another host, and set the secret in the same change. `ttyd.service` marks both `EnvironmentFile` lines optional, so a box with no conffile gets the compiled default |
 
 Any proxy that emits a username header works. Authentik sets
 `X-Authentik-Username`; oauth2-proxy, Caddy, Cloudflare Access and Tailscale
@@ -59,9 +59,15 @@ set `X-Forwarded-User`.
 
 > [!IMPORTANT]
 > With `TL_PROXY_SECRET` unset, anything that can reach the service ports can
-> send `TL_AUTH_HEADER` and be treated as that user. Either set the secret and
-> have your proxy send it, or set `TL_BIND=127.0.0.1` so only the local proxy
-> can reach them.
+> send `TL_AUTH_HEADER` and be treated as that user. Set the secret, and have
+> your proxy send it.
+>
+> `TL_BIND=127.0.0.1` is not an alternative to it on a multi-user box. It keeps
+> the ports off the network, which is worth having, but every OS user on the box
+> reaches loopback and nothing checks a request's source, so any local account
+> can still send the header and be treated as any mapped user. Treat the secret
+> as required whenever `TL_MULTI_USER` resolves to true, and narrow the bind as
+> well when the proxy is local.
 >
 > The secret covers the five HTTP services: 7683 clipboard-upload, 7684
 > tmux-api, 7685 session-events, 7686 file-api, 7688 skills-api. It does not
