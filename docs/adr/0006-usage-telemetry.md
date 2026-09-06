@@ -108,7 +108,7 @@ joined to the read that consumed it.
 
 | Source | Events |
 |---|---|
-| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`) |
+| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`), a pinned window pointed at the client reading it (`session.grid_sized`, `tl.kind` = the grid asked for; emitted only when something moved, so an unpinned session is silent) |
 | `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers, files kept beside a session (`file.attached`, `tl.count` = bytes) |
 | `file-api` | file preview, file save (by extension) |
 | `session-events` | prompt sent, cancel, SSE stream open/close, a blocking prompt answered (`claude.answered`, `tl.client` = `api` for keys or `api-text` for free text, `tl.count` = the answer's size) |
