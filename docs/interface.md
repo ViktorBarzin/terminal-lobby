@@ -56,11 +56,14 @@ from anywhere. Rename a session by **double-clicking** its card (single click
 just selects), or from the card's `⋯` menu.
 
 Renaming edits the session's **title**, which is the only thing anyone reads.
-Its name is an opaque id, minted when the session was created, and it never
-moves (ADR-0019). Titles normally arrive on their own — Claude Code writes a
-summary of the conversation and the lobby stamps it as the title a few seconds
-after the first prompt — so the box is for overriding one, and leaving it empty
-hands the session back to whatever summary lands next.
+The tmux **name** follows it, so `tmux ls` and the status bar read as words
+too (ADR-0022): `Deploy the thing` becomes `deploy-the-thing`. A session that
+has never been titled is called by the opaque id it was minted with. Titles
+normally arrive on their own — Claude Code writes a summary of the conversation
+and the lobby stamps it as the title a few seconds after the first prompt — so
+the box is for overriding one, and leaving it empty hands the session back to
+whatever summary lands next. Clearing a title leaves the name where the last
+title put it.
 
 ## Session image gallery
 

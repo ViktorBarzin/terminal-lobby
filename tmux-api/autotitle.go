@@ -372,21 +372,38 @@ func autoTitleSessions(osUser string, sessions []Session, now time.Time) {
 		if !autoTitles.beginStamp(osUser, s.Name) {
 			continue
 		}
-		err := stampSessionTitle(osUser, s.Name, summary)
+		// The name the in-flight marker was taken under. Every piece of
+		// bookkeeping below is keyed by it, and the rename comes after all of
+		// them: ending the stamp under the NEW name would leave the marker for
+		// the old one behind, holding a session out of the rule for good.
+		origin := s.Name
+		err := stampSessionTitle(osUser, origin, summary)
 		if err != nil {
 			// The session is still untitled and still inside its window, so
 			// the next poll tries again.
-			log.Printf("auto-title: titling %s/%s failed: %v", osUser, s.Name, err)
+			log.Printf("auto-title: titling %s/%s failed: %v", osUser, origin, err)
 		} else {
 			s.Title = summary
-			if serr := titleStoreInstance.set(osUser, s.Name, summary); serr != nil {
+			if serr := titleStoreInstance.set(osUser, origin, summary); serr != nil {
 				// The option landed, so the title is live; only its survival
 				// across a restore is at risk.
-				log.Printf("auto-title: remembering %s/%s failed: %v", osUser, s.Name, serr)
+				log.Printf("auto-title: remembering %s/%s failed: %v", osUser, origin, serr)
 			}
 		}
-		if autoTitles.endStamp(osUser, s.Name, err == nil) {
-			emitAutoTitled(osUser, s.Name, age, autoTitleTitled)
+		if autoTitles.endStamp(osUser, origin, err == nil) {
+			emitAutoTitled(osUser, origin, age, autoTitleTitled)
+		}
+		if err == nil {
+			// The summary is the moment a session stops being a bare id, so it
+			// is also the moment its tmux name can read as words (ADR-0020).
+			// `live` is this poll's name set, passed in rather than looked up:
+			// reading the session list from here would re-enter it. Deriving is
+			// a fixed point, so the next poll asks for nothing.
+			s.Name = renameToDerivedNameAmong(osUser, origin, summary, "autotitle", live)
+			if s.Name != origin {
+				delete(live, origin)
+				live[s.Name] = true
+			}
 		}
 	}
 	// Last, after every windowStart above has read it: from here on, a name

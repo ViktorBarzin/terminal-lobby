@@ -4,7 +4,10 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // Everything keyed by a session's NAME has to move when the name does.
@@ -260,4 +263,53 @@ func TestCarryRenameSurvivesARepinFailure(t *testing.T) {
 	t.Cleanup(func() { repinGrid = orig })
 
 	carryRenameAcrossStores("wizard", "gone-already", "new-name")
+}
+
+// The eighth thing a rename records is for a CLIENT rather than for us: the name
+// the session was created with, so a browser holding that name can still find
+// the session. ADR-0022 renames a fresh session within seconds, often before any
+// poll has listed it under the id the browser minted.
+func TestCarryRenameStampsTheBirthName(t *testing.T) {
+	// actAs, or tmuxCmd shells out to `sudo -n -u wizard` and the stub never
+	// runs — which is exactly how the last batch of tests here came to pass
+	// only on a box whose user is called wizard (2aa111e).
+	actAs(t, "wizard")
+	argv := withTmuxStub(t, "exit 0")
+
+	carryRenameAcrossStores("wizard", "824smya2cmz5", "remove-changed-files-panel")
+
+	got := recordedArgv(t, argv)
+	for _, want := range []string{
+		"set-option", "-o", "=remove-changed-files-panel:",
+		sessionio.OptionBornAs, "824smya2cmz5",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A readable old name records nothing. It is a name the session has been listed
+// under for as long as it has held it, so any client that cares saw it and can
+// follow the rename by session_id — and writing it would replace the minted id a
+// stranded tab is actually holding.
+func TestBirthNameIsOnlyRecordedForAMintedId(t *testing.T) {
+	actAs(t, "wizard")
+	argv := withTmuxStub(t, "exit 0")
+
+	carryRenameAcrossStores("wizard", "deploy", "deploy-the-thing")
+
+	if got := recordedArgv(t, argv); strings.Contains(got, sessionio.OptionBornAs) {
+		t.Errorf("recorded a birth name for a rename away from a readable name:\n%s", got)
+	}
+}
+
+// A stamp that will not land is logged and nothing else. The tmux rename has
+// already happened by the time this runs, and a session with no birth name is
+// exactly as findable as one from before the option existed.
+func TestCarryRenameSurvivesABirthNameFailure(t *testing.T) {
+	actAs(t, "wizard")
+	withTmuxStub(t, "exit 1")
+
+	carryRenameAcrossStores("wizard", "824smya2cmz5", "new-name")
 }

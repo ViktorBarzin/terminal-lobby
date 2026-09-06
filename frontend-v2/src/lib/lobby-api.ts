@@ -180,7 +180,9 @@ export async function killSession(name: string): Promise<void> {
 /**
  * POST /api/sessions/{name}/title {title} — 204/404/400.
  *
- * Every retitle, because a name never moves (ADR-0019). Three callers: stamping
+ * Every retitle. The server derives the tmux name from the title and renames
+ * the session (ADR-0022), so the caller should refresh afterwards rather than
+ * assume the name it sent still resolves. Three callers: stamping
  * a title onto a session the lobby has just created (creation reaches no
  * server, so this is the first the API hears of it), editing one from a card,
  * and clearing one back to nothing so the session takes the next summary.
