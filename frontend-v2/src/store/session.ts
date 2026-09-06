@@ -9,7 +9,7 @@ import {
 import { track } from "../telemetry/track";
 import {
   createTranscriptCache,
-  indexedDbBackend,
+  sharedIndexedDbBackend,
   resumeCursor,
   type TranscriptCache,
 } from "./transcript-cache";
@@ -172,7 +172,7 @@ export interface SessionStoreOptions {
 let sharedCache: TranscriptCache | null = null;
 /** The tab's transcript cache. One IndexedDB handle for every session store. */
 function defaultTranscriptCache(): TranscriptCache {
-  if (!sharedCache) sharedCache = createTranscriptCache(indexedDbBackend());
+  if (!sharedCache) sharedCache = createTranscriptCache(sharedIndexedDbBackend());
   return sharedCache;
 }
 

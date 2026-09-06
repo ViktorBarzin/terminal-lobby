@@ -7,6 +7,7 @@ import {
   gesturesEnabled,
   setFlowControlEnabled,
 } from "../src/store/device-prefs";
+import { closeSharedTranscriptDb, sharedIndexedDbBackend } from "../src/store/transcript-cache";
 
 beforeEach(() => localStorage.clear());
 
@@ -254,5 +255,86 @@ describe("clearLocalData", () => {
     expect(onError).toHaveBeenCalled();
     expect(localStorage.getItem("tl:prefs:v1")).toBeNull();
     expect(reload).toHaveBeenCalled();
+  });
+});
+
+/**
+ * The confirm text names "cached session transcripts", and `tl-transcripts` is
+ * the one database the page itself holds open: transcript-cache memoises an
+ * IDBDatabase for the life of the tab, so the delete would fire `blocked`,
+ * degrade to a no-op, and reload with every transcript still on disk. The
+ * service worker's `tl-notif` is genuinely another execution context and stays
+ * on the blocked path; this one is ours to close.
+ */
+describe("clearLocalData closes the transcript handle it can close", () => {
+  /** Enough of IndexedDB for transcript-cache to open a database and read from
+   *  it, recording the order of `close` against each `deleteDatabase`. */
+  const fakeIDBWithOpen = () => {
+    const order: string[] = [];
+    const req = <T>(result: T): IDBRequest<T> => {
+      const r = { onsuccess: null, onerror: null, result } as unknown as IDBRequest<T> & {
+        onsuccess: (() => void) | null;
+      };
+      queueMicrotask(() => r.onsuccess?.(new Event("success") as never));
+      return r;
+    };
+    const store = {
+      get: () => req(undefined),
+      put: () => req(undefined),
+      delete: () => req(undefined),
+      getAll: () => req([]),
+    };
+    const database = {
+      objectStoreNames: { contains: () => true },
+      createObjectStore: () => store,
+      transaction: () => ({ objectStore: () => store, onabort: null, error: null }),
+      close: () => order.push("close"),
+    };
+    const idb = {
+      open() {
+        const r = {
+          onsuccess: null,
+          onerror: null,
+          onblocked: null,
+          onupgradeneeded: null,
+          result: database,
+        } as unknown as IDBOpenDBRequest & { onsuccess: (() => void) | null };
+        queueMicrotask(() => r.onsuccess?.(new Event("success") as never));
+        return r;
+      },
+      deleteDatabase(name: string) {
+        order.push(`delete:${name}`);
+        const r = new EventTarget();
+        queueMicrotask(() => r.dispatchEvent(new Event("success")));
+        return r;
+      },
+    };
+    const prev = Object.getOwnPropertyDescriptor(globalThis, "indexedDB");
+    Object.defineProperty(globalThis, "indexedDB", { value: idb, configurable: true });
+    onTestFinished(() => {
+      if (prev) Object.defineProperty(globalThis, "indexedDB", prev);
+      else delete (globalThis as { indexedDB?: unknown }).indexedDB;
+    });
+    return order;
+  };
+
+  it("closes the memoised handle BEFORE deleting tl-transcripts", async () => {
+    const order = fakeIDBWithOpen();
+    const backend = sharedIndexedDbBackend();
+    expect(backend).not.toBeNull();
+    await backend?.read("some-session"); // forces the open the wipe has to undo
+
+    await clearLocalData({ alsoRoamed: false, reload: () => {}, idbTimeoutMs: 20 });
+
+    expect(order.indexOf("close")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("close")).toBeLessThan(order.indexOf("delete:tl-transcripts"));
+  });
+
+  it("reopens on the next read, so a wipe does not leave the cache dead", async () => {
+    fakeIDBWithOpen();
+    const backend = sharedIndexedDbBackend();
+    await backend?.read("s");
+    await closeSharedTranscriptDb();
+    await expect(backend?.read("s")).resolves.toBeNull();
   });
 });

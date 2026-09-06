@@ -24,6 +24,7 @@
 import { PREFS_PATH } from "../lib/config";
 import { apiUrl } from "../lib/config";
 import { PREF_DEFAULTS, composeDoc } from "./prefs";
+import { closeSharedTranscriptDb } from "./transcript-cache";
 
 /** Terminal flow control (XON/XOFF back-pressure). "off" disables it here. */
 export const FLOW_KILL_KEY = "tl-flow-control";
@@ -105,11 +106,16 @@ const IDB_DELETE_TIMEOUT_MS = 1_500;
  *
  * `deleteDatabase` does not fail when something else holds the database open.
  * It fires `blocked` and then waits, indefinitely, for the last connection to
- * close — and two of the three ARE held open: `tl-transcripts` by a
- * module-level memo in transcript-cache.ts that nothing invalidates, and
- * `tl-notif` by the service worker. Waiting for those would strand the reload
- * the user is waiting on, so a blocked delete degrades to a no-op instead: the
- * request stays outstanding and finishes on its own once the page goes away.
+ * close. `tl-transcripts` IS held open, by the module singleton in
+ * transcript-cache.ts, so the wipe closes that handle first and the delete then
+ * runs for real — that is the database the confirm text names, and the one
+ * worth up to twelve sessions of events.
+ *
+ * `tl-notif` is held by the service worker, which is another execution context
+ * this page cannot close, so its delete can still block. Waiting on it would
+ * strand the reload the user is waiting on, so a blocked delete degrades to a
+ * no-op: the request stays outstanding and, in practice, completes once the
+ * page goes away. Nothing here verifies that last part.
  *
  * `abort` is listened for as well as `error`, because a transaction can abort
  * without ever firing an error, and a promise with no abort path stays pending
@@ -206,6 +212,9 @@ export async function clearLocalData(opts: ClearLocalDataOptions): Promise<void>
     /* ditto */
   }
   if (typeof indexedDB !== "undefined") {
+    // Let go of the transcript handle first, or its delete only fires `blocked`
+    // and the transcripts the confirm text promised to clear survive the reload.
+    await closeSharedTranscriptDb();
     const timeout = opts.idbTimeoutMs ?? IDB_DELETE_TIMEOUT_MS;
     await Promise.all(OWNED_DATABASES.map((name) => deleteDatabase(name, timeout)));
   }

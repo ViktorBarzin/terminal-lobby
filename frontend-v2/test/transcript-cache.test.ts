@@ -38,6 +38,7 @@ function memoryBackend(): CacheBackend & { records: Map<string, CacheRecord> } {
     remove: async (session) => void records.delete(session),
     list: async () =>
       [...records.values()].map((r) => ({ session: r.session, touchedAt: r.touchedAt })),
+    close: async () => {},
   };
 }
 
@@ -159,6 +160,9 @@ describe("transcript cache — reading and writing", () => {
         throw new Error("nope");
       },
       list: async () => {
+        throw new Error("nope");
+      },
+      close: async () => {
         throw new Error("nope");
       },
     };
