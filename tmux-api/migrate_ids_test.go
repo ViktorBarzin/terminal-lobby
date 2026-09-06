@@ -91,7 +91,9 @@ func TestMigrateKeepsATitleTheSessionAlreadyHas(t *testing.T) {
 
 	got := recordedArgv(t, argv)
 	// Only sessions with nothing to read get their name written as a title.
-	if strings.Contains(got, "set-option") {
+	// The rename's own birth-name stamp is a set-option too, so the assertion
+	// names the option it means.
+	if strings.Contains(got, "\n"+sessionTitleOption+"\n") {
 		t.Errorf("re-stamped a title the session already had:\n%s", got)
 	}
 	newName := renamedTo(t, got)

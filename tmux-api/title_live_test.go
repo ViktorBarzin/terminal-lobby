@@ -98,8 +98,10 @@ func TestTitleRoundTripsThroughRealTmux(t *testing.T) {
 		t.Fatalf("POST title: %d (%s)", rec.Code, rec.Body)
 	}
 
+	// The title carries the NAME with it now (ADR-0022): "Deploy | тест 🚀"
+	// transliterates and slugs down to this.
 	sessions := liveSessions(t, osSelf)
-	got := findSession(t, sessions, "deploy-the-thing")
+	got := findSession(t, sessions, "deploy-test")
 	if got.Title != title {
 		t.Errorf("title round-tripped as %q, want %q", got.Title, title)
 	}
@@ -112,17 +114,16 @@ func TestTitleRoundTripsThroughRealTmux(t *testing.T) {
 		t.Errorf("the prefix sibling was stamped too: %q", sib.Title)
 	}
 
-	// Retitling again against a live server: only the title moves. The name is
-	// an id now (ADR-0019), so the session the second title lands on has to be
-	// the same one under the same name.
+	// Retitling again against a live server, addressing the session by the name
+	// the first retitle gave it. The name moves a second time.
 	rec = httptest.NewRecorder()
-	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/deploy-the-thing/title",
+	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/deploy-test/title",
 		`{"title":`+mustJSON(t, "Fix the parser")+`}`, "authself"))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("second POST title: %d (%s)", rec.Code, rec.Body)
 	}
 	sessions = liveSessions(t, osSelf)
-	moved := findSession(t, sessions, "deploy-the-thing")
+	moved := findSession(t, sessions, "fix-the-parser")
 	if moved.Title != "Fix the parser" {
 		t.Errorf("after the retitle, title = %q", moved.Title)
 	}
@@ -131,14 +132,16 @@ func TestTitleRoundTripsThroughRealTmux(t *testing.T) {
 		t.Errorf("session id changed across the retitle: %q → %q", got.ID, moved.ID)
 	}
 
-	// Clearing hands the session back to whatever summary lands next.
+	// Clearing hands the session back to whatever summary lands next. The name
+	// stays where the last title put it: an empty title derives nothing, and a
+	// name invented for a running session would be worse than a stale one.
 	rec = httptest.NewRecorder()
-	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/deploy-the-thing/title",
+	handleSessionByName(rec, sessionReq(http.MethodPost, "/sessions/fix-the-parser/title",
 		`{"title":""}`, "authself"))
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("clearing: %d (%s)", rec.Code, rec.Body)
 	}
-	if cleared := findSession(t, liveSessions(t, osSelf), "deploy-the-thing"); cleared.Title != "" {
+	if cleared := findSession(t, liveSessions(t, osSelf), "fix-the-parser"); cleared.Title != "" {
 		t.Errorf("a cleared title reads back %q", cleared.Title)
 	}
 }
@@ -168,7 +171,7 @@ func TestPaneTitleWithOddCharactersDoesNotBreakTheRow(t *testing.T) {
 		t.Fatalf("POST title: %d (%s)", rec.Code, rec.Body)
 	}
 
-	got := findSession(t, liveSessions(t, osSelf), "work")
+	got := findSession(t, liveSessions(t, osSelf), "build-watch")
 	if got.Title != "Build | watch" {
 		t.Errorf("display title = %q", got.Title)
 	}
@@ -176,7 +179,7 @@ func TestPaneTitleWithOddCharactersDoesNotBreakTheRow(t *testing.T) {
 		t.Errorf("pane title = %q", got.PaneTitle)
 	}
 	// The columns either side of the two title fields must still be intact.
-	if got.Name != "work" || got.ID == "" {
+	if got.Name != "build-watch" || got.ID == "" {
 		t.Errorf("row shifted: %+v", got)
 	}
 }

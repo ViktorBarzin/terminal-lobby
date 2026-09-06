@@ -64,11 +64,12 @@ const (
 		"#{@claude_state}" + listSep +
 		"#{" + sessionBackgroundOption + "}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
-		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
+		"#{" + sessionTitleOption + "}" + listSep +
+		"#{" + sessionBornAsOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 12
+	listFields = 13
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -77,6 +78,10 @@ const (
 	// only thing protecting the row from a title that contains one.
 	bgColumn = 7
 
+	// bornColumn is where the birth name sits in tmuxListFmt: after @title and
+	// before pane_title, which stays last for the reason bgColumn gives.
+	bornColumn = 11
+
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
 	// else reading a session's options agree on the spelling. Options die with
@@ -84,6 +89,12 @@ const (
 	// title someone chose — the titles store (titles.go) is what carries a
 	// title across a restore.
 	sessionTitleOption = sessionio.OptionTitle
+
+	// sessionBornAsOption carries the name a session was created with, stamped
+	// by the first rename that moves it. It rides this format for the same
+	// reason @title does — the option is already on the session, so reading it
+	// costs nothing — and sits before pane_title, which has to stay last.
+	sessionBornAsOption = sessionio.OptionBornAs
 
 	// sessionBackgroundOption holds the session's outstanding background work
 	// as `<kind>:<id>` tokens, written by the same hook script as

@@ -775,6 +775,43 @@
   flex-direction: column;
   gap: 1px;
 }
+/* The two SIDEBAR popups only: the session card's ⋯ and the group header's ⋯,
+   which opt in from SessionCard.tsx and ProjectGroup.tsx by adding this class
+   next to .tl-menu. Everything above stays exactly as it was, because .tl-menu
+   is also the header's ordering picker, the session bar's overflow menu and the
+   model picker — all of them in a top bar with the whole screen below them.
+
+   Fixed, because absolute made the popup part of the list. Measured at 1440x900
+   with 25 sessions on 2026-09-06: opened on the last card the menu stood 317px
+   tall, hung 308px past the end of .tl-sidebar-scroll and 259px past the window,
+   and grew that scroller's scrollHeight from 908px to 1216px, so reaching the
+   options at the bottom meant scrolling the session list to them. Fixed escapes
+   all four clipping ancestors at once (.tl-sidebar-scroll's overflow-y,
+   .tl-shell-sidebar, #root and body) with no portal, because none of them
+   carries a transform, filter, contain or will-change and so none of them
+   re-roots the containing block a fixed element resolves against. The one place
+   that can stop being true is .tl-card itself, which takes an inline transform
+   while a finger swipes or drags it; both gestures close the menu first, and
+   menu.logic.ts explains what happens when they do not.
+
+   The price is that left and top now have to be computed, which happens in
+   createDismissableMenu once the popup is in the document and can be measured.
+   Hidden until then: the popup has to be laid out somewhere to have a height,
+   and this is what stops the reader seeing it there. top/left are the spot it
+   is measured in, and the inline style replaces both.
+
+   overflow-y is the safety net for a menu taller than the space either side of
+   the row. At three projects the menu is 317px and nothing here does anything;
+   it grows by one "Move to" row per project, so it starts to matter somewhere
+   around twenty of them. */
+.tl-menu-placed {
+  position: fixed;
+  top: 0;
+  right: auto;
+  left: 0;
+  visibility: hidden;
+  overflow-y: auto;
+}
 .tl-menu-item {
   font: inherit;
   font-size: 13px;
