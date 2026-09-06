@@ -659,7 +659,19 @@ describe("telemetry — an event name that is emitted is a name the catalog carr
     readonly from: string;
   }
 
-  /** Every literal event name a Go service emits, with the file that emits it. */
+  /**
+   * Every event name a Go service emits, with the file that emits it. Read in
+   * two shapes, because the first argument to `Emit` is not always a literal:
+   * `skills-api/handlers.go:426` emits `events.Emit(event, ...)` after choosing
+   * between "skill.installed" and "plugin.installed" at :421-424, and a
+   * literal-only parser reads that call site as emitting nothing at all. So a
+   * file that emits through a variable also has its `event = "..."`
+   * assignments read. That gate keeps a local named `event` in a file which
+   * never emits from inventing a name; the tmux-api forwarder
+   * (`emitter.Emit(ev.Name, ...)`, telemetry.go:204) passes a field rather than
+   * a name and carries no assignment for either half to find, which is correct
+   * since the names it forwards are the browser's and the union covers them.
+   */
   const emitted = ((): Emitted[] => {
     const out: Emitted[] = [];
     for (const entry of readdirSync(REPO("."))) {
@@ -668,8 +680,14 @@ describe("telemetry — an event name that is emitted is a name the catalog carr
       for (const file of readdirSync(dir).sort()) {
         if (!file.endsWith(".go") || file.endsWith("_test.go")) continue;
         const src = readFileSync(join(dir, file), "utf8");
+        const from = `${entry}/${file}`;
         for (const name of captures(/\bEmit\(\s*"([a-z][a-z0-9_.]*)"/g, src)) {
-          out.push({ name, from: `${entry}/${file}` });
+          out.push({ name, from });
+        }
+        if (/\bEmit\(\s*[A-Za-z_][A-Za-z0-9_.]*\s*,/.test(src)) {
+          for (const name of captures(/\bevent\s*:?=\s*"([a-z][a-z0-9_.]*)"/g, src)) {
+            out.push({ name, from });
+          }
         }
       }
     }
@@ -692,6 +710,17 @@ describe("telemetry — an event name that is emitted is a name the catalog carr
     expect(catalog.size, "telemetry/events.go parsed to no catalog").toBeGreaterThanOrEqual(60);
     expect(union.length, "the TlEvent union parsed to nothing").toBeGreaterThanOrEqual(50);
     expect(emitted.length, "no Go Emit call sites found").toBeGreaterThanOrEqual(30);
+    // Canaries for the variable-assignment half of the parser.
+    // skills-api/handlers.go:421 picks between these two and emits the
+    // variable at :426. `plugin.installed` is written nowhere else, so it
+    // reaches this list only if that half is still reading; `skill.installed`
+    // is also emitted literally at :281 and holds the pair together.
+    const names = new Set(emitted.map((e) => e.name));
+    for (const canary of ["skill.installed", "plugin.installed"]) {
+      expect(names.has(canary), `${canary} is emitted through a variable and went unread`).toBe(
+        true,
+      );
+    }
   });
 
   it("every TlEvent name the browser can send is in the catalog", () => {
