@@ -90,6 +90,7 @@ right. The pages, in rail order:
 | Notifications | when to notify, this device's permission and subscription, two tests |
 | Network | the Full/Auto/Light link pin, which network you are on, and "Data used" |
 | Privacy | send diagnostics, and clear this browser's data |
+| Agent spend | what Claude Code and Codex have consumed over a period: Claude's dollars, Codex's 5-hour and weekly limits, and the conversations under each |
 | Skills | install, disable, share — see `docs/adr/0011` |
 | Act as user | admins only; see [multi-user](multi-user.md) |
 
@@ -106,6 +107,14 @@ rather than what the control is: acting as another user, clearing local data,
 and what diagnostics do and do not send.
 
 On a phone the rail becomes a row of chips above the page.
+
+**Agent spend** has a short form outside Settings: a figure beside ⚙ in the
+sidebar footer, following whatever the attached session runs. A Claude Code
+session shows today's dollars, a Codex session shows how much of its tighter
+limit is gone, and a plain shell or nothing attached shows no figure at all.
+Clicking it opens the page. A section on the page is drawn only for a tool that
+has reported something, so a box that only runs Claude sees one section and a
+box that has run neither sees a line saying nothing has reported yet.
 
 ## Theme
 

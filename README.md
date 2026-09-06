@@ -115,6 +115,16 @@ options and scrolling behaviour. Theme is per-device.
 
 ![the settings panel](docs/screenshots/settings.png)
 
+**Agent spend** is a Settings page for what the agents in your sessions have
+consumed, over today, 7 days, this month or all time. Each tool speaks its own
+language: Claude Code reports dollars, which it computes itself, and Codex
+reports how much of its 5-hour and weekly limits is gone, because a ChatGPT
+plan reports no cost anywhere. The Claude figures come from a recorder in the
+statusLine slot (`devvm/tl-usage-record`, wired the same way the state dot's
+hooks are); Codex needs nothing installed. A small figure beside the gear
+carries the one number for the session you are attached to. See
+`docs/adr/0022-agent-spend-via-a-statusline-wrapper.md`.
+
 Light themes are first-class, not an afterthought:
 
 ![the ink theme, warm paper light](docs/screenshots/theme-ink.png)

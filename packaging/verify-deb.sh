@@ -62,6 +62,14 @@ check "postinst is present" \
 check "the stamp endpoint ships (the healer polls it)" \
   "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/build-id$' || true)" 1
 
+# The Claude half of Agent spend has exactly one source: the CLI hands its own
+# cost arithmetic to the statusLine command and to nothing else
+# (docs/adr/0022-agent-spend-via-a-statusline-wrapper.md). A package that omits
+# the recorder still installs, still passes verify, and shows a panel that can
+# never fill. The mode is part of the check because Claude Code execs it.
+check "the spend recorder ships, executable" \
+  "$(printf '%s' "$contents" | grep -c '^-rwxr-xr-x.*usr/local/bin/tl-usage-record$' || true)" 1
+
 check "the PWA surface ships" \
   "$(printf '%s' "$contents" | grep -cE 'usr/local/share/ttyd/(sw\.js|manifest\.webmanifest|icon-192\.png|icon-512\.png|icon-512-maskable\.png)$' || true)" 5
 
