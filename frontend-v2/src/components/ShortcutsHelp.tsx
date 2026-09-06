@@ -69,6 +69,7 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         [[`${ALT} (hold)`], "Preview session numbers"],
         [[`${ALT}+Shift+[`, `${ALT}+Shift+]`], "Previous / next session"],
         [[`${ALT}+Shift+Enter`], "Next session awaiting input"],
+        [[`${ALT}+Shift+U`], "Next session with unread output"],
       ],
     ],
     [
@@ -100,6 +101,10 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
           [`${MOD}+J`],
           "Toggle text / terminal view (works in a session; always on)",
         ],
+        // Find has no Ctrl/Cmd+F row because Ctrl+F belongs to the TUI. This
+        // chord is the only keyboard way in, which is why leaving it out of
+        // the table hid the feature entirely.
+        [[`${ALT}+Shift+F`], "Find in the open session (Text view)"],
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.

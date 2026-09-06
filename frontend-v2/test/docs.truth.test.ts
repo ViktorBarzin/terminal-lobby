@@ -288,15 +288,18 @@ describe("the route and helper parsers found something to check against", () => 
 
   it("resolves the client's URL builders to concrete paths", () => {
     expect(HELPER_PATHS.length).toBeGreaterThanOrEqual(20);
-    // tmux-api contributes none on purpose: its one builder takes the path from
-    // its caller, so what can be pinned there is the PREFIX, which the dev-proxy
-    // row below and the "spelled-out prefix" test further down both cover.
+    // tmux-api contributes exactly one: `telemetryUrl`, which names a concrete
+    // path because it must NOT carry ?as=. Its other builder, `apiUrl`, takes
+    // the path from its caller, so what can be pinned for the rest of tmux-api
+    // is the PREFIX, which the dev-proxy row below and the "spelled-out prefix"
+    // test further down both cover.
     const covered = new Set(HELPER_PATHS.map((h) => serviceOf(h.path)));
     expect([...covered].sort()).toEqual([
       "clipboard-upload",
       "file-api",
       "session-events",
       "skills-api",
+      "tmux-api",
     ]);
   });
 
@@ -730,9 +733,6 @@ describe("the tmux-api prefix is spelled out in one place", () => {
       "the service worker reads these same three paths, and a push subscription " +
       "deliberately carries no ?as= — going through apiUrl would enroll this browser " +
       "as one of the act-as target's devices",
-    "src/telemetry/diag.ts":
-      "the intake URL handed to the tlDiag core at bind time, which is not a fetch() " +
-      "this module makes. It should come through apiUrl and does not yet",
   };
 
   const spellers = srcTree()

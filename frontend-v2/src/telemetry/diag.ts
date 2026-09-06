@@ -13,7 +13,7 @@
  * calls to a function it never defined, which is what that drift costs.
  */
 
-import { BUILD_ID } from "../lib/config";
+import { BUILD_ID, telemetryUrl } from "../lib/config";
 import { currentNetworkId } from "../diagnostics/network";
 import type { WindowBytes } from "../diagnostics/usage";
 import { commitWindow } from "../diagnostics/usage-store";
@@ -71,7 +71,7 @@ export function startDiagnostics(): Diagnostics {
     const core = (globalThis as unknown as { tlDiag?: TlDiagGlobal }).tlDiag;
     if (!core) return inert;
     handle = core.bind({
-      url: "/api/sessions/telemetry",
+      url: telemetryUrl(),
       client: "lobby-v2",
       role: "lobby",
       build: BUILD_ID,
