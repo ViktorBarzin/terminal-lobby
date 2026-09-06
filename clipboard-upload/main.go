@@ -47,7 +47,10 @@ const (
 	// attachPrefix marks a stored non-image attachment. The gallery lists by
 	// prefix, so this is what keeps a document out of a grid of thumbnails.
 	attachPrefix = "file-"
-	listenAddr   = "0.0.0.0:7683"
+	// Loopback by default: with no config file present, the identity header
+	// is all that authenticates a request, so the port must not be on the
+	// network until an operator says so (TL-3).
+	listenAddr = "127.0.0.1:7683"
 	// unsortedSession is the store bucket for writes that arrive without a
 	// (valid) session name. Nothing ties its contents to a session's
 	// lifetime, so the cleaner (devvm/clipboard-store-clean) ages it out on
@@ -111,9 +114,11 @@ func main() {
 	// which can't bind 7683 while the production service holds it).
 	// The systemd unit sets no environment — production stays :7683.
 	addr := listenAddr
-	// TL_BIND narrows the listener. The default is unchanged; an operator who
-	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
-	// path entirely without needing a shared secret.
+	// TL_BIND is the listen address. The compiled default is loopback, so a
+	// process that reaches no configuration at all stays off the network;
+	// the shipped conffile says the same. Widening to 0.0.0.0 for a proxy on
+	// another host is the operator's explicit act, made in the file where
+	// TL_PROXY_SECRET is set alongside it.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
 		if _, port, err := net.SplitHostPort(addr); err == nil {
 			addr = net.JoinHostPort(b, port)

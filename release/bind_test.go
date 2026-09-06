@@ -3,6 +3,7 @@ package release
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -42,6 +43,48 @@ func TestTtydHonoursTheBindAddress(t *testing.T) {
 	if !strings.Contains(unit, "Environment=TL_BIND=") {
 		t.Error("devvm/ttyd.service passes -i ${TL_BIND} with no Environment=TL_BIND= fallback; " +
 			"a box with no config file would start ttyd with an empty -i")
+	}
+	// And that floor is loopback, for the same reason the five compiled
+	// defaults below are: a box with no config file must not put a terminal
+	// that trusts a self-asserted header on every interface.
+	if !strings.Contains(unit, "Environment=TL_BIND=127.0.0.1") {
+		t.Error("devvm/ttyd.service's TL_BIND floor is not 127.0.0.1; with no config " +
+			"file present that opens 7681 to the network (TL-3, TL-5)")
+	}
+}
+
+// The compiled defaults are the floor a process falls to when no configuration
+// reaches it at all, and they are the half of TL-3 that does not depend on an
+// operator. The shipped conffile already says TL_BIND=127.0.0.1; a unit whose
+// optional EnvironmentFile is absent has to land on the same address, or five
+// services and ttyd bind every interface with TL_AUTH_HEADER as the only thing
+// authenticating a request. Widening stays an explicit act, made in the file
+// where the operator also sets TL_PROXY_SECRET.
+//
+// Read out of the sources rather than imported: these are five separate Go
+// modules and release requires none of them.
+func TestCompiledBindDefaultsAreLoopback(t *testing.T) {
+	cases := map[string]*regexp.Regexp{
+		"clipboard-upload/main.go": regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
+		"tmux-api/main.go":         regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
+		"file-api/main.go":         regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
+		"skills-api/main.go":       regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
+		// session-events has no constant; its flag default is the same floor.
+		"session-events/main.go": regexp.MustCompile(`flag\.String\("addr",\s*"([^"]*)"`),
+	}
+	for rel, re := range cases {
+		b, err := os.ReadFile(filepath.Join("..", filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		m := re.FindSubmatch(b)
+		if m == nil {
+			t.Fatalf("%s: no compiled listen address matched %s", rel, re)
+		}
+		if got := string(m[1]); !strings.HasPrefix(got, "127.0.0.1:") {
+			t.Errorf("%s compiles in %q; with no config file that binds every interface, "+
+				"and the identity header is all that authenticates a request (TL-3)", rel, got)
+		}
 	}
 }
 

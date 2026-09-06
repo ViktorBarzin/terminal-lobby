@@ -19,7 +19,10 @@ import (
 )
 
 const (
-	listenAddr     = "0.0.0.0:7684"
+	// Loopback by default: with no config file present, the identity header
+	// is all that authenticates a request, so the port must not be on the
+	// network until an operator says so (TL-3).
+	listenAddr     = "127.0.0.1:7684"
 	restoreWrapper = "/usr/local/bin/tmux-restore-user"
 	// @claude_state is stamped by the claude-tmux-state hook script
 	// (ADR-0001). pane_pid feeds the liveness backstop (proc.go): state
@@ -299,9 +302,11 @@ func main() {
 	// which can't bind 7684 while the production service holds it).
 	// The systemd unit sets no environment — production stays :7684.
 	addr := listenAddr
-	// TL_BIND narrows the listener. The default is unchanged; an operator who
-	// puts the proxy on the same host can set 127.0.0.1 and remove the LAN
-	// path entirely without needing a shared secret.
+	// TL_BIND is the listen address. The compiled default is loopback, so a
+	// process that reaches no configuration at all stays off the network;
+	// the shipped conffile says the same. Widening to 0.0.0.0 for a proxy on
+	// another host is the operator's explicit act, made in the file where
+	// TL_PROXY_SECRET is set alongside it.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
 		if _, port, err := net.SplitHostPort(addr); err == nil {
 			addr = net.JoinHostPort(b, port)

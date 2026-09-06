@@ -21,7 +21,11 @@ import (
 )
 
 func main() {
-	addr := flag.String("addr", ":7685", "listen address")
+	// Loopback by default, like the four sibling services: with no config
+	// file present, the identity header is all that authenticates a request,
+	// so the port must not be on the network until an operator says so
+	// (TL-3). TL_BIND below is what widens it.
+	addr := flag.String("addr", "127.0.0.1:7685", "listen address")
 	mapPath := flag.String("usermap", authuser.DefaultMapPath, "identity→OS-user map")
 	homeBase := flag.String("home-base", "/home", "base dir holding per-user homes")
 	poll := flag.Duration("poll", 200*time.Millisecond, "transcript tail interval")
