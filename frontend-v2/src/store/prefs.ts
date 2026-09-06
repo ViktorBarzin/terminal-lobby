@@ -3,7 +3,7 @@ import {
   DEFAULT_SESSION_ORDER,
   isSessionOrder,
   type SessionOrder,
-} from "../components/order.logic";
+} from "../logic/order.logic";
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 import { fetchWithDeadline } from "../lib/http";

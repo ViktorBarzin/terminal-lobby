@@ -18,7 +18,7 @@ import {
   type Completion,
   type CompletionItem,
   type SlashCommand,
-} from "./compose.logic";
+} from "../logic/compose.logic";
 import {
   clearDraft,
   DRAFT_PARKED_EVENT,

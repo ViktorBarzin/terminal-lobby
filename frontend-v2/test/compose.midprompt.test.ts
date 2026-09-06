@@ -12,7 +12,7 @@
  * what should keep a path from opening a menu.
  */
 import { describe, it, expect } from "vitest";
-import { completionFor, type SlashCommand } from "../src/components/compose.logic";
+import { completionFor, type SlashCommand } from "../src/logic/compose.logic";
 
 const cmd = (name: string, source: string, description = ""): SlashCommand => ({
   name,

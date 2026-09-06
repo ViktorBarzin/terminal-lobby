@@ -21,7 +21,7 @@ import {
   applySessionOrder,
   captureVisibleOrder,
   type SessionOrder,
-} from "../components/order.logic";
+} from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import type { DropSpot } from "../mobile/reorder";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";

@@ -6,7 +6,7 @@ import type {
   TokenUsage,
   SessionState,
 } from "../types/events";
-import type { PendingPrompt } from "./compose.logic";
+import type { PendingPrompt } from "../logic/compose.logic";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -303,6 +303,462 @@ function answersFrom(payload: unknown): string[] {
   return out;
 }
 
+/**
+ * Fold one turn's events into its rows: the user's message, and the work that
+ * followed it. Every accumulator here is scoped to the turn, so they are locals
+ * rather than state deriveRows has to carry.
+ */
+function collectTurnRows(turn: Turn): {
+  userRow: UserRow | null;
+  work: LeafRow[];
+} {
+
+  let userRow: UserRow | null = null;
+  const work: LeafRow[] = [];
+  const toolBy = new Map<string, ToolRow>();
+  // The subagent call currently collecting sidechain work, if any.
+  let host: ToolRow | null = null;
+  let lastTodo: TodoRow | null = null;
+  // Rows awaiting the tool_result that resolves them, by tool_use_id. Local
+  // to the turn: deriveRows runs on every event and must be pure, so nothing
+  // here may outlive one derivation.
+  const pendingByTool = new Map<string, QuestionRow | PlanRow>();
+  // Skill calls of this turn, by the skill they named, so the `meta:skill`
+  // that follows can fold its size onto the call rather than adding a second
+  // row for the same load.
+  const skillCalls = new Map<string, ToolRow>();
+
+  /** Push a row into the turn, or into the subagent that spawned it. */
+  const add = (row: LeafRow, sidechain?: boolean) => {
+    if (sidechain && host) host.children.push(row);
+    else work.push(row);
+  };
+
+  for (const e of turn.events) {
+    switch (e.kind) {
+      case "user":
+        userRow = {
+          kind: "user",
+          key: `user-${e.id}`,
+          id: e.id,
+          body: e.body ?? "",
+          turnKey: turn.key,
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        };
+        break;
+      case "text":
+        add(
+          {
+            kind: "message",
+            key: `msg-${e.id}`,
+            id: e.id,
+            body: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          },
+          e.sidechain,
+        );
+        break;
+      case "thinking":
+        add(
+          {
+            kind: "thinking",
+            key: `think-${e.id}`,
+            id: e.id,
+            body: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          },
+          e.sidechain,
+        );
+        break;
+      case "tool_use": {
+        const d: Described = describeTool(e.tool ?? "", e.body);
+        // TodoWrite is a checklist, not a call: one row per turn, updated in
+        // place, so a turn that revises its list six times shows one list.
+        if (d.type === "todo") {
+          const steps = extractTodoSteps(parseJSON(e.body)) ?? [];
+          if (lastTodo) {
+            lastTodo.steps = steps;
+            lastTodo.id = e.id;
+          } else {
+            lastTodo = {
+              kind: "todo",
+              key: `todo-${turn.key}`,
+              id: e.id,
+              steps,
+              turnKey: turn.key,
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            };
+            add(lastTodo, e.sidechain);
+          }
+          break;
+        }
+        if (d.type === "question") {
+          const row: QuestionRow = {
+            kind: "question",
+            key: `q-${e.toolId || e.id}`,
+            id: e.id,
+            questions: questions(parseJSON(e.body)),
+            answers: [],
+            pending: true,
+            turnKey: turn.key,
+            ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          };
+          if (e.toolId) pendingByTool.set(e.toolId, row);
+          add(row, e.sidechain);
+          break;
+        }
+        if (d.type === "plan") {
+          const plan = parseJSON(e.body) as { plan?: string } | null;
+          const row: PlanRow = {
+            kind: "plan",
+            key: `plan-${e.toolId || e.id}`,
+            id: e.id,
+            body: plan?.plan ?? e.body ?? "",
+            pending: true,
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          };
+          if (e.toolId) pendingByTool.set(e.toolId, row);
+          add(row, e.sidechain);
+          break;
+        }
+        const row: ToolRow = {
+          kind: "tool",
+          key: `tool-${e.toolId || e.id}`,
+          id: e.id,
+          tool: e.tool ?? "",
+          itemType: d.type,
+          label: d.label,
+          detail: d.detail,
+          changedFiles: d.changedFiles,
+          input: e.body ?? "",
+          isError: false,
+          done: false,
+          truncated: false,
+          children: [],
+          turnKey: turn.key,
+          ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        };
+        if (e.toolId) toolBy.set(e.toolId, row);
+        // The load that follows folds its size onto this call (see the
+        // `meta` case). Keyed on the skill's name, which `describe` put in
+        // the label, so the two find each other across the tool result the
+        // receipt arrived on.
+        if (d.type === "skill" && d.label) skillCalls.set(d.label, row);
+        // A subagent's own work arrives as sidechain records AFTER the call
+        // that spawned it, so the call becomes the host for what follows.
+        if (d.type === "collab_agent_tool_call") host = row;
+        add(row, e.sidechain);
+        break;
+      }
+      case "tool_result": {
+        const waiting = e.toolId ? pendingByTool.get(e.toolId) : undefined;
+        if (waiting) {
+          waiting.pending = false;
+          if (waiting.kind === "question") {
+            waiting.answers = answersFrom(e.result);
+          }
+          pendingByTool.delete(e.toolId!);
+          // A subagent's result closes its host.
+          break;
+        }
+        const existing = e.toolId ? toolBy.get(e.toolId) : undefined;
+        if (existing) {
+          existing.result = e.body ?? "";
+          existing.payload = e.result;
+          existing.isError = !!e.isError;
+          existing.done = true;
+          existing.truncated = !!e.truncated;
+          if (existing.itemType === "collab_agent_tool_call" && host === existing) {
+            host = null;
+          }
+        } else {
+          add(
+            {
+              kind: "tool",
+              key: `tool-${e.toolId || e.id}`,
+              id: e.id,
+              tool: "",
+              itemType: "dynamic_tool_call",
+              label: "",
+              detail: "",
+              changedFiles: [],
+              input: "",
+              result: e.body ?? "",
+              payload: e.result,
+              isError: !!e.isError,
+              done: true,
+              truncated: !!e.truncated,
+              children: [],
+              turnKey: turn.key,
+              ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
+              ...(e.at !== undefined ? { at: e.at } : {}),
+            },
+            e.sidechain,
+          );
+        }
+        break;
+      }
+      case "meta": {
+        const meta = e.meta ?? "mode";
+        // `mode` and `permission-mode` are STATE, not events: the composer's
+        // chip always shows the mode in force, so a divider announcing each
+        // change interrupts the conversation to repeat what is already on
+        // screen (Viktor, 2026-08-17). The EVENTS still flow — currentMode()
+        // reads them for that chip — only the row is dropped, and dropped
+        // outright rather than folded, since expanding a turn would put the
+        // divider back.
+        if (meta === "mode" || meta === "permission-mode") break;
+        // A `/context` reading is state for the same reason, and the meter
+        // beside the composer is where it shows. A reading also arrives as a
+        // 15 KB block of markdown the CLI already rendered in the pane, so a
+        // row per reading would be the biggest thing in the log.
+        if (meta === "context") break;
+        // Which model is answering is state as well, and the chip beside the
+        // composer is where it shows. A change made from the lobby leaves its
+        // own visible mark anyway: applying one types `/model` into the pane,
+        // and that line arrives as an ordinary row.
+        if (meta === "model") break;
+        // The queue's departures are bookkeeping for queuedPrompts(), the
+        // same way the mode events are for the chip: a divider saying a
+        // prompt left the queue tells the reader nothing the queue itself
+        // does not already say by shrinking.
+        if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
+        // What the PANE says about a blocking question is state too, and the
+        // answer card is where it shows (askingFromPane). It is also the one
+        // reading that repeats: a dialog sits on screen for as long as nobody
+        // answers it, and a row per reading would bury the conversation.
+        if (meta === "asking") break;
+        // A background task finishing is delivered THROUGH the queue, so the
+        // queue reports enqueueing a wall of XML — 2,140 of them across this
+        // box's transcripts, the single most common artifact in the text view
+        // (measured 2026-09-02). queuedPrompts() already keeps them out of
+        // the queue list for the same reason; this keeps them out of the
+        // transcript. Nothing is lost: the notification also arrives as its
+        // own record, which renders as one muted line (415 of the 419
+        // measured), and the event still flows so the queue list stays in
+        // step.
+        if (meta === "queued" && isHarnessNotice(e.body ?? "")) break;
+        // A skill load is TWO records: the `Skill` call, and the SKILL.md
+        // body sessionio collapsed to this event. One thing happened, so it
+        // reads as one card — the size lands on the call and this row is
+        // dropped. Matched by name rather than by position, because the
+        // receipt the load was detected from arrives on the call's own tool
+        // result and anything may sit between them.
+        //
+        // Unmatched, the row stays: a body detected by its `Base directory`
+        // marker with no Skill call before it is still a load, and dropping
+        // it would lose the only trace of one.
+        if (meta === "skill") {
+          const call = skillCalls.get(e.body ?? "");
+          if (call && call.bytes === undefined) {
+            call.bytes = e.bytes ?? 0;
+            break;
+          }
+        }
+        add({
+          kind: "meta",
+          key: `meta-${e.id}`,
+          id: e.id,
+          meta,
+          body: e.body ?? "",
+          turnKey: turn.key,
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        });
+        break;
+      }
+      case "permission_request":
+        work.push({
+          kind: "permission",
+          key: `perm-${e.reqId || e.id}`,
+          id: e.id,
+          reqId: e.reqId ?? "",
+          tool: e.tool ?? "",
+          input: e.body ?? "",
+          turnKey: turn.key,
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        });
+        break;
+      case "permission_resolved": {
+        const pr = work.find(
+          (r): r is PermissionRow =>
+            r.kind === "permission" && r.reqId === e.reqId,
+        );
+        if (pr) {
+          pr.decision = e.body ?? "";
+        } else {
+          work.push({
+            kind: "permission",
+            key: `perm-${e.reqId || e.id}`,
+            id: e.id,
+            reqId: e.reqId ?? "",
+            tool: e.tool ?? "",
+            input: "",
+            decision: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          });
+        }
+        break;
+      }
+      case "error":
+        add({
+          kind: "error",
+          key: `err-${e.id}`,
+          id: e.id,
+          body: e.body ?? "",
+          turnKey: turn.key,
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        });
+        break;
+      case "session":
+      case "state":
+      case "result":
+        work.push({
+          kind: "status",
+          key: `status-${e.id}`,
+          id: e.id,
+          body: e.body ?? "",
+          subtype: e.kind,
+          turnKey: turn.key,
+          ...(e.at !== undefined ? { at: e.at } : {}),
+        });
+        break;
+      case "turn_end":
+        break;
+    }
+  }
+
+  return { userRow, work };
+}
+
+/**
+ * The rows a turn contributes below its user message. A settled turn with more
+ * than one work row folds; anything else hands back the work as it stands.
+ */
+function foldSettledTurn(
+  turn: Turn,
+  work: LeafRow[],
+  settled: boolean,
+): TimelineRow[] {
+  const rows: TimelineRow[] = [];
+  if (settled && work.length > 1) {
+    // Keep the last assistant message visible (the turn's "answer"); fold the
+    // rest behind a "Worked for Ns" row. Fall back to the last work row when
+    // the turn produced no assistant text.
+    let visibleAt = -1;
+    for (let i = work.length - 1; i >= 0; i--) {
+      if (work[i]!.kind === "message") {
+        visibleAt = i;
+        break;
+      }
+    }
+    if (visibleAt < 0) visibleAt = work.length - 1;
+    const visible = work[visibleAt];
+    const hidden = work.filter((_, i) => i !== visibleAt);
+    const changed = [
+      ...new Set(
+        work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])),
+      ),
+    ];
+    const fold: TurnFoldRow | null =
+      hidden.length > 0
+        ? {
+            kind: "turn-fold",
+            key: `fold-${turn.key}`,
+            turnKey: turn.key,
+            count: hidden.length,
+            hidden,
+            hasError: hidden.some(leafFailed),
+            changedFiles: changed,
+            ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
+            ...(turnDuration(turn) !== undefined
+              ? { durationMs: turnDuration(turn) }
+              : {}),
+          }
+        : null;
+    // Chronology: the fold stands for the run of hidden rows that begins at
+    // the first one, so it goes above the visible message only when hidden
+    // work preceded it. A turn whose last item is a tool call keeps the
+    // message that ANNOUNCED the call above the fold holding it.
+    if (fold && visibleAt > 0) rows.push(fold);
+    if (visible) rows.push(visible);
+    if (fold && visibleAt === 0) rows.push(fold);
+  } else {
+    for (const r of work) rows.push(r);
+  }
+  return rows;
+}
+
+/** The single progress indicator a running turn gets. */
+function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
+  // A running turn gets ONE progress indicator: the working row below.
+  //
+  // The last message used to be marked `streaming` as well, which drew a
+  // blinking cursor after it. That cursor said something untrue — Claude
+  // Code writes one transcript record per COMPLETED block, so a message
+  // that has arrived is finished and will never grow — and it said it
+  // directly above the tool rows the message had just announced, blinking
+  // there for the rest of the turn. The working row already reports the
+  // turn honestly: the tool actually running, its elapsed time, the step
+  // count (Viktor, 2026-08-28).
+  //
+  // What is happening RIGHT NOW: the newest thing in the turn that has not
+  // come back yet. The transcript records a tool_use the moment Claude
+  // emits it, so this is specific without any second source (design
+  // decision 6).
+  //
+  // Not all of those are work. A question, a plan put up for approval and a
+  // permission request are all Claude STOPPING and waiting for the reader,
+  // and they leave the turn open in exactly the same way — the assistant
+  // record carries stop_reason "tool_use" and the result is not written
+  // until somebody answers. Replaying the 357 session transcripts on this
+  // box on 2026-09-04 found 3,212 windows where the last turn was open and
+  // the transcript then went quiet for a minute or more, 1,562 hours in
+  // total, and 742 windows / 895 hours of that (57%) was one unanswered
+  // AskUserQuestion. The row said "Working…" with a running clock through
+  // all of it, which is the complaint (Viktor, 2026-09-04).
+  let live: ToolRow | undefined;
+  let waitingFor: QuestionRow | PlanRow | PermissionRow | undefined;
+  for (let i = work.length - 1; i >= 0; i--) {
+    const r = work[i]!;
+    if (r.kind === "tool" && !r.done) {
+      live = r;
+      break;
+    }
+    if ((r.kind === "question" || r.kind === "plan") && r.pending) {
+      waitingFor = r;
+      break;
+    }
+    if (r.kind === "permission" && r.decision === undefined) {
+      waitingFor = r;
+      break;
+    }
+  }
+  // The pane covers the window the transcript misses: Claude Code does not
+  // always write the AskUserQuestion record while its dialog is up (see
+  // askingFromPane). The answer card already docks off this reading, so the
+  // row above it has to agree with it.
+  const paneAsking = !live && !waitingFor && askingFromPane(turn.events) !== null;
+  const anchor = waitingFor?.at ?? live?.at;
+  return {
+    kind: "working",
+    key: `working-${turn.key}`,
+    turnKey: turn.key,
+    steps: work.length,
+    ...(turn.events[0]?.at !== undefined
+      ? { startedAt: turn.events[0]!.at }
+      : {}),
+    ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
+    ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
+    ...(waitingFor || paneAsking ? { waiting: true } : {}),
+  };
+}
+
 /** Derive the folded row list from a session's events (see module doc). */
 export function deriveRows(events: Event[]): TimelineRow[] {
   const turns = groupTurns(events);
@@ -311,438 +767,11 @@ export function deriveRows(events: Event[]): TimelineRow[] {
   turns.forEach((turn, ti) => {
     const isLast = ti === turns.length - 1;
     const settled = turn.ended || !isLast;
-
-    let userRow: UserRow | null = null;
-    const work: LeafRow[] = [];
-    const toolBy = new Map<string, ToolRow>();
-    // The subagent call currently collecting sidechain work, if any.
-    let host: ToolRow | null = null;
-    let lastTodo: TodoRow | null = null;
-    // Rows awaiting the tool_result that resolves them, by tool_use_id. Local
-    // to the turn: deriveRows runs on every event and must be pure, so nothing
-    // here may outlive one derivation.
-    const pendingByTool = new Map<string, QuestionRow | PlanRow>();
-    // Skill calls of this turn, by the skill they named, so the `meta:skill`
-    // that follows can fold its size onto the call rather than adding a second
-    // row for the same load.
-    const skillCalls = new Map<string, ToolRow>();
-
-    /** Push a row into the turn, or into the subagent that spawned it. */
-    const add = (row: LeafRow, sidechain?: boolean) => {
-      if (sidechain && host) host.children.push(row);
-      else work.push(row);
-    };
-
-    for (const e of turn.events) {
-      switch (e.kind) {
-        case "user":
-          userRow = {
-            kind: "user",
-            key: `user-${e.id}`,
-            id: e.id,
-            body: e.body ?? "",
-            turnKey: turn.key,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          };
-          break;
-        case "text":
-          add(
-            {
-              kind: "message",
-              key: `msg-${e.id}`,
-              id: e.id,
-              body: e.body ?? "",
-              turnKey: turn.key,
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            },
-            e.sidechain,
-          );
-          break;
-        case "thinking":
-          add(
-            {
-              kind: "thinking",
-              key: `think-${e.id}`,
-              id: e.id,
-              body: e.body ?? "",
-              turnKey: turn.key,
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            },
-            e.sidechain,
-          );
-          break;
-        case "tool_use": {
-          const d: Described = describeTool(e.tool ?? "", e.body);
-          // TodoWrite is a checklist, not a call: one row per turn, updated in
-          // place, so a turn that revises its list six times shows one list.
-          if (d.type === "todo") {
-            const steps = extractTodoSteps(parseJSON(e.body)) ?? [];
-            if (lastTodo) {
-              lastTodo.steps = steps;
-              lastTodo.id = e.id;
-            } else {
-              lastTodo = {
-                kind: "todo",
-                key: `todo-${turn.key}`,
-                id: e.id,
-                steps,
-                turnKey: turn.key,
-                ...(e.at !== undefined ? { at: e.at } : {}),
-              };
-              add(lastTodo, e.sidechain);
-            }
-            break;
-          }
-          if (d.type === "question") {
-            const row: QuestionRow = {
-              kind: "question",
-              key: `q-${e.toolId || e.id}`,
-              id: e.id,
-              questions: questions(parseJSON(e.body)),
-              answers: [],
-              pending: true,
-              turnKey: turn.key,
-              ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            };
-            if (e.toolId) pendingByTool.set(e.toolId, row);
-            add(row, e.sidechain);
-            break;
-          }
-          if (d.type === "plan") {
-            const plan = parseJSON(e.body) as { plan?: string } | null;
-            const row: PlanRow = {
-              kind: "plan",
-              key: `plan-${e.toolId || e.id}`,
-              id: e.id,
-              body: plan?.plan ?? e.body ?? "",
-              pending: true,
-              turnKey: turn.key,
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            };
-            if (e.toolId) pendingByTool.set(e.toolId, row);
-            add(row, e.sidechain);
-            break;
-          }
-          const row: ToolRow = {
-            kind: "tool",
-            key: `tool-${e.toolId || e.id}`,
-            id: e.id,
-            tool: e.tool ?? "",
-            itemType: d.type,
-            label: d.label,
-            detail: d.detail,
-            changedFiles: d.changedFiles,
-            input: e.body ?? "",
-            isError: false,
-            done: false,
-            truncated: false,
-            children: [],
-            turnKey: turn.key,
-            ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          };
-          if (e.toolId) toolBy.set(e.toolId, row);
-          // The load that follows folds its size onto this call (see the
-          // `meta` case). Keyed on the skill's name, which `describe` put in
-          // the label, so the two find each other across the tool result the
-          // receipt arrived on.
-          if (d.type === "skill" && d.label) skillCalls.set(d.label, row);
-          // A subagent's own work arrives as sidechain records AFTER the call
-          // that spawned it, so the call becomes the host for what follows.
-          if (d.type === "collab_agent_tool_call") host = row;
-          add(row, e.sidechain);
-          break;
-        }
-        case "tool_result": {
-          const waiting = e.toolId ? pendingByTool.get(e.toolId) : undefined;
-          if (waiting) {
-            waiting.pending = false;
-            if (waiting.kind === "question") {
-              waiting.answers = answersFrom(e.result);
-            }
-            pendingByTool.delete(e.toolId!);
-            // A subagent's result closes its host.
-            break;
-          }
-          const existing = e.toolId ? toolBy.get(e.toolId) : undefined;
-          if (existing) {
-            existing.result = e.body ?? "";
-            existing.payload = e.result;
-            existing.isError = !!e.isError;
-            existing.done = true;
-            existing.truncated = !!e.truncated;
-            if (existing.itemType === "collab_agent_tool_call" && host === existing) {
-              host = null;
-            }
-          } else {
-            add(
-              {
-                kind: "tool",
-                key: `tool-${e.toolId || e.id}`,
-                id: e.id,
-                tool: "",
-                itemType: "dynamic_tool_call",
-                label: "",
-                detail: "",
-                changedFiles: [],
-                input: "",
-                result: e.body ?? "",
-                payload: e.result,
-                isError: !!e.isError,
-                done: true,
-                truncated: !!e.truncated,
-                children: [],
-                turnKey: turn.key,
-                ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
-                ...(e.at !== undefined ? { at: e.at } : {}),
-              },
-              e.sidechain,
-            );
-          }
-          break;
-        }
-        case "meta": {
-          const meta = e.meta ?? "mode";
-          // `mode` and `permission-mode` are STATE, not events: the composer's
-          // chip always shows the mode in force, so a divider announcing each
-          // change interrupts the conversation to repeat what is already on
-          // screen (Viktor, 2026-08-17). The EVENTS still flow — currentMode()
-          // reads them for that chip — only the row is dropped, and dropped
-          // outright rather than folded, since expanding a turn would put the
-          // divider back.
-          if (meta === "mode" || meta === "permission-mode") break;
-          // A `/context` reading is state for the same reason, and the meter
-          // beside the composer is where it shows. A reading also arrives as a
-          // 15 KB block of markdown the CLI already rendered in the pane, so a
-          // row per reading would be the biggest thing in the log.
-          if (meta === "context") break;
-          // Which model is answering is state as well, and the chip beside the
-          // composer is where it shows. A change made from the lobby leaves its
-          // own visible mark anyway: applying one types `/model` into the pane,
-          // and that line arrives as an ordinary row.
-          if (meta === "model") break;
-          // The queue's departures are bookkeeping for queuedPrompts(), the
-          // same way the mode events are for the chip: a divider saying a
-          // prompt left the queue tells the reader nothing the queue itself
-          // does not already say by shrinking.
-          if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
-          // What the PANE says about a blocking question is state too, and the
-          // answer card is where it shows (askingFromPane). It is also the one
-          // reading that repeats: a dialog sits on screen for as long as nobody
-          // answers it, and a row per reading would bury the conversation.
-          if (meta === "asking") break;
-          // A background task finishing is delivered THROUGH the queue, so the
-          // queue reports enqueueing a wall of XML — 2,140 of them across this
-          // box's transcripts, the single most common artifact in the text view
-          // (measured 2026-09-02). queuedPrompts() already keeps them out of
-          // the queue list for the same reason; this keeps them out of the
-          // transcript. Nothing is lost: the notification also arrives as its
-          // own record, which renders as one muted line (415 of the 419
-          // measured), and the event still flows so the queue list stays in
-          // step.
-          if (meta === "queued" && isHarnessNotice(e.body ?? "")) break;
-          // A skill load is TWO records: the `Skill` call, and the SKILL.md
-          // body sessionio collapsed to this event. One thing happened, so it
-          // reads as one card — the size lands on the call and this row is
-          // dropped. Matched by name rather than by position, because the
-          // receipt the load was detected from arrives on the call's own tool
-          // result and anything may sit between them.
-          //
-          // Unmatched, the row stays: a body detected by its `Base directory`
-          // marker with no Skill call before it is still a load, and dropping
-          // it would lose the only trace of one.
-          if (meta === "skill") {
-            const call = skillCalls.get(e.body ?? "");
-            if (call && call.bytes === undefined) {
-              call.bytes = e.bytes ?? 0;
-              break;
-            }
-          }
-          add({
-            kind: "meta",
-            key: `meta-${e.id}`,
-            id: e.id,
-            meta,
-            body: e.body ?? "",
-            turnKey: turn.key,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          });
-          break;
-        }
-        case "permission_request":
-          work.push({
-            kind: "permission",
-            key: `perm-${e.reqId || e.id}`,
-            id: e.id,
-            reqId: e.reqId ?? "",
-            tool: e.tool ?? "",
-            input: e.body ?? "",
-            turnKey: turn.key,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          });
-          break;
-        case "permission_resolved": {
-          const pr = work.find(
-            (r): r is PermissionRow =>
-              r.kind === "permission" && r.reqId === e.reqId,
-          );
-          if (pr) {
-            pr.decision = e.body ?? "";
-          } else {
-            work.push({
-              kind: "permission",
-              key: `perm-${e.reqId || e.id}`,
-              id: e.id,
-              reqId: e.reqId ?? "",
-              tool: e.tool ?? "",
-              input: "",
-              decision: e.body ?? "",
-              turnKey: turn.key,
-              ...(e.at !== undefined ? { at: e.at } : {}),
-            });
-          }
-          break;
-        }
-        case "error":
-          add({
-            kind: "error",
-            key: `err-${e.id}`,
-            id: e.id,
-            body: e.body ?? "",
-            turnKey: turn.key,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          });
-          break;
-        case "session":
-        case "state":
-        case "result":
-          work.push({
-            kind: "status",
-            key: `status-${e.id}`,
-            id: e.id,
-            body: e.body ?? "",
-            subtype: e.kind,
-            turnKey: turn.key,
-            ...(e.at !== undefined ? { at: e.at } : {}),
-          });
-          break;
-        case "turn_end":
-          break;
-      }
-    }
+    const { userRow, work } = collectTurnRows(turn);
 
     if (userRow) out.push(userRow);
-
-    if (settled && work.length > 1) {
-      // Keep the last assistant message visible (the turn's "answer"); fold the
-      // rest behind a "Worked for Ns" row. Fall back to the last work row when
-      // the turn produced no assistant text.
-      let visibleAt = -1;
-      for (let i = work.length - 1; i >= 0; i--) {
-        if (work[i]!.kind === "message") {
-          visibleAt = i;
-          break;
-        }
-      }
-      if (visibleAt < 0) visibleAt = work.length - 1;
-      const visible = work[visibleAt];
-      const hidden = work.filter((_, i) => i !== visibleAt);
-      const changed = [
-        ...new Set(
-          work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])),
-        ),
-      ];
-      const fold: TurnFoldRow | null =
-        hidden.length > 0
-          ? {
-              kind: "turn-fold",
-              key: `fold-${turn.key}`,
-              turnKey: turn.key,
-              count: hidden.length,
-              hidden,
-              hasError: hidden.some(leafFailed),
-              changedFiles: changed,
-              ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
-              ...(turnDuration(turn) !== undefined
-                ? { durationMs: turnDuration(turn) }
-                : {}),
-            }
-          : null;
-      // Chronology: the fold stands for the run of hidden rows that begins at
-      // the first one, so it goes above the visible message only when hidden
-      // work preceded it. A turn whose last item is a tool call keeps the
-      // message that ANNOUNCED the call above the fold holding it.
-      if (fold && visibleAt > 0) out.push(fold);
-      if (visible) out.push(visible);
-      if (fold && visibleAt === 0) out.push(fold);
-    } else {
-      for (const r of work) out.push(r);
-    }
-
-    if (!settled) {
-      // A running turn gets ONE progress indicator: the working row below.
-      //
-      // The last message used to be marked `streaming` as well, which drew a
-      // blinking cursor after it. That cursor said something untrue — Claude
-      // Code writes one transcript record per COMPLETED block, so a message
-      // that has arrived is finished and will never grow — and it said it
-      // directly above the tool rows the message had just announced, blinking
-      // there for the rest of the turn. The working row already reports the
-      // turn honestly: the tool actually running, its elapsed time, the step
-      // count (Viktor, 2026-08-28).
-      //
-      // What is happening RIGHT NOW: the newest thing in the turn that has not
-      // come back yet. The transcript records a tool_use the moment Claude
-      // emits it, so this is specific without any second source (design
-      // decision 6).
-      //
-      // Not all of those are work. A question, a plan put up for approval and a
-      // permission request are all Claude STOPPING and waiting for the reader,
-      // and they leave the turn open in exactly the same way — the assistant
-      // record carries stop_reason "tool_use" and the result is not written
-      // until somebody answers. Replaying the 357 session transcripts on this
-      // box on 2026-09-04 found 3,212 windows where the last turn was open and
-      // the transcript then went quiet for a minute or more, 1,562 hours in
-      // total, and 742 windows / 895 hours of that (57%) was one unanswered
-      // AskUserQuestion. The row said "Working…" with a running clock through
-      // all of it, which is the complaint (Viktor, 2026-09-04).
-      let live: ToolRow | undefined;
-      let waitingFor: QuestionRow | PlanRow | PermissionRow | undefined;
-      for (let i = work.length - 1; i >= 0; i--) {
-        const r = work[i]!;
-        if (r.kind === "tool" && !r.done) {
-          live = r;
-          break;
-        }
-        if ((r.kind === "question" || r.kind === "plan") && r.pending) {
-          waitingFor = r;
-          break;
-        }
-        if (r.kind === "permission" && r.decision === undefined) {
-          waitingFor = r;
-          break;
-        }
-      }
-      // The pane covers the window the transcript misses: Claude Code does not
-      // always write the AskUserQuestion record while its dialog is up (see
-      // askingFromPane). The answer card already docks off this reading, so the
-      // row above it has to agree with it.
-      const paneAsking = !live && !waitingFor && askingFromPane(turn.events) !== null;
-      const anchor = waitingFor?.at ?? live?.at;
-      out.push({
-        kind: "working",
-        key: `working-${turn.key}`,
-        turnKey: turn.key,
-        steps: work.length,
-        ...(turn.events[0]?.at !== undefined
-          ? { startedAt: turn.events[0]!.at }
-          : {}),
-        ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
-        ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
-        ...(waitingFor || paneAsking ? { waiting: true } : {}),
-      });
-    }
+    for (const r of foldSettledTurn(turn, work, settled)) out.push(r);
+    if (!settled) out.push(workingRowFor(turn, work));
   });
 
   markSuperseded(out);
