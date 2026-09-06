@@ -52,29 +52,81 @@ payload="$(cat 2>/dev/null || true)"
 # ---- the inner statusline -------------------------------------------------
 # TL_USAGE_INNER_COMMAND is the override for an install that does not keep the
 # user's own statusLine in ~/.claude/settings.json — the container image, and
-# the tests. It is checked first and needs no jq, which is also what makes the
-# pass-through testable on a box without jq.
+# the tests. It is checked first and needs nothing else.
 #
 # Otherwise: the user's own settings, local before global, matching Claude
-# Code's own precedence. This is one jq fork per render, deliberately not
-# cached: a cache would need invalidating when someone edits their settings,
-# and the inner command is itself a whole script — the fork is noise beside it.
+# Code's own precedence. This is one fork per render, deliberately not cached: a
+# cache would need invalidating when someone edits their settings, and the inner
+# command is itself a whole script — the fork is noise beside it.
 inner_command() {
     if [ -n "${TL_USAGE_INNER_COMMAND:-}" ]; then
         printf '%s' "$TL_USAGE_INNER_COMMAND"
         return 0
     fi
-    command -v jq >/dev/null 2>&1 || return 0
     local f found
     for f in "$CLAUDE_DIR/settings.local.json" "$CLAUDE_DIR/settings.json"; do
         [ -r "$f" ] || continue
-        found="$(jq -r '.statusLine.command // empty' "$f" 2>/dev/null || true)"
+        found="$(statusline_command "$f")"
         if [ -n "$found" ]; then
             printf '%s' "$found"
             return 0
         fi
     done
     return 0
+}
+
+# statusline_command prints .statusLine.command from one settings file.
+#
+# jq when it is there. Without it, parameter expansion — because losing the
+# recording on a box with no jq is the price of the feature, and losing the
+# user's own prompt is not: the slot is theirs and this script only borrowed it.
+# jq is not a declared dependency of the package, so this path is what a minimal
+# box, and the container image, actually run.
+#
+# The fallback refuses anything it cannot take apart with certainty. A quote or
+# a backslash inside the command is past what this can parse, and running half
+# of somebody's prompt would be worse than running none of it.
+statusline_command() {
+    local doc rest obj cmd
+    if command -v jq >/dev/null 2>&1; then
+        jq -r '.statusLine.command // empty' "$1" 2>/dev/null || true
+        return 0
+    fi
+    doc="$(<"$1")" || return 0
+    doc="${doc//$'\n'/ }"
+    case "$doc" in
+    *'"statusLine"'*) ;;
+    *) return 0 ;;
+    esac
+    rest="${doc#*\"statusLine\"}"
+    case "$rest" in
+    *'{'*) ;;
+    *) return 0 ;;
+    esac
+    # The statusLine object, up to its first closing brace. A nested object
+    # inside it would end the slice early, and the "command" test below then
+    # fails closed.
+    rest="${rest#*\{}"
+    obj="${rest%%\}*}"
+    case "$obj" in
+    *'"command"'*) ;;
+    *) return 0 ;;
+    esac
+    cmd="${obj#*\"command\"}"
+    cmd="${cmd#*:}"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    case "$cmd" in
+    \"*) ;;
+    *) return 0 ;;
+    esac
+    cmd="${cmd#\"}"
+    cmd="${cmd%%\"*}"
+    # An escaped quote inside the command means the slice above stopped in the
+    # middle of it. Say nothing rather than run a fragment.
+    case "$cmd" in
+    *\\) return 0 ;;
+    esac
+    printf '%s' "$cmd"
 }
 
 # ---- the reading ----------------------------------------------------------
@@ -130,9 +182,14 @@ record() {
 
     cost="$(session_cost)"
     if [ -n "$cost" ] && [ -n "${TMUX_PANE:-}" ]; then
-        prev="$(tmux show-option -qv -t "$TMUX_PANE" @tl_usage_cost 2>/dev/null || true)"
+        # -p, on both calls: without it tmux resolves the pane to its SESSION
+        # and stores one option for the whole thing (measured on 3.4). Two agent
+        # panes in one session would then compare against each other's totals —
+        # which almost never match, so every render of both panes posts, and on
+        # the renders where they do match a real reading is dropped.
+        prev="$(tmux show-option -qvp -t "$TMUX_PANE" @tl_usage_cost 2>/dev/null || true)"
         [ "$prev" = "$cost" ] && return 0
-        tmux set-option -t "$TMUX_PANE" @tl_usage_cost "$cost" >/dev/null 2>&1 || true
+        tmux set-option -p -t "$TMUX_PANE" @tl_usage_cost "$cost" >/dev/null 2>&1 || true
     fi
 
     # The payload goes over the wire untouched under "statusline", with the two
