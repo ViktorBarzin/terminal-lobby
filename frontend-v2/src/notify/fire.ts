@@ -28,13 +28,24 @@ export interface FireOptions {
   onActivate: (session: string) => void;
 }
 
+/**
+ * @param session the session's NAME — an address. It routes the tap and
+ *   coalesces the banner, and is never shown.
+ * @param label what the banner CALLS the session: its title, or the id when it
+ *   has none (`sessionConfirmLabel`). The two were the same string until
+ *   ADR-0019 made a name an opaque id, at which point this banner started
+ *   reading `k7m2q9x4tp0v needs input` on the phone. The server's push has
+ *   said the title since (tmux-api `pushLabel`); this is the page-fired half
+ *   of the same rule, so one edge reads the same whichever path delivers it.
+ */
 export async function fireNotification(
   session: string,
+  label: string,
   kind: NotifyEdge,
   opts: FireOptions,
 ): Promise<void> {
   const finished = kind === "done";
-  const title = session + (finished ? " finished" : " needs input");
+  const title = label + (finished ? " finished" : " needs input");
   const notifOptions: NotificationOptions = {
     tag: "tl-" + session,
     body: finished ? "Claude finished its turn." : "Claude is awaiting your input.",
