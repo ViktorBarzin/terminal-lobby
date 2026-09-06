@@ -1,0 +1,37 @@
+# TEMPLATE — NOT INSTALLED BY THE PACKAGE.
+#
+# Reference for /etc/sudoers.d/tl-reconcile (mode 0440, owner root:root). The
+# package ships this file to /usr/share/terminal-lobby/ and never onto the live
+# path, for the same reason it does not ship sudoers.d-ttyd-users: the line
+# names one specific account, and a copy installed elsewhere would grant root to
+# whoever happens to hold that name there.
+#
+# Render the real one with `tl-users apply -deploy-grant`, or write it by hand.
+#
+# WHAT IT IS FOR
+#
+# CI deploys by SSH-ing to the box as the service user with a key whose
+# authorized_keys entry is a forced command:
+#
+#   command="sudo -n /usr/local/bin/tl-reconcile",no-agent-forwarding,\
+#   no-port-forwarding,no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-deploy
+#
+# in the SERVICE USER's authorized_keys, not root's. This grant is what lets
+# that `sudo -n` succeed. Without it the key connects and the deploy fails at
+# the first privileged step, which is how a box rebuilt from the package alone
+# stops taking updates.
+#
+# HOW WIDE IT ACTUALLY IS
+#
+# tl-reconcile takes no arguments and never reads its own argv, so the key
+# cannot steer it: SSH_ORIGINAL_COMMAND is ignored, and the version is not a
+# parameter. What it does do is `apt-get install`, and dpkg runs maintainer
+# scripts as root. So the honest description is "run whatever root code the
+# configured apt source publishes", and the real bound on this grant is which
+# apt source the box trusts, not the single path below.
+#
+# Keep it to that one path anyway. A wider grant here would be root with no
+# bound at all.
+#
+# The placeholder is the account the units run as. Replace it.
+wizard ALL=(root) NOPASSWD: /usr/local/bin/tl-reconcile

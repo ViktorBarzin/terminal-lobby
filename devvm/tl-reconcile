@@ -5,10 +5,17 @@
 # reads nothing from the caller, so the key's authority is "ask this box to
 # update itself" and nothing else. Install it as a forced command:
 #
-#   command="/usr/local/bin/tl-reconcile",no-agent-forwarding,no-port-forwarding,\
-#   no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-deploy
+#   command="sudo -n /usr/local/bin/tl-reconcile",no-agent-forwarding,\
+#   no-port-forwarding,no-pty,no-user-rc,restrict ssh-ed25519 AAAA... woodpecker-deploy
 #
-# in root's authorized_keys. SSH_ORIGINAL_COMMAND is deliberately ignored: a
+# in the SERVICE USER's authorized_keys, not root's — the deploy logs in as the
+# account the units run as. The `sudo -n` needs a grant of its own, one line in
+# /etc/sudoers.d/tl-reconcile; devvm/sudoers.d-tl-reconcile.template is the
+# reference and `tl-users apply -deploy-grant` renders it. That grant was in no
+# artifact until 2026-09-05, so a box rebuilt from the package alone accepted
+# the connection and failed at the first privileged step.
+#
+# SSH_ORIGINAL_COMMAND is deliberately ignored: a
 # forced command still receives whatever the client asked for, and acting on it
 # would hand the key back the freedom the forced command exists to remove.
 #

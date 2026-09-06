@@ -10,6 +10,17 @@
 # The names below are placeholders. Edit the real file on the box, or let the
 # roster reconcile write it.
 #
+# Revocation is immediate but partial. Drop a name here and from
+# /etc/ttyd-user-map and they stop attaching at once, because every privileged
+# wrapper re-validates against the map before it does anything. What stays is
+# what they accumulated outside their home: /var/lib/tmux-persist/snapshots/<user>
+# keeps their session titles and transcript ids, root-owned, and re-adding the
+# same OS name would make months-old snapshots restorable to whoever holds that
+# account next. `tl-users apply` renames a dropped user's snapshots to
+# <user>.revoked-<date>; a roster-driven box has to do that itself. The home
+# directory is userdel's business either way. release/privsurface.go carries the
+# full list.
+#
 # wizard (the user running ttyd.service + tmux-api.service) needs to run
 # tmux as the OS user that backs each Authentik identity. Keep the grant
 # scoped to each named target user — never `(ALL)` — and to a fixed set of
