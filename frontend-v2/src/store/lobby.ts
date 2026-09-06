@@ -46,6 +46,7 @@ import {
   rememberPromptLine,
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
+import { STATES_KEY } from "./visits";
 
 export interface SelectedSession {
   name: string;
@@ -189,16 +190,19 @@ const LAYOUT_GRACE_MS = 4000;
  */
 const MAX_POLL_INTERVAL_MS = 30000;
 
-/**
- * Vanilla's STATES_KEY (frontend/index.html `trackStateChanges`): epoch ms at
- * which each live session was FIRST seen in its current Claude state. No
- * backend exposes a real state-change time — a session object carries only
- * created/lastActivity — so this observation is the only anchor the working
- * timer has, and it must outlive the page or every reload restarts a
- * long-running session's clock at 0:00.
- */
-const STATES_KEY = "tl:session-states:v1";
+// `STATES_KEY`, declared in ./visits and used by both stores, holds the epoch ms
+// at which each live session was FIRST seen in its current Claude state. No
+// backend exposes a real state-change time — a session object carries only
+// created/lastActivity — so this observation is the only anchor the working
+// timer has, and it must outlive the page or every reload restarts a
+// long-running session's clock at 0:00.
+//
+// This store writes the key and ./visits reads it, so the constant lives there
+// and is imported here. It used to be declared on both sides, which meant
+// bumping the version in one place left the other reading an orphaned key with
+// every test still green.
 
+/** One session's state stamp, as persisted under `STATES_KEY`. */
 interface StateStamp {
   state: string;
   at: number;

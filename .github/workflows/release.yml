@@ -43,6 +43,23 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: lts/* }
 
+      # A NUL byte anywhere in a source file makes git call the whole file
+      # binary, so `git grep` skips it and says nothing. One file had been
+      # invisible to every grep-driven refactor that way. Biome does not see it
+      # either, because a NUL in a string is legal JS, so the instrument that
+      # catches this is git's own heuristic.
+      - name: no binary source files
+        run: |
+          set -euo pipefail
+          binary=$(comm -23 \
+            <(git ls-files '*.ts' '*.tsx' '*.js' '*.go' '*.css' | sort) \
+            <(git grep -Il '' -- '*.ts' '*.tsx' '*.js' '*.go' '*.css' | sort))
+          if [ -n "$binary" ]; then
+            echo "git reads these tracked sources as binary, so git grep skips them:"
+            echo "$binary"
+            exit 1
+          fi
+
       # The tests that exist today start gating releases. They have never run in
       # CI, because there has never been CI. All of them, not only the Go ones:
       # the frontend is where a regression is most likely and least visible, and
