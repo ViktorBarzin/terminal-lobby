@@ -285,14 +285,24 @@ function isDiscovered(cmd: SlashCommand): boolean {
   return cmd.source !== undefined && cmd.source !== "builtin";
 }
 
-/**
- * The shortest mid-prompt query that may open the menu.
+/*
+ * There is no minimum mid-prompt query any more.
  *
- * A guess, not a measurement: `cd /im` would otherwise offer `/implement`, and
- * there is no data on how often a path gets typed into the composer. One
- * character is certainly too few — `/c` matches most of the catalogue.
+ * There was: two characters, and its own comment called it "a guess, not a
+ * measurement". The guess was aimed at `cd /im` offering `/implement`, and it
+ * cost the thing the menu is for — Viktor, 2026-09-06: "can we trigger it on
+ * the first mention of / rather than after writing / and then a letter".
+ *
+ * So a bare mid-prompt slash now opens the whole discovered list, and the rank
+ * ceiling below still governs anything you actually type after it. Measured
+ * before the change: "hello /" and "hello /d" both opened nothing and
+ * "hello /do" opened; after it, all three open and the list narrows as you go.
+ *
+ * The cost is real and was accepted rather than overlooked: a path typed into
+ * the composer opens the menu on its slash. `cd /` shows everything and closes
+ * again on the `u`, because `/usr` matches nothing at MID_MAX_RANK. One
+ * keystroke of noise against a menu that arrives when it is asked for.
  */
-export const MIN_MIDPROMPT_QUERY = 2;
 
 /** The token the caret sits in, if it begins with a completion trigger. */
 function tokenAt(text: string, caret: number): { start: number; token: string } | null {
@@ -333,7 +343,6 @@ export function completionFor(
     const mid = start !== 0;
     let pool = commands;
     if (mid) {
-      if (token.length - 1 < MIN_MIDPROMPT_QUERY) return null;
       pool = commands.filter(isDiscovered);
     }
     const ranked = rankCommands(pool, token).filter(
