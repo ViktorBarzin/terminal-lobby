@@ -227,23 +227,20 @@ jobs:
             --upload-file "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
             "${FORGEJO_DEB_UPLOAD_URL}"
 
-      # Off-site copy, so a cluster outage cannot block repairing the workstation.
-      - name: attach to a GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Two copies of one file. The versioned name is what the registry and
-          # a human looking at the release want; the unversioned one is what
-          # makes /releases/latest/download/terminal-lobby_amd64.deb resolve,
-          # which is the install command the README gives. Without it that URL
-          # 404s, because the asset name carries the version.
-          cp "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
-             "out/terminal-lobby_amd64.deb"
-          gh release create "${{ steps.version.outputs.tag }}" \
-            "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
-            "out/terminal-lobby_amd64.deb" \
-            --title "${{ steps.version.outputs.tag }}" --generate-notes
-
+      # THE DEPLOY GOES HERE, directly after the registry the box installs from
+      # and BEFORE the off-site copy. Order is the whole point: the box has
+      # everything it needs the moment the package is published, and nothing
+      # after this step is on the path to shipping.
+      #
+      # It used to run last, after the GitHub release. On 2026-09-06 that cost
+      # a deploy: `gh release create` failed with "tag v0.42.3 exists locally
+      # but has not been pushed to ViktorBarzin/terminal-lobby" — the tag goes
+      # to Forgejo above, and reaches this mirror only when Forgejo's push
+      # mirror syncs, so the two race. The package was already in the Debian
+      # registry; the job went red on a backup copy and the box stayed on
+      # 0.42.2 until someone ran tl-reconcile by hand. docs/deployment.md's
+      # sequence diagram has shown this order since it was drawn.
+      #
       # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
       # which is deploy-only by ADR-0002 and already activated on the infra repo.
       #
@@ -272,3 +269,24 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"${{ steps.version.outputs.version }}"}}' \
             "${WOODPECKER_PIPELINE_URL}"
+
+      # Off-site copy, so a cluster outage cannot block repairing the
+      # workstation. Last on purpose: it is a backup, and the deploy above must
+      # not wait on it. It can still go red on its own — the tag it names
+      # arrives here by mirror — but a red step here now costs the release
+      # assets and nothing else.
+      - name: attach to a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Two copies of one file. The versioned name is what the registry and
+          # a human looking at the release want; the unversioned one is what
+          # makes /releases/latest/download/terminal-lobby_amd64.deb resolve,
+          # which is the install command the README gives. Without it that URL
+          # 404s, because the asset name carries the version.
+          cp "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+             "out/terminal-lobby_amd64.deb"
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+            "out/terminal-lobby_amd64.deb" \
+            --title "${{ steps.version.outputs.tag }}" --generate-notes
