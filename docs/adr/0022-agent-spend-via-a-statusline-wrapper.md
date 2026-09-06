@@ -61,15 +61,36 @@ Design: `docs/plans/2026-09-06-agent-spend-panel-design.md`.
   no-op: session-events down, `jq` missing, no inner command, no tmux. A
   statusline that breaks somebody's prompt would be worse than not having the
   feature. It also drops a render where the running total has not moved, which
-  is most of them, by comparing against a pane-scoped tmux option. `jq` is one
-  of the things it needs and is not a declared dependency of the package: it is
-  present on the devvm, `claude-se-hook` already assumes it, and a box without
-  it loses the recording and keeps the prompt.
+  is most of them, by comparing against a tmux option stamped with `-p`, so two
+  agent panes in one session throttle on their own totals rather than on each
+  other's. `jq` is one of the things the recording needs and is not a declared
+  dependency of the package: it is present on the devvm, `claude-se-hook`
+  already assumes it, and a box without it loses the recording and keeps the
+  prompt. Keeping the prompt is not automatic, so the script reads
+  `.statusLine.command` with parameter expansion when `jq` is missing, and says
+  nothing rather than running a fragment it could not parse with certainty.
 - **A reading is the conversation's running total, not a delta**, which is what
   makes a dropped POST harmless: a later one carries the same cumulative figure,
   and the last reading of a session carries its final one. The store relies on
   the same property, replacing a session row and moving the day's rollup by the
-  difference rather than adding.
+  difference rather than adding. It also follows from it that a session row is
+  RETIRED rather than deleted at 30 days: the row is what the next reading is
+  differenced against, so a conversation resumed after its row had been deleted
+  would contribute its whole history a second time. A retired row keeps the
+  totals, loses the name and the model, and drops out of the page's session
+  list. The row cap (2,000, retired rows included) is the one place a baseline
+  is genuinely dropped, and `spendstore/spend.go` says so where the cap is
+  declared.
+- **Codex's half is read as the service's own OS user**, because it reads
+  `~/.codex/sessions` directly and nothing about a rollout is served by another
+  process. On a multi-user box with 0750 homes that means the Codex section
+  appears for the user tmux-api runs as, and is left out — with a log line
+  naming the user — for anyone else, `?as=` included. Claude's half has no such
+  limit: session-events writes a store both services own. Closing this would
+  need a privileged helper in the `/etc/sudoers.d/ttyd-users` allowlist, the way
+  file-api and session-events already re-exec themselves per user; the same
+  grant would also be what makes per-session attribution work across users,
+  since `/proc/<pid>/fd` is readable only by the process owner.
 - **The wiring lives in infra and the script lives here**, so both sides
   tolerate the other being absent. No managed-settings entry means the recorder
   never runs and the Claude section of the page is simply absent; a missing
