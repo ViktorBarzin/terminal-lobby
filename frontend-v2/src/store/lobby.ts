@@ -386,16 +386,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   /**
    * Move the selection to a session that was renamed under it.
    *
-   * Nothing renames any more — a name is an opaque id fixed at creation
-   * (ADR-0019) — with ONE exception, and it is the one this exists for.
-   * tmux-api's migration renames every session that predates ids, once, on the
-   * release that ships them (tmux-api/migrate_ids.go). A tab open at that
-   * moment holds a name that is about to stop existing, and it holds it in the
-   * terminal's `?arg=` (built by `terminalFrameArgs`, handed to TerminalNative):
-   * ttyd spawns a fresh `tmux new-session -A -s <name>` per websocket, so the
-   * next reconnect would CREATE the old name as an empty
+   * This is load-bearing again. A session is created with a minted id and keeps
+   * it until its first title lands, at which point tmux-api renames it to
+   * something readable (ADR-0022) — which for a fresh session is seconds into
+   * the first turn, with nobody having asked. The tab is holding the OLD name
+   * in the terminal's `?arg=` (built by `terminalFrameArgs`, handed to
+   * TerminalNative), and ttyd spawns a fresh `tmux new-session -A -s <name>`
+   * per websocket, so the next reconnect would CREATE the old name as an empty
    * session and leave the person looking at a blank shell while their
-   * conversation ran on under the id.
+   * conversation ran on under the new name.
+   *
+   * Both retitle paths refresh immediately rather than waiting out a poll, so
+   * the window where a tab holds a stale name is one round trip for a typed
+   * title and one poll for a summary.
    *
    * tmux's session id is the only thing that survives a rename, so it is what
    * identifies "the same session under a new name". Matching on anything else
@@ -840,8 +843,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    *
    * Emptying the rename box is the only way back to a bare name, and it is the
    * state every session that predates titles is already in. The NAME is left
-   * exactly where it is — deriving one from an empty title would mean renaming
-   * a running session to something arbitrary.
+   * exactly where it is — an empty title derives nothing (ADR-0022), and a name
+   * invented for a running session would be worse than a stale one.
    */
   async function clearTitle(name: string): Promise<boolean> {
     // Clearing hands the session back to its summary, so the placeholder goes
@@ -859,14 +862,15 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   /**
-   * Retitle a session: set the text everyone reads.
+   * Retitle a session: set the text everyone reads, and the name tmux shows.
    *
-   * Only the title moves. The name is an opaque id fixed at creation
-   * (ADR-0019), so nothing downstream is keyed by anything this touches: no
-   * layout to mirror, no per-browser record to carry, and nothing to
-   * re-navigate: TerminalNative reads `props.args` once at mount and never
-   * re-attaches. Two sessions may end up reading the same, which is fine now
-   * that no name is derived from the text.
+   * The tmux name is derived from the title again (ADR-0022), so this DOES move
+   * something: tmux-api renames the session and carries the six stores keyed by
+   * the old name. The `refresh` below is what closes the gap — it brings back
+   * the new name, and `followRenamedSelection` moves the selection onto it by
+   * session id, which also re-navigates the terminal away from a name that no
+   * longer exists. Two sessions may still read the same; the second gets a
+   * `-2` suffix on its name and nothing else changes.
    */
   async function rename(name: string, title: string): Promise<boolean> {
     const t = cleanTitle(title);

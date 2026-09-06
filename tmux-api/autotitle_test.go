@@ -138,8 +138,22 @@ func TestAutoTitleStampsTheFirstSummary(t *testing.T) {
 	if sessions[0].Title != "Tashkent trip planning" {
 		t.Errorf("Title on the returned session = %q, want the summary", sessions[0].Title)
 	}
-	// Remembered, or a restore hands the session back untitled.
-	if got := titleStoreInstance.all("wizard")["k7m2q9x4tpz3"]; got != "Tashkent trip planning" {
+	// And the tmux NAME follows the summary (ADR-0022), on the same poll, so
+	// `tmux ls` and the status bar stop reading as a minted id. The row served
+	// carries the new name too, or the lobby would address a session that has
+	// already moved.
+	const renamed = "tashkent-trip-planning"
+	for _, want := range []string{"rename-session", "=k7m2q9x4tpz3", renamed} {
+		if !strings.Contains(got, want) {
+			t.Errorf("argv missing %q:\n%s", want, got)
+		}
+	}
+	if sessions[0].Name != renamed {
+		t.Errorf("Name on the returned session = %q, want %q", sessions[0].Name, renamed)
+	}
+	// Remembered under the name it has NOW — the rename carries the entry —
+	// or a restore hands the session back untitled.
+	if got := titleStoreInstance.all("wizard")[renamed]; got != "Tashkent trip planning" {
 		t.Errorf("title memory = %q, want the summary", got)
 	}
 
