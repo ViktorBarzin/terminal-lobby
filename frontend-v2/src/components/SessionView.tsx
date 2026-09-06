@@ -23,6 +23,7 @@ import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
+import { dismissOnPress } from "./overlay";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile } from "../lib/ownwhile";
@@ -832,19 +833,17 @@ export const SessionView: Component<{
                 </button>
                 {/* The shell's own items (Settings). display:contents keeps the
                     menu's layout while giving their clicks somewhere to bubble
-                    to — the shell has no handle on this menu to close it. */}
-                <span
-                  role="group"
-                  style={{ display: "contents" }}
-                  onClick={() => barMenu.close()}
-                  // Enter on one of those items fires a click of its own, which
-                  // closes the menu on the line above. keyup runs after that
-                  // click, so it costs nothing and covers an item that acts on
-                  // a key without producing one.
-                  onKeyUp={(e) => {
-                    if (e.key === "Enter" || e.key === " ") barMenu.close();
-                  }}
-                >
+                    to — the shell has no handle on this menu to close it.
+
+                    Every row in there is a real <button>, so Enter and Space
+                    both produce a click and the click is the only thing that
+                    needs to close the menu. A key handler here would be worse
+                    than redundant: Space activates a button on its KEYUP, and
+                    the click is that keyup's default action, so closing on the
+                    keyup would unmount the row before its own click existed.
+                    The listener goes on through a ref for the same reason the
+                    overlay backdrops do — the wrapper is not a control. */}
+                <span style={{ display: "contents" }} ref={dismissOnPress(() => barMenu.close())}>
                   {props.menuExtra}
                 </span>
               </div>
