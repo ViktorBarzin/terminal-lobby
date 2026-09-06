@@ -518,6 +518,13 @@ src/
                          sidebar header the three a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
+    SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
+                         footer beside the gear: today's dollars for Claude
+                         Code, the tighter of the two limits for Codex, nothing
+                         for a shell. Follows the same `tool` the card's mark
+                         does, reads GET /agent-spend on the sidebar's own
+                         session-poll tick with a 30s floor between reads, and
+                         opens Settings → Agent spend when tapped
     NewSessionComposer.tsx
                          The new-session composer: a prompt field plus the three
                          choices a create makes — project, command, model. What
