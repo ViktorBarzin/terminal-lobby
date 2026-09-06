@@ -154,7 +154,7 @@ func (r *SessionResolver) resolve(claudeID string, depth int) (Target, bool, boo
 		target := Target{
 			ClaudeID:   claudeID,
 			TmuxName:   s.Name,
-			CWD:        resolveCWD(stamp, s.Dir),
+			CWD:        sessionio.ResolveCWD(stamp, s.Dir),
 			Transcript: stamp,
 			ThreadID:   thread,
 		}
@@ -202,23 +202,6 @@ func (r *SessionResolver) resolve(claudeID string, depth int) (Target, bool, boo
 		Origin:   b.Origin,
 		AliasOf:  b.AliasOf,
 	}, false, true, nil
-}
-
-// resolveCWD is where the conversation is actually happening.
-//
-// The transcript's own cwd wins over tmux's session_path, which is only where a
-// NEW window in that session would start. `claude` is routinely started from a
-// subdirectory — `tmux new -s work -c ~/code/tl` then `cd .worktrees/x && claude`
-// — and filing the binding by session_path resurrects the session in the parent
-// directory, under a project slug that holds a different conversation's
-// transcripts. The syncer's adoption already files by the transcript's cwd
-// (sessionio.TranscriptCWD); this is the same rule on the bridge's side, so the
-// two writers of one index cannot disagree about where a session lives.
-func resolveCWD(transcript, tmuxDir string) string {
-	if cwd := sessionio.TranscriptCWD(transcript); cwd != "" {
-		return cwd
-	}
-	return tmuxDir
 }
 
 // AttacherDeps are the collaborators an Attacher is built from. They are

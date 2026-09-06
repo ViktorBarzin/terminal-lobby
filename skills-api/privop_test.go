@@ -236,3 +236,27 @@ func TestPrivopChildRevalidatesOwnerAndRepo(t *testing.T) {
 		}
 	}
 }
+
+// The grant carries no argument spec, so every argv the parent can build is one
+// anybody holding the same grant can build. That makes the argv itself the
+// thing to pin: one op name, passed as its own element, and nothing the caller
+// could use to point the child at another user's home.
+func TestPrivopArgvCarriesOnlyTheOp(t *testing.T) {
+	old := sudoBinary
+	t.Cleanup(func() { sudoBinary = old })
+	sudoBinary = "/usr/bin/sudo"
+
+	cmd := privopCommand("bob", "install")
+	if cmd.Path != sudoBinary {
+		t.Fatalf("Path = %q, want the pinned sudo", cmd.Path)
+	}
+	want := []string{"/usr/bin/sudo", "-n", "-u", "bob", exeSelf(), "-privop", "install"}
+	if strings.Join(cmd.Args, " ") != strings.Join(want, " ") {
+		t.Fatalf("argv = %v, want %v", cmd.Args, want)
+	}
+	for _, a := range cmd.Args {
+		if a == "-home" || a == "-path" || a == "-c" || a == "sh" || a == "/bin/sh" {
+			t.Fatalf("argv offers the caller a root or a shell: %v", cmd.Args)
+		}
+	}
+}

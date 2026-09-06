@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -138,5 +139,29 @@ func TestKillSessionSucceedsWhenForgetFails(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("DELETE with a failing forget: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+}
+
+// tmuxCmd is the one place this service decides whether a tmux call goes
+// through sudo, and its argv is what the sudoers grant is written against. It
+// carries no -H: the two calls on this box that need one (the attach probe and
+// the dirlist wrapper) build their own argv for a different binary, so nothing
+// here may grow the flag on their behalf.
+func TestTmuxCmdArgv(t *testing.T) {
+	oldSelf, oldTmux, oldSudo := selfUser, tmuxBinary, sudoBinary
+	t.Cleanup(func() { selfUser, tmuxBinary, sudoBinary = oldSelf, oldTmux, oldSudo })
+	selfUser, tmuxBinary, sudoBinary = "wizard", "/opt/stub/tmux", "/opt/stub/sudo"
+
+	own := tmuxCmd("wizard", "list-sessions", "-F", "#{session_name}")
+	if strings.Join(own.Args, " ") != "/opt/stub/tmux list-sessions -F #{session_name}" {
+		t.Errorf("own user must not go through sudo: %v", own.Args)
+	}
+	other := tmuxCmd("bob", "list-sessions", "-F", "#{session_name}")
+	want := []string{"/opt/stub/sudo", "-n", "-u", "bob", "/opt/stub/tmux", "list-sessions", "-F", "#{session_name}"}
+	if strings.Join(other.Args, " ") != strings.Join(want, " ") {
+		t.Errorf("argv = %v, want %v", other.Args, want)
+	}
+	if other.Path != "/opt/stub/sudo" {
+		t.Errorf("Path = %q, want the pinned sudo", other.Path)
 	}
 }

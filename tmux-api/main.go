@@ -319,12 +319,20 @@ func exactSession(name string) string { return "=" + name }
 // sessionio/tmux.go carries the same helper for the same reason.
 func exactPane(name string) string { return "=" + name + ":" }
 
+// tmuxCmd runs tmux as osUser: directly when that is this service's own user,
+// through `sudo -n -u` otherwise. The rule itself is sessionio.Injector.Command,
+// which this service already depends on and already builds an Injector from
+// (shares.go); re-deriving it here is how the two copies drifted. The Injector
+// is built per call, not once at startup, because tmuxBinary and sudoBinary are
+// test seams and a captured copy would ignore a stub.
+//
+// No -H, matching what this function has always sent. The two calls that do
+// pass one (newcommands.go's attach probe, dirs.go's dirlist wrapper) build
+// their own argv for a different binary and do not come through here.
 func tmuxCmd(osUser string, args ...string) *exec.Cmd {
-	if osUser == selfUser {
-		return exec.Command(tmuxBinary, args...)
-	}
-	full := append([]string{"-n", "-u", osUser, tmuxBinary}, args...)
-	return exec.Command(sudoBinary, full...)
+	in := sessionio.NewInjector(selfUser)
+	in.Binary, in.Sudo = tmuxBinary, sudoBinary
+	return in.Command(osUser, args...)
 }
 
 func main() {
