@@ -92,13 +92,19 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
-	// A session's name is an opaque id, so a title is the only readable thing
-	// about it — and nobody types one any more. Claude Code's own conversation
-	// summary arrives in the pane title a few seconds after the first prompt,
-	// and this is where it becomes the session's title (autotitle.go). Runs
-	// AFTER clearDeadStates, so a claude that died at launch leaves its session
-	// untitled rather than taking whatever the dead pane last wrote.
+	// A session is created with an opaque id for a name, and nobody types a
+	// title any more. Claude Code's own conversation summary arrives in the pane
+	// title a few seconds after the first prompt, and this is where it becomes
+	// the session's title (autotitle.go). Runs AFTER clearDeadStates, so a
+	// claude that died at launch leaves its session untitled rather than taking
+	// whatever the dead pane last wrote.
 	autoTitleSessions(osUser, sessions, time.Now())
+	// …and the title carries the tmux NAME with it (ADR-0022), so `tmux ls` and
+	// the status bar read as words. autoTitleSessions renames what it titles;
+	// this catches a session titled before the rule existed, and one restored
+	// under an id. Both are fixed points, so a poll with nothing to do costs a
+	// comparison per session.
+	backfillDerivedNames(osUser, sessions)
 	return sessions, activity
 }
 
@@ -226,7 +232,8 @@ func parseSessions(out []byte) []Session {
 			PanePID:      panePID,
 			Command:      parts[9],
 			Title:        parts[10],
-			PaneTitle:    parts[11],
+			BornAs:       parts[11],
+			PaneTitle:    parts[12],
 		})
 	}
 	return sessions

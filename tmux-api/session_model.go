@@ -51,6 +51,13 @@ type Session struct {
 	// session has no title and its name is what gets shown, which is where
 	// every session that predates the feature sits.
 	Title string `json:"title,omitempty"`
+	// BornAs is the name this session was FIRST created with, present only on
+	// a session that has since been renamed (sessionio.OptionBornAs). It is
+	// how a client that never saw the session under its original name still
+	// finds it: ADR-0022 renames a fresh session seconds after creation, often
+	// before any poll has listed it, and a browser holding the name it minted
+	// has nothing else to match on. Empty for a session that never moved.
+	BornAs string `json:"bornAs,omitempty"`
 	// Tool is WHICH command the session runs — "claude", "codex" or "shell"
 	// — resolved from the pane's process tree (proc.go), never from Command:
 	// both agents launch through non-exec wrapper scripts, so the pane's

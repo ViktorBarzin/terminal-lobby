@@ -122,7 +122,13 @@ func TestAutoTitleAgainstRealTmux(t *testing.T) {
 	if after[0].PaneTitle != "✳ Tashkent trip planning" {
 		t.Errorf("PaneTitle = %q, want it untouched", after[0].PaneTitle)
 	}
-	if got := titleStoreInstance.all(osSelf)[name]; got != "Tashkent trip planning" {
+	// The summary carries the tmux NAME with it (ADR-0022), which is the point
+	// of the whole rule for anyone reading `tmux ls` or the status bar.
+	renamed := after[0].Name
+	if renamed != "tashkent-trip-planning" {
+		t.Errorf("live session name = %q, want it derived from the summary", renamed)
+	}
+	if got := titleStoreInstance.all(osSelf)[renamed]; got != "Tashkent trip planning" {
 		t.Errorf("title memory = %q, want the summary", got)
 	}
 	if evs := autonamed(t, rec); len(evs) != 1 {
@@ -131,12 +137,18 @@ func TestAutoTitleAgainstRealTmux(t *testing.T) {
 
 	// The stamp is its own marker: the next poll reads @title back and leaves
 	// the session alone even though the summary has moved on.
-	if out, err := tmux("select-pane", "-t", exactPane(name), "-T", "✳ Tashkent trip planning, day two"); err != nil {
+	if out, err := tmux("select-pane", "-t", exactPane(renamed), "-T", "✳ Tashkent trip planning, day two"); err != nil {
 		t.Fatalf("moving the pane title on: %v: %s", err, out)
 	}
 	autoTitleSessions(osSelf, liveSessions(t, osSelf), time.Now())
-	if got := liveSessions(t, osSelf)[0].Title; got != "Tashkent trip planning" {
-		t.Errorf("@title = %q; the title should freeze at the first summary", got)
+	settled := liveSessions(t, osSelf)[0]
+	if settled.Title != "Tashkent trip planning" {
+		t.Errorf("@title = %q; the title should freeze at the first summary", settled.Title)
+	}
+	// And so does the name, or a session would rename itself under whoever was
+	// reading it every time Claude revised its summary.
+	if settled.Name != renamed {
+		t.Errorf("name = %q, want it to stay %q", settled.Name, renamed)
 	}
 	if evs := autonamed(t, rec); len(evs) != 1 {
 		t.Errorf("emitted %d events, want 1 for the life of the session", len(evs))
@@ -179,7 +191,10 @@ func TestAutoTitleReachesTheSessionsResponse(t *testing.T) {
 		t.Fatalf("response is not a session list (%v): %s", err, w.Body)
 	}
 
-	got := findSession(t, body, name)
+	// The row the poll serves is under the name the rename gave it, on the same
+	// poll: a lobby addressing the old id would be talking to nothing.
+	const renamed = "tashkent-trip-planning"
+	got := findSession(t, body, renamed)
 	// The poll that stamps is the one that serves it. A title arriving a cache
 	// cycle late is the difference between a card that reads right and a card
 	// that reads as twelve random characters for five seconds.
@@ -194,7 +209,7 @@ func TestAutoTitleReachesTheSessionsResponse(t *testing.T) {
 	}
 
 	// And it is on the session, not just in the answer.
-	if live := findSession(t, liveSessions(t, osSelf), name); live.Title != "Tashkent trip planning" {
+	if live := findSession(t, liveSessions(t, osSelf), renamed); live.Title != "Tashkent trip planning" {
 		t.Errorf("@title on the live session = %q, want the summary", live.Title)
 	}
 }
@@ -276,8 +291,11 @@ func TestAutoTitleWritesAParseableRowForAnOversizedSummary(t *testing.T) {
 	if len(after) != 1 {
 		t.Fatalf("%d sessions after the rule ran, want 1 — the row shifted: %+v", len(after), after)
 	}
-	if after[0].Name != name {
-		t.Errorf("Name = %q, want %q — the row shifted", after[0].Name, name)
+	// The name is derived from the summary and capped to slug.MaxNameLen, which
+	// is shorter than the title cap. What matters here is that the row is still
+	// ONE parseable session, not which name it landed on.
+	if n := len(after[0].Name); n == 0 || n > slug.MaxNameLen {
+		t.Errorf("Name = %q (%d bytes), want a derived name within %d", after[0].Name, n, slug.MaxNameLen)
 	}
 	if after[0].State != stateRunning {
 		t.Errorf("State = %q, want %q — the row shifted", after[0].State, stateRunning)

@@ -58,6 +58,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		copyModeSession(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "grid" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		sizeSessionGrid(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "capture" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -161,15 +169,18 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 
 // setSessionTitle is POST /sessions/{name}/title — every retitle there is.
 //
-// A session's name is an opaque id fixed at creation (ADR-0019), so a title
-// never moves anything else: no rename, no stores to carry, and no
-// re-navigation of the terminal iframe for the person who typed it. PATCH
-// /sessions/{name} used to carry a rename alongside the stamp and was retired
-// with the derivation that produced the new name.
+// The title is what everyone reads, and since ADR-0022 the tmux NAME follows
+// it, so the surfaces the lobby does not draw (`tmux ls`, the status bar, the
+// window title) read as words again. name_from_title.go holds that rule and
+// the six stores a rename has to carry. PATCH /sessions/{name} used to carry a
+// rename alongside the stamp; the rename is derived now, so a caller has
+// nothing to supply.
 //
 // Three callers: the lobby stamping a title onto a session it has just created
 // (creation reaches no server, so this is the first the API hears of it),
-// editing one from a card, and clearing a title back to nothing.
+// editing one from a card, and clearing a title back to nothing. Clearing
+// leaves the name where it is: an empty title derives nothing, and inventing a
+// name for a running session would be worse than keeping a stale one.
 func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string) {
 	var body struct {
 		Title string `json:"title"`
@@ -178,9 +189,13 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if !stampTitle(w, osUser, name, slug.CleanTitle(body.Title)) {
+	title := slug.CleanTitle(body.Title)
+	if !stampTitle(w, osUser, name, title) {
 		return
 	}
+	// After the stamp, never before: a rename that landed first would leave a
+	// session named for a title it does not carry if the stamp then failed.
+	name = renameToDerivedName(osUser, name, title, "api")
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.retitled", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.client": "api",

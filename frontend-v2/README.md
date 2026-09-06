@@ -183,14 +183,14 @@ src/
     title.ts             Normalizes a display TITLE: control characters to a
                          space, whitespace runs collapsed, capped at 64 code
                          points. Mirrors Go's slug.CleanTitle, which tmux-api
-                         runs on every title it stores. It used to derive a
-                         session NAME from the title too; ADR-0019 ended that
-                         and session-id.ts mints the name instead
+                         runs on every title it stores. The session NAME is
+                         derived from the title too (ADR-0022), but server-side
+                         in Go, where the collision check can see every session
     session-id.ts        Mints a session's NAME: 12 characters of lowercase
                          Crockford base32 from crypto.getRandomValues, and the
-                         test that says a name is one of ours. The name is an
-                         opaque id that never moves (ADR-0019), minted here
-                         because creating a session reaches no server. Mirrored
+                         test that says a name is one of ours. A session is
+                         minted with an id here because creating one reaches no
+                         server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
@@ -534,6 +534,10 @@ src/
                          name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
+    menu.logic.ts        PURE placement for a fixed ⋯ popup: which side of the
+                         row it opens on, where its left edge lands, how tall it
+                         may grow. jsdom does no layout, so this is the only
+                         place the decision can be tested
     overlay.ts           A backdrop's press-to-dismiss, on the node rather than
                          as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
@@ -695,6 +699,8 @@ src/
     notifications.ts     Wires the above + push into the running app
   pwa/
     register.ts          Registers /sw.js + the notification-tap handoff
+    tap.ts               PURE: which pending notification a launch belongs to,
+                         and the reason the journal is told
     push.ts              Web Push subscribe/heal (best-effort)
     vapid.ts             VAPID base64url → Uint8Array
   mobile/
@@ -744,6 +750,7 @@ src/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload
   telemetry/track.ts     Batched usage events → tmux-api /telemetry (ADR-0006)
+  telemetry/device.ts    Per-installation id stamped on every event, mirrored to IndexedDB for sw.js
   telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation

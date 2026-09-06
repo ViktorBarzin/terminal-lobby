@@ -1,0 +1,145 @@
+# A session name reads as words again
+
+[ADR-0019](0019-a-session-name-is-an-id-not-a-label.md) made a tmux session name
+an opaque 12-character id and moved everything a person reads into `@title`.
+Inside the lobby that worked: cards, the tab title, the palette, the dock and
+the push bodies all show titles, and the id sits underneath as an identity that
+does not move.
+
+Outside the lobby it did not. `tmux ls`, the status bar's `#S`, the terminal
+window title from `set-titles-string`, and `choose-tree` all show a **name**,
+and none of them can be taught to show a title without editing each user's own
+configuration. Viktor, 2026-09-06: *"let's use the human readable name in the
+tmux session name. now I see the tmux session name is the uuid style one."*
+
+ADR-0019 shipped a `tls` command for the `tmux ls` case, which covers one
+surface out of four and only for someone who knows to type it.
+
+## What we decided
+
+**A title carries the tmux name with it.** When a title lands, tmux-api derives
+a name from it and renames the session, carrying the rename into everything
+keyed by the old name. The rule lives in `tmux-api/name_from_title.go` and fires
+from the two places a title can arrive: `POST /sessions/{name}/title`, and the
+auto-title pass that adopts Claude Code's conversation summary.
+
+A session is still **created** with a minted id, in the browser, reaching no
+server. It keeps that id until its first title, which for a fresh session is
+seconds into the first turn. So the id is still the identity a session starts
+with, and it is still what an untitled session is called.
+
+Four properties make the derivation safe to run on every title:
+
+- **It is a fixed point.** `derivedNameFor` returns "no change" when the name is
+  already what the title produces, including the `-N` variants a collision
+  produces. Without that, a session that lost the base name to a sibling would
+  walk `deploy-2` → `deploy-3` → `deploy-4` on every poll.
+- **A collision suffixes.** tmux refuses a duplicate session name outright, so
+  two sessions with the same title get `deploy` and `deploy-2` rather than one
+  session or an error.
+- **An unusable title changes nothing.** A CJK or emoji-only title, or an empty
+  one, derives nothing, and the session keeps the name it has. Clearing a title
+  therefore leaves the name where the last title put it.
+- **Machine-made sessions are left alone.** `reservedName` covers the `qa-`,
+  `t3e2e-`, `tlp-t` and pool-slot prefixes, which other services recognise by
+  name.
+
+A session titled BEFORE this rule existed is never reached by it — nothing
+retitles a conversation that has been running for a week, and on the day this
+landed that was 29 of wizard's sessions, every one of them still reading as an
+id. `backfillDerivedNames` runs on each listing and covers them, and covers a
+session restored under an id. It is restricted to **minted ids**: the retitle
+path renames whatever the old name was, because someone asking for a new title
+is asking for it, while this pass acts on a title nobody just touched and may
+only replace a name that says nothing. A shell somebody called `beads` keeps
+that name whatever its title says.
+
+## What this costs, and what pays it
+
+ADR-0019 listed the costs of a derived name. They are real, and this is what
+answers each one.
+
+| ADR-0019's objection | what answers it |
+|---|---|
+| six stores keyed by the name | `carryRenameAcrossStores`, which stayed in the tree for the migration and repins the grid hooks tmux itself holds |
+| a collision with nobody to ask | `slug.Free`'s suffix walk, backed by tmux refusing duplicates |
+| the terminal iframe re-navigating mid-turn | `followRenamedSelection` moves the selection by tmux session id, which a rename does not change, or by `bornAs` when no poll ever saw the old name |
+| the phantom-session trap | narrowed, not closed. See below. |
+
+**The phantom-session trap is the one that stays open.** A tab holding
+`?arg=<old name>` reconnects through `tmux new-session -A -s <name>`, which
+CREATES the old name as an empty session and leaves the person looking at a
+blank shell while their conversation runs on under the new name.
+`followRenamedSelection` is what narrows it: the selection moves onto the new
+name, which re-navigates the terminal, and both retitle paths refresh
+immediately rather than waiting out a poll. The window is one round trip for a
+typed title and one poll for a summary. A tab that is asleep through both, and
+reconnects before its next poll, can still land on a phantom.
+
+Closing it properly means the attach contract carrying something that survives a
+rename — tmux's `#{session_id}`, or a lookup step between `?arg=` and
+`new-session`. That is a change to ttyd's spawn path and is not made here.
+
+### The gap this left, and what closed it (2026-09-06)
+
+`followRenamedSelection` matched on tmux's session id, which a tab can only know
+by having seen the session in an earlier poll — and for a session it has just
+created it usually has not. A title lands seconds into the first turn while
+`GET /sessions` is behind a 5-second cache, so the list can go straight from
+"no such session" to the new name. Measured the evening this landed: of four
+sessions created, two were renamed 3-5s in, before any poll had listed them.
+Both left their tab holding a name nothing answered to.
+
+What that cost was more than a phantom. The stale mount is the SELECTED one, and
+`pruneKept` keeps the selection whatever the list says — so it stayed mounted
+with its read-write client attached to the renamed session. Clicking the real
+session in the sidebar then read `driven: true` from that client and joined as a
+VIEWER, which is how a session came up read-only a minute after being created.
+Viktor, 2026-09-06: *"once the session is created, it's renamed then the web ui
+shows it as view-only and i have to change the type to take action."*
+
+So the first rename away from a minted id records that id in
+`sessionio.OptionBornAs`, and the session list carries it as `bornAs`. That is
+the link between the name a tab is holding and the session it belongs to when no
+id can be matched, and the selection follows it (`renamesBetween`). Written only
+for a minted id, and only once: a session renamed from a readable name has been
+listed under that name all along, and overwriting would replace the one name a
+stranded tab is actually holding.
+
+The per-browser records keyed by name move with it — the watch choice, the view
+a session was being read in, and an unsent draft (`carryRenamedRecords`). The
+watch choice has to, rather than merely wanting to: the automatic rule reads
+`driven`, which counts this client's own attach, so a view remounting under the
+new name would resolve a session it is itself driving as one somebody else is
+driving.
+
+## Considered options
+
+- **Show the title on tmux's own surfaces instead.**
+  `#{?#{@title},#{@title},#S}` renders correctly on tmux 3.4 today, and would
+  have given readable status bars and window titles with nothing renaming. It
+  was offered and not chosen: the status bar and `set-titles-string` live in
+  each user's own `~/.tmux.conf` (oh-my-tmux here), so the fix would have to be
+  repeated per user and per surface, and `tmux ls` would still print ids.
+- **Rename only once, at the first title.** Cheaper in renames, and it hits the
+  worst case anyway: the first title is exactly the one that arrives seconds
+  into the first turn while a tab is holding the old name.
+- **Keep ADR-0019 and extend `tls`.** One more surface covered, three not.
+
+## Consequences
+
+- `tmux ls` reads as words, and so does everything else that prints `#S`. `tls`
+  keeps working and is now mostly redundant for titled sessions; it still earns
+  its place for untitled ones, where it prints the id beside an empty title.
+- Renaming is an ordinary background event again, so anything keyed by a session
+  name has to either follow the rename or key by something else. The six stores
+  follow, and so do the three per-browser records that are keyed by name — the
+  watch choice, the view mode and the composer draft (`carryRenamedRecords`).
+  Read/unread visits key by tmux's session id and need nothing.
+- Two sessions can no longer be told apart by name alone in the way an id
+  guaranteed: `deploy` and `deploy-2` are two conversations about deploying. The
+  id is gone from the name once a title lands, which is the trade this makes.
+- `slug.FromTitle` / `Free` / `MaxNameLen` have the lobby as a consumer again,
+  alongside t3-bridge.
+- The `session.renamed` event now carries `tl.client` values `api` (a typed
+  title) and `autotitle` (an adopted summary), alongside the existing `migrate`.

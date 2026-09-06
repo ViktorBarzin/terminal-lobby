@@ -46,6 +46,17 @@ export interface Session {
    *  survive a tmux server restart, which is why it is not the session's name.
    *  Absent from a server that predates it. */
   id?: string;
+  /** The name this session was FIRST created with, present only once it has
+   *  been renamed away from a minted id (tmux-api sessionio.OptionBornAs).
+   *
+   *  It is what makes a rename followable when `id` cannot help. A session is
+   *  renamed as soon as its first title lands (ADR-0022) — seconds in — and the
+   *  session list is behind a 5-second cache, so a tab that created the session
+   *  routinely never sees it under the id it minted. With no previous row to
+   *  match an id against, this is the only link between the name that tab is
+   *  holding and the session it belongs to. Absent for a session that never
+   *  moved, and from a server that predates the field. */
+  bornAs?: string;
   /** The display title a person chose — arbitrary text, up to 64 code points,
    *  from the session's @title option. Absent means the session has no title
    *  and its `name` is what gets shown, which is where every session that

@@ -48,6 +48,8 @@ const native = vi.hoisted(() => ({
   active: null as null | (() => boolean | undefined),
   /** Fire the hand-up, standing in for attention.ts's `signal` action. */
   signal: null as null | ((kind: "bell" | "output") => void),
+  /** Fire a grid claim, standing in for a landed fit or a focus. */
+  claim: null as null | ((cols: number, rows: number) => void),
   /** FALSE stands in for the window before the real component's two dynamic
    *  imports resolve, when it has handed no lever back yet. */
   readyOnMount: true,
@@ -58,6 +60,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     args?: string;
     active?: boolean;
     onAttention?: (kind: "bell" | "output") => void;
+    onGrid?: (cols: number, rows: number) => void;
     onReady?: (control: {
       reconnect: () => void;
       ask: () => void;
@@ -68,6 +71,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     native.active = () => props.active;
     native.args = () => props.args;
     native.signal = (kind) => props.onAttention?.(kind);
+    native.claim = (cols, rows) => props.onGrid?.(cols, rows);
     if (native.readyOnMount) {
       props.onReady?.({
         reconnect: () => void native.retries++,
@@ -76,6 +80,21 @@ vi.mock("../src/components/TerminalNative", () => ({
       });
     }
     return <div class="tl-terminal-native" />;
+  },
+}));
+
+/**
+ * Every grid claim that reached the wire, as "SESSION COLSxROWS".
+ *
+ * Only this one export is replaced: SessionView's neighbours import the same
+ * module, and a whole-module mock would take the session list and the layout
+ * with it.
+ */
+const grids = vi.hoisted(() => [] as string[]);
+vi.mock("../src/lib/lobby-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/lib/lobby-api")>()),
+  setSessionGrid: async (name: string, cols: number, rows: number) => {
+    grids.push(`${name} ${cols}x${rows}`);
   },
 }));
 
@@ -116,7 +135,10 @@ afterEach(() => {
   native.active = null;
   native.args = null;
   native.signal = null;
+  native.claim = null;
   native.readyOnMount = true;
+  grids.length = 0;
+  vi.useRealTimers();
   // The view mode persists per session (store/viewmode.ts), and these tests
   // switch views, so a name reused across files would inherit the deviation.
   localStorage.clear();
@@ -279,6 +301,78 @@ describe("the attach args <SessionView> gives the terminal", () => {
     render(() => <SessionView session="qa-native-rw" />);
     expect(native.args?.()).toContain("arg=qa-native-rw");
     expect(native.args?.()).not.toContain("arg=ro");
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * Claiming the grid
+ * ------------------------------------------------------------------ */
+
+/**
+ * The terminal says what size it is; this view decides whether that becomes
+ * "size this session's tmux window to me".
+ *
+ * Both refusals below have to live here. The terminal is handed `args`, not a
+ * session, so it cannot name the session; and the SERVER cannot make either
+ * call — two devices of one person arrive with one identity header, and no HTTP
+ * request carries the tmux client it belongs to. So Watch mode's promise, that a
+ * phone opening a session never reflows the desktop driving it, is kept by the
+ * phone declining to speak.
+ */
+describe("the grid claim <SessionView> makes for the terminal", () => {
+  it("claims the grid for the session it is showing", () => {
+    render(() => <SessionView session="qa-grid-own" />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-own 231x62"]);
+  });
+
+  /** arg5's other half. A read-only client taking the size is the whole of what
+   *  the pin refuses, and this is the only place that can refuse it. */
+  it("claims nothing while watching", () => {
+    localStorage.setItem(WATCH_KEY_PREFIX + "qa-grid-watch", "ro");
+    render(() => <SessionView session="qa-grid-watch" />);
+    native.claim?.(390, 40);
+    expect(grids).toEqual([]);
+  });
+
+  /** The endpoint acts on the caller's own OS user, so a foreign attach could
+   *  only ever 404 against a name that account does not have. */
+  it("claims nothing on somebody else's session", () => {
+    render(() => <SessionView session="qa-grid-shared" owner="emo" me={() => "wizard"} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual([]);
+  });
+
+  /** Your own session reached through the owner arg is still yours. */
+  it("claims a session of your own that names its owner", () => {
+    render(() => <SessionView session="qa-grid-mine" owner="wizard" me={() => "wizard"} />);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-mine 231x62"]);
+  });
+
+  /**
+   * The claim is idempotent and cheap, but the terminal fires one on every
+   * landed fit and every focus. A drag-resize or a click-happy minute would
+   * otherwise be a request each.
+   */
+  it("says the same grid once, and a changed one straight away", () => {
+    vi.useFakeTimers();
+    render(() => <SessionView session="qa-grid-quiet" />);
+    native.claim?.(231, 62);
+    native.claim?.(231, 62);
+    native.claim?.(231, 62);
+    expect(grids).toEqual(["qa-grid-quiet 231x62"]);
+
+    native.claim?.(120, 40); // a real resize is news whenever it happens
+    expect(grids).toEqual(["qa-grid-quiet 231x62", "qa-grid-quiet 120x40"]);
+
+    vi.advanceTimersByTime(2000); // and the quiet period expires
+    native.claim?.(120, 40);
+    expect(grids).toEqual([
+      "qa-grid-quiet 231x62",
+      "qa-grid-quiet 120x40",
+      "qa-grid-quiet 120x40",
+    ]);
   });
 });
 

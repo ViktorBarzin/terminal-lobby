@@ -53,16 +53,43 @@ function lobby(url = "/", focused = false, ack = true): FakeClient & { got: unkn
 }
 
 /**
- * The smallest IndexedDB the worker's readSeenDone() will accept: one store, one
- * record. `names === null` means the page has never written, which is the
- * fallback path.
+ * The three databases the worker reads, in one fake.
+ *
+ * They are separate databases on purpose and the worker opens each at version 1:
+ * `tl-badge`/`seen` is what the page has already shown (store/visits.ts),
+ * `tl-notif`/`pending` is the tap stash it writes itself, and `tl-device`/`meta`
+ * mirrors the telemetry device id a worker cannot read out of localStorage. A
+ * single-slot fake answered every get with the same record, which made a stash
+ * write indistinguishable from a seen-set read.
+ *
+ * `seen === null` means the page has never written, which is the fallback path.
  */
-function fakeIndexedDB(names: string[] | null) {
+interface FakeDbs {
+  seen?: string[] | null;
+  device?: string | null;
+  /** The stash, live: the worker's writes land here and the test reads them. */
+  pending?: Map<string, unknown>;
+}
+
+function fakeIndexedDB(dbs: FakeDbs) {
+  const pending = dbs.pending ?? new Map<string, unknown>();
+  const seen = dbs.seen ?? null;
   return {
-    open: () => {
+    open: (name: string) => {
       const req: Record<string, unknown> = {};
-      const get: Record<string, unknown> = { result: names === null ? undefined : { names } };
-      const store = { get: () => get, put: () => {} };
+      const store = {
+        get: (k: string) => {
+          const g: Record<string, unknown> = {};
+          if (name === "tl-badge") g.result = seen === null ? undefined : { names: seen };
+          else if (name === "tl-device") g.result = dbs.device ?? undefined;
+          else g.result = pending.get(k);
+          return g;
+        },
+        put: (v: unknown, k: string) => {
+          if (name === "tl-notif") pending.set(k, v);
+        },
+        delete: (k: string) => pending.delete(k),
+      };
       const tx: Record<string, unknown> = { objectStore: () => store };
       req.result = { transaction: () => tx, close: () => {}, createObjectStore: () => {} };
       setTimeout(() => {
@@ -74,33 +101,90 @@ function fakeIndexedDB(names: string[] | null) {
   };
 }
 
+interface TelemetryEvent {
+  name: string;
+  attrs: Record<string, unknown>;
+}
+
 /** Load the real worker with a stubbed global scope and return its listeners. */
 function loadWorker(
   clients: FakeClient[],
-  openWindow = vi.fn(async () => null),
+  openWindow: unknown = vi.fn(async () => null),
   seen: string[] | null = null,
+  dbs: FakeDbs = {},
+  /**
+   * `origin` is what self.location reports (a plain-http dev origin is a secure
+   * context, so a worker really does run on one), and `putOk` whether the server
+   * accepted the subscription PUT.
+   */
+  env: { origin?: string; putOk?: boolean } = {},
 ) {
   const listeners = new Map<string, (e: unknown) => void>();
   const navigator = { setAppBadge: vi.fn(async () => {}), clearAppBadge: vi.fn(async () => {}) };
+  const pending = dbs.pending ?? new Map<string, unknown>();
+  /** Every telemetry event the worker posted, flattened out of its batches. */
+  const events: TelemetryEvent[] = [];
+  /** Every non-telemetry request, so the re-subscribe PUT body is inspectable. */
+  const requests: { url: string; init?: Record<string, unknown> }[] = [];
+  const vapid = "BJ_test_key";
+  interface FakeResponse {
+    ok: boolean;
+    status: number;
+    text: () => Promise<string>;
+  }
+  const fetch = vi.fn(
+    async (url: string, init?: Record<string, unknown>): Promise<FakeResponse> => {
+      if (url === "/api/sessions/telemetry") {
+        const body = JSON.parse(String(init?.body)) as { events: TelemetryEvent[] };
+        events.push(...body.events);
+        return { ok: true, status: 200, text: async () => "" };
+      }
+      requests.push({ url, init });
+      const ok = init?.method === "PUT" ? (env.putOk ?? true) : true;
+      return { ok, status: ok ? 200 : 400, text: async () => vapid };
+    },
+  );
   const self = {
     addEventListener: (t: string, fn: (e: unknown) => void) => listeners.set(t, fn),
     skipWaiting: vi.fn(),
     navigator,
-    registration: { showNotification: vi.fn(async () => {}) },
+    location: (() => {
+      const origin = env.origin ?? "https://terminal.viktorbarzin.me";
+      return { origin, protocol: new URL(origin).protocol };
+    })(),
+    registration: {
+      showNotification: vi.fn(async () => {}),
+      pushManager: {
+        subscribe: vi.fn(async () => ({
+          endpoint: "https://push.example/new",
+          toJSON: () => ({ endpoint: "https://push.example/new", keys: { p256dh: "k", auth: "a" } }),
+        })),
+      },
+    },
     clients: {
       matchAll: vi.fn(async () => clients),
       openWindow,
     },
   };
-  new Function("self", "indexedDB", "MessageChannel", "setTimeout", "URL", "atob", SRC)(
+  new Function(
+    "self",
+    "indexedDB",
+    "MessageChannel",
+    "setTimeout",
+    "URL",
+    "atob",
+    "fetch",
+    SRC,
+  )(
     self,
-    fakeIndexedDB(seen),
+    fakeIndexedDB({ ...dbs, seen, pending }),
     MessageChannel,
     setTimeout,
     URL,
     (s: string) => s,
+    fetch,
   );
-  return { listeners, self, navigator, openWindow };
+  return { listeners, self, navigator, openWindow, pending, events, requests, fetch };
 }
 
 /** Fire notificationclick the way the browser does, and wait for waitUntil. */
@@ -113,6 +197,16 @@ async function tap(listeners: Map<string, (e: unknown) => void>, session: string
   listeners.get("notificationclick")!(event);
   await Promise.all(waits);
   return event;
+}
+
+/** The events of one name, in the order the worker posted them. */
+const named = (events: TelemetryEvent[], name: string) => events.filter((e) => e.name === name);
+
+/** The single event of one name, failing loudly when the worker emitted none. */
+function only(events: TelemetryEvent[], name: string): TelemetryEvent {
+  const hits = named(events, name);
+  expect(hits).toHaveLength(1);
+  return hits[0] as TelemetryEvent;
 }
 
 describe("notificationclick routing", () => {
@@ -236,31 +330,387 @@ describe("push badge", () => {
 });
 
 /**
- * The two copies of every PWA asset.
+ * There is ONE copy of every PWA asset now.
  *
- * `frontend-v2/public/` is what vite serves and what these tests drive;
- * `frontend/` is what the Debian package installs to /usr/local/share/ttyd
- * (release/manifest.go). Nothing else keeps the pairs in step, and the natural
- * place to edit is the copy that does NOT ship — so an edit to one alone means
- * either the fix never reaches the box, or dev and production quietly disagree.
+ * This block used to pin `frontend/` byte-identical to `frontend-v2/public/`,
+ * because the Debian package installed the first and vite served the second, so
+ * an edit to one alone either never reached the box or made dev and production
+ * disagree. release/manifest.go now points at `frontend-v2/public/` and the
+ * `frontend/` copies are deleted, so the drift this guarded has no second copy
+ * to happen in. What replaced it lives in release/manifest_test.go:
+ * TestEverySourceFileInTheManifestExistsInTheRepo and
+ * TestEveryStagedSourceDirectoryIsCopiedIntoTheStage, which check that the file
+ * the manifest names exists and that build-deb.sh stages it.
  *
- * ADR-0014 diagnosed exactly this for sw.js and pinned sw.js alone. The other
- * four assets have the same two copies and had no pin, so a new icon or a
- * changed `start_url` in frontend-v2/public/ passed CI, rendered on the dev
- * server, and shipped nothing.
+ * The one thing worth keeping here is that the worker this suite drives IS the
+ * worker the package ships, since every test above would otherwise be exercising
+ * a file nobody installs.
  */
-describe("the shipped PWA assets", () => {
-  const here = dirname(fileURLToPath(import.meta.url));
-  const bytes = (p: string) => readFileSync(resolve(here, p));
+describe("the shipped service worker", () => {
+  it("is the file release/manifest.go installs", () => {
+    const manifest = readFileSync(
+      resolve(dirname(fileURLToPath(import.meta.url)), "../../release/manifest.go"),
+      "utf8",
+    );
+    expect(manifest).toContain("frontend-v2/public/sw.js");
+    expect(manifest).not.toContain('"frontend/sw.js"');
+  });
+});
+
+/**
+ * B1: the tap that left no trace.
+ *
+ * Measured over 7 days of notify.stash_read on the deployed build: 51 reads of
+ * 795 routed, and 376 came back `absent`, with no record at all. The click handler
+ * is why. When window clients exist it posts the switch and waits ACK_MS for a
+ * reply, and on iOS the page is not running JS yet when clients.matchAll()
+ * resolves, so postMessage to a waking client is dropped (WebKit bug 268797).
+ * Nobody answers, the loop ends, and the handler used to return having written
+ * NOTHING. The tap simply disappeared.
+ *
+ * So every branch now leaves a record. It costs one IndexedDB write on a path
+ * that already worked, and the page consumes the record when it acts on the
+ * message, so a warm tap that DID land cannot route twice.
+ */
+describe("notificationclick always leaves a tap record", () => {
+  const stashed = (pending: Map<string, unknown>, session: string) =>
+    pending.get(session) as { session: string; tapped: boolean } | undefined;
+
+  it("records the tap when a lobby ACKNOWLEDGED the switch", async () => {
+    const app = lobby("http://x/", true, true);
+    const { listeners, pending } = loadWorker([app]);
+
+    await tap(listeners, "k7m2q9x4tp0v");
+
+    expect(app.got).toHaveLength(1);
+    expect(stashed(pending, "k7m2q9x4tp0v")).toMatchObject({
+      session: "k7m2q9x4tp0v",
+      tapped: true,
+    });
+  });
+
+  it("records the tap when NOBODY answers, the iPhone case", async () => {
+    // Two lobby-shaped windows, neither running JS yet. This is what a warm
+    // iOS tap looks like from inside the worker.
+    const asleep = lobby("http://x/", true, false);
+    const alsoAsleep = lobby("http://x/", false, false);
+    const { listeners, pending } = loadWorker([asleep, alsoAsleep]);
+
+    await tap(listeners, "b3n8h1x5r2wq");
+
+    expect(asleep.got).toHaveLength(1); // posted to
+    expect(alsoAsleep.got).toHaveLength(1); // and to
+    expect(stashed(pending, "b3n8h1x5r2wq")).toMatchObject({ tapped: true });
+  });
+
+  it("records the tap on the cold openWindow branch", async () => {
+    const { listeners, pending } = loadWorker([]);
+
+    await tap(listeners, "vpn");
+
+    expect(stashed(pending, "vpn")).toMatchObject({ tapped: true });
+  });
+
+  it("mirrors the record into the legacy `last` slot for an older page", async () => {
+    const { listeners, pending } = loadWorker([lobby("http://x/", true, false)]);
+
+    await tap(listeners, "myprotein");
+
+    expect(pending.get("last")).toMatchObject({ session: "myprotein", tapped: true });
+  });
+
+  it("writes NOTHING for a session-less test tap", async () => {
+    const { listeners, pending } = loadWorker([lobby("http://x/", true, true)]);
+
+    await tap(listeners, null);
+
+    expect([...pending.keys()]).toEqual([]);
+  });
+});
+
+/**
+ * notify.tap: which arm the click took.
+ *
+ * The click handler emitted nothing at all, so the only instrument on the tap
+ * path was the page's notify.stash_read, which cannot see a tap that never
+ * reached a page. This is the other half: what the WORKER did.
+ */
+describe("notify.tap telemetry", () => {
+  const kinds = (events: TelemetryEvent[]) => named(events, "notify.tap").map((e) => e.attrs["tl.kind"]);
 
   it.each([
-    "sw.js",
-    "manifest.webmanifest",
-    "icon-192.png",
-    "icon-512.png",
-    "icon-512-maskable.png",
-  ])("frontend/%s is byte-identical to frontend-v2/public/%s", (name) => {
-    expect(bytes(`../../frontend/${name}`).equals(bytes(`../public/${name}`))).toBe(true);
+    ["acked", () => [lobby("http://x/", true, true)]],
+    ["posted", () => [lobby("http://x/", true, false)]],
+    ["opened", () => []],
+  ])("reports %s", async (kind, clients) => {
+    const { listeners, events } = loadWorker(clients());
+    await tap(listeners, "k7m2q9x4tp0v");
+    expect(kinds(events)).toEqual([kind]);
+  });
+
+  it("reports a session-less tap as focused, with no tl.session", async () => {
+    const { listeners, events } = loadWorker([lobby("http://x/", true, true)]);
+
+    await tap(listeners, null);
+
+    const ev = only(events, "notify.tap");
+    expect(ev.attrs["tl.kind"]).toBe("focused");
+    expect(ev.attrs).not.toHaveProperty("tl.session");
+  });
+
+  it("reports failed when the browser cannot open a window", async () => {
+    // No lobby and no openWindow: nothing carried the tap anywhere, and that is
+    // the one outcome worth telling apart from a routed one.
+    const { listeners, events } = loadWorker([], null);
+    await tap(listeners, "vpn");
+    expect(kinds(events)).toEqual(["failed"]);
+  });
+
+  it("carries the session and the window count", async () => {
+    const { listeners, events } = loadWorker([lobby("http://x/", true, true), lobby("http://x/")]);
+
+    await tap(listeners, "k7m2q9x4tp0v");
+
+    const ev = only(events, "notify.tap");
+    expect(ev.attrs["tl.session"]).toBe("k7m2q9x4tp0v");
+    expect(ev.attrs["tl.count"]).toBe(2);
+  });
+
+  it("stamps the device id the page mirrored into IndexedDB", async () => {
+    const device = "0123456789abcdef0123456789abcdef";
+    const { listeners, events } = loadWorker([lobby("http://x/", true, true)], undefined, null, {
+      device,
+    });
+
+    await tap(listeners, "k7m2q9x4tp0v");
+
+    // Every worker event carries it, not just the tap: a stash written on this
+    // phone can then be joined to the read that consumed it.
+    for (const ev of events) expect(ev.attrs["tl.device"]).toBe(device);
+  });
+
+  it("omits tl.device rather than minting one when the mirror is empty", async () => {
+    const { listeners, events } = loadWorker([lobby("http://x/", true, true)]);
+
+    await tap(listeners, "k7m2q9x4tp0v");
+
+    expect(events.length).toBeGreaterThan(0);
+    for (const ev of events) expect(ev.attrs).not.toHaveProperty("tl.device");
+  });
+});
+
+/**
+ * Declarative Web Push (iOS/iPadOS 18.4, Safari 18.4).
+ *
+ * The server sends ONE document that both worlds read. Chrome never runs the
+ * declarative parser and gets the whole JSON through event.data.json(). WebKit
+ * parses it, and because the server sets top-level "mutable": true it still
+ * starts this worker, but event.data is NULL and the payload arrives as
+ * event.notification, with our own fields on event.notification.data.
+ */
+describe("push, the declarative shape", () => {
+  /** The exact wire shape tmux-api emits, per the pushsender contract. */
+  const declarative = (over: Record<string, unknown> = {}) => ({
+    notification: {
+      title: "Worktree cleanup finished",
+      body: "Claude finished its turn.",
+      navigate: "https://terminal.viktorbarzin.me/?session=k7m2q9x4tp0v",
+      tag: "tl-k7m2q9x4tp0v",
+      app_badge: 2,
+      data: {
+        session: "k7m2q9x4tp0v",
+        waiting: { a: ["k7m2q9x4tp0v"], d: ["b3n8h1x5r2wq"] },
+      },
+      ...over,
+    },
+  });
+
+  const fire = async (
+    listeners: Map<string, (e: unknown) => void>,
+    event: Record<string, unknown>,
+  ) => {
+    const waits: Promise<unknown>[] = [];
+    listeners.get("push")!({ data: null, waitUntil: (p: Promise<unknown>) => waits.push(p), ...event });
+    await Promise.all(waits);
+  };
+
+  it("shows NOTHING itself, WebKit is already displaying the payload's banner", async () => {
+    const { listeners, self } = loadWorker([]);
+    await fire(listeners, declarative());
+    // Calling showNotification here would replace WebKit's own notification,
+    // and a replacement needs its own valid absolute navigate or it throws.
+    expect(self.registration.showNotification).not.toHaveBeenCalled();
+  });
+
+  it("still stashes the session out of notification.data", async () => {
+    const { listeners, pending } = loadWorker([]);
+    await fire(listeners, declarative());
+    expect(pending.get("k7m2q9x4tp0v")).toMatchObject({
+      session: "k7m2q9x4tp0v",
+      tapped: false,
+    });
+  });
+
+  it("still subtracts this device's seen set from the named waiting list", async () => {
+    // 1 awaiting + 1 finished, and the finished one has been read here, so 1.
+    const { listeners, navigator } = loadWorker([], undefined, ["b3n8h1x5r2wq"]);
+    await fire(listeners, declarative());
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(1);
+  });
+
+  // WebKit does not put app_badge on the Notification it builds. A Notification
+  // carries title, body, tag and data; the count reaches the worker as
+  // PushEvent.appBadge. Reading it off the notification found undefined every
+  // time, so the fallback never fired.
+  it("falls back to the event's appBadge when the waiting list was over the cap", async () => {
+    const { listeners, navigator } = loadWorker([], undefined, []);
+    await fire(listeners, { appBadge: 2, ...declarative({ data: { session: "k7m2q9x4tp0v" } }) });
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(2);
+  });
+
+  it("still reads a payload-shaped app_badge, for an engine that hands it over", async () => {
+    const { listeners, navigator } = loadWorker([], undefined, []);
+    await fire(listeners, declarative({ data: { session: "k7m2q9x4tp0v" } }));
+    expect(navigator.setAppBadge).toHaveBeenCalledWith(2);
+  });
+
+  it("leaves the icon alone when the payload carries no app_badge (the test push)", async () => {
+    const { listeners, navigator, pending } = loadWorker([]);
+    await fire(listeners, {
+      notification: {
+        title: "Test notification",
+        body: "If you can read this, push delivery works on this device.",
+        navigate: "https://terminal.viktorbarzin.me/",
+        tag: "tl-test",
+        data: { session: "" },
+      },
+    });
+    expect(navigator.setAppBadge).not.toHaveBeenCalled();
+    expect(navigator.clearAppBadge).not.toHaveBeenCalled();
+    expect([...pending.keys()]).toEqual([]); // a diagnostic never stashes
+  });
+
+  it("survives a notification with no data at all", async () => {
+    const { listeners, self, navigator } = loadWorker([]);
+    await fire(listeners, { notification: { title: "t", body: "b", tag: "tl" } });
+    expect(self.registration.showNotification).not.toHaveBeenCalled();
+    expect(navigator.setAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("Chrome, given the SAME document, still shows its own notification", async () => {
+    // Chrome ignores web_push/mutable and hands the whole JSON to event.data.
+    const { listeners, self, pending } = loadWorker([]);
+    const waits: Promise<unknown>[] = [];
+    listeners.get("push")!({
+      data: {
+        json: () => ({
+          web_push: 8030,
+          mutable: true,
+          notification: declarative().notification,
+          title: "Worktree cleanup finished",
+          body: "Claude finished its turn.",
+          tag: "tl-k7m2q9x4tp0v",
+          session: "k7m2q9x4tp0v",
+          badge: 2,
+          waiting: { a: ["k7m2q9x4tp0v"], d: ["b3n8h1x5r2wq"] },
+        }),
+      },
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    });
+    await Promise.all(waits);
+
+    // Required: a Chrome push handler that shows nothing gets Chrome's own
+    // "site updated in background" notice instead.
+    expect(self.registration.showNotification).toHaveBeenCalledWith(
+      "Worktree cleanup finished",
+      expect.objectContaining({ tag: "tl-k7m2q9x4tp0v", body: "Claude finished its turn." }),
+    );
+    expect(pending.get("k7m2q9x4tp0v")).toMatchObject({ session: "k7m2q9x4tp0v" });
+  });
+});
+
+/**
+ * The rotated subscription carries the origin too.
+ *
+ * The server records a subscription's origin so it can build the absolute
+ * `navigate` URL Declarative Web Push requires (a relative one is a SyntaxError
+ * and WebKit drops the whole message). A pushsubscriptionchange mints a NEW
+ * endpoint, so the store's same-endpoint preservation does not cover it: without
+ * this the rotated device would silently drop back to the flat payload and stop
+ * routing taps on iOS.
+ */
+describe("pushsubscriptionchange", () => {
+  it("PUTs the new subscription with this worker's origin", async () => {
+    const { listeners, requests } = loadWorker([]);
+    const waits: Promise<unknown>[] = [];
+    listeners.get("pushsubscriptionchange")!({
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    });
+    await Promise.all(waits);
+
+    const put = requests.find((r) => r.init?.method === "PUT");
+    expect(put).toBeDefined();
+    expect(JSON.parse(String(put?.init?.body))).toMatchObject({
+      endpoint: "https://push.example/new",
+      origin: "https://terminal.viktorbarzin.me",
+    });
+  });
+
+  /**
+   * The server refuses anything but an absolute https origin (push.go
+   * validatePushOrigin) and 400s the whole PUT with it, so a plain-http origin
+   * has to be withheld rather than sent. http://localhost and http://127.0.0.1
+   * are secure contexts, so a service worker really does run and rotate there;
+   * pwa/push.ts already applies this test on the page side (secureOrigin).
+   */
+  it("withholds a plain-http origin rather than losing the whole PUT", async () => {
+    const { listeners, requests } = loadWorker([], undefined, null, {}, {
+      origin: "http://127.0.0.1:8080",
+    });
+    const waits: Promise<unknown>[] = [];
+    listeners.get("pushsubscriptionchange")!({
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+    });
+    await Promise.all(waits);
+
+    const put = requests.find((r) => r.init?.method === "PUT");
+    expect(put).toBeDefined();
+    const body = JSON.parse(String(put?.init?.body)) as Record<string, unknown>;
+    expect(body).toMatchObject({ endpoint: "https://push.example/new" });
+    expect(body.origin).toBeUndefined();
+  });
+
+  /**
+   * The old endpoint is the only one still working until the new one is stored.
+   * Deleting it after a rejected PUT leaves the device with no subscription at
+   * all and no background push until someone reopens the app.
+   */
+  it("keeps the old endpoint when the server refuses the new subscription", async () => {
+    const { listeners, requests } = loadWorker([], undefined, null, {}, { putOk: false });
+    const waits: Promise<unknown>[] = [];
+    listeners.get("pushsubscriptionchange")!({
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+      oldSubscription: { endpoint: "https://push.example/old" },
+    });
+    await Promise.all(waits);
+
+    expect(requests.some((r) => r.init?.method === "PUT")).toBe(true);
+    expect(requests.some((r) => r.init?.method === "DELETE")).toBe(false);
+  });
+
+  it("retires the old endpoint once the new one is stored", async () => {
+    const { listeners, requests } = loadWorker([]);
+    const waits: Promise<unknown>[] = [];
+    listeners.get("pushsubscriptionchange")!({
+      waitUntil: (p: Promise<unknown>) => waits.push(p),
+      oldSubscription: { endpoint: "https://push.example/old" },
+    });
+    await Promise.all(waits);
+
+    const del = requests.find((r) => r.init?.method === "DELETE");
+    expect(JSON.parse(String(del?.init?.body))).toEqual({
+      endpoint: "https://push.example/old",
+    });
   });
 });
 

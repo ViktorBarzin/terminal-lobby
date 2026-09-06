@@ -146,14 +146,15 @@ func (r *Reconciler) Plan(ctx context.Context, snap Snapshot) (Plan, error) {
 		binding := bindings[c.ClaudeID]
 		// The index records the tmux name, and it is the only way a kill notice
 		// finds its thread (threadForSession) — the notice carries a name and
-		// nothing else. Nothing renames a session now that a name is an opaque
-		// id fixed at creation (ADR-0019), with one exception: tmux-api renames
-		// every session that predates ids, once, on the release that ships them
-		// (tmux-api/migrate_ids.go). The @t3_thread option survives that, so
-		// the session is not re-adopted and nothing else writes the index — the
-		// name would simply stay wrong, and every pre-migration thread would
-		// stop being archived when its session was killed. This is also the
-		// restore path's <name>-<HHMM> collision rename, which had the same gap.
+		// nothing else. Renames are ORDINARY: a title carries the tmux name
+		// with it (ADR-0022), so every session gets one the first time Claude's
+		// summary lands. The binding is keyed by the Claude conversation id and
+		// the @t3_thread option survives a rename, so the session is not
+		// re-adopted and nothing else writes the index — without this the
+		// recorded name would stay at the minted id and the thread would stop
+		// being archived when its session was killed. Also covers the one-time
+		// id migration and the restore path's <name>-<HHMM> collision rename,
+		// which is what it was written for.
 		if binding.TmuxName != "" && binding.TmuxName != c.TmuxName {
 			p.Rebind = append(p.Rebind, Rebind{ClaudeID: c.ClaudeID, TmuxName: c.TmuxName})
 		}
