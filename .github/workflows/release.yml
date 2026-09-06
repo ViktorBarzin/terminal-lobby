@@ -17,6 +17,13 @@ on:
       - '**/*.md'
       - '.github/workflows/ttyd.yml'
       - '.github/workflows/viu.yml'
+      # The container image is built by container.yml out of its own inputs,
+      # and packaging/build-deb.sh reads none of them. A push touching only
+      # these was cutting a .deb version whose contents had not moved.
+      - 'Dockerfile'
+      - 'docker/**'
+      - '.github/workflows/container.yml'
+      - 'scripts/devserve/**'
   workflow_dispatch: {}
 
 permissions:
@@ -67,12 +74,39 @@ jobs:
       - name: test (go)
         run: |
           set -euo pipefail
-          for mod in release telemetry skillscan authuser sessionio slug \
-                     tmux-api clipboard-upload session-events file-api skills-api \
-                     t3-bridge t3-sync tl-session-watch; do
-            [ -f "$mod/go.mod" ] || continue
+          # Derived, not typed. What this replaces was 14 hand-written names
+          # guarded by `[ -f "$mod/go.mod" ] || continue`, which skips a name
+          # with no module and says nothing about a module with no name. So the
+          # guard was loud in the harmless direction and silent in the other:
+          # tl-session-watch/go.mod was added 2026-09-01, reached the list
+          # 2026-09-04, and four commits landed on the module in between with
+          # nothing here compiling or testing it.
+          mods=$(git ls-files '*/go.mod' | xargs -n1 dirname | sort)
+          # A derivation that returns nothing would pass this job in silence,
+          # which is the same hole as the typed list with none of its noise.
+          # The floor sits well under 14, so adding or dropping a module needs
+          # no edit here, and well over zero, so a broken derivation stops.
+          if [ "$(printf '%s\n' "$mods" | grep -c .)" -lt 10 ]; then
+            echo "expected at least 10 Go modules, the derivation found:"
+            printf '%s\n' "$mods"
+            exit 1
+          fi
+          for mod in $mods; do
             echo "==> $mod"
-            (cd "$mod" && go vet ./... && go test ./...)
+            (
+              cd "$mod"
+              # gofmt comes with the toolchain setup-go already installs, so
+              # the gate costs no new dependency. Drift is otherwise invisible
+              # until it turns up as noise in somebody else's diff.
+              unformatted=$(gofmt -l .)
+              if [ -n "$unformatted" ]; then
+                echo "not gofmt-clean, fix with: (cd $mod && gofmt -w .)"
+                printf '%s\n' "$unformatted"
+                exit 1
+              fi
+              go vet ./...
+              go test ./...
+            )
           done
 
       - name: test (frontend)

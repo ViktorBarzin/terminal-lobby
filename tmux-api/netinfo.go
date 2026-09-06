@@ -360,7 +360,7 @@ func isForwarded(via string) bool { return via != "peer" && via != "none" }
 // starts one lookup rather than one per request.
 var warming sync.Map
 
-/**
+/*
 setNetworkHeader stamps the caller's network on a response they were already
 going to receive, which is what makes attribution cost no request of its own.
 
