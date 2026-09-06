@@ -88,15 +88,58 @@ func TestMarkDrivenKeepsASessionNameContainingASpaceIntact(t *testing.T) {
 // the first, once per subscribed user per five-second tick.
 func TestLatestActivityKeepsTheNewestKeystrokePerSession(t *testing.T) {
 	clients := parseClients([]byte(
-		"work\tattached,UTF-8\t100\n" +
-			"work\tattached,read-only,UTF-8\t400\n" + // a watcher's client counts too
-			"idle\tattached,UTF-8\t250\n"))
+		"work\tattached,UTF-8\t100\t50\n" +
+			"work\tattached,read-only,UTF-8\t400\t50\n" + // a watcher's client counts too
+			"idle\tattached,UTF-8\t250\t50\n"))
 	got := latestActivity(clients)
 	if got["work"] != 400 {
 		t.Errorf("work = %d, want the newest (400)", got["work"])
 	}
 	if got["idle"] != 250 {
 		t.Errorf("idle = %d, want 250", got["idle"])
+	}
+}
+
+// Attaching is not typing. tmux stamps client_activity at attach and only moves
+// it on a real key, so a client that has never been typed into reports the two
+// timestamps equal — and the lobby holds an attached client for every session
+// you have visited today (frontend-v2 store/keepalive.ts). Counting those as
+// keystrokes made opening the app look like typing into a dozen sessions at
+// once. Measured against tmux 3.4 on 2026-09-06:
+//
+//	at attach       created/activity = 1788687997 1788687997
+//	after 6s idle   created/activity = 1788687997 1788687997
+//	after a keypress                 = 1788687997 1788688005
+func TestLatestActivityIgnoresAClientThatOnlyAttached(t *testing.T) {
+	clients := parseClients([]byte(
+		"fresh\tattached,UTF-8\t500\t500\n" + // attached, never typed into
+			"typed\tattached,UTF-8\t600\t500\n")) // attached, then typed into
+	got := latestActivity(clients)
+	if _, ok := got["fresh"]; ok {
+		t.Errorf("a client that only attached was read as a keystroke: %d", got["fresh"])
+	}
+	if got["typed"] != 600 {
+		t.Errorf("typed = %d, want 600", got["typed"])
+	}
+}
+
+// A watcher that never typed does not hide the driver who did.
+func TestLatestActivityPrefersTheClientThatTyped(t *testing.T) {
+	clients := parseClients([]byte(
+		"work\tattached,UTF-8\t600\t500\n" + // typed at 600
+			"work\tattached,read-only,UTF-8\t900\t900\n")) // attached at 900, silent
+	if got := latestActivity(clients)["work"]; got != 600 {
+		t.Errorf("work = %d, want 600 — the only real keystroke", got)
+	}
+}
+
+// A tmux too old to report client_created, or a row it could not stamp, leaves
+// created at zero. That must fail OPEN — treat the activity as real — rather
+// than silently dropping every session's reading.
+func TestLatestActivityFailsOpenWithoutACreatedStamp(t *testing.T) {
+	clients := parseClients([]byte("work\tattached,UTF-8\t600\n"))
+	if got := latestActivity(clients)["work"]; got != 600 {
+		t.Errorf("work = %d, want 600", got)
 	}
 }
 
