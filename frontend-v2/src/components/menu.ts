@@ -206,9 +206,21 @@ export function createDismissableMenu(
    * The scroll listener has to CAPTURE: `.tl-sidebar-scroll` is the element
    * that scrolls, and a scroll event does not bubble, so a listener sitting on
    * the document in the bubble phase would never hear it.
+   *
+   * Capture is also why the popup has to exempt itself. Capturing on the
+   * document hears EVERY scroll in the page, including the popup scrolling
+   * inside its own `max-height` — measured in Chrome, a scroll of the popup
+   * arrives here with `target` set to the popup. Without this check the safety
+   * net would defeat itself: a menu too tall for the room beside its row gets
+   * `overflow-y: auto` precisely so it can be scrolled, and the first scroll
+   * would dismiss it. A scroll of the popup is the reader reading, not the row
+   * moving out from under them, so it is not a reason to close. `contains`
+   * counts the element itself, which is what a scroll of the popup reports.
    */
-  const onViewportMoved = (): void => {
+  const onViewportMoved = (e: Event): void => {
     if (!open()) return;
+    const t = e.target;
+    if (popupEl && t instanceof Node && popupEl.contains(t)) return;
     close();
   };
 

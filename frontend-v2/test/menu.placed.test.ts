@@ -17,9 +17,14 @@
  * rather than laying it out, so that half is asserted for real.
  */
 import { describe, it, expect, afterEach } from "vitest";
+import { createRoot } from "solid-js";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { visibleViewport } from "../src/components/menu";
+import {
+  createDismissableMenu,
+  visibleViewport,
+  type DismissableMenu,
+} from "../src/components/menu";
 
 const css = readFileSync(resolve(process.cwd(), "src/sidebar.css"), "utf8");
 
@@ -122,5 +127,72 @@ describe("the box a popup has to stay inside", () => {
     // and a NaN here would put the popup nowhere at all.
     document.documentElement.style.setProperty("--kb-offset", "auto");
     expect(visibleViewport().bottom).toBe(window.innerHeight);
+  });
+});
+
+describe("what moving the viewport under a placed popup does to it", () => {
+  /**
+   * A placed popup is fixed, so it is put somewhere once and then stays there
+   * while the row it belongs to slides away underneath. Closing is the answer
+   * to that. The exception is the popup's own scroll: capturing on the document
+   * hears every scroll in the page, so a popup that has hit its `max-height`
+   * and grown a scrollbar would dismiss itself the first time anyone used it.
+   */
+  function placedMenu(): { menu: DismissableMenu; popup: HTMLElement; dispose: () => void } {
+    const anchor = document.createElement("div");
+    const popup = document.createElement("div");
+    popup.appendChild(document.createElement("button"));
+    anchor.appendChild(popup);
+    document.body.appendChild(anchor);
+
+    let menu!: DismissableMenu;
+    const dispose = createRoot((d) => {
+      menu = createDismissableMenu(() => () => {}, { placed: true });
+      return () => {
+        d();
+        anchor.remove();
+      };
+    });
+    menu.anchor(anchor);
+    menu.popup(popup);
+    menu.toggle();
+    return { menu, popup, dispose };
+  }
+
+  it("closes when the list under it scrolls", () => {
+    const { menu, dispose } = placedMenu();
+    expect(menu.open()).toBe(true);
+
+    const list = document.createElement("div");
+    document.body.appendChild(list);
+    list.dispatchEvent(new Event("scroll", { bubbles: false }));
+
+    expect(menu.open()).toBe(false);
+    list.remove();
+    dispose();
+  });
+
+  it("closes when the window resizes", () => {
+    const { menu, dispose } = placedMenu();
+    window.dispatchEvent(new Event("resize"));
+    expect(menu.open()).toBe(false);
+    dispose();
+  });
+
+  it("stays open while the popup scrolls inside its own max-height", () => {
+    // The safety net has to survive being used. placeMenu clamps a menu too
+    // tall for the room beside its row and .tl-menu-placed gives it
+    // overflow-y: auto, and both are pointless if the resulting scroll closes
+    // the menu. Measured in Chrome: a scroll of the popup reaches a capturing
+    // document listener with target set to the popup itself.
+    const { menu, popup, dispose } = placedMenu();
+    popup.dispatchEvent(new Event("scroll", { bubbles: false }));
+    expect(menu.open()).toBe(true);
+
+    // Same for a scroll starting deeper in, which is what a wheel over a menu
+    // item reports.
+    popup.firstElementChild?.dispatchEvent(new Event("scroll", { bubbles: false }));
+    expect(menu.open()).toBe(true);
+    dispose();
   });
 });
