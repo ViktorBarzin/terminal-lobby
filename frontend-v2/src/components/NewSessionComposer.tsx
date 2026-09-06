@@ -21,14 +21,12 @@ import {
 } from "../lib/new-commands";
 import {
   modelHarness,
-  modelRequest,
   optionsFor,
   phraseFor,
   type ModelField,
   type ModelHarness,
 } from "../lib/models";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
-import { setSessionModel } from "../lib/model-api";
 import { PromptField } from "./PromptField";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
@@ -103,7 +101,6 @@ export const NewSessionComposer: Component<{
    *  given its first prompt, and how held files reach its store. */
   deliver?: typeof deliverFirstPrompt;
   upload?: typeof uploadAttachments;
-  setModel?: typeof setSessionModel;
 }> = (props) => {
   const avail = (): CommandAvailability => props.available?.() ?? {};
   const cmd = (): NewCommand =>
@@ -220,12 +217,13 @@ export const NewSessionComposer: Component<{
     const shell = naming();
     const store = props.store;
     const key = cmd();
-    // Neither the model nor the effort is a launch flag: both are applied to
-    // the session once it is up, by driving the CLI's own picker
-    // (lib/models.ts). A shell has neither, and null here is also what a pair
-    // of untouched defaults produces.
-    const h = harness();
-    const wants = h ? modelRequest(h, choice(h)) : null;
+    // Nothing about the model or the effort happens here any more. Both are
+    // FLAGS on the process the attach starts (lib/terminal-url.ts), read out of
+    // the same preference this row writes — so by the time the create selects
+    // and this component is gone, the answer is already where the attach will
+    // look for it. What that replaced was a POST that drove the CLI's own
+    // picker after the session was up, which cost about four seconds and put a
+    // `/model` line in a conversation that had not started.
     const files = tray
       .map((a) => held.get(a.path))
       .filter((f): f is File => f !== undefined);
@@ -235,7 +233,6 @@ export const NewSessionComposer: Component<{
     // us, so nothing below may reach back into props.
     const deliver = props.deliver ?? deliverFirstPrompt;
     const upload = props.upload ?? uploadAttachments;
-    const setModel = props.setModel ?? setSessionModel;
 
     const project = props.project();
     const id = await store.create(text, project, shell ? "name" : "prompt");
@@ -251,11 +248,9 @@ export const NewSessionComposer: Component<{
       session: id,
       text,
       files,
-      wants,
       claude: key === "claude",
       deliver,
       upload,
-      setModel,
     });
     return true;
   };
@@ -411,30 +406,23 @@ export const NewSessionComposer: Component<{
  *
  * Order matters and is the whole of it. The files go up FIRST, because the
  * prompt has to carry their paths and those paths do not exist until they are
- * in the session's own bucket. The model and the effort go next, because they
- * decide who answers the prompt and how hard — and because both are applied by
- * driving the CLI's own picker, which cannot be done over a turn already
- * running. The prompt goes last.
+ * in the session's own bucket. The prompt goes second, and there is no third
+ * step: the model and the effort are flags on the process the attach started,
+ * so by the time anything is sent the session is already answering as it was
+ * asked to.
  *
- * Both waits are the server's: a session tmux has created accepts input seconds
+ * The wait is the server's: a session tmux has created accepts input seconds
  * before the CLI in it is ready to read any, and text sent into that gap is
  * silently dropped, so `session-events` holds each attempt until the pane can
- * take it and answers 503 when it cannot (lib/first-prompt.ts, lib/model-api.ts).
- *
- * A model that will not apply does not cost the prompt. The session is up and
- * the person is looking at it; sending what they typed on the wrong model is
- * better than dropping it, so the failure is a toast and the prompt goes
- * anyway.
+ * take it and answers 503 when it cannot (lib/first-prompt.ts).
  */
 async function sendFirstPrompt(o: {
   session: string;
   text: string;
   files: readonly File[];
-  wants: ReturnType<typeof modelRequest>;
   claude: boolean;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
-  setModel: typeof setSessionModel;
 }): Promise<void> {
   const attached = await o.upload(o.files, o.session, {
     notify: (message, kind) => void showToast(message, kind, 8000),
@@ -443,23 +431,6 @@ async function sendFirstPrompt(o: {
     o.text,
     attached.map((a) => a.path),
   );
-  if (o.wants) {
-    const r = await o.setModel({
-      session: o.session,
-      harness: o.wants.tool,
-      model: o.wants.model,
-      effort: o.wants.effort,
-      awaitReady: true,
-    });
-    if (!r.ok) showToast(`Started on the session's own model — ${r.reason}`, "error", 8000);
-    else if (o.wants.effort && r.state.effort && r.state.effort !== o.wants.effort) {
-      showToast(
-        `The session stayed on ${r.state.effort} effort — something on the box pins it`,
-        "error",
-        8000,
-      );
-    }
-  }
   const lines = [prompt].filter((l): l is string => !!l);
   const ok = await o.deliver({
     session: o.session,
