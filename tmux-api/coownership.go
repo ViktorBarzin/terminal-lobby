@@ -125,18 +125,50 @@ func coownArgs(op coownOp, homeOf func(string) string) ([]string, error) {
 	return []string{"-n", setfaclWrapper, op.Action, op.Dir, strings.Join(op.Users, ","), op.Owner}, nil
 }
 
+// coownOwnerForOp settles whose authority a wrapper call runs under, and the
+// two directions do not get the same answer.
+//
+// A grant keeps the owner resolved from the project's own people. Nobody
+// involved owning the tree means the grant must not run at all.
+//
+// A revoke resolves the owner from the dir's own containing home across every
+// mapped OS user instead. A revoke exists to take back an ACL that is already
+// on disk, including one written before this binding did — the wrapper used to
+// accept any /home/<x>/<y> — and a tree nobody on the project owns is exactly
+// where such a grant sits. Refusing that revoke would leave the access in place
+// with no way left in the tool to remove it, the same reason the wrapper does
+// not inode-cap a revoke. The wrapper's own gates still stand in front of root:
+// the dir must be canonical and real, and the owner and every grantee must be
+// in /etc/ttyd-user-map.
+func coownOwnerForOp(op coownOp, mapped []string, homeOf func(string) string) string {
+	if op.Action != "revoke" {
+		return op.Owner
+	}
+	if o := coownDirOwner(op.Dir, mapped, homeOf); o != "" {
+		return o
+	}
+	return op.Owner
+}
+
 // runCoownAsync invokes the root setfacl wrapper in the background (a large tree
 // must not block the HTTP request) and logs the outcome. Fire-and-forget: a
 // failed grant leaves the co-ownership flag set but unapplied — the user can
-// re-toggle to retry (trust-based v1). A failed REVOKE is louder, because it
-// means a removed member still holds access to the tree.
+// re-toggle to retry (trust-based v1). A REVOKE is louder in both directions,
+// refused or failed, because either way a removed member still holds access to
+// the tree.
 func runCoownAsync(op coownOp) {
+	op.Owner = coownOwnerForOp(op, mappedOSUsers(), homeOfUser)
+	csv := strings.Join(op.Users, ",")
 	args, err := coownArgs(op, homeOfUser)
 	if err != nil {
+		if op.Action == "revoke" {
+			log.Printf("co-ownership REVOKE FAILED %s [%s]: refused: %v — those users may still hold ACL access",
+				op.Dir, csv, err)
+			return
+		}
 		log.Printf("co-ownership %s refused: %v", op.Action, err)
 		return
 	}
-	csv := strings.Join(op.Users, ",")
 	go func() {
 		out, err := exec.Command(sudoBinary, args...).CombinedOutput()
 		if err != nil {
