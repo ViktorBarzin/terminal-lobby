@@ -13,6 +13,9 @@ import {
 } from "../src/types/lobby";
 import { promptLineFor } from "../src/store/prompt-line";
 import { isSessionId } from "../src/lib/session-id";
+import { loadWatch, publishResolvedWatch, resolveWatch } from "../src/store/watchmode";
+import { loadMode, saveMode } from "../src/store/viewmode";
+import { loadDraft, saveDraft } from "../src/store/drafts";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -469,6 +472,139 @@ describe("lobby store", () => {
       await store.refresh();
 
       expect(store.selected()?.name).toBe("theirs");
+    });
+  });
+
+  /**
+   * THE RENAME NOBODY SAW COMING, which is the one that actually stranded tabs.
+   *
+   * A session is renamed the moment its first title lands, seconds in, and the
+   * session list is behind a 5-second cache — so the poll can go straight from
+   * "no such session" to the new name, with the minted id never appearing in a
+   * list at all. There is no previous row to match an id against, so the server
+   * records the name the session was created with and the selection follows
+   * that instead.
+   *
+   * Measured on the box 2026-09-06: of four sessions created that evening, two
+   * were renamed 3-5s in, before any poll had listed them.
+   */
+  it("follows a rename of a session the poll never saw under its old name", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("8tw14vd9gyxs"); // minted here; the server has never seen it
+
+      api.sessionsVal = [
+        { ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" },
+      ];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("single-word-reply");
+    });
+  });
+
+  it("carries the watch decision across a rename it never saw either", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("8tw14vd9gyxs");
+      publishResolvedWatch("8tw14vd9gyxs", false);
+
+      api.sessionsVal = [
+        { ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs", driven: true },
+      ];
+      await store.refresh();
+
+      expect(loadWatch("single-word-reply")).toBe(false);
+    });
+  });
+
+  it("does not take a birth name as proof when the old name is still live", async () => {
+    // Two sessions can carry the same text, and a session that is still in the
+    // list has not been renamed. The live row wins.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("mine"), id: "$1" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("mine");
+
+      api.sessionsVal = [
+        { ...sess("mine"), id: "$1" },
+        { ...sess("other"), id: "$2", bornAs: "mine" },
+      ];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("mine");
+    });
+  });
+
+  /**
+   * THE BUG A RENAME USED TO CAUSE, and the reason this carry exists.
+   *
+   * A fresh session is created with a minted id and renamed the moment its
+   * first title lands (ADR-0022). The selection follows, App mounts a new
+   * SessionView under the new name, and that view re-takes the join decision —
+   * with THIS CLIENT still attached read-write. `driven` counts it, so the
+   * session the person is driving reads as one somebody else is driving, and
+   * the view joins it as a viewer. Reported 2026-09-06: "once the session is
+   * created, it's renamed then the web ui shows it as view-only".
+   */
+  it("a rename carries the watch decision, so a session you are driving stays yours to drive", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("824smya2cmz5"), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("824smya2cmz5");
+      // What the open view resolved when it took the session on: nobody had
+      // chosen, nobody was driving, so it drives.
+      publishResolvedWatch("824smya2cmz5", false);
+
+      api.sessionsVal = [
+        { ...sess("remove-changed-files-panel"), id: "$41", title: "Remove changed files panel", driven: true },
+      ];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("remove-changed-files-panel");
+      // Explicit, so the automatic rule cannot read our own attach as somebody
+      // else's and downgrade the new mount to a viewer.
+      expect(loadWatch("remove-changed-files-panel")).toBe(false);
+      expect(resolveWatch(loadWatch("remove-changed-files-panel"), true)).toBe(false);
+    });
+  });
+
+  it("a rename carries the view a session was being read in, and its unsent draft", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("824smya2cmz5"), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      saveMode("824smya2cmz5", "text");
+      saveDraft("824smya2cmz5", { text: "half a thought", attachments: [], at: 1 });
+
+      api.sessionsVal = [{ ...sess("beads"), id: "$41", title: "Beads" }];
+      await store.refresh();
+
+      expect(loadMode("beads")).toBe("text");
+      expect(loadDraft("beads")?.text).toBe("half a thought");
+      expect(loadDraft("824smya2cmz5")).toBeNull();
+    });
+  });
+
+  it("does not carry records across a rename in somebody else's account", async () => {
+    // A foreign session's id comes from ANOTHER tmux server, where the same
+    // `$41` names an unrelated session. Matching ids across the two accounts
+    // would move this user's records onto a stranger's name.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("theirs", { owner: "bob" }), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      publishResolvedWatch("theirs", false);
+
+      api.sessionsVal = [{ ...sess("mine"), id: "$41" }];
+      await store.refresh();
+
+      expect(loadWatch("mine")).toBeUndefined();
     });
   });
 

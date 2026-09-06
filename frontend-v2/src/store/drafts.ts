@@ -135,6 +135,22 @@ export function clearDraft(session: string): void {
 }
 
 /**
+ * Move a session's unsent draft onto the name a rename gave it (ADR-0022).
+ *
+ * A title lands seconds into the first turn, which is exactly when somebody is
+ * likely to be part-way through typing the next message. The draft is keyed by
+ * name, so without this the composer for the new name comes up empty and the
+ * half-written message sits under a name nothing will ask for again.
+ */
+export function carryDraft(from: string, to: string): void {
+  if (from === to) return;
+  const draft = loadDraft(from);
+  if (!draft) return;
+  saveDraft(to, draft);
+  clearDraft(from);
+}
+
+/**
  * Drop drafts for sessions that no longer exist.
  *
  * An EMPTY live list is treated as "no information", not "everything died" — a
