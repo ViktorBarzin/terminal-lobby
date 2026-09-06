@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   TMUX_API_PREFIX,
   apiUrl,
+  telemetryUrl,
   clipboardUrl,
   fileListUrl,
   fileReadUrl,
@@ -26,6 +27,14 @@ describe("config — tmux-api prefix (PROD ingress: PathPrefix /api/sessions/ ->
     expect(apiUrl("/dirs")).toBe("/api/sessions/dirs");
     // prefs roams through the same prefix (store/prefs.ts uses apiUrl(PREFS_PATH)).
     expect(apiUrl(PREFS_PATH)).toBe("/api/sessions/prefs");
+  });
+
+  it("telemetryUrl points at the intake under the same prefix", () => {
+    // diag.ts used to spell this out as a literal, which is why a ?api= tab
+    // sent its telemetry to whatever origin served the page instead of the
+    // backend it was pointed at.
+    expect(telemetryUrl()).toBe("/api/sessions/telemetry");
+    expect(telemetryUrl()).toBe(apiUrl("/telemetry"));
   });
 
   it("apiUrl tolerates a path with or without a leading slash", () => {

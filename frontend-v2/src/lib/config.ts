@@ -85,9 +85,11 @@ function withActAs(url: string): string {
  * The tmux-api prefix. Every lobby data call built with `apiUrl` lives under it.
  * The PROD ingress routes `PathPrefix /api/sessions/` → tmux-api and STRIPS the
  * whole prefix, so tmux-api serves /whoami, /sessions, /layout, /prefs, … at its
- * root — exactly what the vanilla frontend/index.html calls. Web Push rides the
- * same /api/sessions/ prefix but is spelled out verbatim in pwa/push.ts (NOT via
- * apiUrl), so it is unaffected by this constant.
+ * root — exactly what the vanilla frontend/index.html calls.
+ *
+ * Two routes ride this prefix without going through `apiUrl`, both because they
+ * must not carry `?as=`: Web Push, spelled out verbatim in pwa/push.ts, and the
+ * telemetry intake, which has `telemetryUrl` below.
  */
 export const TMUX_API_PREFIX = "/api/sessions";
 
@@ -224,6 +226,20 @@ export function answerTextUrl(session: string): string {
 export function apiUrl(path: string): string {
   const p = path.startsWith("/") ? path : `/${path}`;
   return withActAs(`${API_BASE}${TMUX_API_PREFIX}${p}`);
+}
+
+/**
+ * POST target for the diagnostics batch (telemetry/diag.ts, ADR-0008).
+ *
+ * Under the tmux-api prefix like everything else, and it picks up `?api=` so a
+ * tab pointed at a canary or a remote devvm reports to THAT backend rather than
+ * to whatever origin served the page. It deliberately omits `?as=`, which is
+ * why it is not `apiUrl("/telemetry")`: the intake attributes a batch by the
+ * forward-auth header on the request, so appending `as=` would file an admin's
+ * own telemetry against the person they are watching.
+ */
+export function telemetryUrl(): string {
+  return `${API_BASE}${TMUX_API_PREFIX}/telemetry`;
 }
 
 /**
