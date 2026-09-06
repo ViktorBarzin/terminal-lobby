@@ -448,6 +448,8 @@ interface Mounted {
   reports: TerminalReport[];
   /** Every attention signal handed up, in order (terminal/attention.ts). */
   attention: ("bell" | "output")[];
+  /** Every grid claim handed up, in order, as "COLSxROWS" (SessionView's onGrid). */
+  grids: string[];
   /** The levers `onReady` handed up, which is what SessionView holds. */
   control(): { reconnect: () => void; ask: () => void; copy: () => void };
   /**
@@ -476,6 +478,7 @@ async function mount(
   const [active, setActive] = createSignal(opts.active ?? true);
   const reports: TerminalReport[] = [];
   const attention: ("bell" | "output")[] = [];
+  const grids: string[] = [];
   // A list rather than a nullable local, so TypeScript does not have to be
   // argued out of narrowing an assignment made inside a callback.
   const controls: { reconnect: () => void; ask: () => void; copy: () => void }[] = [];
@@ -489,6 +492,7 @@ async function mount(
       // terminal that stays mounted and stays attached.
       active={active()}
       onAttention={(kind) => void attention.push(kind)}
+      onGrid={(cols, rows) => void grids.push(`${cols}x${rows}`)}
       onConn={(report) => void reports.push(report)}
       onReady={(c) => void controls.push(c)}
     />
@@ -519,6 +523,7 @@ async function mount(
     setActive,
     reports,
     attention,
+    grids,
     control: () => one(controls, "onReady control"),
     mirror: () => {
       const el = field();
@@ -5490,5 +5495,119 @@ describe("pinch to font size (term.html:7758-7965)", () => {
     host.dispatchEvent(gestureEvent("gesturechange", 1.3));
     expect(m.term.options.fontSize).toBe(BASE);
     host.remove();
+  });
+});
+
+/**
+ * CLAIMING THE GRID (tmux-api/grid_size.go).
+ *
+ * `attachment.resize()` sets this ttyd client's pty and stops there. tmux sizes
+ * a WINDOW from its clients, and a session any read-only attach has pinned
+ * re-reads them on three events only: a client attaching, detaching or resizing.
+ * Switching back to a session the lobby kept mounted is none of the three, so
+ * the window keeps whatever the last device to attach left it at, and a desktop
+ * ends up reading a 60-column window in a 220-column pane.
+ *
+ * So the terminal says what size it is at the three moments it is the thing
+ * being read, and the lobby turns that into "size this session's window to me".
+ * These pin the moments; that the window then moves is sessionio's
+ * (grid_resize_test.go, against a real tmux), and whether this device is allowed
+ * to say it at all is SessionView's.
+ */
+describe("claiming the grid for a pinned tmux window", () => {
+  const hostOf = (m: Mounted): HTMLElement => {
+    const el = m.term.host;
+    if (!el) throw new Error("the terminal was never opened");
+    return el;
+  };
+
+  /**
+   * THE BUG THIS EXISTS FOR. `fit.ts` reduces a `shown` with no debt to
+   * `nothing`, and it is right to: the geometry on this side was already
+   * correct, so there is no fit to run and no pty resize to send. What was
+   * missing is the tmux half — correct for THIS client says nothing about the
+   * window, which another device can have moved while this session sat hidden.
+   */
+  it("claims the grid when a kept session comes back needing no fit", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    m.setOnScreen(false);
+    m.setOnScreen(true);
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    await settle();
+
+    // Unchanged, and both still true: nothing to fit, nothing to send the pty.
+    expect(m.fit.fits).toBe(1);
+    expect(resizes(m.socket())).toEqual([]);
+    // And the part that was missing.
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /** A fit that DID land is the same statement, and makes it too. */
+  it("claims the grid on a landed fit", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    boxW = 0;
+    boxH = 0;
+    m.observed(); // the debt
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    boxW = 800;
+    boxH = 600;
+    m.setOnScreen(false);
+    m.setOnScreen(true); // pays it
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    await settle();
+
+    expect(m.fit.fits).toBe(2);
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /**
+   * A skipped fit claims nothing. The grid it would send is the last good one
+   * rather than the 0x0 it just measured, but a session nobody can see has no
+   * business being the size the window follows — which is the whole argument
+   * `fit.ts` makes for sending no pty resize either.
+   */
+  it("claims nothing from a session that is hidden", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    boxW = 0;
+    boxH = 0;
+    m.setOnScreen(false);
+    m.observed();
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    await settle();
+
+    expect(m.grids).toEqual([]);
+  });
+
+  /**
+   * The third moment, and the only one that covers a grid lost while this
+   * terminal sat still: another device joining the same session moves the window
+   * without anything here fitting and without any view switch. Clicking into the
+   * terminal gets it back, which is what a person does before typing anyway.
+   */
+  it("claims the grid when the terminal takes focus", async () => {
+    const m = await mountOpen();
+    m.grids.length = 0;
+
+    hostOf(m).dispatchEvent(new Event("focusin", { bubbles: true }));
+    await settle();
+
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /**
+   * Nothing before the socket. With no attachment there is no tmux client to
+   * speak for, and the boot size rides the handshake — the same rule the pty
+   * resize follows one line above the claim.
+   */
+  it("claims nothing at boot, before there is a client to claim for", async () => {
+    const m = await mount();
+    expect(m.fit.fits).toBe(1); // the boot fit ran
+    expect(m.grids).toEqual([]); // and said nothing
   });
 });

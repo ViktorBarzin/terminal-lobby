@@ -42,6 +42,7 @@ import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
+import { setSessionGrid } from "../lib/lobby-api";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { modelHarness } from "../lib/models";
@@ -268,6 +269,45 @@ export const SessionView: Component<{
   // when the view goes so a stale decision cannot outlive the attach it
   // described.
   onCleanup(() => clearResolvedWatch(session));
+
+  /**
+   * The last grid this view claimed, and when. A claim is idempotent and cheap,
+   * but the terminal fires one on every landed fit and on every focus, so a
+   * drag-resize or a click-happy minute would otherwise be a request each.
+   */
+  let claimedGrid = "";
+  let claimedAt = 0;
+  /** How long the same grid stays claimed before it is worth saying again. */
+  const GRID_CLAIM_QUIET_MS = 1500;
+  /**
+   * Point this session's tmux window at the device reading it.
+   *
+   * TWO REFUSALS, both of which have to be here rather than in the terminal or
+   * the server:
+   *
+   *   - WATCHING. A read-only client taking the size is the whole of what
+   *     PinGrid refuses, and the server cannot tell this device from the
+   *     desktop it is watching — one identity header, and no way to say which
+   *     tmux client an HTTP request belongs to. So the watching device declines,
+   *     and that is what keeps Watch mode's promise that a phone opening a
+   *     session never reflows the desktop driving it.
+   *   - SOMEONE ELSE'S SESSION. The endpoint acts on the caller's own OS user,
+   *     so a shared attach would only ever 404 against a name it does not have.
+   *
+   * Fire-and-forget past that: the client swallows its own failures, and a
+   * window that did not move is a terminal at the wrong width rather than
+   * anything to report.
+   */
+  const claimGrid = (cols: number, rows: number): void => {
+    if (watch()) return;
+    if (props.owner && props.owner !== props.me?.()) return;
+    const grid = `${cols}x${rows}`;
+    const now = Date.now();
+    if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
+    claimedGrid = grid;
+    claimedAt = now;
+    void setSessionGrid(session, cols, rows);
+  };
 
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is
@@ -952,6 +992,10 @@ export const SessionView: Component<{
             // handed `args`, not a name. It is in our own document, so the
             // name is ours to supply and there is nothing to validate.
             onAttention={(kind) => noteAttention(kind, session)}
+            // Which session's window to size, and whether this device may say
+            // so at all, both belong here for the same reason `onAttention`'s
+            // name does: the terminal is handed `args`, not a session.
+            onGrid={claimGrid}
             // Only the session ON SCREEN speaks for the terminal channel.
             // Every visited session stays mounted, so without this guard a
             // hidden tab's terminal would keep overwriting the badge for the

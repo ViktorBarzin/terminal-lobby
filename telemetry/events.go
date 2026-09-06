@@ -62,6 +62,12 @@ var knownEvents = map[string]bool{
 	// repaired session, so a run over many users emits many; tl.client says
 	// which pass did it. tl.session, tl.client=sweep.
 	"session.grid_repinned": true,
+	// A pinned session's window pointed at the client reading it, because no
+	// tmux hook can notice a lobby switching back to a session it kept mounted
+	// (tmux-api/grid_size.go). Emitted only when something actually moved, so an
+	// unpinned session — the majority — is silent. tl.session, tl.kind = the
+	// grid asked for, tl.client.
+	"session.grid_sized": true,
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)
