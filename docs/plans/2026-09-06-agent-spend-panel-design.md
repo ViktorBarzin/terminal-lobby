@@ -1,10 +1,7 @@
 # Agent spend and limits in Settings
 
-Status: approved, ready to implement
-Date: 2026-09-06
-
-Terminal Lobby runs Claude Code and Codex sessions all day and tells you
-nothing about what they consume. This adds a Settings page that answers
+Terminal Lobby runs Claude Code and Codex sessions all day and does not
+currently show what they consume. This adds a Settings page that answers
 "what have my agents cost me, and how close am I to a limit", plus a small
 figure in the sidebar footer so the answer is visible without opening
 Settings.
@@ -48,25 +45,21 @@ Max seat carries both.
   the file is only recomputed when someone opens `/usage`. The copy on this
   box was last computed on 2026-03-08 with empty token data.
 - **Pricing transcript tokens ourselves.** Transcripts carry tokens and the
-  model but no cost, so this means maintaining a price table that goes wrong
-  quietly whenever a rate changes. The statusLine number is Claude Code's own
+  model but no cost, so this means maintaining a price table that must be
+  updated whenever a rate changes, with no signal when it has gone stale. The statusLine number is Claude Code's own
   arithmetic and needs no table.
 
 ## How the numbers arrive
 
 ```mermaid
-flowchart LR
-  subgraph claude[Claude Code session]
-    CC[claude] -->|statusLine JSON on stdin| REC[tl-usage-record]
-    REC -->|exec, stdin passed through| INNER[the user's own statusLine]
-  end
-  subgraph codex[Codex session]
-    CX[codex] -->|token_count + rate_limits| ROLL[(rollout JSONL)]
-  end
+flowchart TD
+  CC[claude] -->|statusLine JSON on stdin| REC[tl-usage-record]
+  REC -->|exec, stdin passed through| INNER[the user's own statusLine]
   REC -->|POST /hooks/usage, loopback only| SE[session-events]
-  SE --> STORE[("/var/lib/tmux-api/spend/&lt;user&gt;.json")]
-  ROLL -->|read on request| API[tmux-api GET /usage]
-  STORE --> API
+  SE --> STORE[("/var/lib/tmux-api/spend/user.json")]
+  CX[codex] -->|token_count + rate_limits| ROLL[(rollout JSONL)]
+  STORE --> API[tmux-api GET /agent-spend]
+  ROLL -->|read on request| API
   API --> UI[Settings page + sidebar figure]
 ```
 
@@ -88,11 +81,13 @@ only when that tool has data, so a Claude-only box sees one section and a
 plain-shell box sees no page at all.
 
 **Claude Code**
+
 - Spend for the selected period, as the heading figure.
 - 5-hour and weekly bars when the seat reports them.
 - Session rows: name, model, tokens, spend.
 
 **Codex**
+
 - 5-hour limit and weekly limit bars, labelled in OpenAI's words. These are
   account-wide facts and sit above the session rows rather than inside them.
 - Plan, and credit balance when `credits.has_credits` is true.
