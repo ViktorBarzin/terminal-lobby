@@ -134,10 +134,19 @@ jobs:
           # Unused value exports. Neither biome nor eslint does this analysis,
           # which is why knip is a second tool rather than a biome rule.
           npm run lint:exports
-          # Formatting by ratchet, on the files a branch changed and never
-          # tree-wide. On a master push origin/master is the commit being
-          # built, so this is a no-op here and does its work on branches.
-          npm run format:changed
+          # No formatting gate here, on purpose. `npm run format:changed` is a
+          # ratchet: it compares against a base ref and checks only the files a
+          # branch changed. This workflow runs on pushes to master and nothing
+          # else, so its base would be the commit being built and the check
+          # would have nothing to compare. Running it here would report a pass
+          # on every push while catching nothing, which is a worse signal than
+          # no step. It stays a local check contributors run before opening a
+          # PR (CONTRIBUTING.md). Wiring it up for real means a workflow that
+          # can name the base of the change it is building -- a pull_request
+          # trigger, or a push event's `before` sha -- passed as
+          # TL_FORMAT_SINCE. That gate is red until the files this repo has
+          # already drifted on are formatted, so it lands with that work, not
+          # before it.
           npm run test
 
       - name: test (python)
