@@ -33,6 +33,14 @@ built in the cluster. `svu` derives the version from conventional commits, so a
 anonymously, so the box needs no apt credential. GitHub releases carry the same
 package as an off-site copy, which is what to reach for if the cluster is down.
 
+The deploy trigger fires as soon as that package is published, and the GitHub
+release is attached afterwards. The order is worth keeping: the box installs
+from the registry, so nothing after the trigger is on the path to shipping, and
+a backup copy that fails should cost the release assets rather than the deploy.
+On 2026-09-06, with the trigger running last, `gh release create` hit a tag that
+had not yet mirrored from Forgejo, the job went red, and a published 0.42.3 sat
+undeployed until someone ran `tl-reconcile` by hand.
+
 **Woodpecker** carries the trigger and nothing else. Runners cannot route to the
 box, and Woodpecker is deploy-only by ADR-0002.
 
