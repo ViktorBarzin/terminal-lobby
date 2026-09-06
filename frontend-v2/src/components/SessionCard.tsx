@@ -97,7 +97,10 @@ export const SessionCard: Component<{
     (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
 
   const [editing, setEditing] = createSignal(false);
-  const menu = createDismissableMenu(() => props.store.hold());
+  // Placed: the popup is measured against the window rather than hung off the
+  // bottom of this row, which is what a row near the end of a long list needs
+  // (see .tl-menu-placed in sidebar.css).
+  const menu = createDismissableMenu(() => props.store.hold(), { placed: true });
   const [dropEdge, setDropEdge] = createSignal<"above" | "below" | null>(null);
   let releaseHold: (() => void) | null = null;
   let inputEl: HTMLInputElement | undefined;
@@ -757,7 +760,14 @@ export const SessionCard: Component<{
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}
-        <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+        <div
+          class="tl-menu tl-menu-placed"
+          role="menu"
+          ref={menu.popup}
+          style={menu.style()}
+          onClick={stopMenuClick}
+          onKeyDown={stopMenuActivationKey}
+        >
           <button class="tl-menu-item" role="menuitem" onClick={() => beginRename()}>
             Rename
           </button>
