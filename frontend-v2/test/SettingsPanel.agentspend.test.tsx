@@ -296,6 +296,61 @@ describe("Agent spend — the Codex section", () => {
   });
 });
 
+describe("Agent spend — the clock keeps running", () => {
+  it("drops a window that resets while the panel is open", async () => {
+    vi.useFakeTimers();
+    try {
+      const doc = codexOnly();
+      doc.codex!.windows = [
+        {
+          label: "5-hour limit",
+          windowMinutes: 300,
+          usedPercent: 92,
+          resetsAtSec: Math.floor(Date.now() / 1000) + 240,
+        },
+      ];
+      stubSpend(doc);
+      const { container } = render(() => (
+        <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="spend" />
+      ));
+      await vi.waitFor(() => expect(meters(container)).toHaveLength(1));
+      expect(meters(container)[0]).toContain("92%");
+
+      // Nobody touches the panel; the window simply resets under it. Reporting
+      // 92% of a limit the account has since been let off is the reading this
+      // filter exists to stop.
+      vi.advanceTimersByTime(90 * 60_000);
+      await vi.waitFor(() => expect(meters(container)).toHaveLength(0));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("counts the reset down as time passes", async () => {
+    vi.useFakeTimers();
+    try {
+      const doc = codexOnly();
+      doc.codex!.windows = [
+        {
+          label: "weekly limit",
+          windowMinutes: 10080,
+          usedPercent: 30,
+          resetsAtSec: Math.floor(Date.now() / 1000) + 3 * 3600,
+        },
+      ];
+      stubSpend(doc);
+      const { container } = render(() => (
+        <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="spend" />
+      ));
+      await vi.waitFor(() => expect(meters(container)[0]).toContain("resets in 3h"));
+      vi.advanceTimersByTime(2 * 3600_000);
+      await vi.waitFor(() => expect(meters(container)[0]).toContain("resets in 1h"));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("Agent spend — the period", () => {
   it("offers the four periods and starts on today", async () => {
     stubSpend(claudeOnly());
@@ -326,5 +381,70 @@ describe("Agent spend — the period", () => {
     );
     expect(urls.at(-1)).toContain("period=7d");
     expect(periodOn(container)).toBe("7 days");
+  });
+
+  it("ignores a slow answer for a period that is no longer selected", async () => {
+    // All time walks every day row on the server and Today reads one, so the
+    // two can land out of order. The figure has to match the period that is
+    // checked, whichever response arrives last.
+    const pending: Array<{ url: string; send: (doc: AgentSpend) => void }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (input: RequestInfo | URL) =>
+          new Promise<Response>((resolve) => {
+            pending.push({
+              url: String(input),
+              send: (doc) =>
+                resolve(
+                  new Response(JSON.stringify(doc), {
+                    status: 200,
+                    headers: { "Content-Type": "application/json" },
+                  }),
+                ),
+            });
+          }),
+      ),
+    );
+
+    const { container } = render(() => (
+      <SettingsPanel prefs={fakePrefs()} onClose={() => {}} initialPage="spend" />
+    ));
+    await waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]!.send(claudeOnly());
+    await waitFor(() =>
+      expect(container.querySelector(".tl-spend-figure")?.textContent).toContain("$4.12"),
+    );
+
+    fireEvent.click(periodButtons(container).find((b) => b.textContent === "All time")!);
+    await waitFor(() => expect(pending).toHaveLength(2));
+    fireEvent.click(periodButtons(container).find((b) => b.textContent === "Today")!);
+    await waitFor(() => expect(pending).toHaveLength(3));
+
+    // Today answers first, All time afterwards.
+    pending[2]!.send({ period: "today", claude: { ...claudeOnly().claude!, costUsd: 4.12 } });
+    await waitFor(() =>
+      expect(container.querySelector(".tl-spend-figure")?.textContent).toContain("$4.12"),
+    );
+    pending[1]!.send({ period: "all", claude: { ...claudeOnly().claude!, costUsd: 912.5 } });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(periodOn(container)).toBe("Today");
+    expect(container.querySelector(".tl-spend-figure")?.textContent).toContain("$4.12");
+    expect(container.textContent).not.toContain("912.50");
+  });
+});
+
+describe("Agent spend — how exact the figures are", () => {
+  it("marks the token totals as approximate and says why", async () => {
+    stubSpend(claudeOnly());
+    const { container } = await openPanel();
+    await waitFor(() => expect(container.querySelector(".tl-spend-figure")).not.toBeNull());
+    // The dollars are Claude Code's own arithmetic. The tokens are not: a
+    // compaction takes the context down, and the store rolls up differences.
+    const figure = container.querySelector(".tl-spend-figure")!;
+    expect(figure.querySelector(".tl-netusage-approx")).not.toBeNull();
+    expect(container.textContent).toContain("Token counts are approximate");
+    expect(figure.textContent).toContain("$4.12");
   });
 });

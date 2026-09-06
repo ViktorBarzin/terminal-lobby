@@ -249,9 +249,15 @@ export function apiUrl(path: string): string {
  * (tmux-api/agentspend.go). Carries `?as=` like every other lobby call, so an
  * admin acting as someone else reads that person's figures rather than their
  * own.
+ *
+ * `tool` narrows the answer to one section, and narrows the WORK: the Codex
+ * half walks that user's rollout files and asks tmux for their panes, which a
+ * caller showing a Claude figure has no use for. Omit it for the whole picture.
  */
-export function agentSpendUrl(period: string): string {
-  return apiUrl(`/agent-spend?period=${encodeURIComponent(period)}`);
+export function agentSpendUrl(period: string, tool?: string): string {
+  const q = new URLSearchParams({ period });
+  if (tool) q.set("tool", tool);
+  return apiUrl(`/agent-spend?${q.toString()}`);
 }
 
 /**
