@@ -293,7 +293,9 @@ body {
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: calc(var(--radius) + 8px);
-  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    var(--surface-shadow),
+    0 16px 48px rgba(0, 0, 0, 0.35);
   padding: 16px 18px 20px;
 }
 .tl-settings-head {
@@ -521,7 +523,9 @@ label.tl-set-row-label {
   border: 1px solid var(--border-strong);
   position: relative;
   cursor: pointer;
-  transition: background 0.12s ease, border-color 0.12s ease;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
 .tl-set-toggle::after {
   content: "";
@@ -532,7 +536,9 @@ label.tl-set-row-label {
   height: 14px;
   border-radius: 50%;
   background: var(--text-muted);
-  transition: transform 0.12s ease, background 0.12s ease;
+  transition:
+    transform 0.12s ease,
+    background 0.12s ease;
 }
 .tl-set-toggle:checked {
   background: var(--accent);
@@ -811,12 +817,14 @@ label.tl-set-row-label {
    read as a column and compared to each other, so they have to line up. */
 /* Periods: selectable rows, one of which scopes everything below. Buttons
    rather than radios because the whole row is the target on a phone. */
-.tl-netusage-periods {
+.tl-netusage-periods,
+.tl-spend-periods {
   display: grid;
   gap: 2px;
   margin: 0 0 12px;
 }
-.tl-netusage-period {
+.tl-netusage-period,
+.tl-spend-period {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -832,12 +840,14 @@ label.tl-set-row-label {
   cursor: pointer;
   text-align: left;
 }
-.tl-netusage-period:hover {
+.tl-netusage-period:hover,
+.tl-spend-period:hover {
   background: var(--bg-page);
 }
 /* The selected period is the one thing on this panel that has to be obvious at
    a glance: everything under it is scoped by it. */
-.tl-netusage-period.is-on {
+.tl-netusage-period.is-on,
+.tl-spend-period.is-on {
   color: var(--text-primary);
   border-color: var(--border);
   background: var(--bg-page);
@@ -870,7 +880,8 @@ label.tl-set-row-label {
   color: var(--text-muted);
 }
 
-.tl-netusage-breakdown {
+.tl-netusage-breakdown,
+.tl-spend-meters {
   display: grid;
   /* The name track must be allowed to SHRINK. A bare `auto` is floored at the
      column's min-content width, and the min-content of a nowrap label is the
@@ -882,7 +893,8 @@ label.tl-set-row-label {
   gap: 4px 8px;
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
-.tl-netusage-row {
+.tl-netusage-row,
+.tl-spend-meter {
   display: contents;
 }
 /* A network row is tappable and narrows the bars below it; a bucket row is
@@ -904,7 +916,8 @@ label.tl-set-row-label {
   color: var(--text-primary);
   font-weight: 600;
 }
-.tl-netusage-name {
+.tl-netusage-name,
+.tl-spend-meter-label {
   color: var(--text-muted);
   /* Wraps rather than truncates: an operator's name is what identifies the
      row, and half of one identifies nothing. `anywhere` rather than
@@ -914,7 +927,8 @@ label.tl-set-row-label {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.tl-netusage-bytes {
+.tl-netusage-bytes,
+.tl-spend-meter-value {
   text-align: right;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -924,14 +938,16 @@ label.tl-set-row-label {
 .tl-netusage-approx {
   color: var(--text-muted);
 }
-.tl-netusage-bar {
+.tl-netusage-bar,
+.tl-spend-meter-bar {
   display: block;
   height: 6px;
   border-radius: 3px;
   background: var(--bg-page);
   overflow: hidden;
 }
-.tl-netusage-bar > span {
+.tl-netusage-bar > span,
+.tl-spend-meter-bar > span {
   display: block;
   height: 100%;
   border-radius: 3px;
@@ -957,6 +973,81 @@ label.tl-set-row-label {
      cut off, and the marker beside it keeps its own width. */
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* Agent spend — what Claude Code and Codex have consumed. The period rows and
+   the percentage bars share their rules with Data used above rather than
+   restating them: the two pages read the same way, and one set of rules cannot
+   drift from itself. Only what is particular to this page lives here. */
+.tl-spend-period {
+  /* No second figure on the row, so the label is the whole of it. */
+  justify-content: flex-start;
+}
+/* The heading figure: the one number someone opens this page for, so it is the
+   only thing on the page at this size. */
+.tl-spend-figure {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin-bottom: 10px;
+}
+.tl-spend-figure b {
+  font-size: calc(24px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+.tl-spend-figure-note {
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+/* When a window resets, beside the window's name rather than on a line of its
+   own: it qualifies the percentage next to it. */
+.tl-spend-meter-note {
+  color: var(--text-muted);
+  opacity: 0.8;
+}
+/* Line items: a model, or a conversation. Name, what it was doing, what it came
+   to — the figure right-aligned so the column can be read down. */
+.tl-spend-rows {
+  display: grid;
+  gap: 6px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+/* Each row places its own three cells rather than sharing one grid with the
+   rows around it: a title wraps to two lines and the row below it must not
+   move sideways to match. */
+.tl-spend-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  column-gap: 8px;
+  align-items: baseline;
+}
+.tl-spend-row-name {
+  grid-column: 1;
+  grid-row: 1;
+  color: var(--text-primary);
+  /* A title is arbitrary text and identifies the row, so it wraps rather than
+     being cut in half. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tl-spend-row-meta {
+  grid-column: 1;
+  grid-row: 2;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.tl-spend-row-value {
+  grid-column: 2;
+  grid-row: 1;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Header notification bell — accent color when notifications are enabled. */
@@ -1039,7 +1130,9 @@ label.tl-set-row-label {
   border: 1px solid var(--border-strong);
   border-left: 3px solid var(--text-muted);
   border-radius: var(--radius);
-  box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.3);
+  box-shadow:
+    var(--surface-shadow),
+    0 8px 24px rgba(0, 0, 0, 0.3);
   padding: 10px 12px;
   font-size: calc(13px * var(--tl-text-scale, 1));
 }
@@ -2022,7 +2115,9 @@ label.tl-set-row-label {
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: calc(var(--radius) + 8px);
-  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    var(--surface-shadow),
+    0 16px 48px rgba(0, 0, 0, 0.35);
   overflow: hidden;
 }
 .tl-cp-input {
@@ -2105,7 +2200,9 @@ label.tl-set-row-label {
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: calc(var(--radius) + 8px);
-  box-shadow: var(--surface-shadow), 0 16px 48px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    var(--surface-shadow),
+    0 16px 48px rgba(0, 0, 0, 0.35);
   padding: 16px 18px 14px;
 }
 .tl-schelp-title {
@@ -2213,8 +2310,7 @@ body.tl-kb-up {
   flex-direction: column;
   align-items: stretch;
   gap: 6px;
-  padding: 6px calc(6px + env(safe-area-inset-left)) 6px
-    calc(6px + env(safe-area-inset-right));
+  padding: 6px calc(6px + env(safe-area-inset-left)) 6px calc(6px + env(safe-area-inset-right));
   background: color-mix(in srgb, var(--bg-card) 92%, transparent);
   border-top: 1px solid var(--border-strong);
   backdrop-filter: blur(6px);
@@ -2275,7 +2371,10 @@ body.tl-kb-up {
   touch-action: manipulation; /* no double-tap-zoom / 300ms delay on keys */
   -webkit-tap-highlight-color: transparent;
   user-select: none;
-  transition: background 0.1s, border-color 0.1s, color 0.1s;
+  transition:
+    background 0.1s,
+    border-color 0.1s,
+    color 0.1s;
 }
 #soft-keys button.sk-narrow {
   min-width: 36px;
@@ -2336,9 +2435,7 @@ body.tl-kb-up {
      the FitAddon-honest equivalent of the vanilla `body.has-soft-keys #terminal`
      shrink. --sk-h is the live toolbar height (viewport.ts), 50px pre-JS. */
   body.has-soft-keys .tl-views {
-    margin-bottom: calc(
-      var(--sk-h, 50px) + var(--kb-offset, 0px) + var(--safe-b, 0px)
-    );
+    margin-bottom: calc(var(--sk-h, 50px) + var(--kb-offset, 0px) + var(--safe-b, 0px));
   }
   /* TERMINAL view: leave the keyboard OUT of the reservation.
      The focused field in this view is the ghost compose mirror, so shrinking
