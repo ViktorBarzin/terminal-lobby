@@ -137,16 +137,19 @@ terminal view; click `›` to bring it back. Choice persists per browser
 
 **Projects** are named folders that group sessions in the sidebar
 (domain glossary: `CONTEXT.md`). Create one with **+ Project**; assign
-sessions by dragging a card onto a project header, or via the card's
-`⋯` menu (**Move to…**, which also holds Rename/Kill). Each project
-header has a `+` (new session directly in the project) and a `⋯` menu
-(move up / move down / rename / delete — deleting moves members to
-**Ungrouped**, it never kills sessions). Drag any group header —
-projects or the Ungrouped section itself — to reorder them; the `⋯`
-move entries are the touch equivalent (Ungrouped's `⋯` has only
-those). Sections collapse per browser; a collapsed header
-shows its session count plus aggregated state dots. Membership and all
-ordering live server-side per user (`GET`/`PUT /layout`), so the
+sessions by dragging a card into another project's list, or via the
+card's `⋯` menu (**Move to…**, which also holds Rename/Kill). A
+collapsed project opens on its own when you hold a dragged card over
+its header, so a card lands where you point rather than at the end.
+Each project header has a `+` (new session directly in the project)
+and a `⋯` menu (move up / move down / rename / delete — deleting
+moves members to **Ungrouped**, it never kills sessions). Drag any
+group header — projects or the Ungrouped section itself — to reorder
+them, with a mouse or a finger; the `⋯` move entries do the same from
+a menu (Ungrouped's `⋯` has only those). Sections collapse per
+browser; a collapsed header shows its session count plus aggregated
+state dots. Membership and all ordering live server-side per user
+(`GET`/`PUT /layout`), so the
 arrangement follows you across desktop and phone and survives OOM
 restores — see `docs/adr/0002-layout-store-in-tmux-api.md` for why
 that beats tmux options or localStorage.
