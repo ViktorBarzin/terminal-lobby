@@ -292,6 +292,21 @@
 .tl-foot-btn:hover {
   background: var(--bg-card-hover);
 }
+/* What the attached session has consumed, beside the gear: today's dollars for
+   Claude Code, the tighter limit for Codex. It reads as a fact rather than a
+   control, so it carries no border of its own and only lights up under the
+   pointer, the way the other footer icons do.
+
+   Tabular numerals for the same reason Data used sets them: a figure that
+   changes while you look at it must not shift the row it sits in. It never
+   wraps — "$4.12" losing its cents to a second line would be a different
+   number. On a phone it inherits the sidebar's 40px icon target and the
+   footer's safe-area padding, both already in the media block below. */
+.tl-foot-spend {
+  font-variant-numeric: tabular-nums;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
 /* ---- New-session route ------------------------------------------------- */
 /* What is left of the create row: the box itself became the composer, which
@@ -769,7 +784,9 @@
   background: var(--bg-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: var(--surface-shadow), 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow:
+    var(--surface-shadow),
+    0 8px 24px rgba(0, 0, 0, 0.28);
   padding: 4px;
   display: flex;
   flex-direction: column;
@@ -1106,8 +1123,7 @@
        owns the bottom of each screen — the soft-key row already adds it to its
        own reservation, and the sidebar's footer does the same below. */
     box-sizing: border-box;
-    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0
-      env(safe-area-inset-left);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
   /* Browsing: the list has the screen. display:none, not a zero height — the
      session pane must not keep a measurable box, or the terminal inside it

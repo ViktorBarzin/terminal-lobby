@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# tl-usage-record — terminal-lobby's Claude Code spend recorder. It sits in the
+# statusLine slot, posts what the session has spent to session-events (:7685)
+# and then runs whatever statusLine the user already had, so the prompt they
+# wrote keeps drawing exactly as before
+# (docs/plans/2026-09-06-agent-spend-panel-design.md).
+#
+# Why the statusLine and not a hook: no Claude Code hook payload carries cost.
+# SessionEnd delivers {reason}, Stop delivers last_assistant_message, and the
+# only money-shaped field in the whole hook surface is a forward-looking
+# cache-rebuild estimate. The statusLine command is the one place the CLI hands
+# out its own arithmetic, and it hands it out on stdin on every render:
+#
+#   {"cost":{"total_cost_usd":0.329,…},"context_window":{…},
+#    "model":{"id":"claude-opus-5"},"session_id":"…","effort":{…}}
+#
+# with an OPTIONAL "rate_limits" key, present for Claude.ai subscribers and for
+# a gateway with a spend limit, absent on enterprise seats.
+#
+# Wired org-wide via /etc/claude-code/managed-settings.json (infra repo),
+# alongside claude-se-hook and claude-tmux-state. Managed settings win over the
+# user's own, which is what leaves ~/.claude/settings.json still holding THEIR
+# statusLine for us to read back and run.
+#
+# Contract with the CLI:
+#   - Whatever happens to the recording, the inner command runs and its output
+#     reaches the terminal unchanged. A statusline that breaks the user's prompt
+#     is worse than no feature, so every failure here is a silent no-op:
+#     session-events down, jq missing, no inner command, no tmux.
+#   - The recording never sits in front of the render. The entire POST path,
+#     tmux lookups included, runs in a background subshell with its output
+#     discarded, so this script adds one fork to a render and nothing else.
+#   - No-ops the recording outside tmux ($TMUX unset) — headless and t3 Claude
+#     instances read the same managed settings and have no lobby session to
+#     attribute spend to. They still get their statusline.
+#
+# The figures are CUMULATIVE for the session rather than per-turn deltas:
+# total_cost_usd is the running total of that conversation. So a dropped POST
+# costs nothing as long as a later one lands, and the last POST of a session
+# carries its final figure. That is what makes the throttle below safe.
+set -u
+
+# TL_USAGE_ENDPOINT is a scratch override for the dev harness and the tests,
+# the same rationale as tmux-api's TMUX_API_PREFS_DIR: a test run must not post
+# into the production store. The managed-settings entry sets no environment.
+USAGE_URL="${TL_USAGE_ENDPOINT:-http://localhost:7685/hooks/usage}"
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+
+# The statusLine payload, read once and handed to both consumers.
+payload="$(cat 2>/dev/null || true)"
+
+# ---- the inner statusline -------------------------------------------------
+# TL_USAGE_INNER_COMMAND is the override for an install that does not keep the
+# user's own statusLine in ~/.claude/settings.json — the container image, and
+# the tests. It is checked first and needs nothing else.
+#
+# Otherwise: the user's own settings, local before global, matching Claude
+# Code's own precedence. This is one fork per render, deliberately not cached: a
+# cache would need invalidating when someone edits their settings, and the inner
+# command is itself a whole script — the fork is noise beside it.
+inner_command() {
+    if [ -n "${TL_USAGE_INNER_COMMAND:-}" ]; then
+        printf '%s' "$TL_USAGE_INNER_COMMAND"
+        return 0
+    fi
+    local f found
+    for f in "$CLAUDE_DIR/settings.local.json" "$CLAUDE_DIR/settings.json"; do
+        [ -r "$f" ] || continue
+        found="$(statusline_command "$f")"
+        if [ -n "$found" ]; then
+            printf '%s' "$found"
+            return 0
+        fi
+    done
+    return 0
+}
+
+# statusline_command prints .statusLine.command from one settings file.
+#
+# jq when it is there. Without it, parameter expansion — because losing the
+# recording on a box with no jq is the price of the feature, and losing the
+# user's own prompt is not: the slot is theirs and this script only borrowed it.
+# jq is not a declared dependency of the package, so this path is what a minimal
+# box, and the container image, actually run.
+#
+# The fallback refuses anything it cannot take apart with certainty. A quote or
+# a backslash inside the command is past what this can parse, and running half
+# of somebody's prompt would be worse than running none of it.
+statusline_command() {
+    local doc rest obj cmd
+    if command -v jq >/dev/null 2>&1; then
+        jq -r '.statusLine.command // empty' "$1" 2>/dev/null || true
+        return 0
+    fi
+    doc="$(<"$1")" || return 0
+    doc="${doc//$'\n'/ }"
+    case "$doc" in
+    *'"statusLine"'*) ;;
+    *) return 0 ;;
+    esac
+    rest="${doc#*\"statusLine\"}"
+    case "$rest" in
+    *'{'*) ;;
+    *) return 0 ;;
+    esac
+    # The statusLine object, up to its first closing brace. A nested object
+    # inside it would end the slice early, and the "command" test below then
+    # fails closed.
+    rest="${rest#*\{}"
+    obj="${rest%%\}*}"
+    case "$obj" in
+    *'"command"'*) ;;
+    *) return 0 ;;
+    esac
+    cmd="${obj#*\"command\"}"
+    cmd="${cmd#*:}"
+    cmd="${cmd#"${cmd%%[![:space:]]*}"}"
+    case "$cmd" in
+    \"*) ;;
+    *) return 0 ;;
+    esac
+    cmd="${cmd#\"}"
+    cmd="${cmd%%\"*}"
+    # An escaped quote inside the command means the slice above stopped in the
+    # middle of it. Say nothing rather than run a fragment.
+    case "$cmd" in
+    *\\) return 0 ;;
+    esac
+    printf '%s' "$cmd"
+}
+
+# ---- the reading ----------------------------------------------------------
+
+# session_cost extracts total_cost_usd with parameter expansion rather than jq.
+# It runs before the decision to post at all, so it must not fork. The payload
+# is compact JSON with no whitespace (measured against 2.1.263, 2026-09-06),
+# which is what lets this work; anything it cannot parse comes back empty and
+# means "post anyway".
+session_cost() {
+    local c
+    case "$payload" in
+    *'"total_cost_usd":'*) ;;
+    *) return 0 ;;
+    esac
+    c="${payload#*\"total_cost_usd\":}"
+    c="${c%%,*}"
+    c="${c%%\}*}"
+    # A number and nothing else. The value lands in a tmux option that is later
+    # compared as a string, and a value that is not a number means the payload
+    # is not the shape this parser assumes.
+    case "$c" in
+    "" | *[!0-9.]*) return 0 ;;
+    esac
+    printf '%s' "$c"
+}
+
+# record posts one reading. Everything in here is inside the background
+# subshell, including the tmux calls, so none of it is on the render path.
+#
+# The throttle: the statusLine renders many times a turn, and a render where
+# the running total has not moved carries no new spend. Comparing against the
+# last posted total in a pane-scoped tmux option costs one show-option and
+# drops those. Because the total is monotonic, the reading that closes a turn
+# always differs from the one before it, so nothing is lost at the tail. The
+# rate-limit percentages ride along with whichever reading does get posted; a
+# window that resets without any spend happening is a stale reading until the
+# next turn, which is a few seconds of staleness on a five-hour window.
+#
+# The option is stamped whether or not the POST succeeded. A service that is
+# down would otherwise be retried on every render at three a second, and it
+# loses nothing: the next change in the total posts the cumulative figure that
+# the failed attempt was carrying.
+record() {
+    local cost prev session
+
+    command -v tmux >/dev/null 2>&1 || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    command -v curl >/dev/null 2>&1 || return 0
+
+    session="$(tmux display -p '#S' 2>/dev/null || true)"
+    [ -n "$session" ] || return 0
+
+    cost="$(session_cost)"
+    if [ -n "$cost" ] && [ -n "${TMUX_PANE:-}" ]; then
+        # -p, on both calls: without it tmux resolves the pane to its SESSION
+        # and stores one option for the whole thing (measured on 3.4). Two agent
+        # panes in one session would then compare against each other's totals —
+        # which almost never match, so every render of both panes posts, and on
+        # the renders where they do match a real reading is dropped.
+        prev="$(tmux show-option -qvp -t "$TMUX_PANE" @tl_usage_cost 2>/dev/null || true)"
+        [ "$prev" = "$cost" ] && return 0
+        tmux set-option -p -t "$TMUX_PANE" @tl_usage_cost "$cost" >/dev/null 2>&1 || true
+    fi
+
+    # The payload goes over the wire untouched under "statusline", with the two
+    # facts it does not carry added beside it. Untouched on purpose: the shape
+    # drifts between versions, and a script that picked fields out would need
+    # editing every time one moved. The service decides what it understands.
+    #
+    # jq builds it rather than string concatenation, because the tmux session
+    # name and the payload both have to be valid JSON on the other end.
+    printf '%s' "$payload" \
+        | jq -c --arg u "${USER:-$(id -un)}" --arg t "$session" \
+            '{user:$u, tmux_session:$t, statusline:.}' 2>/dev/null \
+        | curl -s --connect-timeout 1 --max-time 3 -X POST \
+            -H 'Content-Type: application/json' --data-binary @- \
+            "$USAGE_URL" >/dev/null 2>&1 || true
+}
+
+# ---- run ------------------------------------------------------------------
+
+if [ -n "${TMUX:-}" ]; then
+    # Backgrounded whole. Nothing about recording — not a tmux lookup, not a
+    # jq, not a connect timeout — is allowed to delay the prompt the user is
+    # looking at.
+    record >/dev/null 2>&1 &
+fi
+
+cmd="$(inner_command)"
+
+# No inner command is the ordinary case for a user who never set a statusLine:
+# Claude Code shows its own default, and printing nothing is what it expects
+# from a command that produces nothing.
+[ -n "$cmd" ] || exit 0
+
+# A configuration that points the inner slot back at this script would recurse
+# until the box ran out of processes. It is a misconfiguration rather than
+# something that can happen through managed settings, and it is cheap to refuse.
+case "$cmd" in
+*tl-usage-record*)
+    exit 0
+    ;;
+esac
+
+# The same JSON on stdin, so the inner command sees exactly what the CLI sent.
+# printf rather than a heredoc: a heredoc would append a newline the CLI did not
+# send. The pipeline's status is the script's, so an inner command's own exit
+# code reaches the CLI unchanged.
+printf '%s' "$payload" | exec sh -c "$cmd"

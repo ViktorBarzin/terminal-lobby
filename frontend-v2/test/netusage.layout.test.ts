@@ -14,11 +14,21 @@ import { resolve } from "node:path";
  */
 const css = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
 
-/** The body of one rule, by selector. */
+/**
+ * The body of one rule, by selector.
+ *
+ * A selector may be one of a LIST: the Agent spend page shares these rules
+ * rather than restating them, so `.tl-netusage-bar` and `.tl-spend-meter-bar`
+ * are two names on one rule. Matching the selector on its own line, ending in
+ * either a comma or the brace, finds it under either shape — and still fails
+ * loudly if the rule is renamed away.
+ */
 function rule(selector: string): string {
-  const i = css.indexOf(`\n${selector} {`);
-  if (i < 0) throw new Error(`no rule for ${selector}`);
-  return css.slice(i, css.indexOf("}", i));
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const at = css.search(new RegExp(`\\n${escaped}\\s*[,{]`));
+  if (at < 0) throw new Error(`no rule for ${selector}`);
+  const open = css.indexOf("{", at);
+  return css.slice(open, css.indexOf("}", open));
 }
 
 describe("the Data used breakdown stays inside its panel", () => {

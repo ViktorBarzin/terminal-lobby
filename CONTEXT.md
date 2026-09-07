@@ -536,6 +536,98 @@ number. An estimate by construction — it reproduces the server's algorithm, no
 its exact state.
 _Avoid_: shadow, proxy
 
+### Agent spend
+
+What the agents inside the sessions cost, read in Settings and in one figure
+beside the gear
+(`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`, design in
+`docs/plans/2026-09-06-agent-spend-panel-design.md`). The words below are close
+enough to **Data used** to be worth keeping apart deliberately, so each entry
+says which side it is on.
+
+**Agent spend**:
+What one OS user's Claude Code and Codex conversations have consumed over a
+period, kept server-side in `/var/lib/tmux-api/spend/<user>.json` and served by
+`GET /agent-spend`. Distinct from **Data used** in every respect worth naming:
+that is **wire bytes** a browser moved, counted per browser profile and never
+leaving the device; this is what the agents themselves cost, counted per OS
+user, and it follows the person to any browser they sign in from. The two tools
+are kept apart all the way down, because Claude Code reports dollars and a
+ChatGPT plan reports none.
+_Avoid_: usage (taken: **Data used** owns it, and Codex's rollout spends the
+same word on tokens alone, in `total_token_usage`), cost tracking, billing
+(nothing here bills anyone). The ban is on what a person reads and on new
+names. The recording path was built under the vendor's own word for the slot it
+sits in and keeps it, so `devvm/tl-usage-record`, `POST /hooks/usage`,
+`TL_USAGE_ENDPOINT` and `@tl_usage_cost` all say "usage" and all mean spend.
+Renaming them would mean changing the managed-settings entry in the infra repo
+in the same breath, so they stand — grep for `usage` and expect both meanings.
+
+**Spend**:
+Dollars, and only for Claude Code, which computes `total_cost_usd` itself and
+hands it to the **Recorder** on every render. Never derived here: pricing
+tokens ourselves would mean a rate table with no signal when it went stale.
+A Codex session has no spend figure at all, so its rows carry tokens and stop
+there.
+_Avoid_: cost (fine in prose, but the field a person reads is spend), price
+
+**Limit window**:
+One rate-limit window a vendor reports: how much of it is gone as a percentage,
+and when it resets. Codex reports up to two on every turn and labels each from
+the length it declares, which is where **5-hour limit** and **weekly limit**
+come from; a rollout may carry only one. Claude Code reports `five_hour`,
+`seven_day` and `spend_limit` only for a Claude.ai seat or a gateway carrying a
+spend limit, so an enterprise seat shows spend and no windows. A window whose
+reset has already passed describes a window that no longer exists, so it is
+dropped rather than shown as current. Each vendor's own words are the labels,
+because the person reading them will meet the same words in the CLI.
+_Avoid_: quota, allowance, subscription (taken: a **subscription** in this repo
+is the Web Push registration on the Notifications page, which has nothing to do
+with a vendor's limits)
+
+**Plan**:
+The vendor account tier a tool reports for itself, such as ChatGPT `plus` from
+a Codex rollout. Shown as a fact beside the limits, next to the **credit
+balance** when the account has one, and read from nowhere but the tool's own
+output.
+_Avoid_: subscription (see **Limit window**), tier, seat (Claude's word for it,
+which the panel never has to print)
+
+**Recorder**:
+`devvm/tl-usage-record`, which sits in Claude Code's statusLine slot, posts the
+payload to `POST /hooks/usage` and then runs whatever statusLine the user
+already had with the same JSON on stdin. It is the only place the CLI hands out
+its own cost arithmetic. Everything it does on the recording side is a silent
+no-op on failure and runs in a background subshell, because a statusline that
+breaks somebody's prompt is worse than no feature. Codex has no counterpart and
+needs none: its rollout files already carry what the panel reads.
+_Avoid_: hook (no hook payload carries cost, which is the whole reason this
+exists), agent, collector
+
+**Reading**:
+One statusLine payload as recorded: the conversation's RUNNING TOTAL, not a
+turn's delta. So a write REPLACES that session's row and moves the day's total
+by the difference, and a dropped post costs nothing as long as a later one
+lands.
+_Avoid_: sample, event, tick
+
+**Day rollup**:
+The per-day total a **reading** rolls its difference into. The rollups are the
+complete record, which is what lets **All time** be answered from the days
+alone; the session rows are the detail view of the last 30 days.
+_Avoid_: aggregate, bucket (taken: a **bucket** is one of Data used's five
+features)
+
+**Retired row**:
+A session row past the 30-day window. It keeps the conversation's id and its
+running totals and loses its name and model, and the page stops listing it. The
+totals are why it stays: the next **reading** from that conversation is
+differenced against them, and a row that had been deleted outright would make a
+resumed conversation contribute its whole history to the day it came back. The
+row cap (2,000, retired rows included) is the one place a baseline is dropped
+for good.
+_Avoid_: expired, archived, tombstone (nothing here marks a deletion)
+
 ### Release
 
 How a commit becomes the code running on the devvm

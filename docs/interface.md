@@ -100,6 +100,7 @@ right. The pages, in rail order:
 | Notifications | when to notify, this device's permission and subscription, two tests |
 | Network | the Full/Auto/Light link pin, which network you are on, and "Data used" |
 | Privacy | send diagnostics, and clear this browser's data |
+| Agent spend | what Claude Code and Codex have consumed over a period: Claude's dollars, Codex's 5-hour and weekly limits, and the conversations under each |
 | Skills | install, disable, share — see `docs/adr/0011` |
 | Act as user | admins only; see [multi-user](multi-user.md) |
 
@@ -116,6 +117,23 @@ rather than what the control is: acting as another user, clearing local data,
 and what diagnostics do and do not send.
 
 On a phone the rail becomes a row of chips above the page.
+
+**Agent spend** has a short form outside Settings: a figure beside ⚙ in the
+sidebar footer, following whatever the attached session runs. A Claude Code
+session shows today's dollars, a Codex session shows how much of its tighter
+limit is gone, and a plain shell or nothing attached shows no figure at all.
+Clicking it opens the page. A section on the page is drawn only for a tool that
+has reported something, so a box that only runs Claude sees one section and a
+box that has run neither sees a line saying nothing has reported yet.
+
+The Codex section has one more condition on a multi-user box. Codex's figures
+are read straight out of `~/.codex/sessions`, tmux-api runs as one OS user, and
+peer homes here are 0750 — so on the devvm the section is drawn for the user
+that service runs as. For anyone else, including an admin using `?as=`, the
+read is refused and the section is left out; the service logs which user it
+could not read for. Claude's half has no such condition: it comes from a store
+the services own. Reaching another user's rollouts would need a privileged
+helper and a sudoers grant, neither of which exists yet.
 
 ## Theme
 
