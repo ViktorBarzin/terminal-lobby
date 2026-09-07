@@ -489,17 +489,40 @@
 .tl-card-swiping {
   transition: none;
 }
-/* Lifted by a long press and following the finger up and down the list
-   (SessionCard: press, hold, then drag). `pointer-events: none` is what makes
-   the drag able to see where it is going: the lifted row sits directly under
-   the finger, so without it every hit-test would come back as itself. */
-.tl-card-lifted {
+/* The row a drag left behind, for as long as one is in the air (dnd/sidebar.ts
+   sets this through the library's placeholder class). It stays in the list and
+   holds the gap the row will drop into, so the seat is visible the whole way
+   rather than appearing at the end. */
+.tl-card-dragging {
+  opacity: 0.32;
+  background: var(--bg-card-hover);
+}
+/* The copy that follows the finger during a touch drag. The library clones the
+   row, copies its computed box and puts the clone in the top layer as a manual
+   popover, so it is free of any transformed ancestor — but the clone carries
+   .tl-card with it, and that class has a 160ms transform transition which would
+   make it swim after the finger rather than track it. */
+#dnd-dragged-node-clone {
   transition: none;
-  pointer-events: none;
-  position: relative;
-  z-index: 3;
+  border: 1px solid var(--border-strong);
   background: var(--bg-card-hover);
   box-shadow: 0 8px 20px rgb(0 0 0 / 0.35);
+}
+/* A project with no sessions has a body with no height, so there would be
+   nothing to aim a card at. It opens up while a drag is in the air, and says
+   so. */
+.tl-group-body:empty {
+  min-height: 0;
+  transition: min-height 120ms ease;
+}
+:root[data-tl-drag] .tl-group-body:empty {
+  min-height: 30px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px;
+}
+/* The group a header drag left behind, matching the card placeholder. */
+.tl-group-dragging {
+  opacity: 0.32;
 }
 /* Which way the row is offering to go. The tint is the only warning a swipe
    gives before the confirm, so the destructive direction is the one that has
@@ -547,12 +570,6 @@
 }
 .tl-card-unseen .tl-card-name {
   font-weight: 600;
-}
-.tl-drop-above {
-  box-shadow: inset 0 2px 0 var(--accent);
-}
-.tl-drop-below {
-  box-shadow: inset 0 -2px 0 var(--accent);
 }
 /* Session names are BOLD (Viktor, 2026-08-15). This deliberately goes past the
    vanilla page, which uses 500 at rest and 600 attached: at 13px in DM Sans the

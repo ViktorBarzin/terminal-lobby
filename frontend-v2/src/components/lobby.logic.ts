@@ -40,6 +40,19 @@ export interface SidebarModel {
   foreign: Session[];
 }
 
+/**
+ * Every own session on screen, by name.
+ *
+ * A card dragged into another group is drawn by that group before the layout
+ * has moved it, so the row it needs is still filed under the group it came
+ * from and has to be findable from anywhere.
+ */
+export function sessionsByName(model: SidebarModel): Map<string, Session> {
+  const out = new Map<string, Session>();
+  for (const g of model.groups) for (const s of g.sessions) out.set(s.name, s);
+  return out;
+}
+
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(n, hi));
 }

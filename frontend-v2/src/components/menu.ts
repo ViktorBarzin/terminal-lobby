@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount, type Accessor, type JSX } from "solid-js";
 import { placeMenu, type Box } from "./menu.logic";
+import { DRAG_START_EVENT } from "../dnd/sidebar";
 
 export interface DismissableMenu {
   open: Accessor<boolean>;
@@ -243,6 +244,9 @@ export function createDismissableMenu(
   onMount(() => {
     document.addEventListener("pointerdown", onPointerDown, true);
     document.addEventListener("keydown", onKeyDown, true);
+    // A drag has taken the row this menu belongs to (dnd/sidebar.ts explains
+    // why the announcement comes from there rather than from the row).
+    document.addEventListener(DRAG_START_EVENT, close);
     if (opts.placed) {
       document.addEventListener("scroll", onScrolled, true);
       // A resize moves the box the popup was fitted into whatever the cause —
@@ -254,6 +258,7 @@ export function createDismissableMenu(
   onCleanup(() => {
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    document.removeEventListener(DRAG_START_EVENT, close);
     if (opts.placed) {
       document.removeEventListener("scroll", onScrolled, true);
       window.removeEventListener("resize", close);
