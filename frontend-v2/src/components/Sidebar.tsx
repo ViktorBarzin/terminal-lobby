@@ -23,6 +23,8 @@ import { SkillsIcon } from "./Icons";
 import { BellIcon } from "./BellIcon";
 import type { NotificationSystem } from "../notify/notifications";
 import { StatusDot } from "./StatusDot";
+import { SpendFigure } from "./SpendFigure";
+import type { SessionTool } from "../types/lobby";
 import { LOBBY_CHANNELS, type Channel } from "../diagnostics/status";
 
 /**
@@ -66,8 +68,22 @@ export const Sidebar: Component<{
   /** The connection badge in the header (ADR-0016), scoped to the channels a
    *  list screen can honestly report. Optional so a test can mount without it. */
   status?: { channels: () => readonly Channel[]; onOpen: () => void };
+  /** Open the Agent spend page. Supplying it is what puts the footer figure on
+   *  screen; a test that does not care about spend mounts without it, and the
+   *  sidebar then reads nothing from the server. */
+  onOpenSpend?: () => void;
 }> = (props) => {
   const store = props.store;
+
+  // Which tool the attached session runs, which is the whole of what the footer
+  // figure follows. `tool` comes off the same /sessions payload the cards read
+  // (tmux-api derives it from the pane's process tree), so the figure and the
+  // card's tool mark cannot disagree.
+  const attachedTool = createMemo<SessionTool | undefined>(() => {
+    const sel = store.selected();
+    if (!sel) return undefined;
+    return store.sessions.find((s) => s.name === sel.name)?.tool;
+  });
 
   // The roamed session-list pref, read once here and threaded to every card
   // (through ProjectGroup for projects and Ungrouped, directly for the
@@ -195,9 +211,7 @@ export const Sidebar: Component<{
             type="button"
             aria-label="Reload the app"
             title="Reload the app"
-            onClick={() =>
-              props.onReload ? props.onReload() : window.location.reload()
-            }
+            onClick={() => (props.onReload ? props.onReload() : window.location.reload())}
           >
             ↻
           </button>
@@ -225,8 +239,8 @@ export const Sidebar: Component<{
         </div>
         <Show when={store.whoami()}>
           <p class="tl-sidebar-sub">
-            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}).
-            Sessions are kernel-isolated per Unix user; you only see your own.
+            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}). Sessions are
+            kernel-isolated per Unix user; you only see your own.
           </p>
         </Show>
       </div>
@@ -362,6 +376,14 @@ export const Sidebar: Component<{
           </button>
         </Show>
         {props.actAsChip}
+        {/* Beside the gear, because it is the short answer to the question the
+            gear opens: attach a Claude session and it reads today's spend,
+            attach a Codex one and it reads the tighter of its two limits. */}
+        <Show when={props.onOpenSpend}>
+          {(open) => (
+            <SpendFigure tool={attachedTool} polls={store.polls} onOpen={() => open()()} />
+          )}
+        </Show>
         <Show when={props.onOpenSkills}>
           {(open) => (
             <button

@@ -207,6 +207,10 @@ src/
                          panel says something different about: 409 is a name
                          collision with a diff to show, 404 a list drawn before
                          someone else removed that skill
+    agent-spend.ts       GET /agent-spend client and the wording around it:
+                         Claude's window keys in words, dollars that never
+                         round a real cost to $0.00, compact token counts, and
+                         the filter that drops a window whose reset has passed
     act-as.ts            Admin act-as switch: the URL to navigate to in order
                          to act as a user (or return) — switching is a load —
                          plus lensTarget(), the one answer for "whose account
@@ -514,6 +518,13 @@ src/
                          sidebar header the three a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
+    SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
+                         footer beside the gear: today's dollars for Claude
+                         Code, the tighter of the two limits for Codex, nothing
+                         for a shell. Follows the same `tool` the card's mark
+                         does, reads GET /agent-spend on the sidebar's own
+                         session-poll tick with a 30s floor between reads, and
+                         opens Settings → Agent spend when tapped
     NewSessionComposer.tsx
                          The new-session composer: a prompt field plus the three
                          choices a create makes — project, command, model. What
@@ -625,6 +636,11 @@ src/
                               bytes by period, by named network, by feature
         PrivacyPage.tsx       Send diagnostics, and Clear local data with the
                               roamed-settings opt-in
+        AgentSpendPage.tsx    What Claude Code and Codex have consumed over a
+                              period: Claude's spend, its windows when the seat
+                              reports any, Codex's 5-hour and weekly limits,
+                              plan and credits, and the session rows under each.
+                              A section is drawn only when the server sent it
         ActAsPage.tsx         The admin act-as picker; renders for an admin only
         SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
                               since 2026-08-30: a tab per list — this account's

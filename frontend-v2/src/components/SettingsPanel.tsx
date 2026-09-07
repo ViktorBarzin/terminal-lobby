@@ -25,6 +25,7 @@ import { NotificationsPage } from "./settings/pages/NotificationsPage";
 import { NetworkPage } from "./settings/pages/NetworkPage";
 import type { ConnectionControl } from "../diagnostics/status-store";
 import { PrivacyPage } from "./settings/pages/PrivacyPage";
+import { AgentSpendPage } from "./settings/pages/AgentSpendPage";
 import { ActAsPage, type ActAsControl } from "./settings/pages/ActAsPage";
 import { SkillsPage } from "./settings/pages/SkillsPage";
 import { lsGet, lsSet } from "../lib/storage";
@@ -81,6 +82,9 @@ export const SettingsPanel: Component<{
   skills?: SkillsStore;
   /** the caller's live sessions, for the Skills page's Sessions tab. */
   skillSessions?: Accessor<ReadonlyArray<{ name: string; state?: string }>>;
+  /** the caller's live sessions with their titles, so the Agent spend page can
+   *  name a row rather than showing the session's id. */
+  sessionTitles?: Accessor<ReadonlyArray<{ name: string; title?: string }>>;
   /** confirm seam for Clear local data and the skills actions (tests inject). */
   confirm?: (message: string) => boolean;
   /** reload seam for Clear local data (tests inject it). */
@@ -278,6 +282,9 @@ export const SettingsPanel: Component<{
               </Match>
               <Match when={current() === "privacy"}>
                 <PrivacyPage confirm={props.confirm} onCleared={props.onCleared} />
+              </Match>
+              <Match when={current() === "spend"}>
+                <AgentSpendPage sessionTitles={props.sessionTitles} />
               </Match>
               <Match when={current() === "skills"}>
                 <Show

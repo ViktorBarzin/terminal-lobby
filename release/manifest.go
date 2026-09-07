@@ -209,6 +209,10 @@ var Package = Manifest{
 		{Src: "devvm/tls", Dest: "/usr/local/bin/tls", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-tmux-state", Dest: "/usr/local/bin/claude-tmux-state", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-se-hook", Dest: "/usr/local/bin/claude-se-hook", Mode: 0o755, Unmanaged: true},
+		// Claude Code's statusLine slot, run once a render by the CLI. Shipped
+		// here and wired by whoever owns the machine's Claude configuration —
+		// the same split ADR-0001 established for the state dot.
+		{Src: "devvm/tl-usage-record", Dest: "/usr/local/bin/tl-usage-record", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},
 
 		{Src: "share/index.html", Dest: "/usr/local/share/ttyd/index.html", Mode: 0o644},
