@@ -687,6 +687,17 @@ src/
                          and the reason the journal is told
     push.ts              Web Push subscribe/heal (best-effort)
     vapid.ts             VAPID base64url → Uint8Array
+  dnd/
+    sidebar.ts           Drag and drop for the sidebar, over
+                         @formkit/drag-and-drop: each group's card list and the
+                         sequence of groups are registered as sortables, a mouse
+                         gets native drag events and a finger a synthetic
+                         pointer drag, and the store is written once when the
+                         pointer comes up. Also the reason clipboard/attach.ts
+                         asks before claiming a dragover — its window-level
+                         `dropEffect = "copy"` was refusing every card drop
+    anchor.ts            PURE: the neighbour a dropped card is placed against,
+                         and where a dragged group lands in the raw sequence
   mobile/
     pointer.ts           Coarse-pointer gate for every mobile affordance
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys
@@ -714,9 +725,6 @@ src/
                          --tl-text-scale, set on .tl-textview, so transcript,
                          answer card and composer move together
     swipe.ts             PURE swipe classification + the session-switch gesture
-    reorder.ts           PURE geometry for dragging a session row with a
-                         finger (which side of the row under it, how fast
-                         the list scrolls itself at its edges)
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame
                          has no focus, so it cannot read it) — text via tl-paste,

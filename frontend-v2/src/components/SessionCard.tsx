@@ -22,15 +22,15 @@ import {
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
-import { dropSide, edgeScroll } from "../mobile/reorder";
-import { hasFinePointer } from "../mobile/pointer";
 import { ACT_AS } from "../lib/config";
 
 /**
  * A thin session row (inventory Cat.2 "Session card"): state dot + name (left),
  * live working timer / relative time (right), an optional foreign owner badge,
- * and a ⋯ actions menu. Own cards are draggable (fine pointer) and rename inline
- * on double-click. Activate on click / Enter / Space.
+ * and a ⋯ actions menu. Own cards rename inline on double-click and are dragged
+ * to reorder by the group's sortable (dnd/sidebar.ts), which owns every drag
+ * gesture the row has; what is left here is the swipe and the long press.
+ * Activate on click / Enter / Space.
  */
 export const SessionCard: Component<{
   store: LobbyStore;
@@ -101,16 +101,15 @@ export const SessionCard: Component<{
   // bottom of this row, which is what a row near the end of a long list needs
   // (see .tl-menu-placed in sidebar.css).
   const menu = createDismissableMenu(() => props.store.hold(), { placed: true });
-  const [dropEdge, setDropEdge] = createSignal<"above" | "below" | null>(null);
   let releaseHold: (() => void) | null = null;
   let inputEl: HTMLInputElement | undefined;
 
-  // The rename box and a drag both hold the poll, and only their own end
-  // handlers give it back — so a card that goes away while one is open (its
-  // group collapsing does exactly that, and until the model was stabilized so
-  // did any poll) stranded the sidebar: the hold count never returned to zero
-  // and nothing polled again for the rest of the session. Same backstop
-  // ProjectGroup keeps on its add box and header drag.
+  // The rename box holds the poll and only its own end handler gives it back —
+  // so a card that goes away while one is open (its group collapsing does
+  // exactly that, and until the model was stabilized so did any poll) stranded
+  // the sidebar: the hold count never returned to zero and nothing polled again
+  // for the rest of the session. Same backstop ProjectGroup keeps on its add
+  // box; a drag's own hold lives with the drag, in dnd/sidebar.ts.
   onCleanup(() => {
     releaseHold?.();
     releaseHold = null;
@@ -215,51 +214,6 @@ export const SessionCard: Component<{
     menu.toggle();
   };
 
-  // ---- drag reorder ----
-  // Armed when a mouse, trackpad or stylus is present — NOT when the primary
-  // pointer happens to be fine. On a touchscreen laptop the primary pointer is
-  // coarse while the person drags with a mouse, and the old test left that
-  // machine unable to reorder at all: no native drag, and onPointerDown ignores
-  // a mouse. A phone still answers no here and keeps the touch path.
-  const draggable = () => !foreign() && hasFinePointer();
-  const onDragStart = (e: DragEvent) => {
-    if (!draggable()) return;
-    releaseHold = props.store.hold();
-    props.store.setDragName(s().name);
-    e.dataTransfer?.setData("text/tl-session", s().name);
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  };
-  const onDragEnd = () => {
-    props.store.setDragName(null);
-    setDropEdge(null);
-    releaseHold?.();
-    releaseHold = null;
-  };
-  const onDragOver = (e: DragEvent) => {
-    const dragging = props.store.dragName();
-    if (!dragging || dragging === s().name) return;
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    setDropEdge(e.clientY < rect.top + rect.height / 2 ? "above" : "below");
-  };
-  const onDragLeave = () => setDropEdge(null);
-  const onDrop = async (e: DragEvent) => {
-    const dragging = props.store.dragName() || e.dataTransfer?.getData("text/tl-session");
-    const edge = dropEdge();
-    setDropEdge(null);
-    if (!dragging || dragging === s().name) return;
-    e.preventDefault();
-    e.stopPropagation();
-    // Hand the store the CARD the drop landed on, never a rendered index: the
-    // render is a filtered view of the layout, so the two coordinate systems
-    // disagree wherever a dead ref or a leftover sits.
-    await props.store.move(dragging, props.groupName, {
-      name: s().name,
-      side: edge ?? "below",
-    });
-  };
-
   /**
    * Long-press opens the actions menu on a touch screen.
    *
@@ -287,9 +241,9 @@ export const SessionCard: Component<{
       holdTimer = undefined;
       // The finger has stopped being a swipe and become a hold. It may now do
       // either of two things: come up, and leave the menu open, or move, and
-      // take the row with it (see startDrag).
-      armed = true;
-      swipeFrom = null;
+      // take the row with it. `holdFired` is what makes onPointerMove stop
+      // treating the same press as a swipe; the origin stays recorded, because
+      // that branch still needs to know how far the finger has since travelled.
       menu.toggle();
     }, HOLD_MS);
   };
@@ -324,10 +278,6 @@ export const SessionCard: Component<{
   const AXIS_LOCK_PX = 10;
   const [swipeDx, setSwipeDx] = createSignal(0);
   let swipeFrom: { x: number; y: number } | null = null;
-  /** the row itself, for the non-passive listener and the scroller lookup. */
-  let cardEl: HTMLElement | undefined;
-  /** where the finger is across the screen, for the drag's fallback aim. */
-  let lastX = 0;
   /** Which way the finger claimed: "x" is this row's, "y" is the list's. */
   let axis: "x" | "y" | null = null;
 
@@ -335,29 +285,24 @@ export const SessionCard: Component<{
     onHoldStart(e);
     if (e.pointerType === "mouse") return;
     axis = null;
-    armed = false;
-    liftFrom = e.clientY;
-    lastX = e.clientX;
     swipeFrom = { x: e.clientX, y: e.clientY };
   };
 
   const onPointerMove = (e: PointerEvent) => {
-    lastX = e.clientX;
-    if (lifted()) {
-      trackDrag(e.clientY);
-      return;
-    }
-    if (armed) {
-      // The hold has fired and the finger is moving: that is a drag, not a tap
-      // on the menu that just opened.
-      if (Math.abs(e.clientY - liftFrom) >= DRAG_START_PX) startDrag(e.clientY);
-      return;
-    }
     if (!swipeFrom) return;
     const dx = e.clientX - swipeFrom.x;
     const dy = e.clientY - swipeFrom.y;
     // A finger that has moved is not holding still, whichever way it went.
     if (Math.abs(dx) > HOLD_SLOP_PX || Math.abs(dy) > HOLD_SLOP_PX) endHold();
+    // The hold has fired, the menu is open, and the finger is moving. That is
+    // the drag library lifting this row — it runs a press timer of its own on
+    // the same 450ms (dnd/sidebar.ts), so one press does both, in the order
+    // Viktor chose on 2026-08-22. The swipe is off the table for the rest of
+    // this press, which is why this returns rather than falling through. The
+    // menu closes when the drag actually begins, announced on the document,
+    // because a touchscreen stops sending this row pointer events the moment it
+    // hands the gesture over.
+    if (holdFired) return;
     if (!axis && Math.max(Math.abs(dx), Math.abs(dy)) >= AXIS_LOCK_PX) {
       axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
       // Down the list: this row is out of it, and it must not trail a scroll.
@@ -373,9 +318,8 @@ export const SessionCard: Component<{
       // finger comes up. There is a live path to it: a hold opens the menu and
       // deliberately leaves it open when the finger lifts, so the next finger
       // down and across on the same row swipes underneath an open menu. Closing
-      // is what the drag one branch over does (startDrag), for the same reason
-      // and to the same end — the gesture has taken the row, and the menu is
-      // not part of it.
+      // is what a lift one branch up does, for the same reason and to the same
+      // end — the gesture has taken the row, and the menu is not part of it.
       if (axis === "x") menu.close();
     }
     if (axis !== "x") return;
@@ -394,20 +338,19 @@ export const SessionCard: Component<{
    * downward produced on the deployed build. `touch-action: pan-y` alone was
    * not enough, because it leaves the vertical scroll on the table.
    *
+   * Only the swipe needs this now. A lifted row is held still by the drag
+   * library, which cancels touchmove on the document for as long as one is in
+   * the air.
+   *
    * Registered by hand rather than as JSX, because Solid delegates touch
    * handlers to the document, where the browser makes them passive and
    * `preventDefault()` is ignored.
    */
   const onTouchMove = (e: TouchEvent) => {
-    if ((axis === "x" || lifted()) && e.cancelable) e.preventDefault();
+    if (axis === "x" && e.cancelable) e.preventDefault();
   };
 
   const endSwipe = (e: PointerEvent) => {
-    if (lifted()) {
-      void drop();
-      return;
-    }
-    armed = false;
     endHold();
     const from = swipeFrom;
     const claimed = axis === "x";
@@ -429,187 +372,7 @@ export const SessionCard: Component<{
     }
   };
 
-  /**
-   * Drag the row to reorder it, once the long press has armed one.
-   *
-   * The mouse reorders with HTML5 drag-and-drop (above), which a touch screen
-   * never fires — so before this a phone could reorder sessions only by not
-   * being a phone. Viktor asked for both from the one press (2026-08-22) and
-   * chose the order: the hold opens the menu as it always has, and moving the
-   * finger afterwards closes it and takes the row along.
-   *
-   * The lifted row publishes where it would land rather than deciding alone,
-   * because the indicator belongs to the row being dropped ON — which is a
-   * different component, and often in a different group (store.dropSpot).
-   */
-  /** Movement after the hold that means "drag", not a wobbling thumb. */
-  const DRAG_START_PX = 4;
-  const [lifted, setLifted] = createSignal(false);
-  const [liftDy, setLiftDy] = createSignal(0);
-  /** the hold fired and the finger is still down: a drag may start. */
-  let armed = false;
-  let liftFrom = 0;
-  let lastY = 0;
-  let scroller: HTMLElement | null = null;
-  /** The list's scroll position when the row was lifted. `liftDy` is a
-   *  `translateY`, which is relative to the row's own LAYOUT box — and that box
-   *  lives inside the scroller, so it moves whenever the list does. Without this
-   *  baseline the transform is a client-space delta measured against an origin
-   *  that has since slid: every pixel scrolled is a pixel the row falls behind
-   *  the finger. Measured on a phone: drift equalled the scroll exactly, in both
-   *  directions, and never recovered. */
-  let scrollFrom = 0;
-  /**
-   * How far the list could scroll when the row was lifted — the end of the
-   * list, and where the auto-scroll has to stop.
-   *
-   * It needs recording because the answer changes DURING a drag: the lifted
-   * row's own `translateY` counts toward its scroller's scrollable overflow, so
-   * a row that has travelled past the list's bottom makes the list longer, and
-   * the auto-scroll below would then have somewhere new to go — and would
-   * extend it again. Measured in a browser: scrollHeight - clientHeight climbed
-   * from 255 to 1,356 while a thumb rested still at the edge, carrying the list
-   * 952px past its end. `store.hold()` freezes the rows for the duration of the
-   * drag, so the reading taken at lift is good until it ends.
-   */
-  let scrollMax = 0;
-  let scrollRaf: number | undefined;
-
-  const startDrag = (y: number) => {
-    armed = false;
-    menu.close();
-    setLifted(true);
-    props.store.setDragName(s().name);
-    // Same hold the mouse drag takes: a poll that rebuilt the list mid-drag
-    // would move the rows out from under the finger.
-    if (!releaseHold) releaseHold = props.store.hold();
-    scroller = cardEl?.closest<HTMLElement>(".tl-sidebar-scroll") ?? null;
-    // After the closest() above, not at pointerdown: that is where the scroller
-    // becomes known. (`endDrag` leaves the reference in place, so reading it any
-    // earlier would take the previous drag's list.)
-    scrollFrom = scroller?.scrollTop ?? 0;
-    scrollMax = scroller ? Math.max(0, scroller.scrollHeight - scroller.clientHeight) : 0;
-    trackDrag(y);
-  };
-
-  /**
-   * Put the lifted row under the finger: how far the finger has travelled, plus
-   * how far the list has travelled beneath it.
-   *
-   * The scroll term is read LIVE and compared against the lift-time baseline
-   * rather than accumulated from tickScroll's own steps — so a scroll from any
-   * source is absorbed (a momentum fling, a programmatic scroll), and the row
-   * stops moving when the list clamps at either end instead of running past it.
-   */
-  const place = () => setLiftDy(lastY - liftFrom + (scroller?.scrollTop ?? 0) - scrollFrom);
-
-  const trackDrag = (y: number) => {
-    lastY = y;
-    place();
-    aim(y);
-    tickScroll();
-  };
-
-  /** What the finger is over, published for whoever has to draw it. */
-  const aim = (y: number) => {
-    // Aimed down the middle of the list rather than at the finger's own x: a
-    // thumb drifts sideways as it travels, and the rows it is dragging past do
-    // not move.
-    const box = scroller?.getBoundingClientRect();
-    const x = box && box.width > 0 ? box.left + box.width / 2 : lastX;
-    const under = document.elementFromPoint?.(x, y) as HTMLElement | null;
-    const card = under?.closest?.(".tl-card") as HTMLElement | null;
-    const overName = card?.dataset.name;
-    if (overName && overName !== s().name) {
-      const r = card!.getBoundingClientRect();
-      props.store.setDropSpot({
-        group: card!.dataset.group ?? "",
-        anchor: { name: overName, side: dropSide(y, r.top, r.height) },
-      });
-      return;
-    }
-    // A group's header means "into this group", and lets the layout place it.
-    const header = under?.closest?.(".tl-group-header") as HTMLElement | null;
-    const group = header?.dataset.group;
-    if (group !== undefined) {
-      props.store.setDropSpot({ group });
-      return;
-    }
-    // Over nothing: the empty space past the last row, or a gap between
-    // groups. The last place the indicator showed STAYS showing, because the
-    // list scrolls itself near its edges — the last row climbs away from the
-    // finger, and a drag aimed at it lands just below it. Measured on the
-    // deployed build: 2px past the end, and the drop went nowhere.
-  };
-
-  /**
-   * Scroll the list while the finger rests near its edge, so a session can be
-   * moved past the eight or so rows a phone shows at once.
-   */
-  const tickScroll = () => {
-    if (scrollRaf !== undefined || !scroller) return;
-    const step = () => {
-      scrollRaf = undefined;
-      const box = scroller?.getBoundingClientRect();
-      if (!scroller || !lifted() || !box || box.height <= 0) return;
-      const by = edgeScroll(lastY, box.top, box.bottom);
-      if (by === 0) return;
-      // Clamped to where the list ended when the row was lifted, not to where
-      // it ends now — see scrollMax. Without this the row extends the list as
-      // it travels and the scroll never arrives anywhere.
-      const to = Math.max(0, Math.min(scroller.scrollTop + by, scrollMax));
-      if (to === scroller.scrollTop) return;
-      scroller.scrollTop = to;
-      // Both of these, for the same reason: the rows moved under a finger that
-      // did not. `place()` has to be called rather than left to reactivity —
-      // `liftDy` is a signal and `scrollTop` is a plain DOM property with
-      // nothing reactive behind it, so a scroll on its own re-renders nothing.
-      // This loop is the only thing that moves the list without a pointer event,
-      // and before this call the row simply stayed where the last move left it.
-      place();
-      aim(lastY);
-      scrollRaf = requestAnimationFrame(step);
-    };
-    scrollRaf = requestAnimationFrame(step);
-  };
-
-  const drop = async () => {
-    const spot = props.store.dropSpot();
-    endDrag();
-    if (!spot) return;
-    await props.store.move(s().name, spot.group, spot.anchor);
-  };
-
-  const endDrag = () => {
-    armed = false;
-    setLifted(false);
-    setLiftDy(0);
-    props.store.setDragName(null);
-    props.store.setDropSpot(null);
-    if (scrollRaf !== undefined) cancelAnimationFrame(scrollRaf);
-    scrollRaf = undefined;
-    releaseHold?.();
-    releaseHold = null;
-  };
-
-  // A row can be unmounted mid-drag (a rename landing, a session dying), and a
-  // held poll or a stale indicator would outlive it.
-  onCleanup(() => {
-    if (lifted() || props.store.dragName() === s().name) endDrag();
-  });
-
-  /** Where the FINGER says this row's own indicator goes, if anywhere. */
-  const dropFromTouch = () => {
-    const spot = props.store.dropSpot();
-    return spot?.anchor?.name === s().name ? spot.anchor.side : null;
-  };
-
   const cancelSwipe = () => {
-    if (lifted()) {
-      endDrag();
-      return;
-    }
-    armed = false;
     endHold();
     swipeFrom = null;
     setSwipeDx(0);
@@ -622,37 +385,39 @@ export const SessionCard: Component<{
       // listener rides along, since it has to be non-passive (see onTouchMove).
       ref={(el) => {
         menu.anchor(el);
-        cardEl = el;
         el.addEventListener("touchmove", onTouchMove, { passive: false });
-        onCleanup(() => el.removeEventListener("touchmove", onTouchMove));
+        // Capture, and on the element rather than as JSX. The drag library
+        // registers a `pointerup` of its own on every row it manages and calls
+        // stopPropagation from it, which is fine for the library and fatal for
+        // us: Solid DELEGATES pointer handlers to the document, so an
+        // `onPointerUp` in the markup below would never be reached and a swipe
+        // would trail the finger and then do nothing when it lifted (measured
+        // in the swipe suite the moment the library went in). Capturing on the
+        // row means this runs on the way down, before anything can stop the
+        // event on the way up.
+        el.addEventListener("pointerup", endSwipe as EventListener, true);
+        onCleanup(() => {
+          el.removeEventListener("touchmove", onTouchMove);
+          el.removeEventListener("pointerup", endSwipe as EventListener, true);
+        });
       }}
       class="tl-card"
-      style={
-        lifted()
-          ? { transform: `translateY(${liftDy()}px)` }
-          : swipeDx()
-            ? { transform: `translateX(${swipeDx()}px)` }
-            : undefined
-      }
+      style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
       // What the row is offering to do while it trails, so a destructive
       // direction looks destructive before the finger comes up.
       data-swipe={swipeDx() === 0 ? undefined : swipeDx() > 0 ? "kill" : "open"}
-      // Read by a finger dragging another row: elementFromPoint hands back a
-      // DOM node, and this is how that node says which session it is.
+      // The row's identity in the DOM: the drag library carries values, not
+      // elements, and a test reads a row back by name.
       data-name={s().name}
       data-group={props.groupName}
       classList={{
         "tl-card-swiping": swipeDx() !== 0,
-        "tl-card-lifted": lifted(),
         "tl-card-active": isActive(),
         "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
-        "tl-drop-above": dropEdge() === "above" || dropFromTouch() === "above",
-        "tl-drop-below": dropEdge() === "below" || dropFromTouch() === "below",
       }}
       role="button"
       tabindex={0}
-      draggable={draggable()}
       aria-label={
         `session ${label()}` +
         (s().tool ? ", " + TOOL_LABELS[s().tool!] : "") +
@@ -663,18 +428,12 @@ export const SessionCard: Component<{
       onDblClick={beginRename}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
-      onPointerUp={endSwipe}
       onPointerCancel={cancelSwipe}
       onPointerLeave={cancelSwipe}
       onContextMenu={(e) => {
         // A long press raises the platform context menu on top of ours.
         if (holdFired) e.preventDefault();
       }}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onDragOver}
-      onDragLeave={onDragLeave}
-      onDrop={onDrop}
     >
       <Show when={props.badge?.(s().name)} keyed>
         {(label) => (

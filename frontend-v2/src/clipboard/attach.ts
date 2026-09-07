@@ -1,6 +1,7 @@
 import { createSignal, type Accessor } from "solid-js";
 import { firstImageBlob } from "./paste";
 import { dragHasFiles } from "./drop";
+import { lobbyDragActive } from "../dnd/sidebar";
 import { uploadBlob, uploadField } from "./upload";
 import { showToast, toasts, type ToastKind } from "../store/toast";
 import { track } from "../telemetry/track";
@@ -235,13 +236,29 @@ export function installImageClipboard(
   // dragDepth counts nested dragenter/dragleave so the overlay only drops when
   // the cursor truly leaves the window (children fire leave on every crossing).
   let dragDepth = 0;
+  /**
+   * A session or a project being dragged across the sidebar is not a file drop,
+   * and this handler must not touch it.
+   *
+   * These listeners are on the WINDOW, so they see every drag on the page and
+   * run last. Claiming one costs the lobby its own: `dropEffect = "copy"`
+   * against a card's `effectAllowed = "move"` resolves to no operation at all,
+   * so Chrome refuses the drop and fires `dragleave` + `dragend` instead — the
+   * drop line painted and nothing landed, measured 2026-09-06 in a real
+   * browser. It started reaching the lobby's drags when the terminal stopped
+   * being an iframe on 2026-09-05 and these listeners moved onto the top
+   * window with it.
+   */
+  const ours = (): boolean => lobbyDragActive();
   const onDragEnter = (e: DragEvent): void => {
+    if (ours()) return;
     e.preventDefault();
     if (!dragHasFiles(e.dataTransfer)) return;
     dragDepth++;
     setDropActive(true);
   };
   const onDragOver = (e: DragEvent): void => {
+    if (ours()) return;
     // UNCONDITIONAL preventDefault — without it the browser falls back to
     // "open the dropped file" (a new tab). The overlay/upload are gated on
     // files, the preventDefault never is.
@@ -254,6 +271,7 @@ export function installImageClipboard(
     if (dragDepth === 0) setDropActive(false);
   };
   const onDrop = (e: DragEvent): void => {
+    if (ours()) return;
     // preventDefault stays UNCONDITIONAL (see onDragOver): without it the browser
     // opens the dropped file in a new tab, which is wrong in either view.
     e.preventDefault();

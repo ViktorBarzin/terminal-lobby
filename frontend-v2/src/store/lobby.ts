@@ -23,7 +23,6 @@ import {
   type SessionOrder,
 } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
-import type { DropSpot } from "../mobile/reorder";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
@@ -101,17 +100,6 @@ export interface LobbyStore {
   pollHealth: Accessor<SessionsReport>;
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
-  /** name of the session card currently being dragged (HTML5 DnD), or null. */
-  dragName: Accessor<string | null>;
-  setDragName: (name: string | null) => void;
-  /** group token ("p:<name>" | "u") of the group header being dragged, or null. */
-  dragGroup: Accessor<string | null>;
-  setDragGroup: (token: string | null) => void;
-  /** Where a FINGER-dragged row would land, or null. The mouse has the
-   *  browser's own dragover for this; a touch drag has to publish it, because
-   *  the row that shows the indicator is never the row being dragged. */
-  dropSpot: Accessor<DropSpot | null>;
-  setDropSpot: (spot: DropSpot | null) => void;
   collapse: CollapseStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
   workingSince: (name: string) => number | undefined;
@@ -278,9 +266,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     opts.initialSelected ?? null,
   );
   const [toast, setToast] = createSignal<string | null>(null);
-  const [dragName, setDragName] = createSignal<string | null>(null);
-  const [dropSpot, setDropSpot] = createSignal<DropSpot | null>(null);
-  const [dragGroup, setDragGroup] = createSignal<string | null>(null);
 
   const me = () => whoami()?.osUser ?? "";
   const collapse = createCollapseStore(me);
@@ -1166,12 +1151,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     },
     selected,
     toast,
-    dragName,
-    setDragName,
-    dropSpot,
-    setDropSpot,
-    dragGroup,
-    setDragGroup,
     collapse,
     workingSince,
     refresh,

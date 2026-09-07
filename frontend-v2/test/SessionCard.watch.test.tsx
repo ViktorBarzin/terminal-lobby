@@ -35,8 +35,6 @@ function stubStore(): LobbyStore {
     // a release function.
     hold: () => () => {},
     // The card reads both while rendering its drop indicator (touch reorder).
-    dragName: () => null,
-    dropSpot: () => null,
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
   } as unknown as LobbyStore;
 }

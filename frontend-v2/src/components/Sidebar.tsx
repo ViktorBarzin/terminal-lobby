@@ -12,7 +12,8 @@ import {
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
 import { SHARED_KEY } from "../store/collapse";
-import { isGroupVisible } from "./lobby.logic";
+import { groupSeqTokens, groupToken, isGroupVisible, type RenderGroup } from "./lobby.logic";
+import { attachGroupList, liveGroupOrder } from "../dnd/sidebar";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
@@ -138,7 +139,19 @@ export const Sidebar: Component<{
   // render so they can be seen and dropped into. Shared with the move-up/down
   // bounds — the two reading different predicates is what let a group's Move
   // item offer a step onto a slot that renders nothing.
-  const visibleGroups = () => store.model().groups.filter(isGroupVisible);
+  const onScreen = () => store.model().groups.filter(isGroupVisible);
+  /** The groups to draw: the model's sequence, or the one a header being
+   *  dragged has now (dnd/sidebar.ts holds it for the length of the drag). */
+  const visibleGroups = (): RenderGroup[] => {
+    const order = liveGroupOrder();
+    const groups = onScreen();
+    if (!order) return groups;
+    const byToken = new Map(groups.map((g) => [groupToken(g), g]));
+    return order.flatMap((t) => {
+      const g = byToken.get(t);
+      return g ? [g] : [];
+    });
+  };
 
   // "No sessions yet." is a claim about fetched data, so a load error disowns
   // it: refresh() can bail before /sessions is ever called (denied whoami), and
@@ -232,7 +245,21 @@ export const Sidebar: Component<{
         </button>
       </div>
 
-      <div class="tl-sidebar-scroll">
+      <div
+        class="tl-sidebar-scroll"
+        // The groups are a sortable of their own, dragged by their headers.
+        // Each group's cards are a sortable NESTED in one of these nodes, and
+        // the inner list claims a press on a card first, so the two never
+        // answer the same gesture.
+        ref={(el) =>
+          attachGroupList(el, {
+            visible: () => visibleGroups().map(groupToken),
+            sequence: () => groupSeqTokens(store.layout()),
+            reorder: (from, to) => store.reorderGroupsTo(from, to),
+            hold: () => store.hold(),
+          })
+        }
+      >
         <Show when={store.loadError()}>
           <div class="tl-sidebar-msg tl-sidebar-error">{store.loadError()}</div>
         </Show>
