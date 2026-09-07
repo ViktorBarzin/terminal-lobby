@@ -204,7 +204,7 @@ image does not carry: a copy of `devvm/tl-usage-record` from this repo, named as
 `statusLine.command` in your own `~/.claude/settings.json`, and `jq`, which the
 recorder needs and no-ops without. It posts the reading and then runs whatever
 statusLine was there before. Reasoning:
-`docs/adr/0022-agent-spend-via-a-statusline-wrapper.md`.
+`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
 
 Codex is the one option in that dropdown with nothing behind it, and the lobby
 says so: it greys the option out and labels it "not installed", because

@@ -540,7 +540,7 @@ _Avoid_: shadow, proxy
 
 What the agents inside the sessions cost, read in Settings and in one figure
 beside the gear
-(`docs/adr/0022-agent-spend-via-a-statusline-wrapper.md`, design in
+(`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`, design in
 `docs/plans/2026-09-06-agent-spend-panel-design.md`). The words below are close
 enough to **Data used** to be worth keeping apart deliberately, so each entry
 says which side it is on.

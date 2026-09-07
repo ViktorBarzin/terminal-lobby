@@ -123,7 +123,7 @@ plan reports no cost anywhere. The Claude figures come from a recorder in the
 statusLine slot (`devvm/tl-usage-record`, wired the same way the state dot's
 hooks are); Codex needs nothing installed. A small figure beside the gear
 carries the one number for the session you are attached to. See
-`docs/adr/0022-agent-spend-via-a-statusline-wrapper.md`.
+`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
 
 Light themes are first-class, not an afterthought:
 
