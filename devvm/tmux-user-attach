@@ -328,6 +328,22 @@ if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
         # first, ahead of the refill and the attach: everything after this is
         # best-effort, and none of it may run before the mark is dropped.
         tmux set-option -u -t "=$name:" @tl_speculative >/dev/null 2>&1 || true
+        # When this session became SOMEBODY'S, which is not what tmux's
+        # #{session_created} answers after a claim: the rename leaves it reading
+        # the SLOT's creation time, and a standing slot is refilled rather than
+        # recreated, so that time can be hours or days old. A session claimed out
+        # of one sorts that far down a newest-first list. tmux-api reads this
+        # stamp in preference to session_created.
+        #
+        # `=name:` and not `=name` for the reason the speculative stamp above
+        # gives: set-option rejects the bare exact form, and plain `name` would
+        # resolve by unambiguous PREFIX — which could stamp a neighbouring
+        # session instead of this one.
+        #
+        # Best-effort like its neighbours, and on purpose: a stamp that fails
+        # falls back to session_created, which reads stale rather than breaking
+        # a session start.
+        tmux set-option -t "=$name:" @tl_created "$(date +%s)" >/dev/null 2>&1 || true
         logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'${was_speculative:+ (was speculative)}"
         # Re-warm for whoever comes next — but only a STANDING slot. A
         # speculative one was a guess about a single create, and replacing it

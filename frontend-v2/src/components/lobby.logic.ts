@@ -365,9 +365,31 @@ export function deleteProject(layout: Layout, name: string): Layout {
   };
 }
 
-/** Add a session name to a group (used by create). "" = ungrouped. */
+/**
+ * File a freshly created session in a group ("" = ungrouped), at the FRONT.
+ *
+ * The front, because under the `manual` ordering the layout array is what the
+ * sidebar renders. Nothing sorts it there, so the layout is the only place
+ * "newest first" can be written down in a form that survives a reload.
+ * Appending filed a session you started ten seconds ago at the bottom of its
+ * project, under everything you had already finished with.
+ *
+ * Projects and Ungrouped take the same rule, so there is no branch here and no
+ * group where a create behaves differently.
+ *
+ * Leaving the append and sorting by `session.created` instead does not cover
+ * it. That field is the tmux session's creation time, and a create that claims
+ * a pre-warmed pool slot renames a session that already exists rather than
+ * starting one, so the stamp it reports is the SLOT's age
+ * (tmux-api/autotitle.go:77-84). The same change stamps `@tl_created` at claim
+ * time to fix that field for the two time orderings, but under `manual`
+ * nothing is sorted at all, so the layout write is what makes it right there.
+ *
+ * moveSession strips any prior reference before it inserts, so a name is
+ * listed at most once. That is not repeated here.
+ */
 export function addSessionToGroup(layout: Layout, name: string, group: string): Layout {
-  return moveSession(layout, name, group);
+  return moveSession(layout, name, group, 0);
 }
 
 export function removeSessionFromLayout(layout: Layout, name: string): Layout {

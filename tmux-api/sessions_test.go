@@ -18,8 +18,19 @@ func row(fields ...string) string { return rowBG("", fields...) }
 func rowBG(bg string, fields ...string) string { return rowBorn(bg, "", fields...) }
 
 // rowBorn is the same line with the birth-name column filled in as well
-// (sessionio.OptionBornAs — the name a renamed session was created with).
+// (sessionio.OptionBornAs — the name a renamed session was created with), and
+// an EMPTY @tl_created stamp, which is what every session that predates the
+// stamp reports.
 func rowBorn(bg, born string, fields ...string) string {
+	return rowCreated(bg, born, "", fields...)
+}
+
+// rowCreated is the same line with the @tl_created stamp filled in too — when
+// the session became somebody's, stamped by tmux-user-attach at the moment a
+// create claims a pre-warmed slot. It sits at createdColumn, immediately before
+// pane_title, so it is spliced in the way the birth name is rather than
+// appended.
+func rowCreated(bg, born, created string, fields ...string) string {
 	if len(fields) < bgColumn {
 		return strings.Join(fields, listSep)
 	}
@@ -30,11 +41,18 @@ func rowBorn(bg, born string, fields ...string) string {
 	if len(out) < bornColumn {
 		return strings.Join(out, listSep)
 	}
-	withBorn := make([]string, 0, len(out)+1)
+	withBorn := make([]string, 0, len(out)+2)
 	withBorn = append(withBorn, out[:bornColumn]...)
 	withBorn = append(withBorn, born)
 	withBorn = append(withBorn, out[bornColumn:]...)
-	return strings.Join(withBorn, listSep)
+	if len(withBorn) < createdColumn {
+		return strings.Join(withBorn, listSep)
+	}
+	withCreated := make([]string, 0, len(withBorn)+1)
+	withCreated = append(withCreated, withBorn[:createdColumn]...)
+	withCreated = append(withCreated, created)
+	withCreated = append(withCreated, withBorn[createdColumn:]...)
+	return strings.Join(withCreated, listSep)
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which
@@ -146,6 +164,80 @@ func TestParseSessionsFields(t *testing.T) {
 				t.Fatalf("parseSessions(%q):\n got %+v\nwant %+v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+// Created is when the session became SOMEBODY'S, which is what the sidebar
+// sorts a newest-first list on. A create that claims a pre-warmed slot does it
+// with `tmux rename-session`, and a rename leaves #{session_created} reading
+// the slot's own age — 4h33m stale when the standing slot for /home/wizard/code
+// was measured on 2026-09-04, days stale once it has stood a while. So the
+// @tl_created stamp the claim writes wins over session_created whenever it
+// parses, and session_created is what is left when it does not.
+func TestParseSessionsPrefersTheClaimStampOverSessionCreated(t *testing.T) {
+	cases := []struct {
+		name    string
+		stamp   string
+		want    int64
+		wantWhy string
+	}{
+		{
+			name: "the stamp wins when it is set",
+			// A slot created at 1690000000 and claimed 8 days later.
+			stamp: "1690700000", want: 1690700000,
+			wantWhy: "a claimed session must date from the claim, not from the slot",
+		},
+		{
+			name:  "an empty stamp falls back — every session predating it",
+			stamp: "", want: 1690000000,
+			wantWhy: "an unstamped session must keep session_created, not lose its date",
+		},
+		{
+			name:  "a non-numeric stamp falls back",
+			stamp: "not-a-number", want: 1690000000,
+			wantWhy: "garbage in the column must not be read as a date",
+		},
+		{
+			name:  "zero falls back",
+			stamp: "0", want: 1690000000,
+			wantWhy: "the epoch is not a creation time any session has",
+		},
+		{
+			name:  "a negative stamp falls back",
+			stamp: "-5", want: 1690000000,
+			wantWhy: "a negative date would sort a session to the very bottom",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := rowCreated("", "", tc.stamp,
+				"$3", "work", "1", "1700000000", "1690000000", "", "running", "4242", "claude", "", "")
+			got := parseSessions([]byte(in + "\n"))
+			if len(got) != 1 {
+				t.Fatalf("parseSessions dropped the row: %+v", got)
+			}
+			if got[0].Created != tc.want {
+				t.Errorf("Created = %d, want %d — %s", got[0].Created, tc.want, tc.wantWhy)
+			}
+		})
+	}
+}
+
+// The stamp is written by the shell and read here, so the name the format asks
+// tmux for has to be the name tmux-user-attach set. TestCreatedStampMatchesShell
+// guards the other half of that pair.
+func TestListFormatCarriesTheClaimStamp(t *testing.T) {
+	if !strings.Contains(tmuxListFmt, "#{"+createdStampOption+"}") {
+		t.Errorf("tmuxListFmt does not ask for %s: %q", createdStampOption, tmuxListFmt)
+	}
+	// It has to stay AHEAD of pane_title, which is the only field allowed to
+	// hold a tab and therefore has to be the one a stray tab is soaked into. A
+	// stamp behind it would be the field that absorbed the overflow instead,
+	// and an unparseable stamp sends a freshly claimed session to the bottom of
+	// a newest-first list, which is what the stamp exists to prevent.
+	if strings.Index(tmuxListFmt, createdStampOption) > strings.Index(tmuxListFmt, "pane_title") {
+		t.Errorf("%s moved behind pane_title, where a tab in a pane title would eat it: %q",
+			createdStampOption, tmuxListFmt)
 	}
 }
 
