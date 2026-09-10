@@ -826,6 +826,7 @@ describe("the one key handler xterm stores", () => {
         galleryOpen: false,
         previewOpen: false,
         previewDirty: false,
+        editing: false,
       }),
     });
     expect(matched?.command).toBe("session.kill.current");

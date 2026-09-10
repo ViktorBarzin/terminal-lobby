@@ -728,6 +728,8 @@ src/
     palette-controller.ts Reactive palette state (open, query, selection)
     refocus.ts           Hand the keyboard back to the terminal when a lobby
                          overlay closes (window.__tlFocusTerminal)
+    editing.ts           Is the keyboard inside something that types? The one
+                         chord that has to yield to a field is Cmd+Z
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge

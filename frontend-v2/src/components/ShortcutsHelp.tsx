@@ -109,10 +109,7 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         // return on `dock.allowed()`, which is `!coarse()` (store/dock.ts).
         // The view toggle keeps the [Text | Terminal] control and the palette,
         // which is what `test/SessionView.viewswitch.test.tsx` pins.
-        [
-          [`${MOD}+J`],
-          "Scratch shell at the foot of the screen (desktop only; always on)",
-        ],
+        [[`${MOD}+J`], "Scratch shell at the foot of the screen (desktop only; always on)"],
         // Find has no Ctrl/Cmd+F row because Ctrl+F belongs to the TUI. This
         // chord is the only keyboard way in, which is why leaving it out of
         // the table hid the feature entirely.
@@ -120,11 +117,26 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.
-        [
-          ["/", "?", `${ALT}+/`],
-          `Show this help (${ALT}+/ works in a session; / and ? always on)`,
-        ],
+        [["/", "?", `${ALT}+/`], `Show this help (${ALT}+/ works in a session; / and ? always on)`],
         [["Esc"], "Close menus"],
+      ],
+    ],
+    [
+      "Undo",
+      [
+        // The table binds ctrl+ AND meta+ for each of these, so the row shows
+        // whichever this keyboard has. test/bindings.logic.test.ts checks both
+        // spellings are documented, by building this table for both platforms.
+        //
+        // Not marked "always on", and that is the point rather than an
+        // omission: these two are ordinary default rows, so the switch named
+        // below turns them off — which is how somebody gets Ctrl+Z back as the
+        // shell's suspend key inside a session.
+        [
+          [`${MOD}+Z`],
+          "Undo the last change to the sidebar (kill, new, rename, reorder, move, project)",
+        ],
+        [[`${MOD}+Shift+Z`], "Redo it"],
       ],
     ],
   ];
@@ -223,8 +235,8 @@ export const ShortcutsHelp: Component<{
           </For>
         </div>
         <div class="tl-schelp-note">
-          On by default — toggle “App shortcuts” in ⚙ Settings. The rows marked
-          “always on” ignore that toggle. Press Esc or / to close.
+          On by default — toggle “App shortcuts” in ⚙ Settings. The rows marked “always on” ignore
+          that toggle. Press Esc or / to close.
         </div>
       </div>
     </div>
