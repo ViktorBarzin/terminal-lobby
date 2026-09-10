@@ -92,8 +92,8 @@ func TestKillKeepsTheTitleForTheRestorePicker(t *testing.T) {
 	}
 	rec := httptest.NewRecorder()
 	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/work", "", "authself"))
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE /sessions/work: got %d, want 204", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /sessions/work: got %d, want 200", rec.Code)
 	}
 
 	if got := store.get(osSelf, "work"); got != "Work in progress" {

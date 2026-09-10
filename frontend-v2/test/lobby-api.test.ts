@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  killSession,
   listSessions,
   putLayout,
   restoreSessions,
@@ -137,5 +138,55 @@ describe("withDeadline", () => {
     const s = withDeadline(1000, caller.signal);
     expect(s.aborted).toBe(true);
     expect((s.reason as Error).message).toBe("gone");
+  });
+});
+
+/**
+ * What a kill answers with, and why it matters: past its eight-second grace
+ * window the DELETE has gone out, so undo can only bring the session back by
+ * POSTing /restore, and the record inside `resurrect` is the only thing that
+ * says which snapshot to ask for (tmux-api session_mutate.go killSession).
+ *
+ * Every shape that is not a usable record reads null, and none of them throws.
+ * The kill has already happened by the time this parses, so failing it would
+ * report a session as alive that is gone.
+ */
+describe("the record a kill comes back with", () => {
+  function answering(status: number, body?: unknown) {
+    const init = { status, headers: { "Content-Type": "application/json" } };
+    return vi.fn(() =>
+      Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), init)),
+    );
+  }
+
+  it("reads the snapshot and the name to restore out of it", async () => {
+    vi.stubGlobal(
+      "fetch",
+      answering(200, { resurrect: { snapshot: "20260910T131500", sessions: ["deploy-thing"] } }),
+    );
+    expect(await killSession("deploy-thing")).toEqual({
+      snapshot: "20260910T131500",
+      sessions: ["deploy-thing"],
+    });
+  });
+
+  it.each([
+    ["a kill nothing snapshotted", 200, {}],
+    ["a record with no snapshot", 200, { resurrect: { sessions: ["x"] } }],
+    [
+      "a record naming no session",
+      200,
+      { resurrect: { snapshot: "20260910T131500", sessions: [] } },
+    ],
+    ["a server that answers something else", 200, { ok: true }],
+    ["a server too old to send one", 204, undefined],
+  ])("reads %s as nothing to resurrect from", async (_what, status, body) => {
+    vi.stubGlobal("fetch", answering(status, body));
+    expect(await killSession("deploy-thing")).toBeNull();
+  });
+
+  it("does not throw on a 404, which is a session that was already dead", async () => {
+    vi.stubGlobal("fetch", answering(404, { error: "session not found" }));
+    expect(await killSession("deploy-thing")).toBeNull();
   });
 });

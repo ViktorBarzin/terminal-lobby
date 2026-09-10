@@ -246,8 +246,8 @@ func TestKillRemembersProjectBeforeDroppingIt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if rec := killReq(t, "repowise"); rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusNoContent)
+	if rec := killReq(t, "repowise"); rec.Code != http.StatusOK {
+		t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusOK)
 	}
 
 	l, _ := layoutStoreInstance.load(osSelf)
