@@ -6,6 +6,7 @@ import {
   addSessionToGroup,
   deleteProject,
   deriveSidebar,
+  groupSeqTokens,
   materializeGroup,
   moveSession,
   moveSessionToAnchor,
@@ -17,12 +18,10 @@ import {
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
-import {
-  applySessionOrder,
-  captureVisibleOrder,
-  type SessionOrder,
-} from "../logic/order.logic";
+import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
+import type { UndoStore } from "./undo";
+import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
@@ -124,6 +123,11 @@ export interface LobbyStore {
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
+  /** Change which order the session list comes in. Goes through the store
+   *  rather than straight to the pref because a switch into manual freezes the
+   *  visible arrangement into the layout first, and because the switch is
+   *  undoable. */
+  setSessionOrderMode(next: SessionOrder): Promise<void>;
   reorderGroupsTo(from: number, to: number): Promise<void>;
   createProject(name: string, dir?: string): Promise<boolean>;
   /** Ask for a Claude session started ahead of a create, in this directory.
@@ -171,6 +175,20 @@ export interface LobbyStoreOptions {
   /** Change the ordering. A drop that names a position calls this with
    *  "manual" — see `move`. */
   setSessionOrder?: (order: SessionOrder) => void;
+  /**
+   * This tab's undo stack (store/undo.ts).
+   *
+   * App owns the one instance, because whether undo runs at all is the page's
+   * business rather than this store's: a lens tab (`?as=bob`) has none. Every
+   * layout action below records itself here AFTER its write lands, and the
+   * inverses are registered from here at construction
+   * (store/undo.layout.ts).
+   *
+   * Omitted means no undo: nothing is pushed, no handler is registered, and
+   * every action behaves exactly as it did before undo existed. That is what
+   * the tests of those actions run with.
+   */
+  undo?: UndoStore;
   /**
    * Whether this device can render the Ctrl+J dock, which decides whether the
    * docked shell may be hidden from the sidebar.
@@ -721,8 +739,14 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   function updateHash(sel: SelectedSession | null): void {
     if (!syncHash || typeof window === "undefined") return;
     try {
-      const hash = sel ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "") : "";
-      window.history.replaceState(null, "", window.location.pathname + window.location.search + hash);
+      const hash = sel
+        ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "")
+        : "";
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search + hash,
+      );
     } catch {
       /* no history */
     }
@@ -823,11 +847,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * prompt. A layout write that fails is toasted and drops the optimistic card,
    * but the session itself is still started by the attach.
    */
-  async function create(
-    text: string,
-    group: string,
-    kind: CreateKind = "prompt",
-  ): Promise<string> {
+  async function create(text: string, group: string, kind: CreateKind = "prompt"): Promise<string> {
     const t = kind === "name" ? cleanTitle(text) : firstPromptLine(text);
     const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
@@ -993,8 +1013,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // (the card menu's "Move to…", a drop on a group header) asks for no
     // position at all, so it leaves the ordering alone.
     const wasOrder = sessionOrder();
+    const before = layout();
     const handBack = wasOrder !== "manual" && !!anchor;
-    const frozen = handBack ? captureVisibleOrder(layout(), model()) : layout();
+    const frozen = handBack ? captureVisibleOrder(before, model()) : before;
     // Swept-in members occupy rendered positions they have no raw entry for, so
     // nothing can be placed relative to them (nor after them) until they are
     // materialized — Ungrouped's leftovers, and a project's members that only
@@ -1011,11 +1032,81 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // saveLayout rolls the layout back on a failed PUT; the ordering it changed
     // on the way in goes back with it, or the list is left in manual showing an
     // arrangement the server never took.
-    if (!ok && handBack) opts.setSessionOrder?.(wasOrder);
+    if (!ok) {
+      if (handBack) opts.setSessionOrder?.(wasOrder);
+      return;
+    }
+    // Recorded AFTER the write, so a drag the server refused leaves nothing on
+    // the stack. The FROM position is read out of `base` rather than out of the
+    // layout: the freeze and the materialize both run before the move, and a
+    // session the layout had never placed acquires its first raw entry there.
+    const from = locate(base, name);
+    const to = locate(next, name);
+    // A drop that landed the card back in the seat it already had changed
+    // nothing, and an entry for it would swallow a Cmd+Z press without moving
+    // anything. The mode flip counts as a change even when the card did not.
+    if (!to || (!handBack && sameLayout(before, next))) return;
+    opts.undo?.push({
+      kind: "move",
+      session: name,
+      ...(from ? { fromGroup: from.group } : null),
+      fromIndex: from ? from.index : -1,
+      toGroup: to.group,
+      toIndex: to.index,
+      ...(handBack ? { orderBefore: wasOrder } : null),
+    });
+  }
+
+  /**
+   * Change which order the session list comes in.
+   *
+   * A switch INTO manual freezes what is on screen into the layout first, the
+   * same thing a positioned drop does and for the same reason: the layout is
+   * the only place an order can be written, so without the freeze every card
+   * jumps to whatever seat the raw arrays hold for it, which for a list nobody
+   * has arranged lately is an order the user has never seen. The write goes
+   * first and the mode second here, the opposite way round from `move`, because
+   * the frozen arrangement is invisible until the mode is manual, so this
+   * order is the one with no intermediate frame to render.
+   *
+   * Leaving manual freezes nothing: the arrangement stays in the document and
+   * the sort decides the order instead.
+   */
+  async function setSessionOrderMode(next: SessionOrder): Promise<void> {
+    const before = sessionOrder();
+    if (next === before) return;
+    let captured: OrderModeCapture | undefined;
+    if (next === "manual") {
+      const over = layout();
+      const wrote = captureVisibleOrder(over, model());
+      if (!sameLayout(over, wrote)) {
+        // saveLayout rolled the layout back and toasted. Changing the mode on
+        // top of that would leave the list in manual showing an arrangement
+        // the server never took.
+        if (!(await saveLayout(wrote))) return;
+        captured = { over, wrote };
+      }
+    }
+    opts.setSessionOrder?.(next);
+    opts.undo?.push({
+      kind: "orderMode",
+      before,
+      after: next,
+      ...(captured ? { capturedLayout: captured } : null),
+    });
   }
 
   async function reorderGroupsTo(from: number, to: number): Promise<void> {
-    await saveLayout(reorderGroups(layout(), from, to));
+    const cur = layout();
+    const token = groupSeqTokens(cur)[from];
+    const next = reorderGroups(cur, from, to);
+    if (!(await saveLayout(next))) return;
+    // No ordering mode rides along with this one, unlike `move` above:
+    // `sidebar.order` orders the sessions WITHIN a group, so the group sequence
+    // reads the same under all three orderings and a reorder of it never had a
+    // reason to hand ordering back.
+    if (token === undefined || sameLayout(cur, next)) return;
+    opts.undo?.push({ kind: "reorderGroups", from, to, group: token });
   }
 
   async function createProject(name: string, dir?: string): Promise<boolean> {
@@ -1028,7 +1119,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast(`Project "${n}" already exists`);
       return false;
     }
-    await saveLayout(addProject(layout(), n, dir));
+    if (await saveLayout(addProject(layout(), n, dir))) {
+      opts.undo?.push({ kind: "projectCreate", name: n, ...(dir ? { dir } : null) });
+    }
     return true;
   }
 
@@ -1047,12 +1140,32 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // layout), so the key has to travel with the rename — and only once the
     // write has landed, or a rollback would leave the two disagreeing.
     const saved = await saveLayout(renameProject(layout(), oldName, n));
-    if (saved) collapse.rename(oldName, n);
+    if (saved) {
+      collapse.rename(oldName, n);
+      opts.undo?.push({ kind: "projectRename", from: oldName, to: n });
+    }
     return saved;
   }
 
   async function deleteProjectAction(name: string): Promise<void> {
-    if (await saveLayout(deleteProject(layout(), name))) collapse.remove(name);
+    const cur = layout();
+    const doomed = cur.projects.find((p) => p.name === name);
+    // Its seat among the groups, read before the delete takes it away. Undo
+    // puts the project back THERE rather than beside Ungrouped, which is where
+    // a project somebody has just named belongs and a returning one does not.
+    const index = groupSeqTokens(cur).indexOf("p:" + name);
+    if (!(await saveLayout(deleteProject(cur, name)))) return;
+    collapse.remove(name);
+    if (!doomed) return;
+    opts.undo?.push({
+      kind: "projectDelete",
+      name,
+      ...(doomed.dir ? { dir: doomed.dir } : null),
+      index,
+      // In the order it held them, so undo puts them back in their seats
+      // instead of at the end of Ungrouped where the delete tipped them.
+      sessions: [...doomed.sessions],
+    });
   }
 
   /**
@@ -1119,6 +1232,24 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
   }
 
+  // The inverses of the layout actions above are in store/undo.layout.ts, one
+  // per kind, and reach back in here through these ports. Registered from the
+  // store that OWNS the actions, which is what keeps store/undo.ts ignorant of
+  // the lobby and the dependency running one way (see its header). Only when
+  // the app supplied a stack: registering handlers that nothing can push to
+  // would just leave a dead entry pointing at a disposed store.
+  if (opts.undo) {
+    registerLayoutUndoHandlers({
+      layout,
+      save: saveLayout,
+      order: sessionOrder,
+      setOrder: (order) => opts.setSessionOrder?.(order),
+      capture: () => captureVisibleOrder(layout(), model()),
+      renameCollapse: (from, to) => collapse.rename(from, to),
+      removeCollapse: (name) => collapse.remove(name),
+    });
+  }
+
   if (opts.autoStart !== false) {
     polling = true;
     void pollTick();
@@ -1162,6 +1293,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     rename,
     kill,
     move,
+    setSessionOrderMode,
     reorderGroupsTo,
     createProject,
     prewarm,

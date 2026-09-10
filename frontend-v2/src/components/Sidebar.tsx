@@ -201,9 +201,14 @@ export const Sidebar: Component<{
               />
             )}
           </Show>
+          {/* Through the store rather than straight at the pref: a switch into
+              manual freezes the visible arrangement into the layout first, and
+              the switch itself is undoable. The store still writes the choice
+              through this same pref (App wires `setSessionOrder` to it), so it
+              roams exactly as it did. */}
           <OrderMenu
             order={order}
-            onPick={(next) => props.prefs.setPref({ sidebar: { order: next } })}
+            onPick={(next) => void store.setSessionOrderMode(next)}
             hold={() => store.hold()}
           />
           <button
