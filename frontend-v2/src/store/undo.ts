@@ -40,6 +40,7 @@
  */
 import { type Accessor, createSignal } from "solid-js";
 import { type MinStorage, sessionStorageOrNull } from "../lib/storage";
+import type { CreateEntry, KillEntry } from "./undo.kill";
 import type {
   MoveEntry,
   OrderModeEntry,
@@ -101,12 +102,14 @@ export interface UndoEntryBase {
  * document read back from sessionStorage was written by whatever build was
  * running before the reload, and its kinds are not this build's to enumerate
  * (`step` hands one it does not recognise back as a refusal). The types below
- * are imported for their shape only. undo.layout.ts, undo.titles.ts and
- * undo.local.ts are what register their handlers, and nothing in this file
- * runs any of them.
+ * are imported for their shape only. undo.kill.ts, undo.layout.ts,
+ * undo.titles.ts and undo.local.ts are what register their handlers, and
+ * nothing in this file runs any of them.
  */
 export type UndoEntry =
   | UndoEntryBase
+  | KillEntry
+  | CreateEntry
   | MoveEntry
   | ReorderGroupsEntry
   | ProjectCreateEntry

@@ -41,13 +41,7 @@ function stubStore(): LobbyStore {
 
 const card = (s: Session) =>
   render(() => (
-    <SessionCard
-      store={stubStore()}
-      session={s}
-      groupName=""
-      tick={() => 0}
-      confirm={() => true}
-    />
+    <SessionCard store={stubStore()} session={s} groupName="" tick={() => 0} />
   ));
 
 const badge = (c: HTMLElement) => c.querySelector(".tl-card-watch");
@@ -188,7 +182,6 @@ describe("<SessionCard> — the relative time answers 'when was this last driven
         })}
         groupName=""
         tick={() => 0}
-        confirm={() => true}
         showLastActive={() => true}
       />
     ));
@@ -205,7 +198,6 @@ describe("<SessionCard> — the relative time answers 'when was this last driven
         session={session({ state: "", lastActivity: now - 5, created: now - 60 })}
         groupName=""
         tick={() => 0}
-        confirm={() => true}
         showLastActive={() => true}
       />
     ));
@@ -234,7 +226,6 @@ describe("<SessionCard> ⋯ menu — a key inside it stays inside it", () => {
         session={session()}
         groupName=""
         tick={() => 0}
-        confirm={() => true}
       />
     ));
     openMenu(container);

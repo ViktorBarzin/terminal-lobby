@@ -43,13 +43,7 @@ function lensStore(): LobbyStore {
 
 const card = (s: Session) =>
   render(() => (
-    <SessionCard
-      store={lensStore()}
-      session={s}
-      groupName=""
-      tick={() => 0}
-      confirm={() => true}
-    />
+    <SessionCard store={lensStore()} session={s} groupName="" tick={() => 0} />
   ));
 
 const menuItem = (c: HTMLElement, text: string) =>

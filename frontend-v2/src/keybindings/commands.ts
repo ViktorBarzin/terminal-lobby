@@ -1,4 +1,4 @@
-import { sessionConfirmLabel, sessionTitleDraft } from "../types/lobby";
+import { sessionTitleDraft } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
 import type { PaletteController } from "./palette-controller";
 import type { HelpController } from "../components/ShortcutsHelp";
@@ -52,24 +52,19 @@ export interface CommandDeps {
    *  there is none. Same `window.__tlOpenFind` bridge shape as toggleView —
    *  the lobby shell does not own the session's transcript. */
   openFind?: () => boolean;
-  /** confirm/prompt seams (window.* by default; injectable for tests). */
-  confirm?: (message: string) => boolean;
+  /** prompt seam (window.prompt by default; injectable for tests). The
+   *  confirm seam went with the kill confirm: a kill is undoable now, and
+   *  nothing else in this dispatcher asks a question. */
   prompt?: (message: string, def?: string) => string | null;
 }
 
 export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const { store, palette, help } = deps;
-  const confirmFn = deps.confirm ?? ((m: string) => window.confirm(m));
   const promptFn = deps.prompt ?? ((m: string, d?: string) => window.prompt(m, d));
   const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
   const openFindFn = deps.openFind ?? (() => window.__tlOpenFind?.() ?? false);
 
   const current = (): string | null => store.selected()?.name ?? null;
-  /** What an irreversible confirmation calls it: the id stands in for no title. */
-  const confirmLabelOf = (name: string): string => {
-    const s = store.sessions.find((x) => x.name === name);
-    return s ? sessionConfirmLabel(s) : name;
-  };
   /** What a rename box opens on: the real title, "" when there is none. */
   const titleOf = (name: string): string =>
     sessionTitleDraft(store.sessions.find((x) => x.name === name));
@@ -136,9 +131,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
 
     if (cmd === "session.kill.current") {
       const sel = store.selected();
-      // Named by its id when it has no title: killing is irreversible, and
-      // `Kill session "New session"?` names every untitled session equally.
-      if (sel && confirmFn(`Kill session "${confirmLabelOf(sel.name)}"?`)) void store.kill(sel.name);
+      // Straight through, with nothing to answer first. The store holds the
+      // kill for eight seconds with the card dimmed and Cmd+Z takes it back
+      // (store/lobby.ts GRACE_MS), so the chord that used to need a modal in
+      // front of it is now safe to press by mistake.
+      if (sel) void store.kill(sel.name);
       return;
     }
 

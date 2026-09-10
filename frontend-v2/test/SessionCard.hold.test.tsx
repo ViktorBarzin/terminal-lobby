@@ -80,7 +80,7 @@ async function mountList(names: string[], sessions?: Session[]) {
       putDebounceMs: 10_000,
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} confirm={() => true} />;
+    return <Sidebar store={store} prefs={prefs} />;
   });
   onTestFinished(() => store.dispose());
   await store.refresh();

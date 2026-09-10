@@ -79,7 +79,7 @@ async function mountSidebar(layout: Layout, names: string[]) {
       putDebounceMs: 10_000,
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} confirm={() => true} />;
+    return <Sidebar store={store} prefs={prefs} />;
   });
   onTestFinished(() => store.dispose());
   await store.refresh();

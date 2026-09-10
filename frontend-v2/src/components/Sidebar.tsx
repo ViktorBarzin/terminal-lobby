@@ -44,8 +44,6 @@ export const Sidebar: Component<{
   onNewSession?: (group?: string) => void;
   /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
   altActive?: Accessor<boolean>;
-  /** confirm seam for the destructive card actions (tests inject it). */
-  confirm?: (message: string) => boolean;
   /** the notification system, for the bell in the header. The shell owns it;
    *  the header is just where it is presented (as on the vanilla page).
    *  Optional so a test can mount the sidebar without one. */
@@ -301,7 +299,6 @@ export const Sidebar: Component<{
               group={g}
               tick={tick}
               badge={badge}
-              confirm={props.confirm}
               showLastActive={showLastActive}
               onNewSession={props.onNewSession}
             />

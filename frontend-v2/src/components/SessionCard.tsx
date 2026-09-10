@@ -6,7 +6,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { sessionConfirmLabel, sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
+import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
 import { backgroundLabel, formatWorking, relativeTime, stateLabel } from "./lobby.logic";
@@ -41,8 +41,6 @@ export const SessionCard: Component<{
   badge?: (name: string) => string | null;
   /** finished since you last looked (see Sidebar.unseenOf). */
   isUnseen?: (s: { name: string; state?: string }) => boolean;
-  /** confirm seam (window.confirm by default; injectable for tests). */
-  confirm?: (message: string) => boolean;
   /** The roamed `sidebar.showLastActive` pref. Absent means hidden — the safe
    *  direction for a setting that is off by default, so a call site that
    *  forgets to pass it errs towards showing less rather than more. */
@@ -187,14 +185,14 @@ export const SessionCard: Component<{
   };
 
   // ---- actions ----
-  // Killing is unrecoverable, so it confirms here exactly as every sibling path
-  // does (the kill chord, the palette action, Delete project).
+  // No question asked. The kill holds for eight seconds with this card dimmed
+  // in place and Cmd+Z takes it back (store/lobby.ts kill, GRACE_MS), which
+  // answers "did you mean that" better than a modal naming a session by the
+  // minted id it has instead of a title. Every other kill path — the swipe
+  // below, the sidebar's Delete, alt+shift+w, the palette — goes through the
+  // same store call and gets the same window.
   const kill = async () => {
     menu.close();
-    const ask = props.confirm ?? ((m: string) => window.confirm(m));
-    // Named by its id when it has no title: killing cannot be undone, and
-    // `Kill session "New session"?` reads the same for every untitled session.
-    if (!ask(`Kill session "${sessionConfirmLabel(s())}"?`)) return;
     await props.store.kill(s().name);
   };
   const moveTo = async (group: string) => {
@@ -252,7 +250,7 @@ export const SessionCard: Component<{
 
   /**
    * Swipe the row to act on the session: left opens it (Viktor, 2026-08-20),
-   * right kills it behind the same confirm the ⋯ menu asks (Viktor, 2026-08-21).
+   * right kills it, the same way the ⋯ menu's Kill does (Viktor, 2026-08-21).
    *
    * On a phone the list is the whole screen and the other way in is a tap on a
    * 40px row. Leftward is the direction the session view already uses to move
@@ -262,8 +260,9 @@ export const SessionCard: Component<{
    *
    * Rightward is also the platform back gesture, so it will sometimes be eaten
    * by the OS before the page sees it. That is a safe way to fail — nothing
-   * happens — and the confirm is what makes the other direction safe: a swipe
-   * cannot kill a session on its own, it can only ask.
+   * happens — and what makes the other direction safe is the grace window: the
+   * card dims for eight seconds with an undo arrow on it, and a swipe nobody
+   * meant is taken back by tapping that (store/lobby.ts GRACE_MS).
    *
    * Someone else's session does not trail rightward at all. The whole actions
    * menu is hidden for a shared row, so a gesture that looked like it would
@@ -368,7 +367,7 @@ export const SessionCard: Component<{
       menu.close();
       props.store.select(s().name, foreign() ? s().owner : undefined);
     } else if (!foreign()) {
-      void kill(); // asks first, exactly as the menu's Kill does
+      void kill(); // the same window the menu's Kill opens
     }
   };
 
