@@ -1,5 +1,6 @@
 import { sessionTitleDraft } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
+import type { UndoStore } from "../store/undo";
 import type { PaletteController } from "./palette-controller";
 import type { HelpController } from "../components/ShortcutsHelp";
 import {
@@ -56,6 +57,18 @@ export interface CommandDeps {
    *  confirm seam went with the kill confirm: a kill is undoable now, and
    *  nothing else in this dispatcher asks a question. */
   prompt?: (message: string, def?: string) => string | null;
+  /**
+   * This tab's undo stack (store/undo.ts), behind `edit.undo` / `edit.redo`.
+   *
+   * Defaults to the one the lobby store carries, which App handed it at
+   * construction (LobbyStoreOptions.undo) and which it hands back out as
+   * `LobbyStore.undo` — so the two can never be different instances. A test
+   * passes its own here instead of building a store.
+   *
+   * Absent on both means a page with no undo at all, which is what a lens tab
+   * (`?as=bob`) is, and the two commands are then a silent no-op.
+   */
+  undo?: UndoStore;
 }
 
 export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
@@ -63,6 +76,7 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const promptFn = deps.prompt ?? ((m: string, d?: string) => window.prompt(m, d));
   const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
   const openFindFn = deps.openFind ?? (() => window.__tlOpenFind?.() ?? false);
+  const undoStack = (): UndoStore | undefined => deps.undo ?? store.undo;
 
   const current = (): string | null => store.selected()?.name ?? null;
   /** What a rename box opens on: the real title, "" when there is none. */
@@ -108,7 +122,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     // The app icon counts awaiting AND unread-finished, and only the first half
     // was reachable from the keyboard.
     if (cmd === "session.next.unseen") {
-      const target = nextMatchingTarget(order(), (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false, current());
+      const target = nextMatchingTarget(
+        order(),
+        (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false,
+        current(),
+      );
       if (target) store.select(target.name, target.owner);
       else deps.notify("No unread sessions", "info");
       return;
@@ -181,6 +199,30 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       // Ctrl+J. The engine's capture-phase window listener sees the keydown
       // wherever focus is, the terminal included, so this is the one path.
       deps.toggleDock();
+      return;
+    }
+
+    if (cmd === "edit.undo" || cmd === "edit.redo") {
+      // Cmd+Z / Cmd+Shift+Z, and the palette's two rows.
+      //
+      // THE CALLER TOASTS, not the store: store/undo.ts answers {ok:false,
+      // reason} and never reaches for a toast itself, so that it stays testable
+      // without a DOM and so undo can be silent when it works. Three outcomes
+      // and only one of them says anything — a refusal with a sentence toasts
+      // it, a refusal with a null reason is the silent no-op a browser gives
+      // you for Cmd+Z on an empty history, and success says nothing at all. No
+      // success toast is deliberate: the sidebar changing back IS the feedback,
+      // and a toast per press would bury the screen on a run of them.
+      //
+      // The reason is toasted VERBATIM, with no lead-in of ours, because the
+      // dimmed card's undo arrow does the same for the same refusal
+      // (SessionCard.tsx `takeBack`) and one string must not read two ways
+      // depending on which affordance you reached for.
+      const stack = undoStack();
+      if (!stack) return;
+      void (cmd === "edit.undo" ? stack.undo() : stack.redo()).then((r) => {
+        if (!r.ok && r.reason) deps.notify(r.reason, "warning");
+      });
       return;
     }
 

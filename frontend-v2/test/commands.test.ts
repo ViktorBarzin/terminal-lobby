@@ -3,6 +3,7 @@ import { createRunAppCommand, type CommandDeps } from "../src/keybindings/comman
 import type { LobbyStore } from "../src/store/lobby";
 import type { PaletteController } from "../src/keybindings/palette-controller";
 import type { HelpController } from "../src/components/ShortcutsHelp";
+import type { UndoResult, UndoStore } from "../src/store/undo";
 
 /**
  * The lobby command dispatcher's VIEW-TOGGLE branch.
@@ -106,5 +107,95 @@ describe("session.new.shell — the forwarded Ctrl+J", () => {
     const { run } = makeRun({ toggleDock: () => void toggled++ });
     run("session.new.shell");
     expect(toggled).toBe(1);
+  });
+});
+
+/**
+ * edit.undo / edit.redo — the Cmd+Z arms.
+ *
+ * The store never toasts (store/undo.ts says why: it would need a DOM to be
+ * tested at all, and undo is deliberately silent when it works). It answers
+ * {ok:false, reason} and the CALLER speaks, which for the chord and the palette
+ * rows is this dispatcher. Three outcomes, and only one of them says anything:
+ * a refusal with a sentence toasts it, a refusal with a null reason is the
+ * silent no-op a browser gives you for Cmd+Z on an empty history, and success
+ * says nothing at all.
+ */
+describe("runAppCommand — edit.undo / edit.redo", () => {
+  const stack = (over: Partial<UndoStore> = {}): UndoStore =>
+    ({
+      push: noop,
+      undo: () => Promise.resolve<UndoResult>({ ok: true }),
+      redo: () => Promise.resolve<UndoResult>({ ok: true }),
+      canUndo: () => true,
+      canRedo: () => true,
+      clear: noop,
+      carry: noop,
+      ...over,
+    }) as UndoStore;
+
+  it.each(["edit.undo", "edit.redo"] as const)("%s says nothing when it works", async (cmd) => {
+    const undo = vi.fn(() => Promise.resolve<UndoResult>({ ok: true }));
+    const redo = vi.fn(() => Promise.resolve<UndoResult>({ ok: true }));
+    const { run, notify } = makeRun({ undo: stack({ undo, redo }) });
+    run(cmd);
+    await vi.waitFor(() =>
+      expect(cmd === "edit.undo" ? undo : redo).toHaveBeenCalledTimes(1),
+    );
+    expect(notify).not.toHaveBeenCalled();
+    // ...and only its own direction ran.
+    expect(cmd === "edit.undo" ? redo : undo).not.toHaveBeenCalled();
+  });
+
+  it.each(["edit.undo", "edit.redo"] as const)("%s toasts a refusal's reason", async (cmd) => {
+    const refuse = () => Promise.resolve<UndoResult>({ ok: false, reason: "that session is gone" });
+    const { run, notify } = makeRun({ undo: stack({ undo: refuse, redo: refuse }) });
+    run(cmd);
+    await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify).toHaveBeenCalledWith("that session is gone", "warning");
+  });
+
+  it.each(["edit.undo", "edit.redo"] as const)("%s stays silent on an empty stack", async (cmd) => {
+    // reason === null is the store's "nothing to say": an empty stack, or a
+    // lens tab where undo is off entirely. A toast here would fire on every
+    // stray Cmd+Z in a fresh tab.
+    const nothing = () => Promise.resolve<UndoResult>({ ok: false, reason: null });
+    const seen: string[] = [];
+    const { run, notify } = makeRun({
+      undo: stack({
+        undo: () => {
+          seen.push("undo");
+          return nothing();
+        },
+        redo: () => {
+          seen.push("redo");
+          return nothing();
+        },
+      }),
+    });
+    run(cmd);
+    await vi.waitFor(() => expect(seen).toHaveLength(1));
+    expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the stack the lobby store carries", () => {
+    // App hands the one instance to createLobbyStore, which hands it back out
+    // as LobbyStore.undo. A dispatcher built without its own `undo` dep reads
+    // it from there rather than being inert.
+    const undo = vi.fn(() => Promise.resolve<UndoResult>({ ok: true }));
+    const store = stubStore();
+    (store as { undo?: UndoStore }).undo = stack({ undo });
+    const { run } = makeRun({ store });
+    run("edit.undo");
+    expect(undo).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing at all on a page with no stack", () => {
+    // A lens tab builds no store (store/undo.ts UndoStoreOptions.enabled), so
+    // the chord has to be a no-op rather than a crash.
+    const { run, notify } = makeRun();
+    expect(() => run("edit.undo")).not.toThrow();
+    expect(() => run("edit.redo")).not.toThrow();
+    expect(notify).not.toHaveBeenCalled();
   });
 });

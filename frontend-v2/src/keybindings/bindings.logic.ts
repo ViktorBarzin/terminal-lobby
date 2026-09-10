@@ -85,6 +85,24 @@ const lobbyOrSelf = (self: string): string => `${LOBBY_WHEN} || lobbyOpen && ${s
 const SWITCH_WHEN = "!overlayOpen && !previewDirty";
 
 /**
+ * The when-clause the four undo rows carry, and its two halves are two
+ * different arguments.
+ *
+ * `!editing` because a focused text input, textarea, contenteditable or the
+ * CodeMirror editor owns Cmd+Z outright — it has an undo history of the words
+ * being typed, and ours is about sessions and projects. That leg cannot be
+ * moved downstream: the engine's listener is capture-phase on `window` while
+ * the editor's own Mod-z is bubble-phase on its contentDOM, so a match here
+ * fires first and nothing afterwards can give the key back (keybindings/
+ * editing.ts carries the full note).
+ *
+ * `!overlayOpen` for the same reason every other lobby chord carries it: the
+ * lobby must not act BEHIND a dialog. Cmd+Z with Settings open would resurrect
+ * a session nobody can see from there.
+ */
+const UNDO_WHEN = "!editing && !overlayOpen";
+
+/**
  * Opt-in-toggleable, user-overridable bindings. Chord choices follow the vanilla
  * plan: Ctrl+Shift+K avoids TUI-owned Ctrl+K/Ctrl+F; Alt+Shift+[ ] avoids the
  * browser tab chords; the dev-flow letters/Enter carry `e.code` aliases so they
@@ -126,6 +144,26 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
   // `e.key`, which Option+/ renders as "÷" on a Mac, so this chord is what
   // closes it there.
   { key: "alt+/", command: "shortcuts.help", when: lobbyOrSelf("helpOpen") },
+  // Undo / redo for the lobby's structural actions (store/undo.ts). Both
+  // spellings of the modifier are rows of their own because `parseChord` keeps
+  // ctrl and meta as separate flags and `eventMatchesChord` compares all four
+  // exactly — one row cannot cover both platforms.
+  //
+  // THESE ROWS TAKE Ctrl+Z AWAY FROM THE PTY, deliberately and with the cost
+  // signed off. The chord is claimed globally, the terminal included, so Ctrl+Z
+  // no longer suspends the foreground job in a session. Nothing terminal-side
+  // was written for that: the engine preventDefaults on a match, TerminalNative
+  // passes `appChord: e.defaultPrevented`, and terminal/keys.ts's `app-chord`
+  // leg answers `passToTerminal: false`.
+  //
+  // Which is exactly why they are HERE and not in KB_ALWAYS_BINDINGS. A default
+  // row honours the ⚙ Settings "App shortcuts" switch, so anybody who wants
+  // Ctrl+Z back as SIGTSTP has a way to say so; an always-on row would take it
+  // with no way back.
+  { key: "ctrl+z", command: "edit.undo", when: UNDO_WHEN },
+  { key: "meta+z", command: "edit.undo", when: UNDO_WHEN },
+  { key: "ctrl+shift+z", command: "edit.redo", when: UNDO_WHEN },
+  { key: "meta+shift+z", command: "edit.redo", when: UNDO_WHEN },
 ];
 
 /**
@@ -145,9 +183,7 @@ export const KB_ALWAYS_BINDINGS: Binding[] = [
 ];
 
 /** Commands that a user override may target (default bindings only). */
-export const KB_COMMANDS: ReadonlySet<string> = new Set(
-  KB_DEFAULT_BINDINGS.map((b) => b.command),
-);
+export const KB_COMMANDS: ReadonlySet<string> = new Set(KB_DEFAULT_BINDINGS.map((b) => b.command));
 
 /** localStorage key for the persisted keybinding doc (per-browser, not roamed). */
 export const KB_KEY = "tl:keybindings:v1";
@@ -212,6 +248,10 @@ export interface KeyContextInput {
   previewOpen: boolean;
   /** ...with an unsaved editor draft in it. */
   previewDirty: boolean;
+  /** a text input, textarea, contenteditable or the CodeMirror editor holds the
+   *  keyboard. Read fresh at every keydown (App.tsx), because focus is a DOM
+   *  fact rather than a signal. */
+  editing: boolean;
 }
 
 /** The when-context every clause in the table is evaluated against. */
@@ -227,6 +267,10 @@ export interface KeyContext {
   galleryOpen: boolean;
   previewOpen: boolean;
   previewDirty: boolean;
+  /** a field owns the keyboard, and with it Cmd+Z. Deliberately NOT part of
+   *  `overlayOpen`: a caret in the new-session name box must not cost you every
+   *  other lobby chord, only the one the field has its own meaning for. */
+  editing: boolean;
 }
 
 /**
@@ -251,6 +295,13 @@ export interface KeyContext {
  * editor" refusal, which is unreachable if the chord that opens it is refused
  * first. Only the chords that would UNMOUNT the draft are gated, on
  * `previewDirty`.
+ *
+ * `editing` is the odd one out among these inputs: the others are signals the
+ * shell already holds, and this one is a reading of `document.activeElement` at
+ * the moment of the press (App.tsx, via keybindings/editing.ts). It is not
+ * cached for that reason — focus moves without any signal changing — and it
+ * gates exactly the four undo rows, which are the only chords a text field has
+ * its own meaning for.
  */
 export function keyContext(s: KeyContextInput): KeyContext {
   return {
@@ -261,6 +312,7 @@ export function keyContext(s: KeyContextInput): KeyContext {
     galleryOpen: s.galleryOpen,
     previewOpen: s.previewOpen,
     previewDirty: s.previewDirty,
+    editing: s.editing,
   };
 }
 
