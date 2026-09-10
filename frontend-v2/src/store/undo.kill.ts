@@ -12,9 +12,24 @@
  *     selection the kill took. Nothing ever reached the server, so there is
  *     nothing to put back, and this is the only undo here that cannot fail.
  *   past it — the session is dead, and it comes back from the record the kill
- *     left: POST /restore with the snapshot tmux-api took before killing, which
- *     relaunches `claude --resume`. It comes back without its scrollback and
- *     without the process tree it had.
+ *     left: POST /restore with the snapshot tmux-api took before killing.
+ *
+ * WHAT A RESURRECTED SESSION IS, since it is not the one that died. A snapshot
+ * row is three fields, the name, the cwd and the claude uuid
+ * (tmux-persist:382), so the restore recreates ONE window with ONE pane in that
+ * directory and runs `claude --resume <uuid>` in it (tmux-persist:664-669). The
+ * CONVERSATION comes back in full, which is the part worth having. Nothing else
+ * does: the process tree is gone, so claude starts cold and takes roughly
+ * 550 MB to settle again; the scrollback above the prompt is gone; so is
+ * anything typed and not sent; so is any process that was not claude; and so is
+ * any second window or pane, since the format holds one of each.
+ *
+ * THE NAME SURVIVES, which is what lets every name-keyed store here go on
+ * resolving: the restore recreates the session under the name it was killed
+ * with (tmux-persist:672-676). tmux's own session_id does not — a restored
+ * session gets a fresh $N — so nothing in this file may lean on it, which is
+ * the rule the rest of the codebase already follows and explains at
+ * tmux-api/sessionid.go:11-15.
  *
  * THE RECORD LIVES IN THE STORE, not on the entry, because an entry is
  * immutable JSON the moment it is pushed (store/undo.ts) and the record only
@@ -91,6 +106,16 @@ export interface KillUndoPorts {
    * caller that needs it is a later press asking `killRecord`.
    */
   killNow(session: string): Promise<boolean>;
+  /**
+   * Kill on the ordinary eight-second window, with no undo entry behind it
+   * (store/lobby.ts armKill): the card dims, and the DELETE goes out only when
+   * the window elapses. This is what a REDO uses, so the second kill costs
+   * exactly what the first one did.
+   *
+   * false when a window was already open for that session, which is the world
+   * the press wanted anyway rather than a failure.
+   */
+  killLater(session: string): boolean;
   /** What this page life holds that could bring that session back: the record
    *  its kill answered with, null when the server sent none, and undefined
    *  when this page never killed it (a reload, or somebody else's kill). */
@@ -194,10 +219,20 @@ function killHandler(ports: KillUndoPorts): UndoHandler<KillEntry> {
       await bringBack(ports, entry, record);
     },
     async redo(entry) {
-      // Straight away, no second window: a redo that opened one would leave the
-      // stack and the world disagreeing for eight seconds, and it would need an
-      // entry of its own to cancel.
-      await killAgain(ports, entry.session);
+      // Its own eight seconds, through the ordinary path. Cmd+Shift+Z is as
+      // easy to press by accident as the kill was, and the window is what
+      // replaced the confirm in front of both, so a redo that sent the DELETE
+      // straight out would be the only way left to lose a session in one
+      // keystroke.
+      //
+      // Nothing is left disagreeing while that window runs: the entry this
+      // press just moved onto the undo stack is exactly the one whose `undo`
+      // cancels the timer, and `check` reads the pending state as an ordinary
+      // starting point. `killLater` reaches below `store.kill` so the redo
+      // records nothing of its own; false from it means a window was already
+      // open, which is the world this press was asking for.
+      if (!ports.isLive(entry.session)) throw new Error(SESSION_ALREADY_GONE);
+      ports.killLater(entry.session);
     },
   };
 }

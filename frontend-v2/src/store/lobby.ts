@@ -20,6 +20,7 @@ import {
 } from "../components/lobby.logic";
 import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
+import { toasts } from "./toast";
 import { UNDO_CAP, type UndoStore } from "./undo";
 import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
@@ -1152,17 +1153,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * scrollback and the process tree.
    */
   async function kill(name: string): Promise<void> {
+    const at = locate(layout(), name);
+    const wasSelected = selected()?.name === name;
     // A second press on a session already on its way out: the window it is in
     // is the one to wait for, and a second entry would make the person press
     // Cmd+Z twice to take back one kill.
-    if (pendingKills.has(name)) return;
-    const at = locate(layout(), name);
-    const wasSelected = selected()?.name === name;
-    // Deselected on the press, not when the kill lands: the person asked for
-    // the session to go, and leaving its terminal in front of them for eight
-    // seconds reads as a kill that missed. The entry remembers it was open, so
-    // an undo hands it straight back.
-    if (wasSelected) deselect();
+    if (!armKill(name)) return;
     opts.undo?.push({
       kind: "kill",
       session: name,
@@ -1170,6 +1166,27 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       index: at ? at.index : -1,
       ...(wasSelected ? { wasSelected: true } : null),
     });
+  }
+
+  /**
+   * Open a kill's grace window: the dimmed card, the deselect, and the DELETE
+   * only when GRACE_MS is up. No undo entry.
+   *
+   * The plain write under `kill` above, and the second one here after `killNow`
+   * (store/undo.titles.ts states the rule): the REDO of an undone kill comes
+   * back through this, and going through `kill` would push a second entry and
+   * clear the redo stack that press is walking down.
+   *
+   * false when a window was already open for that name. Not a failure — it is
+   * the second press on a card already on its way out.
+   */
+  function armKill(name: string): boolean {
+    if (pendingKills.has(name)) return false;
+    // Deselected on the press, not when the kill lands: the person asked for
+    // the session to go, and leaving its terminal in front of them for eight
+    // seconds reads as a kill that missed. The entry remembers it was open, so
+    // an undo hands it straight back.
+    if (selected()?.name === name) deselect();
     const rec: PendingKill = { name };
     rec.timer = setTimeout(() => {
       // Out of the map first, so the killNow below finds no window to cancel.
@@ -1179,6 +1196,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }, GRACE_MS);
     pendingKills.set(name, rec);
     publishKilling();
+    return true;
   }
 
   /**
@@ -1493,14 +1511,38 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   /**
    * Bring a killed session back from the record its kill left.
    *
-   * The plain write under `restore` above: no toast, because an undo that
-   * worked says nothing at all (a toast is reserved for one that refuses), and
-   * it throws rather than swallowing, so the undo handler can turn a failed
-   * restore into a sentence a person reads.
+   * The plain write under `restore` above: it throws rather than swallowing, so
+   * the undo handler can turn a failed restore into a sentence a person reads,
+   * and it reports nothing when it succeeds.
+   *
+   * EXCEPT WHILE IT RUNS, which makes this the one press on the undo stack that
+   * says anything at all. Every other inverse is a layout PUT or a rename and
+   * is done inside a second, so silence is right for them: undo that worked has
+   * nothing to tell you (store/undo.ts). This one shells out to tmux-persist,
+   * which recreates the session and starts claude cold on the conversation, and
+   * it runs on a 30-second deadline of its own for that reason (lib/lobby-api.ts
+   * RESTORE_TIMEOUT_MS). Seconds of nothing after Cmd+Z reads as a press that
+   * missed, and the second press it invites undoes the entry underneath. So the
+   * work gets a sticky toast the same way an upload does (clipboard/attach.ts),
+   * cleared in `finally` — a sticky one has no timer to save it, and one left
+   * behind by a failure would sit there for the rest of the page life.
    */
   async function resurrect(record: RestoreSelection): Promise<void> {
-    await api.restoreSessions(record);
-    await settleRestore();
+    const note = toasts.push({
+      kind: "loading",
+      // Named: a tab can hold several dimmed cards at once, and the person who
+      // pressed Cmd+Z is owed which one this is about. A record always names
+      // the one session its kill took (lib/lobby-api.ts killSession).
+      message: `Bringing ${record.sessions.join(", ")} back…`,
+    });
+    try {
+      await api.restoreSessions(record);
+      // Inside the try, so the toast outlives the refresh: it is the card
+      // coming back that ends the wait, not the POST answering.
+      await settleRestore();
+    } finally {
+      toasts.dismiss(note);
+    }
   }
 
   /**
@@ -1587,6 +1629,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       pending: (session) => pendingKills.has(session),
       cancelKill,
       killNow,
+      killLater: armKill,
       killRecord: (session) => killRecords.get(session),
       resurrect: async (record) => {
         await resurrect(record);
