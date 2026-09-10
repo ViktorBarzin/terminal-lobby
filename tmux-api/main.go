@@ -52,7 +52,12 @@ const (
 	// field, now good for two: a title cannot contain one, because CleanTitle
 	// strips every control character before a title is ever stored, and
 	// pane_title stays LAST so an embedded tab is soaked into the trailing
-	// field rather than shifting the row.
+	// field rather than shifting the row. @tl_created goes immediately BEFORE
+	// it and not after, so the stamp is never the field a stray tab lands in:
+	// measured on tmux 3.4, both OSC 2 and `select-pane -T` strip a tab out of
+	// a pane title, but a claimed session silently falling back to
+	// session_created is the very bug the stamp exists to fix, so it should not
+	// rest on stripping tmux does not document.
 	//
 	// session_id leads. It is the one field with a guaranteed shape ($N) and
 	// it SURVIVES A RENAME, which is what lets a second tab follow a session
@@ -65,11 +70,12 @@ const (
 		"#{" + sessionBackgroundOption + "}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
 		"#{" + sessionTitleOption + "}" + listSep +
-		"#{" + sessionBornAsOption + "}" + listSep + "#{pane_title}"
+		"#{" + sessionBornAsOption + "}" + listSep +
+		"#{" + createdStampOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 13
+	listFields = 14
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -81,6 +87,12 @@ const (
 	// bornColumn is where the birth name sits in tmuxListFmt: after @title and
 	// before pane_title, which stays last for the reason bgColumn gives.
 	bornColumn = 11
+
+	// createdColumn is where the claim stamp sits: the last column before
+	// pane_title, for the same reason bgColumn gives. Only the row builders in
+	// the tests address it by name; parseSessions reads it positionally like
+	// every other field.
+	createdColumn = 12
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
@@ -101,6 +113,22 @@ const (
 	// @claude_state. It rides the list format rather than costing a second
 	// tmux call, exactly as @claude_state does.
 	sessionBackgroundOption = sessionio.OptionBackground
+
+	// createdStampOption is when a session became somebody's, as opposed to
+	// when the tmux session was made. The SHELL writes it and this service only
+	// reads it: tmux-user-attach stamps it at the moment a create claims a
+	// pre-warmed slot, because that claim is a `rename-session` and a rename
+	// leaves #{session_created} reading the slot's own age (measured 4h33m
+	// stale on 2026-09-04, and days stale for a standing slot). Spelled as a
+	// literal rather than via sessionio for the same reason @last_drive is —
+	// nothing in Go sets it, so there is no writer to agree with; the guard
+	// that keeps the two spellings together is a test against the script.
+	//
+	// It sits immediately before pane_title, which keeps pane_title the field
+	// that soaks up a stray tab. That costs one index: pane_title moved from 12
+	// to 13. Every column ahead of it, bgColumn and bornColumn included, is
+	// where it was.
+	createdStampOption = "@tl_created"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL

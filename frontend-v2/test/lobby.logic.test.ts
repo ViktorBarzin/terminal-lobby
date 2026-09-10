@@ -499,6 +499,45 @@ describe("session CRUD in layout", () => {
     l = removeSessionFromLayout(l, "sess");
     expect(l.ungrouped).toEqual([]);
   });
+
+  // A create files the new session at the FRONT. Under the `manual` ordering
+  // the layout array is what the sidebar renders, so this is the only place
+  // "newest first" gets recorded for it.
+  it("a create lands first in its project, leaving the rest in order", () => {
+    const l = layout({ projects: [{ name: "a", sessions: ["old", "older"] }] });
+    expect(addSessionToGroup(l, "new", "a").projects[0]!.sessions).toEqual(["new", "old", "older"]);
+  });
+
+  it("an ungrouped create lands first too", () => {
+    const l = layout({ ungrouped: ["old", "older"] });
+    expect(addSessionToGroup(l, "new", "").ungrouped).toEqual(["new", "old", "older"]);
+  });
+
+  it("a name listed elsewhere moves to the front and is not duplicated", () => {
+    const l = layout({
+      projects: [
+        { name: "a", sessions: ["x", "y"] },
+        { name: "b", sessions: ["z"] },
+      ],
+      ungrouped: ["u"],
+    });
+    const out = addSessionToGroup(l, "z", "a");
+    expect(out.projects[0]!.sessions).toEqual(["z", "x", "y"]);
+    expect(out.projects[1]!.sessions).toEqual([]);
+    expect(out.ungrouped).toEqual(["u"]);
+  });
+
+  // A create never files into a project the layout does not have: the composer
+  // offers only existing projects, and freshSessionName mints a name no list
+  // holds. Both halves are asserted, because moveSession strips before it
+  // inserts and would drop a name that WAS listed. That is its behaviour on
+  // master and not something this change touches; the test pins which of the
+  // two cases is safe rather than implying both are.
+  it("drops a create into a project that does not exist, leaving the rest alone", () => {
+    const l = layout({ projects: [{ name: "a", sessions: ["x"] }], ungrouped: ["u"] });
+    expect(addSessionToGroup(l, "new", "missing")).toEqual(l);
+    expect(addSessionToGroup(l, "x", "missing").projects[0]!.sessions).toEqual([]);
+  });
 });
 
 describe("display helpers", () => {
