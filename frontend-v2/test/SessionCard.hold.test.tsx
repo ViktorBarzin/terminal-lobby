@@ -33,10 +33,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -96,7 +102,14 @@ function layOut(container: HTMLElement): HTMLElement[] {
   const cards = Array.from(container.querySelectorAll<HTMLElement>(".tl-card"));
   cards.forEach((card, i) => {
     card.getBoundingClientRect = () =>
-      ({ top: 100 + i * 40, bottom: 140 + i * 40, height: 40, left: 0, right: 300, width: 300 }) as DOMRect;
+      ({
+        top: 100 + i * 40,
+        bottom: 140 + i * 40,
+        height: 40,
+        left: 0,
+        right: 300,
+        width: 300,
+      }) as DOMRect;
   });
   const scroller = container.querySelector<HTMLElement>(".tl-sidebar-scroll");
   if (scroller) {

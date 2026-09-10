@@ -36,9 +36,15 @@ const sess = (name: string): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -134,7 +140,14 @@ function swipe(
     ms = 0,
   }: { dx: number; dy?: number; x?: number; y?: number; ms?: number },
 ): void {
-  finger(el, [[dx / 2, dy / 2], [dx, dy]], { x, y, ms });
+  finger(
+    el,
+    [
+      [dx / 2, dy / 2],
+      [dx, dy],
+    ],
+    { x, y, ms },
+  );
 }
 
 /** Was the page allowed to scroll while the finger was moving? */
@@ -213,7 +226,11 @@ describe("swiping a session row", () => {
     const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
-    finger(card, [[-140, 0], [-70, 0], [-8, 0]]);
+    finger(card, [
+      [-140, 0],
+      [-70, 0],
+      [-8, 0],
+    ]);
 
     expect(store.selected()).toBeNull();
   });

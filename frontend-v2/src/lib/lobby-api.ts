@@ -40,7 +40,6 @@ export class ApiError extends Error {
  */
 export const RESTORE_TIMEOUT_MS = 30000;
 
-
 async function req(
   path: string,
   init?: RequestInit,
@@ -104,9 +103,7 @@ export async function availableCommands(): Promise<Record<string, boolean>> {
   try {
     const m = await json<Record<string, boolean>>("/new-commands", { cache: "no-store" });
     if (!m || typeof m !== "object" || Array.isArray(m)) return {};
-    return Object.fromEntries(
-      Object.entries(m).filter(([, v]) => typeof v === "boolean"),
-    );
+    return Object.fromEntries(Object.entries(m).filter(([, v]) => typeof v === "boolean"));
   } catch {
     return {};
   }
@@ -134,7 +131,9 @@ export function normalizeLayout(raw: Partial<Layout> | null | undefined): Layout
         .filter((p): p is LayoutProject => !!p && typeof p.name === "string")
         .map((p) => ({
           name: p.name,
-          sessions: Array.isArray(p.sessions) ? p.sessions.filter((s) => typeof s === "string") : [],
+          sessions: Array.isArray(p.sessions)
+            ? p.sessions.filter((s) => typeof s === "string")
+            : [],
           ...(typeof p.dir === "string" && p.dir ? { dir: p.dir } : {}),
         }))
     : [];
@@ -175,6 +174,43 @@ export async function putLayout(layout: Layout): Promise<void> {
 export async function killSession(name: string): Promise<void> {
   const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+}
+
+/**
+ * What `@tl_origin` reads on a session the lobby's own create path made — the
+ * only value this client ever writes, and the one the store stamps on an
+ * optimistic card so a freshly created session is not read as a stray.
+ *
+ * The string exists in three places and cannot be shared between them: here,
+ * `ORIGIN_USER` in components/lobby.logic.ts (which stays free of imports from
+ * the client layer), and `originUser` in tmux-api/origin.go. A fourth spelling
+ * would 400 at the server and read as a system session forever on the client,
+ * so test/rescue.test.ts asserts the two client copies against each other.
+ */
+export const ORIGIN_USER = "user";
+
+/**
+ * POST /api/sessions/{name}/origin {origin} — the rescue
+ * (docs/plans/2026-09-06-test-session-origin-design.md).
+ *
+ * Dragging a card out of the System group adopts the session: it stops being a
+ * system session on the SERVER, which is what makes it push, record and survive
+ * a reload as a person's own. The arrangement alone cannot say it — the sidebar
+ * files a session by the origin tmux reports, so a layout that disagreed would
+ * lose the argument on the next poll.
+ *
+ * Throws on anything but 204, 404 included, and that is the difference from
+ * killSession: a kill that 404s got what it wanted, whereas an adoption of a
+ * session that is no longer there did not happen at all, and the caller has a
+ * layout write to hold back on the strength of it.
+ */
+export async function setSessionOrigin(name: string, origin: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}/origin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `set origin HTTP ${res.status}`);
 }
 
 /**
@@ -303,7 +339,9 @@ export async function listSnapshots(): Promise<SnapshotList> {
  *  set: per row, what restoring it would do and whether it starts ticked.
  *  Resolution is server-side so this and the vanilla lobby cannot drift. */
 export async function getSnapshot(ts: string): Promise<SnapshotRow[]> {
-  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, { cache: "no-store" });
+  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, {
+    cache: "no-store",
+  });
   return Array.isArray(rows) ? rows : [];
 }
 
@@ -315,6 +353,7 @@ export interface LobbyApi {
   putLayout(layout: Layout): Promise<void>;
   killSession(name: string): Promise<void>;
   setSessionTitle(name: string, title: string): Promise<void>;
+  setSessionOrigin(name: string, origin: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
@@ -329,6 +368,7 @@ export const lobbyApi: LobbyApi = {
   putLayout,
   killSession,
   setSessionTitle,
+  setSessionOrigin,
   restoreSessions,
   listSnapshots,
   getSnapshot,
