@@ -383,15 +383,20 @@ describe("undoing a kill that has landed", () => {
     expect(cards(w.store)).toContain("alpha");
   });
 
-  it("kills it again on redo, straight away", async () => {
+  it("kills it again on redo, on a window of its own", async () => {
     const w = await wire(["alpha"]);
     await w.store.kill("alpha");
     await vi.advanceTimersByTimeAsync(GRACE_MS);
     await expectOk(w.stack.undo());
 
     await expectOk(w.stack.redo());
-    // No second window: a redo that opened one would leave the stack and the
-    // world disagreeing for eight seconds.
+    // The same eight seconds the first press bought, because Cmd+Shift+Z is as
+    // easy to mean by accident as the kill was. What the redo does NOT do is
+    // record an entry of its own (test/undo.resurrect.test.ts holds that half).
+    expect(w.api.kills).toEqual(["alpha"]);
+    expect(w.store.killing("alpha")).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
     expect(w.api.kills).toEqual(["alpha", "alpha"]);
     expect(cards(w.store)).toEqual([]);
   });
