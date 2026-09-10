@@ -1,7 +1,11 @@
 package main
 
 import (
+	"os"
+	"os/user"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -29,10 +33,10 @@ func TestParseUserMapIgnoresMalformedLines(t *testing.T) {
 
 func TestParseSessionList(t *testing.T) {
 	// tmux rejects newlines in session names but not tabs, so the split has to
-	// come off the LAST separators rather than the first. Two options now ride
-	// each row, so it is the last TWO.
-	in := "alerts\trunning\ta:a1 w:w1\nclaude\t\t\nwith\tname\tdone\t\n"
-	got := parseSessionList(in)
+	// come off the LAST separators rather than the first. Three options now ride
+	// each row, so it is the last THREE.
+	in := "alerts\trunning\ta:a1 w:w1\tuser\nclaude\t\t\t\nwith\tname\tdone\t\tuser\n"
+	got, _ := parseSessionList(in)
 
 	if len(got) != 3 {
 		t.Fatalf("want 3 sessions, got %d: %+v", len(got), got)
@@ -59,7 +63,7 @@ func TestParseSessionList(t *testing.T) {
 // not recognise must still yield the session and its state rather than
 // vanishing, which would read as a death.
 func TestParseSessionListToleratesARowWithoutTheBackgroundField(t *testing.T) {
-	got := parseSessionList("alerts\trunning\n")
+	got, _ := parseSessionList("alerts\trunning\n")
 
 	if len(got) != 1 {
 		t.Fatalf("want 1 session, got %d: %+v", len(got), got)
@@ -427,5 +431,110 @@ func TestCleanExitsPathIsUnderThePerUserRuntimeDir(t *testing.T) {
 	// which is what the watcher runs as, can still read it.
 	if got := cleanExitsFn(1002); got != "/run/user/1002/tl-clean-exit.tsv" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// --- origin (docs/plans/2026-09-06-test-session-origin-design.md) ----------
+
+func TestIsSystemSession(t *testing.T) {
+	cases := []struct {
+		name   string
+		origin string
+		want   bool
+		why    string
+	}{
+		{"worktree", "user", false, "the lobby's own create path stamped it"},
+		{"worktree", "test", true, "a harness owns it"},
+		{"kbfix-probe", "", true, "nobody stamped it, so the lobby did not make it"},
+		{"qa-slug", "user", true, "a reserved prefix outranks the stamp"},
+		{"t3e2e-7", "", true, "t3-bridge's e2e harness"},
+		{"tlp-t42", "user", true, "a playwright e2e session"},
+		{"__terminal_lobby_prewarmed_pool_slot_1", "user", true, "a prewarm slot"},
+		{"qa", "user", false, "a person may legitimately name a session qa"},
+	}
+	for _, c := range cases {
+		if got := isSystemSession(c.name, c.origin); got != c.want {
+			t.Errorf("isSystemSession(%q, %q) = %v, want %v (%s)", c.name, c.origin, got, c.want, c.why)
+		}
+	}
+}
+
+func TestParseSessionListReadsOrigin(t *testing.T) {
+	got, origins := parseSessionList("worktree\trunning\ta:a1\tuser\nqa-slug\tidle\t\t\n")
+
+	if origins["worktree"] != "user" {
+		t.Errorf("worktree: want origin user, got %q", origins["worktree"])
+	}
+	if got["worktree"].ClaudeState != "running" || got["worktree"].Background != "a:a1" {
+		t.Errorf("the fields before origin moved: %+v", got["worktree"])
+	}
+	if origins["qa-slug"] != "" {
+		t.Errorf("an unset @tl_origin must read as empty, got %q", origins["qa-slug"])
+	}
+	if _, ok := got["qa-slug"]; !ok {
+		t.Error("the parser reports every row; the filtering is collectUser's job")
+	}
+}
+
+// fakeTmux puts a script at tmuxBinary that answers list-sessions from a
+// fixture and records the argv it was called with, so a test can assert both
+// what the watcher asks tmux for and what it does with the answer.
+func fakeTmux(t *testing.T, sessions string) (argvLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	argvLog = filepath.Join(dir, "argv")
+	fixture := filepath.Join(dir, "sessions")
+	if err := os.WriteFile(fixture, []byte(sessions), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' \"$*\" >> " + argvLog + "\n" +
+		"case \"$1\" in list-sessions) cat " + fixture + " ;; esac\n"
+	bin := filepath.Join(dir, "tmux")
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := tmuxBinary
+	tmuxBinary = bin
+	t.Cleanup(func() { tmuxBinary = old })
+	return argvLog
+}
+
+// A system session is not watched at all: it never enters the snapshot, so it
+// cannot be missed out of the next one, and a harness ending its own sessions
+// cannot page anyone.
+func TestCollectUserExcludesSystemSessions(t *testing.T) {
+	me, err := user.Current()
+	if err != nil {
+		t.Skip("no current user to run tmux as")
+	}
+	argvLog := fakeTmux(t, strings.Join([]string{
+		"worktree\trunning\ta:a1\tuser", // a person's session
+		"kbfix-probe\trunning\t\t",      // unstamped, so system
+		"qa-fleet-3\trunning\t\ttest",   // a harness said so
+		"qa-slug\trunning\t\tuser",      // reserved prefix, whatever the stamp says
+		"",
+	}, "\n"))
+
+	snap := collectUser(me.Username, "boot-1")
+
+	if _, ok := snap.Sessions["worktree"]; !ok {
+		t.Errorf("a user session must survive: %+v", snap.Sessions)
+	}
+	for _, name := range []string{"kbfix-probe", "qa-fleet-3", "qa-slug"} {
+		if _, ok := snap.Sessions[name]; ok {
+			t.Errorf("system session %q was collected: %+v", name, snap.Sessions)
+		}
+	}
+	if len(snap.Sessions) != 1 {
+		t.Errorf("want only the user session, got %+v", snap.Sessions)
+	}
+
+	raw, err := os.ReadFile(argvLog)
+	if err != nil {
+		t.Fatalf("tmux was never called: %v", err)
+	}
+	if !strings.Contains(string(raw), "@tl_origin") {
+		t.Errorf("list-sessions must ask for @tl_origin, argv was: %s", raw)
 	}
 }

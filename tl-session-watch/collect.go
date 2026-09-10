@@ -99,38 +99,91 @@ func parseUserMap(in string) []string {
 	return out
 }
 
-// parseSessionList reads `name<TAB>@claude_state<TAB>@claude_bg` rows. tmux
-// rejects newlines in session names but not tabs, so the two option fields come
-// off the LAST two separators and whatever precedes them is the name.
+// parseSessionList reads `name<TAB>@claude_state<TAB>@claude_bg<TAB>@tl_origin`
+// rows. tmux rejects newlines in session names but not tabs, so the option
+// fields come off the LAST three separators and whatever precedes them is the
+// name.
 //
-// A row with only one separator is read as the older `name<TAB>state` shape
-// rather than dropped. Dropping it would be the worst possible failure here:
-// this watcher's job is noticing sessions that went away, and a session missing
-// from a snapshot reads as a death.
-func parseSessionList(in string) map[string]Session {
+// A row with fewer separators is read as an older shape — `name<TAB>state<TAB>bg`,
+// or `name<TAB>state` — rather than dropped. Dropping it would be the worst
+// possible failure here: this watcher's job is noticing sessions that went
+// away, and a session missing from a snapshot reads as a death.
+//
+// The origin comes back in its own map rather than on Session because it is an
+// input to a filter collectUser applies, not a fact the watcher reports: every
+// session that survives that filter has origin `user`, so a field on the
+// snapshot record would carry one value forever.
+func parseSessionList(in string) (map[string]Session, map[string]string) {
 	out := map[string]Session{}
+	origins := map[string]string{}
 	for _, line := range strings.Split(in, "\n") {
 		if line == "" {
 			continue
 		}
-		last := strings.LastIndex(line, "\t")
-		if last < 0 {
+		// Peel at most three option fields off the right-hand end, so a tab
+		// inside the name stays inside the name.
+		name := line
+		var fields []string
+		for len(fields) < 3 {
+			i := strings.LastIndex(name, "\t")
+			if i < 0 {
+				break
+			}
+			fields = append([]string{name[i+1:]}, fields...)
+			name = name[:i]
+		}
+		if len(fields) == 0 {
 			continue
 		}
-		prev := strings.LastIndex(line[:last], "\t")
-		if prev < 0 {
-			name := line[:last]
-			out[name] = Session{Name: name, ClaudeState: line[last+1:]}
-			continue
+		s := Session{Name: name, ClaudeState: fields[0]}
+		if len(fields) > 1 {
+			s.Background = fields[1]
 		}
-		name := line[:prev]
-		out[name] = Session{
-			Name:        name,
-			ClaudeState: line[prev+1 : last],
-			Background:  line[last+1:],
+		if len(fields) > 2 {
+			origins[name] = fields[2]
+		}
+		out[name] = s
+	}
+	return out, origins
+}
+
+// originUser is the @tl_origin value the lobby's own create path stamps
+// (devvm/tmux-user-attach). Spelled as a literal rather than imported: the
+// writers of this option are a shell script and two harnesses, none of which
+// can import a Go package, so every reader carries its own copy of the word.
+const originUser = "user"
+
+// systemPrefixes are session names that belong to something other than a
+// person. This deliberately mirrors tmux-api's reservedNamePrefixes
+// (tmux-api/migrate_ids.go), which is the same list asked the same question;
+// the two are kept in step by hand, because this module does not import
+// tmux-api and there is no shared package the services agree through — the same
+// arrangement that list already has with t3-sync's DefaultIgnorePrefixes.
+var systemPrefixes = []string{"qa-", "t3e2e-", "tlp-t", "__terminal_lobby_prewarmed_pool_slot_"}
+
+// isSystemSession reports whether a session belongs to tooling rather than to a
+// person, and is the local twin of tmux-api's isSystemSession
+// (docs/plans/2026-09-06-test-session-origin-design.md). It takes the two
+// fields rather than a Session so it stays a statement about a tmux row.
+//
+// "Not user" rather than "is test", for the reason the design gives: measured
+// on the box on 2026-09-06, three of the four tooling-made sessions in the list
+// matched no harness convention at all. Asking "did the lobby make this" catches
+// those; asking "is this a known harness" catches one in four.
+//
+// The cost of a wrong answer here is small in both directions. A user session
+// wrongly called system loses its death alert, which the sidebar still shows;
+// a harness session wrongly kept pages someone for a robot.
+func isSystemSession(name, origin string) bool {
+	if origin != originUser {
+		return true
+	}
+	for _, p := range systemPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
 		}
 	}
-	return out
+	return false
 }
 
 // parsePaneList reads `name<TAB>pane_pid` rows into session -> pane pids.
@@ -236,12 +289,24 @@ func collectUser(user, bootID string) Snapshot {
 	}
 
 	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F",
-		"#{session_name}\t#{@claude_state}\t#{@claude_bg}")
+		"#{session_name}\t#{@claude_state}\t#{@claude_bg}\t#{@tl_origin}")
 	if err != nil {
 		// No server, or no sessions. Either way there is nothing to compare.
 		return snap
 	}
-	snap.Sessions = parseSessionList(sessOut)
+	sessions, origins := parseSessionList(sessOut)
+	// System sessions are dropped here, at the only tmux call this watcher
+	// makes, because it is not downstream of tmux-api and shares no choke point
+	// with it. Dropping them at collection rather than at the alert keeps them
+	// out of the diff as well: a session that never enters a snapshot cannot go
+	// missing from the next one, so a harness tearing its fleet down at the end
+	// of a run pages nobody, and its panes never reach the OOM metric either.
+	for name := range sessions {
+		if isSystemSession(name, origins[name]) {
+			delete(sessions, name)
+		}
+	}
+	snap.Sessions = sessions
 
 	paneOut, err := asUser(user, tmuxBinary, "list-panes", "-a", "-F", "#{session_name}\t#{pane_pid}")
 	if err == nil {

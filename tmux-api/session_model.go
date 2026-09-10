@@ -75,6 +75,24 @@ type Session struct {
 	// nobody prompting it. State stays "running" for as long as this is
 	// non-nil, which every consumer of State already handles.
 	Background *Background `json:"bg,omitempty"`
+	// Origin is WHO made this session, read from @tl_origin. Three states:
+	// "user" when the lobby's own create path made it, "test" when a harness
+	// stamped it, and EMPTY when nobody said.
+	//
+	// Empty is not a synonym for "user", and that is the inversion the whole
+	// feature rests on. Before the lobby's create path started stamping, an
+	// absent option meant nothing at all — every session on the box had one.
+	// After it, absence means the session came from somewhere that is not the
+	// lobby: a hand-run `tmux new`, a script that is not in this repo, or
+	// something written after this was. Measured on 2026-09-06, three of the
+	// four machine-made sessions in the list were exactly that. So empty reads
+	// as system, and isSystemSession (origin.go) is the one place that decides
+	// it — never a comparison written out at a call site.
+	//
+	// omitempty keeps the old wire shape for consumers that predate the field,
+	// and it means the unstamped state arrives at the frontend as an absent key
+	// rather than as "".
+	Origin string `json:"origin,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
