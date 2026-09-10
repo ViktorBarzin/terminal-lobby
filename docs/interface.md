@@ -29,6 +29,8 @@ viewer's platform):
 | `Alt+Shift+Backspace` | Kill the **attached** session — from anywhere, even mid-type (always on) |
 | `Ctrl+Shift+K` | Command palette (fuzzy session + action search) |
 | `Ctrl+J` / `Cmd+J` | Toggle a docked scratch shell (always on) |
+| `Ctrl+Z` / `Cmd+Z` | Undo the last change to the sidebar (kill, new, retitle, reorder, move, project) |
+| `Ctrl+Shift+Z` / `Cmd+Shift+Z` | Redo it |
 | `/` or `?` / `Alt+/` | Show this shortcuts help (`Alt+/` works in a session too) |
 
 Sessions past the tenth aren't digit-jumpable — cycle with
@@ -48,7 +50,9 @@ help from anywhere — or the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
 
 **Backspace** / **Delete** kill the selected session straight from the
 sidebar — select a session card (click it, or Tab/arrow to it) and press
-Backspace or Delete (a confirm guards it). Like `/`, these are plain keys, so
+Backspace or Delete. Nothing is asked first: the card dims for eight seconds
+and `Ctrl+Z` takes it back, which is the **Undo** section below. Like `/`,
+these are plain keys, so
 they only fire when the sidebar has focus, never while you're typing in a
 terminal. From inside a session — where those keys belong to the shell — use
 `Alt+Shift+Backspace` (in the table above), which kills the attached session
@@ -71,6 +75,59 @@ of downwards and keeps its edges on screen, so the options at the end of it are
 no longer somewhere you have to scroll the list to reach. Scrolling the list or
 turning the phone closes the menu, the same as pressing Escape or clicking away
 from it.
+
+## Undo
+
+`Ctrl+Z` (`Cmd+Z` on a Mac) takes back the last change you made to the sidebar,
+and `Ctrl+Shift+Z` puts it back. It covers the structural things: killing and
+creating a session, retitling one, moving one between projects, reordering
+cards and groups, the session-order mode, creating, renaming and deleting a
+project, collapsing a group, and the watch-mode choice. It does not cover
+settings, skills, file edits, or anything typed into a terminal. Those are not
+sidebar structure, and the last of them belongs to the shell.
+
+Undo is silent when it works. When it cannot run it says why in a toast and
+drops that step rather than forcing it through. Each step checks that the world
+still looks the way it left it, so if a project was renamed on your phone while
+the step waited, you get a sentence saying so rather than your old arrangement
+written over the new one.
+
+**Killing waits instead of asking.** There is no "Kill session X?" box any
+more. The card stays in the sidebar for eight seconds, dimmed and struck
+through, with a `↺` arrow in the slot its `⋯` button gave up, and nothing
+reaches the server until those eight seconds are out. Press the arrow, press
+`Ctrl+Z`, or pick **Undo** from the palette, and the session was never killed.
+The arrow is the way back on a phone, where there is no `Ctrl+Z` to press.
+
+Once those eight seconds are up the session is really gone, and undo brings it
+back rather than calling anything off. tmux-api snapshots a session before it kills it and hands
+the record back, and undo posts that record to `/restore`, which recreates the
+session under the same name and runs `claude --resume` in it. The conversation
+comes back in full. Nothing else does: the scrollback above the prompt, the
+process tree, anything typed and not sent, any second window or pane, and any
+process that was not Claude are all gone, and Claude starts cold. A kill that
+nothing could snapshot cannot be undone at all, and undo says so rather than
+trying.
+
+**The stack belongs to one browser tab.** It lives in `sessionStorage`
+(`tl:undo:v1`), holds the last 25 actions, and any new action clears the redo
+half. A reload keeps your history, a second tab keeps its own, and closing the
+tab is the end of it. A tab acting as another user (`?as=`) has no undo at all,
+because the history in it was written against your own account before you
+switched.
+
+**`Ctrl+Z` no longer suspends anything in the terminal.** The chord is claimed
+for the whole page, the terminal included, so it stops reaching the shell as
+SIGTSTP. That is deliberate, and the way back is ⚙ Settings → **Keyboard** →
+**App shortcuts**: with it off the whole layer goes to the terminal, `Ctrl+Z`
+included. To keep the rest of the layer and give up only this chord, point
+`edit.undo` at a chord of your own in `tl:keybindings:v1`; the override is per
+command, so `Cmd+Z` moves with it. One exception needs no setting at all: while
+a text box, the rename field or the file editor has focus, `Ctrl+Z` belongs to
+that field and undoes the typing in it.
+
+Why this chord and not one the terminal could keep, and what the eight seconds
+buy: `docs/adr/0024-undo-takes-ctrl-z-and-a-kill-waits.md`.
 
 ## Session image gallery
 

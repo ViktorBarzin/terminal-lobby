@@ -52,8 +52,8 @@ _Avoid_: original name, old name, alias
 The display text for a session — spaces, punctuation, emoji, any script, up
 to 64 characters. The only name a session has that anyone reads, and what
 every surface shows: sidebar cards, the tab title, the command palette, the
-dock, push bodies, confirmations, the restore picker. Usually a **summary**
-the lobby adopted rather than text a person typed, and a person may replace
+dock, push bodies, the restore picker. Usually a **summary** the lobby
+adopted rather than text a person typed, and a person may replace
 it at any time. Stored on the session itself (the `@title` tmux option), so
 everyone who can see the session sees the same title, and a durable copy
 (tmux-api `titles.go`) re-stamps it after a restore. That copy is also what
@@ -61,10 +61,12 @@ the restore picker reads: it lists sessions that are not running, and a tmux
 option died with them. It outlives a deliberate kill too, because the picker
 can restore from a snapshot older than the kill. Clearing it hands the session back to the summary. A session with
 no title yet shows the first line of the prompt it was created with, or
-`New session` — except where a question has to name ONE session and the
-answer cannot be taken back, such as a kill confirmation, which falls back
-to the **name** instead: `New session` reads the same for every untitled
-session, and the id is the only thing that tells them apart.
+`New session`, except where a message has ONE chance to say which session it
+is about and the reader cannot ask which, such as an OS notification on a
+locked phone, which falls back to the **name** instead: `New session` reads the
+same for every untitled session, and the id is the only thing that tells them
+apart. A kill confirmation was the other place that fell back, until the
+**Grace window** replaced it. No kill asks anything now.
 _Avoid_: label, nickname, display name; and do not confuse with **pane
 title**, which is whatever is running in the pane describing itself.
 
@@ -215,6 +217,50 @@ The per-user sidebar arrangement owned by tmux-api: the ordered list
 of projects, each project's ordered member sessions, the Ungrouped
 order, and the Ungrouped section's slot among the projects. Collapse
 state is NOT part of the layout — it is a per-browser view preference.
+
+**Undo stack**:
+What `Ctrl+Z` walks back: one entry per structural action a person took, in the
+order they took them. Kill, create, retitle, move between projects, reorder
+sessions or groups, the session-order mode, project create/rename/delete,
+collapse, and the watch choice. An entry is plain JSON naming the INVERSE to
+apply, never a copy of a **Layout** document, because `PUT /layout` replaces
+the whole document and carries no version. An undo therefore re-applies its
+inverse to the layout as it is now, and refuses when the world no longer looks
+the way the entry left it. Keyed by the browser TAB: it lives in that tab's
+`sessionStorage` (`tl:undo:v1`, 25 entries), so a reload keeps it, a second tab
+has its own, and closing the tab ends it. An entry names its session in
+`session` or `sessions` and nowhere else, which is what lets the stack rewrite
+the **name** under it when a title lands (ADR-0022). A **Lens** tab has no
+stack at all. `frontend-v2/src/store/undo.ts`; ADR-0024 has the reasoning.
+_Avoid_: history, journal, transaction log (each names a record of what
+happened; this one holds only what can still be taken back)
+
+**Grace window**:
+The eight seconds a killed session stays in the sidebar before the DELETE goes
+out (`GRACE_MS`, `store/lobby.ts`). The card is dimmed and struck through and
+carries a `↺` arrow, the session is deselected, and nothing has reached
+tmux-api yet. Taking the kill back inside the window is therefore a cancelled
+timer rather than a recovery, and it cannot fail. It replaced the "Kill session
+X?" question on every kill path, which is why no kill asks anything now. Kept
+per session **name** in the lobby store, in the browser and nowhere else: a tab
+that goes away mid-window sends its kill from `pagehide` rather than handing
+the window to the next page life.
+_Avoid_: countdown (nothing counts down on screen), soft delete, trash,
+deferred kill
+
+**Resurrection record**:
+What a landed kill leaves behind so it can still be undone: the tmux-persist
+snapshot the session was captured in, plus its **name**. tmux-api takes the
+snapshot BEFORE killing (one taken after describes a box the session has
+already left) and returns it in the DELETE's body, in exactly `POST /restore`'s
+shape, so undo posts back what it was handed. Keyed by session name and held in
+the lobby store for the life of the page, never persisted: a tab that reloaded
+mid-window has none, and an entry that finds none refuses rather than promising
+a session it cannot bring back. Absent, too, when nothing could snapshot the
+session. What it restores is the conversation, not the session: one window, one
+pane, `claude --resume`, no scrollback and no process tree.
+_Avoid_: snapshot (the record points AT one, which is tmux-persist's), backup,
+tombstone, undo token
 
 **Session state**:
 What the Claude conversation inside a session is doing: *running* (it is

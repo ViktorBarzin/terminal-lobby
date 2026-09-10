@@ -831,7 +831,8 @@ with a 4s grace window so a stale poll can't revert an in-flight change):
   dims-or-rings-while-unseen), a live working timer for running sessions;
 - **project grouping + Ungrouped** at its movable slot (hides while empty);
 - **session CRUD** — create (optimistic + dup guard), rename (inline, POST
-  `/api/sessions/{n}/rename`, 409/404 handled), kill (DELETE), move-to (menu);
+  `/api/sessions/{n}/rename`, 409/404 handled), kill (DELETE, held `GRACE_MS`
+  behind a dimmed card and nothing asked), move-to (menu);
 - **drag-reorder** session cards (across groups) and group headers (HTML5 DnD),
   plus menu move-up/down; per-browser **collapse**; **Restore** (POST `/restore`);
 - read-only **Shared-with-me** section for foreign sessions.
@@ -843,13 +844,24 @@ All of the following ship in the deployed build:
 - **Keyboard** — a layout-proof chord engine with one capture-phase listener:
   Alt-hold paints numbered chips, `Alt+1…9/0` attaches the Nth session,
   `Alt+Shift+]`/`[` step forward/back, `Alt+Shift+Enter` jumps to the next
-  awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view.
+  awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view,
+  `Cmd/Ctrl+Z` and its shifted form undo and redo (which is why the terminal no
+  longer sees `Ctrl+Z`, ADR-0024).
   The shortcuts help opens on a bare `/` in the lobby, or `Alt+/` from anywhere
   including inside the terminal, which is in this document and so its keydowns
   reach the one window listener. Bindings are user-overridable and persisted
   per-browser (`tl:keybindings:v1`).
 - **Command palette** — `Ctrl+Shift+K`; type to filter sessions, `>` switches to
   action mode. The action list is selection-dependent.
+- **Undo** — one stack per browser tab (`tl:undo:v1` in `sessionStorage`, 25
+  deep) over the structural actions: kill, create, retitle, move, reorder, the
+  three project verbs, the order mode, collapse and the watch choice. Each entry
+  is an inverse OPERATION rather than a saved document, because `PUT /layout`
+  has no version to check, and an entry whose precondition no longer holds
+  refuses with a toast instead of overwriting. A kill is held for `GRACE_MS`
+  behind a dimmed card carrying a `↺`; past that window undo resurrects from the
+  snapshot the DELETE handed back. Off in a lens tab.
+  See `docs/adr/0024-undo-takes-ctrl-z-and-a-kill-waits.md`.
 - **Gallery** — the 🖼 overlay lists the session's stored images from
   `/clipboard/list` (newest-first, `show-image` badged), with a shared lightbox;
   Escape steps lightbox → grid → closed.
