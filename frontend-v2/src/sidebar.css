@@ -548,6 +548,37 @@
 .tl-card[data-swipe="kill"] {
   background: color-mix(in srgb, var(--danger) 20%, transparent);
 }
+/* A session inside its kill window: eight seconds in which nothing has reached
+   tmux-api yet and the arrow on the row takes the whole thing back
+   (store/lobby.ts GRACE_MS, SessionCard `killing`). The row keeps its seat, so
+   the undo has something to point at. On a phone that arrow is the only undo
+   there is.
+
+   The tint is the swipe's danger colour at half strength. The swipe's is a
+   flash under a moving finger; this one sits still for eight seconds, and at
+   20% it read as an alarm rather than as a row on its way out.
+
+   Nothing here animates. A countdown would be the honest thing to draw and it
+   would need a `prefers-reduced-motion` answer (app.css:139 is where the app's
+   one animation turns itself off); the fade says "leaving" without moving. */
+.tl-card[data-killing] {
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  cursor: default;
+}
+/* Everything fades EXCEPT the arrow. `opacity` on the row itself would take the
+   way out down with it: opacity makes a group, and no child can climb back out
+   of one. ::before is the active/unseen accent bar, which is part of the row
+   rather than a child of it. */
+.tl-card[data-killing] > *:not(.tl-card-undo),
+.tl-card[data-killing]::before {
+  opacity: 0.45;
+}
+/* Struck through as well as faded, because faded alone is what a DISABLED row
+   looks like, and a row that is merely disabled is not saying it is about to be
+   deleted. */
+.tl-card[data-killing] .tl-card-name {
+  text-decoration: line-through;
+}
 .tl-card-active {
   background: var(--bg-card);
   border-color: var(--border-strong);
@@ -707,6 +738,37 @@
 .tl-card-actions:hover {
   background: var(--hover-tint);
   color: var(--text-primary);
+}
+/* The undo arrow on a dimmed row. Sized and shaped like the ⋯ button it stands
+   in for, with one difference: it is never hover-revealed. The ⋯ button can
+   afford to appear on hover because a long press opens the same menu; this is
+   the only way back from a kill, and a target that appears on hover is a target
+   a finger cannot find. */
+.tl-card-undo {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-primary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 6px;
+  min-width: 28px;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tl-card-undo:hover {
+  background: var(--hover-tint);
+}
+/* The row's own focus ring, on the button inside it: this is reached by Tab, so
+   it needs to say where the keyboard is. */
+.tl-card-undo:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
 
 /* ---- State dots -------------------------------------------------------- */
@@ -1023,6 +1085,17 @@
      menu. */
   .tl-card-actions {
     display: none;
+  }
+  /* The undo arrow is the opposite case. The ⋯ button can go away here because
+     a long press opens the same menu; nothing on a phone replaces this one,
+     since there is no Cmd+Z to press and the right-swipe that kills has no
+     confirm in front of it. So it is the one target that goes past the 40px
+     floor above to 44px, which the 48px row has room for without the inflation
+     the ⋯ button's own history warns about: the target is smaller than the row,
+     so the row's height is not the button's to set. */
+  .tl-card-undo {
+    min-width: 44px;
+    min-height: 44px;
   }
   /* The active row's accent bar insets from the row's edges; at 40px the old
      6px left a 28px stub, which reads as a dash rather than a bar. */

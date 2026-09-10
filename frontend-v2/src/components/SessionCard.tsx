@@ -20,6 +20,7 @@ import {
   type WatchChoice,
 } from "../store/watchmode";
 import { ToolIcon, TOOL_LABELS } from "./ToolIcon";
+import { showToast } from "../store/toast";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
@@ -94,6 +95,51 @@ export const SessionCard: Component<{
     props.store.selected()?.name === s().name &&
     (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
 
+  // --- On its way out ------------------------------------------------------
+  /**
+   * Inside its kill window: the DELETE has not gone out and will not for eight
+   * seconds (store/lobby.ts GRACE_MS). The row keeps its seat and reads as
+   * leaving: faded, title struck through, an arrow where the ⋯ button was.
+   *
+   * A card that vanished on the press would leave the person with a window
+   * they cannot see and an undo they have no reason to reach for, which is the
+   * whole reason the window could replace the `Kill session "x"?` confirm.
+   */
+  const killing = () => props.store.killing(s().name);
+  /**
+   * Is there a press to offer? The arrow appears only when the stack would
+   * actually do something: a lens tab (`?as=bob`) runs with undo off, and a
+   * page App has wired no stack into has none at all. A visible arrow that did
+   * nothing would be worse than the fade on its own.
+   */
+  const canTakeBack = () => killing() && props.store.undo?.canUndo() === true;
+  /**
+   * The way back, and on a phone the ONLY one: there is no Cmd+Z on a touch
+   * screen, and the right-swipe that kills has no confirm in front of it any
+   * more.
+   *
+   * This presses the STACK rather than retracting this card's own kill. The
+   * entry has to come off, or a later Cmd+Z would undo a kill that was already
+   * taken back (store/undo.kill.ts). The press is therefore the top of the
+   * stack, exactly as the chord is: two kills held at once and the older card's
+   * arrow brings the NEWER session back, which is the same thing Cmd+Z does and
+   * costs a second press rather than a wrong outcome.
+   *
+   * The refusal toast is the caller's job, not the store's (store/undo.ts
+   * UndoResult): a `reason` of null is the deliberate silence of an empty
+   * stack, and a success says nothing at all.
+   */
+  const takeBack = async (e: MouseEvent) => {
+    // Synchronously, before any await: the click bubbles to the row's own
+    // handler, and by then the retraction has already flipped `killing` back to
+    // false, so the press that rescued the session would go on to open it.
+    e.stopPropagation();
+    const stack = props.store.undo;
+    if (!stack) return;
+    const r = await stack.undo();
+    if (!r.ok && r.reason) showToast(r.reason, "warning");
+  };
+
   const [editing, setEditing] = createSignal(false);
   // Placed: the popup is measured against the window rather than hung off the
   // bottom of this row, which is what a row near the end of a long list needs
@@ -147,11 +193,16 @@ export const SessionCard: Component<{
     }
     menu.close(); // a click on the row is a click away from the menu
     if (editing()) return;
+    // A row inside its kill window is not a way into the session: the person
+    // asked for it to go, and its terminal was taken off screen on the press.
+    // The only live thing left on the row is the undo arrow, which stops the
+    // click before it reaches here.
+    if (killing()) return;
     if ((e as MouseEvent).detail > 1) return; // dblclick → rename, not activate
     props.store.select(s().name, foreign() ? s().owner : undefined);
   };
   const onKey = (e: KeyboardEvent) => {
-    if (editing()) return;
+    if (editing() || killing()) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       props.store.select(s().name, foreign() ? s().owner : undefined);
@@ -160,7 +211,9 @@ export const SessionCard: Component<{
 
   // ---- inline rename ----
   const beginRename = (e?: Event) => {
-    if (foreign()) return;
+    // Nor a title, on a session that is leaving: the double-click reaches here
+    // from the row itself, and the ⋯ menu's Rename is hidden while it dies.
+    if (foreign() || killing()) return;
     e?.stopPropagation();
     releaseHold = props.store.hold();
     setEditing(true);
@@ -281,6 +334,12 @@ export const SessionCard: Component<{
   let axis: "x" | "y" | null = null;
 
   const onPointerDown = (e: PointerEvent) => {
+    // Both gestures off for a row already on its way out. Neither has anything
+    // left to offer: the leftward open is the session that was just taken off
+    // screen, the rightward kill is the kill already in flight, and the long
+    // press opens the menu this state hides. Recording no origin is what makes
+    // the release a no-op too (`endSwipe` reads `swipeFrom`).
+    if (killing()) return;
     onHoldStart(e);
     if (e.pointerType === "mouse") return;
     axis = null;
@@ -405,6 +464,11 @@ export const SessionCard: Component<{
       // What the row is offering to do while it trails, so a destructive
       // direction looks destructive before the finger comes up.
       data-swipe={swipeDx() === 0 ? undefined : swipeDx() > 0 ? "kill" : "open"}
+      // On its way out, for the eight seconds before the DELETE goes out. The
+      // presence of the attribute is the whole message, so it carries no value.
+      // sidebar.css hangs the fade and the strike-through off it, and the arrow
+      // beside them is what takes it back.
+      data-killing={killing() ? "" : undefined}
       // The row's identity in the DOM: the drag library carries values, not
       // elements, and a test reads a row back by name.
       data-name={s().name}
@@ -518,7 +582,10 @@ export const SessionCard: Component<{
         )}
       </Show>
 
-      <Show when={!foreign()}>
+      {/* Nothing in the menu applies to a session that is leaving: Rename, the
+          three Attach as rows and Move to are all about a session you are
+          going to work in, and Kill is the thing already in flight. */}
+      <Show when={!foreign() && !killing()}>
         <button
           class="tl-card-actions"
           aria-label="Session actions"
@@ -529,7 +596,28 @@ export const SessionCard: Component<{
         </button>
       </Show>
 
-      <Show when={menu.open()}>
+      {/* The way out of a kill, in the slot the ⋯ button just gave up so the
+          row does not reflow. A button rather than a tappable glyph, because
+          tab order, Enter and Space all come free from the element and every
+          one of them is how this gets pressed without a mouse. */}
+      <Show when={canTakeBack()}>
+        <button
+          class="tl-card-undo"
+          aria-label="Undo kill"
+          title="Undo kill"
+          onClick={(e) => void takeBack(e)}
+          // The row renames on a double click. Two fast presses on the arrow
+          // are somebody pressing the arrow.
+          onDblClick={(e) => e.stopPropagation()}
+        >
+          ↺
+        </button>
+      </Show>
+
+      {/* `!killing()` covers the one path that dims a card with its menu open:
+          the kill came from somewhere else while this row's popup was up, from
+          the sidebar's Delete, the kill chord or the palette. */}
+      <Show when={menu.open() && !killing()}>
         {/* Rename and Kill lead the menu: they are the actions actually
             reached for (Viktor, 2026-08-02). Rename stays first so the
             destructive one is not the item under the opening cursor. */}
