@@ -34,8 +34,14 @@ Three of the four are unattributed. They match no harness convention, so
 something created them by hand or from a script that is not in this repo.
 
 Nothing in the system can tell any of them from a session a person opened. A
-name is an opaque id (ADR-0019), and a QA agent driving the primary new-session
-flow mints one exactly like the composer does.
+session is created with a minted 12-character id (ADR-0019), and a QA agent
+driving the primary new-session flow mints one exactly like the composer does.
+
+Since ADR-0022 a name does not stay that id: when a title lands, tmux-api derives
+a name from it and renames the session. That does not weaken anything here. A
+tmux option survives a rename, so `@tl_origin` rides along, and `derivedNameFor`
+(`tmux-api/name_from_title.go:50`) declines to rename a `reservedName`, so a
+`qa-` session keeps the prefix the backstop reads.
 
 ## What changes
 
@@ -80,7 +86,7 @@ flowchart TD
 | Lens (`?as=`) | Same rule, same group, per tab |
 | Restore across reboot | Never. `tmux-persist` skips them at save time |
 | Prewarm pool slots | Left invisible. They are churn on a 2-minute TTL, not sessions |
-| ADR | Yes, ADR-0021, plus **Origin** in CONTEXT.md |
+| ADR | Yes, ADR-0024, plus **Origin** in CONTEXT.md |
 
 ## How it works
 
@@ -219,7 +225,7 @@ never enters a snapshot and a reboot never brings it back.
 8. **Telemetry** — the emit hook wired per service; the harness proxy refuses
    `POST /telemetry`; `tl-session-watch` excluded.
 9. **infra** — `tmux-persist.sh` and its test.
-10. **Docs** — **Origin** and the System group in CONTEXT.md, ADR-0021.
+10. **Docs** — **Origin** and the System group in CONTEXT.md, ADR-0024.
 11. **Clean up** — kill the four stranded sessions above.
 
 Landing is two pushes: terminal-lobby, whose own CI builds the package the box

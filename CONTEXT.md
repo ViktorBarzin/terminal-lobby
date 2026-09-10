@@ -107,6 +107,22 @@ and (co-equal) may edit it.
 The OS user whose uid the session's process tree runs as — exactly one per
 session. A foreign session (owner ≠ the viewer) is attach-only.
 
+**Origin** (of a session):
+What made a **Session**, which is a different question from **Owner**. Owner is
+whose uid it runs as; origin is what asked for it to exist. A session the
+lobby's own create path made is a user session. One a test harness made, and one
+nothing accounted for at all, is a **system session**. System sessions collect
+in a single group at the foot of the sidebar, **System**, collapsed by default,
+where they stay fully addressable: attach, prompt, kill and open by URL all work
+as they always did. What they lose is the attention a person's session gets,
+since a system session raises no push and is not recorded in telemetry. System
+is not a **Project** and cannot become one, but moving a session out of it into
+a project is how you say a person made this one after all, and that change
+sticks. Absence of an origin counts as system, which only means anything because
+the lobby marks what it makes itself.
+_Avoid_: creator, source, author (each reads as who is working inside the
+session rather than what brought it into being), bot session
+
 **Share**:
 A grant letting a named non-owner attach a specific session, read-only
 (`tmux attach -r`, watch) or read-write (drive — which runs as the owner).
