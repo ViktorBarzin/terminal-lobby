@@ -38,6 +38,9 @@ function lensStore(): LobbyStore {
     hold: () => () => {},
     // The card reads both while rendering its drop indicator (touch reorder).
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
+    // No kill in flight, so the row draws itself the ordinary way. The dimmed
+    // one is test/SessionCard.killing.test.tsx.
+    killing: () => false,
   } as unknown as LobbyStore;
 }
 

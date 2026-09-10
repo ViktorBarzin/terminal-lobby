@@ -103,6 +103,17 @@ export interface LobbyStore {
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
   collapse: CollapseStore;
+  /**
+   * This tab's undo stack, or undefined on a page that has none.
+   *
+   * Handed straight back out of {@link LobbyStoreOptions.undo}, because a
+   * component that holds the store has no other route to the one instance App
+   * owns: the dimmed card's undo arrow is the only way back from a kill on a
+   * phone, where there is no Cmd+Z to press (components/SessionCard.tsx). It
+   * presses the STACK rather than retracting its own kill, so the entry comes
+   * off and a later chord cannot undo the same kill twice.
+   */
+  undo?: UndoStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
   workingSince: (name: string) => number | undefined;
 
@@ -1645,6 +1656,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     selected,
     toast,
     collapse,
+    undo: opts.undo,
     workingSince,
     refresh,
     hold,
