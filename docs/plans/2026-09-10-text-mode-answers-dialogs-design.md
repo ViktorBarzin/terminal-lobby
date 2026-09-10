@@ -11,55 +11,100 @@
 > in the terminal. Let's fix this! I want the text mode to be able to fully handle
 > these prompts.
 
-Seen on both phone and desktop, and the screen involved is the review screen at
-the end of a multi-question call.
+Seen on both phone and desktop. Of the six recorded failures one is the review
+screen; the other five stop earlier, which the field data below sets out.
 
 ```stats
-63 ms | for the review screen to draw — the client's first look is at 90 ms
-2 of 5 | AskUserQuestion records not written until the question was ANSWERED
-22.4% | of 1,045 calls the one-at-a-time card rescued from a Terminal hand-off
+4 of 5 | four-question answers from the text view FAILED, in 10 days of field data
+6 of 6 | of those failures are `desync` — never `refused`, never `unreadable`
+2 | of them happened during the session that produced this document
 1 | stale marker found live: we say "Other", the CLI draws "Type something."
 ```
 
-## What we ruled out first
+## What the field data says
 
-Three explanations fit the symptom and none of them survived measurement. They
-are recorded here so the next reader does not repeat them.
+`text.answer_failed` and `text.answer_sent` land in Loki as
+`{job="devvm-journal", unit="tmux-api.service"}` under the `TLEVENT` marker. The
+emit shipped in `da5cd67` on 2026-08-30; a 14-day query reaches back before that
+and finds nothing older, so this is the complete population.
 
-| suspected | measured 2026-09-10, CLI 2.1.267 | verdict |
+Window 2026-09-01 07:25 to 2026-09-10 19:37 UTC, 15 events, one user.
+
+| call shape | sent | failed | fail rate |
+|---|---|---|---|
+| 1 question | 8 | 2 | 20% |
+| 4 questions | 1 | 4 | 80% |
+
+All six failures are `desync`. Zero `refused` and zero `unreadable`, so the keys
+were always accepted and the pane was always readable. What fails is the
+expected-text match, every time.
+
+| ts (UTC) | source | questions | step | `expect_len` | pane reads |
+|---|---|---|---|---|---|
+| 2026-09-10 19:37:05 | transcript | 4 | 1/5 | 182 | 2 |
+| 2026-09-10 19:30:45 | transcript | 4 | 1/5 | 321 | 2 |
+| 2026-09-10 00:00:55 | transcript | 4 | 4/5 | 19 | 5 |
+| 2026-09-04 17:32:57 | pane | 1 | 1/1 | 8 | 2 |
+| 2026-09-04 17:30:42 | pane | 1 | 1/1 | 8 | 2 |
+| 2026-09-04 15:25:09 | transcript | 4 | 1/5 | 68 | 2 |
+
+`expect_len` says which check gave up. 19 is `"Review your answers"`. 8 is a
+tab-bar `☒ <header>`. 182, 321 and 68 are the length of the *next question's
+text*, which is what a whole-walk step looks for.
+
+The top two rows are the grilling session that produced this document: Viktor
+answering rounds 2 and 3 in the text view, on the current build, from a browser.
+Four questions each, and both stopped at the first check.
+
+## What breaks
+
+Four of the six failures stop at **step 1**: the digit for question 1 went in,
+and the pane did not show question 2's text within the two reads the client
+allows. One stops at the review marker, two on the pane path's tab-bar check.
+
+The single thing common to all six: **the plan predicts what the next screen
+will say, and then does not find it.** That prediction is the whole-walk
+design — `planAnswer` sets each step's expectation to the *following* question's
+text, and the last step's to `"Review your answers"` (`answer.logic.ts:161-167`).
+
+What I could not isolate is why the prediction misses. Four candidates survive
+measurement, and the design removes all four, so I stopped short of picking one:
+
+| candidate | evidence for | evidence against |
 |---|---|---|
-| `REVIEW_MARKER` wording drifted | live review screen carries both "Review your answers" and "Ready to submit your answers?" | wording is correct |
-| review title scrolled out of `capture-pane` | title disappears only at ≤ 10 rows; no pane on this box is under 23 | not reachable here |
-| the check times out before the screen draws | q2 digit → review screen visible in 63 ms, against a first look at 90 ms | comfortable margin |
-| the pane read is cached and returns a stale screen | `GET /pane` runs a fresh `capture-pane -p` per request (`sessionio/ready.go:38`) | fresh every time |
+| the CLI truncates a long question, so the text is not on screen | three failures carry `expect_len` of 182–321 | tested 2026-09-10 with a 218-character question: the shipped `landed()` matched at 111 ms, on the first read |
+| the screen has not drawn yet at 90 ms and 310 ms | both reads are always consumed | measured 63–154 ms for both transitions on an idle box |
+| the keys did not advance the dialog | `desync` rather than `refused` only proves the POST succeeded, not that the TUI acted | `runAnswer` sends batches back to back with no delay (`answer.logic.ts:328`), while the Go picker for the same class of TUI sleeps `keySettle = 120 ms` between keystrokes (`sessionio/setmodel.go:24`) |
+| the pane had already moved past question 1 when Send was pressed | `fromPane()` lags up to 2 s (`PaneWatchInterval`, `registry.go:238`) while the transcript tails at 200 ms (`main.go:32`), so the card's two sources are 10× apart in freshness | not directly observed |
 
-## What appears to break
+Two defects turned up while chasing this that are worth fixing regardless:
 
-This is a reading of the code and the measurements, not a reproduction. It
-explains every part of the report — the "sometimes", question 2, the review
-screen, and both devices — so it is the working hypothesis, and the design below
-removes the whole class rather than this instance.
+1. **`landed()` searches the whole captured pane**, conversation scrollback
+   included, not just the dialog region (`answer.logic.ts:375`). A step can pass
+   on text that was already on screen before anything was typed.
+2. **No settle time between key batches.** The codebase already knows this TUI
+   needs 120 ms between keystrokes on the model-picker path and allows none on
+   the answer path.
 
-The card takes its **questions** from the transcript and its **position** from
-the pane. Those two sources can disagree, and when they do the card plans from
-question 1 into a dialog that has moved past it.
+### How the two sources disagree
+
+Independent of which candidate above fires, the card holds two readings that can
+contradict each other, and this is what the design removes.
 
 ```mermaid
 flowchart TD
-    A["a 2-question AskUserQuestion opens<br/>the transcript record is not written yet"]
-    B["the pane draws question 1 only<br/>→ the one-at-a-time card"]
-    C["reader answers q1 · it lands<br/>the pane advances to question 2"]
-    D["the transcript record arrives,<br/>carrying BOTH questions"]
-    E["asking() key changes<br/>1-question → 2-question"]
-    F["the card REBUILDS as a whole-walk card,<br/>positioned at question 1"]
-    G["types q1's digit into<br/>the question-2 screen"]
-    H["a wrong option is taken<br/>the dialog jumps to review"]
-    I["types q2's digit into review<br/>row 1 is Submit answers → SUBMITS"]
-    J["expects Review your answers,<br/>the dialog is gone → desync"]
-    A --> B --> C --> D --> E --> F --> G --> H --> I --> J
+    A["a 4-question AskUserQuestion opens"]
+    B["transcript tails at 200 ms<br/>→ all four questions, quickly"]
+    C["pane watcher ticks at 2 s<br/>→ one question, up to 2 s late"]
+    D["the card takes QUESTIONS from the transcript<br/>and POSITION from the pane"]
+    E["planAnswer always plans from question 1<br/>and predicts each next screen"]
+    F["a prediction misses → desync,<br/>the card latches, Send is disabled"]
+    A --> B --> D
+    A --> C --> D
+    D --> E --> F
 ```
 
-Three things line up to make it possible:
+Three specifics behind that:
 
 1. **The record can be late.** Claude Code writes the `AskUserQuestion` record
    when it gets round to it; measured on 2026-08-28 over five consecutive calls,
@@ -68,7 +113,7 @@ Three things line up to make it possible:
    source, and the pane draws one question.
 2. **The handover changes the card's identity.** `asking()` keys on the content
    of every question in the call, so a one-question pane reading and a
-   two-question transcript reading produce different keys, and
+   four-question transcript reading produce different keys, and
    `<Show … keyed>` rebuilds the card (`TextView.tsx:566`). Content-keying does
    carry a half-finished walk through the handover, which is the case the comment
    there describes; a multi-question call is the case where the two readings
@@ -213,17 +258,18 @@ against whatever is actually there.
 
 ## Open questions
 
-- **No field telemetry backs the frequency claims.** `text.answer_failed` carries
-  `tl.reason`, `tl.step`, `tl.questions` and `tl.source`, which would say how
-  often this fires and on which shape of call. Two agents dispatched to query it
-  returned nothing, so the numbers here are all first-hand measurement on this
-  box. Worth pulling before or during the build, mostly to confirm the failures
-  cluster on `tl.source: "transcript"` with `tl.questions ≥ 2`.
-- **The mechanism is a reading, not a reproduction.** Reproducing it needs the
-  transcript record to land mid-walk, which is timing we do not control. The
-  cheapest confirmation is the telemetry above; the design does not depend on it,
-  since one-request-per-choice removes both the stale plan and the two-source
-  disagreement regardless of which one fires.
+- **Which of the four candidates fires is unresolved.** The telemetry pins
+  *where* the walk stops to the step and the expectation length, and rules out
+  the keys being refused or the pane being unreadable. It does not say why a
+  prediction missed. Isolating it needs the pane captured at the moment of a real
+  failure, which no instrument records today. The design does not wait on that:
+  one request per choice removes the prediction, so every candidate stops
+  applying.
+- **n is small.** 15 events, one user, 10 days. The 80% figure for four-question
+  calls rests on 5 attempts, of which 1 succeeded.
+- **The event carries no session name**, only `user.id` and `tl.device`, so a
+  failure cannot be tied back to the transcript it came from. Adding the session
+  to the event would make the next investigation much shorter.
 - **Per-choice latency on a phone.** Server-side work measured at 63–154 ms; a
   cellular round trip adds perhaps 200–400 ms on top. That should feel fine with
   a spinner on the tapped row, but it is unmeasured on a real phone.
