@@ -487,6 +487,20 @@ src/
                          document changing and strict about the slice its entry
                          touched. Registered from lobby.ts, which owns the
                          actions
+    undo.titles.ts       The inverse of a RETITLE, including the clear that
+                         hands a session back to its bare name. The one entry
+                         that cannot promise an exact reversal: the tmux name
+                         follows the title (ADR-0022) and a collision suffixes
+                         it, so the title comes back exactly and the name is
+                         the server's to decide. Finds its session by tmux id,
+                         then by name, then by birth name, and refuses when the
+                         title has moved under it
+    undo.local.ts        The inverses of the two per-browser toggles a person
+                         changes on purpose: a group collapsed, and watch mode
+                         switched. Both carry BOTH ends of their switch, since
+                         watch mode has three states and "nobody has said" does
+                         not derive from the other two. Not mark-seen, which
+                         nothing chooses, and there is no pin feature to cover
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path

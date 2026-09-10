@@ -1,12 +1,7 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  untrack,
-  type Accessor,
-} from "solid-js";
+import { createEffect, createMemo, createSignal, untrack, type Accessor } from "solid-js";
 import { track } from "../telemetry/track";
 import { lsGet, lsSet } from "../lib/storage";
+import type { UndoStore } from "./undo";
 
 /**
  * Watch mode — per-session, per-device: attach this client read-only, so it
@@ -49,9 +44,7 @@ export const WATCH_KEY_PREFIX = "tl:watch:v1:";
  * the colons.
  */
 export function watchKey(session: string, as = ""): string {
-  return as
-    ? `${WATCH_KEY_PREFIX}as:${as}:${session}`
-    : WATCH_KEY_PREFIX + session;
+  return as ? `${WATCH_KEY_PREFIX}as:${as}:${session}` : WATCH_KEY_PREFIX + session;
 }
 
 /** undefined = no choice recorded; decide from whether the session is driven. */
@@ -75,6 +68,33 @@ export function watchChoice(session: string, as = ""): WatchChoice {
   return loadWatch(session, as);
 }
 
+/**
+ * Write a choice with no telemetry and no undo entry.
+ *
+ * The path the inverse of a switch runs on (store/undo.local.ts). `saveWatch`
+ * would record itself on the stack and wipe the redo half the press is about
+ * to fill, and its `watch.switched` event counts a person choosing, which a
+ * Cmd+Z press is not. `carryWatch` writes below both for the same second
+ * reason, and stays on `lsSet` because it moves two keys under one bump.
+ */
+export function applyWatch(session: string, choice: WatchChoice, as = ""): void {
+  lsSet(watchKey(session, as), choice === undefined ? null : choice ? "ro" : "rw");
+  setRev((n) => n + 1);
+}
+
+/**
+ * This tab's undo stack, or null when there is none (a lens tab, or a page
+ * that has not wired one). Module-level because watch mode is module-level:
+ * the choice is a localStorage key rather than an instance, so there is no
+ * store object to hang a stack off. store/lobby.ts sets it at wiring time,
+ * from the one instance App owns, and clears it when it disposes.
+ */
+let undoStack: UndoStore | null = null;
+
+export function setWatchUndo(stack: UndoStore | null): void {
+  undoStack = stack;
+}
+
 export function saveWatch(session: string, choice: WatchChoice, as = ""): void {
   if (choice !== undefined) {
     track("watch.switched", {
@@ -86,8 +106,24 @@ export function saveWatch(session: string, choice: WatchChoice, as = ""): void {
       ...(as ? { "tl.as": as } : {}),
     });
   }
-  lsSet(watchKey(session, as), choice === undefined ? null : choice ? "ro" : "rw");
-  setRev((n) => n + 1);
+  const was = loadWatch(session, as);
+  applyWatch(session, choice, as);
+  // Nothing changed means nothing to undo: the card's menu and the session
+  // bar both let a person pick what is already chosen, and an entry for that
+  // would swallow a Cmd+Z press without moving anything.
+  //
+  // Both ends are recorded because the three states do not derive from one
+  // another: `!undefined` is `true`, so an entry holding only `was` would redo
+  // a switch to watching after somebody had chosen to drive.
+  if (undoStack && was !== choice) {
+    undoStack.push({
+      kind: "watch",
+      session,
+      ...(was !== undefined ? { was } : null),
+      ...(choice !== undefined ? { to: choice } : null),
+      ...(as ? { as } : null),
+    });
+  }
 }
 
 /**
@@ -103,11 +139,7 @@ export function saveWatch(session: string, choice: WatchChoice, as = ""): void {
  * `driven` is a courtesy signal, not an access decision — it comes from the
  * polled session list and can be seconds stale. Being wrong costs one click.
  */
-export function resolveWatch(
-  choice: WatchChoice,
-  driven: boolean,
-  lens = false,
-): boolean {
+export function resolveWatch(choice: WatchChoice, driven: boolean, lens = false): boolean {
   if (lens) return choice ?? true;
   return choice ?? driven;
 }

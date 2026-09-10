@@ -1,7 +1,8 @@
 /**
  * The undo stack behind Cmd+Z / Ctrl+Z for the lobby's structural actions
  * (kill, create, retitle, reorder, move, project create/rename/delete, and the
- * per-browser toggles: collapse, watch, mark-seen).
+ * two per-browser toggles a person changes on purpose: collapse and watch
+ * mode. Not mark-seen, which nothing chooses; store/undo.local.ts says why).
  *
  * This file knows nothing about any of them. It holds a sequence of plain JSON
  * records and hands the top one to the code that knows how to invert it. Five
@@ -47,6 +48,8 @@ import type {
   ProjectRenameEntry,
   ReorderGroupsEntry,
 } from "./undo.layout";
+import type { CollapseEntry, WatchEntry } from "./undo.local";
+import type { TitleEntry } from "./undo.titles";
 
 /** Where the stack lives. Bump the suffix if the entry shape ever changes. */
 export const UNDO_KEY = "tl:undo:v1";
@@ -98,8 +101,9 @@ export interface UndoEntryBase {
  * document read back from sessionStorage was written by whatever build was
  * running before the reload, and its kinds are not this build's to enumerate
  * (`step` hands one it does not recognise back as a refusal). The types below
- * are imported for their shape only. undo.layout.ts is what registers their
- * handlers, and nothing in this file runs any of them.
+ * are imported for their shape only. undo.layout.ts, undo.titles.ts and
+ * undo.local.ts are what register their handlers, and nothing in this file
+ * runs any of them.
  */
 export type UndoEntry =
   | UndoEntryBase
@@ -108,7 +112,10 @@ export type UndoEntry =
   | ProjectCreateEntry
   | ProjectRenameEntry
   | ProjectDeleteEntry
-  | OrderModeEntry;
+  | OrderModeEntry
+  | TitleEntry
+  | CollapseEntry
+  | WatchEntry;
 
 /** `Omit` that stays a union as kinds are added, instead of collapsing to one. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
