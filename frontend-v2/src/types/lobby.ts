@@ -184,16 +184,19 @@ export function sessionLabel(s: Pick<Session, "name" | "title">): string {
 
 /**
  * What a message calls a session when it has ONE chance to say which one, and
- * the reader cannot ask again: a kill prompt, where the answer is
- * irreversible, and an OS notification, which arrives on a locked phone with
- * no list beside it.
+ * the reader cannot ask again: an OS notification, which arrives on a locked
+ * phone with no list beside it.
  *
- * `sessionLabel` answers `New session` for every untitled minted id, so
- * `Kill session "New session"?` cannot tell two of them apart, and neither can
- * a banner. The id is the only thing that can, and this is also where it
- * becomes readable at all: a name is invisible everywhere else now (ADR-0019's
- * last consequence). tmux-api's `pushLabel` is the same rule server-side, so a
- * pushed banner and a page-fired one read alike.
+ * `sessionLabel` answers `New session` for every untitled minted id, so a
+ * banner about one cannot tell two of them apart. The id is the only thing that
+ * can, and this is also where it becomes readable at all: a name is invisible
+ * everywhere else now (ADR-0019's last consequence). tmux-api's `pushLabel` is
+ * the same rule server-side, so a pushed banner and a page-fired one read
+ * alike.
+ *
+ * The kill confirm was the other reader until the grace window replaced it
+ * (store/lobby.ts GRACE_MS): a kill is undone with Cmd+Z now, so nothing asks
+ * about one first and no message has to name the session it is about to take.
  */
 export function sessionConfirmLabel(s: Pick<Session, "name" | "title">): string {
   return s.title && s.title.length > 0 ? s.title : s.name;

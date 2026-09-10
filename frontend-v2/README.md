@@ -478,6 +478,16 @@ src/
                          carries no version, so re-PUTting a copy would erase
                          what another device did meanwhile. A refusal drops its
                          entry and hands back a sentence for the caller to toast
+    undo.kill.ts         The inverses of a KILL and a CREATE, which are one
+                         pair of operations read in both directions. A kill is
+                         held for 8s (lobby.ts GRACE_MS) with the card dimmed in
+                         place and nothing sent, so an undo inside the window
+                         retracts the whole thing; past it the session comes back
+                         from the record the DELETE answered with, without its
+                         scrollback. That record lives in the store rather than
+                         on the entry, because an entry is immutable JSON the
+                         moment it is pushed, and a reloaded tab therefore has
+                         none and refuses instead
     undo.layout.ts       The inverses of the LAYOUT actions, one per kind: a
                          session moved, the group sequence reordered, a project
                          created / renamed / deleted, and the session-order

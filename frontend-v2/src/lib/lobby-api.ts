@@ -171,10 +171,69 @@ export async function putLayout(layout: Layout): Promise<void> {
   if (!res.ok) throw new ApiError(res.status, `layout PUT HTTP ${res.status}`);
 }
 
-/** DELETE /api/sessions/{name} — kill a session (204/404). */
-export async function killSession(name: string): Promise<void> {
+/**
+ * DELETE /api/sessions/{name} — kill a session (204/404).
+ *
+ * The answer, when the server sends one, is what it takes to put the session
+ * back: a tmux-api that snapshots before it kills replies with the snapshot and
+ * the row inside it, which is exactly POST /restore's body
+ * (types/lobby.ts RestoreSelection). That is what makes a kill undoable once
+ * its grace window has elapsed (store/undo.kill.ts). The tmux-api deployed
+ * today answers 204 with no body and this reads null, which the undo handler
+ * reports as a kill it cannot take back rather than pretending.
+ *
+ * A 404 is not an error here: the session was already dead, and the caller's
+ * layout PUT is what stops its card coming back on the next poll.
+ */
+export async function killSession(name: string): Promise<RestoreSelection | null> {
   const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+  return await asRestoreSelection(res);
+}
+
+/** The response body as a restore record, or null when it is not one — a 204,
+ *  an empty body, a server that answers something else. Nothing here is worth
+ *  failing a kill that has already happened over. */
+async function asRestoreSelection(res: Response): Promise<RestoreSelection | null> {
+  if (res.status === 204) return null;
+  try {
+    const body: unknown = await res.json();
+    if (!body || typeof body !== "object") return null;
+    const rec = body as { snapshot?: unknown; sessions?: unknown };
+    if (typeof rec.snapshot !== "string" || rec.snapshot === "") return null;
+    if (!Array.isArray(rec.sessions)) return null;
+    const sessions = rec.sessions.filter((s): s is string => typeof s === "string");
+    return sessions.length > 0 ? { snapshot: rec.snapshot, sessions } : null;
+  } catch {
+    return null; // no body, or not JSON
+  }
+}
+
+/**
+ * The same DELETE, fired on the way out of the page.
+ *
+ * `keepalive` is the whole point: a kill inside its grace window still has to
+ * land when the tab is closed or reloaded (store/lobby.ts flushKills), and an
+ * ordinary fetch is cancelled with the document before it can settle. Built
+ * through `apiUrl` like every other call, so `?as=` rides along, and there is
+ * no deadline on it — the page is going away, so nothing here could act on a
+ * timeout anyway.
+ *
+ * Nothing to await and nothing to report: `pagehide` runs synchronously and the
+ * document is gone by the time an answer could arrive. The record a kill would
+ * normally hand back is lost with it, which is why an undo after a reload
+ * refuses instead of resurrecting.
+ */
+export function killSessionKeepalive(name: string): void {
+  try {
+    void fetch(apiUrl(`/sessions/${encodeURIComponent(name)}`), {
+      method: "DELETE",
+      credentials: "same-origin",
+      keepalive: true,
+    });
+  } catch {
+    /* a browser that refuses the request on unload: see the header */
+  }
 }
 
 /**
@@ -313,7 +372,15 @@ export interface LobbyApi {
   listSessions(): Promise<Session[]>;
   getLayout(): Promise<Layout>;
   putLayout(layout: Layout): Promise<void>;
-  killSession(name: string): Promise<void>;
+  /**
+   * Kill a session, answering the record that puts it back where the server
+   * snapshots first (see the function). `void` is in the union so a client or a
+   * test double that has nothing to say satisfies this unchanged.
+   */
+  killSession(name: string): Promise<RestoreSelection | null | void>;
+  /** The kill that has to survive the page (see `killSessionKeepalive`).
+   *  Optional: a double without it simply flushes nothing on the way out. */
+  killSessionKeepalive?(name: string): void;
   setSessionTitle(name: string, title: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
@@ -328,6 +395,7 @@ export const lobbyApi: LobbyApi = {
   getLayout,
   putLayout,
   killSession,
+  killSessionKeepalive,
   setSessionTitle,
   restoreSessions,
   listSnapshots,

@@ -46,8 +46,6 @@ export const ProjectGroup: Component<{
   badge?: (name: string) => string | null;
   /** finished since you last looked (see Sidebar.unseenOf). */
   isUnseen?: (s: { name: string; state?: string }) => boolean;
-  /** confirm seam, threaded down to each session card (tests inject it). */
-  confirm?: (message: string) => boolean;
   /** the roamed `sidebar.showLastActive` pref, threaded down to each card. */
   showLastActive?: Accessor<boolean>;
   /** Show the new-session composer, preset to this project. The group used to
@@ -330,7 +328,6 @@ export const ProjectGroup: Component<{
                 groupName={isUngrouped() ? "" : props.group.name}
                 tick={props.tick}
                 badge={props.badge}
-                confirm={props.confirm}
                 showLastActive={props.showLastActive}
               />
             )}

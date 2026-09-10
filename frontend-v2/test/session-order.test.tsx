@@ -382,7 +382,7 @@ async function mountSidebar(initial?: SessionOrder) {
       setSessionOrder: (order) => prefs.setPref({ sidebar: { order } }),
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} confirm={() => true} />;
+    return <Sidebar store={store} prefs={prefs} />;
   });
   onTestFinished(() => store.dispose());
   await store.refresh();

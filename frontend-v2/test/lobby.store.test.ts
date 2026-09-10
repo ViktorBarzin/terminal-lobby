@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
-import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
+import {
+  GRACE_MS,
+  createLobbyStore,
+  type LobbyStore,
+  type LobbyStoreOptions,
+} from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
 import {
   emptyLayout,
@@ -608,13 +613,23 @@ describe("lobby store", () => {
     });
   });
 
-  it("kill: calls the API and removes the session from the model", async () => {
+  it("kill: holds the API call for the grace window, then removes the session", async () => {
+    // The kill waits out GRACE_MS with the card in place and dimmed, and Cmd+Z
+    // inside that window takes it back with nothing to undo server-side. The
+    // window's own suite is test/undo.kill.test.ts; this is the store's plain
+    // action still doing what it always did, one timer later.
+    vi.useFakeTimers();
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.kill("a");
+      expect(api.kills).toEqual([]);
+      expect(store.killing("a")).toBe(true);
+      expect(names(store)).toContain("a");
+
+      await vi.advanceTimersByTimeAsync(GRACE_MS);
       expect(api.kills).toContain("a");
       expect(names(store)).not.toContain("a");
       expect(names(store)).toContain("b");
@@ -732,12 +747,14 @@ describe("lobby store", () => {
   });
 
   it("kill: PUTs the layout so the entry cannot come back on the next poll", async () => {
+    vi.useFakeTimers();
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.kill("a");
+      await vi.advanceTimersByTimeAsync(GRACE_MS);
       // The server doc — not just the local signal — must lose the entry, or
       // the next poll (past the 4s grace) pulls it straight back.
       expect(api.layoutVal.ungrouped).toEqual(["b"]);

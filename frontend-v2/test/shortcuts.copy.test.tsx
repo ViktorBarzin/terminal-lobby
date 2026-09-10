@@ -11,11 +11,17 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
 
 /**
  * "App shortcuts" is a checkbox that does NOT govern everything its label lists:
- * Alt+Shift+Backspace (kill the attached session, with a confirm) is an
- * always-on binding by design, and the bare "/" help opener is a separate window
- * listener that never consults the gate at all. Turning the layer off and still
- * being able to destroy a session is defensible; saying otherwise is not. These
- * tests hold the copy to what the code actually does.
+ * Alt+Shift+Backspace (kill the attached session) is an always-on binding by
+ * design, and the bare "/" help opener is a separate window listener that never
+ * consults the gate at all. Turning the layer off and still being able to
+ * destroy a session is defensible; saying otherwise is not. These tests hold the
+ * copy to what the code actually does.
+ *
+ * The kill row said "asks first" until 2026-09-10, when the confirm gave way to
+ * an eight-second grace window (store/lobby.ts GRACE_MS). Note what the layer
+ * being off then costs: the undo chords are ordinary KB_DEFAULT_BINDINGS, so
+ * Ctrl+Z goes back to the terminal with the switch, while this always-on chord
+ * keeps killing. The card's own undo arrow is what is left to press.
  *
  * Ctrl/Cmd+J is a third exemption, and the one the copy used to miss. It is the
  * scratch-shell dock: App.tsx's `onDockKey` is a raw window listener that never
@@ -36,7 +42,7 @@ import { PREF_DEFAULTS, type Prefs, type PrefsStore } from "../src/store/prefs";
 /**
  * Every chord that survives the ⚙ "App shortcuts" opt-out, measured against the
  * running build with the layer off: "/" and "?" open this help,
- * Alt+Shift+Backspace prompts the kill confirm, Ctrl+J opens the scratch-shell
+ * Alt+Shift+Backspace kills the attached session, Ctrl+J opens the scratch-shell
  * dock. Each one has to carry the marker in the table, and nothing else may.
  */
 const ALWAYS_ON_CHORDS = ["/", "?", "Alt+Shift+Backspace", "Ctrl+J"];

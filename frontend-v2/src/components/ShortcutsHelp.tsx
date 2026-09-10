@@ -81,10 +81,12 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         [[`${ALT}+Shift+R`], "Rename current session"],
         // ALWAYS ON by design (KB_ALWAYS_BINDINGS): it bypasses the ⚙ toggle so
         // the escape hatch out of a wedged session survives a disabled layer.
-        // It still opens the confirm that names the session.
+        // Nothing to answer first since the kill became undoable — the card
+        // dims for eight seconds and Cmd+Z takes it back — so the row no
+        // longer promises a question.
         [
           [`${ALT}+Shift+Backspace`],
-          "Kill attached session (works in a session; always on, asks first)",
+          `Kill attached session (works in a session; always on, undo with ${MOD}+Z)`,
         ],
       ],
     ],

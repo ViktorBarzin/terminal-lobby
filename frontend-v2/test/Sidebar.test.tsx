@@ -66,7 +66,6 @@ class FakeApi implements LobbyApi {
 function mount(
   api: LobbyApi,
   over: {
-    confirm?: (message: string) => boolean;
     notifications?: Parameters<typeof Sidebar>[0]["notifications"];
     onReload?: () => void;
     onNewSession?: (group?: string) => void;
@@ -85,7 +84,6 @@ function mount(
       <Sidebar
         store={store}
         prefs={prefs}
-        confirm={over.confirm}
         notifications={over.notifications}
         onReload={over.onReload}
         onNewSession={over.onNewSession}
@@ -365,17 +363,19 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("confirms before killing from the ⋯ menu, and honours a dismissal", async () => {
+  /**
+   * Kill asks nothing, and nothing has reached the server when the menu
+   * closes: the store holds the DELETE for eight seconds with the card dimmed
+   * in place, and Cmd+Z inside that window takes the whole thing back
+   * (store/lobby.ts GRACE_MS, whose own suite is test/undo.kill.test.ts).
+   * Until 2026-09-10 this path opened `Kill session "doomed"?` first.
+   */
+  it("kills from the ⋯ menu with no question, and holds the DELETE", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("doomed")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
-    const asked: string[] = [];
-    const { container, getByLabelText, getByText, store } = mount(api, {
-      confirm: (m) => {
-        asked.push(m);
-        return false; // user cancels
-      },
-    });
+    const asked = vi.spyOn(window, "confirm");
+    const { container, getByLabelText, getByText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
 
@@ -383,25 +383,12 @@ describe("<Sidebar>", () => {
     await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
     fireEvent.click(getByText("Kill"));
 
-    await waitFor(() => expect(asked).toHaveLength(1));
-    expect(asked[0]).toBe('Kill session "doomed"?');
-    expect(api.kills).toEqual([]); // dismissed → the session lives
+    await waitFor(() => expect(store.killing("doomed")).toBe(true));
+    expect(asked).not.toHaveBeenCalled();
+    expect(api.kills).toEqual([]);
+    // The card is still there to carry the undo affordance, not gone.
     expect(container.querySelector(".tl-card")).not.toBeNull();
-    store.dispose();
-  });
-
-  it("kills from the ⋯ menu once the confirm is accepted", async () => {
-    const api = new FakeApi();
-    api.sessionsVal = [sess("doomed")];
-    api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
-    const { container, getByLabelText, getByText, store } = mount(api, { confirm: () => true });
-    await store.refresh();
-    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
-
-    fireEvent.click(getByLabelText("Session actions"));
-    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
-    fireEvent.click(getByText("Kill"));
-    await waitFor(() => expect(api.kills).toEqual(["doomed"]));
+    asked.mockRestore();
     store.dispose();
   });
 

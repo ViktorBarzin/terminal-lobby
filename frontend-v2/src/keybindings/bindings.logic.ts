@@ -132,7 +132,13 @@ export const KB_DEFAULT_BINDINGS: Binding[] = [
  * Always-on bindings: fire regardless of the opt-in `enabled` flag, for every
  * user. Alt+Shift+Backspace kills the attached session from anywhere the lobby
  * owns keys (Alt+SHIFT, not plain Option+Backspace — the shell/editor use
- * Option+Backspace for delete-word). `session.kill.current` keeps its confirm.
+ * Option+Backspace for delete-word).
+ *
+ * It asks nothing first, and does not need to: `session.kill.current` holds the
+ * kill for eight seconds with the card dimmed (store/lobby.ts GRACE_MS), and
+ * Cmd+Z takes it back. The undo chords themselves are deliberately NOT in here
+ * — they sit in KB_DEFAULT_BINDINGS, so the ⚙ "App shortcuts" switch can hand
+ * Ctrl+Z back to the terminal.
  */
 export const KB_ALWAYS_BINDINGS: Binding[] = [
   { key: "alt+shift+backspace", command: "session.kill.current", when: LOBBY_WHEN },
