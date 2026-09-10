@@ -281,6 +281,76 @@ func parseSnapshotList(out string, liveCount int) []Snapshot {
 	return snaps
 }
 
+// newestSnapshotTS picks the snapshot a restore would use out of the wrapper's
+// `list` output. tmux-persist prints the series newest-first and marks the first
+// row `newest` (snapshots_rows), and parseSnapshotList already reads that
+// format, so this only chooses a row. The liveCount it takes feeds DeltaVsLive
+// and LastFull, neither of which is read here.
+func newestSnapshotTS(out string) string {
+	snaps := parseSnapshotList(out, 0)
+	for _, s := range snaps {
+		if s.Newest {
+			return s.TS
+		}
+	}
+	if len(snaps) > 0 {
+		return snaps[0].TS
+	}
+	return ""
+}
+
+// resurrectRecordFor snapshots the box and returns what would bring `name`
+// back, in POST /restore's own body shape.
+//
+// WHY A KILL SNAPSHOTS AT ALL. Snapshots are written by tmux-persist-save.timer
+// on OnCalendar=*:0/5, and restore-selection refuses a name that is absent from
+// the snapshot it is handed (tmux-persist restore_selection). So a session
+// created and killed inside one five-minute tick is in no snapshot anywhere and
+// nothing can bring it back, and a session killed minutes after it was made is
+// exactly the one killed by mistake. Asking for a save first is what closes
+// that, and it is why the lobby can offer undo past its grace window.
+//
+// The tombstone the kill writes afterwards does not take that away again:
+// snapshots are immutable files, forget only appends to the tombstone list, and
+// restore-selection never consults it. Only the blanket restore skips a
+// tombstoned row, which is what keeps a deliberate kill from coming back on its
+// own; the picker still shows it, unticked.
+//
+// BEST EFFORT THROUGHOUT. Every failure here is a log line and a nil record:
+// losing the ability to bring a session back must never mean losing the ability
+// to kill it. A wrapper too old to know `save` fails the same way, so a box
+// mid-upgrade kills exactly as it did before.
+//
+// Two costs, both accepted. The save is synchronous, so a kill waits on one
+// tmux-persist run: it walks every user, as the timer does, and writes nothing
+// for a user whose session set has not changed. And it runs before the kill has
+// been shown to be possible, so a DELETE that ends in a 404 pays for it too,
+// which is the price of not asking tmux twice about a session it is about to
+// destroy.
+func resurrectRecordFor(osUser, name string) *restoreSelection {
+	if out, err := persistCmd(osUser, "save").CombinedOutput(); err != nil {
+		log.Printf("pre-kill snapshot for %s/%s failed, killing without one: %v: %s",
+			osUser, name, err, strings.TrimSpace(string(out)))
+		return nil
+	}
+	out, err := persistCmd(osUser, "list").Output()
+	if err != nil {
+		log.Printf("snapshot list after the pre-kill save for %s/%s failed: %v", osUser, name, err)
+		return nil
+	}
+	ts := newestSnapshotTS(string(out))
+	if ts == "" {
+		log.Printf("no snapshot for %s after the pre-kill save, killing %s without one", osUser, name)
+		return nil
+	}
+	// Not checked against that snapshot's own rows. Reading them back is a
+	// second privileged round trip that resolves every row against live tmux,
+	// and it would answer for a box that has moved on by the time anyone
+	// presses undo. The record says what to TRY, and restore reports it when
+	// the name turns out not to be in there (restoreFromSelection).
+	return &restoreSelection{Snapshot: ts, Sessions: []string{name}}
+}
+
 // handleSnapshotByTS (GET /snapshots/{ts}) resolves one snapshot against the
 // live session set: per row, what restoring it would do and whether it should
 // start ticked.

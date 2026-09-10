@@ -86,7 +86,7 @@ func withTempLayoutStore(t *testing.T) {
 
 func TestKillSessionForgetsPersistedSession(t *testing.T) {
 	osSelf, _ := twoLocalUsers(t)        // caller == current user: tmuxCmd skips sudo,
-	withUserMap(t, "alice="+osSelf+"\n") // so the sudo stub only ever sees the forget
+	withUserMap(t, "alice="+osSelf+"\n") // so the sudo stub sees only the wrappers
 	withTempLayoutStore(t)
 	withTmuxStub(t, "exit 0")
 	sudoArgv := withSudoStub(t, "exit 0")
@@ -94,12 +94,15 @@ func TestKillSessionForgetsPersistedSession(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/qa-restore", "", "alice"))
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE /sessions/qa-restore: got %d, want %d", rec.Code, http.StatusNoContent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE /sessions/qa-restore: got %d, want %d", rec.Code, http.StatusOK)
 	}
-	want := "-n\n" + persistForgetWrapper + "\n" + osSelf + "\nqa-restore\n"
-	if got := recordedArgv(t, sudoArgv); got != want {
-		t.Fatalf("forget invocation:\ngot  %q\nwant %q", got, want)
+	// The pre-kill snapshot comes first and is asserted in full by
+	// kill_resurrect_test.go; what this test is about is the forget landing
+	// after it, with the killed name.
+	want := "\n" + persistForgetWrapper + "\n" + osSelf + "\nqa-restore\n"
+	if got := recordedArgv(t, sudoArgv); !strings.HasSuffix(got, want) {
+		t.Fatalf("forget invocation:\ngot  %q\nwant a run ending in %q", got, want)
 	}
 }
 
@@ -119,7 +122,10 @@ func TestKillSessionFailureLeavesManifestAlone(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("DELETE of a dead session: got %d, want %d", rec.Code, http.StatusNotFound)
 	}
-	if got := recordedArgv(t, sudoArgv); got != "" {
+	// The pre-kill snapshot has run by now, since it has to happen before the
+	// kill that turned out to be impossible. It writes snapshot files and
+	// nothing else, so it is not what this test is guarding: the forget is.
+	if got := recordedArgv(t, sudoArgv); strings.Contains(got, persistForgetWrapper) {
 		t.Fatalf("forget ran after a failed kill: %q", got)
 	}
 }
@@ -137,8 +143,8 @@ func TestKillSessionSucceedsWhenForgetFails(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/qa-restore", "", "alice"))
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE with a failing forget: got %d, want %d", rec.Code, http.StatusNoContent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE with a failing forget: got %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

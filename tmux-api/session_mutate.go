@@ -77,7 +77,34 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "not found", http.StatusNotFound)
 }
 
+// killResponse is the body of a successful DELETE /sessions/{name}.
+//
+// The DELETE used to answer 204 with nothing at all. It answers 200 with this
+// because the lobby lets someone undo a kill after the eight-second grace
+// window has elapsed and the session is really gone
+// (frontend-v2/src/store/undo.kill.ts), and only the server knows which
+// snapshot it would come back out of.
+//
+// Resurrect is exactly POST /restore's body, so the client posts back what it
+// was handed instead of translating between two spellings of one fact. It is
+// absent when nothing snapshotted the session, which the lobby reports as a
+// kill it cannot take back rather than promising an undo that would fail.
+//
+// A client that reads only the status is unaffected by the change: t3-sync
+// accepts any 2xx (t3-sync/tmuxapi.go do), qa_driver just returns the number,
+// and the lobby treats a 204 and a 200 with no record alike
+// (lib/lobby-api.ts asRestoreSelection).
+type killResponse struct {
+	Resurrect *restoreSelection `json:"resurrect,omitempty"`
+}
+
 func killSession(w http.ResponseWriter, osUser, name string) {
+	// Before the kill, never after: a snapshot taken afterwards is of a box this
+	// session has already left, which is the same as no snapshot at all. Nil
+	// when it could not be taken, which costs the undo and nothing else. See
+	// resurrectRecordFor (snapshots.go) for why a kill snapshots in the first
+	// place.
+	resurrect := resurrectRecordFor(osUser, name)
 	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
 	if err != nil {
 		msg := string(out)
@@ -136,7 +163,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	}
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.killed", osUser, telemetry.Attrs{"tl.session": name, "tl.client": "api"})
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	// The kill has already happened, so a body that does not reach the client
+	// costs the undo and nothing else. There is also nothing left to report it
+	// with: the status line has gone out.
+	_ = json.NewEncoder(w).Encode(killResponse{Resurrect: resurrect})
 }
 
 func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName string) {

@@ -172,15 +172,18 @@ export async function putLayout(layout: Layout): Promise<void> {
 }
 
 /**
- * DELETE /api/sessions/{name} — kill a session (204/404).
+ * DELETE /api/sessions/{name} — kill a session (200/404).
  *
- * The answer, when the server sends one, is what it takes to put the session
- * back: a tmux-api that snapshots before it kills replies with the snapshot and
- * the row inside it, which is exactly POST /restore's body
- * (types/lobby.ts RestoreSelection). That is what makes a kill undoable once
- * its grace window has elapsed (store/undo.kill.ts). The tmux-api deployed
- * today answers 204 with no body and this reads null, which the undo handler
- * reports as a kill it cannot take back rather than pretending.
+ * The answer is what it takes to put the session back: tmux-api snapshots
+ * before it kills and replies `{"resurrect": {snapshot, sessions}}`, whose
+ * inner half is exactly POST /restore's body (types/lobby.ts RestoreSelection),
+ * so undo posts back what it was handed. That is what makes a kill undoable
+ * once its grace window has elapsed (store/undo.kill.ts).
+ *
+ * A server with no record to give sends the field empty, and one older than
+ * this feature still answers 204 with no body at all. Both read null here,
+ * which the undo handler reports as a kill it cannot take back rather than
+ * pretending.
  *
  * A 404 is not an error here: the session was already dead, and the caller's
  * layout PUT is what stops its card coming back on the next poll.
@@ -191,19 +194,21 @@ export async function killSession(name: string): Promise<RestoreSelection | null
   return await asRestoreSelection(res);
 }
 
-/** The response body as a restore record, or null when it is not one — a 204,
- *  an empty body, a server that answers something else. Nothing here is worth
- *  failing a kill that has already happened over. */
+/** The response body's resurrect record, or null when there is not one — a 204,
+ *  an empty body, a kill nothing snapshotted, a server that answers something
+ *  else. Nothing here is worth failing a kill that has already happened over. */
 async function asRestoreSelection(res: Response): Promise<RestoreSelection | null> {
   if (res.status === 204) return null;
   try {
     const body: unknown = await res.json();
     if (!body || typeof body !== "object") return null;
-    const rec = body as { snapshot?: unknown; sessions?: unknown };
-    if (typeof rec.snapshot !== "string" || rec.snapshot === "") return null;
-    if (!Array.isArray(rec.sessions)) return null;
-    const sessions = rec.sessions.filter((s): s is string => typeof s === "string");
-    return sessions.length > 0 ? { snapshot: rec.snapshot, sessions } : null;
+    const rec = (body as { resurrect?: unknown }).resurrect;
+    if (!rec || typeof rec !== "object") return null;
+    const { snapshot, sessions } = rec as { snapshot?: unknown; sessions?: unknown };
+    if (typeof snapshot !== "string" || snapshot === "") return null;
+    if (!Array.isArray(sessions)) return null;
+    const names = sessions.filter((s): s is string => typeof s === "string");
+    return names.length > 0 ? { snapshot, sessions: names } : null;
   } catch {
     return null; // no body, or not JSON
   }
