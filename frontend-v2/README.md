@@ -468,6 +468,16 @@ src/
                          picks a flip up live via a storage event) and the
                          Clear-local-data wipe
     toast.ts             Toast stack + the slow-request health coordinator
+    undo.ts              Per-TAB undo/redo stack for the structural actions
+                         (tl:undo:v1 in sessionStorage, 25 deep). An entry is
+                         plain JSON and its behaviour lives in a handler the
+                         store that owns the action registers, so the stack
+                         survives the reload a new build triggers and this file
+                         imports nothing from lobby.ts. An entry is an inverse
+                         OPERATION rather than a captured document: PUT /layout
+                         carries no version, so re-PUTting a copy would erase
+                         what another device did meanwhile. A refusal drops its
+                         entry and hands back a sentence for the caller to toast
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path

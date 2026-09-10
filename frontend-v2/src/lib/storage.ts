@@ -23,6 +23,29 @@ export function localStorageOrNull(): MinStorage | null {
 }
 
 /**
+ * `sessionStorage`, or null where it is absent or blocked. The per-TAB store:
+ * what it holds survives a reload (including the one deploy/healer.ts performs
+ * when a new build lands) and dies with the tab, which is the lifetime a
+ * per-tab undo stack wants (store/undo.ts).
+ *
+ * Caught rather than tested for, same as above and for the same reason: in a
+ * sandboxed iframe, reading the property is itself what throws.
+ *
+ * No `ssGet`/`ssSet` pair beside `lsGet`/`lsSet` below. Both callers of per-tab
+ * storage take their Storage as an injected option instead, so their tests can
+ * hand in a Map-backed fake with no DOM at all, and a key-at-a-time pair here
+ * would have nobody to call it. A second unused copy of those four lines is the
+ * divergence this file exists to prevent.
+ */
+export function sessionStorageOrNull(): MinStorage | null {
+  try {
+    return typeof sessionStorage === "undefined" ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Read one string, or null where the key is unset, the store is absent or the
  * store refuses. Deliberately without a default parameter: the fallback differs
  * per caller (a font size, a theme name, an empty Set), and a default here would
