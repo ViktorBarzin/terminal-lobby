@@ -50,6 +50,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		setSessionTitle(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "origin" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		setSessionOrigin(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "copy-mode" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -200,6 +208,55 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 	events.Emit("session.retitled", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.client": "api",
 	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setSessionOrigin is POST /sessions/{name}/origin — the rescue
+// (docs/plans/2026-09-06-test-session-origin-design.md).
+//
+// One caller: dropping a card out of the System group. The drop already writes
+// the layout, and this is how it says the same thing on the SERVER, so the
+// session stops being a system session for the push sender and the telemetry
+// rule too rather than only in the browser that moved it. Without it, a
+// rescued session would sit in a project in the sidebar and still be silent.
+//
+// Only `user` and `test` are accepted. Those are the only two values anything
+// writes (origin.go); the third state is the ABSENCE of the option, and no
+// caller has a reason to ask for it, because a session with no origin already
+// reads as system and that is exactly what the drag is undoing.
+//
+// The shape is setSessionTitle's, and so are the reasons behind each part of
+// it: the pane target form so a name cannot resolve by prefix onto a sibling,
+// tmuxTargetMissing so all four spellings of "it is gone" become a 404 the
+// lobby reads as gone instead of broken, and the cache invalidated so the very
+// next poll carries the new value rather than a body built before the stamp.
+//
+// No event is emitted. The catalog has no name for this yet, and an event
+// about a session the record was told to start keeping is the one event the
+// drop rule would most likely still refuse (telemetry.go).
+func setSessionOrigin(w http.ResponseWriter, r *http.Request, osUser, name string) {
+	var body struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	origin := strings.TrimSpace(body.Origin)
+	if origin != originUser && origin != originTest {
+		http.Error(w, "invalid origin", http.StatusBadRequest)
+		return
+	}
+	if msg, err := setOriginOption(osUser, name, origin); err != nil {
+		if tmuxTargetMissing(msg) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("set %s on %s as %s failed: %v: %s", originOption, name, osUser, err, msg)
+		http.Error(w, "set-option failed", http.StatusInternalServerError)
+		return
+	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 
