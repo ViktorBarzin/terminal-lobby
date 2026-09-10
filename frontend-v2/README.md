@@ -478,6 +478,15 @@ src/
                          carries no version, so re-PUTting a copy would erase
                          what another device did meanwhile. A refusal drops its
                          entry and hands back a sentence for the caller to toast
+    undo.layout.ts       The inverses of the LAYOUT actions, one per kind: a
+                         session moved, the group sequence reordered, a project
+                         created / renamed / deleted, and the session-order
+                         mode. Each folds its inverse into the document as it is
+                         NOW through the same pure transform the forward action
+                         used, and each `check` is tolerant of the rest of the
+                         document changing and strict about the slice its entry
+                         touched. Registered from lobby.ts, which owns the
+                         actions
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path

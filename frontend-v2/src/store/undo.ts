@@ -39,6 +39,14 @@
  */
 import { type Accessor, createSignal } from "solid-js";
 import { type MinStorage, sessionStorageOrNull } from "../lib/storage";
+import type {
+  MoveEntry,
+  OrderModeEntry,
+  ProjectCreateEntry,
+  ProjectDeleteEntry,
+  ProjectRenameEntry,
+  ReorderGroupsEntry,
+} from "./undo.layout";
 
 /** Where the stack lives. Bump the suffix if the entry shape ever changes. */
 export const UNDO_KEY = "tl:undo:v1";
@@ -80,14 +88,27 @@ export interface UndoEntryBase {
 /**
  * One undoable action.
  *
- * A discriminated union on `kind`, and today it has no members of its own:
- * batch 1 ships the machinery, and each later batch adds its kind here as an
- * interface extending {@link UndoEntryBase} plus the fields its own handler
- * reads. Keeping the union in this file (rather than an augmentable registry
- * interface) means `switch (entry.kind)` stays exhaustive and a new kind cannot
- * be pushed without a handler existing for it.
+ * A union on `kind`: each batch adds its kind here as an interface extending
+ * {@link UndoEntryBase} plus the fields its own handler reads. Keeping the
+ * union in this file (rather than an augmentable registry interface) is what
+ * makes a `push` of a kind nobody declared a type error.
+ *
+ * {@link UndoEntryBase} itself stays a member, so `kind` is a string rather
+ * than a closed set of literals. That is honest about what the store holds: a
+ * document read back from sessionStorage was written by whatever build was
+ * running before the reload, and its kinds are not this build's to enumerate
+ * (`step` hands one it does not recognise back as a refusal). The types below
+ * are imported for their shape only. undo.layout.ts is what registers their
+ * handlers, and nothing in this file runs any of them.
  */
-export type UndoEntry = UndoEntryBase;
+export type UndoEntry =
+  | UndoEntryBase
+  | MoveEntry
+  | ReorderGroupsEntry
+  | ProjectCreateEntry
+  | ProjectRenameEntry
+  | ProjectDeleteEntry
+  | OrderModeEntry;
 
 /** `Omit` that stays a union as kinds are added, instead of collapsing to one. */
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
