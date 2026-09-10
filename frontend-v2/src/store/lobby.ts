@@ -22,6 +22,8 @@ import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../lo
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import type { UndoStore } from "./undo";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
+import { registerLocalUndoHandlers } from "./undo.local";
+import { registerTitleUndoHandlers } from "./undo.titles";
 import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
@@ -45,7 +47,7 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY } from "./visits";
-import { carryWatch } from "./watchmode";
+import { applyWatch, carryWatch, loadWatch, setWatchUndo } from "./watchmode";
 import { carryViewMode } from "./viewmode";
 import { carryDraft } from "./drafts";
 import { lensTarget } from "../lib/act-as";
@@ -118,7 +120,9 @@ export interface LobbyStore {
   create(text: string, group: string, kind?: CreateKind): Promise<string>;
   /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
   setDock(next: DockState | undefined): Promise<boolean>;
-  /** Retitle a session. The name never moves (ADR-0019). */
+  /** Retitle a session. The tmux name is derived from the title again
+   *  (ADR-0022), so this does move it; an empty title clears the title and
+   *  leaves the name alone. */
   rename(name: string, title: string): Promise<boolean>;
   kill(name: string): Promise<void>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
@@ -286,7 +290,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const [toast, setToast] = createSignal<string | null>(null);
 
   const me = () => whoami()?.osUser ?? "";
-  const collapse = createCollapseStore(me);
+  const collapse = createCollapseStore(me, opts.undo);
 
   const states = loadStates();
   const workingSince = (name: string): number | undefined => {
@@ -447,6 +451,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       carryWatch(was, now, as);
       carryViewMode(was, now);
       carryDraft(was, now);
+      // The undo stack is the fourth record keyed by the name. Its entries
+      // hold one in `session` or `sessions` and nowhere else (store/undo.ts
+      // UndoEntryBase), so this rewrites what an entry cannot key by tmux's
+      // session id: a layout position, or a title entry about a session from a
+      // server that supplies no id. Own sessions only, like the three above,
+      // and `as` is always "" here since a lens tab has no stack at all.
+      opts.undo?.carry(was, now);
     }
   }
 
@@ -922,6 +933,86 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   /**
+   * Stamp a title (or clear it with ""), and wait for the refresh that brings
+   * the derived name back. false = the write did not land, and it has toasted.
+   *
+   * The two actions below are this plus an undo entry, and the undo handler is
+   * this ALONE (store/undo.titles.ts): an inverse that went through `rename`
+   * would record itself on the stack and wipe the redo half the press is about
+   * to fill. Takes an already-clean title, since the caller is what decides
+   * whether an empty box means "clear" (lib/title.ts cleanTitle).
+   */
+  async function applyTitle(name: string, title: string): Promise<boolean> {
+    // Clearing hands the session back to its summary, so the placeholder goes
+    // too — leaving it would put the prompt line straight back on the card.
+    if (title === "") forgetPromptLine(name);
+    try {
+      await api.setSessionTitle(name, title);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Rename failed");
+      return false;
+    }
+    await refresh();
+    return true;
+  }
+
+  /** What a retitle remembers about a session BEFORE it writes: the title it
+   *  is replacing, and the two fields that find the session again once the
+   *  write has moved its name. */
+  interface TitleWas {
+    id?: string;
+    bornAs?: string;
+    title: string;
+  }
+
+  function titleNow(name: string): TitleWas | null {
+    const s = mergedSessions().find((x) => x.name === name);
+    if (!s) return null;
+    return {
+      ...(s.id ? { id: s.id } : null),
+      ...(s.bornAs ? { bornAs: s.bornAs } : null),
+      title: s.title ?? "",
+    };
+  }
+
+  /**
+   * The name the session answers to after a write that may have renamed it.
+   *
+   * The same two links `renamesBetween` uses and in the same order: tmux's
+   * session id, then the birth name the server records for a session renamed
+   * away from a minted id. A session with neither cannot be followed from
+   * here, because the pre-write list cannot be snapshotted: `reconcile`
+   * rewrites the rows in place. The entry then keeps the name the retitle was
+   * made against, and `carry` moves it when a poll reveals the rename.
+   */
+  function nameAfterTitle(was: TitleWas, name: string): string {
+    const list = mergedSessions();
+    const byId = was.id ? list.find((s) => s.id === was.id) : undefined;
+    if (byId) return byId.name;
+    const born = was.bornAs ? list.find((s) => s.bornAs === was.bornAs) : undefined;
+    return born?.name ?? name;
+  }
+
+  /**
+   * Record a retitle, AFTER its write landed.
+   *
+   * A session the list has never shown reads as having had no title, which is
+   * the right guess: its undo clears the title, and clearing is the state a
+   * session with none is already in.
+   */
+  function pushTitle(was: TitleWas | null, name: string, after: string): void {
+    if (!opts.undo) return;
+    opts.undo.push({
+      kind: "title",
+      session: was ? nameAfterTitle(was, name) : name,
+      ...(was?.id ? { id: was.id } : null),
+      before: was?.title ?? "",
+      after,
+    });
+  }
+
+  /**
    * Clear a session's title so its card shows its name again.
    *
    * Emptying the rename box is the only way back to a bare name, and it is the
@@ -930,17 +1021,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * invented for a running session would be worse than a stale one.
    */
   async function clearTitle(name: string): Promise<boolean> {
-    // Clearing hands the session back to its summary, so the placeholder goes
-    // too — leaving it would put the prompt line straight back on the card.
-    forgetPromptLine(name);
-    try {
-      await api.setSessionTitle(name, "");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
-      else showToast("Rename failed");
-      return false;
-    }
-    await refresh();
+    const was = titleNow(name);
+    if (!(await applyTitle(name, ""))) return false;
+    // Its own push, because clearing does not route through `rename` below.
+    // It is also the one title change on this screen that cannot be re-typed
+    // from memory, so it is the last one Cmd+Z should miss.
+    pushTitle(was, name, "");
     return true;
   }
 
@@ -961,14 +1047,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // An empty title hands the session back to its summary.
       return clearTitle(name);
     }
-    try {
-      await api.setSessionTitle(name, t);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
-      else showToast("Rename failed");
-      return false;
-    }
-    await refresh();
+    const was = titleNow(name);
+    if (!(await applyTitle(name, t))) return false;
+    // The CLEANED title, which is what the server stored: an entry holding the
+    // raw text would redo a title nobody has, and then refuse its own
+    // precondition the next press.
+    pushTitle(was, name, t);
     return true;
   }
 
@@ -1230,6 +1314,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     if (typeof window !== "undefined") {
       window.removeEventListener("online", onOnline);
     }
+    // Watch mode's stack is module-level (store/watchmode.ts has why), so a
+    // disposed store has to take it back down or the next one built without a
+    // stack would still record switches into this one's.
+    if (opts.undo) setWatchUndo(null);
   }
 
   // The inverses of the layout actions above are in store/undo.layout.ts, one
@@ -1248,6 +1336,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       renameCollapse: (from, to) => collapse.rename(from, to),
       removeCollapse: (name) => collapse.remove(name),
     });
+    registerTitleUndoHandlers({ sessions: mergedSessions, me, setTitle: applyTitle });
+    // Collapse and watch mode (store/undo.local.ts). Watch mode keeps its
+    // choice in a localStorage key rather than in a store instance, so it has
+    // no constructor to take the stack: this is where it is handed the one
+    // App owns, and `dispose` below is where it is taken back.
+    registerLocalUndoHandlers({
+      collapseUser: me,
+      isCollapsed: (group) => collapse.isCollapsed(group),
+      setCollapsed: (group, on) => collapse.set(group, on),
+      watchChoice: (session, as) => loadWatch(session, as),
+      setWatchChoice: (session, choice, as) => applyWatch(session, choice, as),
+    });
+    setWatchUndo(opts.undo);
   }
 
   if (opts.autoStart !== false) {
