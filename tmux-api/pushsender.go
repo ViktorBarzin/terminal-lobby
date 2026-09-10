@@ -314,13 +314,22 @@ type declarativeNotification struct {
 //
 // The three declarative fields ride ALONGSIDE the flat ones rather than
 // replacing them. Chrome, Android and every Apple device below 18.4 ignore
-// web_push/mutable/notification and read the flat keys; iOS 18.4+ reads the
+// web_push/notification and read the flat keys; iOS 18.4+ reads the
 // declarative half. They are omitted entirely for a subscription with no
 // recorded origin, which keeps that device's payload byte-identical to what
 // shipped before (TestPayloadWithoutAnOriginIsUnchangedOnTheWire).
+// There is deliberately NO "mutable" member. WebKit reads it at the top level,
+// and true means "I will show a replacement banner from the service worker" —
+// WebKit then starts the worker and displays NOTHING of its own, waiting for a
+// replacement that sw.js never draws (showing one needs its own absolute
+// navigate or WebKit throws, which is why that branch shows nothing). Sending
+// it cost every iOS notification between 2026-09-08, when Viktor's iPhone first
+// re-subscribed onto this path, and 2026-09-10: Apple accepted all 58 with a
+// 201 and the phone displayed none. Absent, WebKit draws the payload's own
+// banner without starting the worker, which is the point of a declarative
+// message and the state ADR-0015's badge subtraction gives way to.
 type pushPayload struct {
 	WebPush      int                      `json:"web_push,omitempty"`
-	Mutable      bool                     `json:"mutable,omitempty"`
 	Notification *declarativeNotification `json:"notification,omitempty"`
 
 	Title   string `json:"title"`
@@ -467,7 +476,6 @@ func marshalPayload(title, body, session string, badge int, waiting *waitList, o
 	}
 	if origin != "" {
 		p.WebPush = declarativeWebPushVersion
-		p.Mutable = true
 		p.Notification = &declarativeNotification{
 			Title:    title,
 			Body:     body,

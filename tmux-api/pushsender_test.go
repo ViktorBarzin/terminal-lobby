@@ -939,11 +939,16 @@ func TestPushPayloadIsDeclarativeWhenTheOriginIsKnown(t *testing.T) {
 	if got["web_push"] != float64(8030) {
 		t.Fatalf("web_push = %v, want 8030 (the only version WebKit accepts)", got["web_push"])
 	}
-	// mutable true is what keeps our service worker in the loop. Without it
-	// WebKit shows the banner itself and never starts the worker, taking the
-	// device-side badge count with it (ADR-0015).
-	if got["mutable"] != true {
-		t.Fatalf("mutable = %v, want true", got["mutable"])
+	// mutable must be ABSENT. With it true, WebKit starts the worker and then
+	// waits for that worker to show a REPLACEMENT banner before displaying
+	// anything; sw.js deliberately shows nothing on the declarative path, so
+	// the notification was never displayed at all. Measured on Viktor's iPhone
+	// 2026-09-08..10: every push accepted by Apple with a 201 and not one
+	// banner. Absent means WebKit draws the payload's own banner, which is the
+	// whole point of a declarative message. The cost is the device-side badge
+	// subtraction (ADR-0015), which needs a worker WebKit no longer starts.
+	if _, ok := got["mutable"]; ok {
+		t.Fatalf("mutable = %v, want it absent — a mutable message WebKit shows nothing for", got["mutable"])
 	}
 	note, ok := got["notification"].(map[string]any)
 	if !ok {
