@@ -135,3 +135,32 @@ enough to act on.
 A session someone else shared with you is excluded from the count on both sides.
 Nobody here has one today, so it would otherwise have surfaced the first time
 somebody did.
+
+## Amendment — 2026-09-10: on iOS the server decides again, and why
+
+The subtraction described above needs `sw.js` to run when a push arrives. On
+iOS it no longer does, and the badge there falls back to the server's
+`app_badge` total, which is the count this ADR set out to replace.
+
+The cause was a payload member, not a change of heart. The declarative envelope
+carried `"mutable": true`, on the reading that it kept the worker in the loop
+for exactly this arithmetic. That member means something else: it tells WebKit a
+replacement banner is coming from the worker, so WebKit starts the worker and
+displays nothing of its own while it waits for one. Our push handler draws no
+replacement on that path, because a replacement needs its own absolute
+`navigate` or WebKit throws and the notification is lost. So iOS showed no
+notification at all between 2026-09-08, when Viktor's iPhone re-subscribed onto
+the declarative path, and 2026-09-10. Apple accepted all 58 sends of the last
+twelve hours with a 201, which is why every server-side measurement read healthy
+throughout.
+
+Dropping the member restores the banner and, with it, WebKit's own decision not
+to start a worker for a declarative message. The trade is deliberate: an
+occasionally high count is worth more than a notification nobody sees. Chrome
+and Firefox are unaffected — they ignore the declarative envelope and still run
+the subtraction described above.
+
+Getting the subtraction back on iOS means drawing our own replacement banner
+from the worker, carrying the absolute `navigate` through to
+`showNotification`. That is untried, and it needs testing on a real iPhone
+rather than a desktop Safari, so it is written down here rather than attempted.
