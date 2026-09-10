@@ -13,10 +13,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -136,8 +142,15 @@ beforeEach(() => {
 describe("<Sidebar>", () => {
   it("renders grouped sessions with the right state dots", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [sess("running1", { state: "running" }), sess("waiting1", { state: "awaiting" })];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["running1"] }], ungrouped: ["waiting1"] };
+    api.sessionsVal = [
+      sess("running1", { state: "running" }),
+      sess("waiting1", { state: "awaiting" }),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["running1"] }],
+      ungrouped: ["waiting1"],
+    };
     const { getByText, container, store } = mount(api);
     await store.refresh();
 
@@ -183,7 +196,11 @@ describe("<Sidebar>", () => {
     // cursor as the menu opens.
     const api = new FakeApi();
     api.sessionsVal = [sess("solo")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["solo"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["solo"],
+    };
     const { container, getByLabelText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
@@ -327,8 +344,7 @@ describe("<Sidebar>", () => {
     // Measured live rather than assigned once: the rows reorder under the
     // pointer as it travels, and a row has to report the seat it is in now.
     for (const card of live()) {
-      card.getBoundingClientRect = () =>
-        stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
+      card.getBoundingClientRect = () => stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
     }
     document.elementFromPoint = (_x: number, y: number) =>
       live().find((c) => {
