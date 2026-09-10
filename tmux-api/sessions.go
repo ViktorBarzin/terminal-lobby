@@ -215,6 +215,19 @@ func parseSessions(out []byte) []Session {
 		// which is every session predating the option — dropping those rows
 		// would empty the sidebar on the deploy that introduced the field.
 		lastDrive, _ := strconv.ParseInt(parts[5], 10, 64)
+		// @tl_created is parsed leniently for the same reason and wins when it
+		// is there: Created means when the session became SOMEBODY'S, not when
+		// the tmux session was made. A create that claims a pre-warmed slot
+		// does it with `rename-session`, which leaves #{session_created}
+		// reading the slot's own age — hours for a fresh slot, days for a
+		// standing one — so a claimed session would otherwise sort that far
+		// down a newest-first list. tmux-user-attach stamps the option at the
+		// moment of the claim; anything it did not stamp (every session that
+		// predates the stamp, every cold create, every session renamed by hand)
+		// renders empty here and keeps session_created.
+		if claimed, err := strconv.ParseInt(parts[12], 10, 64); err == nil && claimed > 0 {
+			created = claimed
+		}
 		state := parts[6]
 		if !knownStates[state] {
 			state = ""
@@ -233,7 +246,7 @@ func parseSessions(out []byte) []Session {
 			Command:      parts[9],
 			Title:        parts[10],
 			BornAs:       parts[11],
-			PaneTitle:    parts[12],
+			PaneTitle:    parts[13],
 		})
 	}
 	return sessions

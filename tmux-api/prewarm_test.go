@@ -87,6 +87,34 @@ func TestShellSlotNameDerivationIsUnchanged(t *testing.T) {
 	}
 }
 
+// The other literal the shell and the Go have to agree on. tmux-user-attach
+// STAMPS @tl_created when a create claims a slot; this service only reads it,
+// through tmuxListFmt. Nothing fails loudly if the two spellings drift — the
+// stamp is written and never read, and every session claimed out of a pool slot
+// silently keeps the SLOT's age, which `rename-session` leaves in
+// #{session_created}: 4h33m stale when the standing slot for /home/wizard/code
+// was measured on 2026-09-04, and days stale once a slot has stood a while.
+// That session then sorts to the bottom of a newest-first list, which is the
+// bug this stamp exists to fix.
+//
+// The wanted line is built FROM the Go constant, so an edit to either half
+// fails here. It carries the target form too: `=$name:` and not `=$name`,
+// because set-option rejects the bare exact form and a plain name resolves by
+// unambiguous prefix, which could stamp a neighbouring session.
+func TestCreatedStampMatchesShell(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "devvm", "tmux-user-attach"))
+	if err != nil {
+		t.Skipf("tmux-user-attach not readable: %v", err)
+	}
+	want := `tmux set-option -t "=$name:" ` + createdStampOption + ` "$(date +%s)"`
+	if !strings.Contains(string(b), want) {
+		t.Errorf("tmux-user-attach does not contain %q — the shell and\n"+
+			"createdStampOption (%s, read through tmuxListFmt) have drifted, so the stamp is\n"+
+			"written and never read and a claimed session keeps the pool slot's age.",
+			want, createdStampOption)
+	}
+}
+
 // A slot's name must be impossible for a client to address. Every endpoint that
 // takes a session name validates against sessionNameRe, and parseSessions omits
 // what it rejects, so this is what keeps a slot out of the lobby and out of

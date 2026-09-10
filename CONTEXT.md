@@ -148,6 +148,32 @@ telemetry, which records both identities.
 _Avoid_: impersonation, sudo mode, admin mode (the switch is one tab's view, not
 a state of the app)
 
+**Created**:
+When a Session became somebody's, which is not when the tmux session was
+made. A create that claims a **Pre-warm slot** renames a session that
+already existed, and tmux's own `session_created` goes on reading the
+slot's age: measured 2026-09-04, a standing slot read 4h33m stale. So the
+claim stamps the session's `@tl_created` tmux option, and that wins
+wherever it is present, with `session_created` the fallback for every
+session that predates it. It is what the sidebar's Created ordering sorts
+on, and so the answer to "which of these did I just make"; it also seeds
+**Last driven** until a first driver is seen, and dates the window the
+auto-title rule watches in.
+_Avoid_: session start, birth time, and anything that suggests it is tmux's
+`session_created`
+
+**Pre-warm slot**:
+A detached session with Claude already booted, started for a directory
+before anyone has committed to making a session there, so a create can skip
+the boot. Two lifetimes: a standing slot, refilled after each claim and
+never collected, and a speculative one, warmed when a create input opens
+and collected by TTL if nobody commits. A claim is a `tmux rename-session`
+onto the slot, which is atomic and refuses a name already in use, and that
+is the whole concurrency story. Slots are named past the length limit a
+client may address, so the lobby never lists one; the rename is also why a
+claimed session's **Created** cannot be tmux's own `session_created`.
+_Avoid_: pool session, warm session, spare session
+
 **Last driven**:
 When a human last had hands on a Session — the newest moment a **read-write**
 client was attached. The relative time the sidebar shows, and the answer to "has
