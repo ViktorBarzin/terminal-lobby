@@ -419,11 +419,11 @@ func TestPlanChoiceWalksAMultiSelect(t *testing.T) {
 		choices []string
 		want    [][]string
 	}{
-		{[]string{"Apple"}, [][]string{{"Space"}, {"Enter"}}},
-		{[]string{"Pear"}, [][]string{{"Down"}, {"Space"}, {"Enter"}}},
-		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down"}, {"Space"}, {"Enter"}}},
+		{[]string{"Apple"}, [][]string{{"Space"}, {"Down", "Down", "Down", "Down"}, {"Enter"}}},
+		{[]string{"Pear"}, [][]string{{"Down"}, {"Space"}, {"Down", "Down", "Down"}, {"Enter"}}},
+		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}},
 		// Out of order in, list order out: the cursor only ever walks one way.
-		{[]string{"Plum", "Pear"}, [][]string{{"Down"}, {"Space"}, {"Down"}, {"Space"}, {"Enter"}}},
+		{[]string{"Plum", "Pear"}, [][]string{{"Down"}, {"Space"}, {"Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}},
 	} {
 		t.Run(strings.Join(tc.choices, "+"), func(t *testing.T) {
 			plan, err := planChoice(d, region, tc.choices, "")
@@ -453,8 +453,9 @@ func TestPlanChoiceReplacesThePickAlreadyOnScreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planChoice: %v", err)
 	}
-	// Up from the cursor's row to Apple to clear it, then down to Plum.
-	if !sameKeys(plan.Batches, [][]string{{"Up"}, {"Space"}, {"Down", "Down"}, {"Space"}, {"Enter"}}) {
+	// Up from the cursor's row to Apple to clear it, then down to Plum, then
+	// on to the unnumbered "Next" row, which is what commits the question.
+	if !sameKeys(plan.Batches, [][]string{{"Up"}, {"Space"}, {"Down", "Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want the old pick cleared and Plum toggled on", plan.Batches)
 	}
 }
@@ -477,8 +478,8 @@ func TestPlanChoiceLeavesAnAnswerItIsAskedForAgainAlone(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planChoice: %v", err)
 	}
-	if !sameKeys(plan.Batches, [][]string{{"Enter"}}) {
-		t.Errorf("batches = %v, want nothing but the Enter that leaves the question", plan.Batches)
+	if !sameKeys(plan.Batches, [][]string{{"Down", "Down", "Down"}, {"Enter"}}) {
+		t.Errorf("batches = %v, want no toggle at all, just the walk to \"Next\" and its Enter", plan.Batches)
 	}
 }
 
@@ -496,7 +497,7 @@ func TestPlanChoiceDoesNotToggleTheCLIsOwnRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planChoice: %v", err)
 	}
-	if !sameKeys(plan.Batches, [][]string{{"Space"}, {"Enter"}}) {
+	if !sameKeys(plan.Batches, [][]string{{"Space"}, {"Down", "Down", "Down", "Down"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want Apple toggled on and the free-text row untouched", plan.Batches)
 	}
 }
@@ -521,9 +522,10 @@ func TestPlanChoiceChunksToMaxKeys(t *testing.T) {
 		}
 		keys += len(b)
 	}
-	// Ten Downs from row one to row eleven, a Space, and the Enter that leaves.
-	if keys != 12 {
-		t.Errorf("%d keys in total, want 12", keys)
+	// Ten Downs from row one to row eleven and a Space, then the walk on to
+	// the unnumbered "Next" row and the Enter there that commits.
+	if keys != 15 {
+		t.Errorf("%d keys in total, want 15", keys)
 	}
 }
 
@@ -781,7 +783,7 @@ func TestPlanChoiceAddsToAPickAlreadyOnScreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planChoice: %v", err)
 	}
-	if !sameKeys(add.Batches, [][]string{{"Down"}, {"Space"}, {"Enter"}}) {
+	if !sameKeys(add.Batches, [][]string{{"Down"}, {"Space"}, {"Down", "Down", "Down"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want Pear toggled on and Apple left alone", add.Batches)
 	}
 	if got := strings.Join(toggledRows(t, rows, add), ","); got != "Pear" {
