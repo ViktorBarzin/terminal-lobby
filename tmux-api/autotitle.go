@@ -74,14 +74,22 @@ const (
 	// for the gap between creating a session and sending that prompt, not for
 	// the summariser.
 	//
-	// It is measured from windowStart, NOT from session_created: a session's
-	// creation time is not when it became somebody's session. A create that
-	// claims a pre-warm slot takes over a tmux session that already existed —
-	// `tmux rename-session` does not touch session_created, and a STANDING slot
-	// is refilled rather than recreated, so it has no TTL at all. Measured on
+	// It is measured from windowStart, NOT from s.Created: a session's creation
+	// time is not when it became somebody's session. A create that claims a
+	// pre-warm slot takes over a tmux session that already existed — `tmux
+	// rename-session` does not touch session_created, and a STANDING slot is
+	// refilled rather than recreated, so it has no TTL at all. Measured on
 	// 2026-09-04: the standing slot for /home/wizard/code read session_created
 	// 4h33m in the past, so every session claimed out of it would have been
 	// born expired.
+	//
+	// The claim now stamps @tl_created and parseSessions prefers it, so
+	// s.Created usually already carries the moment of the claim. windowStart is
+	// the backstop rather than the mechanism: it still covers what no stamp
+	// reaches — a session renamed by hand at a shell, and a slot claimed by a
+	// build older than the stamp — and it stays out of the way of the first
+	// list after a restart, where dating every session from now would put every
+	// old untitled Claude session back in front of the rule.
 	autoTitleWindow = 2 * time.Minute
 
 	// The two outcomes session.autonamed reports.
@@ -175,8 +183,10 @@ type autoTitleUser struct {
 type autoTitleWatch struct {
 	// firstSeen is when this process first met the session, and fresh says the
 	// session APPEARED while we were watching this user rather than already
-	// being there when we started. Together they date a claimed pre-warm slot,
-	// whose session_created belongs to the slot and not to the create.
+	// being there when we started. Together they date a claimed pre-warm slot
+	// the @tl_created stamp did not reach: one claimed by a build older than
+	// the stamp, or renamed by hand at a shell, where Created is still the
+	// slot's rather than the claim's.
 	firstSeen time.Time
 	fresh     bool
 	// watched is set once the rule has seen this session untitled while it was
@@ -224,13 +234,14 @@ func (t *autoTitleTracker) entry(osUser, name string) *autoTitleWatch {
 // windowStart is the moment this session's auto-title window runs from.
 //
 // Creation, except for a session that appeared while we were watching this
-// user and is older than that: those are pre-warm claims, where tmux reports
-// the SLOT's creation time because a claim is a rename. Anchoring on when the
-// session showed up is what gives a claimed slot the same two minutes a cold
-// create gets, and it is deliberately not applied to the first list we see for
-// a user — at a restart every session looks new, and dating them all from now
-// would put every old untitled Claude session on the box back in front of the
-// rule.
+// user and is older than that: those are pre-warm claims the @tl_created stamp
+// did not reach, where tmux still reports the SLOT's creation time because a
+// claim is a rename. A stamped claim already arrives here dated correctly and
+// takes the ordinary path. Anchoring on when the session showed up is what
+// gives an unstamped claim the same two minutes a cold create gets, and it is
+// deliberately not applied to the first list we see for a user — at a restart
+// every session looks new, and dating them all from now would put every old
+// untitled Claude session on the box back in front of the rule.
 func (t *autoTitleTracker) windowStart(osUser, name string, created, now time.Time) time.Time {
 	t.mu.Lock()
 	defer t.mu.Unlock()

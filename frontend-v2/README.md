@@ -463,10 +463,13 @@ src/
                          the auto-title rule only fires while @title is unset,
                          so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
-    device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
-                         terminal flow control (tl-flow-control — the terminal
-                         picks a flip up live via a storage event) and the
-                         Clear-local-data wipe
+    device-prefs.ts      Per-BROWSER state the roamed doc must not carry: the
+                         gestures master kill (tl-gestures, read fresh on every
+                         gesture) and the Clear-local-data wipe. It also names
+                         the two keys nothing reads any more, and why they are
+                         left in place rather than migrated: tl-terminal-
+                         renderer (2026-09-05) and tl-flow-control
+                         (2026-09-06)
     toast.ts             Toast stack + the slow-request health coordinator
     undo.ts              Per-TAB undo/redo stack for the structural actions
                          (tl:undo:v1 in sessionStorage, 25 deep). An entry is
@@ -667,8 +670,10 @@ src/
         AppearancePage.tsx    The nine themes as swatch cards painting their own
                               colours; "System" follows the OS live
         TerminalPage.tsx      Font size, line height, letter spacing, bold
-                              weight, cursor, scrolling, link copy chip, and
-                              flow control
+                              weight, cursor, scrolling, link copy chip. Every
+                              row roams, so nothing here wears the "this
+                              device" chip: the Flow control row went on
+                              2026-09-06 with the group that held it
         SessionsPage.tsx      New-session command, session-list last-active time
         KeyboardPage.tsx      The app-shortcut layer's opt-out, and the four
                               chords that outlive it
@@ -846,7 +851,7 @@ All of the following ship in the deployed build:
   `Alt+Shift+]`/`[` step forward/back, `Alt+Shift+Enter` jumps to the next
   awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view,
   `Cmd/Ctrl+Z` and its shifted form undo and redo (which is why the terminal no
-  longer sees `Ctrl+Z`, ADR-0024).
+  longer sees `Ctrl+Z`, ADR-0025).
   The shortcuts help opens on a bare `/` in the lobby, or `Alt+/` from anywhere
   including inside the terminal, which is in this document and so its keydowns
   reach the one window listener. Bindings are user-overridable and persisted
@@ -861,7 +866,7 @@ All of the following ship in the deployed build:
   refuses with a toast instead of overwriting. A kill is held for `GRACE_MS`
   behind a dimmed card carrying a `↺`; past that window undo resurrects from the
   snapshot the DELETE handed back. Off in a lens tab.
-  See `docs/adr/0024-undo-takes-ctrl-z-and-a-kill-waits.md`.
+  See `docs/adr/0025-undo-takes-ctrl-z-and-a-kill-waits.md`.
 - **Gallery** — the 🖼 overlay lists the session's stored images from
   `/clipboard/list` (newest-first, `show-image` badged), with a shared lightbox;
   Escape steps lightbox → grid → closed.

@@ -76,6 +76,7 @@ type stubStater struct {
 	m      map[string]string
 	titles map[string]string
 	act    map[string]int64
+	system map[string]bool
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -90,7 +91,7 @@ func (s *stubStater) setTitles(m map[string]string) {
 	s.titles = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64) {
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
@@ -105,7 +106,11 @@ func (s *stubStater) read(string) (map[string]string, map[string]string, map[str
 	for k, v := range s.act {
 		act[k] = v
 	}
-	return cp, titles, act
+	system := make(map[string]bool, len(s.system))
+	for k, v := range s.system {
+		system[k] = v
+	}
+	return cp, titles, act, system
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
@@ -939,11 +944,16 @@ func TestPushPayloadIsDeclarativeWhenTheOriginIsKnown(t *testing.T) {
 	if got["web_push"] != float64(8030) {
 		t.Fatalf("web_push = %v, want 8030 (the only version WebKit accepts)", got["web_push"])
 	}
-	// mutable true is what keeps our service worker in the loop. Without it
-	// WebKit shows the banner itself and never starts the worker, taking the
-	// device-side badge count with it (ADR-0015).
-	if got["mutable"] != true {
-		t.Fatalf("mutable = %v, want true", got["mutable"])
+	// mutable must be ABSENT. With it true, WebKit starts the worker and then
+	// waits for that worker to show a REPLACEMENT banner before displaying
+	// anything; sw.js deliberately shows nothing on the declarative path, so
+	// the notification was never displayed at all. Measured on Viktor's iPhone
+	// 2026-09-08..10: every push accepted by Apple with a 201 and not one
+	// banner. Absent means WebKit draws the payload's own banner, which is the
+	// whole point of a declarative message. The cost is the device-side badge
+	// subtraction (ADR-0015), which needs a worker WebKit no longer starts.
+	if _, ok := got["mutable"]; ok {
+		t.Fatalf("mutable = %v, want it absent — a mutable message WebKit shows nothing for", got["mutable"])
 	}
 	note, ok := got["notification"].(map[string]any)
 	if !ok {
@@ -1161,5 +1171,148 @@ func TestSendBuildsOnePayloadPerSubscriptionOrigin(t *testing.T) {
 	sort.Strings(seen)
 	if !reflect.DeepEqual(seen, []string{"", testPushOrigin}) {
 		t.Fatalf("origins seen = %v, want [\"\" %s]", seen, testPushOrigin)
+	}
+}
+
+// --- system sessions never push (docs/plans/2026-09-06-test-session-origin-design.md) ---
+//
+// The QA fleet drives the real deployed lobby on purpose, so its sessions are
+// wizard's sessions, and every turn one of them finishes used to be a push to
+// his phone. A system session is dropped from the tick's reading BEFORE the
+// edge diff, which is stricter than declining to send: nothing about it is
+// remembered, so there is no stale edge left for a rescue to fire on.
+
+// setSystem tells the stub which of its sessions belong to tooling. Production
+// answers this from Session.Origin and the reserved-name prefixes
+// (isSystemSession); the stub is handed the verdict directly, so a sender test
+// needs no tmux.
+func (s *stubStater) setSystem(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.system = map[string]bool{}
+	for _, n := range names {
+		s.system[n] = true
+	}
+}
+
+func TestPushSenderNeverPushesForASystemSession(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// A harness session and a person's session, side by side, moving through
+	// the same running→done edge on the same ticks.
+	stub.set(map[string]string{"qa-slug": stateRunning, "main": stateRunning})
+	stub.setSystem("qa-slug")
+	sender.tick()
+	stub.set(map[string]string{"qa-slug": stateDone, "main": stateDone})
+	sender.tick()
+
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("got %d pushes, want exactly 1 — the person's session and not the harness's", got)
+	}
+	// Nothing about it is remembered: not the state it was in, not the
+	// activity watermark, and above all not an outstanding notification, which
+	// would otherwise silence the session for good once it were rescued.
+	if _, ok := sender.last["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in last: %v", sender.last["alice"])
+	}
+	if sender.outstanding["alice"]["qa-slug"] {
+		t.Error("a system session left an outstanding notification")
+	}
+	if _, ok := sender.seenAct["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in seenAct: %v", sender.seenAct["alice"])
+	}
+	if _, ok := sender.pushedAct["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in pushedAct: %v", sender.pushedAct["alice"])
+	}
+}
+
+// The badge and the waiting list are counted from the same reading the diff
+// runs on, so dropping the session before the diff is also what keeps it off
+// the app icon and out of the by-name list the device filters with.
+func TestPushSenderCountsNoSystemSessionInTheBadgeOrTheWaitingList(t *testing.T) {
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: "https://example.invalid/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	stub.set(map[string]string{"qa-slug": stateDone, "t3e2e-7": stateAwaiting, "main": stateAwaiting})
+	stub.setSystem("qa-slug", "t3e2e-7")
+	sender.tick() // the seeding tick: it reads, filters and remembers, and sends nothing
+
+	cur := sender.last["alice"]
+	if got := waitingCount(cur); got != 1 {
+		t.Errorf("badge = %d, want 1 — only the person's session is asking for anything", got)
+	}
+	w := waitingList(cur)
+	if w == nil || len(w.Done) != 0 || !reflect.DeepEqual(w.Awaiting, []string{"main"}) {
+		t.Errorf("waiting list = %+v, want awaiting=[main] and nothing done", w)
+	}
+}
+
+// A rescued session must not fire on the edge it crossed while it was hidden.
+// This is what "before the diff, not at the send" buys: the sender has no
+// memory of the session at all, so its first observation after the rescue is a
+// seeding one, and a session first seen already done stays silent.
+func TestPushSenderDoesNotFireOnAStaleEdgeAfterARescue(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// It runs, and finishes, entirely while it is a system session.
+	stub.set(map[string]string{"rescued": stateRunning})
+	stub.setSystem("rescued")
+	sender.tick()
+	stub.set(map[string]string{"rescued": stateDone})
+	sender.tick()
+
+	// Dragged out of System: POST /sessions/{name}/origin stamps it `user`,
+	// and the next tick sees it for the first time, already done.
+	stub.setSystem()
+	sender.tick()
+
+	if got := rec.hit("/d"); got != 0 {
+		t.Fatalf("a rescued session rang for an edge it crossed while hidden: got %d, want 0", got)
+	}
+
+	// It is an ordinary session from here: the next completion rings.
+	stub.set(map[string]string{"rescued": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"rescued": stateDone})
+	sender.tick()
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("a rescued session stayed silent afterwards: got %d, want 1", got)
+	}
+}
+
+// The production stater's half of the same rule: the verdict comes off the
+// session list it already reads, at no extra fork, and covers both halves of
+// isSystemSession — the stamp and the reserved name.
+func TestSystemNamesReadsBothHalvesOfTheRule(t *testing.T) {
+	got := systemNames([]Session{
+		{Name: "k7m2q9x4tp0v", Origin: originUser},
+		{Name: "b3n8h1x5r2wq", Origin: originTest},
+		{Name: "q4m8vwx2rt5n"},
+		{Name: "qa-slug", Origin: originUser},
+	})
+	want := map[string]bool{"b3n8h1x5r2wq": true, "q4m8vwx2rt5n": true, "qa-slug": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("systemNames = %v, want %v", got, want)
+	}
+	if systemNames([]Session{{Name: "k7m2q9x4tp0v", Origin: originUser}}) != nil {
+		t.Error("a list with nothing system in it should produce no map at all")
 	}
 }

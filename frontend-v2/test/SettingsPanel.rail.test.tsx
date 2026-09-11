@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, onTestFinished } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { SettingsPanel } from "../src/components/SettingsPanel";
@@ -212,20 +212,46 @@ describe("a settings row", () => {
   });
 
   it("marks what does not roam, and leaves what does unmarked", () => {
-    const { container } = panel("terminal");
-    const chipped = [...container.querySelectorAll(".tl-set-row")].filter((r) =>
+    // Appearance is where a chipped row lives: the theme is stored per browser
+    // under `tmux-theme`, so it wears the chip. Checking the chip on a page
+    // that still has one keeps the mechanism covered, which the Terminal page
+    // stopped doing when its last device-stored row left.
+    const appearance = panel();
+    const chipped = [...appearance.container.querySelectorAll(".tl-set-row")].filter((r) =>
       r.querySelector(".tl-set-chip"),
     );
-    // One row on this page lives in the browser rather than the account: flow
-    // control, which exists to rescue a wedged stream on the machine that is
-    // wedged. An "Engine" row sat above it from the flip (2026-09-04) until
-    // the deletion (2026-09-05), choosing which of the two terminals rendered;
-    // there is one terminal now, so there is nothing to choose.
     expect(chipped.map((r) => r.querySelector(".tl-set-row-label")?.textContent)).toEqual([
-      "Flow control",
+      "Theme",
     ]);
-    // Everything else on this page is roamed, so nothing else is marked.
-    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(1);
+    cleanup();
+
+    // The Terminal page has NO chipped row, and that is the claim its own
+    // header makes: every row there is roamed. Two device-stored rows have
+    // left it. "Engine" chose which of the two terminals rendered, from the
+    // flip (2026-09-04) to the deletion (2026-09-05). "Flow control" went on
+    // 2026-09-06, because the accounting that would have read `tl-flow-control`
+    // never came across from term.html, so the toggle moved a key nothing
+    // looked at.
+    const { container } = panel("terminal");
+    expect(container.querySelectorAll(".tl-set-chip")).toHaveLength(0);
+  });
+
+  it("draws no flow-control row, even on a device that had it turned off", () => {
+    // The stored key outlives the control that wrote it, and nothing migrates
+    // it away. A device carrying `tl-flow-control=off` must get the same page
+    // as one that never set it: no row, no disabled row, no chip. Viktor asked
+    // for the control gone rather than inert, so this is the guard against it
+    // coming back as a stub.
+    localStorage.setItem("tl-flow-control", "off");
+    onTestFinished(() => localStorage.removeItem("tl-flow-control"));
+    const { container } = panel("terminal");
+    expect(container.textContent).not.toContain("Flow control");
+    expect(title(container)).toBe("Terminal");
+    // The groups that remain, in order, so an emptied group cannot pass as a
+    // rendered one: "Output" held flow control alone and went with it.
+    expect(
+      [...container.querySelectorAll(".tl-set-group-title")].map((g) => g.textContent),
+    ).toEqual(["Text", "Cursor", "Scrolling & links"]);
   });
 
   it("draws toggles as switches, still operable as checkboxes", () => {

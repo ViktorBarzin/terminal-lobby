@@ -142,8 +142,15 @@ def test_push_unsubscribe_blocked(guard):
 
 
 # --- roamed state passes through (it is snapshot/restored instead) --------
+#
+# `telemetry` was in this list until the origin work ("A session knows who made
+# it"): the fleet was allowed to post its usage batch because the events looked
+# harmless. They
+# are not — they carry no session, so nothing downstream can separate them from
+# a person's usage. The refusal and its reasoning are in the telemetry section
+# at the foot of this file.
 
-@pytest.mark.parametrize("tail", ["layout", "prefs", "telemetry"])
+@pytest.mark.parametrize("tail", ["layout", "prefs"])
 def test_roamed_and_idempotent_endpoints_allowed(guard, tail):
     assert guard.check_tmux_api("PUT", tail, b"{}") is None
     assert guard.check_tmux_api("POST", tail, b"{}") is None
@@ -500,9 +507,18 @@ def test_the_build_stamp_is_authed_not_public():
 @pytest.fixture(autouse=True)
 def _never_touch_the_live_backends(monkeypatch):
     """:7684 and :7683 are wizard's real tmux-api and clipboard-upload. A unit
-    test must never reach either; one that needs an upstream starts its own."""
+    test must never reach either; one that needs an upstream starts its own.
+
+    tmux is stubbed for the same reason: build_app starts the origin stamper,
+    and an admitted attach in a proxy-level test queues a name for it, so
+    without this the suite would fork `tmux` against whatever server the machine
+    running it happens to have. The stamper tests below install their own fake
+    over these, after this fixture has run."""
     monkeypatch.setattr(qa, "TMUX_API", "http://127.0.0.1:1")
     monkeypatch.setattr(qa, "CLIPBOARD", "http://127.0.0.1:1")
+    monkeypatch.setattr(qa, "tmux_origins", lambda: {})
+    monkeypatch.setattr(qa, "tmux_stamp_origin",
+                        lambda name, value=qa.ORIGIN_TEST: None)
 
 
 def harness_args(**over) -> argparse.Namespace:
@@ -803,3 +819,211 @@ def test_write_with_non_object_json_is_refused(guard, payload):
 def test_record_project_survives_non_object_response(guard):
     guard.record_project(b"{}", b"[]")
     assert guard.own_projects == set()
+
+
+# --- telemetry ------------------------------------------------------------
+#
+# The fleet's page-level events name no session at all — app.loaded,
+# theme.changed, the whole diagnostics batch — so a session-keyed exclusion
+# cannot see them and they would file against wizard's own usage figures
+# (docs/adr/0006-usage-telemetry.md). The proxy refuses the intake instead,
+# which is the only place that sees them before they reach Loki.
+
+def test_posting_telemetry_is_refused(guard):
+    reason = guard.check_tmux_api("POST", "telemetry", body(events=[]))
+    assert reason and "telemetry" in reason
+
+
+def test_reading_telemetry_is_not_refused(guard):
+    """The refusal is about what the fleet WRITES. A GET carries no events."""
+    assert guard.check_tmux_api("GET", "telemetry", b"") is None
+
+
+def test_the_telemetry_refusal_says_qa_harness_guard(guard):
+    """Same body shape as every other refusal, so an agent reading a 403 knows
+    it hit the guard rather than an intake bug."""
+    resp = guard.deny(guard.check_tmux_api("POST", "telemetry", b"{}"),
+                      "/api/sessions/telemetry")
+    assert resp.status == 403
+    assert resp.text.startswith("qa-harness guard:")
+
+
+# --- @tl_origin: the fleet's sessions say they are the fleet's -------------
+#
+# The lobby's own create path stamps `@tl_origin user` on everything it makes
+# (devvm/tmux-user-attach), including a session a QA agent creates by driving
+# /?session=<minted-id>. So the harness has to OVERWRITE that for the sessions
+# its run owns, and it can only do so once the session exists — the attach that
+# brings it into being is the same request the guard admits.
+
+def test_attaching_a_fresh_minted_id_queues_the_origin_stamp(guard, monkeypatch):
+    monkeypatch.setattr(qa, "tmux_session_names", lambda: ["main"])
+    assert guard.check_ws(FakeQuery(["k7m2q9x4tp0v"])) is None
+    assert "k7m2q9x4tp0v" in guard.pending_origin
+
+
+def test_attaching_a_qa_session_queues_the_origin_stamp(guard):
+    """qa-* needs no ownership record — it is a namespace — but it still needs
+    the option, because the option is what the list reads."""
+    assert guard.check_ws(FakeQuery(["qa-timeline"])) is None
+    assert "qa-timeline" in guard.pending_origin
+
+
+def test_a_refused_attach_queues_nothing(guard):
+    assert guard.check_ws(FakeQuery(["main"])) is not None
+    assert guard.pending_origin == set()
+
+
+class FakeTmuxOrigins:
+    """A tmux server that lists `@tl_origin` per session and takes writes.
+
+    `origins` maps a LIVE session name to its option value, "" being live but
+    unstamped. A name that is absent is a session that does not exist — the
+    distinction the stamper waits on. `listing` may be set to None to play an
+    unreadable tmux.
+    """
+
+    def __init__(self, origins: dict):
+        self.origins = dict(origins)
+        self.writes: list = []
+        self.readable = True
+
+    def list(self):
+        return None if not self.readable else dict(self.origins)
+
+    def write(self, name: str, value: str = qa.ORIGIN_TEST):
+        if name not in self.origins:
+            return None
+        self.origins[name] = value
+        self.writes.append((name, value))
+        return value
+
+
+@pytest.fixture
+def stamper(guard, monkeypatch):
+    def make(origins: dict, **kw):
+        fake = FakeTmuxOrigins(origins)
+        monkeypatch.setattr(qa, "tmux_origins", fake.list)
+        monkeypatch.setattr(qa, "tmux_stamp_origin", fake.write)
+        return fake, qa.OriginStamper(guard, **kw)
+    return make
+
+
+@pytest.mark.asyncio
+async def test_the_stamper_overwrites_the_lobbys_user_stamp(guard, stamper):
+    guard.pending_origin.add("k7m2q9x4tp0v")
+    fake, st = stamper({"k7m2q9x4tp0v": "user"})
+    await st.step()
+    assert fake.writes == [("k7m2q9x4tp0v", "test")]
+
+
+@pytest.mark.asyncio
+async def test_the_stamper_confirms_on_a_later_read_than_the_write(guard, stamper):
+    """One pass cannot prove the stamp stuck: the create's own `set-option user`
+    may still be in the tmux command queue behind our read. So a name leaves the
+    queue only when a READ taken after the write says test."""
+    guard.pending_origin.add("qa-x")
+    fake, st = stamper({"qa-x": "user"})
+    await st.step()
+    assert guard.pending_origin == {"qa-x"}, "one pass is not proof"
+    await st.step()
+    assert guard.pending_origin == set()
+    assert guard.stamped == ["qa-x"]
+    assert fake.writes == [("qa-x", "test")]
+
+
+@pytest.mark.asyncio
+async def test_the_stamper_restamps_when_the_create_path_wins_the_race(guard, stamper):
+    guard.pending_origin.add("qa-x")
+    fake, st = stamper({"qa-x": ""})
+    await st.step()
+    fake.origins["qa-x"] = "user"  # the lobby's set-option landed after ours
+    await st.step()
+    assert guard.pending_origin == {"qa-x"}
+    await st.step()
+    assert guard.pending_origin == set()
+    assert fake.writes == [("qa-x", "test"), ("qa-x", "test")]
+
+
+@pytest.mark.asyncio
+async def test_the_stamper_waits_for_the_session_to_exist(guard, stamper):
+    """The attach is what creates the session, so the queue runs ahead of it."""
+    guard.pending_origin.add("qa-late")
+    fake, st = stamper({})
+    await st.step()
+    assert fake.writes == []
+    assert guard.pending_origin == {"qa-late"}
+    fake.origins["qa-late"] = "user"
+    await st.step()
+    await st.step()
+    assert guard.pending_origin == set()
+
+
+@pytest.mark.asyncio
+async def test_the_stamper_gives_up_on_a_session_that_never_appears(guard, stamper):
+    """An agent that navigates away before the terminal attaches leaves a name
+    nothing will ever create. Retrying it forever would fork tmux twice a second
+    for the length of the run."""
+    guard.pending_origin.add("qa-ghost")
+    fake, st = stamper({}, window=0.0)
+    await st.step()
+    assert guard.pending_origin == set()
+    assert guard.stamped == []
+    assert fake.writes == []
+
+
+@pytest.mark.asyncio
+async def test_a_session_that_appears_late_still_gets_its_confirming_pass(guard, stamper):
+    """The window is how long the queue waits for a session to EXIST. A session
+    that shows up in its last second has been stamped correctly and must not be
+    dropped one pass later and reported as never stamped."""
+    guard.pending_origin.add("qa-slow")
+    fake, st = stamper({"qa-slow": "user"}, window=0.0)
+    await st.step()
+    assert guard.pending_origin == {"qa-slow"}, "written, so it gets its confirm"
+    await st.step()
+    assert guard.stamped == ["qa-slow"]
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_tmux_gives_up_on_nothing(guard, stamper):
+    """A tmux that cannot be listed says nothing about any name, so a pass that
+    cannot read must not drop a session the fleet really owns — the give-up is
+    for names that are proved absent, not for passes that proved nothing."""
+    guard.pending_origin.add("qa-x")
+    fake, st = stamper({"qa-x": "user"}, window=0.0)
+    fake.readable = False
+    await st.step()
+    assert guard.pending_origin == {"qa-x"}
+    assert fake.writes == []
+    fake.readable = True
+    await st.step()
+    await st.step()
+    assert guard.stamped == ["qa-x"]
+
+
+@pytest.mark.asyncio
+async def test_the_telemetry_intake_is_never_reached(monkeypatch):
+    """Wire-level, because the browser reaches the intake through the normal
+    /api/sessions/* leg and a refusal that only lives in the guard's return
+    value would still have to be plumbed into that handler."""
+    intake: list = []
+
+    async def telemetry_handler(request):
+        intake.append(await request.read())
+        return web.json_response({"accepted": 1})
+
+    app = web.Application()
+    app.router.add_route("POST", "/telemetry", telemetry_handler)
+    api = TestServer(app)
+    await api.start_server()
+    monkeypatch.setattr(qa, "TMUX_API", f"http://127.0.0.1:{api.port}")
+    try:
+        async with TestClient(TestServer(qa.build_app(harness_args()))) as client:
+            resp = await client.post("/api/sessions/telemetry",
+                                     json={"events": [{"name": "app.loaded"}]})
+            assert resp.status == 403
+            assert (await resp.text()).startswith("qa-harness guard:")
+    finally:
+        await api.close()
+    assert intake == [], "a fleet's page events must not reach the intake"

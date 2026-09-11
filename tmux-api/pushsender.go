@@ -54,10 +54,17 @@ type sessionStater interface {
 	// attached client, or one that only ever attached (driven.go
 	// latestActivity) — and the sender remembers the max it has ever seen.
 	//
-	// One method rather than three because all three come out of the same tmux
+	// The fourth return is the set of the user's SYSTEM sessions — tooling's,
+	// not a person's (origin.go) — which tick drops from all three maps before
+	// it diffs anything. It rides this method for the same reason the other
+	// three do: it is another answer that falls out of the list read already
+	// being made, and asking for it separately would mean a second fork per
+	// user per tick to learn something the first one already said.
+	//
+	// One method rather than four because they all come out of the same tmux
 	// reads, and asking separately forked `list-clients` twice per user per
 	// tick.
-	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64)
+	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool)
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -73,10 +80,32 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64) {
+func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool) {
 	sessions, activity := userSessionsAndActivity(osUser)
 	states, titles := statesAndTitles(sessions)
-	return states, titles, activity
+	return states, titles, activity, systemNames(sessions)
+}
+
+// systemNames is the set of a user's sessions that belong to tooling rather
+// than to a person, read off the list the sender already has in hand.
+//
+// Only system sessions appear, and the map is nil when there are none, which is
+// the ordinary case on this box: the sender then allocates nothing and the
+// filter below is a range over an empty map. It answers both halves of the rule
+// at once (isSystemSession): the stamp, and the reserved-name prefixes that
+// force system whatever the stamp says.
+func systemNames(sessions []Session) map[string]bool {
+	var out map[string]bool
+	for _, s := range sessions {
+		if !isSystemSession(s) {
+			continue
+		}
+		if out == nil {
+			out = map[string]bool{}
+		}
+		out[s.Name] = true
+	}
+	return out
 }
 
 // statesAndTitles splits a parsed session list into the two maps the sender
@@ -314,13 +343,22 @@ type declarativeNotification struct {
 //
 // The three declarative fields ride ALONGSIDE the flat ones rather than
 // replacing them. Chrome, Android and every Apple device below 18.4 ignore
-// web_push/mutable/notification and read the flat keys; iOS 18.4+ reads the
+// web_push/notification and read the flat keys; iOS 18.4+ reads the
 // declarative half. They are omitted entirely for a subscription with no
 // recorded origin, which keeps that device's payload byte-identical to what
 // shipped before (TestPayloadWithoutAnOriginIsUnchangedOnTheWire).
+// There is deliberately NO "mutable" member. WebKit reads it at the top level,
+// and true means "I will show a replacement banner from the service worker" —
+// WebKit then starts the worker and displays NOTHING of its own, waiting for a
+// replacement that sw.js never draws (showing one needs its own absolute
+// navigate or WebKit throws, which is why that branch shows nothing). Sending
+// it cost every iOS notification between 2026-09-08, when Viktor's iPhone first
+// re-subscribed onto this path, and 2026-09-10: Apple accepted all 58 with a
+// 201 and the phone displayed none. Absent, WebKit draws the payload's own
+// banner without starting the worker, which is the point of a declarative
+// message and the state ADR-0015's badge subtraction gives way to.
 type pushPayload struct {
 	WebPush      int                      `json:"web_push,omitempty"`
-	Mutable      bool                     `json:"mutable,omitempty"`
 	Notification *declarativeNotification `json:"notification,omitempty"`
 
 	Title   string `json:"title"`
@@ -467,7 +505,6 @@ func marshalPayload(title, body, session string, badge int, waiting *waitList, o
 	}
 	if origin != "" {
 		p.WebPush = declarativeWebPushVersion
-		p.Mutable = true
 		p.Notification = &declarativeNotification{
 			Title:    title,
 			Body:     body,
@@ -540,7 +577,8 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur, titles, act := p.stater.read(u)
+		cur, titles, act, system := p.stater.read(u)
+		p.forgetSystemSessions(u, system, cur, titles, act)
 		p.last[u] = cur
 		p.observeActivity(u, act)
 		if prev == nil {
@@ -594,6 +632,41 @@ func (p *pushSender) tick() {
 			delete(p.seenAct, u)
 			delete(p.pushedAct, u)
 		}
+	}
+}
+
+// forgetSystemSessions takes tooling's sessions out of one tick's reading, and
+// out of everything the sender remembers about them, BEFORE any of it is
+// diffed. Nothing downstream then has to know they exist: the edge detector
+// never sees them, `last` never records the state they were in, and the badge
+// and the waiting list are counted from what is left.
+//
+// Dropping them HERE rather than declining to send is what makes a rescue safe
+// (docs/plans/2026-09-06-test-session-origin-design.md). A session that
+// finished while it was hidden would otherwise sit in `last` as running,
+// against a current state of done, and the first tick after it was dragged out
+// of System would fire on that stale edge — a push about a turn that ended
+// minutes ago. With no memory of it at all, the tick after the rescue is a
+// first observation, and a session first seen already done stays silent.
+//
+// The three maps are this tick's own — the production stater builds them per
+// call and the stub returns copies — so deleting from them mutates nothing
+// anyone else holds. Deleting from seenAct and pushedAct is for the session
+// that becomes system after having been a user session, which the origin
+// endpoint makes possible in both directions.
+func (p *pushSender) forgetSystemSessions(u string, system map[string]bool, states, titles map[string]string, act map[string]int64) {
+	for name, sys := range system {
+		if !sys {
+			// A set, by contract, and a stater that sent a verdict per session
+			// instead would otherwise erase the whole list here.
+			continue
+		}
+		delete(states, name)
+		delete(titles, name)
+		delete(act, name)
+		delete(p.seenAct[u], name)
+		delete(p.pushedAct[u], name)
+		p.clearOutstanding(u, name)
 	}
 }
 

@@ -16,8 +16,9 @@
 //   { title, body, tag: 'tl-<session>', session, badge,
 //     waiting: { a: [names awaiting], d: [names done] } }
 // plus, for iOS/iPadOS 18.4 and Safari 18.4, the Declarative Web Push envelope
-// alongside them: { web_push: 8030, mutable: true, notification: { title, body,
-// navigate, tag, app_badge, data: { session, waiting } } }.
+// alongside them: { web_push: 8030, notification: { title, body,
+// navigate, tag, app_badge, data: { session, waiting } } }. No "mutable" —
+// see readPush for what sending it cost.
 // Coalescing is by tag ONLY — a re-fire for the same session REPLACES
 // the visible notification; `renotify` is intentionally omitted so a
 // repeat never re-alerts the user (tripit-proven).
@@ -348,12 +349,22 @@ function verifyStash(session) {
 // ignore.
 //
 // iOS/iPadOS 18.4 and Safari 18.4 parse the SAME document declaratively (the
-// top-level "web_push": 8030 marker). Because the server sets the top-level
-// "mutable": true, WebKit still starts this worker and still fires push, but
-// event.data is NULL and the payload arrives as event.notification, a
-// Notification object carrying our own fields on its .data. Without "mutable"
-// WebKit would display the banner without ever starting the worker, which would
-// take the device-side badge subtraction with it (ADR-0015).
+// top-level "web_push": 8030 marker) and, with no "mutable" member, draw the
+// banner themselves WITHOUT starting this worker. So on iOS the branch below
+// normally does not run at all; it stays because an engine that does start a
+// worker for a declarative message hands the payload over as event.notification
+// with event.data NULL, and reading it costs nothing.
+//
+// The server used to send "mutable": true to keep this worker in the loop for
+// ADR-0015's device-side badge subtraction. That is not what the member means:
+// true tells WebKit a REPLACEMENT banner is coming from the worker, and WebKit
+// then shows nothing of its own while it waits. The branch below deliberately
+// draws no replacement, so between 2026-09-08 and 2026-09-10 Viktor's iPhone
+// displayed none of the 58 pushes Apple accepted with a 201. The badge now
+// falls back to the payload's app_badge, which is the trade the banner is worth.
+//
+// event.data is the discriminator rather than the presence of event.notification:
+// when the JSON we control is readable, read that.
 //
 // event.data is the discriminator rather than the presence of event.notification:
 // when the JSON we control is readable, read that.
@@ -414,13 +425,15 @@ self.addEventListener('push', (event) => {
                 data: { session: p.session }
             }));
         }
-        // On the declarative path WebKit has ALREADY built and displayed the
-        // banner from the payload. showNotification here would REPLACE it, and
-        // a replacement needs its own valid ABSOLUTE navigate in the options or
-        // WebKit throws TypeError, losing the notification and with it the
-        // permission. So this branch deliberately shows nothing, and the routing
-        // it would have set up travels by the payload's navigate URL instead
-        // (notificationclick is never dispatched on the declarative path).
+        // Nothing to show on the declarative path: WebKit drew the banner from
+        // the payload before this worker was considered, and a showNotification
+        // here would REPLACE it — which needs its own valid ABSOLUTE navigate in
+        // the options or WebKit throws TypeError, losing the notification and
+        // with it the permission. The routing it would have set up travels by
+        // the payload's navigate URL instead (notificationclick is never
+        // dispatched on the declarative path). This is also why the server must
+        // not send "mutable": promising a replacement from here and then drawing
+        // none is a push that displays nothing at all.
         if (p.session) {
             // Chain the report onto the write so it records the real outcome,
             // and keep BOTH off showNotification's path.

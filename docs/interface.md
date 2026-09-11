@@ -135,7 +135,7 @@ a text box, the rename field or the file editor has focus, `Ctrl+Z` belongs to
 that field and undoes the typing in it.
 
 Why this chord and not one the terminal could keep, and what the eight seconds
-buy: `docs/adr/0024-undo-takes-ctrl-z-and-a-kill-waits.md`.
+buy: `docs/adr/0025-undo-takes-ctrl-z-and-a-kill-waits.md`.
 
 ## Session image gallery
 

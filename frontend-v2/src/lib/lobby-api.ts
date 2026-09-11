@@ -246,6 +246,43 @@ export function killSessionKeepalive(name: string): void {
 }
 
 /**
+ * What `@tl_origin` reads on a session the lobby's own create path made — the
+ * only value this client ever writes, and the one the store stamps on an
+ * optimistic card so a freshly created session is not read as a stray.
+ *
+ * The string exists in three places and cannot be shared between them: here,
+ * `ORIGIN_USER` in components/lobby.logic.ts (which stays free of imports from
+ * the client layer), and `originUser` in tmux-api/origin.go. A fourth spelling
+ * would 400 at the server and read as a system session forever on the client,
+ * so test/rescue.test.ts asserts the two client copies against each other.
+ */
+export const ORIGIN_USER = "user";
+
+/**
+ * POST /api/sessions/{name}/origin {origin} — the rescue
+ * (docs/plans/2026-09-06-test-session-origin-design.md).
+ *
+ * Dragging a card out of the System group adopts the session: it stops being a
+ * system session on the SERVER, which is what makes it push, record and survive
+ * a reload as a person's own. The arrangement alone cannot say it — the sidebar
+ * files a session by the origin tmux reports, so a layout that disagreed would
+ * lose the argument on the next poll.
+ *
+ * Throws on anything but 204, 404 included, and that is the difference from
+ * killSession: a kill that 404s got what it wanted, whereas an adoption of a
+ * session that is no longer there did not happen at all, and the caller has a
+ * layout write to hold back on the strength of it.
+ */
+export async function setSessionOrigin(name: string, origin: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}/origin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `set origin HTTP ${res.status}`);
+}
+
+/**
  * POST /api/sessions/{name}/title {title} — 204/404/400.
  *
  * Every retitle. The server derives the tmux name from the title and renames
@@ -393,6 +430,7 @@ export interface LobbyApi {
    *  Optional: a double without it simply flushes nothing on the way out. */
   killSessionKeepalive?(name: string): void;
   setSessionTitle(name: string, title: string): Promise<void>;
+  setSessionOrigin(name: string, origin: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
@@ -408,6 +446,7 @@ export const lobbyApi: LobbyApi = {
   killSession,
   killSessionKeepalive,
   setSessionTitle,
+  setSessionOrigin,
   restoreSessions,
   listSnapshots,
   getSnapshot,

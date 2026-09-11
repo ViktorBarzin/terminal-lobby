@@ -390,6 +390,7 @@ class FakeApi implements LobbyApi {
   }
   async killSession(_name: string) {}
   /** Stamps the title and moves the name after it, as tmux-api does. */
+  async setSessionOrigin() {}
   async setSessionTitle(name: string, title: string) {
     if (this.titleError) {
       const status = this.titleError;

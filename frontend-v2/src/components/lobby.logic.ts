@@ -16,16 +16,45 @@
  *    slot (the sentinel stays in the sequence for reordering/capture) — so the
  *    reorder CONTROLS must measure `visibleGroupSeqTokens`, not the raw token
  *    sequence, or they offer the user a step onto a slot nobody can see.
+ *  - a session the lobby's own create path did not make (`origin` ≠ "user")
+ *    collects in the System group, which is pinned after every other group and
+ *    hides while empty. The exception is a session the layout has explicitly
+ *    placed in a project: that is somebody having dragged it out, and it stays
+ *    out.
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
 import type { BackgroundWork, Layout, LayoutProject, Session } from "../types/lobby";
 
-export type GroupKind = "project" | "ungrouped";
+export type GroupKind = "project" | "ungrouped" | "system";
+
+/**
+ * What `@tl_origin` reads on a session the lobby's own create path made. Every
+ * other value — a harness's `test`, or no value at all — is a system session.
+ */
+const ORIGIN_USER = "user";
+
+/**
+ * The System group's `name`.
+ *
+ * Ungrouped answers "" and identifies itself by `kind`, but a THIRD group
+ * answering "" would collide with it in every map keyed by group name:
+ * `captureVisibleOrder` (logic/order.logic.ts) would fold System's card order
+ * into `layout.ungrouped`, and `groupRender("")` would find whichever came
+ * first. A leading ':' cannot occur in a project name (NAME_RE), so this is
+ * safe as a key and doubles as the collapse-store key — which is what makes
+ * ProjectGroup's `collapseKey` and the store's auto-expand-on-activate land on
+ * `:system` with no branch of their own. Kept in step with
+ * `SYSTEM_KEY` in store/collapse.ts; this module stays free of store imports.
+ */
+export const SYSTEM_GROUP_NAME = ":system";
+
+/** The token the System group occupies. Pinned last — see groupSeqTokens. */
+const SYSTEM_TOKEN = "s";
 
 export interface RenderGroup {
   kind: GroupKind;
-  /** project name; "" for ungrouped. */
+  /** project name; "" for ungrouped; ":system" for System. */
   name: string;
   /** the layout project (undefined for ungrouped). */
   project?: LayoutProject;
@@ -34,7 +63,7 @@ export interface RenderGroup {
 }
 
 export interface SidebarModel {
-  /** ordered groups, including the ungrouped sentinel at its slot. */
+  /** ordered groups: the ungrouped sentinel at its slot, System pinned last. */
   groups: RenderGroup[];
   /** shared-with-me (foreign) sessions, owner-major then name. */
   foreign: Session[];
@@ -63,8 +92,17 @@ export function isOwn(s: Session, me: string): boolean {
 }
 
 /**
- * The ordered group sequence as tokens: "p:<projectName>" per project and "u"
- * for the ungrouped sentinel, inserted at ungroupedIndex. Used for reordering.
+ * The ordered group sequence as tokens: "p:<projectName>" per project, "u" for
+ * the ungrouped sentinel inserted at ungroupedIndex, and "s" for System pinned
+ * at the end. Used for reordering.
+ *
+ * System is PINNED rather than placed: the layout has no slot for it, nothing
+ * the user does moves it, and it exists here only so deriveSidebar has one
+ * place that decides where it renders. `applySeqTokens` drops the token again,
+ * which is safe precisely because this function puts it back — and is why
+ * `reorderGroups` refuses to move it or to move anything onto its index: a
+ * splice that round-trips through the layout would return the same document and
+ * read as a click that did nothing.
  */
 export function groupSeqTokens(layout: Layout): string[] {
   const n = layout.projects.length;
@@ -74,28 +112,62 @@ export function groupSeqTokens(layout: Layout): string[] {
     if (i === ui) seq.push("u");
     if (i < n) seq.push("p:" + layout.projects[i]!.name);
   }
+  seq.push(SYSTEM_TOKEN);
   return seq;
 }
 
 /** The token a rendered group occupies in the sequence above. */
 export function groupToken(g: RenderGroup): string {
-  return g.kind === "ungrouped" ? "u" : "p:" + g.name;
+  if (g.kind === "ungrouped") return "u";
+  if (g.kind === "system") return SYSTEM_TOKEN;
+  return "p:" + g.name;
+}
+
+/**
+ * Is this session one the lobby's own create path did NOT make?
+ *
+ * Only `user` is a person's session. `test` is a harness (qa-harness, qa_driver,
+ * t3-bridge's e2e lib), and an absent origin is anything else that reached the
+ * tmux server without saying who it was — three of the four tooling sessions
+ * measured on 2026-09-06 looked exactly like that.
+ *
+ * The reserved-prefix half of the rule (`reservedName` over "qa-", "t3e2e-",
+ * "tlp-t" and the pool prefix) is the SERVER's, and it is already baked into
+ * the origin that arrives here. Repeating it client-side would only give the
+ * two copies a chance to disagree — and would drag a rescued `qa-` session back
+ * into System the moment somebody dragged it out.
+ */
+export function isSystemSession(s: Session): boolean {
+  return s.origin !== ORIGIN_USER;
 }
 
 /**
  * Does this group render? Projects always do (so they can be seen and dropped
- * into); the Ungrouped sentinel hides while empty. The sidebar's filter and the
- * move-up/down bounds read this one predicate deliberately — measuring the menu
- * in token space while the user reads visible space is what made an edge
- * group's Move item enabled and its first click a no-op.
+ * into); the synthesised groups — the Ungrouped sentinel and System — hide
+ * while empty. The sidebar's filter and the move-up/down bounds read this one
+ * predicate deliberately — measuring the menu in token space while the user
+ * reads visible space is what made an edge group's Move item enabled and its
+ * first click a no-op.
  */
 export function isGroupVisible(g: RenderGroup): boolean {
   return g.kind === "project" || g.sessions.length > 0;
 }
 
-/** The group sequence as the USER sees it: tokens minus the hidden sentinel. */
+/**
+ * The group sequence as the REORDER CONTROLS see it: tokens minus the hidden
+ * sentinel, and minus System.
+ *
+ * System is on screen when it has members, so this is not quite "what the user
+ * sees" any more — it is what a Move item may step onto, which is the only
+ * thing the callers ask it. System is pinned to the end and the layout cannot
+ * record a position for it, so counting it here would hand the last project a
+ * neighbour that no reorder can honour: the item comes up enabled, the click
+ * writes a layout identical to the one it started from, and the group has not
+ * moved. That is the same failure the empty sentinel used to cause, arriving by
+ * a different route.
+ */
 export function visibleGroupSeqTokens(model: SidebarModel): string[] {
-  return model.groups.filter(isGroupVisible).map(groupToken);
+  return model.groups.filter((g) => g.kind !== "system" && isGroupVisible(g)).map(groupToken);
 }
 
 /** Rebuild {projects order, ungroupedIndex} from a reordered token sequence. */
@@ -115,11 +187,7 @@ function applySeqTokens(layout: Layout, tokens: string[]): Layout {
 }
 
 /** Derive the sidebar render model from the layout + live sessions. */
-export function deriveSidebar(
-  layout: Layout,
-  sessions: Session[],
-  me: string,
-): SidebarModel {
+export function deriveSidebar(layout: Layout, sessions: Session[], me: string): SidebarModel {
   const own = sessions.filter((s) => isOwn(s, me));
   const foreign = sessions.filter((s) => !isOwn(s, me));
   const dockName = layout.dock?.session;
@@ -145,7 +213,18 @@ export function deriveSidebar(
   const projectMembers = new Map<string, Session[]>();
   for (const p of layout.projects) projectMembers.set(p.name, resolve(p.sessions));
 
-  const ungroupedMembers = resolve(layout.ungrouped);
+  // Ungrouped's own list, minus anything the lobby did not make. A harness
+  // drives the ordinary create flow — that is the whole point of qa-harness —
+  // so a system session is filed in `layout.ungrouped` exactly like a person's
+  // before its origin is overwritten to `test` a moment later. Reading that
+  // entry as a placement would leave the fleet sitting in the main list, which
+  // is the thing this group exists to stop. A PROJECT entry is different: only
+  // a person puts a card there, and that is the rescue.
+  const systemMembers: Session[] = [];
+  const ungroupedMembers: Session[] = [];
+  for (const s of resolve(layout.ungrouped)) {
+    (isSystemSession(s) ? systemMembers : ungroupedMembers).push(s);
+  }
   // Live own sessions referenced by no group, in a stable order (creation time
   // asc, then name) so the sidebar doesn't jitter.
   const leftovers = [...ownByName.values()]
@@ -156,7 +235,16 @@ export function deriveSidebar(
   // the arrangement the user made of it, so the layout wins wherever it has an
   // opinion — but a session it has never placed used to fall through to
   // Ungrouped even while the project it named sat beside it reading 0.
+  //
+  // A system leftover goes to System ahead of both, its own `project` included:
+  // that field is where tmux-api found the session, not somewhere anybody put
+  // it, so a harness run started inside a project directory would otherwise
+  // deal its sessions straight into that project.
   for (const s of leftovers) {
+    if (isSystemSession(s)) {
+      systemMembers.push(s);
+      continue;
+    }
     const claimed = s.project ? projectMembers.get(s.project) : undefined;
     (claimed ?? ungroupedMembers).push(s);
   }
@@ -165,6 +253,8 @@ export function deriveSidebar(
   for (const t of groupSeqTokens(layout)) {
     if (t === "u") {
       groups.push({ kind: "ungrouped", name: "", sessions: ungroupedMembers });
+    } else if (t === SYSTEM_TOKEN) {
+      groups.push({ kind: "system", name: SYSTEM_GROUP_NAME, sessions: systemMembers });
     } else {
       const name = t.slice(2);
       const project = layout.projects.find((p) => p.name === name);
@@ -177,7 +267,9 @@ export function deriveSidebar(
     }
   }
 
-  foreign.sort((a, b) => (a.owner ?? "").localeCompare(b.owner ?? "") || a.name.localeCompare(b.name));
+  foreign.sort(
+    (a, b) => (a.owner ?? "").localeCompare(b.owner ?? "") || a.name.localeCompare(b.name),
+  );
   return { groups, foreign };
 }
 
@@ -199,12 +291,7 @@ function stripEverywhere(layout: Layout, name: string): Layout {
  * omitted appends). Removes any prior reference first so a session is listed at
  * most once (the PUT validator rejects duplicates).
  */
-export function moveSession(
-  layout: Layout,
-  name: string,
-  targetGroup: string,
-  index = -1,
-): Layout {
+export function moveSession(layout: Layout, name: string, targetGroup: string, index = -1): Layout {
   const base = stripEverywhere(layout, name);
   const insert = (list: string[]): string[] => {
     const at = index < 0 || index > list.length ? list.length : index;
@@ -296,17 +383,33 @@ export function moveSessionToAnchor(
   return moveSession(layout, name, targetGroup, anchor.side === "below" ? at + 1 : at);
 }
 
-/** Reorder the group sequence by moving the token at fromSeq to toSeq. */
+/**
+ * Reorder the group sequence by moving the token at fromSeq to toSeq.
+ *
+ * The last token is System, which is pinned there and which the layout has no
+ * field for. Both ends of the move stop short of it: taking it is refused, and
+ * a drop past the last real slot lands on that slot instead of on System's. Let
+ * either through and the splice round-trips — applySeqTokens drops the token,
+ * groupSeqTokens re-appends it — so the caller writes a layout byte-identical
+ * to the one it read and the user watches a drag snap back.
+ */
 export function reorderGroups(layout: Layout, fromSeq: number, toSeq: number): Layout {
   const tokens = groupSeqTokens(layout);
-  if (fromSeq < 0 || fromSeq >= tokens.length) return layout;
-  const to = clamp(toSeq, 0, tokens.length - 1);
+  const pinned = tokens.length - 1;
+  if (fromSeq < 0 || fromSeq >= pinned) return layout;
+  const to = clamp(toSeq, 0, pinned - 1);
   const [moved] = tokens.splice(fromSeq, 1);
   tokens.splice(to, 0, moved!);
   return applySeqTokens(layout, tokens);
 }
 
-/** Move a group (project name, or "" for ungrouped) up/down by one slot. */
+/**
+ * Move a group (project name, or "" for ungrouped) up/down by one slot.
+ *
+ * System has no move: its name is ":system", which no project can be called, so
+ * the token built here is one the sequence never holds and the lookup below
+ * bails.
+ */
 export function moveGroup(layout: Layout, groupName: string, dir: -1 | 1): Layout {
   const tokens = groupSeqTokens(layout);
   const token = groupName === "" ? "u" : "p:" + groupName;
@@ -342,9 +445,7 @@ export function renameProject(layout: Layout, oldName: string, newName: string):
   if (layout.projects.some((p) => p.name === newName)) return layout;
   return {
     ...layout,
-    projects: layout.projects.map((p) =>
-      p.name === oldName ? { ...p, name: newName } : p,
-    ),
+    projects: layout.projects.map((p) => (p.name === oldName ? { ...p, name: newName } : p)),
   };
 }
 
@@ -365,9 +466,31 @@ export function deleteProject(layout: Layout, name: string): Layout {
   };
 }
 
-/** Add a session name to a group (used by create). "" = ungrouped. */
+/**
+ * File a freshly created session in a group ("" = ungrouped), at the FRONT.
+ *
+ * The front, because under the `manual` ordering the layout array is what the
+ * sidebar renders. Nothing sorts it there, so the layout is the only place
+ * "newest first" can be written down in a form that survives a reload.
+ * Appending filed a session you started ten seconds ago at the bottom of its
+ * project, under everything you had already finished with.
+ *
+ * Projects and Ungrouped take the same rule, so there is no branch here and no
+ * group where a create behaves differently.
+ *
+ * Leaving the append and sorting by `session.created` instead does not cover
+ * it. That field is the tmux session's creation time, and a create that claims
+ * a pre-warmed pool slot renames a session that already exists rather than
+ * starting one, so the stamp it reports is the SLOT's age
+ * (tmux-api/autotitle.go:77-84). The same change stamps `@tl_created` at claim
+ * time to fix that field for the two time orderings, but under `manual`
+ * nothing is sorted at all, so the layout write is what makes it right there.
+ *
+ * moveSession strips any prior reference before it inserts, so a name is
+ * listed at most once. That is not repeated here.
+ */
 export function addSessionToGroup(layout: Layout, name: string, group: string): Layout {
-  return moveSession(layout, name, group);
+  return moveSession(layout, name, group, 0);
 }
 
 export function removeSessionFromLayout(layout: Layout, name: string): Layout {
@@ -401,7 +524,11 @@ export function sameLayout(a: Layout, b: Layout): boolean {
   const bd = b.dock;
   if (!ad !== !bd) return false;
   if (ad && bd) {
-    if (ad.session !== bd.session || ad.visible !== bd.visible || (ad.dir ?? "") !== (bd.dir ?? "")) {
+    if (
+      ad.session !== bd.session ||
+      ad.visible !== bd.visible ||
+      (ad.dir ?? "") !== (bd.dir ?? "")
+    ) {
       return false;
     }
   }
@@ -441,10 +568,7 @@ function sameGroup(a: RenderGroup, b: RenderGroup): boolean {
  * place through the same proxy — which is exactly the granular repaint we want
  * (a moving timer must not cost a new DOM node either).
  */
-export function stabilizeModel(
-  prev: SidebarModel | undefined,
-  next: SidebarModel,
-): SidebarModel {
+export function stabilizeModel(prev: SidebarModel | undefined, next: SidebarModel): SidebarModel {
   if (!prev) return next;
   const groups =
     prev.groups.length === next.groups.length

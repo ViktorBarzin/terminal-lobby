@@ -109,6 +109,22 @@ and (co-equal) may edit it.
 The OS user whose uid the session's process tree runs as — exactly one per
 session. A foreign session (owner ≠ the viewer) is attach-only.
 
+**Origin** (of a session):
+What made a **Session**, which is a different question from **Owner**. Owner is
+whose uid it runs as; origin is what asked for it to exist. A session the
+lobby's own create path made is a user session. One a test harness made, and one
+nothing accounted for at all, is a **system session**. System sessions collect
+in a single group at the foot of the sidebar, **System**, collapsed by default,
+where they stay fully addressable: attach, prompt, kill and open by URL all work
+as they always did. What they lose is the attention a person's session gets,
+since a system session raises no push and is not recorded in telemetry. System
+is not a **Project** and cannot become one, but moving a session out of it into
+a project is how you say a person made this one after all, and that change
+sticks. Absence of an origin counts as system, which only means anything because
+the lobby marks what it makes itself.
+_Avoid_: creator, source, author (each reads as who is working inside the
+session rather than what brought it into being), bot session
+
 **Share**:
 A grant letting a named non-owner attach a specific session, read-only
 (`tmux attach -r`, watch) or read-write (drive — which runs as the owner).
@@ -149,6 +165,32 @@ resolve the real caller instead of the target — push subscriptions, and
 telemetry, which records both identities.
 _Avoid_: impersonation, sudo mode, admin mode (the switch is one tab's view, not
 a state of the app)
+
+**Created**:
+When a Session became somebody's, which is not when the tmux session was
+made. A create that claims a **Pre-warm slot** renames a session that
+already existed, and tmux's own `session_created` goes on reading the
+slot's age: measured 2026-09-04, a standing slot read 4h33m stale. So the
+claim stamps the session's `@tl_created` tmux option, and that wins
+wherever it is present, with `session_created` the fallback for every
+session that predates it. It is what the sidebar's Created ordering sorts
+on, and so the answer to "which of these did I just make"; it also seeds
+**Last driven** until a first driver is seen, and dates the window the
+auto-title rule watches in.
+_Avoid_: session start, birth time, and anything that suggests it is tmux's
+`session_created`
+
+**Pre-warm slot**:
+A detached session with Claude already booted, started for a directory
+before anyone has committed to making a session there, so a create can skip
+the boot. Two lifetimes: a standing slot, refilled after each claim and
+never collected, and a speculative one, warmed when a create input opens
+and collected by TTL if nobody commits. A claim is a `tmux rename-session`
+onto the slot, which is atomic and refuses a name already in use, and that
+is the whole concurrency story. Slots are named past the length limit a
+client may address, so the lobby never lists one; the rename is also why a
+claimed session's **Created** cannot be tmux's own `session_created`.
+_Avoid_: pool session, warm session, spare session
 
 **Last driven**:
 When a human last had hands on a Session — the newest moment a **read-write**
@@ -231,7 +273,7 @@ the way the entry left it. Keyed by the browser TAB: it lives in that tab's
 has its own, and closing the tab ends it. An entry names its session in
 `session` or `sessions` and nowhere else, which is what lets the stack rewrite
 the **name** under it when a title lands (ADR-0022). A **Lens** tab has no
-stack at all. `frontend-v2/src/store/undo.ts`; ADR-0024 has the reasoning.
+stack at all. `frontend-v2/src/store/undo.ts`; ADR-0025 has the reasoning.
 _Avoid_: history, journal, transaction log (each names a record of what
 happened; this one holds only what can still be taken back)
 

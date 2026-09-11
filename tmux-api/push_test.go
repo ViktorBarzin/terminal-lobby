@@ -681,7 +681,13 @@ func TestBuildTestPayloadIsDeclarativeWithAnOrigin(t *testing.T) {
 	if _, ok := note["app_badge"]; ok {
 		t.Fatal("the test push carries an app_badge — a diagnostic would repaint the app icon")
 	}
-	if got["web_push"] != float64(8030) || got["mutable"] != true {
-		t.Fatalf("not a declarative message: web_push=%v mutable=%v", got["web_push"], got["mutable"])
+	if got["web_push"] != float64(8030) {
+		t.Fatalf("not a declarative message: web_push=%v", got["web_push"])
+	}
+	// Same reason as the real notifications: mutable defers the banner to a
+	// worker that never draws one, so a "test" push would be the one thing
+	// guaranteed not to show.
+	if _, ok := got["mutable"]; ok {
+		t.Fatalf("mutable = %v, want it absent", got["mutable"])
 	}
 }

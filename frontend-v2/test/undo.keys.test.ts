@@ -103,7 +103,7 @@ describe("isEditingTarget — who owns Cmd+Z right now", () => {
    * (@xterm/xterm 6.0.0). It is a plain non-readonly TEXTAREA, so reading the
    * tag alone says "a field is being typed into" for every attached session —
    * and then Cmd+Z does nothing in a session and Ctrl+Z goes on suspending the
-   * foreground job, which is the pair ADR-0024 turned down.
+   * foreground job, which is the pair ADR-0025 turned down.
    *
    * Focused for real rather than passed in, because App reads
    * `document.activeElement` (components/App.tsx keyContext) and the bug was

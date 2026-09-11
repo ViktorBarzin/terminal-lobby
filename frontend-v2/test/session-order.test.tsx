@@ -36,10 +36,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz@x", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
@@ -237,8 +243,10 @@ describe("the store paints the list in the chosen order", () => {
     expect(store.model().groups.map((g) => (g.kind === "ungrouped" ? "" : g.name))).toEqual([
       "work",
       "",
+      ":system",
     ]);
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta"] });
+    // System is pinned after them both, empty while every session is a user's.
+    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta"], ":system": [] });
   });
 
   /**
@@ -316,10 +324,18 @@ describe("dragging a card while a time ordering is deciding positions", () => {
       [...three(), sess("delta", { created: 700, lastDrive: 700 })],
       "created",
     );
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["delta", "beta"] });
+    expect(painted(store)).toEqual({
+      work: ["gamma", "alpha"],
+      "": ["delta", "beta"],
+      ":system": [],
+    });
     await store.move("beta", "", { name: "delta", side: "above" });
     expect(api.puts.at(-1)!.projects[0]!.sessions).toEqual(["gamma", "alpha"]);
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta", "delta"] });
+    expect(painted(store)).toEqual({
+      work: ["gamma", "alpha"],
+      "": ["beta", "delta"],
+      ":system": [],
+    });
   });
 
   /**
@@ -341,7 +357,7 @@ describe("dragging a card while a time ordering is deciding positions", () => {
     );
     await store.move("beta", "work");
     expect(order()).toBe("created");
-    expect(painted(store)).toEqual({ work: ["beta"], "": ["gamma", "alpha"] });
+    expect(painted(store)).toEqual({ work: ["beta"], "": ["gamma", "alpha"], ":system": [] });
   });
 
   it("leaves a manual list exactly as it always behaved", async () => {

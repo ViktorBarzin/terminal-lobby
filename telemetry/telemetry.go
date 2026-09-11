@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"log"
 	"sort"
+	"sync"
 	"time"
 )
 
@@ -55,6 +56,11 @@ const (
 // JSON scalars (string, number, bool).
 type Attrs map[string]any
 
+// SessionAttr is the attribute naming the session an event happened in. It is
+// the only attribute Emit itself reads, because it is the one that decides
+// whether the event is recorded at all (see SetDropRule).
+const SessionAttr = "tl.session"
+
 // Writer is where finished lines go. Production uses the service logger;
 // tests capture instead.
 type Writer interface{ Write(line string) }
@@ -78,6 +84,14 @@ type Emitter struct {
 	marker  string
 	known   func(string) bool
 	limit   func(key string) int
+
+	// mu guards drop and nothing else. Every other field is written once by
+	// New or NewDiag and only read afterwards, so none of them needs a lock;
+	// drop is installed after construction by a service that is already
+	// serving requests from many goroutines, which makes it the one piece of
+	// mutable state here.
+	mu   sync.RWMutex
+	drop func(osUser, session string) bool
 }
 
 // New builds an Emitter for a service. version is the deployed build id, so a
@@ -94,12 +108,57 @@ func New(service, version string, out Writer) *Emitter {
 	}
 }
 
+// SetDropRule installs a predicate the Emitter consults before writing an
+// event carrying a tl.session attribute. Returning true drops the event.
+// A nil rule drops nothing.
+//
+// This is how system sessions stay out of the usage record
+// (docs/plans/2026-09-06-test-session-origin-design.md). The QA fleet drives
+// the real deployed lobby against the real backends on purpose, so its turns
+// are real events from a real service; only the session they name says they
+// are not a person's work. The predicate is supplied by the service rather
+// than computed here because each one answers it differently — tmux-api from
+// the sessions cache it already keeps, the others from a small cached tmux
+// read — and this package deliberately knows nothing about tmux.
+//
+// It is a rule about SESSIONS, so it can only judge an event that names one.
+// A page-level event like app.loaded carries no tl.session and is never
+// dropped here; the browser leg of that is refused at the qa-harness proxy
+// instead.
+func (e *Emitter) SetDropRule(drop func(osUser, session string) bool) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.drop = drop
+}
+
+// dropped asks the installed rule about one event. A missing rule, or an event
+// naming no session, answers false: telemetry fails towards recording, because
+// a lost event is invisible and a wrongly-kept one is merely noise.
+func (e *Emitter) dropped(osUser string, attrs Attrs) bool {
+	session, ok := attrs[SessionAttr].(string)
+	if !ok {
+		return false
+	}
+	e.mu.RLock()
+	drop := e.drop
+	e.mu.RUnlock()
+	return drop != nil && drop(osUser, session)
+}
+
 // Emit records one event for one OS user. It is deliberately forgiving: a nil
 // Emitter, an unknown event name, or a hostile attribute value is dropped or
 // neutered rather than failing the request that triggered it — telemetry is
 // never worth breaking the app over.
 func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 	if e == nil || !e.known(name) {
+		return
+	}
+	// Before bound(), so the rule sees the session name the caller passed
+	// rather than one truncated at MaxValueLen.
+	if e.dropped(osUser, attrs) {
 		return
 	}
 	rec := struct {

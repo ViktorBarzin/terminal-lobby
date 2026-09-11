@@ -319,11 +319,30 @@ pane_text() {
     tmux capture-pane -p -t "$p" -S -"${2:-60}" 2>/dev/null
 }
 
+# stamp_test_origin <session> — this run made it, and it is not a person.
+#
+# These sessions live on the DEFAULT socket, which is the server the lobby
+# lists, so `@tl_origin` decides where they land (the ADR is "A session knows
+# who made it"): a session whose origin is not `user` is a system session, and
+# stays out of the main sidebar list, out of Web Push and out of telemetry. The
+# t3e2e- prefix would catch them anyway — reservedName() already reserves it —
+# but the prefix is the backstop and the option is the truth. Stamping both ways
+# means a rename, or a bridge-born session whose name comes from a workspace
+# root rather than from this harness, cannot quietly become somebody's session
+# in the sidebar.
+#
+# `=name:` and not `=name`: set-option rejects the bare exact form, and a plain
+# `name` resolves by unambiguous PREFIX — the exactness this file's header
+# argues for at length, in the one spelling set-option accepts. Best-effort:
+# a run that already has its session has nothing to gain from dying over a label.
+stamp_test_origin() { tmux set-option -t "=$1:" @tl_origin test >/dev/null 2>&1 || true; }
+
 # new_e2e_session <name> <dir> — a detached login shell, tracked for cleanup.
 new_e2e_session() {
     local name=$1 dir=$2
     case "$name" in t3e2e-*) ;; *) die "e2e sessions must be named t3e2e-*: $name" ;; esac
     tmux new-session -d -s "$name" -c "$dir" || die "could not create tmux session $name"
+    stamp_test_origin "$name"
     track_session "$name"
 }
 
@@ -348,6 +367,10 @@ sweep_sessions() {
         done
         [ "$known" = 1 ] && continue
         note "sweep: $name appeared without this harness creating it (the bridge made it); tracking it for cleanup"
+        # Stamped here for the same reason it is stamped at creation: the bridge
+        # names these after a workspace root, so this is the only place that
+        # knows the session belongs to a test run rather than to a person.
+        stamp_test_origin "$name"
         track_session "$name"
     done < <(tmux_names)
 }
