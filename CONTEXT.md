@@ -154,6 +154,19 @@ disabled, and nothing is recorded (the stored choice is keyed by session name, s
 a lens that wrote would change how your own session of that name opens).
 _Avoid_: read-only mode (ambiguous against a share's `ro`), observer mode
 
+**Preload attach**:
+A client's own choice to attach a Session the user has not opened yet, so the
+terminal is already drawn when they commit. Read-**write**, unlike Watch mode,
+but carrying tmux's ignore-size flag, so until it is **promoted** it does not
+move the **Grid** and does not count as driving (**Last driven** stays put). A
+promotion clears the flag on the same client, so the socket the hover opened is
+the one the user then types into; there is no second attach. The third value of
+the client's attach request, beside watch and drive, and resolved by the server
+downgrade-only like the others. Speculative and collected: one at a time, on a
+TTL, and it never creates a Session that has gone away. _Compare_: **Pre-warm
+slot**, which speculates on CREATING a session for a directory; this speculates
+on OPENING one that exists. _Avoid_: warm attach, pre-warmed session, prefetch
+
 **Lens**:
 A browser tab acting as another OS user — an administrator's view of someone
 else's lobby, carried as `?as=<osUser>` and confirmed by `/whoami` answering with
