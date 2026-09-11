@@ -762,8 +762,18 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 			// so it is left exactly as it is.
 			continue
 		}
-		step := append(walkTo(at, i), "Space")
-		batches = append(batches, chunkKeys(step)...)
+		// The walk and the toggle are SEPARATE runs, so a settle lands
+		// between the last cursor move and the Space. Measured against CLI
+		// 2.1.268 on 2026-09-11 driving a real dialog: [Space] then
+		// [Down Down Space] ticked the first row and left the third clear with
+		// the cursor on it, while one Up and a Space in the same run did tick.
+		// The difference is how much the widget repaints before the Space
+		// arrives, so the number of navigation keys decides whether it
+		// survives — which is not a thing to leave to the shape of the list.
+		if walk := walkTo(at, i); len(walk) > 0 {
+			batches = append(batches, chunkKeys(walk)...)
+		}
+		batches = append(batches, []string{"Space"})
 		at = i
 	}
 	// Space only toggles. Enter is what leaves a multi-select question, and it
