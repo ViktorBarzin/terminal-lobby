@@ -1,10 +1,15 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { localStorageOrNull, lsGet, lsSet } from "../src/lib/storage";
+import { localStorageOrNull, lsGet, lsSet, sessionStorageOrNull } from "../src/lib/storage";
 
 const real = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+const realSession = Object.getOwnPropertyDescriptor(globalThis, "sessionStorage");
 
 function restore(): void {
   if (real) Object.defineProperty(globalThis, "localStorage", real);
+}
+
+function restoreSession(): void {
+  if (realSession) Object.defineProperty(globalThis, "sessionStorage", realSession);
 }
 
 describe("localStorageOrNull", () => {
@@ -27,6 +32,33 @@ describe("localStorageOrNull", () => {
   it("is null where there is no localStorage at all", () => {
     Object.defineProperty(globalThis, "localStorage", { configurable: true, value: undefined });
     expect(localStorageOrNull()).toBeNull();
+  });
+});
+
+/** The per-tab twin, used by the undo stack (store/undo.ts) for a history that
+ *  survives a reload and dies with the tab. Same three cases, because the
+ *  failure modes are the same ones: a sandboxed frame throws on the getter, and
+ *  a non-browser runtime has no such global. */
+describe("sessionStorageOrNull", () => {
+  afterEach(restoreSession);
+
+  it("hands back the real sessionStorage when the browser has one", () => {
+    expect(sessionStorageOrNull()).toBe(globalThis.sessionStorage);
+  });
+
+  it("is null when the getter throws, which is what a sandboxed frame does", () => {
+    Object.defineProperty(globalThis, "sessionStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("The operation is insecure.", "SecurityError");
+      },
+    });
+    expect(sessionStorageOrNull()).toBeNull();
+  });
+
+  it("is null where there is no sessionStorage at all", () => {
+    Object.defineProperty(globalThis, "sessionStorage", { configurable: true, value: undefined });
+    expect(sessionStorageOrNull()).toBeNull();
   });
 });
 

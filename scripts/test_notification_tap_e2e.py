@@ -160,6 +160,13 @@ def _ensure_bundle() -> None:
 # The origin: the built bundle plus a stub tmux-api
 # --------------------------------------------------------------------------
 
+# `origin: "user"` is what real tmux-api serves for these, and it is load-bearing
+# here rather than decoration. Since ADR-0024 a session with no `@tl_origin` is a
+# SYSTEM session, and the sidebar files those into the System group, which is
+# collapsed by default — so an unstamped Bravo renders behind a closed disclosure
+# and `open_session` waits 30s for text no person could have clicked either.
+# These two stand in for sessions a person opened, so they carry the stamp the
+# lobby's own create path leaves. Both cases fail without it.
 SESSIONS = [
     {
         "name": SESSION_A,
@@ -168,6 +175,7 @@ SESSIONS = [
         "lastActivity": 0,
         "created": 0,
         "state": "done",
+        "origin": "user",
     },
     {
         "name": SESSION_B,
@@ -176,6 +184,7 @@ SESSIONS = [
         "lastActivity": 0,
         "created": 0,
         "state": "running",
+        "origin": "user",
     },
 ]
 

@@ -15,6 +15,7 @@ package main
 // from resolveOSUser, never from the request body.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"terminal-lobby/telemetry"
 )
@@ -81,6 +83,47 @@ type SnapshotRow struct {
 func persistCmd(osUser string, args ...string) *exec.Cmd {
 	return exec.Command(sudoBinary, append([]string{"-n", restoreWrapper, osUser}, args...)...)
 }
+
+// persistCmdContext is persistCmd with a deadline: the process is killed when
+// ctx is done. Only the pre-kill snapshot uses it, because it is the only
+// wrapper call a person is waiting on with a request already half-run.
+func persistCmdContext(ctx context.Context, osUser string, args ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, sudoBinary, append([]string{"-n", restoreWrapper, osUser}, args...)...)
+	// Without this the deadline does not bind. The wrapper is a shell script,
+	// so killing it on ctx leaves its CHILDREN holding the pipes this call is
+	// reading, and CombinedOutput blocks until the last of them exits: a save
+	// that hangs for ten seconds still costs ten seconds. WaitDelay closes the
+	// pipes shortly after the kill and returns.
+	c.WaitDelay = 500 * time.Millisecond
+	return c
+}
+
+// preKillSnapshotBudget is how long the whole pre-kill snapshot may take —
+// waiting for a turn plus the save plus the list.
+//
+// Well under the 8s the browser abandons a request at (frontend-v2
+// lib/http.ts REQUEST_TIMEOUT_MS), because past that deadline the client gives
+// up and toasts a failed kill while this handler carries on and kills the
+// session anyway: the card then says the kill failed, the session is gone, and
+// the undo entry has no record to work from. A snapshot that costs more than
+// the kill is not worth the kill, so it is dropped and the session dies
+// undoable-from-nothing, which is the same outcome as any other failed save.
+//
+// A var so a test can shorten it.
+var preKillSnapshotBudget = 4 * time.Second
+
+// saveSlot lets ONE pre-kill snapshot run at a time.
+//
+// `save` is not per-user work however it is called: the wrapper validates the
+// user it is handed and then snapshots every mapped user on the box
+// (tmux-persist save), walking each one's panes with tmux, ps, and for a claude
+// pane with no stamp a find over that user's transcripts. Two of those at once
+// duplicate all of it, and handlers run one per request, so without this a
+// burst of DELETEs fans out into as many concurrent root runs as there are
+// requests. A caller that cannot get the slot inside the budget goes without a
+// record rather than queueing, which is the same best-effort answer every
+// other snapshot failure gets.
+var saveSlot = make(chan struct{}, 1)
 
 // SnapshotList is the GET /snapshots payload. MemAvailableMB rides along so the
 // picker can warn before a large restore without a second round trip: restoring
@@ -279,6 +322,86 @@ func parseSnapshotList(out string, liveCount int) []Snapshot {
 		snaps[best].LastFull = true
 	}
 	return snaps
+}
+
+// newestSnapshotTS picks the snapshot a restore would use out of the wrapper's
+// `list` output. tmux-persist prints the series newest-first and marks the first
+// row `newest` (snapshots_rows), and parseSnapshotList already reads that
+// format, so this only chooses a row. The liveCount it takes feeds DeltaVsLive
+// and LastFull, neither of which is read here.
+func newestSnapshotTS(out string) string {
+	snaps := parseSnapshotList(out, 0)
+	for _, s := range snaps {
+		if s.Newest {
+			return s.TS
+		}
+	}
+	if len(snaps) > 0 {
+		return snaps[0].TS
+	}
+	return ""
+}
+
+// resurrectRecordFor snapshots the box and returns what would bring `name`
+// back, in POST /restore's own body shape.
+//
+// WHY A KILL SNAPSHOTS AT ALL. Snapshots are written by tmux-persist-save.timer
+// on OnCalendar=*:0/5, and restore-selection refuses a name that is absent from
+// the snapshot it is handed (tmux-persist restore_selection). So a session
+// created and killed inside one five-minute tick is in no snapshot anywhere and
+// nothing can bring it back, and a session killed minutes after it was made is
+// exactly the one killed by mistake. Asking for a save first is what closes
+// that, and it is why the lobby can offer undo past its grace window.
+//
+// The tombstone the kill writes afterwards does not take that away again:
+// snapshots are immutable files, forget only appends to the tombstone list, and
+// restore-selection never consults it. Only the blanket restore skips a
+// tombstoned row, which is what keeps a deliberate kill from coming back on its
+// own; the picker still shows it, unticked.
+//
+// BEST EFFORT THROUGHOUT. Every failure here is a log line and a nil record:
+// losing the ability to bring a session back must never mean losing the ability
+// to kill it. A wrapper too old to know `save` fails the same way, so a box
+// mid-upgrade kills exactly as it did before.
+//
+// ONE COST, ACCEPTED: the save is synchronous, so a kill waits on one
+// tmux-persist run, which walks every user as the timer does and writes nothing
+// for a user whose session set has not changed. It is bounded at both ends —
+// preKillSnapshotBudget caps how long the caller waits, and saveSlot caps how
+// many of these run at once — and the caller only reaches here once tmux has
+// confirmed the session exists (session_mutate.go killSession).
+func resurrectRecordFor(osUser, name string) *restoreSelection {
+	ctx, cancel := context.WithTimeout(context.Background(), preKillSnapshotBudget)
+	defer cancel()
+	select {
+	case saveSlot <- struct{}{}:
+		defer func() { <-saveSlot }()
+	case <-ctx.Done():
+		log.Printf("pre-kill snapshot for %s/%s gave up waiting for its turn, killing without one",
+			osUser, name)
+		return nil
+	}
+	if out, err := persistCmdContext(ctx, osUser, "save").CombinedOutput(); err != nil {
+		log.Printf("pre-kill snapshot for %s/%s failed, killing without one: %v: %s",
+			osUser, name, err, strings.TrimSpace(string(out)))
+		return nil
+	}
+	out, err := persistCmdContext(ctx, osUser, "list").Output()
+	if err != nil {
+		log.Printf("snapshot list after the pre-kill save for %s/%s failed: %v", osUser, name, err)
+		return nil
+	}
+	ts := newestSnapshotTS(string(out))
+	if ts == "" {
+		log.Printf("no snapshot for %s after the pre-kill save, killing %s without one", osUser, name)
+		return nil
+	}
+	// Not checked against that snapshot's own rows. Reading them back is a
+	// second privileged round trip that resolves every row against live tmux,
+	// and it would answer for a box that has moved on by the time anyone
+	// presses undo. The record says what to TRY, and restore reports it when
+	// the name turns out not to be in there (restoreFromSelection).
+	return &restoreSelection{Snapshot: ts, Sessions: []string{name}}
 }
 
 // handleSnapshotByTS (GET /snapshots/{ts}) resolves one snapshot against the

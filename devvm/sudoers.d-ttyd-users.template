@@ -43,7 +43,12 @@
 #   /usr/local/bin/tmux-user-dirlist  tmux-api GET /dirs (project dir picker).
 #                                      Argument-free; prints dir NAMES under the
 #                                      user's home. No input → nothing to inject.
-#   /usr/local/bin/tmux-restore-user  tmux-api POST /restore (web-UI button).
+#   /usr/local/bin/tmux-restore-user  tmux-api POST /restore (web-UI button)
+#                                      and DELETE /sessions/<name>, which asks
+#                                      for a snapshot before it kills so the
+#                                      lobby can offer undo past its grace
+#                                      window (tmux-api/snapshots.go
+#                                      resurrectRecordFor).
 #                                      Runs as root because it drives
 #                                      tmux-persist's single-user restore (reads
 #                                      the root-owned manifest + runuser into the
@@ -57,6 +62,20 @@
 #                                      reaches tmux-persist as its own argv
 #                                      entry, and a short argv fails closed under
 #                                      `set -e`.
+#                                      ONE VERB CROSSES USERS BY DESIGN: `save`
+#                                      validates the user it is handed and then
+#                                      discards it, because tmux-persist's save
+#                                      takes no user and walks every mapped one
+#                                      — the same work tmux-persist-save.timer
+#                                      does unattended every 5 minutes. It reads
+#                                      live tmux state and writes snapshot
+#                                      files, restoring nothing and destroying
+#                                      nothing, so it is no route into another
+#                                      user's sessions. tmux-api bounds it: the
+#                                      kill asks tmux whether the session exists
+#                                      first, only one save runs at a time, and
+#                                      it is abandoned after
+#                                      preKillSnapshotBudget.
 #   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>: writes
 #                                      a TOMBSTONE for the killed session into
 #                                      the root-owned 0600

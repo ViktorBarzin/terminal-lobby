@@ -323,7 +323,7 @@ func TestPostKillNoticeFailureModes(t *testing.T) {
 func killThrough(t *testing.T, session string, tmuxScript string) (*httptest.ResponseRecorder, time.Duration) {
 	t.Helper()
 	osSelf, _ := twoLocalUsers(t)        // caller == current user: tmuxCmd skips sudo
-	withUserMap(t, "alice="+osSelf+"\n") // so the sudo stub only sees the forget
+	withUserMap(t, "alice="+osSelf+"\n") // so the sudo stub sees only the wrappers
 	withTempLayoutStore(t)
 	withTmuxStub(t, tmuxScript)
 	withSudoStub(t, "exit 0")
@@ -341,8 +341,8 @@ func TestKillSessionNotifiesSyncer(t *testing.T) {
 	spy.pointAt(t, dir, osSelf)
 
 	rec, _ := killThrough(t, "qa-notify", "exit 0")
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusNoContent)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusOK)
 	}
 
 	got := spy.await(t)
@@ -390,8 +390,8 @@ func TestKillSucceedsWhateverTheSyncerDoes(t *testing.T) {
 				writeSyncEnv(t, dir, osSelf, tc.env)
 			}
 			rec, elapsed := killThrough(t, "qa-notify", "exit 0")
-			if rec.Code != http.StatusNoContent {
-				t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusNoContent)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("DELETE: got %d, want %d", rec.Code, http.StatusOK)
 			}
 			// The wedged syncer holds its connection for the whole test; if the
 			// notify were on the response path this would be the assertion that

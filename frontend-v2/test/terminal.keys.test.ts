@@ -185,7 +185,7 @@ const LEGS: readonly Row[] = [
     /**
      * The ALWAYS-ON chord, and the only kind of appChord that fires with the
      * keybinding layer switched off: `matchesAppChord` walks
-     * `KB_ALWAYS_BINDINGS` before the `enabled` gate (bindings.logic.ts:277-282,
+     * `KB_ALWAYS_BINDINGS` before the `enabled` gate (bindings.logic.ts:289-294,
      * term.html:3528-3533). Every other row in this block is a default chord,
      * which is why this one is here.
      */
@@ -776,9 +776,7 @@ describe("the one key handler xterm stores", () => {
    */
   it("routes the word jump through the input path rather than writing it", () => {
     const r = reduce(world({ macLike: true }), ev({ key: "ArrowRight", altKey: true }));
-    expect(r.actions.filter((a) => a.kind === "send")).toEqual([
-      { kind: "send", data: "\x1bf" },
-    ]);
+    expect(r.actions.filter((a) => a.kind === "send")).toEqual([{ kind: "send", data: "\x1bf" }]);
   });
 
   /**
@@ -804,7 +802,7 @@ describe("the one key handler xterm stores", () => {
    * `appChord` joined to the REAL matcher rather than asserted as a boolean,
    * for the one configuration a wiring is most likely to skip the read in.
    * `matchesAppChord` walks the always-on table before the `enabled` gate
-   * (bindings.logic.ts:277-282; term.html:3528-3533 in the same order), so
+   * (bindings.logic.ts:289-294; term.html:3528-3533 in the same order), so
    * `alt+shift+backspace` -> `session.kill.current` matches with
    * `enabled: false`, and the lobby context that guards it is hardcoded
    * `lobbyOpen: true` (`keyContext`, :250). A component that read the matcher
@@ -826,6 +824,7 @@ describe("the one key handler xterm stores", () => {
         galleryOpen: false,
         previewOpen: false,
         previewDirty: false,
+        editing: false,
       }),
     });
     expect(matched?.command).toBe("session.kill.current");
@@ -857,10 +856,7 @@ const MIRRORING: DataWorld = { mirrorEmitting: true };
  * is `cancelScrollMomentum()`; `mirror-out-of-band` is the `mirrorLineReset()`
  * that the `!mirrorEmitting` gate lets through.
  */
-const HEAD: readonly DataAction[] = [
-  { kind: "cancel-momentum" },
-  { kind: "mirror-out-of-band" },
-];
+const HEAD: readonly DataAction[] = [{ kind: "cancel-momentum" }, { kind: "mirror-out-of-band" }];
 
 interface DataRow {
   readonly name: string;

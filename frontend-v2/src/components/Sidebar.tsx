@@ -11,9 +11,22 @@ import {
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
-import { SHARED_KEY } from "../store/collapse";
-import { groupSeqTokens, groupToken, isGroupVisible, type RenderGroup } from "./lobby.logic";
-import { attachGroupList, liveGroupOrder } from "../dnd/sidebar";
+import { SHARED_KEY, SYSTEM_KEY } from "../store/collapse";
+import {
+  groupSeqTokens,
+  groupToken,
+  isGroupVisible,
+  sessionsByName,
+  SYSTEM_GROUP_NAME,
+  type RenderGroup,
+} from "./lobby.logic";
+import {
+  attachGroupList,
+  attachSessionList,
+  GROUP_ATTR,
+  liveGroupOrder,
+  liveOrder,
+} from "../dnd/sidebar";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
@@ -24,7 +37,7 @@ import { BellIcon } from "./BellIcon";
 import type { NotificationSystem } from "../notify/notifications";
 import { StatusDot } from "./StatusDot";
 import { SpendFigure } from "./SpendFigure";
-import type { SessionTool } from "../types/lobby";
+import type { Session, SessionTool } from "../types/lobby";
 import { LOBBY_CHANNELS, type Channel } from "../diagnostics/status";
 
 /**
@@ -44,8 +57,6 @@ export const Sidebar: Component<{
   onNewSession?: (group?: string) => void;
   /** true while Alt is held (engine): overlays numbered chips on the first 10 cards. */
   altActive?: Accessor<boolean>;
-  /** confirm seam for the destructive card actions (tests inject it). */
-  confirm?: (message: string) => boolean;
   /** the notification system, for the bell in the header. The shell owns it;
    *  the header is just where it is presented (as on the vanilla page).
    *  Optional so a test can mount the sidebar without one. */
@@ -155,7 +166,13 @@ export const Sidebar: Component<{
   // render so they can be seen and dropped into. Shared with the move-up/down
   // bounds — the two reading different predicates is what let a group's Move
   // item offer a step onto a slot that renders nothing.
-  const onScreen = () => store.model().groups.filter(isGroupVisible);
+  //
+  // System is drawn by hand at the foot instead, so it is filtered out here for
+  // the same reason `visibleGroupSeqTokens` drops it: this list is also the
+  // token space the group sortable measures, and a slot the layout cannot store
+  // is a slot no drag may land on.
+  const onScreen = () =>
+    store.model().groups.filter((g) => g.kind !== "system" && isGroupVisible(g));
   /** The groups to draw: the model's sequence, or the one a header being
    *  dragged has now (dnd/sidebar.ts holds it for the length of the drag). */
   const visibleGroups = (): RenderGroup[] => {
@@ -181,6 +198,30 @@ export const Sidebar: Component<{
 
   const sharedCollapsed = () => store.collapse.isCollapsed(SHARED_KEY);
 
+  // The System group, or undefined while nothing has landed in it. Hand-rolled
+  // below rather than drawn by <ProjectGroup>, for the same reason "Shared with
+  // me" is: what it shares with a project is a header, a chevron and a count.
+  // It cannot be renamed, deleted, added to, dragged, or moved in the sequence,
+  // and every one of those controls would have needed a branch of its own.
+  const systemGroup = (): RenderGroup | undefined => {
+    const g = store.model().groups.find((x) => x.kind === "system");
+    return g && isGroupVisible(g) ? g : undefined;
+  };
+  const systemCollapsed = () => store.collapse.isCollapsed(SYSTEM_KEY);
+  const toggleSystem = () => store.collapse.toggle(SYSTEM_KEY);
+  /** The cards to draw: the model's order, or the one the pointer has now —
+   *  the same swap ProjectGroup makes, so a card dragged OUT of System leaves
+   *  the list under the finger instead of snapping back until the drop lands. */
+  const systemCards = (g: RenderGroup): Session[] => {
+    const order = liveOrder(SYSTEM_GROUP_NAME);
+    if (!order) return g.sessions;
+    const all = sessionsByName(store.model());
+    return order.flatMap((n) => {
+      const s = all.get(n);
+      return s ? [s] : [];
+    });
+  };
+
   return (
     <div class="tl-sidebar">
       {/* The lobby header, as on the vanilla page: the title carries the app,
@@ -201,9 +242,14 @@ export const Sidebar: Component<{
               />
             )}
           </Show>
+          {/* Through the store rather than straight at the pref: a switch into
+              manual freezes the visible arrangement into the layout first, and
+              the switch itself is undoable. The store still writes the choice
+              through this same pref (App wires `setSessionOrder` to it), so it
+              roams exactly as it did. */}
           <OrderMenu
             order={order}
-            onPick={(next) => props.prefs.setPref({ sidebar: { order: next } })}
+            onPick={(next) => void store.setSessionOrderMode(next)}
             hold={() => store.hold()}
           />
           <button
@@ -296,7 +342,6 @@ export const Sidebar: Component<{
               group={g}
               tick={tick}
               badge={badge}
-              confirm={props.confirm}
               showLastActive={showLastActive}
               onNewSession={props.onNewSession}
             />
@@ -345,6 +390,73 @@ export const Sidebar: Component<{
               </div>
             </Show>
           </div>
+        </Show>
+
+        {/* System, at the very foot: the sessions the lobby's own create path
+            did not make — harness fleets, and whatever else reached the tmux
+            server without saying who it was. Collapsed by default, which is the
+            point of it, so the COUNT is the whole of the evidence that
+            something landed here wrongly and has to be readable without
+            opening the group. Hand-rolled for the reasons at `systemGroup`. */}
+        <Show when={systemGroup()}>
+          {(g) => (
+            <div class="tl-group" classList={{ "tl-group-collapsed": systemCollapsed() }}>
+              <div
+                class="tl-group-header"
+                role="button"
+                tabindex={0}
+                aria-expanded={!systemCollapsed()}
+                aria-label="System group"
+                title="Sessions the lobby did not create. They attach and kill like any other. They do not notify."
+                onClick={toggleSystem}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleSystem();
+                  }
+                }}
+              >
+                <span class="tl-chev">▾</span>
+                <span class="tl-group-title">System</span>
+                <span class="tl-group-badges">
+                  <span class="tl-group-count">{g().sessions.length}</span>
+                </span>
+              </div>
+              <Show when={!systemCollapsed()}>
+                <div
+                  class="tl-group-body"
+                  // A sortable like any other group's, so a card can be dragged
+                  // OUT — which is the rescue (store.move stamps the session
+                  // `user` on the server before it writes the layout). A drop
+                  // back IN reads this name, and the store refuses it: the
+                  // layout has no slot to write.
+                  {...{ [GROUP_ATTR]: SYSTEM_GROUP_NAME }}
+                  ref={(el) =>
+                    attachSessionList(el, {
+                      group: () => SYSTEM_GROUP_NAME,
+                      names: () => g().sessions.map((s) => s.name),
+                      move: (name, group, anchor) => store.move(name, group, anchor),
+                      hold: () => store.hold(),
+                    })
+                  }
+                >
+                  <For each={systemCards(g())}>
+                    {(s) => (
+                      <SessionCard
+                        isUnseen={unseenOf}
+                        store={store}
+                        session={s}
+                        groupName={SYSTEM_GROUP_NAME}
+                        tick={tick}
+                        badge={badge}
+                        showLastActive={showLastActive}
+                      />
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          )}
         </Show>
       </div>
 

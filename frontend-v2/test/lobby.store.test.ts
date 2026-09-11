@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { createRoot } from "solid-js";
-import { createLobbyStore, type LobbyStore, type LobbyStoreOptions } from "../src/store/lobby";
+import {
+  GRACE_MS,
+  createLobbyStore,
+  type LobbyStore,
+  type LobbyStoreOptions,
+} from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
 import {
   emptyLayout,
@@ -23,10 +28,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz@x", osUser: "wizard" };
@@ -167,7 +178,11 @@ describe("lobby store", () => {
   it("loads whoami + sessions + layout and derives groups", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["a"] }], ungrouped: ["b"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a"] }],
+      ungrouped: ["b"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       expect(store.me()).toBe("wizard");
@@ -200,7 +215,10 @@ describe("lobby store", () => {
       await store.refresh();
       const id = await store.create("scratch \u{1F680}", "", "name");
       expect(isSessionId(id)).toBe(true);
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(card?.title).toBe("scratch \u{1F680}");
       // stampTitleWhenAlive's first rung, the same ladder the refresh burst uses
       await vi.advanceTimersByTimeAsync(700);
@@ -217,7 +235,10 @@ describe("lobby store", () => {
     await withStore(api, async (store) => {
       await store.refresh();
       const id = await store.create("Fix the deploy\nit 500s on push", "");
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       // The card reads as the prompt's FIRST LINE while it waits.
       expect(card?.title).toBe("Fix the deploy");
       await vi.advanceTimersByTimeAsync(7000);
@@ -322,7 +343,10 @@ describe("lobby store", () => {
       expect(isSessionId(id)).toBe(true);
       expect(api.puts).toHaveLength(1);
       expect(store.toast()).toBeNull();
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(sessionLabel(card!)).toBe(NEW_SESSION_LABEL);
     });
   });
@@ -495,9 +519,7 @@ describe("lobby store", () => {
       await store.refresh();
       store.select("8tw14vd9gyxs"); // minted here; the server has never seen it
 
-      api.sessionsVal = [
-        { ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" },
-      ];
+      api.sessionsVal = [{ ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" }];
       await store.refresh();
 
       expect(store.selected()?.name).toBe("single-word-reply");
@@ -562,7 +584,12 @@ describe("lobby store", () => {
       publishResolvedWatch("824smya2cmz5", false);
 
       api.sessionsVal = [
-        { ...sess("remove-changed-files-panel"), id: "$41", title: "Remove changed files panel", driven: true },
+        {
+          ...sess("remove-changed-files-panel"),
+          id: "$41",
+          title: "Remove changed files panel",
+          driven: true,
+        },
       ];
       await store.refresh();
 
@@ -608,13 +635,23 @@ describe("lobby store", () => {
     });
   });
 
-  it("kill: calls the API and removes the session from the model", async () => {
+  it("kill: holds the API call for the grace window, then removes the session", async () => {
+    // The kill waits out GRACE_MS with the card in place and dimmed, and Cmd+Z
+    // inside that window takes it back with nothing to undo server-side. The
+    // window's own suite is test/undo.kill.test.ts; this is the store's plain
+    // action still doing what it always did, one timer later.
+    vi.useFakeTimers();
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.kill("a");
+      expect(api.kills).toEqual([]);
+      expect(store.killing("a")).toBe(true);
+      expect(names(store)).toContain("a");
+
+      await vi.advanceTimersByTimeAsync(GRACE_MS);
       expect(api.kills).toContain("a");
       expect(names(store)).not.toContain("a");
       expect(names(store)).toContain("b");
@@ -624,7 +661,11 @@ describe("lobby store", () => {
   it("move: PUTs a layout with the session in the target project", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["a"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["a"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.move("a", "work");
@@ -732,12 +773,14 @@ describe("lobby store", () => {
   });
 
   it("kill: PUTs the layout so the entry cannot come back on the next poll", async () => {
+    vi.useFakeTimers();
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["a", "b"] };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.kill("a");
+      await vi.advanceTimersByTimeAsync(GRACE_MS);
       // The server doc — not just the local signal — must lose the entry, or
       // the next poll (past the 4s grace) pulls it straight back.
       expect(api.layoutVal.ungrouped).toEqual(["b"]);

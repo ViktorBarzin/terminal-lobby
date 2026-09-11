@@ -1,5 +1,6 @@
-import { sessionConfirmLabel, sessionTitleDraft } from "../types/lobby";
+import { sessionTitleDraft } from "../types/lobby";
 import type { LobbyStore, NotifyKind } from "../store/lobby";
+import type { UndoStore } from "../store/undo";
 import type { PaletteController } from "./palette-controller";
 import type { HelpController } from "../components/ShortcutsHelp";
 import {
@@ -52,24 +53,32 @@ export interface CommandDeps {
    *  there is none. Same `window.__tlOpenFind` bridge shape as toggleView —
    *  the lobby shell does not own the session's transcript. */
   openFind?: () => boolean;
-  /** confirm/prompt seams (window.* by default; injectable for tests). */
-  confirm?: (message: string) => boolean;
+  /** prompt seam (window.prompt by default; injectable for tests). The
+   *  confirm seam went with the kill confirm: a kill is undoable now, and
+   *  nothing else in this dispatcher asks a question. */
   prompt?: (message: string, def?: string) => string | null;
+  /**
+   * This tab's undo stack (store/undo.ts), behind `edit.undo` / `edit.redo`.
+   *
+   * Defaults to the one the lobby store carries, which App handed it at
+   * construction (LobbyStoreOptions.undo) and which it hands back out as
+   * `LobbyStore.undo` — so the two can never be different instances. A test
+   * passes its own here instead of building a store.
+   *
+   * Absent on both means a page with no undo at all, which is what a lens tab
+   * (`?as=bob`) is, and the two commands are then a silent no-op.
+   */
+  undo?: UndoStore;
 }
 
 export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
   const { store, palette, help } = deps;
-  const confirmFn = deps.confirm ?? ((m: string) => window.confirm(m));
   const promptFn = deps.prompt ?? ((m: string, d?: string) => window.prompt(m, d));
   const toggleViewFn = deps.toggleView ?? (() => window.__tlToggleView?.() ?? false);
   const openFindFn = deps.openFind ?? (() => window.__tlOpenFind?.() ?? false);
+  const undoStack = (): UndoStore | undefined => deps.undo ?? store.undo;
 
   const current = (): string | null => store.selected()?.name ?? null;
-  /** What an irreversible confirmation calls it: the id stands in for no title. */
-  const confirmLabelOf = (name: string): string => {
-    const s = store.sessions.find((x) => x.name === name);
-    return s ? sessionConfirmLabel(s) : name;
-  };
   /** What a rename box opens on: the real title, "" when there is none. */
   const titleOf = (name: string): string =>
     sessionTitleDraft(store.sessions.find((x) => x.name === name));
@@ -113,7 +122,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     // The app icon counts awaiting AND unread-finished, and only the first half
     // was reachable from the keyboard.
     if (cmd === "session.next.unseen") {
-      const target = nextMatchingTarget(order(), (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false, current());
+      const target = nextMatchingTarget(
+        order(),
+        (s: { name: string; state?: string }) => deps.isUnseen?.(s) ?? false,
+        current(),
+      );
       if (target) store.select(target.name, target.owner);
       else deps.notify("No unread sessions", "info");
       return;
@@ -136,9 +149,11 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
 
     if (cmd === "session.kill.current") {
       const sel = store.selected();
-      // Named by its id when it has no title: killing is irreversible, and
-      // `Kill session "New session"?` names every untitled session equally.
-      if (sel && confirmFn(`Kill session "${confirmLabelOf(sel.name)}"?`)) void store.kill(sel.name);
+      // Straight through, with nothing to answer first. The store holds the
+      // kill for eight seconds with the card dimmed and Cmd+Z takes it back
+      // (store/lobby.ts GRACE_MS), so the chord that used to need a modal in
+      // front of it is now safe to press by mistake.
+      if (sel) void store.kill(sel.name);
       return;
     }
 
@@ -157,9 +172,18 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "view.toggle") {
-      // From the palette or the Shortcuts sheet, which are the only ways in.
-      // The SessionView listener this used to name went when the dock reclaimed
-      // Ctrl/Cmd-J (App.tsx's `onDockKey`), so `view.toggle` has no chord.
+      // NO CHORD, on purpose: Viktor settled that on 2026-09-06, and
+      // keybindings/bindings.logic.ts carries the reasoning and the note not to
+      // add a table row. The SessionView listener this arm used to name went
+      // when the dock reclaimed Ctrl/Cmd-J (App.tsx's `onDockKey`).
+      //
+      // Nor does anything else dispatch it as of 2026-09-06: App.tsx's palette
+      // action list has no view-toggle entry, and the Shortcuts sheet only
+      // PRINTS chords. So this arm is reached from test/commands.test.ts and
+      // nowhere else, while people use the [Text | Terminal] control, which
+      // calls setMode directly. It is kept because the palette entry is the
+      // thing that is missing, and this is what that entry would run.
+      //
       // Reached through the bridge because the shell does not own the
       // per-session view mode.
       if (!toggleViewFn()) deps.notify("Open a session first", "error");
@@ -184,6 +208,34 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       // Ctrl+J. The engine's capture-phase window listener sees the keydown
       // wherever focus is, the terminal included, so this is the one path.
       deps.toggleDock();
+      return;
+    }
+
+    if (cmd === "edit.undo" || cmd === "edit.redo") {
+      // Cmd+Z / Cmd+Shift+Z, and the palette's two rows.
+      //
+      // THE CALLER TOASTS, not the store: store/undo.ts answers {ok:false,
+      // reason} and never reaches for a toast itself, so that it stays testable
+      // without a DOM and so undo can be silent when it works. Three outcomes
+      // and only one of them says anything — a refusal with a sentence toasts
+      // it, a refusal with a null reason is the silent no-op a browser gives
+      // you for Cmd+Z on an empty history, and success says nothing at all. No
+      // success toast is deliberate: the sidebar changing back IS the feedback,
+      // and a toast per press would bury the screen on a run of them.
+      //
+      // A refusal is a SENTENCE, written lower case to read after a lead-in
+      // ("that session is still running"), and the lead-in is added here
+      // rather than baked into the store: the store stays free of the
+      // direction the press was going, and a toast that began mid-sentence in
+      // lower case read as a bug. The dimmed card's arrow builds the same
+      // prefix (SessionCard.tsx `takeBack`), so one string cannot read two
+      // ways depending on which affordance you reached for.
+      const stack = undoStack();
+      if (!stack) return;
+      const lead = cmd === "edit.undo" ? "Can't undo" : "Can't redo";
+      void (cmd === "edit.undo" ? stack.undo() : stack.redo()).then((r) => {
+        if (!r.ok && r.reason) deps.notify(`${lead}: ${r.reason}`, "warning");
+      });
       return;
     }
 

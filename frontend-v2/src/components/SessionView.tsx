@@ -378,14 +378,18 @@ export const SessionView: Component<{
   });
 
   // Ctrl/Cmd+J belongs to the scratch-shell dock, as it does on the vanilla
-  // page — the view toggle keeps the [Text|Terminal] control and the
-  // `view.toggle` command, which is what a chord would have run anyway. Text
-  // mode is deferred for v1, so the segmented control is enough for it.
+  // page, and the view toggle has had no chord since. Viktor settled that on
+  // 2026-09-06: the [Text|Terminal] control is enough, and the reasoning plus
+  // the note not to add a binding row are in keybindings/bindings.logic.ts.
 
   // Publish the toggle so the lobby's command dispatcher can reach it without
-  // the shell owning the view mode: `view.toggle` runs from the palette and
-  // from the Shortcuts sheet, neither of which knows which session is mounted.
-  // Same bridge pattern as __tlOpenFind.
+  // the shell owning the view mode. Same bridge pattern as __tlOpenFind.
+  //
+  // Nothing dispatches `view.toggle` today (2026-09-06): App.tsx's palette
+  // action list has no entry for it and the Shortcuts sheet only prints chords,
+  // so this bridge is installed for a caller that does not exist yet. It stays
+  // because the missing piece is the palette entry, and this is what that entry
+  // would need in order to reach whichever session is mounted.
   const toggleView = (): boolean => {
     toggleMode();
     return true;
@@ -965,7 +969,13 @@ export const SessionView: Component<{
               resizing went with it, and sixel went on purpose (the de-iframe
               plan supersedes ADR-0004). Those are gaps to close here, not a
               reason to keep a second terminal: a way back that nobody
-              maintains is a second thing to break. */}
+              maintains is a second thing to break.
+
+              One gap has been made honest rather than closed. The Settings
+              toggle for flow control went on 2026-09-06, because it wrote
+              `tl-flow-control` and the accounting on this list is what would
+              have read it. Porting the accounting means bringing that control
+              back with it. */}
           <TerminalNative
             args={terminalFrameArgs(session, {
               cmd: props.creating ? props.newCommand?.() : undefined,

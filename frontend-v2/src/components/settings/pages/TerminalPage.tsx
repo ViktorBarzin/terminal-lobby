@@ -1,4 +1,4 @@
-import { createSignal, type Component } from "solid-js";
+import type { Component } from "solid-js";
 import {
   BOLD_WEIGHTS,
   CURSOR_STYLES,
@@ -14,7 +14,6 @@ import {
   type PrefsStore,
   type WheelSpeed,
 } from "../../../store/prefs";
-import { flowControlWanted, setFlowControlEnabled } from "../../../store/device-prefs";
 import { Group, Row, Segmented, Stepper, Toggle } from "../controls";
 import type { StepSpec } from "../stepper";
 
@@ -23,32 +22,35 @@ const LINE: StepSpec = { min: LINE_HEIGHT_MIN, max: LINE_HEIGHT_MAX, step: 0.05 
 const LETTER: StepSpec = { min: LETTER_SPACING_MIN, max: LETTER_SPACING_MAX, step: 0.1 };
 
 /**
- * Everything that changes how the terminal looks and behaves.
+ * Everything that changes how the terminal looks and behaves: Text, Cursor and
+ * "Scrolling & links".
  *
- * Four of the old groups, plus flow control, which used to sit under "This
- * browser" beside diagnostics. Those two were together because both happen to
- * be per-browser rather than because they are related: flow control is a
- * terminal behaviour, so it belongs here, wearing the chip that says where it
- * is stored.
+ * TWO ROWS HAVE LEFT THIS PAGE, and they left for the same reason. An Engine
+ * row chose which of the two terminals rendered, from the flip (2026-09-04)
+ * until the deletion (2026-09-05); there is one terminal now, and a segmented
+ * control over a single option pretends to offer a choice. A Flow control
+ * toggle sat in a group of its own called "Output" until 2026-09-06; the
+ * accounting that would have read its key never came across from term.html
+ * (SessionView.tsx lists it among what went with that page), so the toggle
+ * moved `tl-flow-control` and changed nothing a person could see. Viktor chose
+ * removal over a disabled row, on the grounds that a control which does
+ * nothing is worse than no control. Removing the row emptied "Output", so the
+ * group went too.
  *
- * An Engine row sat between them from the flip (2026-09-04) until the deletion
- * (2026-09-05), choosing which of the two terminals rendered. There is one
- * terminal now, and a segmented control over a single option is a control that
- * pretends to offer a choice, so the row went with the page it selected. The
- * key it wrote, `tl-terminal-renderer`, is simply ignored from here on; it is
- * covered by the `tl-` prefix that Clear local data drops. Anyone who had
- * deliberately picked Classic on a device gets the built-in terminal instead,
- * with no migration and no notice.
+ * Neither stored key is migrated or deleted. Both are `tl-` keys, so Clear
+ * local data sweeps them, and until then they sit unread: anyone who had
+ * picked Classic gets the built-in terminal, and anyone who had turned flow
+ * control off gets what they already had, since nothing was reading the answer.
  *
- * Every row except flow control is roamed, so a change reaches the live
- * terminal without a reload. Font size gets there through the `__tlPrefsLive`
- * receiver TerminalNative installs, which the store calls after it persists
+ * EVERY ROW LEFT HERE IS ROAMED, which is why no row on this page wears the
+ * "this device" chip any more, and why a change reaches the live terminal
+ * without a reload. Font size gets there through the `__tlPrefsLive` receiver
+ * TerminalNative installs, which the store calls after it persists
  * (store/prefs.ts). The input-bar posture is the row that still waits for the
  * terminal's next mount, and the reason is on the read.
  */
 export const TerminalPage: Component<{ prefs: PrefsStore }> = (props) => {
   const p = () => props.prefs.prefs();
-  const [flowOn, setFlowOn] = createSignal(flowControlWanted());
 
   return (
     <>
@@ -136,23 +138,6 @@ export const TerminalPage: Component<{ prefs: PrefsStore }> = (props) => {
             label="Copy button on terminal links"
             checked={p().links.copyChip}
             onChange={(on) => props.prefs.setPref({ links: { copyChip: on } })}
-          />
-        </Row>
-      </Group>
-
-      <Group title="Output">
-        <Row
-          label="Flow control"
-          deviceOnly
-          hint="Back-pressure that pauses a session flooding output. Turning it off releases a stream that is stuck paused — the terminal picks the change up immediately, no reload."
-        >
-          <Toggle
-            label="Flow control"
-            checked={flowOn()}
-            onChange={(on) => {
-              setFlowControlEnabled(on);
-              setFlowOn(on);
-            }}
           />
         </Row>
       </Group>

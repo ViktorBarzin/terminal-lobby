@@ -24,10 +24,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
@@ -82,9 +88,7 @@ function mount(api: LobbyApi, onNewSession?: (group: string) => void) {
       store.model().groups.filter((g) => g.kind === "project" || g.sessions.length > 0);
     return (
       <For each={groups()}>
-        {(g) => (
-          <ProjectGroup store={store} group={g} tick={tick} onNewSession={onNewSession} />
-        )}
+        {(g) => <ProjectGroup store={store} group={g} tick={tick} onNewSession={onNewSession} />}
       </For>
     );
   });
@@ -116,13 +120,12 @@ function twoProjects(api: FakeApi): void {
   };
 }
 
-const headers = (root: Element): HTMLElement[] =>
-  [...root.querySelectorAll<HTMLElement>(".tl-group-header")];
+const headers = (root: Element): HTMLElement[] => [
+  ...root.querySelectorAll<HTMLElement>(".tl-group-header"),
+];
 
 const titles = (root: Element): string[] =>
   [...root.querySelectorAll(".tl-group-title")].map((n) => n.textContent ?? "");
-
-
 
 const point = (el: Element, type: string, y: number, x = 150) =>
   el.dispatchEvent(
@@ -181,7 +184,17 @@ describe("<ProjectGroup> header", () => {
 
     const card = container.querySelector<HTMLElement>(".tl-card")!;
     card.getBoundingClientRect = () =>
-      ({ top: 100, bottom: 140, height: 40, left: 0, right: 300, width: 300, x: 0, y: 100, toJSON() {} }) as DOMRect;
+      ({
+        top: 100,
+        bottom: 140,
+        height: 40,
+        left: 0,
+        right: 300,
+        width: 300,
+        x: 0,
+        y: 100,
+        toJSON() {},
+      }) as DOMRect;
     document.elementFromPoint = () => card;
     point(card, "pointerdown", 120);
     await new Promise((r) => setTimeout(r, 600)); // past the 450ms hold
@@ -205,7 +218,9 @@ describe("<ProjectGroup> header", () => {
 
     fireEvent.click(getAllByLabelText("Group actions")[1]!); // bravo's menu
     await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
-    const up = [...container.querySelectorAll(".tl-menu-item")].find((b) => b.textContent === "Move up")!;
+    const up = [...container.querySelectorAll(".tl-menu-item")].find(
+      (b) => b.textContent === "Move up",
+    )!;
     fireEvent.click(up);
 
     await waitFor(() => expect(api.puts.length).toBe(1));

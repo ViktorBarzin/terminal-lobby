@@ -46,8 +46,6 @@ export const ProjectGroup: Component<{
   badge?: (name: string) => string | null;
   /** finished since you last looked (see Sidebar.unseenOf). */
   isUnseen?: (s: { name: string; state?: string }) => boolean;
-  /** confirm seam, threaded down to each session card (tests inject it). */
-  confirm?: (message: string) => boolean;
   /** the roamed `sidebar.showLastActive` pref, threaded down to each card. */
   showLastActive?: Accessor<boolean>;
   /** Show the new-session composer, preset to this project. The group used to
@@ -116,7 +114,10 @@ export const ProjectGroup: Component<{
   const del = async () => {
     menu.close();
     const n = props.group.sessions.length;
-    const msg = n > 0 ? `Delete project "${props.group.name}"? Its ${n} session(s) move to Ungrouped (not killed).` : `Delete project "${props.group.name}"?`;
+    const msg =
+      n > 0
+        ? `Delete project "${props.group.name}"? Its ${n} session(s) move to Ungrouped (not killed).`
+        : `Delete project "${props.group.name}"?`;
     if (window.confirm(msg)) await props.store.deleteProjectAction(props.group.name);
   };
   // One click, one VISIBLE slot: land on the seat of the neighbour the user can
@@ -230,7 +231,10 @@ export const ProjectGroup: Component<{
           <span class="tl-group-count">{props.group.sessions.length}</span>
           <Show when={collapsed()}>
             <Show when={counts().running > 0}>
-              <span class="tl-chip"><StateDot state="running" size={7} title={false} />{counts().running}</span>
+              <span class="tl-chip">
+                <StateDot state="running" size={7} title={false} />
+                {counts().running}
+              </span>
             </Show>
             {/* Of those running, how many are waiting on background work
                 rather than talking. Its own chip for the same reason unread
@@ -248,10 +252,16 @@ export const ProjectGroup: Component<{
               </span>
             </Show>
             <Show when={counts().awaiting > 0}>
-              <span class="tl-chip"><StateDot state="awaiting" size={7} title={false} />{counts().awaiting}</span>
+              <span class="tl-chip">
+                <StateDot state="awaiting" size={7} title={false} />
+                {counts().awaiting}
+              </span>
             </Show>
             <Show when={counts().done > 0}>
-              <span class="tl-chip"><StateDot state="done" size={7} title={false} />{counts().done}</span>
+              <span class="tl-chip">
+                <StateDot state="done" size={7} title={false} />
+                {counts().done}
+              </span>
             </Show>
             {/* Unread, as its own chip. The done chip counts every finished
                 session and renders dimmed, which is the inverse of what a card
@@ -268,7 +278,13 @@ export const ProjectGroup: Component<{
         </span>
         <span class="tl-group-actions" ref={menu.anchor}>
           <Show when={!isUngrouped()}>
-            <button class="tl-icon-btn" aria-label="New session in project" title="New session in project" draggable={false} onClick={beginAdd}>
+            <button
+              class="tl-icon-btn"
+              aria-label="New session in project"
+              title="New session in project"
+              draggable={false}
+              onClick={beginAdd}
+            >
               +
             </button>
           </Show>
@@ -294,12 +310,34 @@ export const ProjectGroup: Component<{
               onKeyDown={stopMenuActivationKey}
             >
               <Show when={!isUngrouped()}>
-                <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>Rename project</button>
+                <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>
+                  Rename project
+                </button>
               </Show>
-              <button class="tl-menu-item" role="menuitem" disabled={!canUp()} onClick={() => void moveUp()}>Move up</button>
-              <button class="tl-menu-item" role="menuitem" disabled={!canDown()} onClick={() => void moveDown()}>Move down</button>
+              <button
+                class="tl-menu-item"
+                role="menuitem"
+                disabled={!canUp()}
+                onClick={() => void moveUp()}
+              >
+                Move up
+              </button>
+              <button
+                class="tl-menu-item"
+                role="menuitem"
+                disabled={!canDown()}
+                onClick={() => void moveDown()}
+              >
+                Move down
+              </button>
               <Show when={!isUngrouped()}>
-                <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void del()}>Delete project</button>
+                <button
+                  class="tl-menu-item tl-menu-danger"
+                  role="menuitem"
+                  onClick={() => void del()}
+                >
+                  Delete project
+                </button>
               </Show>
             </div>
           </Show>
@@ -330,7 +368,6 @@ export const ProjectGroup: Component<{
                 groupName={isUngrouped() ? "" : props.group.name}
                 tick={props.tick}
                 badge={props.badge}
-                confirm={props.confirm}
                 showLastActive={props.showLastActive}
               />
             )}
