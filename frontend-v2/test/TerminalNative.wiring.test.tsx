@@ -703,9 +703,18 @@ function reportMouse(term: InstanceType<typeof xt.FakeTerminal>): string[] {
  * do not fake it (measured), so a test that needs a LONG gap on both clocks
  * has to stub that one as well (`fakeNow` below).
  */
-function touchEvent(type: string, ys: readonly number[], t: number): Event {
+function touchEvent(
+  type: string,
+  ys: readonly number[],
+  t: number,
+  changed?: readonly { clientX: number; clientY: number }[],
+): Event {
   const e = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(e, "touches", { value: ys.map((y) => ({ clientY: y })) });
+  // The lifted finger, which `touches` no longer holds and which only the link
+  // probe reads. Opt-in, so every case that does not care about the probe keeps
+  // dispatching the same shape it always did.
+  if (changed) Object.defineProperty(e, "changedTouches", { value: changed });
   Object.defineProperty(e, "timeStamp", { value: t });
   return e;
 }
@@ -2934,6 +2943,53 @@ describe("touch scroll (term.html:6478-6556)", () => {
     hostOf(m).dispatchEvent(touchEvent("touchend", [], 20));
     expect(m.term.focused).toBe(booted + 1);
     expect(document.activeElement).not.toBe(field);
+  });
+
+  /**
+   * THE LINK PROBE, which is the one thing a tap does before it decides
+   * anything: it hands xterm the finger's point as a mousemove.
+   *
+   * xterm learns about a link from `mousemove`, and on a touchscreen the compat
+   * one arrives AFTER `touchend` — after the lift has already taken the focus.
+   * Dispatching the same point a moment early is what lets `overLink()` answer
+   * honestly at the lift.
+   *
+   * Two claims, and the second is the one worth having: the probe lands on the
+   * screen element untrusted and at the finger, and it costs an ordinary tap
+   * nothing. Nothing here is over a link, so the tap still focuses the mirror.
+   */
+  it("asks xterm what is under the finger before the tap decides", async () => {
+    const { m, screen } = await onTouch();
+    const seen: MouseEvent[] = [];
+    screen.addEventListener("mousemove", (e) => seen.push(e as MouseEvent));
+    const field = m.mirror();
+    field.blur();
+    finger(m, [300, 0], [[298, 10]]); // 2px: still a tap
+    hostOf(m).dispatchEvent(
+      touchEvent("touchend", [], 20, [{ clientX: 12, clientY: 298 }]),
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.clientX).toBe(12);
+    expect(seen[0]?.clientY).toBe(298);
+    expect(seen[0]?.isTrusted).toBe(false);
+    expect(document.activeElement).toBe(field);
+  });
+
+  /**
+   * A touchend with no `changedTouches` must still scroll.
+   *
+   * Not a hypothetical: the probe read `e.changedTouches[0]` unguarded, the
+   * TypeError was swallowed by the dispatcher, and `feedTouch` below it never
+   * ran — so the lift was lost and with it the tap focus and every coast. The
+   * probe is an ADDITION to this listener and may not be able to break it.
+   */
+  it("still lifts when the touchend carries no changed touch", async () => {
+    const { m } = await onTouch();
+    const field = m.mirror();
+    field.blur();
+    finger(m, [300, 0], [[298, 10]]);
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 20));
+    expect(document.activeElement).toBe(field);
   });
 
   /**
