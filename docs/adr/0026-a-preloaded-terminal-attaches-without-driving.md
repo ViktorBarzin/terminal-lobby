@@ -84,8 +84,8 @@ client reflows it, and it stays reflowed until something attaches. That is what
 clicking the card would have done anyway, so we are accepting it; it is written
 down here because the flag reads like a stronger guarantee than it is.
 
-**And in the shipped configuration those two limits meet, so the flag protects
-nothing at the tmux level.** Driving the real UI on 2026-09-11 showed why. A
+**On the DEFAULT path those two limits meet, and the flag has nothing to do.**
+Driving the real UI on 2026-09-11 showed why. A
 preload that would resolve to Watch mode is dropped rather than attached
 (`SessionView` reports `failed`), because a read-only attach would call
 `PinGrid` permanently. Watch mode's `unset` resolves to watching exactly when
@@ -95,15 +95,21 @@ client, which is the case where tmux stops honouring the flag. Every one of the
 four naturally-attached sessions on the box behaved this way, and reaching the
 protected case at all needed a hand-recorded drive choice.
 
-What the flag still earns is not size protection. It is the marker that keeps a
-preload out of the driven mark, so hovering down the sidebar does not restamp
-every card's timer, and it is how `POST /sessions/{name}/grid` finds which
-client to promote. Both are load-bearing. The size guarantee is the part that
-does not survive contact.
+**The path where it does work is an explicit drive choice.** `resolveWatch`
+reads `choice ?? driven`, so a card the user has set to drive from its
+`Attach as` menu beats the driven count, and a preload then lands on a session
+that already has a read-write client. That is the desktop-and-phone case, and it
+is the one where a reflow costs the most, so the flag guards the configuration
+worth guarding. Read from the code rather than clicked: the measurement reached
+it by writing the key the menu writes.
 
-What actually protects the reachable harm is the fix below, because a PINNED
-session with only a watcher attached is not driven, so it does get preloaded,
-and its hook is what sizes it.
+Two other things the flag earns on every path. It keeps a preload out of the
+driven mark, so hovering down the sidebar does not restamp every card's timer,
+and it is how `POST /sessions/{name}/grid` finds which client to promote.
+
+For the default path, what protects the reachable harm is the fix below, because
+a PINNED session with only a watcher attached is not driven, so it does get
+preloaded, and its hook is what sizes it.
 
 **A pinned session needed a second fix, in a different file.** `PinGrid` takes
 sizing away from tmux (`window-size manual`) and gives it back through a hook
