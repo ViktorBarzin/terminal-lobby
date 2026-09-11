@@ -53,29 +53,80 @@ const (
 	gridMaxCells = 10000
 )
 
-// The tmux-touching seam, as a var so the handler's tests stay pure units.
+// The tmux-touching seams, as vars so the handler's tests stay pure units.
 var sizeGrid = func(osUser, name string, cols, rows int) (bool, error) {
 	return gridInjector.SizeGrid(osUser, name, cols, rows)
 }
 
-// sessionDriven reports whether the session has at least one READ-WRITE client
-// attached. Same question markDriven answers for the session list, asked of one
-// session: a session nobody is driving must not have its grid claimed.
+// sessionClients lists the clients attached to ONE session, in the format and
+// with the parse the session list already uses (driven.go). One fork answers
+// both questions below: who is driving, and which client a hover left behind.
 //
-// A tmux that cannot be read at all answers false, which fails closed: the
-// window keeps the size it has.
-var sessionDriven = func(osUser, name string) bool {
+// A tmux that cannot be read at all answers with no clients, which fails closed
+// at both readers: nobody is driving, so the window keeps the size it has, and
+// there is nothing to promote.
+var sessionClients = func(osUser, name string) []client {
 	out, err := tmuxCmd(osUser, "list-clients", "-t", exactSession(name),
 		"-F", clientsListFmt).Output()
 	if err != nil {
-		return false
+		return nil
 	}
-	for _, c := range parseClients(out) {
+	return parseClients(out)
+}
+
+// promoteClient turns ONE client's ignore-size flag off. The leading `!` is
+// tmux's own syntax for clearing a flag, and this is what makes a hover's
+// preload client start driving the window size. Measured on tmux 3.4 here on
+// 2026-09-11: a 200x50 client attached with `-f ignore-size` left an 80x39
+// window alone, and this call moved the window to 200x49.
+var promoteClient = func(osUser, clientName string) error {
+	return tmuxCmd(osUser, "refresh-client", "-t", clientName, "-f", "!ignore-size").Run()
+}
+
+// anyoneDriving reports whether the list holds at least one READ-WRITE client.
+// Same question markDriven answers for the session list, asked of one session:
+// a session nobody is driving must not have its grid claimed.
+//
+// It counts a preload client, where markDriven does not, and the difference is
+// deliberate. By the time this runs the preload has just been promoted, so it
+// IS the driving client — but the flags in hand were read before that call, so
+// judging on them would 409 the very request that promoted it.
+func anyoneDriving(clients []client) bool {
+	for _, c := range clients {
 		if !isReadOnly(c.Flags) {
 			return true
 		}
 	}
 	return false
+}
+
+// preloadClientName picks the client a hover left attached, by name, or "" when
+// the session has none. There is normally at most one: the lobby keeps a single
+// preload slot per tab, and a hover replaces it.
+//
+// Only the first is returned when two tabs have hovered the same session at
+// once. This endpoint cannot tell which tmux client the caller is (the header
+// comment above says why), so promoting all of them would hand the window size
+// to a client nobody is looking at; promoting one keeps that to the smallest
+// possible mistake, and the other tab's next click promotes its own.
+//
+// A client tmux did not name cannot be a `-t` target, so it is skipped rather
+// than promoted blind.
+//
+// The FLAGS decide this, not whether anyone has typed into the client, which is
+// where it parts company with the driven mark (driven.go). A ttyd reconnect
+// re-attaches with `-f ignore-size` for a session already being driven, so a
+// client carrying the flag can have hands on it and no hover anywhere in sight
+// — and that client is precisely the one whose window is not following it. It
+// asking for its grid is what promotion is for, so it is promoted like any
+// other; tmux gates the window on the flag, whoever is behind it.
+func preloadClientName(clients []client) string {
+	for _, c := range clients {
+		if c.Name != "" && hasPreloadFlags(c.Flags) {
+			return c.Name
+		}
+	}
+	return ""
 }
 
 func sizeSessionGrid(w http.ResponseWriter, r *http.Request, osUser, name string) {
@@ -96,7 +147,20 @@ func sizeSessionGrid(w http.ResponseWriter, r *http.Request, osUser, name string
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	if !sessionDriven(osUser, name) {
+
+	clients := sessionClients(osUser, name)
+	// A session this tab hovered is already attached, with ignore-size on so the
+	// early attach did not take the window from whoever was reading it
+	// (ADR-0026). Reporting a size is what the click looks like from here, so
+	// this is where that client stops ignoring size. Best-effort: the sizing
+	// below is the point of the request, and a client that failed to promote is
+	// exactly as it was a moment ago.
+	if c := preloadClientName(clients); c != "" {
+		if err := promoteClient(osUser, c); err != nil {
+			log.Printf("promote preload client %s on %s as %s failed: %v", c, name, osUser, err)
+		}
+	}
+	if !anyoneDriving(clients) {
 		http.Error(w, "nobody is driving this session", http.StatusConflict)
 		return
 	}

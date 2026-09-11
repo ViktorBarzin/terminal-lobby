@@ -30,7 +30,7 @@ var gridHooks = []string{"client-attached", "client-resized", "client-detached"}
 // GridPinStale tell "pinned by a build that thought differently" from "pinned
 // correctly", which turns repairStaleGridPins into the deploy path for a hook
 // change. Bump it whenever gridHook's behaviour changes.
-const gridHookMark = "tl-grid-v2"
+const gridHookMark = "tl-grid-v3"
 
 // gridSizeMax bounds a grid a client may ask for. tmux's own limit is far
 // higher; this is only here so a browser reporting nonsense mid-layout cannot
@@ -359,6 +359,21 @@ func (in *Injector) gridHook(session string) string {
 		sock = "-L " + in.socket + " "
 	}
 	target := exactPane(session)
+	// TWO CLIENT KINDS ARE FILTERED OUT, for the same reason by different routes.
+	//
+	// `read-only` is the watcher this pin exists to ignore.
+	//
+	// `ignore-size` is a PRELOAD client (ADR-0026): a hover attaches read-write
+	// with tmux's ignore-size flag so it cannot move the window before the user
+	// has committed. tmux honours that flag on its own, but THIS HOOK DOES NOT GO
+	// THROUGH TMUX — it reads the client list and calls resize-window itself, so
+	// a flag tmux would have respected means nothing here. A preload is also the
+	// newest client, and the sort below picks the most recent, so without this
+	// filter it wins outright. Measured on tmux 3.4 on 2026-09-11: a pinned
+	// session sitting at 80x39 with its owner attached went to 200x49 the moment
+	// a 200x50 preload joined, and stayed there. A pin is never reverted, so
+	// every session that has ever been watched carried that exposure.
+	//
 	// The status line is NOT part of the window. tmux sizes a window to the
 	// client's height MINUS its status lines, so resizing to the raw
 	// client_height makes the window one row taller than the visible area and
@@ -372,7 +387,7 @@ func (in *Injector) gridHook(session string) string {
 	return fmt.Sprintf(
 		`run-shell -b '{ : %s; tmux %slist-clients -t %s `+
 			`-F "##{client_activity} ##{client_flags} ##{client_width} ##{client_height}" `+
-			`| grep -v read-only | tac | sort -s -k1,1rn | head -1 `+
+			`| grep -v read-only | grep -v ignore-size | tac | sort -s -k1,1rn | head -1 `+
 			`| while read a f w h; do `+
 			`s=$(tmux %sdisplay -p -t %s "##{status}"); `+
 			`case $s in off) n=0;; [0-9]) n=$s;; *) n=1;; esac; `+

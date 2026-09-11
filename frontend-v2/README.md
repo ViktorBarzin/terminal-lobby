@@ -254,6 +254,11 @@ src/
     terminal-url.ts      ttyd `?arg=` POSITIONAL contract (incl. the foreign-
                          owner 4th arg, which the act-as target defaults into)
                          — red-line-class, unit-tested
+    prefetch.ts          Warms the lazily-imported xterm chunk (329,698 B raw,
+                         82,870 B gzipped) at idle after first paint, so the
+                         first terminal open of a page load does not wait for
+                         it. Not a modulepreload: on a 400 kbps link 82 KB
+                         would sit in front of the session list
   diagnostics/
     usage.ts             Data used: what the lobby cost THIS device in wire
                          bytes, so the question the 1.83 GB/24h measurement
@@ -456,6 +461,12 @@ src/
                          Appends only and hands back stable entries: moving or
                          replacing a slot would rebuild its terminal, which is the
                          1,797 ms cover this exists to remove
+    preload.ts           PURE rules for the ONE session a hover has already
+                         attached, 250 ms before the click. keepalive fired
+                         earlier: same cost minus the transcript, one slot, a
+                         60 s TTL, desktop and own-sessions only. The attach
+                         carries tmux's ignore-size flag so it cannot move the
+                         window, and a click promotes it (ADR-0026)
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildTerminalArgs } from "../src/lib/terminal-url";
+import { buildTerminalArgs, type TerminalUrlOpts } from "../src/lib/terminal-url";
 import { projectDirFor } from "../src/components/App";
 import { LAYOUT_VERSION, type Layout } from "../src/types/lobby";
 
@@ -230,5 +230,136 @@ describe("buildTerminalArgs — the model and effort a new session starts on", (
     expect(buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p" })).toBe(
       "arg=foo&arg=claude&arg=%2Fsrv%2Fp",
     );
+  });
+});
+
+/**
+ * arg5 — the ATTACH MODE, now a three-valued slot.
+ *
+ * Position 5 carries what the client is asking the attach to be: absent for a
+ * drive, "ro" for a watch, "pre" for a preload (ADR-0026). The three are one
+ * question with three answers, so they share one slot rather than getting a
+ * position each — which is also why a caller that asks for two of them at once
+ * is a programming error rather than a precedence puzzle.
+ *
+ * These are table-driven on purpose: the failure this pins is POSITIONAL, so
+ * the assertion has to be the whole `arg` list for each mode side by side, not
+ * a spot check on the value that moved.
+ */
+describe("buildTerminalArgs — arg5 is drive | watch | preload", () => {
+  const withCmdAndDir: ReadonlyArray<{
+    label: string;
+    opts: TerminalUrlOpts;
+    args: string[];
+  }> = [
+    {
+      label: "drive: no mode arg at all, so the list stops at arg3",
+      opts: { cmd: "claude", dir: "/srv/p" },
+      args: ["foo", "claude", "/srv/p"],
+    },
+    {
+      label: "watch: ro at arg5, owner blank at arg4",
+      opts: { cmd: "claude", dir: "/srv/p", watch: true },
+      args: ["foo", "claude", "/srv/p", "", "ro"],
+    },
+    {
+      label: "preload: pre at arg5, owner blank at arg4",
+      opts: { cmd: "claude", dir: "/srv/p", preload: true },
+      args: ["foo", "claude", "/srv/p", "", "pre"],
+    },
+  ];
+
+  it.each(withCmdAndDir)("$label", ({ opts, args }) => {
+    expect(new URLSearchParams(buildTerminalArgs("foo", opts)).getAll("arg")).toEqual(args);
+  });
+
+  // The same three with NOTHING else chosen, which is what a sidebar hover
+  // actually sends. Every earlier slot has to be filled with its placeholder or
+  // "pre" lands in the owner slot, where tmux-attach.sh reads it as an OS user
+  // named "pre" and the attach silently becomes an ordinary read-write drive —
+  // the exact thing ignore-size exists to prevent.
+  const bare: ReadonlyArray<{ label: string; opts: TerminalUrlOpts; args: string[] }> = [
+    { label: "drive", opts: {}, args: ["foo"] },
+    { label: "watch", opts: { watch: true }, args: ["foo", "default", "default", "", "ro"] },
+    { label: "preload", opts: { preload: true }, args: ["foo", "default", "default", "", "pre"] },
+  ];
+
+  it.each(bare)("bare $label: placeholders ahead of the mode", ({ opts, args }) => {
+    const u = buildTerminalArgs("foo", opts);
+    expect(new URLSearchParams(u).getAll("arg")).toEqual(args);
+    expect(u.match(/arg=/g)?.length).toBe(args.length);
+  });
+
+  it("the preload literal is the one MODE_RE matches", () => {
+    // devvm/tmux-attach.sh validates arg5 against ^(ro|rw|pre)$ and maps "pre"
+    // to `attach-session -f ignore-size`. Anything else is no request at all.
+    const args = new URLSearchParams(buildTerminalArgs("foo", { preload: true })).getAll("arg");
+    expect(args[4]).toBe("pre");
+    expect(args).toHaveLength(5);
+  });
+
+  it("preload:false is identical to omitting it — no arg5, no shape change", () => {
+    for (const opts of [
+      {},
+      { cmd: "claude" },
+      { dir: "/d" },
+      { owner: "bob" },
+      { cmd: "claude", dir: "/d", owner: "bob" },
+      { cmd: "claude", model: "claude-opus-5", effort: "max" },
+    ]) {
+      expect(buildTerminalArgs("foo", { ...opts, preload: false })).toBe(
+        buildTerminalArgs("foo", opts),
+      );
+    }
+  });
+
+  it("a launch model cannot push the preload request off arg5", () => {
+    // The deep branch builds arg5 separately from the mid one, so it gets its
+    // own assertion — an off-by-one here is how arg4 died once already.
+    const u = buildTerminalArgs("foo", {
+      cmd: "codex",
+      dir: "/srv/p",
+      preload: true,
+      model: "gpt-5.6-terra",
+      effort: "high",
+    });
+    expect(new URLSearchParams(u).getAll("arg")).toEqual([
+      "foo",
+      "codex",
+      "/srv/p",
+      "",
+      "pre",
+      "gpt-5.6-terra",
+      "high",
+    ]);
+  });
+
+  it("keeps an owner on arg4 and the preload request on arg5", () => {
+    // The builder is positional and nothing more: a preload is own-sessions-
+    // only, and that refusal lives in tmux-attach.sh, which denies a "pre"
+    // naming another owner. What is pinned here is only that the shape does
+    // not corrupt if such a request is ever built.
+    const u = buildTerminalArgs("foo", { owner: "bob", preload: true });
+    expect(new URLSearchParams(u).getAll("arg")).toEqual([
+      "foo",
+      "default",
+      "default",
+      "bob",
+      "pre",
+    ]);
+  });
+
+  // Watch and preload are the same slot answering the same question, so asking
+  // for both is a bug in the caller. It throws rather than picking a winner:
+  // silently demoting a preload to a watch would attach read-only, which calls
+  // PinGrid, and grid.go never reverts a pin — so every card the pointer
+  // crossed would keep a grid pin for life (ADR-0026). A loud error on the
+  // first hover is cheaper than that, and it cannot be mistaken for working.
+  it.each([
+    { label: "on its own", opts: { watch: true, preload: true } },
+    { label: "down the model/effort branch", opts: { watch: true, preload: true, model: "claude-opus-5" } },
+    { label: "with an owner", opts: { watch: true, preload: true, owner: "bob" } },
+  ])("throws when a caller asks for a watch and a preload at once ($label)", ({ opts }) => {
+    expect(() => buildTerminalArgs("foo", opts)).toThrow(/mutually exclusive/i);
   });
 });

@@ -214,6 +214,43 @@ func TestPinnedGridIsOwnedOnlyByReadWriteClients(t *testing.T) {
 	}
 }
 
+// A PRELOAD client must not move a pinned grid either, and it is a different
+// case from a watcher: it is read-WRITE, so `grep -v read-only` never sees it.
+//
+// The flag it carries, tmux's ignore-size, is honoured by tmux itself — but
+// this pin takes sizing away from tmux on purpose (window-size manual) and the
+// hook does the choosing, so a flag tmux would have respected counts for
+// nothing unless the hook reads it. A preload is also the NEWEST client, and
+// the hook picks the most recent, so before `grep -v ignore-size` it won
+// outright: measured on tmux 3.4 on 2026-09-11, a pinned session at 80x39 with
+// its owner attached jumped to 200x49 when a 200x50 preload joined, and stayed.
+// A pin is never reverted, so every session ever watched carried that.
+func TestPinnedGridIgnoresAPreloadClient(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	owner := attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+
+	preload := attach(t, sock, "demo", 80, 24, "-f", "ignore-size")
+	if got := grid(t, sock); got != "200x50" {
+		t.Errorf("preload attached: grid = %s, want 200x50", got)
+	}
+
+	preload.resize(t, 60, 20)
+	if got := grid(t, sock); got != "200x50" {
+		t.Errorf("preload resized: grid = %s, want 200x50", got)
+	}
+
+	// The owner leaving is what exposed the read-only case, so check it here
+	// too: a preload left alone must not inherit the window.
+	owner.close()
+	if got := grid(t, sock); got != "200x50" {
+		t.Errorf("owner detached, preload alone: grid = %s, want it frozen at 200x50", got)
+	}
+}
+
 // Pinning must not cost the owner control: their attach and their live resize
 // both still drive the grid.
 func TestPinnedGridStillFollowsTheReadWriteClient(t *testing.T) {

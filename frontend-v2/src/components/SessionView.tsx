@@ -5,6 +5,7 @@ import {
   For,
   onCleanup,
   Show,
+  untrack,
   type Component,
   type JSX,
 } from "solid-js";
@@ -27,13 +28,7 @@ import { dismissOnPress } from "./overlay";
 import { installImageClipboard } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile } from "../lib/ownwhile";
-import {
-  CameraIcon,
-  ClipboardIcon,
-  EyeIcon,
-  FileTextIcon,
-  ImageIcon,
-} from "./Icons";
+import { CameraIcon, ClipboardIcon, EyeIcon, FileTextIcon, ImageIcon } from "./Icons";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
 import { uploadAttachments } from "../clipboard/attach-files";
@@ -43,6 +38,7 @@ import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
 import { setSessionGrid } from "../lib/lobby-api";
+import { refocusTerminal } from "../keybindings/refocus";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { modelHarness } from "../lib/models";
@@ -70,6 +66,26 @@ export const SessionView: Component<{
    *  sizes a window to its smallest attached client — every other client on
    *  that session would be dragged down with it. Defaults to visible. */
   visible?: boolean;
+  /**
+   * TRUE while this mount is only a PRELOAD: a hover attached it, and nobody
+   * has asked to see it yet (ADR-0026). It changes two things and nothing else
+   * — the attach carries `pre` at arg5, and the transcript stream stays shut —
+   * and it goes false when the click promotes this same mount into the session
+   * on screen. Absent means an ordinary view, which is every other call site.
+   */
+  preloading?: () => boolean;
+  /**
+   * The preload's attach reported itself. `landed` means the socket is up and
+   * the terminal drawn, which is what lets the slot survive the pointer
+   * leaving; `failed` means it will not happen — the session died between the
+   * poll and the dwell, and a `pre` attach never creates one — so the slot is
+   * dropped rather than held for its TTL around a dead terminal.
+   *
+   * Only a preloading mount speaks. Fires unguarded by visibility, unlike
+   * `status.onTerminalConn`: a preload is hidden by definition, so that guard
+   * would silence exactly the mount this is for.
+   */
+  onPreload?: (state: "landed" | "failed") => void;
   /** Bar slots. On a phone the shell bar is folded into this one to buy back a
    *  40px row, so the shell's own controls are passed in rather than duplicated
    *  here. Both are empty on a desktop, where the shell bar carries them itself.
@@ -184,7 +200,11 @@ export const SessionView: Component<{
    */
   const setModel = (choice: { model: string; effort: string }) => {
     const h = modelHarness(props.tool?.());
-    if (!h) return Promise.resolve({ ok: false as const, reason: "No model to pick here." });
+    if (!h)
+      return Promise.resolve({
+        ok: false as const,
+        reason: "No model to pick here.",
+      });
     return setSessionModel({
       session,
       harness: h,
@@ -193,13 +213,46 @@ export const SessionView: Component<{
       ladder: [0],
     });
   };
+  /**
+   * This view was mounted by a HOVER, before the user said they wanted the
+   * session (ADR-0026).
+   *
+   * It goes FALSE the moment the user commits, and that is the whole of the
+   * promotion on this side: the mount stays, the socket stays, the slot simply
+   * stops being a preload and starts being the session on screen.
+   *
+   * Declared up here because `createWatchMode` below reads it while it builds
+   * its latch, and a `const` declared after the call would be in its TDZ.
+   */
+  const preloading = () => props.preloading?.() === true;
   // Watch mode is per (session, device) and lives only in this browser — the
   // desktop keeps driving the same session while the phone watches it.
+  //
+  // THE JOIN DECISION IS RE-TAKEN ON PROMOTION, which is the only thing the
+  // `preloading()` read in the session accessor is for. `createWatchMode`
+  // latches `driven` once per session and reads it untracked, so a hover would
+  // otherwise decide for a session nobody had asked for and hold that answer
+  // for the 60 s the slot survives: a session the desktop started driving in
+  // the meantime would come up read-WRITE on the click, and `claimGrid` would
+  // take its window. Promotion is this mount taking the session on for the
+  // first time, so it re-latches the way moving to another session does.
   const [watch, , toggleWatch] = createWatchMode(
-    () => session,
+    () => {
+      preloading();
+      return session;
+    },
     () => props.driven?.() ?? false,
     () => props.lens?.() ?? "",
   );
+  // AND A PRELOAD TELLS THE SIDEBAR NOTHING. `createWatchMode` publishes what
+  // it resolved, and a card prefers that over its own live answer
+  // (store/watchmode.ts `resolvedWatchFor`) — so a hidden speculative mount
+  // would freeze every hovered card's eye marker on whatever was true 250 ms
+  // after the pointer arrived. Created after that publish, so it runs after it.
+  createEffect(() => {
+    watch();
+    if (preloading()) clearResolvedWatch(session);
+  });
   /** The user this tab is acting as, "" in an ordinary tab. */
   const lens = () => props.lens?.() ?? "";
   /**
@@ -213,6 +266,39 @@ export const SessionView: Component<{
    */
   const onScreen = () => props.visible !== false;
 
+  /* ---- the preload (ADR-0026) -------------------------------------------
+   *
+   * A preload is the ordinary view in every respect but four. Its attach
+   * carries `pre` at arg5, so tmux joins it with the ignore-size flag and it
+   * cannot move the session's window. It holds back the transcript stream a
+   * remembered Text view would otherwise open. It says nothing to the shared
+   * connection model or to the sidebar, because nobody asked for it. And it
+   * refuses to attach at all if its join decision comes out read-only.
+   *
+   * `preloading` itself is declared above, beside the watch latch that reads it.
+   */
+  /**
+   * THE ATTACH MODE IS THE MOUNT'S, read once and never again.
+   *
+   * `terminal/attach.ts` captures the args when it opens the socket, so this
+   * describes a connection that already exists: it stays `pre` for the life of
+   * this mount, promotion included. The tmux client is promoted server-side
+   * instead, by the grid call `claimGrid` already makes (tmux-api/grid_size.go
+   * clears ignore-size in front of its sizing work). Recomputing it on
+   * promotion would only rebuild the terminal this exists to keep.
+   *
+   * A WATCH IS NOT A PRELOAD AND CANNOT BE MADE INTO ONE. Both ride arg5,
+   * `terminalFrameArgs` throws on the pair, and a read-only attach calls
+   * PinGrid, which `grid.go` never reverts. The card declines to preload a
+   * session it would open watching, and `driven` can still flip inside the
+   * 250 ms dwell — so a preload whose join resolves read-only attaches NOTHING
+   * and reports itself failed, which drops the slot. Clicking the card then
+   * opens it the ordinary read-only way, one mount later. Sending `ro` from
+   * the hidden mount instead would pin the window of a session the pointer
+   * merely crossed, for the life of that session.
+   */
+  const preloadAttach = untrack(() => preloading());
+
   // The terminal's two levers, captured on mount and published UP only while
   // this view is the one on screen. Every visited session stays mounted, so the
   // shell must be talking to the terminal a person is actually looking at —
@@ -225,6 +311,13 @@ export const SessionView: Component<{
   let terminalCopy: () => void = () => {};
   createEffect(() => {
     if (!props.status) return;
+    // A PRELOAD SAYS NOTHING HERE EITHER. It is hidden by definition, so the
+    // branch below would fire on mount and withdraw the terminal channel of
+    // the session someone is actually reading: an amber badge over a dropped
+    // socket would clear, the Reconnect button beside it would go, and an
+    // in-flight `Run check` would resolve `null` — all from a pointer resting
+    // on an unrelated card.
+    if (preloading()) return;
     if (!onScreen()) {
       // Leaving the screen withdraws this view's terminal from the model, the
       // same way the transcript below withdraws its stream. Without it, going
@@ -301,6 +394,13 @@ export const SessionView: Component<{
   const claimGrid = (cols: number, rows: number): void => {
     if (watch()) return;
     if (props.owner && props.owner !== props.me?.()) return;
+    // A THIRD REFUSAL, and it is the preload's whole promise. This endpoint
+    // makes the caller's client the one the window follows, which is exactly
+    // what a hover must not do: the first claim clears the ignore-size flag, so
+    // claiming from a hidden speculative attach would move a phone's window to
+    // this desktop's size for a session nobody here has opened (ADR-0026). The
+    // claim that REVEALS this same terminal is the promotion.
+    if (preloading()) return;
     const grid = `${cols}x${rows}`;
     const now = Date.now();
     if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
@@ -308,6 +408,63 @@ export const SessionView: Component<{
     claimedAt = now;
     void setSessionGrid(session, cols, rows);
   };
+
+  /**
+   * The preload's attach, in the vocabulary `store/preload.ts` speaks.
+   *
+   * `open` is the slot landing: from there it survives the pointer leaving,
+   * because hover, glance away, click is a common mouse path. `closed` is the
+   * ladder giving up, which for a `pre` attach mostly means the session went
+   * away between the poll and the dwell — a preload never creates one. Every
+   * other phase is the socket still trying, and says nothing.
+   */
+  const notePreload = (report: TerminalReport): void => {
+    if (!preloadAttach) return;
+    if (report.state === "open") props.onPreload?.("landed");
+    else if (report.state === "closed") props.onPreload?.("failed");
+  };
+
+  /**
+   * A preload whose join resolves READ-ONLY gives the slot back unattached.
+   *
+   * The card declines to preload a session it would open watching, and the
+   * preload store re-checks only what it can see from where it sits — pointer
+   * type, ownership, already open. Neither closes the 250 ms in between, and
+   * the lobby poll lands `driven: true` inside it often enough to matter. A
+   * read-only attach calls PinGrid and `grid.go` never reverts a pin, so the
+   * one thing this must not do is send `ro` anyway.
+   *
+   * `failed` is the store's word for "this attach will not happen", and it
+   * drops the slot rather than leaving a mount waiting out the 60 s TTL. The
+   * click still works: it comes back as an ordinary read-only open, which is
+   * what it would have been with no hover at all.
+   */
+  createEffect(() => {
+    if (preloading() && watch()) props.onPreload?.("failed");
+  });
+
+  /**
+   * A revealed preload takes the keyboard, because nothing else will.
+   *
+   * TerminalNative focuses itself once, at boot, and only when the boot fit
+   * found a box — which a mount inside `display: none` never does. So an
+   * ordinary first open lands with the cursor in the terminal and a preloaded
+   * one would land with it on `<body>`, where the first thing typed goes
+   * nowhere. This is the one place that difference can be closed from.
+   *
+   * `queueMicrotask` because the bridge it calls is claimed by an effect
+   * created LATER than this one (TerminalNative's `ownWhile`, inside its async
+   * mount), so calling it inline would reach the terminal going off screen.
+   * Once only, and only for a mount that started as a preload: a kept session
+   * coming back on screen keeps today's behaviour.
+   */
+  let revealed = false;
+  createEffect(() => {
+    if (!preloadAttach || revealed) return;
+    if (preloading() || !onScreen() || mode() !== "terminal") return;
+    revealed = true;
+    queueMicrotask(() => refocusTerminal());
+  });
 
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is
@@ -323,8 +480,15 @@ export const SessionView: Component<{
   // keeps filling behind it. `start()` is idempotent, so this effect re-running
   // (and the remembered-Text case, where it is true on the very first run)
   // opens exactly one stream.
+  //
+  // A PRELOAD OPENS NOTHING, whatever view it would land on. A hover that
+  // crossed a session last read in Text mode would otherwise open its
+  // `/events` stream and its `watchPanes` subscriber on the server, which is
+  // the cost ADR-0026 says a preload does not pay. The gate lifts on
+  // promotion and this effect re-runs then: the click is what asks for the
+  // transcript.
   createEffect(() => {
-    if (mode() === "text") store.start();
+    if (mode() === "text" && !preloading()) store.start();
   });
 
   const rows = createMemo(() => deriveRows(store.events));
@@ -484,8 +648,7 @@ export const SessionView: Component<{
   const attachFiles = (files: File[]): Promise<DraftAttachment[]> =>
     uploadAttachments(files, session, { notify: props.notify });
 
-  const resolve = (reqId: string, d: PermissionDecision) =>
-    void store.resolvePermission(reqId, d);
+  const resolve = (reqId: string, d: PermissionDecision) => void store.resolvePermission(reqId, d);
 
   // ---- mobile input subsystem (design pillar #2 — Mobile/Touch) -----------
   // Coarse-pointer only. The soft-key toolbar + mobile compose route bytes into
@@ -679,7 +842,12 @@ export const SessionView: Component<{
               <span class="tl-session-caret">▾</span>
             </button>
             <Show when={picker.open()}>
-              <div class="tl-menu tl-session-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+              <div
+                class="tl-menu tl-session-menu"
+                role="menu"
+                onClick={stopMenuClick}
+                onKeyDown={stopMenuActivationKey}
+              >
                 <For each={props.otherSessions?.() ?? []}>
                   {(other) => (
                     <button
@@ -851,7 +1019,12 @@ export const SessionView: Component<{
               ⋯
             </button>
             <Show when={barMenu.open()}>
-              <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+              <div
+                class="tl-menu"
+                role="menu"
+                onClick={stopMenuClick}
+                onKeyDown={stopMenuActivationKey}
+              >
                 <button
                   class="tl-menu-item"
                   role="menuitem"
@@ -907,12 +1080,7 @@ export const SessionView: Component<{
             </Show>
           </span>
         </Show>
-        <ViewSwitch
-          mode={mode()}
-          onSet={setMode}
-          textDot={textDot()}
-          terminalDot={terminalDot()}
-        />
+        <ViewSwitch mode={mode()} onSet={setMode} textDot={textDot()} terminalDot={terminalDot()} />
       </div>
 
       {/* tl-kb-inline: while the TERMINAL view shows, this container does NOT
@@ -922,7 +1090,11 @@ export const SessionView: Component<{
           tap that opened the keyboard. The Text view keeps the reservation: its
           composer is out here. */}
       <main class="tl-views" classList={{ "tl-kb-inline": mode() === "terminal" }}>
-        <section class="tl-view" classList={{ "tl-hidden": mode() !== "text" }} aria-hidden={mode() !== "text"}>
+        <section
+          class="tl-view"
+          classList={{ "tl-hidden": mode() !== "text" }}
+          aria-hidden={mode() !== "text"}
+        >
           <TextView
             onScreen={onScreen()}
             events={store.events}
@@ -959,7 +1131,11 @@ export const SessionView: Component<{
             register={(api) => (composer = api)}
           />
         </section>
-        <section class="tl-view" classList={{ "tl-hidden": mode() !== "terminal" }} aria-hidden={mode() !== "terminal"}>
+        <section
+          class="tl-view"
+          classList={{ "tl-hidden": mode() !== "terminal" }}
+          aria-hidden={mode() !== "terminal"}
+        >
           {/* The terminal the lobby draws itself, and the only one there is
               since term.html was deleted.
 
@@ -976,51 +1152,67 @@ export const SessionView: Component<{
               `tl-flow-control` and the accounting on this list is what would
               have read it. Porting the accounting means bringing that control
               back with it. */}
-          <TerminalNative
-            args={terminalFrameArgs(session, {
-              cmd: props.creating ? props.newCommand?.() : undefined,
-              model: props.creating ? props.newLaunch?.().model : undefined,
-              effort: props.creating ? props.newLaunch?.().effort : undefined,
-              dir: props.dir || undefined,
-              owner: props.owner || undefined,
-              watch: watch(),
-            })}
-            watch={watch}
-            // The bridges are named globals, so a hidden session owning them
-            // would take the soft keys and paste with it. They follow the
-            // session on screen even while it shows its TEXT view, because
-            // that is the pty the composer's "send to terminal" means.
-            ownsBridges={onScreen()}
-            // A DIFFERENT question from ownsBridges, which is `onScreen()`
-            // alone: this one is also false while the TEXT view shows over a
-            // terminal that stays mounted and stays attached.
-            // terminal/attention.ts's `view` event is exactly its negation,
-            // and both halves carry weight — the text view over the terminal,
-            // and this session's whole slot CSS-hidden behind another session.
-            active={mode() === "terminal" && onScreen()}
-            // WHICH session rang is the caller's to add: this component is
-            // handed `args`, not a name. It is in our own document, so the
-            // name is ours to supply and there is nothing to validate.
-            onAttention={(kind) => noteAttention(kind, session)}
-            // Which session's window to size, and whether this device may say
-            // so at all, both belong here for the same reason `onAttention`'s
-            // name does: the terminal is handed `args`, not a session.
-            onGrid={claimGrid}
-            // Only the session ON SCREEN speaks for the terminal channel.
-            // Every visited session stays mounted, so without this guard a
-            // hidden tab's terminal would keep overwriting the badge for the
-            // one being looked at.
-            onConn={(r) => onScreen() && props.status?.onTerminalConn(r)}
-            // BOTH levers. Without the ask, the badge and Run check could only
-            // ever read what the terminal had volunteered on its last change,
-            // so a session returning to the screen above an already-open
-            // terminal sat on "not reporting" (ADR-0016).
-            onReady={(control) => {
-              terminalRetry = control.reconnect;
-              terminalAsk = control.ask;
-              terminalCopy = control.copy;
-            }}
-          />
+          {/* Held back while a preload resolves to a watch, and only then: the
+              attach it would make pins the session's grid for life, and the
+              slot is on its way out (see the `failed` report above). Every
+              other mount, preload included, renders its terminal here. */}
+          <Show when={!(preloading() && watch())}>
+            <TerminalNative
+              args={terminalFrameArgs(session, {
+                cmd: props.creating ? props.newCommand?.() : undefined,
+                model: props.creating ? props.newLaunch?.().model : undefined,
+                effort: props.creating ? props.newLaunch?.().effort : undefined,
+                dir: props.dir || undefined,
+                owner: props.owner || undefined,
+                watch: watch(),
+                // Frozen at mount (see `preloadAttach`), except that a watch
+                // takes the slot back if one ever resolves: both ride arg5 and
+                // asking for both throws.
+                preload: preloadAttach && !watch(),
+              })}
+              watch={watch}
+              // The bridges are named globals, so a hidden session owning them
+              // would take the soft keys and paste with it. They follow the
+              // session on screen even while it shows its TEXT view, because
+              // that is the pty the composer's "send to terminal" means.
+              ownsBridges={onScreen()}
+              // A DIFFERENT question from ownsBridges, which is `onScreen()`
+              // alone: this one is also false while the TEXT view shows over a
+              // terminal that stays mounted and stays attached.
+              // terminal/attention.ts's `view` event is exactly its negation,
+              // and both halves carry weight — the text view over the terminal,
+              // and this session's whole slot CSS-hidden behind another session.
+              active={mode() === "terminal" && onScreen()}
+              // WHICH session rang is the caller's to add: this component is
+              // handed `args`, not a name. It is in our own document, so the
+              // name is ours to supply and there is nothing to validate.
+              onAttention={(kind) => noteAttention(kind, session)}
+              // Which session's window to size, and whether this device may say
+              // so at all, both belong here for the same reason `onAttention`'s
+              // name does: the terminal is handed `args`, not a session.
+              onGrid={claimGrid}
+              // Only the session ON SCREEN speaks for the terminal channel.
+              // Every visited session stays mounted, so without this guard a
+              // hidden tab's terminal would keep overwriting the badge for the
+              // one being looked at.
+              onConn={(r) => {
+                // The preload's own half is NOT gated on being on screen: a
+                // preload is hidden by definition, and its slot is waiting to
+                // hear whether this attach landed.
+                notePreload(r);
+                if (onScreen()) props.status?.onTerminalConn(r);
+              }}
+              // BOTH levers. Without the ask, the badge and Run check could only
+              // ever read what the terminal had volunteered on its last change,
+              // so a session returning to the screen above an already-open
+              // terminal sat on "not reporting" (ADR-0016).
+              onReady={(control) => {
+                terminalRetry = control.reconnect;
+                terminalAsk = control.ask;
+                terminalCopy = control.copy;
+              }}
+            />
+          </Show>
         </section>
       </main>
 

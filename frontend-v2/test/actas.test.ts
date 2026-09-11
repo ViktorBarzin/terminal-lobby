@@ -256,6 +256,42 @@ describe("terminal attach args under ?as=bob", () => {
     );
   });
 
+  /**
+   * A hover in a lens tab builds a FOREIGN preload, and that is the vector
+   * tmux-attach.sh refuses.
+   *
+   * /whoami answers `osUser: bob` in an as-bob tab (tmux-api/actas_test.go),
+   * so store/preload.ts reads bob's own cards as "mine" and the dwell fires;
+   * this builder then fills the owner slot from ACT_AS, because ttyd never
+   * sees ?as= and resolves its identity from the Authentik header instead —
+   * the admin. The script's own-sessions-only gate (ADR-0026) sees
+   * owner=bob != wizard and denies.
+   *
+   * Pinned rather than papered over: the two ways to make the attach succeed
+   * are both worse than a refusal. Without `pre` the hidden mount attaches
+   * read-write and a plain attach MOVES the window (80x39 → 200x49 in
+   * ADR-0026's measurement), rewrapping the session of the person being
+   * helped; without the owner it attaches the ADMIN's own session of that
+   * name under a card labelled with bob's. The wasted connection is stopped
+   * by gating the hover on the lens, not by changing these five args.
+   */
+  it("builds a preload an act-as tab cannot use, and says so in arg4", async () => {
+    const { terminalFrameArgs } = await load("?as=bob");
+    expect(terminalFrameArgs("main", { preload: true })).toBe(
+      "arg=main&arg=default&arg=default&arg=bob&arg=pre",
+    );
+  });
+
+  it("leaves the owner slot empty for a preload with no lens, which is the one that attaches", async () => {
+    // The same call in an ordinary tab: no owner, so the script's gate passes
+    // and the hover attaches `-f ignore-size`. This is the contrast the test
+    // above depends on — arg4 is the whole difference between the two.
+    const { terminalFrameArgs } = await load("");
+    expect(terminalFrameArgs("main", { preload: true })).toBe(
+      "arg=main&arg=default&arg=default&arg=&arg=pre",
+    );
+  });
+
   it("changes nothing without ?as=", async () => {
     const { terminalFrameArgs } = await load("");
     expect(terminalFrameArgs("main")).toBe("arg=main");

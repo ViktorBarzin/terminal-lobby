@@ -135,12 +135,22 @@ fi
 # A 4th ?arg= names the session OWNER. When present and different from the
 # authenticated guest's OS user, this attaches SOMEONE ELSE's session.
 #
-# A 5th ?arg= is the client's WATCH-MODE request: "ro" asks to attach without
-# driving. It is a request, never a decision — the server resolves it against
-# what the caller is actually allowed (downgrade-only: a client may ask for less
-# access than it has, never more), and `-r` still comes back from the server's
-# answer. That is why accepting this argument does not weaken the exact-argv
-# discipline below: the only thing it can do is take access away.
+# A 5th ?arg= is the client's ATTACH-MODE request, one question with three
+# answers: absent drives, "ro" watches, "pre" preloads.
+#
+# "ro" asks to attach without driving. It is a request, never a decision — the
+# server resolves it against what the caller is actually allowed
+# (downgrade-only: a client may ask for less access than it has, never more),
+# and `-r` still comes back from the server's answer. That is why accepting this
+# argument does not weaken the exact-argv discipline below: the only thing it
+# can do is take access away.
+#
+# "pre" is a HOVER: the client is attached before the user has said they want
+# the session, so the terminal is already drawn if the click lands. It is
+# read-write — a click promotes this same client instead of attaching a second
+# one — but it carries tmux's ignore-size flag, so it cannot move the session's
+# window while it is only a preload (ADR-0026). Two rules follow, both enforced
+# below: it is own-sessions-only, and it never creates.
 #
 # Authorization + the read-only decision come from tmux-api's token-gated
 # internal endpoint (which also records this client's tty so a revoke can
@@ -148,11 +158,41 @@ fi
 # is the NAME_RE-validated session name, and `-r` comes from the server's mode,
 # NEVER a client argument. This exact-argv discipline is the whole security
 # boundary given the broad sudo tmux grant.
-MODE_RE='^(ro|rw)$'
+MODE_RE='^(ro|rw|pre)$'
 owner_arg="${4:-}"
 [[ "$owner_arg" =~ $NAME_RE ]] || owner_arg=""
 watch_arg="${5:-}"
 [[ "$watch_arg" =~ $MODE_RE ]] || watch_arg=""
+
+# A preload is OWN-SESSIONS-ONLY, by decision (ADR-0026). It fires from a
+# pointer resting on a card, so a foreign one would put an /internal/attach
+# round trip, a sudo and an audit line on every card the pointer crossed, for
+# sessions nobody has asked to open. Refuse it here, the same way an
+# unpermitted attach is refused below, rather than letting it reach the server.
+# Someone else's session is attached on the click, as it always was.
+#
+# REFUSED IN SILENCE, AND AT ONCE. Every other denial in this file prints a
+# banner and sleeps, because a person is watching an empty terminal and the
+# message is the only thing that explains it. A preload has no reader: it is a
+# hidden mount the user has not asked for, so the only way the banner can be
+# SEEN is for the click to promote that mount into view, and the sleep is
+# exactly the window in which that happens. The frontend's own act-as tab
+# reaches this branch with no bad intent — /whoami answers with the lens target
+# while ttyd resolves the Authentik header to the admin, so a hover on the
+# acted-as user's own card builds owner=<target> with mode=pre — and in that
+# tab a 5 s hold put "A preload only ever attaches your own session" where the
+# session should have been. Exiting immediately closes the socket instead: the
+# terminal reports the preload failed, the slot is dropped, and the click that
+# follows attaches the ordinary way. The journal line below is the whole record
+# of it, which is the right place for a refusal nobody is reading.
+#
+# Both values on that line are already charset-gated (NAME_RE) where they were
+# parsed, which is what the journal-integrity note above requires of anything
+# that reaches a logger call.
+if [[ "$watch_arg" == "pre" && -n "$owner_arg" && "$owner_arg" != "$os_user" ]]; then
+    logger -t ttyd-attach "DENIED: preload is own-sessions-only: guest='$os_user' owner='$owner_arg' name='$name'"
+    exit 1
+fi
 
 # ---- the model and effort a NEW session launches on ----------------------
 # A 6th and 7th ?arg=, forwarded to tmux-user-attach, which turns them into
@@ -174,6 +214,12 @@ effort_arg="${7:-}"
 # The server is consulted for a FOREIGN attach (as before) and now also for any
 # attach that asks to watch — including your own session, which is the
 # two-device case and has no share row to authorize it.
+#
+# A "pre" attach of your OWN session is deliberately not on that list. Owning
+# the session is what authorizes it, exactly as it authorizes the ordinary
+# create path below, and the round trip is a cost the preload exists to avoid:
+# it runs once per card the pointer crosses. The foreign case was refused
+# outright above, so nothing reaches here asking to preload someone else's.
 if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro" ]]; then
     target_owner="${owner_arg:-$os_user}"
     guest="$os_user"
@@ -222,7 +268,14 @@ EOF
     # and indistinguishable from their own work. The server no longer sends that
     # answer, and there is no branch here to act on it: a session that is not
     # running in someone else's account is not something this path brings into
-    # being. `tmux attach-session` below fails, which is the safe outcome.
+    # being. `tmux attach-session` below fails, which is the safe outcome —
+    # and it fails because the target is written `=$name`. A bare -t resolves
+    # by PREFIX after an exact miss, so an authorized name that has just died
+    # would otherwise land this guest on whichever sibling shares its prefix,
+    # which `slug.Free`'s -2/-3 suffixes make an everyday pair. Measured on
+    # tmux 3.4 here 2026-09-11: `has-session -t deploy` returned rc=0 against
+    # a server running only `deploy-staging`, `-t '=deploy'` returned
+    # "can't find session".
     #
     # Fail SAFE: read-only unless the server explicitly said "rw".
     ro_flag=(-r)
@@ -237,10 +290,59 @@ EOF
     # attaching to a session that does not exist.
     if [[ "$target_owner" != "$os_user" || "$mode" == "ro" ]]; then
         if [[ "$target_owner" == "$(id -un)" ]]; then
-            exec /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+            exec /usr/bin/tmux attach-session "${ro_flag[@]}" -t "=$name"
         else
-            exec sudo -n -H -u "$target_owner" /usr/bin/tmux attach-session "${ro_flag[@]}" -t "$name"
+            exec sudo -n -H -u "$target_owner" /usr/bin/tmux attach-session "${ro_flag[@]}" -t "=$name"
         fi
+    fi
+fi
+
+# ---- the preload attach -------------------------------------------------
+# `-f ignore-size` is the whole of what makes a hover safe. Measured on tmux 3.4
+# on this box 2026-09-11, against a session born at a phone's 80x40 with the
+# phone still attached: a plain read-write attach from a 200x50 client moved the
+# window to 200x49 and rewrapped the phone's transcript, and the same attach
+# with `-f ignore-size` left it at 80x39. The client stays read-write, so the
+# click promotes it with `refresh-client -f '!ignore-size'` rather than paying
+# for a second attach, and nothing is pinned: `window-size` is untouched
+# throughout, unlike the read-only path, whose PinGrid is never reverted.
+#
+# attach-session, NEVER the `tmux new-session -A` below. -A creates a session
+# when the name is absent, and a preload must not bring one into being from a
+# mouse movement: a card can only be hovered while it is listed, so a name that
+# no longer resolves means the session died in the interval. Letting the attach
+# fail is the right answer, and it is the same reasoning that took create away
+# from the foreign path above.
+#
+# `=$name`, and that leading `=` is what makes "fail" true. A bare -t target is
+# resolved exact-first, then by PREFIX, then by fnmatch, and prefix siblings are
+# this lobby's normal case: slug.Free() appends -2, -3 to a repeated title, so
+# `deploy` and `deploy-2` sit in the sidebar together. Measured on tmux 3.4 on
+# this box, 2026-09-11, with only `deploy-staging` running:
+#
+#   tmux has-session -t deploy      rc=0, resolved to deploy-staging
+#   tmux has-session -t '=deploy'   rc=1, "can't find session: deploy"
+#
+# and `attach-session -f ignore-size -t deploy` put a live read-write client on
+# `deploy-staging`. So without the `=`, hovering a card whose session has just
+# died attaches the NEIGHBOUR instead of failing, and the click promotes that
+# mount: every keystroke would land in a session the label does not name. The
+# exact form is the only one that means what this branch says it means.
+#
+# The exact-argv discipline is unchanged: the flag is a fixed literal chosen by
+# the branch, and the only guest-influenced value is the NAME_RE-validated
+# session name. $watch_arg is MODE_RE-gated, so the logger line is folded by the
+# same rule the journal-integrity note above sets out.
+if [[ "$watch_arg" == "pre" ]]; then
+    # An array like ro_flag, and mutually exclusive with it by construction:
+    # MODE_RE yields ONE value, and a "pre" never enters the server block that
+    # builds ro_flag — a self preload skips it, a foreign one was refused.
+    pre_flag=(-f ignore-size)
+    logger -t ttyd-attach "preload-attach: os_user='$os_user' name='$name' mode='$watch_arg' self='$(id -un)'"
+    if [[ "$os_user" == "$(id -un)" ]]; then
+        exec /usr/bin/tmux attach-session "${pre_flag[@]}" -t "=$name"
+    else
+        exec sudo -n -H -u "$os_user" /usr/bin/tmux attach-session "${pre_flag[@]}" -t "=$name"
     fi
 fi
 

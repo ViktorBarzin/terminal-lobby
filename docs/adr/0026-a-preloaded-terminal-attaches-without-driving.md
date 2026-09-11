@@ -71,6 +71,33 @@ Measured the same day, same sessions:
 `window-size` stays at tmux's default throughout, so nothing is pinned and
 nothing is left behind.
 
+### Two limits on that, both found while building this
+
+**The flag only works while another client is attached.** tmux ignores a
+flagged client's size only for as long as an unflagged one exists. Measured on
+tmux 3.4 on 2026-09-11, the table above reproduces exactly with the phone
+attached; with nobody else on the session, the same 200x50 preload moved the
+window from 80x40 to 200x49, and re-asserting the flag did not move it back.
+The original measurement always had a second client attached, so it did not
+cover this. Practical effect: hovering a card for a session with no attached
+client reflows it, and it stays reflowed until something attaches. That is what
+clicking the card would have done anyway, so we are accepting it; it is written
+down here because the flag reads like a stronger guarantee than it is.
+
+**A pinned session needed a second fix, in a different file.** `PinGrid` takes
+sizing away from tmux (`window-size manual`) and gives it back through a hook
+that reads the client list itself and calls `resize-window`. A flag tmux would
+have honoured means nothing on that path. The hook filtered `grep -v read-only`
+only, and a preload is read-write and the newest client, so it won outright:
+measured the same day, a pinned session at 80x39 with its owner attached jumped
+to 200x49 the moment a 200x50 preload joined, and stayed there. Since a pin is
+never reverted, every session that had ever been watched carried that exposure.
+
+The fix is one more filter in `sessionio/grid.go`'s hook, `grep -v ignore-size`,
+plus a bump of `gridHookMark` to `tl-grid-v3` so `repairStaleGridPins` reinstalls
+the hook on sessions already pinned by an older build. That mark is the repo's
+existing deploy path for a hook change, and this is what it is for.
+
 ## What we decided
 
 **A preload attaches read-write with `ignore-size`, and is promoted to a driving
