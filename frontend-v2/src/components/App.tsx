@@ -8,11 +8,7 @@ import {
   Show,
   type Component,
 } from "solid-js";
-import {
-  createLobbyStore,
-  type NotifyKind,
-  type SelectedSession,
-} from "../store/lobby";
+import { createLobbyStore, type NotifyKind, type SelectedSession } from "../store/lobby";
 import { canActAs } from "../lib/mode";
 import { NAME_RE, sessionLabel, type Layout, type SessionTool } from "../types/lobby";
 import {
@@ -37,6 +33,8 @@ import { SkillsIcon } from "./Icons";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { keyContext } from "../keybindings/bindings.logic";
+import { isEditingTarget } from "../keybindings/editing";
+import { createUndoStore } from "../store/undo";
 import { createPaletteController, type PaletteAction } from "../keybindings/palette-controller";
 import { createRunAppCommand } from "../keybindings/commands";
 import { refocusTerminal } from "../keybindings/refocus";
@@ -119,8 +117,7 @@ export function projectDirFor(layout: Layout, session: string): string | undefin
  * panel opened from the shell bar.
  */
 export const App: Component = () => {
-  const notify = (message: string, kind: NotifyKind) =>
-    toasts.push({ kind, message });
+  const notify = (message: string, kind: NotifyKind) => toasts.push({ kind, message });
 
   // Ahead of the lobby store, which reads the roamed session ordering out of it.
   const prefs = createPrefsStore();
@@ -143,9 +140,32 @@ export const App: Component = () => {
   // `@media (pointer: coarse)` display:none came out.
   const dockCoarse = createCoarsePointer();
 
+  /**
+   * This tab's undo stack — the ONE instance, which is why it is built here and
+   * not exported as a module singleton (store/undo.ts says so at length):
+   * whether undo runs at all is a property of the PAGE, and only the shell
+   * knows that.
+   *
+   * OFF IN A LENS TAB. `?as=bob` is a navigation in the same tab
+   * (lib/act-as.ts), so the sessionStorage a lens page opens onto was written
+   * by the previous identity in that tab. Reading it would offer to undo your
+   * own actions against bob's account; writing it would hand your next page
+   * life bob's history. A disabled store does neither and leaves the stored
+   * document untouched. `ACT_AS` rather than the server-confirmed `lensTarget`
+   * because the stack is built before /whoami answers and `enabled` is fixed
+   * for the page life; acting as yourself therefore loses undo too, which is
+   * the harmless side of that call.
+   *
+   * Handed to the lobby store, which registers every handler that knows how to
+   * invert one of its actions and hands the instance back out as `store.undo`
+   * for the dimmed card's arrow (SessionCard.tsx) and the two commands.
+   */
+  const undoStack = createUndoStore({ enabled: ACT_AS === "" });
+
   const store = createLobbyStore({
     initialSelected: readInitialSelection(),
     notify,
+    undo: undoStack,
     // A phone renders no dock, so it must not hide the docked shell from the
     // list: `layout.dock` roams, and hiding a card that has no panel to hide
     // behind leaves the session running and unreachable.
@@ -273,12 +293,13 @@ export const App: Component = () => {
       permission: notifications.permission(),
       // "checking" is the boot state, and it is exactly `unknown`: nothing is
       // known yet, and claiming either answer would be a guess.
-      device: notifications.deviceState() === "checking" ? "unsupported" : (
-        notifications.deviceState() as Exclude<
-          ReturnType<typeof notifications.deviceState>,
-          "checking"
-        >
-      ),
+      device:
+        notifications.deviceState() === "checking"
+          ? "unsupported"
+          : (notifications.deviceState() as Exclude<
+              ReturnType<typeof notifications.deviceState>,
+              "checking"
+            >),
       // Only Run check asks the server; the passive readout does not, because
       // it would mean a request per repaint for an answer that changes rarely.
       server: "unknown",
@@ -328,8 +349,7 @@ export const App: Component = () => {
             }),
           transcriptStatus: () => sessionStatus(),
           sessionsReport: () => store.pollHealth(),
-          updateReady: () =>
-            status.channels().find((c) => c.id === "build")?.state === "degraded",
+          updateReady: () => status.channels().find((c) => c.id === "build")?.state === "degraded",
         }),
       );
     },
@@ -423,7 +443,11 @@ export const App: Component = () => {
   /** Is a session bar — and so its connection badge — on screen? The sidebar's
    *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
   const barOnScreen = () =>
-    sessionBarOnScreen({ selected: store.selected() !== null, flip: flip(), collapsed: collapsed() });
+    sessionBarOnScreen({
+      selected: store.selected() !== null,
+      flip: flip(),
+      collapsed: collapsed(),
+    });
 
   const toggleSidebar = () => {
     const next = !collapsed();
@@ -502,9 +526,7 @@ export const App: Component = () => {
     window.location.href = actAsUrl(window.location.href, osUser);
   };
   const actAsControl = createMemo(() =>
-    isAdmin()
-      ? { users: actAsUsers, current: actingAs, switchTo: switchToUser }
-      : undefined,
+    isAdmin() ? { users: actAsUsers, current: actingAs, switchTo: switchToUser } : undefined,
   );
 
   const selectedName = createMemo(() => store.selected()?.name ?? null);
@@ -691,12 +713,28 @@ export const App: Component = () => {
         { label: "Keyboard shortcuts", hint: "/", run: () => run("shortcuts.help") },
         { label: "Skills", hint: "install, disable, share", run: () => openSettings("skills") },
       ];
+      // Undo / redo, shown only when a press would do something — the same rule
+      // the dimmed card's arrow follows (SessionCard.tsx). An empty stack means
+      // no row rather than a row that answers with silence, and a lens tab,
+      // whose stack is disabled and therefore always empty, shows neither.
+      const mod = engine.isMac ? "Cmd" : "Ctrl";
+      if (undoStack.canUndo()) {
+        acts.push({ label: "Undo", hint: `${mod}+Z`, run: () => run("edit.undo") });
+      }
+      if (undoStack.canRedo()) {
+        acts.push({ label: "Redo", hint: `${mod}+Shift+Z`, run: () => run("edit.redo") });
+      }
       if (cur) {
         acts.push(
           { label: "Rename current session", hint: cur, run: () => run("session.rename.current") },
           { label: "Open image gallery", hint: cur, run: () => run("gallery.open") },
           { label: "Paste into terminal", hint: cur, run: () => run("terminal.paste") },
-          { label: "Kill current session", hint: cur, danger: true, run: () => run("session.kill.current") },
+          {
+            label: "Kill current session",
+            hint: cur,
+            danger: true,
+            run: () => run("session.kill.current"),
+          },
         );
       }
       return acts;
@@ -730,6 +768,9 @@ export const App: Component = () => {
     openGallery: () => void gallery.open(),
     pasteToTerminal: () => window.__tlDoPaste?.() ?? false,
     toggleDock: () => void dock.toggle(),
+    // The same instance the lobby store carries, named here so the two undo
+    // commands have a visible source rather than an inherited one.
+    undo: undoStack,
   });
 
   // The shell's when-context, built in ONE place (keyContext) and read by every
@@ -738,7 +779,15 @@ export const App: Component = () => {
   // one path fired on another. SessionView's always-on Ctrl/Cmd+J was a third
   // reader until the dock reclaimed the chord; it still takes `overlayOpen` as
   // a prop and no longer reads it.
-  const keyCtx = createMemo(() =>
+  //
+  // NOT a memo, and the reason is the `editing` flag. Every other input is a
+  // signal, but focus is a DOM fact that moves without one changing, so a
+  // cached context would answer with whatever was focused the last time an
+  // overlay opened. This is a plain function that reads `document.activeElement`
+  // at the moment it is asked — which is the keydown, since the engine calls
+  // `getContext` from its listener — and still tracks the signals it reads for
+  // any reactive caller.
+  const keyCtx = () =>
     keyContext({
       paletteOpen: palette.isOpen(),
       helpOpen: help.isOpen(),
@@ -746,8 +795,10 @@ export const App: Component = () => {
       galleryOpen: gallery.view() !== "closed",
       previewOpen: previewState().open,
       previewDirty: previewState().dirty,
-    }),
-  );
+      // The one chord a text field owns: keybindings/editing.ts says why the
+      // field cannot simply win it downstream.
+      editing: isEditingTarget(document.activeElement),
+    });
   const overlayOpen = () => keyCtx().overlayOpen;
 
   engine.init({
@@ -769,7 +820,8 @@ export const App: Component = () => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable))
+      return;
     // Another overlay owns the keyboard: opening this one over it is the same
     // context leak the chords carried. This overlay itself is exempt — "/" is
     // one of its own dismiss keys.
@@ -995,11 +1047,7 @@ export const App: Component = () => {
                         >
                           Skills
                         </button>
-                        <button
-                          class="tl-menu-item"
-                          role="menuitem"
-                          onClick={() => openSettings()}
-                        >
+                        <button class="tl-menu-item" role="menuitem" onClick={() => openSettings()}>
                           Settings
                         </button>
                       </Show>

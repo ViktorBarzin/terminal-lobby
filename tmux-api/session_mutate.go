@@ -50,6 +50,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		setSessionTitle(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "origin" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		setSessionOrigin(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "copy-mode" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -77,7 +85,45 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "not found", http.StatusNotFound)
 }
 
+// killResponse is the body of a successful DELETE /sessions/{name}.
+//
+// The DELETE used to answer 204 with nothing at all. It answers 200 with this
+// because the lobby lets someone undo a kill after the eight-second grace
+// window has elapsed and the session is really gone
+// (frontend-v2/src/store/undo.kill.ts), and only the server knows which
+// snapshot it would come back out of.
+//
+// Resurrect is exactly POST /restore's body, so the client posts back what it
+// was handed instead of translating between two spellings of one fact. It is
+// absent when nothing snapshotted the session, which the lobby reports as a
+// kill it cannot take back rather than promising an undo that would fail.
+//
+// A client that reads only the status is unaffected by the change: t3-sync
+// accepts any 2xx (t3-sync/tmuxapi.go do), qa_driver just returns the number,
+// and the lobby treats a 204 and a 200 with no record alike
+// (lib/lobby-api.ts asRestoreSelection).
+type killResponse struct {
+	Resurrect *restoreSelection `json:"resurrect,omitempty"`
+}
+
 func killSession(w http.ResponseWriter, osUser, name string) {
+	// Ask tmux whether the session is even there, BEFORE anything privileged
+	// runs. The snapshot below is a root tmux-persist run that walks every
+	// mapped user (snapshots.go resurrectRecordFor), and taking it first meant
+	// a request naming a session nobody has still paid for one: `DELETE
+	// /sessions/nope` did the whole save and then answered 404, so a loop of
+	// them was an unbounded amount of root work for a caller who owns nothing.
+	// One extra tmux round trip is the price of not offering that.
+	if !hasSession(osUser, name) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	// Before the kill, never after: a snapshot taken afterwards is of a box this
+	// session has already left, which is the same as no snapshot at all. Nil
+	// when it could not be taken, which costs the undo and nothing else. See
+	// resurrectRecordFor (snapshots.go) for why a kill snapshots in the first
+	// place.
+	resurrect := resurrectRecordFor(osUser, name)
 	out, err := tmuxCmd(osUser, "kill-session", "-t", exactSession(name)).CombinedOutput()
 	if err != nil {
 		msg := string(out)
@@ -136,7 +182,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	}
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.killed", osUser, telemetry.Attrs{"tl.session": name, "tl.client": "api"})
-	w.WriteHeader(http.StatusNoContent)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	// The kill has already happened, so a body that does not reach the client
+	// costs the undo and nothing else. There is also nothing left to report it
+	// with: the status line has gone out.
+	_ = json.NewEncoder(w).Encode(killResponse{Resurrect: resurrect})
 }
 
 func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName string) {
@@ -200,6 +251,55 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 	events.Emit("session.retitled", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.client": "api",
 	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setSessionOrigin is POST /sessions/{name}/origin — the rescue
+// (docs/plans/2026-09-06-test-session-origin-design.md).
+//
+// One caller: dropping a card out of the System group. The drop already writes
+// the layout, and this is how it says the same thing on the SERVER, so the
+// session stops being a system session for the push sender and the telemetry
+// rule too rather than only in the browser that moved it. Without it, a
+// rescued session would sit in a project in the sidebar and still be silent.
+//
+// Only `user` and `test` are accepted. Those are the only two values anything
+// writes (origin.go); the third state is the ABSENCE of the option, and no
+// caller has a reason to ask for it, because a session with no origin already
+// reads as system and that is exactly what the drag is undoing.
+//
+// The shape is setSessionTitle's, and so are the reasons behind each part of
+// it: the pane target form so a name cannot resolve by prefix onto a sibling,
+// tmuxTargetMissing so all four spellings of "it is gone" become a 404 the
+// lobby reads as gone instead of broken, and the cache invalidated so the very
+// next poll carries the new value rather than a body built before the stamp.
+//
+// No event is emitted. The catalog has no name for this yet, and an event
+// about a session the record was told to start keeping is the one event the
+// drop rule would most likely still refuse (telemetry.go).
+func setSessionOrigin(w http.ResponseWriter, r *http.Request, osUser, name string) {
+	var body struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	origin := strings.TrimSpace(body.Origin)
+	if origin != originUser && origin != originTest {
+		http.Error(w, "invalid origin", http.StatusBadRequest)
+		return
+	}
+	if msg, err := setOriginOption(osUser, name, origin); err != nil {
+		if tmuxTargetMissing(msg) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("set %s on %s as %s failed: %v: %s", originOption, name, osUser, err, msg)
+		http.Error(w, "set-option failed", http.StatusInternalServerError)
+		return
+	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 

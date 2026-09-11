@@ -87,10 +87,10 @@ describe("sidebar.showLastActive — the roamed pref", () => {
 
   it("survives the adoption merge one level deep, like session and notify", () => {
     // A server doc that never saw the subkey must not reset a local one.
-    const merged = mergeAdopt(
-      { sidebar: { showLastActive: true } },
-      { sidebar: {} },
-    ) as Record<string, any>;
+    const merged = mergeAdopt({ sidebar: { showLastActive: true } }, { sidebar: {} }) as Record<
+      string,
+      any
+    >;
     expect(merged.sidebar.showLastActive).toBe(true);
     // ...and the server wins where it does have an opinion.
     const merged2 = mergeAdopt(
@@ -112,12 +112,8 @@ describe("sidebar.showLastActive — the roamed pref", () => {
     // Spread the namespace rather than replacing it: `sidebar` carries the
     // list's ordering too, and dropping it here would report that as changed.
     const on = { ...PREF_DEFAULTS, sidebar: { ...PREF_DEFAULTS.sidebar, showLastActive: true } };
-    expect(changedPrefPaths(PREF_DEFAULTS, on)).toEqual([
-      ["sidebar.showLastActive", "true"],
-    ]);
-    expect(changedPrefPaths(on, PREF_DEFAULTS)).toEqual([
-      ["sidebar.showLastActive", "false"],
-    ]);
+    expect(changedPrefPaths(PREF_DEFAULTS, on)).toEqual([["sidebar.showLastActive", "true"]]);
+    expect(changedPrefPaths(on, PREF_DEFAULTS)).toEqual([["sidebar.showLastActive", "false"]]);
     expect(changedPrefPaths(PREF_DEFAULTS, PREF_DEFAULTS)).toEqual([]);
   });
 });
@@ -139,6 +135,9 @@ const sess = (over: Partial<Session> = {}): Session => ({
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };

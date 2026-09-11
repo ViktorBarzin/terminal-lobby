@@ -31,12 +31,21 @@ function cardStore(): LobbyStore {
     workingSince: () => null,
     lastDriven: () => null,
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
+    // No kill in flight, so the row draws itself the ordinary way. The dimmed
+    // one is test/SessionCard.killing.test.tsx.
+    killing: () => false,
   } as unknown as LobbyStore;
 }
 
 function renderCard(s: Session, unseen: boolean) {
   return render(() => (
-    <SessionCard store={cardStore()} session={s} groupName="" tick={() => 0} isUnseen={() => unseen} />
+    <SessionCard
+      store={cardStore()}
+      session={s}
+      groupName=""
+      tick={() => 0}
+      isUnseen={() => unseen}
+    />
   ));
 }
 

@@ -36,6 +36,9 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: ME,
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
@@ -46,13 +49,10 @@ function layout(over: Partial<Layout> = {}): Layout {
 describe("deriveSidebar", () => {
   it("puts unreferenced live own sessions in Ungrouped, ordered by created", () => {
     const l = layout();
-    const sessions = [
-      sess("b", { created: 200 }),
-      sess("a", { created: 100 }),
-    ];
+    const sessions = [sess("b", { created: 200 }), sess("a", { created: 100 })];
     const m = deriveSidebar(l, sessions, ME);
-    expect(m.groups).toHaveLength(1);
-    expect(m.groups[0]!.kind).toBe("ungrouped");
+    // Ungrouped, then the pinned System slot standing empty behind it.
+    expect(m.groups.map((g) => g.kind)).toEqual(["ungrouped", "system"]);
     expect(m.groups[0]!.sessions.map((s) => s.name)).toEqual(["a", "b"]);
   });
 
@@ -71,6 +71,7 @@ describe("deriveSidebar", () => {
       "work",
       "<ungrouped>",
       "play",
+      ":system",
     ]);
     expect(m.groups[0]!.sessions.map((s) => s.name)).toEqual(["w1"]);
     expect(m.groups[1]!.sessions.map((s) => s.name)).toEqual(["u1"]);
@@ -80,9 +81,7 @@ describe("deriveSidebar", () => {
   it("keeps dead-but-assigned refs out of the render (only live sessions show)", () => {
     const l = layout({ projects: [{ name: "work", sessions: ["live", "dead"] }] });
     const m = deriveSidebar(l, [sess("live")], ME);
-    expect(m.groups.find((g) => g.name === "work")!.sessions.map((s) => s.name)).toEqual([
-      "live",
-    ]);
+    expect(m.groups.find((g) => g.name === "work")!.sessions.map((s) => s.name)).toEqual(["live"]);
   });
 
   it("splits foreign sessions into a Shared-with-me list, owner-major", () => {
@@ -248,28 +247,34 @@ describe("stabilizeModel", () => {
 describe("groupSeqTokens", () => {
   it("places the ungrouped sentinel at ungroupedIndex", () => {
     const l = layout({
-      projects: [{ name: "a", sessions: [] }, { name: "b", sessions: [] }],
+      projects: [
+        { name: "a", sessions: [] },
+        { name: "b", sessions: [] },
+      ],
       ungroupedIndex: 1,
     });
-    expect(groupSeqTokens(l)).toEqual(["p:a", "u", "p:b"]);
+    expect(groupSeqTokens(l)).toEqual(["p:a", "u", "p:b", "s"]);
   });
   it("top slot (0) and last slot", () => {
     const l0 = layout({ projects: [{ name: "a", sessions: [] }], ungroupedIndex: 0 });
-    expect(groupSeqTokens(l0)).toEqual(["u", "p:a"]);
+    expect(groupSeqTokens(l0)).toEqual(["u", "p:a", "s"]);
     const l1 = layout({ projects: [{ name: "a", sessions: [] }], ungroupedIndex: 1 });
-    expect(groupSeqTokens(l1)).toEqual(["p:a", "u"]);
+    expect(groupSeqTokens(l1)).toEqual(["p:a", "u", "s"]);
   });
 });
 
 describe("visibleGroupSeqTokens", () => {
   it("drops the empty sentinel the sidebar hides, without touching the raw sequence", () => {
     const l = layout({
-      projects: [{ name: "a", sessions: ["a1"] }, { name: "b", sessions: ["b1"] }],
+      projects: [
+        { name: "a", sessions: ["a1"] },
+        { name: "b", sessions: ["b1"] },
+      ],
       ungroupedIndex: 1,
     });
     const m = deriveSidebar(l, [sess("a1"), sess("b1")], ME);
     // The slot survives — capture and reorder still need somewhere to put it…
-    expect(groupSeqTokens(l)).toEqual(["p:a", "u", "p:b"]);
+    expect(groupSeqTokens(l)).toEqual(["p:a", "u", "p:b", "s"]);
     // …but the user is looking at two groups, so that is what Move up/down counts.
     expect(visibleGroupSeqTokens(m)).toEqual(["p:a", "p:b"]);
   });
@@ -294,7 +299,10 @@ describe("visibleGroupSeqTokens", () => {
 describe("moveSession", () => {
   it("moves a session between groups and de-dups the prior reference", () => {
     const l = layout({
-      projects: [{ name: "a", sessions: ["x"] }, { name: "b", sessions: [] }],
+      projects: [
+        { name: "a", sessions: ["x"] },
+        { name: "b", sessions: [] },
+      ],
       ungrouped: [],
     });
     const out = moveSession(l, "x", "b");
@@ -343,10 +351,7 @@ describe("materializeGroup", () => {
     // Sessions whose own record names the project, which the layout has never
     // placed: they render in the project with no raw index behind them.
     const l = layout({ projects: [{ name: "work", sessions: ["a"] }] });
-    const live = [
-      sess("a", { created: 1 }),
-      sess("b", { created: 2, project: "work" }),
-    ];
+    const live = [sess("a", { created: 1 }), sess("b", { created: 2, project: "work" })];
     const rendered = deriveSidebar(l, live, ME)
       .groups.find((g) => g.name === "work")!
       .sessions.map((s) => s.name);
@@ -378,7 +383,9 @@ describe("moveSessionToAnchor", () => {
 
     const live = [sess("a"), sess("b"), sess("c")];
     expect(
-      deriveSidebar(out, live, ME).groups.find((g) => g.name === "work")!.sessions.map((s) => s.name),
+      deriveSidebar(out, live, ME)
+        .groups.find((g) => g.name === "work")!
+        .sessions.map((s) => s.name),
     ).toEqual(["b", "a", "c"]);
   });
 
@@ -396,12 +403,10 @@ describe("moveSessionToAnchor", () => {
       sess("gamma", { created: 3 }),
     ];
     const rendered = deriveSidebar(l, live, ME).groups[0]!.sessions.map((s) => s.name);
-    const out = moveSessionToAnchor(
-      materializeUngrouped(l, rendered),
-      "beta",
-      "",
-      { name: "gamma", side: "below" },
-    );
+    const out = moveSessionToAnchor(materializeUngrouped(l, rendered), "beta", "", {
+      name: "gamma",
+      side: "below",
+    });
     expect(out.ungrouped).toEqual(["alpha", "gamma", "beta"]);
     expect(deriveSidebar(out, live, ME).groups[0]!.sessions.map((s) => s.name)).toEqual([
       "alpha",
@@ -432,12 +437,15 @@ describe("moveSessionToAnchor", () => {
 describe("reorderGroups / moveGroup", () => {
   it("reorders projects past the ungrouped slot", () => {
     const l = layout({
-      projects: [{ name: "a", sessions: [] }, { name: "b", sessions: [] }],
+      projects: [
+        { name: "a", sessions: [] },
+        { name: "b", sessions: [] },
+      ],
       ungroupedIndex: 0, // [u, a, b]
     });
     // move ungrouped (seq 0) to the end (seq 2): [a, b, u]
     const out = reorderGroups(l, 0, 2);
-    expect(groupSeqTokens(out)).toEqual(["p:a", "p:b", "u"]);
+    expect(groupSeqTokens(out)).toEqual(["p:a", "p:b", "u", "s"]);
     expect(out.ungroupedIndex).toBe(2);
   });
 
@@ -447,7 +455,7 @@ describe("reorderGroups / moveGroup", () => {
       ungroupedIndex: 0, // [u, a]
     });
     const out = moveGroup(l, "", 1); // ungrouped down → [a, u]
-    expect(groupSeqTokens(out)).toEqual(["p:a", "u"]);
+    expect(groupSeqTokens(out)).toEqual(["p:a", "u", "s"]);
   });
 });
 
@@ -471,17 +479,20 @@ describe("project CRUD", () => {
       ungroupedIndex: 0, // Ungrouped on top, "old" below it
     });
     const out = addProject(l, "fresh");
-    expect(groupSeqTokens(out)).toEqual(["p:fresh", "u", "p:old"]);
+    expect(groupSeqTokens(out)).toEqual(["p:fresh", "u", "p:old", "s"]);
   });
 
   it("keeps a new project above Ungrouped when the sentinel sits last", () => {
     const l = layout({ projects: [{ name: "old", sessions: [] }], ungroupedIndex: 1 });
-    expect(groupSeqTokens(addProject(l, "fresh"))).toEqual(["p:old", "p:fresh", "u"]);
+    expect(groupSeqTokens(addProject(l, "fresh"))).toEqual(["p:old", "p:fresh", "u", "s"]);
   });
 
   it("delete moves members to Ungrouped and clamps the slot", () => {
     const l = layout({
-      projects: [{ name: "a", sessions: ["s1"] }, { name: "b", sessions: ["s2"] }],
+      projects: [
+        { name: "a", sessions: ["s1"] },
+        { name: "b", sessions: ["s2"] },
+      ],
       ungrouped: ["u"],
       ungroupedIndex: 2, // last
     });
@@ -676,7 +687,12 @@ describe("sameLayout", () => {
   });
 
   it("treats an absent optional as equal to an absent optional", () => {
-    const a: Layout = { version: 1, projects: [{ name: "p", sessions: [] }], ungrouped: [], ungroupedIndex: 0 };
+    const a: Layout = {
+      version: 1,
+      projects: [{ name: "p", sessions: [] }],
+      ungrouped: [],
+      ungroupedIndex: 0,
+    };
     expect(sameLayout(a, JSON.parse(JSON.stringify(a)) as Layout)).toBe(true);
   });
 });

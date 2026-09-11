@@ -81,10 +81,12 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         [[`${ALT}+Shift+R`], "Rename current session"],
         // ALWAYS ON by design (KB_ALWAYS_BINDINGS): it bypasses the ⚙ toggle so
         // the escape hatch out of a wedged session survives a disabled layer.
-        // It still opens the confirm that names the session.
+        // Nothing to answer first since the kill became undoable — the card
+        // dims for eight seconds and Cmd+Z takes it back — so the row no
+        // longer promises a question.
         [
           [`${ALT}+Shift+Backspace`],
-          "Kill attached session (works in a session; always on, asks first)",
+          `Kill attached session (works in a session; always on, undo with ${MOD}+Z)`,
         ],
       ],
     ],
@@ -105,12 +107,14 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         // Still always-on: `onDockKey` is a raw window listener that never
         // consults the engine's `enabled` gate. "Desktop only" is its early
         // return on `dock.allowed()`, which is `!coarse()` (store/dock.ts).
-        // The view toggle keeps the [Text | Terminal] control and the palette,
-        // which is what `test/SessionView.viewswitch.test.tsx` pins.
-        [
-          [`${MOD}+J`],
-          "Scratch shell at the foot of the screen (desktop only; always on)",
-        ],
+        //
+        // The view toggle keeps the [Text | Terminal] control, which is what
+        // `test/SessionView.viewswitch.test.tsx` pins. It has no chord and
+        // there is no row for it in this table on purpose: Viktor settled that
+        // on 2026-09-06, and keybindings/bindings.logic.ts carries the
+        // reasoning. The palette entry he named as the second way in has not
+        // been added, so do not read a missing row here as an oversight.
+        [[`${MOD}+J`], "Scratch shell at the foot of the screen (desktop only; always on)"],
         // Find has no Ctrl/Cmd+F row because Ctrl+F belongs to the TUI. This
         // chord is the only keyboard way in, which is why leaving it out of
         // the table hid the feature entirely.
@@ -118,11 +122,31 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         // Bare "/" and "?" are a separate window listener in the shell (App),
         // not a table binding, so they never consult the ⚙ toggle either. Only
         // Alt+/ is part of the toggleable layer.
-        [
-          ["/", "?", `${ALT}+/`],
-          `Show this help (${ALT}+/ works in a session; / and ? always on)`,
-        ],
+        [["/", "?", `${ALT}+/`], `Show this help (${ALT}+/ works in a session; / and ? always on)`],
         [["Esc"], "Close menus"],
+      ],
+    ],
+    [
+      "Undo",
+      [
+        // The table binds ctrl+ AND meta+ for each of these, on every platform.
+        // A Mac therefore has TWO chords for one command, and the second one
+        // costs something a Mac user would not expect: Ctrl+Z stops suspending
+        // the foreground job in a session. So the Mac rows name both keys
+        // rather than only the one this keyboard would reach for first.
+        // Elsewhere Ctrl and the Mod label are the same key, so the row stays a
+        // single chip. test/bindings.logic.test.ts checks both spellings are
+        // documented ON EACH platform's own table.
+        //
+        // Not marked "always on", and that is the point rather than an
+        // omission: these two are ordinary default rows, so the switch named
+        // below turns them off — which is how somebody gets Ctrl+Z back as the
+        // shell's suspend key inside a session.
+        [
+          isMac ? [`${MOD}+Z`, "Ctrl+Z"] : [`${MOD}+Z`],
+          "Undo the last change to the sidebar (kill, new, rename, reorder, move, project)",
+        ],
+        [isMac ? [`${MOD}+Shift+Z`, "Ctrl+Shift+Z"] : [`${MOD}+Shift+Z`], "Redo it"],
       ],
     ],
   ];
@@ -221,8 +245,8 @@ export const ShortcutsHelp: Component<{
           </For>
         </div>
         <div class="tl-schelp-note">
-          On by default — toggle “App shortcuts” in ⚙ Settings. The rows marked
-          “always on” ignore that toggle. Press Esc or / to close.
+          On by default — toggle “App shortcuts” in ⚙ Settings. The rows marked “always on” ignore
+          that toggle. Press Esc or / to close.
         </div>
       </div>
     </div>

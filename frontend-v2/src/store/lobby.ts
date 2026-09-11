@@ -6,6 +6,8 @@ import {
   addSessionToGroup,
   deleteProject,
   deriveSidebar,
+  groupSeqTokens,
+  isSystemSession,
   materializeGroup,
   moveSession,
   moveSessionToAnchor,
@@ -14,16 +16,19 @@ import {
   reorderGroups,
   sameLayout,
   stabilizeModel,
+  SYSTEM_GROUP_NAME,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
-import {
-  applySessionOrder,
-  captureVisibleOrder,
-  type SessionOrder,
-} from "../logic/order.logic";
+import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
-import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
+import { toasts } from "./toast";
+import { UNDO_CAP, type UndoResult, type UndoStore } from "./undo";
+import { registerKillUndoHandlers } from "./undo.kill";
+import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
+import { registerLocalUndoHandlers } from "./undo.local";
+import { registerTitleUndoHandlers } from "./undo.titles";
+import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,
@@ -46,7 +51,7 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY } from "./visits";
-import { carryWatch } from "./watchmode";
+import { applyWatch, carryWatch, loadWatch, setWatchUndo } from "./watchmode";
 import { carryViewMode } from "./viewmode";
 import { carryDraft } from "./drafts";
 import { lensTarget } from "../lib/act-as";
@@ -101,6 +106,17 @@ export interface LobbyStore {
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
   collapse: CollapseStore;
+  /**
+   * This tab's undo stack, or undefined on a page that has none.
+   *
+   * Handed straight back out of {@link LobbyStoreOptions.undo}, because a
+   * component that holds the store has no other route to the one instance App
+   * owns: the command layer reads it from here when App hands it no stack of
+   * its own (keybindings/commands.ts). The dimmed card's arrow does NOT use
+   * it — it goes through {@link LobbyStore.takeBackKill}, which presses that
+   * kill's own entry rather than the top of the stack.
+   */
+  undo?: UndoStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
   workingSince: (name: string) => number | undefined;
 
@@ -119,11 +135,27 @@ export interface LobbyStore {
   create(text: string, group: string, kind?: CreateKind): Promise<string>;
   /** write or clear layout.dock (the Ctrl+J scratch shell); undefined un-docks. */
   setDock(next: DockState | undefined): Promise<boolean>;
-  /** Retitle a session. The name never moves (ADR-0019). */
+  /** Retitle a session. The tmux name is derived from the title again
+   *  (ADR-0022), so this does move it; an empty title clears the title and
+   *  leaves the name alone. */
   rename(name: string, title: string): Promise<boolean>;
+  /** Kill a session — after a grace window in which Cmd+Z takes it back. See
+   *  the function; nothing reaches tmux-api for GRACE_MS. */
   kill(name: string): Promise<void>;
+  /** Is this session inside its kill window: on its way out, still in the
+   *  list, and drawn dimmed with an undo arrow instead of vanishing? */
+  killing(name: string): boolean;
+  /** Take back THIS session's kill, which is what the dimmed card's arrow
+   *  presses. See the function: it undoes that kill's own entry rather than
+   *  the top of the stack, and works in a tab that has no stack at all. */
+  takeBackKill(name: string): Promise<UndoResult>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
+  /** Change which order the session list comes in. Goes through the store
+   *  rather than straight to the pref because a switch into manual freezes the
+   *  visible arrangement into the layout first, and because the switch is
+   *  undoable. */
+  setSessionOrderMode(next: SessionOrder): Promise<void>;
   reorderGroupsTo(from: number, to: number): Promise<void>;
   createProject(name: string, dir?: string): Promise<boolean>;
   /** Ask for a Claude session started ahead of a create, in this directory.
@@ -172,6 +204,20 @@ export interface LobbyStoreOptions {
    *  "manual" — see `move`. */
   setSessionOrder?: (order: SessionOrder) => void;
   /**
+   * This tab's undo stack (store/undo.ts).
+   *
+   * App owns the one instance, because whether undo runs at all is the page's
+   * business rather than this store's: a lens tab (`?as=bob`) has none. Every
+   * layout action below records itself here AFTER its write lands, and the
+   * inverses are registered from here at construction
+   * (store/undo.layout.ts).
+   *
+   * Omitted means no undo: nothing is pushed, no handler is registered, and
+   * every action behaves exactly as it did before undo existed. That is what
+   * the tests of those actions run with.
+   */
+  undo?: UndoStore;
+  /**
    * Whether this device can render the Ctrl+J dock, which decides whether the
    * docked shell may be hidden from the sidebar.
    *
@@ -192,6 +238,23 @@ export interface LobbyStoreOptions {
 }
 
 const LAYOUT_GRACE_MS = 4000;
+
+/**
+ * How long a killed session sits in the sidebar, dimmed, before the DELETE
+ * actually goes out.
+ *
+ * THE WINDOW IS THE CONFIRMATION. Every kill path used to ask
+ * `Kill session "x"?` first, and that question is a poor one: it interrupts the
+ * person who meant it, and to the person who did not it offers a name that is
+ * a minted id (ADR-0019). A window asks nothing and undoes everything — the
+ * card stays put and dimmed, Cmd+Z inside it retracts the whole thing, and
+ * nothing has reached the server to put back.
+ *
+ * 8s is long enough to notice a card dim and reach for the keyboard, and short
+ * enough that nobody is left wondering whether the kill worked. Exported so the
+ * timer here, the sidebar's dim and the tests all read one number.
+ */
+export const GRACE_MS = 8000;
 
 /**
  * Ceiling for the poll's failure backoff. The ladder doubles the base interval
@@ -268,7 +331,56 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   const [toast, setToast] = createSignal<string | null>(null);
 
   const me = () => whoami()?.osUser ?? "";
-  const collapse = createCollapseStore(me);
+  const collapse = createCollapseStore(me, opts.undo);
+
+  /**
+   * A kill inside its grace window: the timer that will land it, and the name
+   * it will land on.
+   *
+   * The name is MUTABLE because a rename can arrive under a pending kill —
+   * eight seconds is long enough for a fresh session's first title to land, and
+   * since ADR-0022 that moves the name. `carryPendingKill` rewrites it, so the
+   * timer fires a DELETE at whatever the session answers to by then rather than
+   * at a name nothing knows, which would leave the session surviving its own
+   * kill.
+   */
+  interface PendingKill {
+    name: string;
+    timer?: ReturnType<typeof setTimeout>;
+  }
+
+  /** Kills waiting out their window, keyed by the name they are waiting on. */
+  const pendingKills = new Map<string, PendingKill>();
+  /**
+   * What this page life could bring a killed session back from: the record its
+   * DELETE answered with (lib/lobby-api.ts killSession), or null from a server
+   * that snapshots nothing.
+   *
+   * Page life only, deliberately. It is written when the kill lands and read by
+   * an undo press one moment later; a reloaded tab has no record, and its
+   * surviving entry refuses rather than claiming a resurrection it cannot do
+   * (store/undo.kill.ts says the same from the other side).
+   */
+  const killRecords = new Map<string, RestoreSelection | null>();
+  /**
+   * The DELETEs that are out right now, keyed by name, each one the promise
+   * `killNow` handed its caller.
+   *
+   * A kill is neither pending nor landed while its request is in flight, and
+   * that gap is long enough to press Cmd+Z in: the grace timer drops the
+   * pending record before it calls `killNow`, the session stays in the list
+   * until the DELETE answers, and the DELETE itself waits on a whole-box
+   * snapshot first (tmux-api/snapshots.go resurrectRecordFor). Without this
+   * map an undo landing there read the session as still running, refused, and
+   * dropped its own entry while the kill went on to succeed.
+   */
+  const killsInFlight = new Map<string, Promise<boolean>>();
+  const [killingNames, setKillingNames] = createSignal<readonly string[]>([]);
+  /** Republish the dim set. A signal rather than a bare Map so the sidebar
+   *  repaints the card the moment a kill starts, lands or is taken back. */
+  const publishKilling = (): void => {
+    setKillingNames([...pendingKills.keys()]);
+  };
 
   const states = loadStates();
   const workingSince = (name: string): number | undefined => {
@@ -429,6 +541,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       carryWatch(was, now, as);
       carryViewMode(was, now);
       carryDraft(was, now);
+      // The undo stack is the fourth record keyed by the name. Its entries
+      // hold one in `session` or `sessions` and nowhere else (store/undo.ts
+      // UndoEntryBase), so this rewrites what an entry cannot key by tmux's
+      // session id: a layout position, or a title entry about a session from a
+      // server that supplies no id. Own sessions only, like the three above,
+      // and `as` is always "" here since a lens tab has no stack at all.
+      opts.undo?.carry(was, now);
+      // The fifth record keyed by the name, and the one with a deadline: a
+      // kill waiting out its grace window fires a DELETE at whatever name this
+      // says in a few seconds' time. A rename landing under it used to leave
+      // the timer aimed at a name nothing answers to, and the session would
+      // survive its own kill.
+      carryPendingKill(was, now);
     }
   }
 
@@ -721,8 +846,14 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   function updateHash(sel: SelectedSession | null): void {
     if (!syncHash || typeof window === "undefined") return;
     try {
-      const hash = sel ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "") : "";
-      window.history.replaceState(null, "", window.location.pathname + window.location.search + hash);
+      const hash = sel
+        ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "")
+        : "";
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search + hash,
+      );
     } catch {
       /* no history */
     }
@@ -823,11 +954,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * prompt. A layout write that fails is toasted and drops the optimistic card,
    * but the session itself is still started by the attach.
    */
-  async function create(
-    text: string,
-    group: string,
-    kind: CreateKind = "prompt",
-  ): Promise<string> {
+  async function create(text: string, group: string, kind: CreateKind = "prompt"): Promise<string> {
     const t = kind === "name" ? cleanTitle(text) : firstPromptLine(text);
     const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
@@ -851,6 +978,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         lastDrive: nowSec,
         created: nowSec,
         state: "",
+        // This IS the lobby's own create path, so the card says so. The server
+        // stamps @tl_origin=user a moment later when the attach creates the
+        // tmux session (devvm/tmux-user-attach), but the card exists before
+        // that — and an unstamped card is a SYSTEM session, so a create the
+        // user is watching would vanish into a collapsed group for the second
+        // or two until the first poll that knows the session.
+        origin: ORIGIN_USER,
       },
     ]);
     // The line the card reads until Claude's summary lands. Persisted rather
@@ -875,6 +1009,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // the auto-title rule fires only while `@title` is unset — the placeholder
     // would become permanent and Claude's summary would never reach the card.
     if (kind === "name" && t !== "") void stampTitleWhenAlive(n, t);
+    // Recorded even when the layout write did not land, unlike every layout
+    // action on this store: a create that lost its PUT still created a session,
+    // because the ttyd attach is what brings one into being, and that is the
+    // half Cmd+Z has to be able to take away.
+    opts.undo?.push({ kind: "create", session: n, group });
     quickRefreshBurst();
     return n;
   }
@@ -902,6 +1041,86 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   /**
+   * Stamp a title (or clear it with ""), and wait for the refresh that brings
+   * the derived name back. false = the write did not land, and it has toasted.
+   *
+   * The two actions below are this plus an undo entry, and the undo handler is
+   * this ALONE (store/undo.titles.ts): an inverse that went through `rename`
+   * would record itself on the stack and wipe the redo half the press is about
+   * to fill. Takes an already-clean title, since the caller is what decides
+   * whether an empty box means "clear" (lib/title.ts cleanTitle).
+   */
+  async function applyTitle(name: string, title: string): Promise<boolean> {
+    // Clearing hands the session back to its summary, so the placeholder goes
+    // too — leaving it would put the prompt line straight back on the card.
+    if (title === "") forgetPromptLine(name);
+    try {
+      await api.setSessionTitle(name, title);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Rename failed");
+      return false;
+    }
+    await refresh();
+    return true;
+  }
+
+  /** What a retitle remembers about a session BEFORE it writes: the title it
+   *  is replacing, and the two fields that find the session again once the
+   *  write has moved its name. */
+  interface TitleWas {
+    id?: string;
+    bornAs?: string;
+    title: string;
+  }
+
+  function titleNow(name: string): TitleWas | null {
+    const s = mergedSessions().find((x) => x.name === name);
+    if (!s) return null;
+    return {
+      ...(s.id ? { id: s.id } : null),
+      ...(s.bornAs ? { bornAs: s.bornAs } : null),
+      title: s.title ?? "",
+    };
+  }
+
+  /**
+   * The name the session answers to after a write that may have renamed it.
+   *
+   * The same two links `renamesBetween` uses and in the same order: tmux's
+   * session id, then the birth name the server records for a session renamed
+   * away from a minted id. A session with neither cannot be followed from
+   * here, because the pre-write list cannot be snapshotted: `reconcile`
+   * rewrites the rows in place. The entry then keeps the name the retitle was
+   * made against, and `carry` moves it when a poll reveals the rename.
+   */
+  function nameAfterTitle(was: TitleWas, name: string): string {
+    const list = mergedSessions();
+    const byId = was.id ? list.find((s) => s.id === was.id) : undefined;
+    if (byId) return byId.name;
+    const born = was.bornAs ? list.find((s) => s.bornAs === was.bornAs) : undefined;
+    return born?.name ?? name;
+  }
+
+  /**
+   * Record a retitle, AFTER its write landed.
+   *
+   * A session the list has never shown reads as having had no title, which is
+   * the right guess: its undo clears the title, and clearing is the state a
+   * session with none is already in.
+   */
+  function pushTitle(was: TitleWas | null, name: string, after: string): void {
+    if (!opts.undo) return;
+    opts.undo.push({
+      kind: "title",
+      session: was ? nameAfterTitle(was, name) : name,
+      ...(was?.id ? { id: was.id } : null),
+      before: was?.title ?? "",
+      after,
+    });
+  }
+
+  /**
    * Clear a session's title so its card shows its name again.
    *
    * Emptying the rename box is the only way back to a bare name, and it is the
@@ -910,17 +1129,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * invented for a running session would be worse than a stale one.
    */
   async function clearTitle(name: string): Promise<boolean> {
-    // Clearing hands the session back to its summary, so the placeholder goes
-    // too — leaving it would put the prompt line straight back on the card.
-    forgetPromptLine(name);
-    try {
-      await api.setSessionTitle(name, "");
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
-      else showToast("Rename failed");
-      return false;
-    }
-    await refresh();
+    const was = titleNow(name);
+    if (!(await applyTitle(name, ""))) return false;
+    // Its own push, because clearing does not route through `rename` below.
+    // It is also the one title change on this screen that cannot be re-typed
+    // from memory, so it is the last one Cmd+Z should miss.
+    pushTitle(was, name, "");
     return true;
   }
 
@@ -941,23 +1155,140 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // An empty title hands the session back to its summary.
       return clearTitle(name);
     }
-    try {
-      await api.setSessionTitle(name, t);
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
-      else showToast("Rename failed");
-      return false;
-    }
-    await refresh();
+    const was = titleNow(name);
+    if (!(await applyTitle(name, t))) return false;
+    // The CLEANED title, which is what the server stored: an entry holding the
+    // raw text would redo a title nobody has, and then refuse its own
+    // precondition the next press.
+    pushTitle(was, name, t);
     return true;
   }
 
+  /**
+   * Kill a session — in GRACE_MS, unless Cmd+Z gets there first.
+   *
+   * Nothing reaches tmux-api on the press. The card stays in the list and goes
+   * dim (`killing`), the timer below is the only thing in flight, and an undo
+   * inside the window drops it with no server call at either end. The window
+   * replaced the `Kill session "x"?` confirm on every entry point — the ⋯ menu,
+   * the right swipe, the sidebar's Delete, alt+shift+w and the palette — so
+   * this is the one place that decides what a kill costs.
+   *
+   * Past the window the DELETE has gone out and undo has to bring the session
+   * back from the record it left instead (store/undo.kill.ts), which loses the
+   * scrollback and the process tree.
+   */
   async function kill(name: string): Promise<void> {
+    const at = locate(layout(), name);
+    const wasSelected = selected()?.name === name;
+    // A second press on a session already on its way out: the window it is in
+    // is the one to wait for, and a second entry would make the person press
+    // Cmd+Z twice to take back one kill.
+    if (!armKill(name)) return;
+    opts.undo?.push({
+      kind: "kill",
+      session: name,
+      group: at ? at.group : "",
+      index: at ? at.index : -1,
+      ...(wasSelected ? { wasSelected: true } : null),
+    });
+  }
+
+  /**
+   * Open a kill's grace window: the dimmed card, the deselect, and the DELETE
+   * only when GRACE_MS is up. No undo entry.
+   *
+   * The plain write under `kill` above, and the second one here after `killNow`
+   * (store/undo.titles.ts states the rule): the REDO of an undone kill comes
+   * back through this, and going through `kill` would push a second entry and
+   * clear the redo stack that press is walking down.
+   *
+   * false when a window was already open for that name. Not a failure — it is
+   * the second press on a card already on its way out.
+   */
+  function armKill(name: string): boolean {
+    if (pendingKills.has(name)) return false;
+    // Deselected on the press, not when the kill lands: the person asked for
+    // the session to go, and leaving its terminal in front of them for eight
+    // seconds reads as a kill that missed. The entry remembers it was open, so
+    // an undo hands it straight back.
+    if (selected()?.name === name) deselect();
+    const rec: PendingKill = { name };
+    rec.timer = setTimeout(() => {
+      // Out of the map first, so the killNow below finds no window to cancel.
+      pendingKills.delete(rec.name);
+      publishKilling();
+      void killNow(rec.name);
+    }, GRACE_MS);
+    pendingKills.set(name, rec);
+    publishKilling();
+    return true;
+  }
+
+  /**
+   * The kill itself: the DELETE, the layout PUT, the local prune and the
+   * deselect. No window, and no undo entry.
+   *
+   * This is the plain write under `kill` above, and what an inverse has to
+   * call: `kill` records an entry, so an undo that went through it would push
+   * onto the stack and wipe the redo half the press is about to fill. Three
+   * callers — the grace timer, the undo of a create, and the redo of a kill.
+   *
+   * false when the DELETE did not go through, having toasted. The record that
+   * would put the session back goes into `killRecords` rather than to the
+   * caller, because the caller that wants it is a later press.
+   */
+  function killNow(name: string): Promise<boolean> {
+    // One DELETE per name at a time, and the promise stays reachable while it
+    // is out. Both halves matter to undo. A press that lands in that window
+    // used to read the session as "still running" — the timer had already
+    // dropped the pending record and the prune only happens after the await —
+    // so the entry was refused and dropped while the DELETE went on to land,
+    // leaving the person no way back from a kill they had just taken back. The
+    // undo handler awaits this promise instead (store/undo.kill.ts).
+    //
+    // The window is not small: the DELETE runs a whole-box `tmux-persist save`
+    // before it kills (tmux-api/snapshots.go resurrectRecordFor).
+    const already = killsInFlight.get(name);
+    if (already) return already;
+    const landing = sendKill(name).finally(() => {
+      killsInFlight.delete(name);
+    });
+    killsInFlight.set(name, landing);
+    return landing;
+  }
+
+  async function sendKill(name: string): Promise<boolean> {
+    cancelKill(name); // landing it now, so its window is over either way
+    let record: RestoreSelection | null = null;
+    let killed = true;
     try {
-      await api.killSession(name);
-    } catch {
-      showToast("Couldn't kill session");
-      return;
+      record = (await api.killSession(name)) ?? null;
+    } catch (e) {
+      // A 404 is not a failed kill, but it is not a kill either: no session
+      // answers to that name here. The commonest way to get one is a name that
+      // has MOVED — tmux-api renames a session as soon as its first title
+      // lands (ADR-0022), and the session list is behind a cache — so the
+      // session is very probably still running under another name. The local
+      // cleanup below still runs, because the name really is not there; what
+      // changes is the ANSWER, so undoing a create refuses instead of
+      // reporting a kill that did not happen.
+      if (!(e instanceof ApiError) || e.status !== 404) {
+        showToast("Couldn't kill session");
+        return false;
+      }
+      killed = false;
+    }
+    // Only for a session this really killed. A record for a 404 would be a
+    // promise to resurrect something that never died.
+    if (killed) killRecords.set(name, record);
+    // Bounded by the stack's own depth, since a record whose entry has fallen
+    // off the end of it can never be asked for again. A Map keeps insertion
+    // order, so the first key is the oldest kill.
+    while (killRecords.size > UNDO_CAP) {
+      const oldest = killRecords.keys().next();
+      if (oldest.done) break;
+      killRecords.delete(oldest.value);
     }
     // The backend drops it from the server layout on a UI kill — but only when
     // tmux still had the session; a kill that 404s (already dead) leaves the
@@ -965,11 +1296,92 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     await saveLayout(removeSessionFromLayout(layout(), name));
     setSessions((prev) => prev.filter((s) => s.name !== name));
     setPending((p) => p.filter((s) => s.name !== name));
-    if (selected()?.name === name) {
-      setSelected(null);
-      updateHash(null);
-    }
+    if (selected()?.name === name) deselect();
     await refresh();
+    return killed;
+  }
+
+  /** Drop a kill still inside its window: the timer goes, the card un-dims,
+   *  and no DELETE was ever sent. false when there was nothing to drop. */
+  function cancelKill(name: string): boolean {
+    const rec = pendingKills.get(name);
+    if (!rec) return false;
+    if (rec.timer) clearTimeout(rec.timer);
+    pendingKills.delete(name);
+    publishKilling();
+    return true;
+  }
+
+  /**
+   * The dimmed card's ↺ arrow: take back THIS session's kill.
+   *
+   * It presses the entry the kill pushed, wherever that entry now sits on the
+   * stack, rather than the top of it. Anything at all can have happened in the
+   * eight seconds since — a group collapsed, another card renamed, a second
+   * kill — and pressing the top from a button drawn on one card undid that
+   * other thing instead while this session went on dying, with no toast, since
+   * a working undo says nothing.
+   *
+   * Going through the stack rather than straight to `cancelKill` is what keeps
+   * the two affordances the same action: the entry comes off the undo stack
+   * (so a later Cmd+Z cannot take the same kill back twice) and lands on the
+   * redo stack (so Cmd+Shift+Z kills again, on a fresh window).
+   *
+   * The fallback underneath it is for a tab with no stack — a lens tab
+   * (`?as=bob`) runs with undo off (store/undo.ts UndoStoreOptions), and it is
+   * the one tab where the session belongs to somebody else. Retracting a
+   * window that has sent nothing needs no history to do it, so the arrow works
+   * there too rather than being drawn dead.
+   */
+  async function takeBackKill(name: string): Promise<UndoResult> {
+    const stack = opts.undo;
+    if (stack) {
+      const r = await stack.undoEntry((e) => e.kind === "kill" && e.session === name);
+      // ok, or a refusal with something to say. Only "nothing matched" falls
+      // through, which is the silent no-op shape (reason null).
+      if (r.ok || r.reason !== null) return r;
+    }
+    return cancelKill(name) ? { ok: true } : { ok: false, reason: null };
+  }
+
+  /** Move a pending kill onto the name its session now answers to. */
+  function carryPendingKill(was: string, now: string): void {
+    const rec = pendingKills.get(was);
+    if (!rec) return;
+    pendingKills.delete(was);
+    rec.name = now;
+    pendingKills.set(now, rec);
+    publishKilling();
+  }
+
+  /**
+   * Land every pending kill on the way out of the page.
+   *
+   * The window is a delay, not a maybe: somebody asked for those sessions to
+   * go, so closing the tab or reloading has to complete the kill rather than
+   * cancel it. `pagehide` is the last event a browser fires for both, and the
+   * request has to be synchronous and `keepalive` — an ordinary fetch is
+   * cancelled with the document before it can settle (lib/lobby-api.ts
+   * killSessionKeepalive, which builds it through the same URL helper as every
+   * other call so `?as=` rides along).
+   *
+   * No layout PUT beside it. The DELETE lands on a session tmux still has, and
+   * the backend drops the layout entry itself for a UI kill; the PUT in
+   * `killNow` is there for the kill that 404s.
+   *
+   * A HARD CRASH MISSES THIS — a killed renderer fires no events, and a browser
+   * may drop keepalive requests on exit. The failure mode is a session that
+   * survives a kill nobody saw fail and gets killed again when somebody
+   * notices it, which is the cheap direction to be wrong in; the expensive one
+   * is killing a session whose undo was still on screen.
+   */
+  function flushKills(): void {
+    for (const rec of pendingKills.values()) {
+      if (rec.timer) clearTimeout(rec.timer);
+      api.killSessionKeepalive?.(rec.name);
+    }
+    pendingKills.clear();
+    publishKilling();
   }
 
   /**
@@ -983,7 +1395,47 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return saveLayout(next ? { ...rest, dock: next } : rest);
   }
 
+  /**
+   * Adopt a session the lobby did not make, because somebody has just dragged
+   * it out of System. Answers false when the adoption did not land, and the
+   * caller then writes no layout at all.
+   *
+   * The order matters and it is the opposite of the usual optimistic one. With
+   * the layout written first, a failed POST would leave the card sitting in a
+   * project while tmux still called the session `test` — and deriveSidebar
+   * honours an explicit project placement over the origin, so the next poll
+   * would AGREE with the arrangement. The card would look rescued, go on not
+   * pushing and not recording, and nothing would ever say otherwise. Asking the
+   * server first costs one round trip on the rescue alone (an ordinary move
+   * never reaches this) and leaves both halves either done or untouched.
+   */
+  async function adoptSystemSession(name: string): Promise<boolean> {
+    const s = sessions.find((x) => x.name === name);
+    if (!s || !isSystemSession(s)) return true;
+    try {
+      await api.setSessionOrigin(name, ORIGIN_USER);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Couldn't take this session out of System");
+      return false;
+    }
+    // The origin the next poll would have brought back, applied now. Without
+    // it the card springs straight back into System for the rest of the poll
+    // interval: a system session is filed there whatever layout.ungrouped says,
+    // which is the whole reason a harness's sessions do not sit in the list.
+    setSessions((x) => x.name === name, "origin", ORIGIN_USER);
+    return true;
+  }
+
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
+    // System is not a place the layout can put anything: it is derived from
+    // each session's origin, and ":system" is a name no project has. Writing it
+    // would strip every reference to the card and file it nowhere, so a session
+    // dropped back in would reappear in Ungrouped having quietly lost the
+    // project it was in.
+    if (group === SYSTEM_GROUP_NAME) return;
+    // The rescue (design doc §Rescue), before anything is written down.
+    if (!(await adoptSystemSession(name))) return;
     // A drop that names a POSITION cannot be honoured while a timestamp is
     // deciding positions: the layout is the only place a position can be
     // written, and the sort would put the card straight back on the next
@@ -993,8 +1445,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // (the card menu's "Move to…", a drop on a group header) asks for no
     // position at all, so it leaves the ordering alone.
     const wasOrder = sessionOrder();
+    const before = layout();
     const handBack = wasOrder !== "manual" && !!anchor;
-    const frozen = handBack ? captureVisibleOrder(layout(), model()) : layout();
+    const frozen = handBack ? captureVisibleOrder(before, model()) : before;
     // Swept-in members occupy rendered positions they have no raw entry for, so
     // nothing can be placed relative to them (nor after them) until they are
     // materialized — Ungrouped's leftovers, and a project's members that only
@@ -1011,11 +1464,81 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // saveLayout rolls the layout back on a failed PUT; the ordering it changed
     // on the way in goes back with it, or the list is left in manual showing an
     // arrangement the server never took.
-    if (!ok && handBack) opts.setSessionOrder?.(wasOrder);
+    if (!ok) {
+      if (handBack) opts.setSessionOrder?.(wasOrder);
+      return;
+    }
+    // Recorded AFTER the write, so a drag the server refused leaves nothing on
+    // the stack. The FROM position is read out of `base` rather than out of the
+    // layout: the freeze and the materialize both run before the move, and a
+    // session the layout had never placed acquires its first raw entry there.
+    const from = locate(base, name);
+    const to = locate(next, name);
+    // A drop that landed the card back in the seat it already had changed
+    // nothing, and an entry for it would swallow a Cmd+Z press without moving
+    // anything. The mode flip counts as a change even when the card did not.
+    if (!to || (!handBack && sameLayout(before, next))) return;
+    opts.undo?.push({
+      kind: "move",
+      session: name,
+      ...(from ? { fromGroup: from.group } : null),
+      fromIndex: from ? from.index : -1,
+      toGroup: to.group,
+      toIndex: to.index,
+      ...(handBack ? { orderBefore: wasOrder } : null),
+    });
+  }
+
+  /**
+   * Change which order the session list comes in.
+   *
+   * A switch INTO manual freezes what is on screen into the layout first, the
+   * same thing a positioned drop does and for the same reason: the layout is
+   * the only place an order can be written, so without the freeze every card
+   * jumps to whatever seat the raw arrays hold for it, which for a list nobody
+   * has arranged lately is an order the user has never seen. The write goes
+   * first and the mode second here, the opposite way round from `move`, because
+   * the frozen arrangement is invisible until the mode is manual, so this
+   * order is the one with no intermediate frame to render.
+   *
+   * Leaving manual freezes nothing: the arrangement stays in the document and
+   * the sort decides the order instead.
+   */
+  async function setSessionOrderMode(next: SessionOrder): Promise<void> {
+    const before = sessionOrder();
+    if (next === before) return;
+    let captured: OrderModeCapture | undefined;
+    if (next === "manual") {
+      const over = layout();
+      const wrote = captureVisibleOrder(over, model());
+      if (!sameLayout(over, wrote)) {
+        // saveLayout rolled the layout back and toasted. Changing the mode on
+        // top of that would leave the list in manual showing an arrangement
+        // the server never took.
+        if (!(await saveLayout(wrote))) return;
+        captured = { over, wrote };
+      }
+    }
+    opts.setSessionOrder?.(next);
+    opts.undo?.push({
+      kind: "orderMode",
+      before,
+      after: next,
+      ...(captured ? { capturedLayout: captured } : null),
+    });
   }
 
   async function reorderGroupsTo(from: number, to: number): Promise<void> {
-    await saveLayout(reorderGroups(layout(), from, to));
+    const cur = layout();
+    const token = groupSeqTokens(cur)[from];
+    const next = reorderGroups(cur, from, to);
+    if (!(await saveLayout(next))) return;
+    // No ordering mode rides along with this one, unlike `move` above:
+    // `sidebar.order` orders the sessions WITHIN a group, so the group sequence
+    // reads the same under all three orderings and a reorder of it never had a
+    // reason to hand ordering back.
+    if (token === undefined || sameLayout(cur, next)) return;
+    opts.undo?.push({ kind: "reorderGroups", from, to, group: token });
   }
 
   async function createProject(name: string, dir?: string): Promise<boolean> {
@@ -1028,7 +1551,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       showToast(`Project "${n}" already exists`);
       return false;
     }
-    await saveLayout(addProject(layout(), n, dir));
+    if (await saveLayout(addProject(layout(), n, dir))) {
+      opts.undo?.push({ kind: "projectCreate", name: n, ...(dir ? { dir } : null) });
+    }
     return true;
   }
 
@@ -1047,12 +1572,32 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // layout), so the key has to travel with the rename — and only once the
     // write has landed, or a rollback would leave the two disagreeing.
     const saved = await saveLayout(renameProject(layout(), oldName, n));
-    if (saved) collapse.rename(oldName, n);
+    if (saved) {
+      collapse.rename(oldName, n);
+      opts.undo?.push({ kind: "projectRename", from: oldName, to: n });
+    }
     return saved;
   }
 
   async function deleteProjectAction(name: string): Promise<void> {
-    if (await saveLayout(deleteProject(layout(), name))) collapse.remove(name);
+    const cur = layout();
+    const doomed = cur.projects.find((p) => p.name === name);
+    // Its seat among the groups, read before the delete takes it away. Undo
+    // puts the project back THERE rather than beside Ungrouped, which is where
+    // a project somebody has just named belongs and a returning one does not.
+    const index = groupSeqTokens(cur).indexOf("p:" + name);
+    if (!(await saveLayout(deleteProject(cur, name)))) return;
+    collapse.remove(name);
+    if (!doomed) return;
+    opts.undo?.push({
+      kind: "projectDelete",
+      name,
+      ...(doomed.dir ? { dir: doomed.dir } : null),
+      index,
+      // In the order it held them, so undo puts them back in their seats
+      // instead of at the end of Ungrouped where the delete tipped them.
+      sessions: [...doomed.sessions],
+    });
   }
 
   /**
@@ -1077,13 +1622,76 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       }
       return;
     }
-    // tmux-api places restored sessions back in their projects, so the server's
-    // layout is now ahead of ours. Disarm the write-grace: holding our copy
-    // would hide the placement until the next poll, and the conflict check
-    // would blame another tab for a change this click asked for.
+    await settleRestore();
+  }
+
+  /**
+   * Take the placement a restore made server-side.
+   *
+   * tmux-api puts restored sessions back in their projects and re-stamps their
+   * titles (tmux-api/assignments.go placeRestoredSessions), so the server's
+   * layout is now ahead of ours. Disarm the write-grace: holding our copy would
+   * hide the placement until the next poll, and the conflict check would blame
+   * another tab for a change this click asked for.
+   */
+  async function settleRestore(): Promise<void> {
     graceUntil = 0;
     lastWritten = null;
     await refresh();
+  }
+
+  /**
+   * Bring a killed session back from the record its kill left.
+   *
+   * The plain write under `restore` above: it throws rather than swallowing, so
+   * the undo handler can turn a failed restore into a sentence a person reads,
+   * and it reports nothing when it succeeds.
+   *
+   * EXCEPT WHILE IT RUNS, which makes this the one press on the undo stack that
+   * says anything at all. Every other inverse is a layout PUT or a rename and
+   * is done inside a second, so silence is right for them: undo that worked has
+   * nothing to tell you (store/undo.ts). This one shells out to tmux-persist,
+   * which recreates the session and starts claude cold on the conversation, and
+   * it runs on a 30-second deadline of its own for that reason (lib/lobby-api.ts
+   * RESTORE_TIMEOUT_MS). Seconds of nothing after Cmd+Z reads as a press that
+   * missed, and the second press it invites undoes the entry underneath. So the
+   * work gets a sticky toast the same way an upload does (clipboard/attach.ts),
+   * cleared in `finally` — a sticky one has no timer to save it, and one left
+   * behind by a failure would sit there for the rest of the page life.
+   */
+  async function resurrect(record: RestoreSelection): Promise<void> {
+    const note = toasts.push({
+      kind: "loading",
+      // Named: a tab can hold several dimmed cards at once, and the person who
+      // pressed Cmd+Z is owed which one this is about. A record always names
+      // the one session its kill took (lib/lobby-api.ts killSession).
+      message: `Bringing ${record.sessions.join(", ")} back…`,
+    });
+    try {
+      await api.restoreSessions(record);
+      // Inside the try, so the toast outlives the refresh: it is the card
+      // coming back that ends the wait, not the POST answering.
+      await settleRestore();
+    } finally {
+      toasts.dismiss(note);
+    }
+  }
+
+  /**
+   * Put a session's layout entry back at the slot a kill took it from.
+   *
+   * A gap-filler rather than the main event: the server places a restored
+   * session itself, so this writes only when the document came back without
+   * it. It also declines for a session that never came back under this name —
+   * a restore whose name was taken returns a `-HHMM` suffixed session
+   * (types/lobby.ts SnapshotRow), and this slot belongs to the name that was
+   * killed.
+   */
+  async function placeSession(name: string, group: string, index: number): Promise<void> {
+    const cur = layout();
+    if (locate(cur, name)) return;
+    if (!mergedSessions().some((s) => s.name === name)) return;
+    await saveLayout(moveSession(cur, name, group, index));
   }
 
   const listSnapshots = (): Promise<SnapshotList> => api.listSnapshots();
@@ -1102,6 +1710,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
   };
   const onOnline = () => wake();
+  const onPageHide = () => flushKills();
 
   function dispose(): void {
     // Before clearing the timer: a poll still out there schedules the next turn
@@ -1116,7 +1725,78 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
     if (typeof window !== "undefined") {
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("pagehide", onPageHide);
     }
+    // Any grace window still open goes with the store. A disposed store is a
+    // page being torn down or replaced, and `pagehide` is what lands those
+    // kills; firing them from here as well would send the DELETE twice.
+    for (const rec of pendingKills.values()) if (rec.timer) clearTimeout(rec.timer);
+    pendingKills.clear();
+    // Watch mode's stack is module-level (store/watchmode.ts has why), so a
+    // disposed store has to take it back down or the next one built without a
+    // stack would still record switches into this one's.
+    if (opts.undo) setWatchUndo(null);
+  }
+
+  // The inverses of the layout actions above are in store/undo.layout.ts, one
+  // per kind, and reach back in here through these ports. Registered from the
+  // store that OWNS the actions, which is what keeps store/undo.ts ignorant of
+  // the lobby and the dependency running one way (see its header). Only when
+  // the app supplied a stack: registering handlers that nothing can push to
+  // would just leave a dead entry pointing at a disposed store.
+  if (opts.undo) {
+    registerLayoutUndoHandlers({
+      layout,
+      save: saveLayout,
+      order: sessionOrder,
+      setOrder: (order) => opts.setSessionOrder?.(order),
+      capture: () => captureVisibleOrder(layout(), model()),
+      renameCollapse: (from, to) => collapse.rename(from, to),
+      removeCollapse: (name) => collapse.remove(name),
+    });
+    registerTitleUndoHandlers({ sessions: mergedSessions, me, setTitle: applyTitle });
+    // Kill and create (store/undo.kill.ts). The two are one pair of operations
+    // read in opposite directions, so they share a registry and these ports.
+    registerKillUndoHandlers({
+      pending: (session) => pendingKills.has(session),
+      cancelKill,
+      killNow,
+      killLater: armKill,
+      killInFlight: (session) => killsInFlight.get(session),
+      killRecord: (session) => killRecords.get(session),
+      resurrect: async (record) => {
+        await resurrect(record);
+        // The record has been spent. Leaving it would offer to restore the
+        // same snapshot over a session that is running again.
+        for (const name of record.sessions) killRecords.delete(name);
+      },
+      // Own sessions only, like every other resolution here: a foreign row's
+      // name belongs to another account's tmux server (`renamesBetween`).
+      isLive: (session) =>
+        mergedSessions().some((x) => x.name === session && (!x.owner || x.owner === me())),
+      place: placeSession,
+      select: (session) => select(session),
+    });
+    // Collapse and watch mode (store/undo.local.ts). Watch mode keeps its
+    // choice in a localStorage key rather than in a store instance, so it has
+    // no constructor to take the stack: this is where it is handed the one
+    // App owns, and `dispose` below is where it is taken back.
+    registerLocalUndoHandlers({
+      collapseUser: me,
+      isCollapsed: (group) => collapse.isCollapsed(group),
+      setCollapsed: (group, on) => collapse.set(group, on),
+      watchChoice: (session, as) => loadWatch(session, as),
+      setWatchChoice: (session, choice, as) => applyWatch(session, choice, as),
+    });
+    setWatchUndo(opts.undo);
+  }
+
+  // Not gated on autoStart, unlike the poll's own two listeners below: a kill
+  // waiting out its window has to land whether or not this store is polling,
+  // and a store built with autoStart off is still a store somebody can kill a
+  // session from.
+  if (typeof window !== "undefined") {
+    window.addEventListener("pagehide", onPageHide);
   }
 
   if (opts.autoStart !== false) {
@@ -1152,6 +1832,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     selected,
     toast,
     collapse,
+    undo: opts.undo,
     workingSince,
     refresh,
     hold,
@@ -1161,7 +1842,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     setDock,
     rename,
     kill,
+    killing: (name) => killingNames().includes(name),
+    takeBackKill,
     move,
+    setSessionOrderMode,
     reorderGroupsTo,
     createProject,
     prewarm,

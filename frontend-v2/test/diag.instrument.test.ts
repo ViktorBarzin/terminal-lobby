@@ -3,11 +3,13 @@ import "../../frontend/diag.js";
 
 /**
  * The instrumentation half of diag.js: it wraps fetch, WebSocket and keydown
- * rather than editing call sites, so index.html and term.html need only a
- * placeholder and one bind() call each. Those two files are ~14k lines of
- * hand-maintained HTML and the terminal's flow-control code reads WebSocket
- * constants directly, so these tests exist mainly to prove the wrappers are
- * transparent — a broken WebSocket wrapper would break the terminal itself.
+ * rather than editing call sites, so a page needs only a placeholder and one
+ * bind() call. That shape was chosen for two files of hand-maintained HTML,
+ * ~14k lines between them, whose terminal read WebSocket constants directly.
+ * One of the two is gone (term.html, 2026-09-05) and the SPA reaches the
+ * wrappers from terminal/attach.ts instead, but the reason these tests exist
+ * has not changed: they prove the wrappers are transparent, because a broken
+ * WebSocket wrapper breaks the terminal itself.
  */
 
 interface Rec {

@@ -36,6 +36,7 @@ function ctx(over: Partial<KeyContextInput> = {}): KeyContext {
     galleryOpen: false,
     previewOpen: false,
     previewDirty: false,
+    editing: false,
     ...over,
   });
 }
@@ -128,7 +129,19 @@ describe("the help overlay tells the truth about the always-on layer", () => {
  * every run and teach nothing about an undocumented chord.
  */
 describe("the help overlay enumerates every bound chord", () => {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  /**
+   * ...with one alias folded in. The table spells the Meta key `meta+`, because
+   * that is what `parseChord` calls it (it folds meta/cmd/super into one flag,
+   * chords.logic.ts), while the help spells it the way the keyboard in front of
+   * the reader does: Cmd on a Mac, Ctrl everywhere else. Folding cmd back to
+   * meta is what lets `meta+z` find its `Cmd+Z` row instead of reading as an
+   * undocumented chord.
+   */
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/(^|\+)cmd\+/g, "$1meta+");
 
   // The help paints "Alt+1 – Alt+9" as one row rather than nine, so a range
   // stands for each chord between its ends.
@@ -141,22 +154,49 @@ describe("the help overlay enumerates every bound chord", () => {
     return Array.from({ length: to - from + 1 }, (_, i) => `${lowPrefix}${from + i}`);
   };
 
+  // Both platform renderings, because a row that names the Meta key writes one
+  // label per platform and the table has a row for each: `ctrl+z` is documented
+  // by the PC pass and `meta+z` by the Mac one, and neither pass alone can say
+  // both are written down.
   const documented = new Set(
-    buildShortcutGroups(altLabel(false), false)
+    [buildShortcutGroups(altLabel(false), false), buildShortcutGroups(altLabel(true), true)]
+      .flat()
       .flatMap(([, rows]) => rows)
       .flatMap(([keys]) => keys.flatMap(expand)),
   );
 
-  it.each(
-    [...KB_DEFAULT_BINDINGS, ...KB_ALWAYS_BINDINGS].map((b) => [b.key, b.command] as const),
-  )("%s (%s) has a help row", (key) => {
-    expect(documented.has(norm(key))).toBe(true);
-  });
+  it.each([...KB_DEFAULT_BINDINGS, ...KB_ALWAYS_BINDINGS].map((b) => [b.key, b.command] as const))(
+    "%s (%s) has a help row",
+    (key) => {
+      expect(documented.has(norm(key))).toBe(true);
+    },
+  );
+
+  /**
+   * The union above is honest for every row that names ONE modifier per
+   * platform, and blind for the undo rows, which bind ctrl+ and meta+ on both.
+   * A Mac reader of that table would have seen Cmd+Z alone while Ctrl+Z was
+   * bound underneath it, taking the shell's suspend key with no row saying so.
+   */
+  it.each(["ctrl+z", "meta+z", "ctrl+shift+z", "meta+shift+z"])(
+    "%s is written down on the Mac table too, not only the PC one",
+    (key) => {
+      const mac = new Set(
+        buildShortcutGroups(altLabel(true), true)
+          .flatMap(([, rows]) => rows)
+          .flatMap(([keys]) => keys.flatMap(expand)),
+      );
+      expect(mac.has(norm(key))).toBe(true);
+    },
+  );
 });
 
 describe("matchesAppChord — gating", () => {
   it("matches an enabled default chord in context (Ctrl+Shift+K -> palette.toggle)", () => {
-    const b = matchesAppChord(ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }), input());
+    const b = matchesAppChord(
+      ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }),
+      input(),
+    );
     expect(b?.command).toBe("palette.toggle");
   });
 
@@ -290,10 +330,16 @@ describe("matchesAppChord — gating", () => {
       ["session.next", ev({ altKey: true, shiftKey: true, key: "}", code: "BracketRight" })],
       ["session.prev", ev({ altKey: true, shiftKey: true, key: "{", code: "BracketLeft" })],
       ["session.attach.2", ev({ altKey: true, key: "2", code: "Digit2" })],
-      [
-        "session.next.awaiting",
-        ev({ altKey: true, shiftKey: true, key: "Enter", code: "Enter" }),
-      ],
+      ["session.next.awaiting", ev({ altKey: true, shiftKey: true, key: "Enter", code: "Enter" })],
+      // Undo switches session too: bringing a kill back re-selects the session
+      // the kill took (store/undo.kill.ts bringBack), and the press has no
+      // confirm in front of it. `editing` does not cover this — focus on the
+      // preview's Save or mode button is not a text field — so the draft died
+      // on a press meant to save a session.
+      ["edit.undo", ev({ ctrlKey: true, key: "z", code: "KeyZ" })],
+      ["edit.undo", ev({ metaKey: true, key: "z", code: "KeyZ" })],
+      ["edit.redo", ev({ ctrlKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
+      ["edit.redo", ev({ metaKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
     ];
 
     for (const [command, e] of switchChords) {
@@ -318,9 +364,21 @@ describe("matchesAppChord — gating", () => {
       ).toBe("sidebar.toggle");
     });
 
+    it("every undo binding carries the guard", () => {
+      const undoRows = KB_DEFAULT_BINDINGS.filter(
+        (b) => b.command === "edit.undo" || b.command === "edit.redo",
+      );
+      expect(undoRows.length).toBe(4); // ctrl and meta, each with and without shift
+      for (const b of undoRows) {
+        expect(b.when, `${b.command} must be gated on !previewDirty`).toContain("!previewDirty");
+      }
+    });
+
     it("every session-switch binding carries the guard", () => {
       const switching = KB_DEFAULT_BINDINGS.filter(
-        (b) => /^session\.(attach\.\d+|prev|next)$/.test(b.command) || b.command === "session.next.awaiting",
+        (b) =>
+          /^session\.(attach\.\d+|prev|next)$/.test(b.command) ||
+          b.command === "session.next.awaiting",
       );
       expect(switching.length).toBe(13); // 10 attach slots + prev + next + next.awaiting
       for (const b of switching) {
@@ -338,12 +396,109 @@ describe("matchesAppChord — gating", () => {
   });
 
   it("maps Alt+0 to session.attach.10 and Alt+9 to session.attach.9", () => {
+    expect(matchesAppChord(ev({ altKey: true, key: "0", code: "Digit0" }), input())?.command).toBe(
+      "session.attach.10",
+    );
+    expect(matchesAppChord(ev({ altKey: true, key: "9", code: "Digit9" }), input())?.command).toBe(
+      "session.attach.9",
+    );
+  });
+});
+
+/**
+ * Cmd+Z / Ctrl+Z and their Shift halves, and the two clauses they carry.
+ *
+ * These four rows claim the chord GLOBALLY, the terminal included, so Ctrl+Z
+ * deliberately stops reaching the pty as SIGTSTP (test/undo.keys.test.ts walks
+ * that chain). That cost is signed off, and the way back is the ⚙ "App
+ * shortcuts" switch — which only works because the rows sit in
+ * KB_DEFAULT_BINDINGS rather than in the always-on table. The last two cases
+ * here are what pin that placement.
+ */
+describe("the undo chords", () => {
+  const chords: [string, string, ChordEventLike][] = [
+    ["ctrl+z", "edit.undo", ev({ ctrlKey: true, key: "z", code: "KeyZ" })],
+    ["meta+z", "edit.undo", ev({ metaKey: true, key: "z", code: "KeyZ" })],
+    ["ctrl+shift+z", "edit.redo", ev({ ctrlKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
+    ["meta+shift+z", "edit.redo", ev({ metaKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
+  ];
+
+  it.each(chords)("%s runs %s", (_key, command, e) => {
+    expect(matchesAppChord(e, input())?.command).toBe(command);
+  });
+
+  /**
+   * The exemption the whole `editing` flag exists for. The engine's listener is
+   * capture-phase on `window` (engine.ts init) and CodeMirror's own Mod-z is a
+   * bubble-phase handler on its contentDOM, so capture runs FIRST and a match
+   * here steals the editor's undo before it is ever asked. Nothing downstream
+   * can hand it back, which is why the refusal has to happen at the table.
+   */
+  it.each(chords)("%s belongs to the focused field, not the lobby", (_key, _command, e) => {
+    expect(matchesAppChord(e, input({ ctx: ctx({ editing: true }) }))).toBeNull();
+  });
+
+  it.each(chords)("%s is inert behind an overlay", (_key, _command, e) => {
+    expect(matchesAppChord(e, input({ ctx: ctx({ settingsOpen: true }) }))).toBeNull();
+  });
+
+  it.each(chords)("%s goes off with the App shortcuts switch", (_key, _command, e) => {
+    expect(matchesAppChord(e, input({ enabled: false }))).toBeNull();
+  });
+
+  it("keeps both commands out of the always-on table", () => {
+    // An always-on row would take Ctrl+Z off the pty with no way back, since
+    // KB_ALWAYS_BINDINGS bypasses the `enabled` gate by design.
+    for (const b of KB_ALWAYS_BINDINGS) {
+      expect(b.command).not.toBe("edit.undo");
+      expect(b.command).not.toBe("edit.redo");
+    }
+  });
+
+  it("makes both commands rebindable, like every other default row", () => {
+    expect(KB_COMMANDS.has("edit.undo")).toBe(true);
+    expect(KB_COMMANDS.has("edit.redo")).toBe(true);
+  });
+
+  it("carries both halves of the when-clause on all four rows", () => {
+    const rows = KB_DEFAULT_BINDINGS.filter((b) => b.command.startsWith("edit."));
+    expect(rows.length).toBe(4);
+    for (const b of rows) {
+      expect(b.when, `${b.key} must yield to a focused field`).toContain("!editing");
+      expect(b.when, `${b.key} must not act behind a dialog`).toContain("!overlayOpen");
+    }
+  });
+
+  it("never confuses undo with redo — Shift is part of the chord", () => {
+    // `eventMatchesChord` compares all four modifiers exactly, so there is no
+    // path where a plain Ctrl+Z reaches redo or a Ctrl+Shift+Z reaches undo.
+    const plain = ev({ ctrlKey: true, key: "z", code: "KeyZ" });
+    const shifted = ev({ ctrlKey: true, shiftKey: true, key: "Z", code: "KeyZ" });
+    expect(matchesAppChord(plain, input())?.command).toBe("edit.undo");
+    expect(matchesAppChord(shifted, input())?.command).toBe("edit.redo");
+    // ...and Ctrl+Alt+Z (AltGr on a few layouts) is neither.
     expect(
-      matchesAppChord(ev({ altKey: true, key: "0", code: "Digit0" }), input())?.command,
-    ).toBe("session.attach.10");
+      matchesAppChord(ev({ ctrlKey: true, altKey: true, key: "z", code: "KeyZ" }), input()),
+    ).toBeNull();
+  });
+
+  it("leaves every OTHER chord alone while a field has focus", () => {
+    // `editing` is not a second `overlayOpen`: it gates the four rows that a
+    // text field has its own meaning for, and nothing else. Typing a session
+    // name must not cost you Alt+Shift+S.
+    const editingCtx = ctx({ editing: true });
     expect(
-      matchesAppChord(ev({ altKey: true, key: "9", code: "Digit9" }), input())?.command,
-    ).toBe("session.attach.9");
+      matchesAppChord(
+        ev({ altKey: true, shiftKey: true, key: "S", code: "KeyS" }),
+        input({ ctx: editingCtx }),
+      )?.command,
+    ).toBe("sidebar.toggle");
+    expect(
+      matchesAppChord(
+        ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }),
+        input({ ctx: editingCtx }),
+      )?.command,
+    ).toBe("palette.toggle");
   });
 });
 
@@ -368,6 +523,15 @@ describe("keyContext — one reading of who owns the keyboard", () => {
   it("keeps the palette identifiable, so its own toggle can still close it", () => {
     expect(ctx({ paletteOpen: true }).paletteOpen).toBe(true);
     expect(ctx({ galleryOpen: true }).paletteOpen).toBe(false);
+  });
+
+  it("carries `editing` through, and does not count a field as an overlay", () => {
+    // A focused field owns Cmd+Z and nothing else. Reading it as an overlay
+    // would suppress every lobby chord for as long as the new-session name box
+    // has the caret in it.
+    expect(ctx().editing).toBe(false);
+    expect(ctx({ editing: true }).editing).toBe(true);
+    expect(ctx({ editing: true }).overlayOpen).toBe(false);
   });
 });
 

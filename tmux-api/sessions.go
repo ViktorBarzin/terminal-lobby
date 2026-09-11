@@ -246,7 +246,17 @@ func parseSessions(out []byte) []Session {
 			Command:      parts[9],
 			Title:        parts[10],
 			BornAs:       parts[11],
-			PaneTitle:    parts[13],
+			// @tl_origin is read raw and leniently, for the same reason
+			// @last_drive is: an unset option renders EMPTY, which is what
+			// every session alive on the deploy that introduces it reports,
+			// and rejecting the row for it would empty the sidebar. The parser
+			// does not judge the value either — isSystemSession (origin.go) is
+			// the single place that decides what a stamp means, so a value
+			// nothing in this repo writes reaches it intact rather than being
+			// quietly normalised to "" here and read as a different kind of
+			// unknown.
+			Origin:    parts[13],
+			PaneTitle: parts[14],
 		})
 	}
 	return sessions

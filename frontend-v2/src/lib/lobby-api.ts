@@ -40,7 +40,6 @@ export class ApiError extends Error {
  */
 export const RESTORE_TIMEOUT_MS = 30000;
 
-
 async function req(
   path: string,
   init?: RequestInit,
@@ -104,9 +103,7 @@ export async function availableCommands(): Promise<Record<string, boolean>> {
   try {
     const m = await json<Record<string, boolean>>("/new-commands", { cache: "no-store" });
     if (!m || typeof m !== "object" || Array.isArray(m)) return {};
-    return Object.fromEntries(
-      Object.entries(m).filter(([, v]) => typeof v === "boolean"),
-    );
+    return Object.fromEntries(Object.entries(m).filter(([, v]) => typeof v === "boolean"));
   } catch {
     return {};
   }
@@ -134,7 +131,9 @@ export function normalizeLayout(raw: Partial<Layout> | null | undefined): Layout
         .filter((p): p is LayoutProject => !!p && typeof p.name === "string")
         .map((p) => ({
           name: p.name,
-          sessions: Array.isArray(p.sessions) ? p.sessions.filter((s) => typeof s === "string") : [],
+          sessions: Array.isArray(p.sessions)
+            ? p.sessions.filter((s) => typeof s === "string")
+            : [],
           ...(typeof p.dir === "string" && p.dir ? { dir: p.dir } : {}),
         }))
     : [];
@@ -171,10 +170,116 @@ export async function putLayout(layout: Layout): Promise<void> {
   if (!res.ok) throw new ApiError(res.status, `layout PUT HTTP ${res.status}`);
 }
 
-/** DELETE /api/sessions/{name} — kill a session (204/404). */
-export async function killSession(name: string): Promise<void> {
+/**
+ * DELETE /api/sessions/{name} — kill a session (200/404).
+ *
+ * The answer is what it takes to put the session back: tmux-api snapshots
+ * before it kills and replies `{"resurrect": {snapshot, sessions}}`, whose
+ * inner half is exactly POST /restore's body (types/lobby.ts RestoreSelection),
+ * so undo posts back what it was handed. That is what makes a kill undoable
+ * once its grace window has elapsed (store/undo.kill.ts).
+ *
+ * A server with no record to give sends the field empty, and one older than
+ * this feature still answers 204 with no body at all. Both read null here,
+ * which the undo handler reports as a kill it cannot take back rather than
+ * pretending.
+ *
+ * A 404 THROWS, like every other non-2xx, and the caller decides what it
+ * means: no session of that name is there, which is not the same as one this
+ * call killed. The store treats the two differently — it still drops the local
+ * layout entry, since the name really is gone, and it reports the kill as not
+ * having happened, so undoing a create whose session tmux-api has since
+ * renamed (ADR-0022) refuses instead of reporting a kill that landed on
+ * nothing while the session went on running (store/lobby.ts sendKill).
+ */
+export async function killSession(name: string): Promise<RestoreSelection | null> {
   const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+  return await asRestoreSelection(res);
+}
+
+/** The response body's resurrect record, or null when there is not one — a 204,
+ *  an empty body, a kill nothing snapshotted, a server that answers something
+ *  else. Nothing here is worth failing a kill that has already happened over. */
+async function asRestoreSelection(res: Response): Promise<RestoreSelection | null> {
+  if (res.status === 204) return null;
+  try {
+    const body: unknown = await res.json();
+    if (!body || typeof body !== "object") return null;
+    const rec = (body as { resurrect?: unknown }).resurrect;
+    if (!rec || typeof rec !== "object") return null;
+    const { snapshot, sessions } = rec as { snapshot?: unknown; sessions?: unknown };
+    if (typeof snapshot !== "string" || snapshot === "") return null;
+    if (!Array.isArray(sessions)) return null;
+    const names = sessions.filter((s): s is string => typeof s === "string");
+    return names.length > 0 ? { snapshot, sessions: names } : null;
+  } catch {
+    return null; // no body, or not JSON
+  }
+}
+
+/**
+ * The same DELETE, fired on the way out of the page.
+ *
+ * `keepalive` is the whole point: a kill inside its grace window still has to
+ * land when the tab is closed or reloaded (store/lobby.ts flushKills), and an
+ * ordinary fetch is cancelled with the document before it can settle. Built
+ * through `apiUrl` like every other call, so `?as=` rides along, and there is
+ * no deadline on it — the page is going away, so nothing here could act on a
+ * timeout anyway.
+ *
+ * Nothing to await and nothing to report: `pagehide` runs synchronously and the
+ * document is gone by the time an answer could arrive. The record a kill would
+ * normally hand back is lost with it, which is why an undo after a reload
+ * refuses instead of resurrecting.
+ */
+export function killSessionKeepalive(name: string): void {
+  try {
+    void fetch(apiUrl(`/sessions/${encodeURIComponent(name)}`), {
+      method: "DELETE",
+      credentials: "same-origin",
+      keepalive: true,
+    });
+  } catch {
+    /* a browser that refuses the request on unload: see the header */
+  }
+}
+
+/**
+ * What `@tl_origin` reads on a session the lobby's own create path made — the
+ * only value this client ever writes, and the one the store stamps on an
+ * optimistic card so a freshly created session is not read as a stray.
+ *
+ * The string exists in three places and cannot be shared between them: here,
+ * `ORIGIN_USER` in components/lobby.logic.ts (which stays free of imports from
+ * the client layer), and `originUser` in tmux-api/origin.go. A fourth spelling
+ * would 400 at the server and read as a system session forever on the client,
+ * so test/rescue.test.ts asserts the two client copies against each other.
+ */
+export const ORIGIN_USER = "user";
+
+/**
+ * POST /api/sessions/{name}/origin {origin} — the rescue
+ * (docs/plans/2026-09-06-test-session-origin-design.md).
+ *
+ * Dragging a card out of the System group adopts the session: it stops being a
+ * system session on the SERVER, which is what makes it push, record and survive
+ * a reload as a person's own. The arrangement alone cannot say it — the sidebar
+ * files a session by the origin tmux reports, so a layout that disagreed would
+ * lose the argument on the next poll.
+ *
+ * Throws on anything but 204, 404 included, and that is the difference from
+ * killSession: a kill that 404s got what it wanted, whereas an adoption of a
+ * session that is no longer there did not happen at all, and the caller has a
+ * layout write to hold back on the strength of it.
+ */
+export async function setSessionOrigin(name: string, origin: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}/origin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origin }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `set origin HTTP ${res.status}`);
 }
 
 /**
@@ -303,7 +408,9 @@ export async function listSnapshots(): Promise<SnapshotList> {
  *  set: per row, what restoring it would do and whether it starts ticked.
  *  Resolution is server-side so this and the vanilla lobby cannot drift. */
 export async function getSnapshot(ts: string): Promise<SnapshotRow[]> {
-  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, { cache: "no-store" });
+  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, {
+    cache: "no-store",
+  });
   return Array.isArray(rows) ? rows : [];
 }
 
@@ -313,8 +420,17 @@ export interface LobbyApi {
   listSessions(): Promise<Session[]>;
   getLayout(): Promise<Layout>;
   putLayout(layout: Layout): Promise<void>;
-  killSession(name: string): Promise<void>;
+  /**
+   * Kill a session, answering the record that puts it back where the server
+   * snapshots first (see the function). `void` is in the union so a client or a
+   * test double that has nothing to say satisfies this unchanged.
+   */
+  killSession(name: string): Promise<RestoreSelection | null | void>;
+  /** The kill that has to survive the page (see `killSessionKeepalive`).
+   *  Optional: a double without it simply flushes nothing on the way out. */
+  killSessionKeepalive?(name: string): void;
   setSessionTitle(name: string, title: string): Promise<void>;
+  setSessionOrigin(name: string, origin: string): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
@@ -328,7 +444,9 @@ export const lobbyApi: LobbyApi = {
   getLayout,
   putLayout,
   killSession,
+  killSessionKeepalive,
   setSessionTitle,
+  setSessionOrigin,
   restoreSessions,
   listSnapshots,
   getSnapshot,

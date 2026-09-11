@@ -17,11 +17,16 @@
 #     tmux-restore-user <user> list                  snapshot series
 #     tmux-restore-user <user> show <ts>             one snapshot, resolved
 #     tmux-restore-user <user> select <ts> <name>... restore chosen rows
+#     tmux-restore-user <user> save                  snapshot now, before a kill
 #
 # TRUST MODEL — the sudo grant places no restriction on argv, so every
 # argument is validated here before it reaches tmux-persist:
 #   * the user is re-checked against /etc/ttyd-user-map, so this can only ever
-#     act on a real terminal user's OWN sessions;
+#     act on a real terminal user's OWN sessions. `save` is the one verb that is
+#     not per-user: tmux-persist's save takes no user and walks all of them, the
+#     same work tmux-persist-save.timer already does unattended every 5 minutes.
+#     It reads live tmux state and writes snapshot files, restoring nothing and
+#     destroying nothing, so it is no route into another user's sessions;
 #   * the subcommand is matched against a fixed set, never passed through;
 #   * a snapshot id must be exactly YYYYMMDDTHHMMSS — no '/', no '..', so it
 #     cannot walk out of the snapshots directory;
@@ -78,6 +83,22 @@ case "$action" in
     (( $# )) || die "select needs at least one session name"
     for n in "$@"; do valid_name "$n" || die "invalid session name '$n'"; done
     exec "$TMUX_PERSIST" restore-selection "$u" "$ts" "$@"
+    ;;
+  save)
+    # Asked for by tmux-api just before it kills a session, so there is a
+    # snapshot to bring that session back from. Snapshots are otherwise written
+    # only by tmux-persist-save.timer (OnCalendar=*:0/5), and restore-selection
+    # refuses a name that is absent from the snapshot it is handed, so a session
+    # created and killed inside one tick is in none and cannot be restored. That
+    # is exactly the session somebody kills by mistake.
+    #
+    # tmux-persist's save takes NO user argument: it snapshots every terminal
+    # user, exactly as the timer does. So "$u" is not passed on. It is still
+    # validated above for the same reason every other verb validates it, since
+    # the sudo grant places no restriction on argv. The verb therefore widens
+    # nothing: it asks for work the timer already does on its own schedule, a
+    # few seconds early.
+    exec "$TMUX_PERSIST" save
     ;;
   *)
     die "unknown action '$action'"

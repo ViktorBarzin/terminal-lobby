@@ -320,6 +320,14 @@ src/
                          and blurs the mirror, taking the keyboard with it. Inside
                          the grid dragselect already prevents it, which is why the
                          top of a phone screen always worked
+    links.ts             PURE: which OSC 8 URL may be opened, and whether the
+                         pointer is on a link. Claude Code prints real OSC 8
+                         hyperlinks, so nothing pattern-matches the scrollback.
+                         xterm's fallback asked confirm() over a keyboard the
+                         same tap had just raised; `overLink()` is what lets
+                         tapFocus leave the keyboard down, and is the only way to
+                         ask the question, since the public buffer API exposes no
+                         URL for a cell
     reconnect.ts         The backoff ladder as a reducer: attempts, generations
                          (so a late /token or session answer cannot install a
                          socket nobody is waiting for), the 30s proof that only
@@ -468,11 +476,57 @@ src/
                          the auto-title rule only fires while @title is unset,
                          so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
-    device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
-                         terminal flow control (tl-flow-control — the terminal
-                         picks a flip up live via a storage event) and the
-                         Clear-local-data wipe
+    device-prefs.ts      Per-BROWSER state the roamed doc must not carry: the
+                         gestures master kill (tl-gestures, read fresh on every
+                         gesture) and the Clear-local-data wipe. It also names
+                         the two keys nothing reads any more, and why they are
+                         left in place rather than migrated: tl-terminal-
+                         renderer (2026-09-05) and tl-flow-control
+                         (2026-09-06)
     toast.ts             Toast stack + the slow-request health coordinator
+    undo.ts              Per-TAB undo/redo stack for the structural actions
+                         (tl:undo:v1 in sessionStorage, 25 deep). An entry is
+                         plain JSON and its behaviour lives in a handler the
+                         store that owns the action registers, so the stack
+                         survives the reload a new build triggers and this file
+                         imports nothing from lobby.ts. An entry is an inverse
+                         OPERATION rather than a captured document: PUT /layout
+                         carries no version, so re-PUTting a copy would erase
+                         what another device did meanwhile. A refusal drops its
+                         entry and hands back a sentence for the caller to toast
+    undo.kill.ts         The inverses of a KILL and a CREATE, which are one
+                         pair of operations read in both directions. A kill is
+                         held for 8s (lobby.ts GRACE_MS) with the card dimmed in
+                         place and nothing sent, so an undo inside the window
+                         retracts the whole thing; past it the session comes back
+                         from the record the DELETE answered with, without its
+                         scrollback. That record lives in the store rather than
+                         on the entry, because an entry is immutable JSON the
+                         moment it is pushed, and a reloaded tab therefore has
+                         none and refuses instead
+    undo.layout.ts       The inverses of the LAYOUT actions, one per kind: a
+                         session moved, the group sequence reordered, a project
+                         created / renamed / deleted, and the session-order
+                         mode. Each folds its inverse into the document as it is
+                         NOW through the same pure transform the forward action
+                         used, and each `check` is tolerant of the rest of the
+                         document changing and strict about the slice its entry
+                         touched. Registered from lobby.ts, which owns the
+                         actions
+    undo.titles.ts       The inverse of a RETITLE, including the clear that
+                         hands a session back to its bare name. The one entry
+                         that cannot promise an exact reversal: the tmux name
+                         follows the title (ADR-0022) and a collision suffixes
+                         it, so the title comes back exactly and the name is
+                         the server's to decide. Finds its session by tmux id,
+                         then by name, then by birth name, and refuses when the
+                         title has moved under it
+    undo.local.ts        The inverses of the two per-browser toggles a person
+                         changes on purpose: a group collapsed, and watch mode
+                         switched. Both carry BOTH ends of their switch, since
+                         watch mode has three states and "nobody has said" does
+                         not derive from the other two. Not mark-seen, which
+                         nothing chooses, and there is no pin feature to cover
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path
@@ -638,8 +692,10 @@ src/
         AppearancePage.tsx    The nine themes as swatch cards painting their own
                               colours; "System" follows the OS live
         TerminalPage.tsx      Font size, line height, letter spacing, bold
-                              weight, cursor, scrolling, link copy chip, and
-                              flow control
+                              weight, cursor, scrolling, link copy chip. Every
+                              row roams, so nothing here wears the "this
+                              device" chip: the Flow control row went on
+                              2026-09-06 with the group that held it
         SessionsPage.tsx      New-session command, session-list last-active time
         KeyboardPage.tsx      The app-shortcut layer's opt-out, and the four
                               chords that outlive it
@@ -699,6 +755,8 @@ src/
     palette-controller.ts Reactive palette state (open, query, selection)
     refocus.ts           Hand the keyboard back to the terminal when a lobby
                          overlay closes (window.__tlFocusTerminal)
+    editing.ts           Is the keyboard inside something that types? The one
+                         chord that has to yield to a field is Cmd+Z
   notify/
     transitions.ts       PURE poll→poll state edges that deserve a notification
     fire.ts              Show ONE foreground OS notification per session edge
@@ -800,7 +858,8 @@ with a 4s grace window so a stale poll can't revert an in-flight change):
   dims-or-rings-while-unseen), a live working timer for running sessions;
 - **project grouping + Ungrouped** at its movable slot (hides while empty);
 - **session CRUD** — create (optimistic + dup guard), rename (inline, POST
-  `/api/sessions/{n}/rename`, 409/404 handled), kill (DELETE), move-to (menu);
+  `/api/sessions/{n}/rename`, 409/404 handled), kill (DELETE, held `GRACE_MS`
+  behind a dimmed card and nothing asked), move-to (menu);
 - **drag-reorder** session cards (across groups) and group headers (HTML5 DnD),
   plus menu move-up/down; per-browser **collapse**; **Restore** (POST `/restore`);
 - read-only **Shared-with-me** section for foreign sessions.
@@ -812,13 +871,24 @@ All of the following ship in the deployed build:
 - **Keyboard** — a layout-proof chord engine with one capture-phase listener:
   Alt-hold paints numbered chips, `Alt+1…9/0` attaches the Nth session,
   `Alt+Shift+]`/`[` step forward/back, `Alt+Shift+Enter` jumps to the next
-  awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view.
+  awaiting one, `Alt+Shift+S` collapses the sidebar, `Cmd/Ctrl-J` swaps view,
+  `Cmd/Ctrl+Z` and its shifted form undo and redo (which is why the terminal no
+  longer sees `Ctrl+Z`, ADR-0025).
   The shortcuts help opens on a bare `/` in the lobby, or `Alt+/` from anywhere
   including inside the terminal, which is in this document and so its keydowns
   reach the one window listener. Bindings are user-overridable and persisted
   per-browser (`tl:keybindings:v1`).
 - **Command palette** — `Ctrl+Shift+K`; type to filter sessions, `>` switches to
   action mode. The action list is selection-dependent.
+- **Undo** — one stack per browser tab (`tl:undo:v1` in `sessionStorage`, 25
+  deep) over the structural actions: kill, create, retitle, move, reorder, the
+  three project verbs, the order mode, collapse and the watch choice. Each entry
+  is an inverse OPERATION rather than a saved document, because `PUT /layout`
+  has no version to check, and an entry whose precondition no longer holds
+  refuses with a toast instead of overwriting. A kill is held for `GRACE_MS`
+  behind a dimmed card carrying a `↺`; past that window undo resurrects from the
+  snapshot the DELETE handed back. Off in a lens tab.
+  See `docs/adr/0025-undo-takes-ctrl-z-and-a-kill-waits.md`.
 - **Gallery** — the 🖼 overlay lists the session's stored images from
   `/clipboard/list` (newest-first, `show-image` badged), with a shared lightbox;
   Escape steps lightbox → grid → closed.

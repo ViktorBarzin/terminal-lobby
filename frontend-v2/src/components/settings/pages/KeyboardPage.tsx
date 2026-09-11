@@ -24,6 +24,10 @@ export interface KeybindingsControl {
  * that matches a J chord, it never reads the `enabled` gate, and it returns
  * early on a coarse pointer, which is where "on a desktop" comes from.
  * ShortcutsHelp carries the same correction and the longer note.
+ *
+ * The view toggle has no chord at all now, which Viktor settled on 2026-09-06
+ * (keybindings/bindings.logic.ts). This hint is where someone would go to
+ * promise it one again, so: it is not on this list because it is not bound.
  */
 export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (props) => {
   const alt = () => props.keybindings.altLabel ?? "Alt";
@@ -38,10 +42,11 @@ export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (pro
         deviceOnly
         hint={
           <>
-            Press <kbd>/</kbd> for the full list. Off sends these keys to the
-            terminal instead. Four chords stay on either way: <kbd>/</kbd> and{" "}
-            <kbd>?</kbd> (that list), <kbd>{alt()}+Shift+Backspace</kbd> (kill the
-            attached session, asks first) and <kbd>{ctrl()}+J</kbd> (the scratch
+            Press <kbd>/</kbd> for the full list. Off sends these keys to the terminal instead,{" "}
+            <kbd>Ctrl+Z</kbd> included, which is how a shell gets its suspend key back. Four chords
+            stay on either way: <kbd>/</kbd> and <kbd>?</kbd> (that list),{" "}
+            <kbd>{alt()}+Shift+Backspace</kbd> (kill the attached session; the card dims for eight
+            seconds and <kbd>{ctrl()}+Z</kbd> takes it back) and <kbd>{ctrl()}+J</kbd> (the scratch
             shell, on a desktop).
           </>
         }

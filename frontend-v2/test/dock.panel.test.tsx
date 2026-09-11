@@ -119,6 +119,9 @@ const sess = (name: string): Session => ({
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
   sessionsVal: Session[] = [sess("work"), sess("shell")];
   layoutVal: Layout = emptyLayout();

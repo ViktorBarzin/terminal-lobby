@@ -13,10 +13,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -66,7 +72,6 @@ class FakeApi implements LobbyApi {
 function mount(
   api: LobbyApi,
   over: {
-    confirm?: (message: string) => boolean;
     notifications?: Parameters<typeof Sidebar>[0]["notifications"];
     onReload?: () => void;
     onNewSession?: (group?: string) => void;
@@ -85,7 +90,6 @@ function mount(
       <Sidebar
         store={store}
         prefs={prefs}
-        confirm={over.confirm}
         notifications={over.notifications}
         onReload={over.onReload}
         onNewSession={over.onNewSession}
@@ -136,8 +140,15 @@ beforeEach(() => {
 describe("<Sidebar>", () => {
   it("renders grouped sessions with the right state dots", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [sess("running1", { state: "running" }), sess("waiting1", { state: "awaiting" })];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["running1"] }], ungrouped: ["waiting1"] };
+    api.sessionsVal = [
+      sess("running1", { state: "running" }),
+      sess("waiting1", { state: "awaiting" }),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["running1"] }],
+      ungrouped: ["waiting1"],
+    };
     const { getByText, container, store } = mount(api);
     await store.refresh();
 
@@ -183,7 +194,11 @@ describe("<Sidebar>", () => {
     // cursor as the menu opens.
     const api = new FakeApi();
     api.sessionsVal = [sess("solo")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["solo"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["solo"],
+    };
     const { container, getByLabelText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
@@ -327,8 +342,7 @@ describe("<Sidebar>", () => {
     // Measured live rather than assigned once: the rows reorder under the
     // pointer as it travels, and a row has to report the seat it is in now.
     for (const card of live()) {
-      card.getBoundingClientRect = () =>
-        stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
+      card.getBoundingClientRect = () => stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
     }
     document.elementFromPoint = (_x: number, y: number) =>
       live().find((c) => {
@@ -365,17 +379,19 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("confirms before killing from the ⋯ menu, and honours a dismissal", async () => {
+  /**
+   * Kill asks nothing, and nothing has reached the server when the menu
+   * closes: the store holds the DELETE for eight seconds with the card dimmed
+   * in place, and Cmd+Z inside that window takes the whole thing back
+   * (store/lobby.ts GRACE_MS, whose own suite is test/undo.kill.test.ts).
+   * Until 2026-09-10 this path opened `Kill session "doomed"?` first.
+   */
+  it("kills from the ⋯ menu with no question, and holds the DELETE", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("doomed")];
     api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
-    const asked: string[] = [];
-    const { container, getByLabelText, getByText, store } = mount(api, {
-      confirm: (m) => {
-        asked.push(m);
-        return false; // user cancels
-      },
-    });
+    const asked = vi.spyOn(window, "confirm");
+    const { container, getByLabelText, getByText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
 
@@ -383,25 +399,12 @@ describe("<Sidebar>", () => {
     await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
     fireEvent.click(getByText("Kill"));
 
-    await waitFor(() => expect(asked).toHaveLength(1));
-    expect(asked[0]).toBe('Kill session "doomed"?');
-    expect(api.kills).toEqual([]); // dismissed → the session lives
+    await waitFor(() => expect(store.killing("doomed")).toBe(true));
+    expect(asked).not.toHaveBeenCalled();
+    expect(api.kills).toEqual([]);
+    // The card is still there to carry the undo affordance, not gone.
     expect(container.querySelector(".tl-card")).not.toBeNull();
-    store.dispose();
-  });
-
-  it("kills from the ⋯ menu once the confirm is accepted", async () => {
-    const api = new FakeApi();
-    api.sessionsVal = [sess("doomed")];
-    api.layoutVal = { ...emptyLayout(), ungrouped: ["doomed"] };
-    const { container, getByLabelText, getByText, store } = mount(api, { confirm: () => true });
-    await store.refresh();
-    await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
-
-    fireEvent.click(getByLabelText("Session actions"));
-    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
-    fireEvent.click(getByText("Kill"));
-    await waitFor(() => expect(api.kills).toEqual(["doomed"]));
+    asked.mockRestore();
     store.dispose();
   });
 

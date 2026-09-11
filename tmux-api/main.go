@@ -71,11 +71,12 @@ const (
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
 		"#{" + sessionTitleOption + "}" + listSep +
 		"#{" + sessionBornAsOption + "}" + listSep +
-		"#{" + createdStampOption + "}" + listSep + "#{pane_title}"
+		"#{" + createdStampOption + "}" + listSep +
+		"#{" + originOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 14
+	listFields = 15
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -93,6 +94,17 @@ const (
 	// the tests address it by name; parseSessions reads it positionally like
 	// every other field.
 	createdColumn = 12
+
+	// originColumn is where the origin stamp sits: the last column before
+	// pane_title, which pushed pane_title from 13 to 14 and moved nothing
+	// ahead of it. Same reason bgColumn gives, and here it is load-bearing
+	// rather than tidy — pane_title is text an application writes for itself
+	// via OSC 2, and SplitN hands the LAST field every separator left over, so
+	// an origin parsed out of the tail would be whatever the pane last said. A
+	// session could then talk itself out of the System group by printing a tab
+	// and the word `user`. Only the row builders in the tests address this by
+	// name; parseSessions reads it positionally like every other field.
+	originColumn = 13
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
@@ -124,10 +136,12 @@ const (
 	// nothing in Go sets it, so there is no writer to agree with; the guard
 	// that keeps the two spellings together is a test against the script.
 	//
-	// It sits immediately before pane_title, which keeps pane_title the field
-	// that soaks up a stray tab. That costs one index: pane_title moved from 12
-	// to 13. Every column ahead of it, bgColumn and bornColumn included, is
-	// where it was.
+	// It sits ahead of pane_title, which keeps pane_title the field that soaks
+	// up a stray tab. That cost one index when it landed: pane_title moved from
+	// 12 to 13, and every column ahead of it, bgColumn and bornColumn included,
+	// stayed where it was. @tl_origin has since taken the slot immediately
+	// before pane_title for the same reason, moving pane_title again to 14 and
+	// leaving this stamp at 12.
 	createdStampOption = "@tl_created"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
@@ -284,10 +298,14 @@ func main() {
 	// for the migration having not finished yet, and the lobby's five-second
 	// poll picks up each new name as it lands.
 	// One goroutine, in order: the rename pass makes a pin stale, so the sweep
-	// that repairs stale pins has to follow it rather than race it.
+	// that repairs stale pins has to follow it rather than race it. The origin
+	// grandfather goes LAST for the same reason — it lists sessions itself, and
+	// listing after the renames means it stamps the names the sessions will
+	// keep rather than ones the pass above is about to change underneath it.
 	go func() {
 		migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
 		repairStaleGridPins(mappedOSUsers(), userSessions)
+		grandfatherSessionOrigins(mappedOSUsers(), userSessions)
 	}()
 
 	// Localhost token the devvm attach path uses to record a shared attach's

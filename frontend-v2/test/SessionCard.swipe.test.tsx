@@ -1,6 +1,7 @@
 /**
  * Swipe a session row: left opens it (Viktor, 2026-08-20), right kills it
- * behind a confirm (Viktor, 2026-08-21).
+ * (Viktor, 2026-08-21) — since 2026-09-10 with no confirm in front of it, and
+ * an eight-second grace window behind it instead (store/lobby.ts GRACE_MS).
  *
  * On a phone the list IS the screen, so opening a session is a tap on a 40px
  * row; a leftward swipe is the second way in.
@@ -36,9 +37,15 @@ const sess = (name: string): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -73,7 +80,7 @@ class FakeApi implements LobbyApi {
   }
 }
 
-function mount(api: LobbyApi, confirm?: (message: string) => boolean) {
+function mount(api: LobbyApi) {
   let store!: LobbyStore;
   let prefs!: PrefsStore;
   const utils = render(() => {
@@ -83,7 +90,7 @@ function mount(api: LobbyApi, confirm?: (message: string) => boolean) {
       putDebounceMs: 10_000,
     });
     onCleanup(() => prefs.dispose());
-    return <Sidebar store={store} prefs={prefs} confirm={confirm} />;
+    return <Sidebar store={store} prefs={prefs} />;
   });
   onTestFinished(() => store.dispose());
   return { ...utils, store: store! };
@@ -134,7 +141,14 @@ function swipe(
     ms = 0,
   }: { dx: number; dy?: number; x?: number; y?: number; ms?: number },
 ): void {
-  finger(el, [[dx / 2, dy / 2], [dx, dy]], { x, y, ms });
+  finger(
+    el,
+    [
+      [dx / 2, dy / 2],
+      [dx, dy],
+    ],
+    { x, y, ms },
+  );
 }
 
 /** Was the page allowed to scroll while the finger was moving? */
@@ -213,7 +227,11 @@ describe("swiping a session row", () => {
     const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
-    finger(card, [[-140, 0], [-70, 0], [-8, 0]]);
+    finger(card, [
+      [-140, 0],
+      [-70, 0],
+      [-8, 0],
+    ]);
 
     expect(store.selected()).toBeNull();
   });
@@ -271,11 +289,7 @@ describe("swiping a session row", () => {
 
   it("does not OPEN a session on a rightward swipe", async () => {
     const api = await listOf(["alpha"]);
-    const asked: string[] = [];
-    const { container, store } = mount(api, (m) => {
-      asked.push(m);
-      return false;
-    });
+    const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
     swipe(card, { dx: 140 });
@@ -363,62 +377,49 @@ describe("swiping a session row", () => {
 });
 
 describe("swiping a session row right", () => {
-  it("asks before killing, and kills when the answer is yes", async () => {
+  /**
+   * What the swipe starts is the grace window, not the DELETE: the row dims and
+   * stays put for eight seconds with an undo arrow on it, which is the phone's
+   * whole affordance for taking a swipe back. So these cases assert
+   * `store.killing`, and that nothing reached the server yet — the timing half
+   * lives in test/undo.kill.test.ts, on a fake clock.
+   */
+  it("starts the kill without asking anything", async () => {
     const api = await listOf(["alpha", "beta"]);
-    const asked: string[] = [];
-    const { container, store } = mount(api, (m) => {
-      asked.push(m);
-      return true;
-    });
+    const asked = vi.spyOn(window, "confirm");
+    const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
     swipe(card, { dx: 150 });
 
-    await waitFor(() => expect((api as FakeApi).kills).toEqual(["alpha"]));
-    // The same question the ⋯ menu's Kill asks, so the two paths read alike.
-    expect(asked).toEqual(['Kill session "alpha"?']);
-    expect(store.selected()).toBeNull();
-  });
-
-  it("kills nothing when the answer is no", async () => {
-    const api = await listOf(["alpha"]);
-    const { container, store } = mount(api, () => false);
-    const card = await firstCard(container, store);
-
-    swipe(card, { dx: 150 });
-
-    await waitFor(() => expect(store.sessions.length).toBe(1));
+    await waitFor(() => expect(store.killing("alpha")).toBe(true));
+    expect(asked).not.toHaveBeenCalled();
     expect((api as FakeApi).kills).toEqual([]);
+    // The card is still in the list, which is what the undo arrow hangs on.
+    expect(store.sessions.map((s) => s.name)).toContain("alpha");
+    asked.mockRestore();
   });
 
-  it("does not offer to kill a session belonging to someone else", async () => {
+  it("does not kill a session belonging to someone else", async () => {
     const api = await listOf(["shared"]);
     api.sessionsVal = [{ ...sess("shared"), owner: "bob", access: "ro" }];
-    const asked: string[] = [];
-    const { container, store } = mount(api, (m) => {
-      asked.push(m);
-      return true;
-    });
+    const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
     swipe(card, { dx: 150 });
 
-    expect(asked).toEqual([]);
+    expect(store.killing("shared")).toBe(false);
     expect((api as FakeApi).kills).toEqual([]);
   });
 
   it("does not kill on a drag too short to be deliberate", async () => {
     const api = await listOf(["alpha"]);
-    const asked: string[] = [];
-    const { container, store } = mount(api, (m) => {
-      asked.push(m);
-      return true;
-    });
+    const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
     swipe(card, { dx: 40 });
 
-    expect(asked).toEqual([]);
+    expect(store.killing("alpha")).toBe(false);
     expect((api as FakeApi).kills).toEqual([]);
   });
 });

@@ -23,6 +23,11 @@
  *
  * The route half used to read session-events alone, which left the four other
  * backends this app calls unguarded. It reads all five now, off one table.
+ *
+ * The doc half used to read `frontend-v2/README.md` alone. `docs/interface.md`
+ * joined it for the keyboard layer (the last describe in this file), because
+ * that doc now tells people which key the terminal no longer gets and how to
+ * take it back, and both halves of that sentence are decided in code.
  */
 import { describe, it, expect } from "vitest";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -145,9 +150,7 @@ function targetOfAlias(alias: string): string {
 
 /** The dev proxy table, read as prefix → origin constant. */
 function proxyEntries(): ProxyEntry[] {
-  const body = VITE_CONFIG.slice(
-    VITE_CONFIG.indexOf("const proxy: Record<string, ProxyOptions>"),
-  );
+  const body = VITE_CONFIG.slice(VITE_CONFIG.indexOf("const proxy: Record<string, ProxyOptions>"));
   const out: ProxyEntry[] = [];
   for (const m of body.matchAll(/^ {2}"(\/[a-z0-9/-]+)":\s*([\s\S]*?)(?=^ {2}"\/|^\};)/gm)) {
     const [, prefix, value] = m;
@@ -416,6 +419,7 @@ const SHIPPED: readonly Shipped[] = [
     proof: ["src/components/FilePreview.tsx", "src/lib/file-api.ts"],
   },
   { named: /settings panel|settings overlay/i, proof: ["src/components/SettingsPanel.tsx"] },
+  { named: /\bundo\b/i, proof: ["src/store/undo.ts", "src/store/undo.kill.ts"] },
   { named: /self-update|healer/i, proof: ["src/deploy/healer.ts"] },
   { named: /telemetry/i, proof: ["src/telemetry/track.ts"] },
 ];
@@ -505,8 +509,7 @@ describe("the README's Layout map is the whole source tree", () => {
     // One accessor rather than a cast at each use: the empty stack is a real
     // state (a row at the fence's own root) and it answers "" for it.
     const openPath = (): string => (stack.length ? (stack[stack.length - 1] as Open).path : "");
-    const openIndent = (): number =>
-      stack.length ? (stack[stack.length - 1] as Open).indent : -1;
+    const openIndent = (): number => (stack.length ? (stack[stack.length - 1] as Open).indent : -1);
 
     for (const raw of fence.split("\n")) {
       if (!raw.trim()) continue;
@@ -523,9 +526,7 @@ describe("the README's Layout map is the whole source tree", () => {
       // Two row styles, both in use. Most rows are a bare name inside a
       // directory block; some spell the path out instead, as `types/events.ts`
       // and `telemetry/track.ts` do, and those carry their own directory.
-      const file = /^((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(\s|$)/.exec(
-        trimmed,
-      );
+      const file = /^((?:[A-Za-z0-9_.-]+\/)*[A-Za-z0-9_.-]+\.[A-Za-z0-9]+)(\s|$)/.exec(trimmed);
       const named = file?.[1];
       if (!named) continue;
       if (named.includes("/")) {
@@ -780,5 +781,161 @@ describe("the tmux-api prefix is spelled out in one place", () => {
     // reader copies.
     const stale = Object.keys(ALLOWED).filter((rel) => !spellers.includes(rel));
     expect(stale, "listed as allowed to spell the prefix, but no longer does").toEqual([]);
+  });
+});
+
+/**
+ * The keyboard half of `docs/interface.md`, which is the doc a person reads
+ * before they read anything in this directory.
+ *
+ * It is here rather than in a doc-only test because the undo rows are the first
+ * chords in this app that TAKE a key away from the terminal. Ctrl+Z stops
+ * reaching the pty as SIGTSTP, and the sentence telling somebody how to get it
+ * back is only true while `edit.undo` sits in KB_DEFAULT_BINDINGS: move those
+ * rows to KB_ALWAYS_BINDINGS and the ⚙ switch stops handing the key over, with
+ * the doc still promising that it does. The binding table is the only thing
+ * that can answer which table they are in, so the check reads it.
+ *
+ * Same shape as everything above: both sides come from code. The chords are
+ * parsed out of the table, the window out of `GRACE_MS`, the stack's home out
+ * of `UNDO_KEY` / `UNDO_CAP`, and the "nothing asks first" claim out of the
+ * kill paths themselves.
+ */
+describe("docs/interface.md — the undo it documents is the undo that ships", () => {
+  const INTERFACE = readFileSync(REPO("docs/interface.md"), "utf8");
+  const BINDINGS = readFileSync(FE("src/keybindings/bindings.logic.ts"), "utf8");
+  const LOBBY = readFileSync(FE("src/store/lobby.ts"), "utf8");
+  const UNDO_TS = readFileSync(FE("src/store/undo.ts"), "utf8");
+
+  interface Row {
+    readonly key: string;
+    readonly command: string;
+  }
+
+  /** One declarative binding table, read as its rows. */
+  function table(name: string): Row[] {
+    const at = BINDINGS.indexOf(`export const ${name}: Binding[] = [`);
+    if (at < 0) return [];
+    const body = BINDINGS.slice(at, BINDINGS.indexOf("\n];", at));
+    const out: Row[] = [];
+    for (const m of body.matchAll(/key:\s*"([^"]+)",\s*command:\s*"([^"]+)"/g)) {
+      const [, key, command] = m;
+      if (key !== undefined && command !== undefined) out.push({ key, command });
+    }
+    return out;
+  }
+
+  const DEFAULTS = table("KB_DEFAULT_BINDINGS");
+  const ALWAYS = table("KB_ALWAYS_BINDINGS");
+  const chordsFor = (rows: Row[], command: string): string[] =>
+    rows.filter((r) => r.command === command).map((r) => r.key);
+
+  /**
+   * A chord the way the doc writes it: `meta+shift+z` reads `Cmd+Shift+Z`,
+   * which is how the shortcuts sheet spells it too (ShortcutsHelp's `MOD`).
+   */
+  const LABEL: Readonly<Record<string, string>> = {
+    ctrl: "Ctrl",
+    meta: "Cmd",
+    alt: "Alt",
+    shift: "Shift",
+  };
+  const spell = (chord: string): string =>
+    chord
+      .split("+")
+      .map((part) => LABEL[part] ?? part.toUpperCase())
+      .join("+");
+
+  /** The chord table under "## Keyboard shortcuts", down to the blank line. */
+  const shortcutTable = ((): string => {
+    const at = INTERFACE.indexOf("| Chord | Action |");
+    if (at < 0) return "";
+    const end = INTERFACE.indexOf("\n\n", at);
+    return INTERFACE.slice(at, end < 0 ? undefined : end);
+  })();
+
+  /** The "## Undo" section, down to the next heading of the same level. */
+  const undoSection = ((): string => {
+    const at = INTERFACE.indexOf("\n## Undo\n");
+    if (at < 0) return "";
+    const end = INTERFACE.indexOf("\n## ", at + 1);
+    return INTERFACE.slice(at, end < 0 ? undefined : end);
+  })();
+
+  it("found the binding tables, the chord table and the section to check", () => {
+    // Every check below is vacuously true against an empty string, so the
+    // parsers get a canary of their own, for the same reason the route parsers
+    // have one at the top of this file.
+    expect(DEFAULTS.length, "KB_DEFAULT_BINDINGS parsed to nothing").toBeGreaterThanOrEqual(20);
+    expect(ALWAYS.length, "KB_ALWAYS_BINDINGS parsed to nothing").toBeGreaterThanOrEqual(1);
+    expect(shortcutTable, "no chord table under '## Keyboard shortcuts'").toContain("Alt+Shift+S");
+    expect(undoSection.length, "docs/interface.md has no '## Undo' section").toBeGreaterThan(200);
+  });
+
+  it.each(["edit.undo", "edit.redo"])("%s — every chord it binds is in the table", (command) => {
+    const chords = chordsFor(DEFAULTS, command);
+    expect(chords.length, `${command} binds nothing`).toBeGreaterThanOrEqual(2);
+    for (const chord of chords) {
+      expect(
+        shortcutTable,
+        `${command} binds ${chord}, which the shortcut table never names`,
+      ).toContain(`\`${spell(chord)}\``);
+    }
+  });
+
+  it("the undo chords are toggleable, which is the way back the doc offers", () => {
+    // The doc's escape hatch is the ⚙ "App shortcuts" switch, and the switch
+    // only reaches KB_DEFAULT_BINDINGS. An always-on row would take Ctrl+Z from
+    // the pty with nothing to hand it back, and the doc would then be wrong
+    // rather than merely incomplete.
+    const always = ALWAYS.map((r) => r.command);
+    expect(always, "an undo row went always-on; interface.md promises a way back").not.toContain(
+      "edit.undo",
+    );
+    expect(always).not.toContain("edit.redo");
+    expect(undoSection).toContain("App shortcuts");
+  });
+
+  it("the grace window the doc quotes is GRACE_MS", () => {
+    const ms = Number(/export const GRACE_MS = (\d+);/.exec(LOBBY)?.[1]);
+    expect(ms, "GRACE_MS is not a number in store/lobby.ts").toBeGreaterThan(0);
+    const seconds = ms / 1000;
+    const words: Readonly<Record<number, string>> = { 5: "five", 8: "eight", 10: "ten" };
+    const word = words[seconds] ?? String(seconds);
+    expect(
+      new RegExp(`\\b(${seconds}|${word}) seconds\\b`).test(undoSection),
+      `GRACE_MS is ${ms}ms and the Undo section quotes a different window`,
+    ).toBe(true);
+  });
+
+  it("the stack's home and depth are the ones store/undo.ts uses", () => {
+    const key = /export const UNDO_KEY = "([^"]+)";/.exec(UNDO_TS)?.[1] ?? "";
+    const cap = /export const UNDO_CAP = (\d+);/.exec(UNDO_TS)?.[1] ?? "";
+    expect(key, "UNDO_KEY is not a string literal").not.toBe("");
+    expect(cap, "UNDO_CAP is not a number literal").not.toBe("");
+    expect(undoSection, `the stack lives in ${key}`).toContain(key);
+    expect(undoSection, `the stack holds ${cap} entries`).toContain(cap);
+  });
+
+  it("no kill path asks a question, so the doc does not say one does", () => {
+    // The confirm went with the grace window (store/lobby.ts GRACE_MS), and it
+    // went from every entry point: the ⋯ menu and the swipe (SessionCard), the
+    // sidebar's Backspace/Delete, and the chord/palette command. A doc sentence
+    // saying otherwise sends somebody looking for a dialog that cannot appear.
+    // ProjectGroup.tsx is deliberately not on this list: deleting a PROJECT
+    // still asks, and that question is about a different action.
+    const killPaths = [
+      "src/components/SessionCard.tsx",
+      "src/components/Sidebar.tsx",
+      "src/keybindings/commands.ts",
+    ];
+    const askers = killPaths.filter((rel) => /\bconfirm\s*\(/.test(readFileSync(FE(rel), "utf8")));
+    expect(askers, "a kill path asks again; the doc below assumes none do").toEqual([]);
+
+    const claims = INTERFACE.split(/\n\s*\n/)
+      .filter((p) => /\bkill/i.test(p))
+      .filter((p) => /\bconfirm\w*\b|\basks? (?:first|you)\b|are you sure/i.test(p))
+      .map((p) => p.split("\n")[0]);
+    expect(claims, "docs/interface.md still says a kill asks first").toEqual([]);
   });
 });

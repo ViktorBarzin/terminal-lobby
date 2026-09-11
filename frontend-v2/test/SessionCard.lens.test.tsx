@@ -38,19 +38,14 @@ function lensStore(): LobbyStore {
     hold: () => () => {},
     // The card reads both while rendering its drop indicator (touch reorder).
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
+    // No kill in flight, so the row draws itself the ordinary way. The dimmed
+    // one is test/SessionCard.killing.test.tsx.
+    killing: () => false,
   } as unknown as LobbyStore;
 }
 
 const card = (s: Session) =>
-  render(() => (
-    <SessionCard
-      store={lensStore()}
-      session={s}
-      groupName=""
-      tick={() => 0}
-      confirm={() => true}
-    />
-  ));
+  render(() => <SessionCard store={lensStore()} session={s} groupName="" tick={() => 0} />);
 
 const menuItem = (c: HTMLElement, text: string) =>
   Array.from(c.querySelectorAll<HTMLButtonElement>("button.tl-menu-item")).find((b) =>
@@ -62,7 +57,10 @@ const openMenu = (c: HTMLElement) =>
 beforeEach(() => {
   localStorage.clear();
   clearResolvedWatch("main");
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response("[]"))),
+  );
 });
 
 describe("<SessionCard> in a tab acting as another user", () => {
@@ -98,9 +96,7 @@ describe("<SessionCard> in a tab acting as another user", () => {
     const { container } = card(session());
     openMenu(container);
     fireEvent.click(menuItem(container, "Take control")!);
-    await waitFor(() =>
-      expect(localStorage.getItem(WATCH_KEY_PREFIX + "as:bob:main")).toBe("rw"),
-    );
+    await waitFor(() => expect(localStorage.getItem(WATCH_KEY_PREFIX + "as:bob:main")).toBe("rw"));
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
     expect(container.querySelector(".tl-card-watch")).toBeNull();
   });
