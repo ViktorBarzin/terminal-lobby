@@ -11,110 +11,70 @@
  *     there) for the `tl-activate-session` the SW posts on a notification tap,
  *     validates the name, and switches the app to it (the resident-PWA
  *     "focus-without-switch" fix);
- *   - reads+consumes the IndexedDB stash the SW writes for the iOS killed-PWA
- *     cold-launch path (which fires no notificationclick).
+ *   - reads and consumes the IndexedDB stash the SW writes for the iOS
+ *     killed-PWA cold-launch path (which fires no notificationclick), and reads
+ *     the notification shade that decision needs.
+ *
+ * WHICH record a launch belongs to is not decided here. That is one pure
+ * function in pwa/tap.ts, so the deciding and the reporting cannot disagree;
+ * this module is the platform half it runs on.
  *
  * SW-backed notifications are preferred over the bare `Notification` constructor
  * (Android Chrome requires them), so `deliverable()` reports whether ANYTHING
  * can show a notification here.
  */
 import { NAME_RE } from "../types/lobby";
+import type { StoredRecord } from "./tap";
 
 /**
- * The stash the SW writes: db 'tl-notif' v1, store 'pending'.
+ * The tags of every notification still in the shade, or null when that cannot be
+ * read at all (no service worker, no getNotifications, or a throw).
  *
- * ONE RECORD PER SESSION, keyed by the session name. It was a single 'last'
- * slot, and with several notifications outstanding each push overwrote the one
- * before it — so tapping the oldest banner routed to the newest push's session,
- * or, when that happened to be the session already on screen, did nothing at
- * all. Measured on Viktor's phone 2026-09-02: pushes for issues, cache-omages
- * and ux landed within 80 s, he tapped one, and the read came back `already`
- * because the slot held `ux` and `ux` was what he was looking at.
+ * The difference carries the decision, so the two are kept apart: an empty array
+ * means the shade answered and nothing is on screen, which is exactly what a tap
+ * leaves behind on iOS. Null means silence, and nothing may be inferred from it.
  *
- * `last` is still written by sw.js and still read here, so a page and a worker
- * from different deploys keep working.
+ * Asked with NO argument on purpose. getNotifications({tag}) only began honouring
+ * its filter in WebKit main on 2024-08-29, no release note says which iOS shipped
+ * it, and same-tag banners do not coalesce on iOS anyway (WebKit bug 258922), so
+ * the whole shade comes back here and pwa/tap.ts matches the tags in JS.
  */
-export interface PendingNotif {
-  session: string;
-  ts: number;
-  /** true when sw.js wrote it from an actual notificationclick, not push receipt. */
-  tapped?: boolean;
-}
-
-/**
- * 2 min: wide enough for a realistic tap→cold-launch, tight enough that a plain
- * icon launch rarely falls inside a stale stash window (a push-time record is the
- * RECEIPT, not the tap — a guess that the user is about to act on it).
- */
-export const PENDING_NOTIF_TTL_MS = 120 * 1000;
-
-/**
- * The outer window a stash may still land a launch on (15 min). It covers the two
- * cases where a receipt's 2 min is simply wrong:
- *   - `tapped:true` — sw.js routed an actual click here (its openWindow branch),
- *     so intent is certain and only the launch is pending;
- *   - a receipt whose notification is NO LONGER DISPLAYED. Viktor's case: a push
- *     arrives, the phone stays locked, and the banner is tapped twenty minutes
- *     later — far outside 2 min, so boot ignored it and landed on the last-active
- *     session instead of the one that called. iOS clears a notification when it is
- *     tapped, so "stash present + banner gone" reads that tap after the fact;
- *     while the banner still sits there untapped, an icon launch must NOT jump.
- */
-export const STASH_MAX_AGE_MS = 15 * 60 * 1000;
-
-/** How many notifications carrying `tag` are still displayed; null = unknowable. */
-async function displayedForTag(tag: string): Promise<number | null> {
+export async function displayedTags(): Promise<string[] | null> {
   if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return null;
-  const reg = await navigator.serviceWorker.getRegistration();
-  if (!reg?.getNotifications) return null;
-  return (await reg.getNotifications({ tag })).length;
-}
-
-/**
- * Is this record finished with, whatever happens next? Malformed, or past the
- * outer window and so no longer evidence of anything. Deleting one of these
- * costs nothing.
- *
- * It is deliberately much narrower than "not actionable". A receipt whose
- * banner is still on screen is not actionable YET and is not finished with
- * either: the reader has not tapped it, and will. Treating the two the same is
- * what made a plain icon launch erase every notification still in the shade,
- * so the tap that came afterwards had nothing to route on (see the prune in
- * notify/notifications.ts).
- */
-export function stashExpired(rec: PendingNotif | null, now = Date.now()): boolean {
-  if (!rec || typeof rec.session !== "string" || !NAME_RE.test(rec.session)) return true;
-  if (typeof rec.ts !== "number") return true;
-  const age = now - rec.ts;
-  return age < 0 || age > STASH_MAX_AGE_MS;
-}
-
-/**
- * Is a stashed record still worth landing the launch on? Conservative on every
- * unknown: an unreadable registration must never become a jump the user did not
- * ask for. `now`/`openNotifications` are injectable for tests only.
- *
- * False here does NOT mean the record is spent. Use `stashExpired` for that.
- */
-export async function stashIsActionable(
-  rec: PendingNotif | null,
-  opts: {
-    now?: number;
-    openNotifications?: (tag: string) => Promise<number | null>;
-  } = {},
-): Promise<boolean> {
-  const now = opts.now ?? Date.now();
-  if (stashExpired(rec, now)) return false;
-  if (!rec) return false;
-  const age = now - rec.ts;
-  if (rec.tapped) return true; // an actual click routed here
-  if (age < PENDING_NOTIF_TTL_MS) return true; // fresh receipt (the iOS tap window)
-  // Older receipt: land only if its banner is gone (tapped or dismissed).
   try {
-    const open = await (opts.openNotifications ?? displayedForTag)("tl-" + rec.session);
-    return open === 0;
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg?.getNotifications) return null;
+    const open = await reg.getNotifications();
+    return open.map((n) => n.tag);
   } catch {
-    return false;
+    return null;
+  }
+}
+
+/**
+ * The session the OPERATING SYSTEM opened this launch on, or null.
+ *
+ * Declarative Web Push (iOS/iPadOS 18.4+) never dispatches notificationclick.
+ * WebKit navigates to the notification's `navigate` URL instead, which
+ * tmux-api/pushsender.go builds as `<origin>/?session=<name>` — the same query
+ * the lobby already reads for its initial selection. So on that platform the
+ * query is the only first-hand statement of WHICH banner was tapped, and
+ * pwa/tap.ts weighs it above everything it infers from the shade and the clock.
+ *
+ * It is read fresh on every landing rather than captured once: a warm
+ * declarative tap navigates the resident window, so the query can change under
+ * a page that never reloaded.
+ *
+ * Not validated here beyond being a string. `pickTap` checks it against NAME_RE
+ * and, more to the point, refuses to act on it without a live record behind it,
+ * which is what keeps a query left over from an earlier tap from routing again.
+ */
+export function navigatedSession(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return new URLSearchParams(window.location.search).get("session");
+  } catch {
+    return null;
   }
 }
 
@@ -122,11 +82,23 @@ export async function stashIsActionable(
 const LEGACY_KEY = "last";
 
 /**
- * Every tap record the worker has written, newest first. Does not consume them:
- * which one was tapped cannot be decided until the notifications are inspected,
- * so the caller deletes the one it acts on (and prunes the rest).
+ * Every row in the tap stash (db 'tl-notif' v1, store 'pending'), in whatever
+ * order IndexedDB hands them over.
+ *
+ * ONE ROW PER SESSION, keyed by the session name, plus the legacy `last` slot
+ * sw.js still mirrors the newest push into. It was a single slot until
+ * 2026-09-02 (a17306e): with several notifications outstanding each push
+ * overwrote the one before it, so tapping the oldest banner routed to the newest
+ * push's session. Measured on Viktor's phone that day: pushes for issues,
+ * cache-omages and ux landed inside 80 s, he tapped one, and the read came back
+ * `already` because the slot held `ux` and `ux` was what he was looking at.
+ *
+ * Nothing is consumed and nothing is judged here, not even the duplicate the
+ * `last` mirror makes. Which copy of a session wins is pwa/tap.ts's call — it
+ * prefers a recorded click over a newer receipt, and a newest-ts dedupe here
+ * would throw that click away before it got to say so.
  */
-export function readPendingSessions(): Promise<PendingNotif[]> {
+export function readPendingSessions(): Promise<StoredRecord[]> {
   return new Promise((resolve) => {
     if (typeof indexedDB === "undefined") {
       resolve([]);
@@ -152,7 +124,7 @@ export function readPendingSessions(): Promise<PendingNotif[]> {
       try {
         const tx = db.transaction("pending", "readonly");
         const all = tx.objectStore("pending").getAll();
-        const done = (v: PendingNotif[]) => {
+        const done = (v: StoredRecord[]) => {
           try {
             db.close();
           } catch {
@@ -161,16 +133,11 @@ export function readPendingSessions(): Promise<PendingNotif[]> {
           resolve(v);
         };
         tx.oncomplete = () => {
-          const rows = (all.result as PendingNotif[]) || [];
-          // De-duplicate: the legacy `last` slot mirrors one of the per-session
-          // records, so the same tap must not be counted twice.
-          const bySession = new Map<string, PendingNotif>();
-          for (const r of rows) {
-            if (!r || typeof r.session !== "string") continue;
-            const prev = bySession.get(r.session);
-            if (!prev || (r.ts ?? 0) > (prev.ts ?? 0)) bySession.set(r.session, r);
-          }
-          done([...bySession.values()].sort((a, b) => (b.ts ?? 0) - (a.ts ?? 0)));
+          const rows = (all.result as unknown[]) || [];
+          // Anything that is not an object cannot be a record and cannot be
+          // named for deletion either. Dropping it here keeps "no rows" meaning
+          // an empty store, which is what a wake stays silent about.
+          done(rows.filter((r): r is StoredRecord => !!r && typeof r === "object"));
         };
         tx.onerror = () => done([]);
         tx.onabort = () => done([]);
@@ -253,144 +220,6 @@ export function clearPendingSessions(sessions: readonly string[]): Promise<void>
 }
 
 /**
- * Which of the outstanding tap records was the one the user actually tapped?
- *
- * On iOS nothing tells us. There is no notificationclick for an installed app,
- * and being brought to the foreground carries no argument. What iOS DOES do is
- * clear the notification that was tapped and leave the others alone — so the
- * record whose banner has GONE is the tap, and the ones still on screen are not.
- * That is the same inference `stashIsActionable` already makes for a single aged
- * receipt, applied across all of them.
- *
- * Order of preference:
- *   1. a record sw.js marked `tapped` (its openWindow branch saw a real click)
- *   2. the newest record whose notification is no longer displayed
- *   3. nothing — every banner is still there, so this is an icon launch
- *
- * `displayed` returning null means the registration could not be read. Falling
- * back to the newest FRESH receipt keeps the behaviour that shipped before this
- * was per-session, rather than regressing to no routing at all.
- *
- * Records past STASH_MAX_AGE_MS are ignored outright, and returning null must
- * always be safe: a launch the user did not ask to be redirected must not be.
- */
-export async function pickTappedSession(
-  records: readonly PendingNotif[],
-  opts: {
-    now?: number;
-    displayed?: (tag: string) => Promise<number | null>;
-  } = {},
-): Promise<PendingNotif | null> {
-  const now = opts.now ?? Date.now();
-  const displayed = opts.displayed ?? displayedForTag;
-  const live = records.filter((r) => {
-    if (!r || typeof r.session !== "string" || !NAME_RE.test(r.session)) return false;
-    if (typeof r.ts !== "number") return false;
-    const age = now - r.ts;
-    return age >= 0 && age <= STASH_MAX_AGE_MS;
-  });
-  if (live.length === 0) return null;
-
-  // A real click beats every inference.
-  const clicked = live.filter((r) => r.tapped).sort((a, b) => b.ts - a.ts);
-  if (clicked.length > 0) return clicked[0]!;
-
-  const gone: PendingNotif[] = [];
-  let unknown = false;
-  for (const r of live) {
-    let count: number | null;
-    try {
-      count = await displayed("tl-" + r.session);
-    } catch {
-      count = null;
-    }
-    if (count === null) unknown = true;
-    else if (count === 0) gone.push(r);
-  }
-  if (gone.length > 0) return gone.sort((a, b) => b.ts - a.ts)[0]!;
-  if (unknown) {
-    const fresh = live.filter((r) => now - r.ts < PENDING_NOTIF_TTL_MS).sort((a, b) => b.ts - a.ts);
-    return fresh[0] ?? null;
-  }
-  return null; // every banner still on screen: an icon launch, not a tap
-}
-
-/**
- * Read AND consume (one-shot delete) the SW's pending-session stash. Best-effort:
- * any failure resolves null. Mirrors sw.js's `stashPendingSession` contract
- * exactly — resolve on complete, error AND abort (an abort can fire without a
- * preceding error and would otherwise leave the Promise pending forever).
- */
-export function readAndClearPendingSession(): Promise<PendingNotif | null> {
-  return new Promise((resolve) => {
-    if (typeof indexedDB === "undefined") {
-      resolve(null);
-      return;
-    }
-    let req: IDBOpenDBRequest;
-    try {
-      req = indexedDB.open("tl-notif", 1);
-    } catch {
-      resolve(null);
-      return;
-    }
-    req.onupgradeneeded = () => {
-      try {
-        req.result.createObjectStore("pending");
-      } catch {
-        /* already exists */
-      }
-    };
-    req.onerror = () => resolve(null);
-    req.onsuccess = () => {
-      const db = req.result;
-      try {
-        const tx = db.transaction("pending", "readwrite");
-        const getReq = tx.objectStore("pending").get("last");
-        getReq.onsuccess = () => {
-          try {
-            tx.objectStore("pending").delete("last");
-          } catch {
-            /* delete best-effort */
-          }
-        };
-        tx.oncomplete = () => {
-          try {
-            db.close();
-          } catch {
-            /* closed */
-          }
-          resolve((getReq.result as PendingNotif) || null);
-        };
-        tx.onerror = () => {
-          try {
-            db.close();
-          } catch {
-            /* closed */
-          }
-          resolve(null);
-        };
-        tx.onabort = () => {
-          try {
-            db.close();
-          } catch {
-            /* closed */
-          }
-          resolve(null); // abort can fire without error
-        };
-      } catch {
-        try {
-          db.close();
-        } catch {
-          /* closed */
-        }
-        resolve(null);
-      }
-    };
-  });
-}
-
-/**
  * A usable Notification CONSTRUCTOR is the desktop fallback delivery mechanism.
  * The probe (`new Notification('')`) is the feature test; it is closed
  * immediately. Callers gate it behind "no SW registration" so it never runs on
@@ -419,7 +248,12 @@ export interface ServiceWorkerHandle {
  * call once on app mount; `dispose()` detaches the message listener.
  */
 export function registerServiceWorker(opts: {
-  onActivateSession: (session: string) => void;
+  /**
+   * Switch the app to this session. Returns whether it actually did: a tab
+   * acting as another user refuses, and a refusal must neither consume the
+   * record nor acknowledge the worker (see onMessage).
+   */
+  onActivateSession: (session: string) => boolean;
 }): ServiceWorkerHandle {
   let reg: ServiceWorkerRegistration | null = null;
 
@@ -429,10 +263,20 @@ export function registerServiceWorker(opts: {
     // Validate the name (the SW never posts for a session-less /push/test tap;
     // this is defense-in-depth against a malformed name).
     if (typeof d.session !== "string" || !NAME_RE.test(d.session)) return;
-    opts.onActivateSession(d.session);
-    // Warm tap handled — consume any stash the SW wrote for this push so a later
-    // plain (icon) launch won't replay it.
-    void readAndClearPendingSession();
+    // A window that will not take the switch stays silent, so sw.js moves on to
+    // the next candidate and the record stays for whichever window does take
+    // it. A lens tab (?as=someone) is the case: matchAll sorts focused windows
+    // first, so the lens is often the one posted to, and answering there both
+    // swallowed the tap and deleted the record the reader's own window was
+    // going to route on.
+    if (!opts.onActivateSession(d.session)) return;
+    // Warm tap handled — consume the record sw.js wrote for this push so a later
+    // wake won't replay it. It used to clear the legacy `last` key alone, and
+    // the store has been keyed BY SESSION since 2026-09-02 (a17306e): the real
+    // row survived, so the next return to the foreground read it, called it a
+    // tap, and pulled the reader off whatever they had moved to.
+    // clearPendingSessions takes the legacy slot with it.
+    void clearPendingSessions([d.session]);
     // Tell sw.js a real lobby took it. The worker cannot reliably tell a lobby
     // from a terminal iframe by URL — it tried, and a URL change unrelated to
     // notifications silently killed tap routing twice — so it now moves on to

@@ -46,6 +46,17 @@ export interface Session {
    *  survive a tmux server restart, which is why it is not the session's name.
    *  Absent from a server that predates it. */
   id?: string;
+  /** The name this session was FIRST created with, present only once it has
+   *  been renamed away from a minted id (tmux-api sessionio.OptionBornAs).
+   *
+   *  It is what makes a rename followable when `id` cannot help. A session is
+   *  renamed as soon as its first title lands (ADR-0022) — seconds in — and the
+   *  session list is behind a 5-second cache, so a tab that created the session
+   *  routinely never sees it under the id it minted. With no previous row to
+   *  match an id against, this is the only link between the name that tab is
+   *  holding and the session it belongs to. Absent for a session that never
+   *  moved, and from a server that predates the field. */
+  bornAs?: string;
   /** The display title a person chose — arbitrary text, up to 64 code points,
    *  from the session's @title option. Absent means the session has no title
    *  and its `name` is what gets shown, which is where every session that
@@ -87,6 +98,17 @@ export interface Session {
   pane_title?: string;
   /** Which command the session runs; drives the sidebar tool mark. */
   tool?: SessionTool;
+  /** Who made this session, from its `@tl_origin` tmux option: `user` when the
+   *  lobby's own create path made it, `test` when a harness stamped it.
+   *
+   *  Absent means nobody said, and that is deliberately NOT the same as `user`:
+   *  a mark can only mean something once the path a person uses leaves one, so
+   *  everything unstamped is a system session (`isSystemSession` in
+   *  components/lobby.logic.ts). Absent also covers a server that predates the
+   *  field, which is why tmux-api stamps every live session `user` once at
+   *  start — without that pass an upgrade would sweep the whole list into
+   *  System. */
+  origin?: string;
 }
 
 /** A per-user layout project (sidebar grouping + ordering). */
@@ -172,14 +194,17 @@ export function sessionLabel(s: Pick<Session, "name" | "title">): string {
 }
 
 /**
- * What a CONFIRMATION calls a session — a kill prompt, anything where the
- * answer is irreversible and the question has to name one session and not
- * another.
+ * What a message calls a session when it has ONE chance to say which one, and
+ * the reader cannot ask again: a kill prompt, where the answer is
+ * irreversible, and an OS notification, which arrives on a locked phone with
+ * no list beside it.
  *
  * `sessionLabel` answers `New session` for every untitled minted id, so
- * `Kill session "New session"?` cannot tell two of them apart. The id is the
- * only thing that can, and this is also where it becomes readable at all: a
- * name is invisible everywhere else now (ADR-0019's last consequence).
+ * `Kill session "New session"?` cannot tell two of them apart, and neither can
+ * a banner. The id is the only thing that can, and this is also where it
+ * becomes readable at all: a name is invisible everywhere else now (ADR-0019's
+ * last consequence). tmux-api's `pushLabel` is the same rule server-side, so a
+ * pushed banner and a page-fired one read alike.
  */
 export function sessionConfirmLabel(s: Pick<Session, "name" | "title">): string {
   return s.title && s.title.length > 0 ? s.title : s.name;
@@ -244,6 +269,10 @@ export interface SnapshotList {
 /** One session inside a snapshot, already resolved against what is live. */
 export interface SnapshotRow {
   name: string;
+  /** What a person reads for this row. A name is an opaque id (ADR-0019), so
+   *  without this the picker is a list of 12-character strings. Absent when the
+   *  session was never titled — then the name is all there is. */
+  title?: string;
   cwd: string;
   uuid?: string;
   state: "missing" | "live_same" | "live_other_conv" | "live_no_claude";

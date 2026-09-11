@@ -18,7 +18,7 @@ import {
 const ids = (admin: boolean): PageId[] => railFor({ admin }).map((e) => e.id);
 
 describe("railFor", () => {
-  it("lists the eight everyone-pages in reading order", () => {
+  it("lists the nine everyone-pages in reading order", () => {
     expect(ids(false)).toEqual([
       "appearance",
       "terminal",
@@ -27,8 +27,21 @@ describe("railFor", () => {
       "notifications",
       "network",
       "privacy",
+      "spend",
       "skills",
     ]);
+  });
+
+  it("keeps Agent spend in the preferences tier, after Privacy", () => {
+    // It is a readout you check, not a thing you manage, so it belongs above
+    // the rule Skills sits under rather than beside it.
+    const entries = railFor({ admin: false });
+    const spend = entries.find((e) => e.id === "spend");
+    expect(spend?.label).toBe("Agent spend");
+    expect(spend?.startsGroup).toBeFalsy();
+    expect(entries.findIndex((e) => e.id === "spend")).toBe(
+      entries.findIndex((e) => e.id === "privacy") + 1,
+    );
   });
 
   it("appends Act as user for an admin, and only for an admin", () => {

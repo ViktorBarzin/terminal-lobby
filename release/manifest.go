@@ -209,6 +209,10 @@ var Package = Manifest{
 		{Src: "devvm/tls", Dest: "/usr/local/bin/tls", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-tmux-state", Dest: "/usr/local/bin/claude-tmux-state", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/claude-se-hook", Dest: "/usr/local/bin/claude-se-hook", Mode: 0o755, Unmanaged: true},
+		// Claude Code's statusLine slot, run once a render by the CLI. Shipped
+		// here and wired by whoever owns the machine's Claude configuration —
+		// the same split ADR-0001 established for the state dot.
+		{Src: "devvm/tl-usage-record", Dest: "/usr/local/bin/tl-usage-record", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/clipboard-store-clean", Dest: "/usr/local/bin/clipboard-store-clean", Mode: 0o755},
 
 		{Src: "share/index.html", Dest: "/usr/local/share/ttyd/index.html", Mode: 0o644},
@@ -221,11 +225,21 @@ var Package = Manifest{
 
 		// The PWA surface, served by clipboard-upload from an exact-path
 		// whitelist -- a missing file here is a 404 the client cannot route around.
-		{Src: "frontend/sw.js", Dest: "/usr/local/share/ttyd/sw.js", Mode: 0o644},
-		{Src: "frontend/manifest.webmanifest", Dest: "/usr/local/share/ttyd/manifest.webmanifest", Mode: 0o644},
-		{Src: "frontend/icon-192.png", Dest: "/usr/local/share/ttyd/icon-192.png", Mode: 0o644},
-		{Src: "frontend/icon-512.png", Dest: "/usr/local/share/ttyd/icon-512.png", Mode: 0o644},
-		{Src: "frontend/icon-512-maskable.png", Dest: "/usr/local/share/ttyd/icon-512-maskable.png", Mode: 0o644},
+		//
+		// It comes from frontend-v2/public/ since 2026-09-06. There were two
+		// copies of all five files before that, byte-identical and with nothing
+		// enforcing it: frontend-v2/public/ is what vite copies into dist/, so it
+		// is the one the dev server serves, the frontend tests drive and the
+		// container image ships (Dockerfile: COPY frontend-v2/dist/ into
+		// /usr/local/share/ttyd/), while this manifest installed the frontend/
+		// copy into the .deb. A service worker fix landed in one of them reached
+		// the browser and never reached a device, and no build step compared them.
+		// One source now, so there is nothing left to drift.
+		{Src: "frontend-v2/public/sw.js", Dest: "/usr/local/share/ttyd/sw.js", Mode: 0o644},
+		{Src: "frontend-v2/public/manifest.webmanifest", Dest: "/usr/local/share/ttyd/manifest.webmanifest", Mode: 0o644},
+		{Src: "frontend-v2/public/icon-192.png", Dest: "/usr/local/share/ttyd/icon-192.png", Mode: 0o644},
+		{Src: "frontend-v2/public/icon-512.png", Dest: "/usr/local/share/ttyd/icon-512.png", Mode: 0o644},
+		{Src: "frontend-v2/public/icon-512-maskable.png", Dest: "/usr/local/share/ttyd/icon-512-maskable.png", Mode: 0o644},
 
 		{Src: "frontend/fonts/dm-sans-latin-wght-normal.woff2", Dest: "/usr/local/share/ttyd/fonts/dm-sans-latin-wght-normal.woff2", Mode: 0o644},
 		{Src: "frontend/fonts/JetBrainsMono-Regular.woff2", Dest: "/usr/local/share/ttyd/fonts/JetBrainsMono-Regular.woff2", Mode: 0o644},

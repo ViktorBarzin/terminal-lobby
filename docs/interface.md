@@ -56,11 +56,21 @@ from anywhere. Rename a session by **double-clicking** its card (single click
 just selects), or from the card's `⋯` menu.
 
 Renaming edits the session's **title**, which is the only thing anyone reads.
-Its name is an opaque id, minted when the session was created, and it never
-moves (ADR-0019). Titles normally arrive on their own — Claude Code writes a
-summary of the conversation and the lobby stamps it as the title a few seconds
-after the first prompt — so the box is for overriding one, and leaving it empty
-hands the session back to whatever summary lands next.
+The tmux **name** follows it, so `tmux ls` and the status bar read as words
+too (ADR-0022): `Deploy the thing` becomes `deploy-the-thing`. A session that
+has never been titled is called by the opaque id it was minted with. Titles
+normally arrive on their own — Claude Code writes a summary of the conversation
+and the lobby stamps it as the title a few seconds after the first prompt — so
+the box is for overriding one, and leaving it empty hands the session back to
+whatever summary lands next. Clearing a title leaves the name where the last
+title put it.
+
+The `⋯` menus in the sidebar, on a session card and on a project header, open
+where you can read them. One near the bottom of the list opens upwards instead
+of downwards and keeps its edges on screen, so the options at the end of it are
+no longer somewhere you have to scroll the list to reach. Scrolling the list or
+turning the phone closes the menu, the same as pressing Escape or clicking away
+from it.
 
 ## Session image gallery
 
@@ -90,6 +100,7 @@ right. The pages, in rail order:
 | Notifications | when to notify, this device's permission and subscription, two tests |
 | Network | the Full/Auto/Light link pin, which network you are on, and "Data used" |
 | Privacy | send diagnostics, and clear this browser's data |
+| Agent spend | what Claude Code and Codex have consumed over a period: Claude's dollars, Codex's 5-hour and weekly limits, and the conversations under each |
 | Skills | install, disable, share — see `docs/adr/0011` |
 | Act as user | admins only; see [multi-user](multi-user.md) |
 
@@ -106,6 +117,23 @@ rather than what the control is: acting as another user, clearing local data,
 and what diagnostics do and do not send.
 
 On a phone the rail becomes a row of chips above the page.
+
+**Agent spend** has a short form outside Settings: a figure beside ⚙ in the
+sidebar footer, following whatever the attached session runs. A Claude Code
+session shows today's dollars, a Codex session shows how much of its tighter
+limit is gone, and a plain shell or nothing attached shows no figure at all.
+Clicking it opens the page. A section on the page is drawn only for a tool that
+has reported something, so a box that only runs Claude sees one section and a
+box that has run neither sees a line saying nothing has reported yet.
+
+The Codex section has one more condition on a multi-user box. Codex's figures
+are read straight out of `~/.codex/sessions`, tmux-api runs as one OS user, and
+peer homes here are 0750 — so on the devvm the section is drawn for the user
+that service runs as. For anyone else, including an admin using `?as=`, the
+read is refused and the section is left out; the service logs which user it
+could not read for. Claude's half has no such condition: it comes from a store
+the services own. Reaching another user's rollouts would need a privileged
+helper and a sudoers grant, neither of which exists yet.
 
 ## Theme
 
@@ -128,14 +156,30 @@ The lobby works on phones and tablets. The viewport meta declares
 soft keyboard pushes the layout up instead of overlaying it, and the
 xterm pane refits whenever `visualViewport` reports a size change.
 
-**Soft-key toolbar.** On any device that reports `pointer: coarse`, a
-docked toolbar appears above the soft keyboard with keys mobile
-keyboards lack: `Esc`, `Tab`, `Ctrl`, `Alt`, arrow keys, `|`, `` ` ``,
-plus `Copy` / `Paste` / `Kbd` (re-summon keyboard). `Ctrl` and `Alt`
-are one-shot on a single tap and **latch** on a double-tap (within
-400 ms); a small dot on the button indicates latch state. Latched
-modifiers apply to subsequent letters typed on the system soft
-keyboard until you tap the modifier again to release.
+**Soft-key row.** On any device that reports `pointer: coarse`, a
+docked row appears above the soft keyboard in the terminal view, with
+the keys a phone keyboard lacks: `Tab`, `Esc`, the four arrows, then
+`Copy`, `Paste` and a keyboard-dismiss key. One line, eight keys,
+which is as much as a 390px screen holds without scrolling. Arrows
+and `Tab` repeat while held. The two clipboard keys carry a caption
+under their icon; every other key says what it is on its face.
+
+`Copy` does not need a selection, and on touch it never has one: a
+drag scrolls the terminal by design, so no range is ever made. With
+nothing selected the button copies the **visible screen**, fetched
+from the server as a pane capture, and toasts "Screen copied". There
+is no way yet to copy a single line or path from a phone.
+
+It was two lines until 2026-09-06, the second hidden behind a `⋯`
+toggle. What that tier held is gone rather than moved: 28 days of
+`terminal.softkey` telemetry recorded no taps at all on the `/`,
+`-`, `|` and `` ` `` glyphs, which the system keyboard types anyway;
+`⇧Tab` had six, and the permission-mode cycle it existed for has its
+own chip in the Text view's composer; and the soft `Ctrl`/`Alt` pair
+could only remap the row's own pre-baked bytes, none of which begin
+with a letter, so `Ctrl+C` from a phone never worked. Wiring a real
+one means passing the modifier state into the terminal component,
+where a letter typed on the system keyboard can be caught.
 
 **Install as a PWA.** A `manifest.webmanifest` (served from `/`) plus
 the two icons (`/icon-192.png`, `/icon-512.png`) let iOS Safari and

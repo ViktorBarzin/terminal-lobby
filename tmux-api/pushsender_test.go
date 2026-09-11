@@ -13,12 +13,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"terminal-lobby/slug"
 )
 
 // stubPrefs is a prefsLoader returning a fixed prefs document (empty ⇒ "{}",
@@ -73,6 +76,7 @@ type stubStater struct {
 	m      map[string]string
 	titles map[string]string
 	act    map[string]int64
+	system map[string]bool
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -87,7 +91,7 @@ func (s *stubStater) setTitles(m map[string]string) {
 	s.titles = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64) {
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
@@ -102,7 +106,11 @@ func (s *stubStater) read(string) (map[string]string, map[string]string, map[str
 	for k, v := range s.act {
 		act[k] = v
 	}
-	return cp, titles, act
+	system := make(map[string]bool, len(s.system))
+	for k, v := range s.system {
+		system[k] = v
+	}
+	return cp, titles, act, system
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
@@ -348,12 +356,12 @@ func TestPushSenderIgnoresUsersWithoutSubs(t *testing.T) {
 	sender.tick() // must not panic; nobody subscribed
 }
 
-// The marshaled payload is EXACTLY the shape frontend/sw.js parses: keys
+// The marshaled payload is EXACTLY the shape frontend-v2/public/sw.js parses: keys
 // title, body, tag, session, badge and nothing else. A drift here breaks
 // background notifications silently, so pin it.
 func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -377,7 +385,7 @@ func TestBuildPushPayloadMatchesServiceWorker(t *testing.T) {
 // renotify).
 func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &got); err != nil {
+	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -391,7 +399,7 @@ func TestBuildDonePayloadMatchesServiceWorker(t *testing.T) {
 		t.Fatalf("done payload shape drift:\n got %v\nwant %v", got, want)
 	}
 	var aw map[string]any
-	_ = json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil), &aw)
+	_ = json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, ""), &aw)
 	if got["tag"] != aw["tag"] {
 		t.Fatalf("done tag %q != awaiting tag %q — coalescing would break", got["tag"], aw["tag"])
 	}
@@ -575,7 +583,7 @@ func TestPushSenderUsesSharedClient(t *testing.T) {
 // stale count on the user's home screen.
 func TestPushPayloadCarriesZeroBadge(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	if _, ok := got["badge"]; !ok {
@@ -669,7 +677,7 @@ func TestWaitingListReturnsNilPastTheCap(t *testing.T) {
 func TestPushPayloadCarriesTheNamedSet(t *testing.T) {
 	var got map[string]any
 	w := waitingList(map[string]string{"one": stateAwaiting, "two": stateDone})
-	if err := json.Unmarshal(buildPushPayload("One", "one", 2, w), &got); err != nil {
+	if err := json.Unmarshal(buildPushPayload("One", "one", 2, w, ""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	wait, ok := got["waiting"].(map[string]any)
@@ -901,5 +909,410 @@ func TestStatesAndTitles(t *testing.T) {
 	}
 	if _, ok := titles["q4m8vwx2rt5n"]; ok {
 		t.Errorf("an untitled session is in the titles map: %v", titles)
+	}
+}
+
+// --- Declarative Web Push (iOS/iPadOS 18.4+, Safari 18.4+) -------------------
+
+// The origin the tests navigate to: the live deployment, so the assertions read
+// like the wire does.
+const testPushOrigin = "https://terminal.viktorbarzin.me"
+
+// A subscription recorded before this change carries no origin, and every such
+// device must keep getting EXACTLY the bytes it got before. This pins the whole
+// document, not a key set: a stray declarative key, or a reordered flat one,
+// fails here.
+func TestPayloadWithoutAnOriginIsUnchangedOnTheWire(t *testing.T) {
+	const want = `{"title":"Worktree cleanup needs input","body":"Claude is awaiting your input.","tag":"tl-k7m2q9x4tp0v","session":"k7m2q9x4tp0v","badge":3}`
+	if got := string(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 3, nil, "")); got != want {
+		t.Fatalf("origin-less payload drifted:\n got %s\nwant %s", got, want)
+	}
+}
+
+// With an origin the message ALSO carries the declarative half, which is what
+// lets iOS 18.4+ open the session itself. Every key is pinned: WebKit drops the
+// whole message (banner included) on a navigate it cannot parse, and the worker
+// reads its own fields back off event.notification.data because event.data is
+// null on that path.
+func TestPushPayloadIsDeclarativeWhenTheOriginIsKnown(t *testing.T) {
+	w := waitingList(map[string]string{"k7m2q9x4tp0v": stateAwaiting, "b3n8h1x5r2wq": stateDone})
+	var got map[string]any
+	raw := buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 2, w, testPushOrigin)
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	if got["web_push"] != float64(8030) {
+		t.Fatalf("web_push = %v, want 8030 (the only version WebKit accepts)", got["web_push"])
+	}
+	// mutable must be ABSENT. With it true, WebKit starts the worker and then
+	// waits for that worker to show a REPLACEMENT banner before displaying
+	// anything; sw.js deliberately shows nothing on the declarative path, so
+	// the notification was never displayed at all. Measured on Viktor's iPhone
+	// 2026-09-08..10: every push accepted by Apple with a 201 and not one
+	// banner. Absent means WebKit draws the payload's own banner, which is the
+	// whole point of a declarative message. The cost is the device-side badge
+	// subtraction (ADR-0015), which needs a worker WebKit no longer starts.
+	if _, ok := got["mutable"]; ok {
+		t.Fatalf("mutable = %v, want it absent — a mutable message WebKit shows nothing for", got["mutable"])
+	}
+	note, ok := got["notification"].(map[string]any)
+	if !ok {
+		t.Fatalf("no notification object in %v", got)
+	}
+	want := map[string]any{
+		"title":     "Worktree cleanup needs input",
+		"body":      "Claude is awaiting your input.",
+		"navigate":  testPushOrigin + "/?session=k7m2q9x4tp0v",
+		"tag":       "tl-k7m2q9x4tp0v",
+		"app_badge": float64(2),
+		"data": map[string]any{
+			"session": "k7m2q9x4tp0v",
+			"waiting": map[string]any{
+				"a": []any{"k7m2q9x4tp0v"},
+				"d": []any{"b3n8h1x5r2wq"},
+			},
+		},
+	}
+	if !reflect.DeepEqual(note, want) {
+		t.Fatalf("declarative notification drift:\n got %v\nwant %v", note, want)
+	}
+	// The flat keys stay exactly as they are: they serve Chrome, Android and
+	// every Apple device below 18.4, none of which read the nested copy.
+	for k, v := range map[string]any{
+		"title":   "Worktree cleanup needs input",
+		"body":    "Claude is awaiting your input.",
+		"tag":     "tl-k7m2q9x4tp0v",
+		"session": "k7m2q9x4tp0v",
+		"badge":   float64(2),
+	} {
+		if !reflect.DeepEqual(got[k], v) {
+			t.Fatalf("flat %q = %v, want %v", k, got[k], v)
+		}
+	}
+}
+
+// The finished wording navigates to the same session and keeps the shared tag,
+// so a later awaiting push still replaces a finished one on the declarative
+// path as well as the classic one.
+func TestDonePayloadNavigatesToTheSession(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildDonePayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, testPushOrigin), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	note := got["notification"].(map[string]any)
+	if note["navigate"] != testPushOrigin+"/?session=k7m2q9x4tp0v" {
+		t.Fatalf("navigate = %v", note["navigate"])
+	}
+	if note["title"] != "Worktree cleanup finished" || note["body"] != "Claude finished its turn." {
+		t.Fatalf("done wording drift: %v", note)
+	}
+	if note["tag"] != got["tag"] {
+		t.Fatalf("nested tag %v != flat tag %v", note["tag"], got["tag"])
+	}
+}
+
+// app_badge omitted leaves the icon alone, so CLEARING it needs an explicit
+// zero — the same three-state rule the flat badge pointer already encodes.
+func TestDeclarativeBadgeCarriesAnExplicitZero(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 0, nil, testPushOrigin), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	note := got["notification"].(map[string]any)
+	v, ok := note["app_badge"]
+	if !ok {
+		t.Fatal("app_badge absent at zero — the icon would keep a stale count")
+	}
+	if v != float64(0) {
+		t.Fatalf("app_badge = %v, want 0", v)
+	}
+}
+
+// fullWaitingSet is a name list at the cap: every name the NAME_RE maximum of
+// 32 bytes, split evenly between awaiting and done.
+func fullWaitingSet() (*waitList, []string) {
+	states := map[string]string{}
+	names := make([]string, 0, waitingListCap)
+	for i := 0; i < waitingListCap; i++ {
+		name := fmt.Sprintf("%s%03d", strings.Repeat("w", 29), i) // 32 bytes, the NAME_RE max
+		names = append(names, name)
+		if i%2 == 0 {
+			states[name] = stateAwaiting
+		} else {
+			states[name] = stateDone
+		}
+	}
+	return waitingList(states), names
+}
+
+// A payload has to fit whatever a session is CALLED, and a title is bounded in
+// runes (slug.MaxTitleRunes, 64) rather than in bytes. encoding/json escapes
+// `<`, `>` and `&` to six bytes each and CleanTitle keeps all three, so 64 of
+// them cost 384 bytes where 64 emoji cost 256 — and the declarative half repeats
+// the title and the whole waiting list. RFC 8291 guarantees only 4096 bytes of
+// ENCRYPTED body and aes128gcm spends 103 of those on framing, so anything past
+// maxPushPayloadBytes is a push a service may refuse: send() logs the failure
+// and the notification never arrives.
+func TestWorstCasePayloadFitsTheEncryptedBudget(t *testing.T) {
+	w, names := fullWaitingSet()
+	if w == nil {
+		t.Fatal("a full-cap set must still send the list")
+	}
+	titles := map[string]string{
+		"emoji":     strings.Repeat("\U0001f6e0", slug.MaxTitleRunes), // 64 runes of 4 bytes
+		"escaped":   strings.Repeat("<", slug.MaxTitleRunes),          // 6 bytes each once marshalled
+		"ampersand": strings.Repeat("&", slug.MaxTitleRunes),
+	}
+	for kind, title := range titles {
+		for _, build := range []struct {
+			name string
+			fn   func(string) []byte
+		}{
+			{"awaiting", func(tt string) []byte { return buildPushPayload(tt, names[0], 999, w, testPushOrigin) }},
+			{"done", func(tt string) []byte { return buildDonePayload(tt, names[0], 999, w, testPushOrigin) }},
+			{"flat", func(tt string) []byte { return buildPushPayload(tt, names[0], 999, w, "") }},
+		} {
+			t.Run(kind+"/"+build.name, func(t *testing.T) {
+				if got := len(build.fn(title)); got > maxPushPayloadBytes {
+					t.Fatalf("worst-case %s payload is %d bytes, over the %d-byte budget", build.name, got, maxPushPayloadBytes)
+				}
+			})
+		}
+	}
+}
+
+// What the sender gives up when a payload will not fit: the name list, and only
+// the name list. The notification itself still goes out, and the device draws
+// the server's total instead of subtracting what it has already read (ADR-0015)
+// — counting high rather than not arriving.
+func TestOversizePayloadDropsTheWaitingListAndStillSends(t *testing.T) {
+	w, names := fullWaitingSet()
+	title := strings.Repeat("<", slug.MaxTitleRunes)
+	got := buildPushPayload(title, names[0], 999, w, testPushOrigin)
+	if len(got) > maxPushPayloadBytes {
+		t.Fatalf("payload is %d bytes, over the %d-byte budget", len(got), maxPushPayloadBytes)
+	}
+	var p struct {
+		Title        string    `json:"title"`
+		Session      string    `json:"session"`
+		Badge        *int      `json:"badge"`
+		Waiting      *waitList `json:"waiting"`
+		Notification *struct {
+			Navigate string `json:"navigate"`
+			Data     *struct {
+				Waiting *waitList `json:"waiting"`
+			} `json:"data"`
+		} `json:"notification"`
+	}
+	if err := json.Unmarshal(got, &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Waiting != nil {
+		t.Error("the flat waiting list should have been dropped")
+	}
+	if p.Notification == nil || p.Notification.Data == nil {
+		t.Fatal("the declarative half must survive: it carries the navigate URL")
+	}
+	if p.Notification.Data.Waiting != nil {
+		t.Error("the declarative waiting list should have been dropped too")
+	}
+	if p.Badge == nil || *p.Badge != 999 {
+		t.Errorf("badge = %v, want the server total to take over", p.Badge)
+	}
+	if p.Session != names[0] || p.Notification.Navigate == "" {
+		t.Errorf("the tap must still route: session=%q navigate=%q", p.Session, p.Notification.Navigate)
+	}
+}
+
+// A device that never recorded an origin gets the flat payload alone, which is
+// half the bytes, so the same set of names that overflows a declarative message
+// fits there. Capping by name count for everyone took the badge subtraction off
+// those devices for nothing.
+func TestFlatPayloadKeepsTheWaitingListAtTheCap(t *testing.T) {
+	w, names := fullWaitingSet()
+	title := strings.Repeat("<", slug.MaxTitleRunes)
+	var p struct {
+		Waiting *waitList `json:"waiting"`
+	}
+	if err := json.Unmarshal(buildPushPayload(title, names[0], 999, w, ""), &p); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if p.Waiting == nil {
+		t.Fatalf("a flat payload of %d names should still carry the list", waitingListCap)
+	}
+	if len(p.Waiting.Awaiting)+len(p.Waiting.Done) != waitingListCap {
+		t.Errorf("carried %d names, want %d", len(p.Waiting.Awaiting)+len(p.Waiting.Done), waitingListCap)
+	}
+}
+
+// The origin is per SUBSCRIPTION, not per user: one person's phone may know it
+// while a browser that subscribed before this change does not. So the payload
+// is built inside the fan-out loop, once per device, with that device's origin.
+func TestSendBuildsOnePayloadPerSubscriptionOrigin(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/phone", Keys: genSubKeys(t), Origin: testPushOrigin}); err != nil {
+		t.Fatalf("upsert phone: %v", err)
+	}
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/legacy", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert legacy: %v", err)
+	}
+	sender := newPushSender(store, stubPrefs{}, &stubStater{}, testVAPID(t))
+
+	var seen []string
+	sent, _ := sender.send("alice", "k7m2q9x4tp0v", func(origin string) []byte {
+		seen = append(seen, origin)
+		return buildPushPayload("Worktree cleanup", "k7m2q9x4tp0v", 1, nil, origin)
+	}, kindDone)
+	if sent != 2 {
+		t.Fatalf("sent %d, want 2", sent)
+	}
+	sort.Strings(seen)
+	if !reflect.DeepEqual(seen, []string{"", testPushOrigin}) {
+		t.Fatalf("origins seen = %v, want [\"\" %s]", seen, testPushOrigin)
+	}
+}
+
+// --- system sessions never push (docs/plans/2026-09-06-test-session-origin-design.md) ---
+//
+// The QA fleet drives the real deployed lobby on purpose, so its sessions are
+// wizard's sessions, and every turn one of them finishes used to be a push to
+// his phone. A system session is dropped from the tick's reading BEFORE the
+// edge diff, which is stricter than declining to send: nothing about it is
+// remembered, so there is no stale edge left for a rescue to fire on.
+
+// setSystem tells the stub which of its sessions belong to tooling. Production
+// answers this from Session.Origin and the reserved-name prefixes
+// (isSystemSession); the stub is handed the verdict directly, so a sender test
+// needs no tmux.
+func (s *stubStater) setSystem(names ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.system = map[string]bool{}
+	for _, n := range names {
+		s.system[n] = true
+	}
+}
+
+func TestPushSenderNeverPushesForASystemSession(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// A harness session and a person's session, side by side, moving through
+	// the same running→done edge on the same ticks.
+	stub.set(map[string]string{"qa-slug": stateRunning, "main": stateRunning})
+	stub.setSystem("qa-slug")
+	sender.tick()
+	stub.set(map[string]string{"qa-slug": stateDone, "main": stateDone})
+	sender.tick()
+
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("got %d pushes, want exactly 1 — the person's session and not the harness's", got)
+	}
+	// Nothing about it is remembered: not the state it was in, not the
+	// activity watermark, and above all not an outstanding notification, which
+	// would otherwise silence the session for good once it were rescued.
+	if _, ok := sender.last["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in last: %v", sender.last["alice"])
+	}
+	if sender.outstanding["alice"]["qa-slug"] {
+		t.Error("a system session left an outstanding notification")
+	}
+	if _, ok := sender.seenAct["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in seenAct: %v", sender.seenAct["alice"])
+	}
+	if _, ok := sender.pushedAct["alice"]["qa-slug"]; ok {
+		t.Errorf("a system session was recorded in pushedAct: %v", sender.pushedAct["alice"])
+	}
+}
+
+// The badge and the waiting list are counted from the same reading the diff
+// runs on, so dropping the session before the diff is also what keeps it off
+// the app icon and out of the by-name list the device filters with.
+func TestPushSenderCountsNoSystemSessionInTheBadgeOrTheWaitingList(t *testing.T) {
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: "https://example.invalid/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	stub.set(map[string]string{"qa-slug": stateDone, "t3e2e-7": stateAwaiting, "main": stateAwaiting})
+	stub.setSystem("qa-slug", "t3e2e-7")
+	sender.tick() // the seeding tick: it reads, filters and remembers, and sends nothing
+
+	cur := sender.last["alice"]
+	if got := waitingCount(cur); got != 1 {
+		t.Errorf("badge = %d, want 1 — only the person's session is asking for anything", got)
+	}
+	w := waitingList(cur)
+	if w == nil || len(w.Done) != 0 || !reflect.DeepEqual(w.Awaiting, []string{"main"}) {
+		t.Errorf("waiting list = %+v, want awaiting=[main] and nothing done", w)
+	}
+}
+
+// A rescued session must not fire on the edge it crossed while it was hidden.
+// This is what "before the diff, not at the send" buys: the sender has no
+// memory of the session at all, so its first observation after the rescue is a
+// seeding one, and a session first seen already done stays silent.
+func TestPushSenderDoesNotFireOnAStaleEdgeAfterARescue(t *testing.T) {
+	rec := &pushRecorder{hits: map[string]int{}}
+	srv := rec.server(t)
+	store := newPushStore(t.TempDir())
+	if err := store.upsert("alice", pushSubscription{Endpoint: srv.URL + "/d", Keys: genSubKeys(t)}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	stub := &stubStater{}
+	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
+
+	// It runs, and finishes, entirely while it is a system session.
+	stub.set(map[string]string{"rescued": stateRunning})
+	stub.setSystem("rescued")
+	sender.tick()
+	stub.set(map[string]string{"rescued": stateDone})
+	sender.tick()
+
+	// Dragged out of System: POST /sessions/{name}/origin stamps it `user`,
+	// and the next tick sees it for the first time, already done.
+	stub.setSystem()
+	sender.tick()
+
+	if got := rec.hit("/d"); got != 0 {
+		t.Fatalf("a rescued session rang for an edge it crossed while hidden: got %d, want 0", got)
+	}
+
+	// It is an ordinary session from here: the next completion rings.
+	stub.set(map[string]string{"rescued": stateRunning})
+	sender.tick()
+	stub.set(map[string]string{"rescued": stateDone})
+	sender.tick()
+	if got := rec.hit("/d"); got != 1 {
+		t.Fatalf("a rescued session stayed silent afterwards: got %d, want 1", got)
+	}
+}
+
+// The production stater's half of the same rule: the verdict comes off the
+// session list it already reads, at no extra fork, and covers both halves of
+// isSystemSession — the stamp and the reserved name.
+func TestSystemNamesReadsBothHalvesOfTheRule(t *testing.T) {
+	got := systemNames([]Session{
+		{Name: "k7m2q9x4tp0v", Origin: originUser},
+		{Name: "b3n8h1x5r2wq", Origin: originTest},
+		{Name: "q4m8vwx2rt5n"},
+		{Name: "qa-slug", Origin: originUser},
+	})
+	want := map[string]bool{"b3n8h1x5r2wq": true, "q4m8vwx2rt5n": true, "qa-slug": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("systemNames = %v, want %v", got, want)
+	}
+	if systemNames([]Session{{Name: "k7m2q9x4tp0v", Origin: originUser}}) != nil {
+		t.Error("a list with nothing system in it should produce no map at all")
 	}
 }

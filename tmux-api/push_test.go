@@ -513,7 +513,7 @@ func TestHandlePushTestSendsAndPrunes(t *testing.T) {
 // so a delivery check leaves the app icon exactly as it found it.
 func TestBuildTestPayloadMatchesServiceWorker(t *testing.T) {
 	var got map[string]any
-	if err := json.Unmarshal(buildTestPayload(), &got); err != nil {
+	if err := json.Unmarshal(buildTestPayload(""), &got); err != nil {
 		t.Fatalf("payload not JSON: %v", err)
 	}
 	want := map[string]any{
@@ -527,5 +527,167 @@ func TestBuildTestPayloadMatchesServiceWorker(t *testing.T) {
 	}
 	if _, ok := got["badge"]; ok {
 		t.Fatal("the test push carries a badge — a diagnostic would repaint the app icon")
+	}
+}
+
+// --- the page origin recorded on a subscription -----------------------------
+
+// The origin is what makes an ABSOLUTE navigate URL possible, and the server
+// has no public-origin config of its own — only the browser knows where the app
+// is served from. It must be an https origin and nothing more: WebKit parses
+// navigate with no base, so a value carrying a path, a query or a fragment
+// would build a URL that opens the wrong thing (or, malformed, drops the whole
+// message).
+func TestValidatePushSubscriptionOrigin(t *testing.T) {
+	const keys = `"keys":{"p256dh":"BPk","auth":"c2Vj"}`
+	sub, err := validatePushSubscription([]byte(`{"endpoint":"https://push.example/x",` + keys + `,"origin":"https://terminal.viktorbarzin.me"}`))
+	if err != nil {
+		t.Fatalf("valid origin rejected: %v", err)
+	}
+	if sub.Origin != "https://terminal.viktorbarzin.me" {
+		t.Fatalf("origin = %q", sub.Origin)
+	}
+
+	// location.origin never carries a trailing slash, but a client that sends
+	// one means the same place, so it is normalized rather than refused.
+	slashed, err := validatePushSubscription([]byte(`{"endpoint":"https://push.example/x",` + keys + `,"origin":"https://terminal.viktorbarzin.me/"}`))
+	if err != nil {
+		t.Fatalf("trailing-slash origin rejected: %v", err)
+	}
+	if slashed.Origin != "https://terminal.viktorbarzin.me" {
+		t.Fatalf("trailing slash kept: %q", slashed.Origin)
+	}
+
+	// No origin at all is the pre-change client, and stays valid: that
+	// subscription simply gets today's flat payload.
+	none, err := validatePushSubscription([]byte(`{"endpoint":"https://push.example/x",` + keys + `}`))
+	if err != nil {
+		t.Fatalf("origin-less subscription rejected: %v", err)
+	}
+	if none.Origin != "" {
+		t.Fatalf("origin invented: %q", none.Origin)
+	}
+
+	for _, c := range []struct{ name, origin string }{
+		{"not https", "http://terminal.viktorbarzin.me"},
+		{"with a path", "https://terminal.viktorbarzin.me/app"},
+		{"with a query", "https://terminal.viktorbarzin.me?session=x"},
+		{"with a fragment", "https://terminal.viktorbarzin.me#top"},
+		{"relative", "/lobby"},
+		{"scheme only", "https://"},
+		{"not a url", "nonsense"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			body := `{"endpoint":"https://push.example/x",` + keys + `,"origin":"` + c.origin + `"}`
+			if _, err := validatePushSubscription([]byte(body)); err == nil {
+				t.Fatalf("%s: want error, got nil", c.name)
+			}
+		})
+	}
+}
+
+// Re-subscribing at the same endpoint keeps the recorded origin the way it
+// keeps added_at: the service worker re-subscribes on its own (register.ts) and
+// has no page origin to send, and losing it would silently drop the device back
+// to the flat payload.
+func TestPushStoreUpsertPreservesOrigin(t *testing.T) {
+	st := testPushStore(t)
+	first := sampleSub("https://push.example/aaa", "p256-old", "auth-old")
+	first.Origin = "https://terminal.viktorbarzin.me"
+	if err := st.upsert("alice", first); err != nil {
+		t.Fatalf("upsert first: %v", err)
+	}
+	if err := st.upsert("alice", sampleSub("https://push.example/aaa", "p256-new", "auth-new")); err != nil {
+		t.Fatalf("upsert second: %v", err)
+	}
+	subs, _ := st.list("alice")
+	if len(subs) != 1 {
+		t.Fatalf("got %d subs, want 1", len(subs))
+	}
+	if subs[0].Origin != "https://terminal.viktorbarzin.me" {
+		t.Fatalf("origin after re-subscribe = %q, want it preserved", subs[0].Origin)
+	}
+	if subs[0].Keys.P256dh != "p256-new" {
+		t.Fatalf("keys were not replaced: %+v", subs[0].Keys)
+	}
+
+	// A device that moves to another origin says so, and the new value wins.
+	moved := sampleSub("https://push.example/aaa", "p256-new", "auth-new")
+	moved.Origin = "https://lobby.example"
+	if err := st.upsert("alice", moved); err != nil {
+		t.Fatalf("upsert moved: %v", err)
+	}
+	subs, _ = st.list("alice")
+	if subs[0].Origin != "https://lobby.example" {
+		t.Fatalf("origin after a move = %q, want https://lobby.example", subs[0].Origin)
+	}
+}
+
+// The handler refuses a bad origin outright rather than storing a value that
+// would build a broken navigate URL. A 400 costs this device background push
+// until it PUTs a good one; a bad navigate would cost it the notification
+// itself, with nothing on screen to say why.
+func TestHandlePushSubsRejectsBadOrigin(t *testing.T) {
+	swapPushStore(t)
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	body := `{"endpoint":"https://push.example/x","keys":{"p256dh":"BPk","auth":"c2Vj"},"origin":"https://terminal.viktorbarzin.me/app"}`
+	rec := httptest.NewRecorder()
+	handlePushSubscriptions(rec, pushReq(http.MethodPut, body, "alice"))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT with a path in the origin: got %d, want 400", rec.Code)
+	}
+	subs, _ := pushStoreInstance.list(osA)
+	if len(subs) != 0 {
+		t.Fatalf("stored %d subs on a rejected PUT, want 0", len(subs))
+	}
+}
+
+// A PUT carrying a good origin stores it, so the sender can address this device.
+func TestHandlePushSubsStoresOrigin(t *testing.T) {
+	swapPushStore(t)
+	osA, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osA+"\n")
+	body := `{"endpoint":"https://push.example/x","keys":{"p256dh":"BPk","auth":"c2Vj"},"origin":"https://terminal.viktorbarzin.me"}`
+	rec := httptest.NewRecorder()
+	handlePushSubscriptions(rec, pushReq(http.MethodPut, body, "alice"))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("PUT: got %d, want 204", rec.Code)
+	}
+	subs, _ := pushStoreInstance.list(osA)
+	if len(subs) != 1 || subs[0].Origin != "https://terminal.viktorbarzin.me" {
+		t.Fatalf("stored %+v, want one sub carrying the origin", subs)
+	}
+}
+
+// The self-diagnosis push has no session, so its navigate is the app itself and
+// it carries NO app_badge — the same reason it carries no flat badge. Proving
+// delivery works must not repaint the icon.
+func TestBuildTestPayloadIsDeclarativeWithAnOrigin(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal(buildTestPayload("https://terminal.viktorbarzin.me"), &got); err != nil {
+		t.Fatalf("payload not JSON: %v", err)
+	}
+	note, ok := got["notification"].(map[string]any)
+	if !ok {
+		t.Fatalf("no notification object in %v", got)
+	}
+	if note["navigate"] != "https://terminal.viktorbarzin.me/" {
+		t.Fatalf("navigate = %v, want the app root", note["navigate"])
+	}
+	if note["tag"] != "tl-test" {
+		t.Fatalf("tag = %v, want tl-test", note["tag"])
+	}
+	if _, ok := note["app_badge"]; ok {
+		t.Fatal("the test push carries an app_badge — a diagnostic would repaint the app icon")
+	}
+	if got["web_push"] != float64(8030) {
+		t.Fatalf("not a declarative message: web_push=%v", got["web_push"])
+	}
+	// Same reason as the real notifications: mutable defers the banner to a
+	// worker that never draws one, so a "test" push would be the one thing
+	// guaranteed not to show.
+	if _, ok := got["mutable"]; ok {
+		t.Fatalf("mutable = %v, want it absent", got["mutable"])
 	}
 }

@@ -147,13 +147,17 @@ launch_flags() {
     [[ -n "$cmd" ]] || return 0
     case "$key" in
         claude)
-            [[ -n "$model" ]] && cmd+=" --model $model"
-            [[ -n "$effort" ]] && cmd+=" --effort $effort"
+            # Single-quoted, because `claude-opus-5[1m]` is a glob to the shell
+            # this line is handed to and would expand away the moment a file in
+            # the start directory happened to match. MODEL_RE admits no quote,
+            # so the quoting cannot be escaped from.
+            [[ -n "$model" ]] && cmd+=" --model '$model'"
+            [[ -n "$effort" ]] && cmd+=" --effort '$effort'"
             ;;
         codex)
-            [[ -n "$model" ]] && cmd+=" -m $model"
+            [[ -n "$model" ]] && cmd+=" -m '$model'"
             # codex takes the reasoning level as config rather than a flag.
-            [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort=$effort"
+            [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort='$effort'"
             ;;
     esac
     return 0
@@ -216,9 +220,12 @@ cmd_key="${3:-}"
 # those — the same discipline CMD_RE applies to the command key. Anything
 # outside them becomes empty, which is exactly "no choice was made".
 #
-# A model name has to cover both vocabularies: `opus` and `gpt-5.6-terra`, so
-# dots and dashes are in and nothing else is.
-MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+# A model name has to cover both vocabularies: `claude-haiku-4-5-20251001` and
+# `gpt-5.6-terra`, so dots and dashes are in. The optional bracketed tail is
+# Claude's context-window suffix, `claude-opus-5[1m]` — the one model name here
+# that is not plain alphanumerics, and the reason the flag is single-quoted
+# below rather than pasted bare into the command line.
+MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}(\[[a-z0-9]{1,4}\])?$'
 EFFORT_RE='^[a-z]{1,12}$'
 model="${4:-}"
 [[ "$model" =~ $MODEL_RE ]] || model=""
@@ -321,6 +328,32 @@ if [[ "$cmd_key" == claude && -z "$model$effort" ]]; then
         # first, ahead of the refill and the attach: everything after this is
         # best-effort, and none of it may run before the mark is dropped.
         tmux set-option -u -t "=$name:" @tl_speculative >/dev/null 2>&1 || true
+        # When this session became SOMEBODY'S, which is not what tmux's
+        # #{session_created} answers after a claim: the rename leaves it reading
+        # the SLOT's creation time, and a standing slot is refilled rather than
+        # recreated, so that time can be hours or days old. A session claimed out
+        # of one sorts that far down a newest-first list. tmux-api reads this
+        # stamp in preference to session_created.
+        #
+        # `=name:` and not `=name` for the reason the speculative stamp above
+        # gives: set-option rejects the bare exact form, and plain `name` would
+        # resolve by unambiguous PREFIX — which could stamp a neighbouring
+        # session instead of this one.
+        #
+        # Best-effort like its neighbours, and on purpose: a stamp that fails
+        # falls back to session_created, which reads stale rather than breaking
+        # a session start.
+        tmux set-option -t "=$name:" @tl_created "$(date +%s)" >/dev/null 2>&1 || true
+        # And who it now belongs to. A claim is the lobby's create path taking a
+        # different route to the same place, so it owes the same `@tl_origin user`
+        # the cold path stamps at the bottom of this script — and it has to be
+        # stamped HERE, because after the rename the session exists and the
+        # has-session check down there reads it as somebody's session already up.
+        # Without this line every pooled create would land in System,
+        # which for the `claude` key with no model or effort flags is most of
+        # them. A WARM slot still carries no origin at all, on purpose: it is not
+        # in anybody's list until this rename makes it one.
+        tmux set-option -t "=$name:" @tl_origin user >/dev/null 2>&1 || true
         logger -t tmux-user-attach "pool: claimed slot for '$start_dir' as '$name'${was_speculative:+ (was speculative)}"
         # Re-warm for whoever comes next — but only a STANDING slot. A
         # speculative one was a guess about a single create, and replacing it
@@ -347,9 +380,48 @@ logger -t tmux-user-attach "user=$(id -un) name='$name' dir='$start_dir' cmd='${
 # arbitrary path needs escaping this shell cannot do safely); whether one was
 # requested is enough for analysis.
 logger -t tmux-user-attach "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"session.attached\",\"service.name\":\"tmux-attach\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$name\",\"tl.kind\":\"${cmd_key:-none}\",\"tl.client\":\"attach\"}}"
-if [[ "$scope_ok" == yes ]]; then
-    exec systemd-run --user --scope --quiet --collect \
-        tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+# ---- who made this session -----------------------------------------------
+# `@tl_origin user` is what makes ABSENCE mean something (the ADR is "A session
+# knows who made it"): a session with no origin was created by something that is
+# not the lobby, and the list puts those in System. That inversion only holds if this path — the one
+# every lobby create and every plain ttyd URL runs through — leaves its mark on
+# everything it creates.
+#
+# `new-session -A` attaches OR creates and says nothing about which, so
+# has-session is asked first: a miss here means the command below is the one
+# that brings the session into being. A hit means somebody's session already
+# exists, and re-stamping it would be wrong — a harness overwrites its own
+# sessions to `test` after creating them through this path (scripts/qa-harness.py),
+# and an ordinary reconnect must not undo that.
+#
+# The two are not atomic, and deliberately not made so. Losing the race means a
+# session that appeared in the gap gets stamped `user` — which is the right
+# answer anyway, because whatever created it in that gap was this same path
+# under another client. The reverse race cannot happen: a session that existed
+# at the check cannot un-exist before new-session runs, because only its own
+# client can kill it.
+#
+# Stamped as a second tmux command in the SAME invocation rather than after it,
+# because this script exec's the attach and nothing runs afterwards. Verified on
+# this box 2026-09-10 against tmux 3.4: the `;` separates the commands even when
+# a multi-word shell-command precedes it, set-option runs at once while the
+# client stays attached, and a set-option that FAILS (a stale target, a server
+# that moved) leaves the session created and attached — so the stamp cannot cost
+# anyone a terminal.
+#
+# `=$name:` and not `=$name`, for the reason the pool stamps above give:
+# set-option rejects the bare exact form, and plain `name` would resolve by
+# unambiguous PREFIX, stamping a neighbouring session instead of this one.
+stamp_origin=()
+if ! tmux has-session -t "=$name" 2>/dev/null; then
+    stamp_origin=(';' set-option -t "=$name:" @tl_origin user)
 fi
 
-exec tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}"
+if [[ "$scope_ok" == yes ]]; then
+    exec systemd-run --user --scope --quiet --collect \
+        tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}" \
+            "${stamp_origin[@]}"
+fi
+
+exec tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}" \
+    "${stamp_origin[@]}"

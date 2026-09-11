@@ -148,11 +148,23 @@ export function applySessionOrder(model: SidebarModel, order: SessionOrder): Sid
  * resolves each name to exactly one group, and PUT /api/layout rejects a
  * duplicate outright, so the stale copy goes rather than turning a drag into a
  * "Couldn't save layout".
+ *
+ * System is not captured at all, on both counts. The layout has no field for
+ * it — its members are decided by each session's origin, and ":system" is a
+ * name no project can take — so an entry written for it could never be read
+ * back. And its members must not count as "rendered somewhere else" either: a
+ * harness drives the ordinary create flow, so its sessions ARE listed in
+ * layout.ungrouped while rendering in System, and reading that as a stale
+ * duplicate would delete the entry from under a session that is still running.
  */
 export function captureVisibleOrder(layout: Layout, model: SidebarModel): Layout {
   const rendered = new Map<string, string[]>();
   for (const g of model.groups) {
-    rendered.set(g.kind === "ungrouped" ? "" : g.name, g.sessions.map((s) => s.name));
+    if (g.kind === "system") continue;
+    rendered.set(
+      g.kind === "ungrouped" ? "" : g.name,
+      g.sessions.map((s) => s.name),
+    );
   }
   const renderedAnywhere = new Set<string>();
   for (const list of rendered.values()) for (const n of list) renderedAnywhere.add(n);

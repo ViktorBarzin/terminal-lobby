@@ -32,7 +32,8 @@ import {
   type ModelHarness,
 } from "../lib/models";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
-import { PromptField } from "./PromptField";
+import { PromptField, type PromptFieldSinks } from "./PromptField";
+import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
 import { uploadAttachments } from "../clipboard/attach-files";
@@ -72,14 +73,17 @@ const HELD_PATH_PREFIX = "held:";
  * does, the card reads the first line of what was typed here.
  *
  * Four controls sit under the field, and the row reads as one sentence: "in
- * code · run Claude · Opus model · max effort". The PROJECT is where the
+ * code · run Claude · claude-opus-5 · max effort". The PROJECT is where the
  * session lands, defaulting to the last one created in and overridable for one
  * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
  * same roamed `session.newCommand` the terminal attach reads, so what is picked
  * here is what starts. The MODEL and the EFFORT belong to whichever CLI the
- * command names — the two share no vocabulary — and are applied to the session
- * once it is up rather than as launch flags, which is what keeps the pre-warm
- * pool usable for every model (lib/models.ts).
+ * command names — the two share no vocabulary — and leave as `--model` and
+ * `--effort` flags on the process the attach starts (lib/terminal-url.ts).
+ *
+ * The model is the one value in that sentence with no noun after it. A slug is
+ * already unmistakably a model, where "Max" beside "claude-opus-5" would be
+ * anybody's guess, so the effort keeps its noun and the model does not.
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
@@ -226,6 +230,40 @@ export const NewSessionComposer: Component<{
   // there is nothing to clean up anywhere else.
   onCleanup(() => held.clear());
 
+  // ---- paste and drop, with no session to upload into ---------------------
+  //
+  // The Attach button was the only way to get a file onto this screen. The
+  // image clipboard is installed by SessionView and gated on that session being
+  // ON SCREEN (clipboard/attach.ts `active`), and while this composer is up
+  // none is — so a pasted screenshot was handled by nobody and the gesture did
+  // nothing at all. Viktor, 2026-09-06: "uploading image (via paste) on new
+  // session screen doesn't work".
+  //
+  // Installing it HERE is what keeps a paste from being handled twice. App
+  // renders this composer only while nothing is selected, which is the same
+  // moment every kept SessionView's `active` reads false, so exactly one set of
+  // document listeners ever wants the gesture.
+  //
+  // `composerOwns` is unconditionally true: there is no pty on this screen and
+  // no session bucket to upload into, so both intakes route to `holdFiles` —
+  // the memory-only tray the Attach button fills. `session` and `sendToPty`
+  // satisfy the interface and are never reached.
+  let tray: PromptFieldSinks | undefined;
+  const image = installImageClipboard({
+    session: () => "",
+    sendToPty: () => false,
+    // A shell is named, not prompted, so the box has no tray to put a file in.
+    // Declining leaves the paste to the browser, which is what a name box
+    // wants; swallowing it would make the gesture look handled and lose it.
+    active: () => !naming(),
+    composerOwns: () => true,
+    onComposerFiles: async (files) => {
+      const chips = await holdFiles(files);
+      if (chips.length) tray?.add(chips);
+    },
+  });
+  onCleanup(image.dispose);
+
   /**
    * Create the session and give it what was typed.
    *
@@ -354,11 +392,26 @@ export const NewSessionComposer: Component<{
             // does not: this is the phone's LANDING view, and focusing it would
             // throw a keyboard over the screen before anyone asked for one.
             autofocus={!isCoarsePointer()}
-            register={(api) => registerFocus(api.focus)}
+            register={(api) => {
+              registerFocus(api.focus);
+              // Where a paste or a drop puts its chips: both land outside this
+              // component, so the tray has to be handed over rather than
+              // reached into.
+              tray = api;
+            }}
             leftExtra={controls()}
           />
         </Show>
       </div>
+
+      {/* The same overlay the session view raises, saying what a drop here
+          does differently: nothing is uploaded until the session exists.
+          Not raised while naming a shell, where the drop is declined. */}
+      <Show when={image.dropActive() && !naming()}>
+        <div class="tl-drop-overlay" aria-hidden="true">
+          Drop files — they attach to the session you are about to start
+        </div>
+      </Show>
     </div>
   );
 

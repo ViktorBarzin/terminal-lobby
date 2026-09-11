@@ -24,10 +24,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
@@ -82,9 +88,7 @@ function mount(api: LobbyApi, onNewSession?: (group: string) => void) {
       store.model().groups.filter((g) => g.kind === "project" || g.sessions.length > 0);
     return (
       <For each={groups()}>
-        {(g) => (
-          <ProjectGroup store={store} group={g} tick={tick} onNewSession={onNewSession} />
-        )}
+        {(g) => <ProjectGroup store={store} group={g} tick={tick} onNewSession={onNewSession} />}
       </For>
     );
   });
@@ -116,19 +120,23 @@ function twoProjects(api: FakeApi): void {
   };
 }
 
-const headers = (root: Element): HTMLElement[] =>
-  [...root.querySelectorAll<HTMLElement>(".tl-group-header")];
+const headers = (root: Element): HTMLElement[] => [
+  ...root.querySelectorAll<HTMLElement>(".tl-group-header"),
+];
 
 const titles = (root: Element): string[] =>
   [...root.querySelectorAll(".tl-group-title")].map((n) => n.textContent ?? "");
 
-const cardNames = (root: Element): string[] =>
-  [...root.querySelectorAll(".tl-card-name")].map((n) => n.textContent ?? "");
-
-/** Rendered order of the PROJECT groups — a churn session makes Ungrouped
- *  appear, which is noise here, not ordering. */
-const projectOrder = (root: Element): string[] =>
-  titles(root).filter((t) => t !== "Ungrouped");
+const point = (el: Element, type: string, y: number, x = 150) =>
+  el.dispatchEvent(
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      clientX: x,
+      clientY: y,
+      pointerType: "touch",
+    }),
+  );
 
 beforeEach(() => {
   churnSeq = 0;
@@ -139,10 +147,11 @@ beforeEach(() => {
   }
 });
 
-describe("<ProjectGroup> header drag-reorder", () => {
-  it("negative control: with no drag in flight, that same churn does replace every header", async () => {
-    // Without this the hold tests below would be vacuous — they would pass on a
-    // poll that never rebuilt anything in the first place.
+describe("<ProjectGroup> header", () => {
+  it("negative control: with no drag in flight, a churning poll replaces every header", async () => {
+    // The pair to the poll-hold test in dnd.drag.test.tsx, which would be
+    // vacuous on its own: this is the proof that the churn it holds back does
+    // rebuild the list when nothing is holding it.
     const api = new FakeApi();
     twoProjects(api);
     const { container, store } = mount(api);
@@ -158,117 +167,45 @@ describe("<ProjectGroup> header drag-reorder", () => {
     store.dispose();
   });
 
-  it("holds the poll while a header drag is in flight, so the source node survives", async () => {
+  /**
+   * A collapsed group has no card list on screen to aim at, so hovering its
+   * header with a session in hand opens it and hands the drop to the ordinary
+   * sortable underneath. It replaced "drop on the header to append", which
+   * landed the card at the end rather than where the pointer was.
+   */
+  it("springs a collapsed group open when a dragged session hovers its header", async () => {
     const api = new FakeApi();
     twoProjects(api);
     const { container, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(headers(container).length).toBe(2));
+    store.collapse.toggle("bravo");
+    await waitFor(() => expect(store.collapse.isCollapsed("bravo")).toBe(true));
 
-    const [alpha, bravo] = headers(container);
-    fireEvent.dragStart(alpha!);
+    const card = container.querySelector<HTMLElement>(".tl-card")!;
+    card.getBoundingClientRect = () =>
+      ({
+        top: 100,
+        bottom: 140,
+        height: 40,
+        left: 0,
+        right: 300,
+        width: 300,
+        x: 0,
+        y: 100,
+        toJSON() {},
+      }) as DOMRect;
+    document.elementFromPoint = () => card;
+    point(card, "pointerdown", 120);
+    await new Promise((r) => setTimeout(r, 600)); // past the 450ms hold
+    point(card, "pointermove", 125);
 
-    await pollWithChurn(api, store);
-    await pollWithChurn(api, store);
-
-    // Same DOM nodes: the drag source is still attached (so the browser still
-    // has something to fire `drop`/`dragend` at) and no reflow has slid a
-    // different group under the cursor.
-    expect(headers(container)[0]).toBe(alpha);
-    expect(headers(container)[1]).toBe(bravo);
-    store.dispose();
-  });
-
-  it("lands the group where it was dropped even when the poll churns mid-drag", async () => {
-    const api = new FakeApi();
-    twoProjects(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(titles(container)).toEqual(["alpha", "bravo"]));
-
-    const [alpha, bravo] = headers(container);
-    fireEvent.dragStart(alpha!);
-    await pollWithChurn(api, store);
-    fireEvent.drop(bravo!);
-
-    await waitFor(() => expect(api.puts.length).toBe(1));
-    expect(api.puts[0]!.projects.map((p) => p.name)).toEqual(["bravo", "alpha"]);
-    await waitFor(() => expect(projectOrder(container)).toEqual(["bravo", "alpha"]));
-    store.dispose();
-  });
-
-  it("releases the hold on dragend, so the next poll rebuilds again", async () => {
-    const api = new FakeApi();
-    twoProjects(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(2));
-
-    const alpha = headers(container)[0]!;
-    fireEvent.dragStart(alpha);
-    fireEvent.dragEnd(alpha);
-
-    await pollWithChurn(api, store);
-
-    await waitFor(() => expect(cardNames(container)).toContain("qa-churn-1"));
-    store.dispose();
-  });
-
-  it("does not strand the poll when dragend never fires (the source was detached)", async () => {
-    // A drop that reorders re-creates every header, so a real browser has no
-    // attached source left to fire `dragend` at. The hold must still come off,
-    // or the sidebar stops polling for the rest of the session.
-    const api = new FakeApi();
-    twoProjects(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(titles(container)).toEqual(["alpha", "bravo"]));
-
-    const [alpha, bravo] = headers(container);
-    fireEvent.dragStart(alpha!);
-    fireEvent.drop(bravo!); // deliberately no dragEnd — the source node is gone
-    await waitFor(() => expect(projectOrder(container)).toEqual(["bravo", "alpha"]));
-
-    await pollWithChurn(api, store);
-
-    await waitFor(() => expect(cardNames(container)).toContain("qa-churn-1"));
-    store.dispose();
-  });
-
-  it("releases the hold when the drop lands back on the dragged header itself", async () => {
-    // from === to: no reorder, so nothing re-creates the header and nothing
-    // disposes the component — the release has to come off the drop itself.
-    const api = new FakeApi();
-    twoProjects(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(2));
-
-    const alpha = headers(container)[0]!;
-    fireEvent.dragStart(alpha);
-    fireEvent.drop(alpha); // no dragEnd
-    expect(api.puts.length).toBe(0);
-
-    await pollWithChurn(api, store);
-
-    await waitFor(() => expect(cardNames(container)).toContain("qa-churn-1"));
-    store.dispose();
-  });
-
-  it("still moves a dragged session card into the group whose header took the drop", async () => {
-    // The header is also a drop target for a session drag; that path holds
-    // nothing of its own (SessionCard already holds) and must keep working.
-    const api = new FakeApi();
-    twoProjects(api);
-    const { container, store } = mount(api);
-    await store.refresh();
-    await waitFor(() => expect(headers(container).length).toBe(2));
-
-    store.setDragName("a1");
-    fireEvent.drop(headers(container)[1]!); // onto "bravo"
-
-    await waitFor(() => expect(api.puts.length).toBe(1));
-    expect(api.puts[0]!.projects.find((p) => p.name === "bravo")!.sessions).toContain("a1");
+    const bravo = headers(container)[1]!;
+    point(bravo, "pointermove", 200);
+    await waitFor(() => expect(store.collapse.isCollapsed("bravo")).toBe(false), {
+      timeout: 2000,
+    });
+    point(bravo, "pointerup", 200);
     store.dispose();
   });
 
@@ -281,7 +218,9 @@ describe("<ProjectGroup> header drag-reorder", () => {
 
     fireEvent.click(getAllByLabelText("Group actions")[1]!); // bravo's menu
     await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
-    const up = [...container.querySelectorAll(".tl-menu-item")].find((b) => b.textContent === "Move up")!;
+    const up = [...container.querySelectorAll(".tl-menu-item")].find(
+      (b) => b.textContent === "Move up",
+    )!;
     fireEvent.click(up);
 
     await waitFor(() => expect(api.puts.length).toBe(1));

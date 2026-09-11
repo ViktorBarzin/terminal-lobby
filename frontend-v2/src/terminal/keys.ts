@@ -159,10 +159,10 @@ export interface KeyWorld {
    * keybinding layer is off is the one shortcut this field invites, and it is
    * wrong twice over:
    *   - `matchesAppChord` walks the ALWAYS-ON table BEFORE the `enabled` gate
-   *     (bindings.logic.ts:289-294, and term.html:3528-3533 in the same order),
+   *     (bindings.logic.ts:292-296, and term.html:3528-3533 in the same order),
    *     so an always-on chord matches with the layer off. Here that table is
    *     one row, `alt+shift+backspace` -> `session.kill.current`
-   *     (bindings.logic.ts:148-150), whose `when` is "lobbyOpen &&
+   *     (bindings.logic.ts:149-150), whose `when` is "lobbyOpen &&
    *     !overlayOpen" (bindings.logic.ts:78) and whose `lobbyOpen` is
    *     hardcoded true by `keyContext` (bindings.logic.ts's `keyContext`), so it holds
    *     whenever no overlay is up. term.html has a second row, `ctrl+j`

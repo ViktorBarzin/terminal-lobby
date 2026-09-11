@@ -18,19 +18,24 @@ import type { SlashCommand } from "../src/logic/compose.logic";
 import { NewSessionComposer } from "../src/components/NewSessionComposer";
 import { createLobbyStore, type LobbyStore } from "../src/store/lobby";
 import { ApiError, type LobbyApi } from "../src/lib/lobby-api";
-import { emptyLayout, sessionLabel, type Layout, type Session, type Whoami } from "../src/types/lobby";
-import { isSessionId } from "../src/lib/session-id";
 import {
-  createPrefsStore,
-  PREFS_KEY,
-  type PrefsStore,
-} from "../src/store/prefs";
+  emptyLayout,
+  sessionLabel,
+  type Layout,
+  type Session,
+  type Whoami,
+} from "../src/types/lobby";
+import { isSessionId } from "../src/lib/session-id";
+import { createPrefsStore, PREFS_KEY, type PrefsStore } from "../src/store/prefs";
 import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
@@ -169,7 +174,6 @@ const pickFile = (c: HTMLElement, ...files: File[]): void => {
 const aFile = (name: string, type = "image/png"): File =>
   new File([new Uint8Array([1, 2, 3])], name, { type });
 
-
 const field = (c: HTMLElement) =>
   c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
 const nameBox = (c: HTMLElement) =>
@@ -189,7 +193,10 @@ const enter = (el: HTMLElement) => fireEvent.keyDown(el, { key: "Enter" });
  *  which is where a just-created one lives until the first poll knows it. */
 const labelOf = (store: LobbyStore, name: string): string =>
   sessionLabel(
-    store.model().groups.flatMap((g) => g.sessions).find((s) => s.name === name) ?? { name },
+    store
+      .model()
+      .groups.flatMap((g) => g.sessions)
+      .find((s) => s.name === name) ?? { name },
   );
 
 beforeEach(() => {
@@ -390,10 +397,9 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
 
     fireEvent.change(pick(m.container, "Project for new session"), { target: { value: "beta" } });
-    await waitFor(() => expect(api.prewarmed).toEqual([
-      "/home/wizard/code/alpha",
-      "/home/wizard/code/beta",
-    ]));
+    await waitFor(() =>
+      expect(api.prewarmed).toEqual(["/home/wizard/code/alpha", "/home/wizard/code/beta"]),
+    );
     expect(api.released).toEqual(["/home/wizard/code/alpha"]);
     m.store.dispose();
   });
@@ -520,9 +526,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "claude" } }));
     const m = mount(new FakeApi(), { claude: false, codex: false, shell: true });
     await m.store.refresh();
-    await waitFor(() =>
-      expect(pick(m.container, "Command for new session").value).toBe("shell"),
-    );
+    await waitFor(() => expect(pick(m.container, "Command for new session").value).toBe("shell"));
     m.store.dispose();
   });
 
@@ -530,9 +534,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "codex" } }));
     const m = mount(new FakeApi(), { claude: true, codex: true, shell: true });
     await m.store.refresh();
-    await waitFor(() =>
-      expect(pick(m.container, "Command for new session").value).toBe("codex"),
-    );
+    await waitFor(() => expect(pick(m.container, "Command for new session").value).toBe("codex"));
     m.store.dispose();
   });
 
@@ -597,13 +599,15 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     const sel = pick(m.container, "Model for new session");
     expect(Array.from(sel.options).map((o) => o.value)).toEqual([
       "default",
-      "opus",
-      "sonnet",
-      "haiku",
+      "claude-opus-5",
+      "claude-opus-5[1m]",
+      "claude-sonnet-5",
+      "claude-haiku-4-5-20251001",
+      "claude-opus-4-8",
     ]);
     expect(sel.value).toBe("default");
-    fireEvent.change(sel, { target: { value: "sonnet" } });
-    expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    fireEvent.change(sel, { target: { value: "claude-sonnet-5" } });
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
     m.store.dispose();
   });
 
@@ -634,20 +638,22 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       target: { value: "codex" },
     });
 
-    expect(Array.from(pick(m.container, "Model for new session").options).map((o) => o.value))
-      .toEqual([
-        "default",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
-        "gpt-5.5",
-        "gpt-5.4-mini",
-      ]);
+    expect(
+      Array.from(pick(m.container, "Model for new session").options).map((o) => o.value),
+    ).toEqual([
+      "default",
+      "gpt-6-astra",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5",
+      "gpt-5.4-mini",
+    ]);
     // The ladders differ at the top step alone: ultracode is Claude's, ultra
     // is codex's, and neither CLI accepts the other's.
-    const efforts = Array.from(
-      pick(m.container, "Effort for new session").options,
-    ).map((o) => o.value);
+    const efforts = Array.from(pick(m.container, "Effort for new session").options).map(
+      (o) => o.value,
+    );
     expect(efforts).toContain("ultra");
     expect(efforts).not.toContain("ultracode");
     m.store.dispose();
@@ -658,7 +664,9 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
   it("keeps each harness's choice separately", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "claude-opus-5" },
+    });
     fireEvent.change(pick(m.container, "Command for new session"), {
       target: { value: "codex" },
     });
@@ -669,7 +677,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       target: { value: "claude" },
     });
 
-    expect(pick(m.container, "Model for new session").value).toBe("opus");
+    expect(pick(m.container, "Model for new session").value).toBe("claude-opus-5");
     expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.5");
     m.store.dispose();
   });
@@ -705,7 +713,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "sonnet" } });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "claude-sonnet-5" },
+    });
     fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "high" } });
 
     type(field(m.container)!, "Fix the deploy");
@@ -715,7 +725,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     // No `/model` line. It used to lead the prompt, and it both cost a round
     // trip and showed up as a command in a conversation nobody had started.
     expect(w.delivered[0]!.lines).toEqual(["Fix the deploy"]);
-    expect(m.prefs.prefs().session.newModel).toBe("sonnet");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
     expect(m.prefs.prefs().session.newEffort).toBe("high");
     m.store.dispose();
   });
@@ -725,7 +735,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "haiku" } });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "claude-haiku-4-5-20251001" },
+    });
     fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
     fireEvent.change(pick(m.container, "Model for new session"), {
       target: { value: "gpt-5.6-luna" },
@@ -737,7 +749,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     await waitFor(() => expect(w.delivered.length).toBe(1));
     expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.6-luna");
     // Claude's own choice is untouched beside it.
-    expect(m.prefs.prefs().session.newModel).toBe("haiku");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-haiku-4-5-20251001");
     m.store.dispose();
   });
 
@@ -746,7 +758,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: "opus" } });
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "claude-opus-5" },
+    });
 
     enter(field(m.container)!);
 
@@ -893,7 +907,12 @@ describe("<NewSessionComposer> — attachments", () => {
     // The session exists and is what the person is looking at, so the text goes
     // into ITS field rather than back into one that has been unmounted.
     await waitFor(() => expect(loadDraft(created(api))?.text).toBe("Fix the deploy"));
-    expect(toasts.toasts().map((t) => t.message).join(" ")).toContain("waiting in the composer");
+    expect(
+      toasts
+        .toasts()
+        .map((t) => t.message)
+        .join(" "),
+    ).toContain("waiting in the composer");
     m.store.dispose();
   });
 });
@@ -947,6 +966,133 @@ describe("<NewSessionComposer> — the / menu", () => {
     });
     // A different project is a different .claude/skills, so it re-reads.
     await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(before));
+    m.store.dispose();
+  });
+});
+
+/**
+ * Paste and drop on the new-session screen.
+ *
+ * The image clipboard (clipboard/attach.ts) is installed by SessionView and
+ * gated on that session being ON SCREEN. On this screen none is — App renders
+ * this composer only while nothing is selected — so a pasted screenshot was
+ * handled by nobody at all and the gesture did nothing. Viktor, 2026-09-06:
+ * "uploading image (via paste) on new session screen doesn't work".
+ *
+ * Reproduced against a local build before the fix: a paste carrying an 8x8 PNG
+ * onto the focused field left `.tl-tray-item` at 0.
+ *
+ * Both intakes land in the same memory-only tray the Attach button fills —
+ * there is no session to upload into until Enter is pressed.
+ */
+describe("<NewSessionComposer> — pasted and dropped files", () => {
+  const created = (api: FakeApi): string => api.puts[0]!.ungrouped[0]!;
+
+  /** A document-level paste carrying one image, as a browser delivers it. */
+  const pasteImage = (f: File): Event => {
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: f.type, getAsFile: () => f }] },
+    });
+    document.dispatchEvent(e);
+    return e;
+  };
+
+  /** A window-level drop carrying files, as a browser delivers it. */
+  const dropFiles = (...files: File[]): Event => {
+    const e = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: { files } });
+    window.dispatchEvent(e);
+    return e;
+  };
+
+  const trayNames = (c: HTMLElement): string[] =>
+    [...c.querySelectorAll(".tl-tray-name")].map((el) => el.textContent ?? "");
+
+  it("holds a pasted image, the way it holds a picked one", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pasteImage(aFile("pasted.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    expect(w.uploads).toEqual([]); // nothing to upload into yet
+    m.store.dispose();
+  });
+
+  it("sends the pasted image up with the prompt when the session is created", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.chips = [
+      [
+        {
+          path: "/var/lib/clipboard-store/wizard/s/pasted-a1.png",
+          name: "pasted-a1.png",
+          kind: "image",
+        },
+      ],
+    ];
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pasteImage(aFile("pasted.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    type(field(m.container)!, "what is wrong here?");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.uploads.length).toBe(1);
+    expect(w.uploads[0]!.session).toBe(created(api));
+    expect(w.uploads[0]!.files.map((f) => f.name)).toEqual(["pasted.png"]);
+    expect(w.delivered[0]!.lines).toEqual([
+      "/var/lib/clipboard-store/wizard/s/pasted-a1.png\nwhat is wrong here?",
+    ]);
+    m.store.dispose();
+  });
+
+  it("holds dropped files too, images and documents alike", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+
+    const e = dropFiles(aFile("shot.png"), aFile("notes.txt", "text/plain"));
+    await waitFor(() => expect(trayNames(m.container)).toEqual(["shot.png", "notes.txt"]));
+    // Without this the browser navigates away to the dropped file.
+    expect(e.defaultPrevented).toBe(true);
+    m.store.dispose();
+  });
+
+  it("lets a text paste through to the field it landed in", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+
+    const e = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "clipboardData", {
+      value: { items: [{ type: "text/plain", getAsFile: () => null }] },
+    });
+    document.dispatchEvent(e);
+
+    expect(e.defaultPrevented).toBe(false);
+    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    m.store.dispose();
+  });
+
+  it("declines the gesture while the box is naming a shell, which has no tray", async () => {
+    const api = new FakeApi();
+    const m = mount(api, {}, emptyWire());
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "shell" },
+    });
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+
+    const e = pasteImage(aFile("pasted.png"));
+    // Nowhere to put it: better to leave the paste to the browser than to
+    // swallow it into a tray that is not on screen.
+    expect(e.defaultPrevented).toBe(false);
+    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
     m.store.dispose();
   });
 });

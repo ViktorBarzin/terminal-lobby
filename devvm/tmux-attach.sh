@@ -164,7 +164,7 @@ watch_arg="${5:-}"
 #
 # Like the command key, they are inert for a session that already exists:
 # `tmux new-session -A` ignores the command entirely when it attaches.
-MODEL_ARG_RE='^[a-z0-9][a-z0-9._-]{0,31}$'
+MODEL_ARG_RE='^[a-z0-9][a-z0-9._-]{0,31}(\[[a-z0-9]{1,4}\])?$'
 EFFORT_ARG_RE='^[a-z]{1,12}$'
 model_arg="${6:-}"
 [[ "$model_arg" =~ $MODEL_ARG_RE ]] || model_arg=""
