@@ -36,9 +36,15 @@ const sess = (name: string): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -134,7 +140,14 @@ function swipe(
     ms = 0,
   }: { dx: number; dy?: number; x?: number; y?: number; ms?: number },
 ): void {
-  finger(el, [[dx / 2, dy / 2], [dx, dy]], { x, y, ms });
+  finger(
+    el,
+    [
+      [dx / 2, dy / 2],
+      [dx, dy],
+    ],
+    { x, y, ms },
+  );
 }
 
 /** Was the page allowed to scroll while the finger was moving? */
@@ -213,7 +226,11 @@ describe("swiping a session row", () => {
     const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
-    finger(card, [[-140, 0], [-70, 0], [-8, 0]]);
+    finger(card, [
+      [-140, 0],
+      [-70, 0],
+      [-8, 0],
+    ]);
 
     expect(store.selected()).toBeNull();
   });
@@ -292,6 +309,51 @@ describe("swiping a session row", () => {
 
     await waitFor(() => expect(store.selected()?.name).toBe("alpha"));
     expect(container.querySelector(".tl-menu")).toBeNull();
+  });
+
+  /**
+   * The row must not be carrying an open menu when it starts trailing.
+   *
+   * The popup is `position: fixed` and placed in window coordinates
+   * (.tl-menu-placed, menu.logic.ts), and it is a DOM child of the row. A
+   * transformed element becomes the containing block for its fixed descendants,
+   * so the moment the row takes its `translateX` those coordinates stop meaning
+   * what they said: measured in Chrome, a popup at top 300 in a 900px window
+   * jumped to top 1084 as soon as the card took a translateX(-60px), and
+   * .tl-card's 160ms transform transition kept it there past the release.
+   *
+   * The path is reachable because the hold deliberately leaves the menu open
+   * when the finger lifts, so the next press on the same row swipes underneath
+   * it. The drag one branch over already closes for the same reason.
+   */
+  it("closes a menu the hold left open before the row starts trailing", async () => {
+    const api = await listOf(["alpha"]);
+    const { container, store } = mount(api);
+    const card = await firstCard(container, store);
+    const point = (type: string, cx: number, cy: number) =>
+      card.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: cx,
+          clientY: cy,
+          pointerType: "touch",
+        }),
+      );
+
+    // Hold to open the menu, then lift: the menu stays open on purpose.
+    point("pointerdown", 300, 200);
+    await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());
+    point("pointerup", 300, 200);
+    expect(container.querySelector(".tl-menu")).not.toBeNull();
+
+    // Second press on the same row, then across far enough to claim the axis.
+    point("pointerdown", 300, 200);
+    point("pointermove", 260, 200);
+
+    expect((card as HTMLElement).style.transform).toContain("translateX");
+    expect(container.querySelector(".tl-menu")).toBeNull();
+    point("pointerup", 260, 200);
   });
 
   it("ignores a mouse drag, which is a selection, not a swipe", async () => {

@@ -5,8 +5,6 @@ describe("keybytes — pre-baked byte map", () => {
   it("maps the control keys to their exact escape sequences", () => {
     expect(keyBytes("esc")).toBe("\x1b");
     expect(keyBytes("tab")).toBe("\t");
-    // Shift+Tab is CSI Z — the only mobile route; wrong bytes break Claude Code.
-    expect(keyBytes("backTab")).toBe("\x1b[Z");
   });
 
   it("maps the four arrows to the correct CSI final bytes (A/B/D/C)", () => {
@@ -14,13 +12,6 @@ describe("keybytes — pre-baked byte map", () => {
     expect(keyBytes("down")).toBe("\x1b[B");
     expect(keyBytes("left")).toBe("\x1b[D");
     expect(keyBytes("right")).toBe("\x1b[C");
-  });
-
-  it("maps the literal glyph keys to single characters", () => {
-    expect(keyBytes("slash")).toBe("/");
-    expect(keyBytes("dash")).toBe("-");
-    expect(keyBytes("pipe")).toBe("|");
-    expect(keyBytes("backtick")).toBe("`");
   });
 
   it("left is D and right is C (the classic swap trap)", () => {
@@ -32,15 +23,15 @@ describe("keybytes — pre-baked byte map", () => {
 
   it("KEY_NAMES enumerates every entry in KEY_BYTES", () => {
     expect(new Set(KEY_NAMES)).toEqual(new Set(Object.keys(KEY_BYTES)));
-    expect(KEY_NAMES.length).toBe(11);
+    // Six since the key row flattened to one line (2026-09-06): backTab and
+    // the four literal glyphs left with the buttons that sent them.
+    expect(KEY_NAMES.length).toBe(6);
   });
 
-  it("every arrow/esc/backTab byte begins with ESC; glyphs do not", () => {
-    for (const n of ["esc", "backTab", "up", "down", "left", "right"] as const) {
+  it("every byte but Tab begins with ESC", () => {
+    for (const n of ["esc", "up", "down", "left", "right"] as const) {
       expect(keyBytes(n).charCodeAt(0)).toBe(0x1b);
     }
-    for (const n of ["slash", "dash", "pipe", "backtick"] as const) {
-      expect(keyBytes(n).charCodeAt(0)).not.toBe(0x1b);
-    }
+    expect(keyBytes("tab")).toBe("\t");
   });
 });

@@ -43,6 +43,16 @@ const (
 	// what every consumer of OptionState already reads correctly. Design:
 	// docs/plans/2026-09-04-background-work-session-state-design.md.
 	OptionBackground = "@claude_bg"
+	// OptionOrigin says what created the session: "user" when a person asked
+	// for it, absent when nothing said. terminal-lobby's tmux-api reads it to
+	// decide whether a session belongs in somebody's list or in the System
+	// group, and a session with no origin is treated as system — so anything
+	// here that creates a session on a PERSON's behalf has to stamp it, or
+	// their work is filed away as tooling's. See NewSession.
+	OptionOrigin = "@tl_origin"
+	// OriginUser is the only value this package writes. A harness stamps
+	// "test" on its own sessions; that is not this package's job.
+	OriginUser = "user"
 	// OptionThread holds the T3 thread id a session is mirrored into. Written
 	// by the syncer at adoption; dies with the session, which is deliberate —
 	// a resurrected session re-derives it from the durable Index instead.
@@ -53,6 +63,23 @@ const (
 	// which is most of them. Like the others it dies with the session, so
 	// tmux-api keeps a durable copy to re-stamp after a restore.
 	OptionTitle = "@title"
+	// OptionBornAs holds the name a session was FIRST created with, written
+	// once by the first rename that moves it (tmux-api carryRenameAcrossStores)
+	// and never again.
+	//
+	// It exists because a rename is invisible to a client that never saw the
+	// old name. ADR-0022 renames a fresh session as soon as its first title
+	// lands — seconds in — and the lobby's session list is behind a 5-second
+	// cache, so a poll can easily miss the window in which the session was
+	// still called the id the browser minted for it. tmux's own session_id
+	// survives a rename and is what the lobby normally follows, but a client
+	// that never saw the session cannot know its id either, and is left holding
+	// a name nothing answers to: its terminal reconnects through `tmux
+	// new-session -A` and resurrects that name as an empty session.
+	//
+	// One name, not a history: the tab at risk is holding the name the session
+	// was CREATED with, and every later rename is one the lobby watched happen.
+	OptionBornAs = "@tl_born"
 )
 
 // Options is the tmux session-option store: read and written as the session's
@@ -462,6 +489,28 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 	out, err := in.Command(spec.OSUser, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("new-session %s: %v: %s", spec.Name, err, strings.TrimSpace(string(out)))
+	}
+	// Say who this is for. The only caller is t3-bridge resurrecting a thread
+	// somebody opened in T3 (resurrect.go), so the answer is always "a person" —
+	// the bridge is the mechanism, not the reason. Without the stamp the session
+	// reads as unattributed, which files a live conversation into the System
+	// group, stops its completions reaching a phone, and keeps it out of every
+	// tmux-persist snapshot so a reboot loses it.
+	//
+	//
+	// A failure here IS returned, and the message says the session was created,
+	// because the two failures need telling apart. NewSession's other error
+	// means nothing exists and a retry is the right move; this one means the
+	// session is up and only its label is missing, and a caller that retried
+	// would hit the duplicate-name refusal this function documents above.
+	// Through SetOption rather than a hand-built set-option: its target form is
+	// exactPane, and set-option is the one verb that will not take the bare
+	// `=name` exactSession form the rest of this package uses. Measured here on
+	// tmux 3.4 — `set-option -t =name` answers "no such session: =name" for a
+	// session that plainly exists.
+	if oerr := in.SetOption(spec.OSUser, spec.Name, OptionOrigin, OriginUser); oerr != nil {
+		return fmt.Errorf("new-session %s: session created but stamping %s failed: %w",
+			spec.Name, OptionOrigin, oerr)
 	}
 	return nil
 }

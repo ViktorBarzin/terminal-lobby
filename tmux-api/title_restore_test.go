@@ -72,9 +72,12 @@ func TestRestoreWithNoRememberedTitlesTouchesNothing(t *testing.T) {
 	}
 }
 
-// A kill is deliberate destruction, and the title goes with it — the same
-// reasoning that already drops the layout entry and the persist manifest row.
-func TestKillForgetsTheTitle(t *testing.T) {
+// A kill drops the layout entry and the persist manifest row, and the title
+// used to go with them. It does not any more: the picker restores a killed
+// session from an OLDER snapshot — rememberKilledAssignment exists for exactly
+// that — and a name is an opaque id since ADR-0019, so forgetting the title
+// makes that row unreadable and unrecoverable at the same time.
+func TestKillKeepsTheTitleForTheRestorePicker(t *testing.T) {
 	osSelf, _ := twoLocalUsers(t)
 	withUserMap(t, "authself="+osSelf+"\n")
 	withTempLayoutStore(t)
@@ -93,7 +96,7 @@ func TestKillForgetsTheTitle(t *testing.T) {
 		t.Fatalf("DELETE /sessions/work: got %d, want 204", rec.Code)
 	}
 
-	if got := store.get(osSelf, "work"); got != "" {
-		t.Errorf("a killed session kept its title: %q", got)
+	if got := store.get(osSelf, "work"); got != "Work in progress" {
+		t.Errorf("title after a kill = %q, want it kept so an older snapshot still reads", got)
 	}
 }

@@ -30,8 +30,6 @@ function cardStore(): LobbyStore {
     hold: () => () => {},
     workingSince: () => null,
     lastDriven: () => null,
-    dragName: () => null,
-    dropSpot: () => null,
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
   } as unknown as LobbyStore;
 }

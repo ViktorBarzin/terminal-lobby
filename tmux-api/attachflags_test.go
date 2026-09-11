@@ -28,6 +28,17 @@ import (
 // path and execs tmux — which is the stub.
 func runAttach(t *testing.T, args ...string) string {
 	t.Helper()
+	out, _ := runAttachWithLog(t, args...)
+	return out
+}
+
+// runAttachWithLog returns that same command line AND every tmux invocation the
+// script made along the way. The two differ because the claim path sends its
+// tmux calls to /dev/null — deliberately, so a failed option write cannot break
+// a session start — which puts them out of reach of stdout. The stub appends
+// its argv to a file as well, and that file is the second return.
+func runAttachWithLog(t *testing.T, args ...string) (string, string) {
+	t.Helper()
 	script, err := filepath.Abs(filepath.Join("..", "devvm", "tmux-user-attach"))
 	if err != nil || !fileExists(script) {
 		t.Skip("tmux-user-attach not present")
@@ -45,7 +56,9 @@ func runAttach(t *testing.T, args ...string) string {
 			t.Fatalf("stub %s: %v", name, err)
 		}
 	}
-	write("tmux", "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\nexit 0\n")
+	tmuxLog := filepath.Join(t.TempDir(), "tmux-argv")
+	write("tmux", "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\"\n"+
+		"printf '%s\\n' \"$*\" >> "+shellQuote(tmuxLog)+"\nexit 0\n")
 	write("systemd-run", "#!/usr/bin/env bash\nwhile [[ \"$1\" == -* ]]; do shift; done\nexec \"$@\"\n")
 	write("logger", "#!/usr/bin/env bash\nexit 0\n")
 
@@ -67,7 +80,10 @@ func runAttach(t *testing.T, args ...string) string {
 	if err != nil {
 		t.Fatalf("attach %v failed: %v\n%s", args, err, out)
 	}
-	return string(out)
+	// Absent when the script made no tmux call at all, which is not a failure
+	// here — the caller asserts on what it finds.
+	logged, _ := os.ReadFile(tmuxLog)
+	return string(out), string(logged)
 }
 
 func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
@@ -76,11 +92,33 @@ func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
-	got := runAttach(t, "flagcase", "/tmp", "claude", "opus", "max")
-	for _, want := range []string{"--model opus", "--effort max"} {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5", "max")
+	for _, want := range []string{"--model 'claude-opus-5'", "--effort 'max'"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("command line is missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// The context-window suffix is the one model name that is not plain
+// alphanumerics, and it has to survive two things: a whitelist that used to
+// end at `-`, and the shell the command line is handed to, where `[1m]` is a
+// glob. A bare `--model claude-opus-5[1m]` expands away the moment a file in
+// the start directory matches, which is why the flag is quoted.
+func TestAttachCarriesTheContextWindowSuffix(t *testing.T) {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5[1m]", "max")
+	if !strings.Contains(got, "--model 'claude-opus-5[1m]'") {
+		t.Errorf("the 1M suffix did not reach the command line:\n%s", got)
+	}
+}
+
+// A pinned build carries a date, which is 25 characters before anything is
+// added. The whitelist has to admit the longest real name, not just the short
+// ones.
+func TestAttachCarriesADatedBuild(t *testing.T) {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-haiku-4-5-20251001", "low")
+	if !strings.Contains(got, "--model 'claude-haiku-4-5-20251001'") {
+		t.Errorf("a dated build did not reach the command line:\n%s", got)
 	}
 }
 
@@ -88,7 +126,7 @@ func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
 // a flag. One shared spelling would start a codex that ignores the choice.
 func TestAttachSpellsCodexsFlagsCodexsWay(t *testing.T) {
 	got := runAttach(t, "flagcase", "/tmp", "codex", "gpt-5.6-terra", "high")
-	for _, want := range []string{"-m gpt-5.6-terra", "-c model_reasoning_effort=high"} {
+	for _, want := range []string{"-m 'gpt-5.6-terra'", "-c model_reasoning_effort='high'"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("command line is missing %q:\n%s", want, got)
 		}
@@ -113,6 +151,11 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		"OPUS",
 		"-rf",
 		strings.Repeat("o", 33),
+		// The bracket class the 1M suffix opened, offered without closing it
+		// and with something other than a short token inside.
+		"claude-opus-5[1m",
+		"claude-opus-5[1m]x",
+		"claude-opus-5[$(id)]",
 	} {
 		got := runAttach(t, "flagcase", "/tmp", "claude", bad, "max")
 		if strings.Contains(got, "--model") {
@@ -120,7 +163,7 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		}
 		// The rest of the line still has to be built: a refused model is "no
 		// choice", not a refused session.
-		if !strings.Contains(got, "--effort max") {
+		if !strings.Contains(got, "--effort 'max'") {
 			t.Errorf("model %q took the effort with it:\n%s", bad, got)
 		}
 		if strings.Contains(got, "tl-pwned") {
@@ -172,5 +215,47 @@ func TestAttachDoesNotClaimAWarmSlotForAFlaggedCreate(t *testing.T) {
 	plain := runAttach(t, "flagcase", "/tmp", "claude", "", "")
 	if !strings.Contains(plain, "rename-session") {
 		t.Errorf("an unflagged create stopped claiming its slot:\n%s", plain)
+	}
+}
+
+// The claim is the moment a pooled session became somebody's, and it is the
+// only moment anything records: `rename-session` leaves #{session_created}
+// reading the SLOT's age, which a standing slot makes days wrong. So the claim
+// has to stamp @tl_created, and a create that never claims must not — a cold
+// create's session_created is already the right answer, and stamping it here
+// would be writing an option for the sake of it.
+//
+// Asserted through the real script for the reason the tests above are: the stub
+// tmux prints the argv it was handed, so what shows up is what the script would
+// actually have run.
+func TestAttachStampsTheClaimTime(t *testing.T) {
+	_, claimed := runAttachWithLog(t, "flagcase", "/tmp", "claude", "", "")
+	if !strings.Contains(claimed, "rename-session") {
+		t.Fatalf("no claim happened, so there is nothing to assert on:\n%s", claimed)
+	}
+	// `=flagcase:` and not `=flagcase`: set-option rejects the bare exact form,
+	// and a plain name resolves by unambiguous prefix, which could stamp a
+	// neighbouring session.
+	want := "set-option -t =flagcase: " + createdStampOption + " "
+	if !strings.Contains(claimed, want) {
+		t.Errorf("a claim did not run %q, so the claimed session keeps the slot's age:\n%s",
+			want, claimed)
+	}
+	// After the speculative mark is dropped, never before: the comment on that
+	// clear says nothing best-effort may run while the mark still points the
+	// reaper at live work.
+	clear := strings.Index(claimed, "set-option -u")
+	stamp := strings.Index(claimed, createdStampOption)
+	if clear >= 0 && stamp >= 0 && stamp < clear {
+		t.Errorf("the stamp ran before the speculative mark was cleared:\n%s", claimed)
+	}
+
+	// A flagged create cannot claim a slot warmed without those flags, so it
+	// takes the cold path — where session_created is already the moment the
+	// session became somebody's and there is nothing to correct.
+	_, flagged := runAttachWithLog(t, "flagcase", "/tmp", "claude", "opus", "")
+	if strings.Contains(flagged, createdStampOption) {
+		t.Errorf("a create that never claimed a slot stamped %s anyway:\n%s",
+			createdStampOption, flagged)
 	}
 }

@@ -27,6 +27,49 @@ func TestPickerOptionsReadsClaudesModelList(t *testing.T) {
 	}
 }
 
+// The picker this box actually draws, since managed settings replaced Claude
+// Code's four family rows with one row per slug (`modelPicker.options` in
+// /etc/claude-code/managed-settings.json). Captured off a live pane on
+// 2026-09-06 against 2.1.263.
+//
+// It is here because the whole driver rests on the row NAME, and these names
+// are not the shape the parser was written against: `claude-opus-5[1m]` carries
+// brackets, and `claude-haiku-4-5-20251001` is 25 characters, which is what
+// pushes the description into a column far enough right that a narrower pane
+// would wrap it. The declared claude-fable-5 row is absent on purpose — Claude
+// Code drops a row the account is not entitled to rather than showing it and
+// refusing, so a walk to it ends as "not offered here", which is the honest
+// answer.
+func TestPickerOptionsReadsTheSlugRowsThisBoxDeclares(t *testing.T) {
+	opts := PickerOptions(fixture(t, "picker-claude-model-slugs.txt"))
+	want := []PickerOption{
+		{Index: 1, Label: "Default"},
+		{Index: 2, Label: "claude-opus-5", Cursor: true},
+		{Index: 3, Label: "claude-opus-5[1m]"},
+		{Index: 4, Label: "claude-sonnet-5"},
+		{Index: 5, Label: "claude-haiku-4-5-20251001"},
+		{Index: 6, Label: "claude-opus-4-8"},
+	}
+	if len(opts) != len(want) {
+		t.Fatalf("options = %+v, want %d of them", opts, len(want))
+	}
+	for i, w := range want {
+		if opts[i] != w {
+			t.Errorf("option %d = %+v, want %+v", i, opts[i], w)
+		}
+	}
+	// The walk asks for a row by name, so the names have to be findable as the
+	// catalogue spells them (frontend-v2/src/lib/models.ts).
+	for _, name := range []string{"claude-opus-5[1m]", "claude-haiku-4-5-20251001"} {
+		if _, ok := FindOption(opts, name); !ok {
+			t.Errorf("%q is in the picker and FindOption did not see it", name)
+		}
+	}
+	if _, ok := FindOption(opts, "claude-fable-5"); ok {
+		t.Error("claude-fable-5 is not entitled here and must not be found")
+	}
+}
+
 // Codex pads its labels with two suffixes at once — "(default) (current)" —
 // and neither is part of the name a caller asks for.
 func TestPickerOptionsReadsCodexsModelList(t *testing.T) {
@@ -342,7 +385,8 @@ func TestSwitchConfirmationHasWalkableRowsButNoPickerFooter(t *testing.T) {
 
 func TestSwitchPromptIgnoresEveryOtherScreen(t *testing.T) {
 	for _, name := range []string{
-		"picker-claude-model.txt", "picker-claude-effort.txt",
+		"picker-claude-model.txt", "picker-claude-model-slugs.txt",
+		"picker-claude-effort.txt",
 		"picker-codex-model.txt", "status-claude-idle.txt",
 	} {
 		if _, ok := SwitchPrompt(fixture(t, name)); ok {

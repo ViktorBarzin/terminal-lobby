@@ -12,23 +12,6 @@ import { createSignal, onCleanup, type Accessor } from "solid-js";
 const COARSE_QUERY = "(pointer: coarse)";
 
 /**
- * Is there a pointing device here that can do a precise drag?
- *
- * ANY-pointer, deliberately, not `pointer`. `(pointer: coarse)` describes only
- * the PRIMARY input, so a touchscreen laptop, a 2-in-1 or a Chromebook reports
- * coarse even while the person is using a mouse. Gating native drag-and-drop on
- * `!coarse` left those machines with nothing: HTML5 drag was never armed, and
- * the touch path ignores `pointerType === "mouse"`, so neither ran and dragging
- * a session did nothing at all (reported 2026-09-01, reproduced with a
- * desktop-sized window that also advertises a touchscreen).
- *
- * `(any-pointer: fine)` asks the question that actually matters — is a mouse,
- * trackpad or stylus available — and a phone still answers no, so it keeps the
- * touch path.
- */
-const FINE_QUERY = "(any-pointer: fine)";
-
-/**
  * The PHONE query — one view at a time (the vanilla two-view flip).
  *
  * Deliberately narrower than `(pointer: coarse)` and narrower than a width
@@ -104,16 +87,37 @@ export function createMobileFlip(): Accessor<boolean> {
  * Reactive coarse-pointer accessor that re-fires when the media query flips.
  * Registers its listener on the current owner and cleans up on dispose.
  */
-/**
- * True when a fine pointer exists. Defaults to TRUE where matchMedia is absent:
- * a machine that cannot answer is far more likely to be a desktop, and the cost
- * of being wrong is a draggable attribute nothing uses, rather than a drag that
- * silently does nothing.
- */
-export function hasFinePointer(): boolean {
-  return typeof matchMedia !== "function" || matchMedia(FINE_QUERY).matches;
-}
-
 export function createCoarsePointer(): Accessor<boolean> {
   return watchQuery(COARSE_QUERY);
+}
+
+/**
+ * Is this a phone or a tablet, as the DRAG LIBRARY understands the question?
+ *
+ * Deliberately the same test @formkit/drag-and-drop makes internally
+ * (`isMobilePlatform`), because the two answers have to agree. The library
+ * ignores mouse pointermove unless it thinks it is on a mobile platform, so a
+ * machine we call mobile and it does not would be left with a mouse that
+ * cannot drag at all. It is not exported, so it is mirrored here — if it ever
+ * changes upstream, this is the line that has to follow it.
+ *
+ * What it decides for us is `nativeDrag` (dnd/sidebar.ts). A desktop needs it
+ * ON, because a mouse has no other path. A phone needs it OFF, because the
+ * PLATFORM starts a native drag of its own from a long press on a `draggable`
+ * element, and that drag then delivers no `dragover` at all — measured on the
+ * Android emulator, the event stream was `pointerdown` → `dragstart` →
+ * `pointercancel`, the row was marked as picked up, and nothing moved for the
+ * rest of the gesture.
+ *
+ * A media query cannot answer this. `(any-pointer: fine)` reads TRUE on the
+ * emulator, which has a host mouse attached, and would have left the phone on
+ * the broken path.
+ */
+export function isMobilePlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaData = (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData;
+  if (uaData) return uaData.mobile === true;
+  const ua = navigator.userAgent;
+  const isPad = /iPad/.test(ua) || (ua.includes("Macintosh") && navigator.maxTouchPoints > 1);
+  return /android|iphone|ipod/i.test(ua) || isPad;
 }

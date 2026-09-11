@@ -554,9 +554,21 @@ describe("the composer's roamed choices", () => {
   });
 
   it("keeps a project name verbatim — a project is named by a person", () => {
-    const p = coercePrefs({ session: { newProject: "code", newModel: "sonnet" } });
+    const p = coercePrefs({ session: { newProject: "code", newModel: "claude-sonnet-5" } });
     expect(p.session.newProject).toBe("code");
-    expect(p.session.newModel).toBe("sonnet");
+    expect(p.session.newModel).toBe("claude-sonnet-5");
+  });
+
+  // The Claude rows were family words until 2026-09-06. A doc written then
+  // still says `opus`, and dropping it would quietly reset the choice of
+  // everyone who had made one.
+  it("carries a family word forward to the row it means now", () => {
+    expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe(
+      "claude-opus-5",
+    );
+    expect(coercePrefs({ session: { newModel: "haiku" } }).session.newModel).toBe(
+      "claude-haiku-4-5-20251001",
+    );
   });
 
   it("rejects a model it does not offer, rather than sending /model garbage", () => {
@@ -567,11 +579,11 @@ describe("the composer's roamed choices", () => {
   it("writes both back into the shared doc without dropping unknown subkeys", () => {
     const doc = composeDoc(
       { session: { reopenLast: false } },
-      coercePrefs({ session: { newProject: "tripit", newModel: "haiku" } }),
+      coercePrefs({ session: { newProject: "tripit", newModel: "claude-opus-4-8" } }),
     ) as { session: Record<string, unknown> };
     expect(doc.session.reopenLast).toBe(false);
     expect(doc.session.newProject).toBe("tripit");
-    expect(doc.session.newModel).toBe("haiku");
+    expect(doc.session.newModel).toBe("claude-opus-4-8");
   });
 
   it("reports each as its own changed path", () => {
@@ -580,7 +592,7 @@ describe("the composer's roamed choices", () => {
       changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } })),
     ).toEqual([["session.newProject", "code"]]);
     expect(
-      changedPrefPaths(prev, applyPatch(prev, { session: { newModel: "opus" } })),
-    ).toEqual([["session.newModel", "opus"]]);
+      changedPrefPaths(prev, applyPatch(prev, { session: { newModel: "claude-opus-5" } })),
+    ).toEqual([["session.newModel", "claude-opus-5"]]);
   });
 });

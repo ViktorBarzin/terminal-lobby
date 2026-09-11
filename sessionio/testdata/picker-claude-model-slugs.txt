@@ -1,0 +1,50 @@
+
+ ▐▛███▛█   Claude Code v2.1.263
+▝▜██████▀  claude-opus-5 with high effort · Claude API
+  ▝▝ ▝▝    /tmp/claude-1000/-home-wizard-code/db403023-fa95-4de6-b150-c3971cee1f84/scratchpad/probe
+
+▎ Using claude-opus-5 (from managed settings) · /model
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Select model
+   Switch between Claude models. Your pick becomes the default for new sessions. For other/previous model names, specify with --model.
+
+     1. Default (recommended)      Sonnet 5 · Efficient for routine tasks
+   ❯ 2. claude-opus-5 ✔            Opus 5 · best for everyday, complex tasks
+     3. claude-opus-5[1m]          Opus 5 with a 1M-token context window
+     4. claude-sonnet-5            Sonnet 5 · efficient for routine tasks
+     5. claude-haiku-4-5-20251001  Haiku 4.5 · fastest for quick answers
+     6. claude-opus-4-8            Opus 4.8 · the previous generation
+
+   ● High effort (default) ←/→ to adjust
+
+   Use /fast to turn on Fast mode (Opus 5).
+
+   Enter to set as default · s to use this session only · Esc to cancel

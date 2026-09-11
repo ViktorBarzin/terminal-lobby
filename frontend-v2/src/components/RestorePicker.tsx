@@ -101,13 +101,30 @@ export function orderRows(rows: SnapshotRow[]): {
   return { changed, running };
 }
 
+/**
+ * What a row is called. A session name is a 12-character id (ADR-0019), so the
+ * name answers "which one is this?" for nobody; the title is the whole reason
+ * the picker is usable. An untitled session has nothing else to show, and the
+ * id at least matches what `tls` and the URL say.
+ *
+ * The title comes off the server, from the titles file that outlives the
+ * session (tmux-api `titles.go`) — a tmux option would have died with it, which
+ * is exactly the case the picker exists for.
+ */
+export function rowLabel(row: SnapshotRow): string {
+  return row.title || row.name;
+}
+
 /** The one-line explanation under a row. `warn` marks the two cases where a
  *  restore does something other than recreate the session under its own name. */
 export function rowNote(row: SnapshotRow): { text: string; warn: boolean } {
   if (row.state === "live_same") return { text: "already running", warn: false };
   if (row.state === "live_other_conv") {
+    // The name it comes back under is `<id>-HHMM`, which is not worth saying to
+    // a person: what they need to know is that this does not replace the
+    // session currently holding the id.
     return {
-      text: `name is taken by a different conversation — restores as ${row.target}`,
+      text: "that id is running a different conversation — restores alongside it",
       warn: true,
     };
   }
@@ -264,9 +281,14 @@ export const RestorePicker: Component<RestorePickerProps> = (props) => {
           onChange={() => toggle(row.name)}
         />
         <span class="tl-restore-meta">
-          <span class="tl-restore-name">{row.name}</span>
+          <span class="tl-restore-name">{rowLabel(row)}</span>
           <span class="tl-restore-where">
             <span class="tl-restore-cwd">{shortCwd(row.cwd, props.home)}</span>
+            {/* The id is what a URL, a log line and a bug report quote, so it
+                stays on the row — behind the title, not in front of it. */}
+            <Show when={row.title}>
+              <span class="tl-restore-id">{row.name}</span>
+            </Show>
             <Show when={row.action !== "skip" && row.project}>
               <span class="tl-restore-dest">→ {row.project}</span>
             </Show>

@@ -177,18 +177,23 @@ describe("clearLocalData", () => {
     return asked;
   };
 
-  it("deletes the three databases this app owns", async () => {
+  it("deletes the four databases this app owns", async () => {
     const asked = fakeIDB("success");
     const reload = vi.fn();
     await clearLocalData({ alsoRoamed: false, reload, idbTimeoutMs: 50 });
-    expect(asked.sort()).toEqual(["tl-badge", "tl-notif", "tl-transcripts"]);
+    expect(asked.sort()).toEqual([
+      "tl-badge",
+      "tl-device",
+      "tl-notif",
+      "tl-transcripts",
+    ]);
     expect(reload).toHaveBeenCalled();
   });
 
   /**
    * The one that matters. `deleteDatabase` fires `blocked` and then sits there
    * for as long as another context holds the database open, and two of the
-   * three ARE held open: tl-transcripts by a module-level memo in
+   * four ARE held open: tl-transcripts by a module-level memo in
    * transcript-cache, tl-notif by the service worker. A sweep that waits for
    * those never reloads, and the user is left staring at a dead button.
    */

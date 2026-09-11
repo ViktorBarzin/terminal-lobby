@@ -3,24 +3,49 @@ import type { SessionTool } from "../types/lobby";
 /**
  * Which model a session runs on, and how hard it thinks.
  *
- * NEITHER IS A LAUNCH FLAG. `start-claude.sh` deliberately passes no `--model`,
- * and `tmux-user-attach` pools pre-warmed sessions under the bare `claude`
- * command key — a per-model key would miss the pool and give up the ~2.4s head
- * start on every model but the default. The attach contract carries a command
- * KEY, not a command line, so there is nowhere to put a flag even if the pool
- * did not exist.
+ * EVERY ID HERE IS AN EXACT SLUG, not a family word. `opus` and `sonnet` are
+ * what Claude Code's stock picker offers, and they cannot name the thing a
+ * person is choosing between: `claude-opus-5` and `claude-opus-5[1m]` are both
+ * "opus", and so is `claude-opus-4-8`. Codex has always spelled its own rows
+ * this way, so this is the two lists agreeing rather than a new convention.
  *
- * So a choice is applied to a session that is already running, by driving the
- * CLI's own picker: `POST /model/{session}`, whose whole implementation is
- * sessionio/setmodel.go. That route replaced the `/model <name>` line this file
- * used to build, for two reasons measured on 2026-09-05. The line saves the
- * choice as the ACCOUNT default — "saved as your default for new sessions" —
- * so a model picked for one thread followed every session started afterwards;
- * and codex has no such line at all, it sends `/model gpt-5.6-sol` to the model
- * as a message.
+ * A choice reaches a session by one of two routes, depending on when it is
+ * made.
  *
- * `default` is the absence of a choice: nothing is sent and the session keeps
- * whatever it booted with. It is the value every account starts on.
+ * STARTING a session: as `--model` and `--effort` FLAGS on the process, carried
+ * to the attach as arg6/arg7 (lib/terminal-url.ts) and turned into flags by
+ * devvm/tmux-user-attach. Measured on this box 2026-09-06, launching with them
+ * costs what launching without costs, while driving the picker afterwards costs
+ * about four seconds and puts a `/model` line in a conversation that has not
+ * started.
+ *
+ * CHANGING a live session: `POST /model/{session}`, which drives the CLI's own
+ * picker (sessionio/setmodel.go) and matches a row by its LABEL. That is why
+ * the ids here have to be the labels Claude's picker draws, and why the box
+ * declares them: `modelPicker.options` in /etc/claude-code/managed-settings.json
+ * (source: infra scripts/workstation/managed-settings.json) replaces the four
+ * built-in family rows with one row per slug. Verified 2026-09-06 that the
+ * setting is honoured from MANAGED settings only — the same block in a user or
+ * project settings.json is dropped.
+ *
+ * EVERY ROW HERE IS ONE THIS ACCOUNT CAN ACTUALLY RUN, which is a rule and not
+ * an accident (Viktor, 2026-09-06: "we must only show models we can use").
+ * `claude-fable-5` was in this list for a few hours and is not entitled: asking
+ * for it starts a Sonnet 5 session and prints a warning, so the row promised
+ * one model and delivered another. A row nobody can use is worse than a
+ * missing one.
+ *
+ * How to check before adding a row: `~/.claude.json` carries a
+ * `modelAccessCache` array of `{apiName, entitled}` for the account, which is
+ * the account's own answer. Then start a session on the slug and read the
+ * banner — a fallback names the OTHER model there and adds a ⚠ line. Do not
+ * probe with `claude -p`: the warning is invisible in print mode and the run
+ * answers normally, so an unentitled model looks like a working one. Codex is
+ * blunter and needs no banner reading — an unsupported model there is a 400.
+ *
+ * `default` is the absence of a choice: no flag, nothing driven, and the
+ * session keeps whatever it booted with. It is the value every account starts
+ * on.
  */
 
 /** A tool that has a model to pick. A plain shell does not. */
@@ -40,9 +65,12 @@ export interface ModelOption {
   readonly label: string;
   /**
    * for the composer's bare row of values, which has no heading. "code" beside
-   * "Claude" beside "Opus" says nothing about which is the project, which is
-   * the command and which is the model; reading the row as a sentence is what
-   * tells you — "in code · run Claude · Opus model · max effort".
+   * "Claude" beside "Max" says nothing about which is the project, which is
+   * the command and which is the effort; reading the row as a sentence is what
+   * tells you — "in code · run Claude · claude-opus-5 · max effort".
+   *
+   * A MODEL needs no noun, because a slug is already unmistakably one. The
+   * effort rows do: "Max" beside "claude-opus-5" would be anybody's guess.
    */
   readonly phrase: string;
 }
@@ -52,6 +80,9 @@ const opt = (id: string, label: string, noun: string): ModelOption => ({
   label,
   phrase: `${label} ${noun}`,
 });
+
+/** A model row: the slug, said once, in all three places. */
+const slug = (id: string): ModelOption => ({ id, label: id, phrase: id });
 
 /** The choice that means "no choice", worded for both places it appears. */
 const anyDefault = (noun: string): ModelOption => ({
@@ -69,14 +100,36 @@ const anyDefault = (noun: string): ModelOption => ({
  * real picker, does not find the row, and reports what the session DOES list
  * (sessionio/setmodel.go). The alternative, picking whatever row is nearest,
  * would put a session on a model nobody chose.
+ *
+ * The Claude rows are the slugs measured against `claude --model <slug>` on
+ * 2026-09-06 (Claude Code 2.1.263), and they must stay in step with the
+ * `modelPicker.options` block in managed settings, which is what makes them
+ * rows in the CLI's own picker. The codex rows are what its own picker listed
+ * on codex-cli 0.153.4 the same day, each one run through `codex exec -m`.
+ *
+ * `gpt-6-astra` is a reminder that a stale CLI is indistinguishable from a
+ * model that does not exist. It is codex's DEFAULT on 0.153.4 and was absent
+ * from 0.144.3, which this box ran for eight weeks — so the model was missing
+ * from the picker, from the binary and from every probe, and looked like it had
+ * never shipped. The devvm now tracks latest and refreshes daily
+ * (infra playbooks/devvm.yml, codex-update.timer).
+ *
+ * Three slugs the CLI knows are deliberately absent. `claude-sonnet-5[1m]` is
+ * accepted and then ignored — the session boots as plain "Sonnet 5", with no
+ * 1M marker, because only Opus carries the suffix — so a row for it would
+ * promise something the session does not do. `claude-fable-5` is in the
+ * catalogue and not entitled to this account. `claude-fable-5-1` is not in this
+ * build's catalogue at all.
  */
 const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>> = {
   claude: {
     model: [
       anyDefault("model"),
-      opt("opus", "Opus", "model"),
-      opt("sonnet", "Sonnet", "model"),
-      opt("haiku", "Haiku", "model"),
+      slug("claude-opus-5"),
+      slug("claude-opus-5[1m]"),
+      slug("claude-sonnet-5"),
+      slug("claude-haiku-4-5-20251001"),
+      slug("claude-opus-4-8"),
     ],
     effort: [
       anyDefault("effort"),
@@ -91,11 +144,12 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   codex: {
     model: [
       anyDefault("model"),
-      opt("gpt-5.6-sol", "GPT-5.6 sol", "model"),
-      opt("gpt-5.6-terra", "GPT-5.6 terra", "model"),
-      opt("gpt-5.6-luna", "GPT-5.6 luna", "model"),
-      opt("gpt-5.5", "GPT-5.5", "model"),
-      opt("gpt-5.4-mini", "GPT-5.4 mini", "model"),
+      slug("gpt-6-astra"),
+      slug("gpt-5.6-sol"),
+      slug("gpt-5.6-terra"),
+      slug("gpt-5.6-luna"),
+      slug("gpt-5.5"),
+      slug("gpt-5.4-mini"),
     ],
     effort: [
       anyDefault("effort"),
@@ -118,7 +172,24 @@ const has = (h: ModelHarness, f: ModelField, id: unknown): boolean =>
   typeof id === "string" && CATALOGUE[h][f].some((o) => o.id === id);
 
 export const isModelFor = (h: ModelHarness, id: unknown): boolean => has(h, "model", id);
+
 export const isEffortFor = (h: ModelHarness, id: unknown): boolean => has(h, "effort", id);
+
+/**
+ * A stored model id, carried forward to the row it means today.
+ *
+ * The Claude rows were family words until 2026-09-06, so a preference written
+ * before that says `opus`. Dropping it would quietly reset the choice of
+ * everyone who had made one; resolving it to the family's canonical row keeps
+ * what they picked. Anything the catalogue still does not recognise comes back
+ * undefined, which the caller reads as no choice (store/prefs.ts).
+ */
+export function adoptModelId(h: ModelHarness, id: unknown): string | undefined {
+  if (typeof id !== "string" || id === "") return undefined;
+  if (has(h, "model", id)) return id;
+  if (h === "codex") return undefined;
+  return canonicalFor(h, modelFamily(h, id));
+}
 
 /**
  * The label for a value, or the value itself when the catalogue has not heard
@@ -148,10 +219,12 @@ export interface ModelState {
  * A model name reduced to its FAMILY, for matching a catalogue row against
  * whatever spelling the session used.
  *
- * The three sources spell one model three ways: the transcript writes the slug
- * (`claude-opus-5`, `claude-haiku-4-5-20251001`), the CLI's own receipt writes
- * it for a person ("Sonnet 5", normalised server-side to `sonnet`), and this
- * catalogue writes the picker's word. The family is what all three agree on.
+ * The transcript and this catalogue both write the slug (`claude-opus-5`,
+ * `claude-haiku-4-5-20251001`), so they need no reduction to agree. The one
+ * source that still writes a family is the CLI's own receipt, which spells the
+ * model for a person ("Sonnet 5", normalised server-side to `sonnet`) — and on
+ * a box carrying the managed `modelPicker` rows even that receipt says the
+ * slug, because the picker's label is the display name the CLI reaches for.
  *
  * It is NOT what the chip shows. Displaying the family threw away the version,
  * which is half of what "which model is this" means.
@@ -165,12 +238,32 @@ export function modelFamily(h: ModelHarness, model: string): string {
 }
 
 /**
+ * The row a bare family word stands for.
+ *
+ * Nothing in the catalogue is spelled `opus` any more, but a session can still
+ * report that: between a `/model` change and the session's next turn the only
+ * source is the CLI's own receipt, and on a box whose managed settings have not
+ * caught up that receipt still reads "Opus 5" and normalises to `opus`
+ * server-side (sessionio/model.go). The first row of the family is what such a
+ * word means — the plain slug, never the `[1m]` variant or last generation.
+ */
+function canonicalFor(h: ModelHarness, family: string): string | undefined {
+  return CATALOGUE[h].model.find(
+    (o) => o.id !== DEFAULT_CHOICE && modelFamily(h, o.id) === family,
+  )?.id;
+}
+
+/**
  * Whether a catalogue id names what the session reports being on.
  *
- * The two sides are spelled differently for Claude and identically for codex:
- * the transcript writes `claude-opus-5` where the picker's row — and so this
- * catalogue — says `opus`, while codex's footer and its rows both say
- * `gpt-5.6-terra`.
+ * Both sides are slugs now, so the answer is usually the string comparison:
+ * the transcript writes `claude-opus-5`, the row says `claude-opus-5`, and
+ * codex's footer and its rows have always agreed this way.
+ *
+ * The family fallback is for the one window where they cannot agree — a
+ * receipt-derived `opus` with no version on it. It ticks the family's
+ * canonical row and nothing else, so `claude-opus-5` and `claude-opus-5[1m]`
+ * are never both marked current.
  */
 export function isCurrentModel(
   h: ModelHarness,
@@ -178,7 +271,11 @@ export function isCurrentModel(
   reported: string | undefined,
 ): boolean {
   if (!reported) return false;
-  return h === "codex" ? reported === id : modelFamily("claude", reported) === id;
+  if (reported.toLowerCase() === id.toLowerCase()) return true;
+  if (h === "codex") return false;
+  // A word with no version in it is a family, not a model.
+  if (/\d/.test(reported)) return false;
+  return canonicalFor(h, modelFamily(h, reported)) === id;
 }
 
 /**

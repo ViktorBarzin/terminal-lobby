@@ -675,6 +675,22 @@ export const TerminalNative: Component<{
    * output frame, and the tab's own visibility.
    */
   onAttention?: (kind: AttentionKind) => void;
+  /**
+   * This terminal is the one being read, and this is the grid it is being read
+   * at. Fired on every landed fit, on a view coming back on screen even when it
+   * needed no fit, and when the terminal takes focus.
+   *
+   * The lobby turns it into "size the session's tmux window to me". That cannot
+   * be `attachment.resize()`, which sets this client's pty and nothing else: a
+   * pinned session's window follows its clients only on attach, detach and
+   * resize, and switching back to a kept session is none of the three. See
+   * `claimGrid` below for the whole argument.
+   *
+   * WHICH session this is belongs to the caller, as with `onAttention` — and so
+   * does whether this device may claim the grid at all, which is a Watch-mode
+   * question this component cannot answer.
+   */
+  onGrid?: (cols: number, rows: number) => void;
 }> = (props) => {
   let host: HTMLDivElement | undefined;
   let attachment: Attachment | null = null;
@@ -1085,7 +1101,17 @@ export const TerminalNative: Component<{
       const safeFit = (type: FitEvent["type"]): boolean => {
         const verdict = reduceFit(fitState, fitEvent(type, measure()));
         fitState = verdict.state;
-        if (verdict.action !== "fit") return false;
+        if (verdict.action !== "fit") {
+          // A `shown` that needed no fit still has to CLAIM the grid, and this
+          // is the arm the bug lived in. Coming back to a kept session leaves
+          // the geometry right on this side and says nothing to tmux: the
+          // client never detached and its pty is the size it always was, so no
+          // hook fires and a pinned window keeps whatever the last device to
+          // attach left it at (tmux-api/grid_size.go). fit.ts is right that
+          // there is no fit to run here; it is the tmux half that is missing.
+          if (type === "shown") claimGrid();
+          return false;
+        }
         try {
           fit.fit();
         } catch (e) {
@@ -1104,7 +1130,33 @@ export const TerminalNative: Component<{
         // spare frame rather than a wrong one. Nothing goes out before the
         // socket exists: the boot size rides the handshake instead.
         attachment?.resize();
+        claimGrid();
         return true;
+      };
+
+      /**
+       * Say what size this terminal is, so the SESSION's window can follow it.
+       *
+       * A different statement from `attachment.resize()`, which sets this ttyd
+       * client's pty and stops there. tmux sizes a window from its clients, and
+       * a session the lobby has pinned (sessionio.PinGrid, laid down by any
+       * read-only attach and never reverted) only re-reads them on a client
+       * attaching, detaching or resizing. None of those happens when a phone
+       * joins a session a desktop is reading, or when the lobby switches back to
+       * a session it kept mounted — so the window can be a size no visible
+       * client has, and stay there. This is the sentence that fixes it.
+       *
+       * Cheap and idempotent by design: the server answers 204 whether it moved
+       * anything or not, and leaves an unpinned session to tmux. WHICH session
+       * this is, and whether this device is allowed to claim it at all, are the
+       * caller's (SessionView) — the same split as `onAttention`.
+       *
+       * Nothing before the socket: with no attachment there is no tmux client
+       * to speak for, and the boot size rides the handshake.
+       */
+      const claimGrid = (): void => {
+        if (disposed || !attachment) return;
+        props.onGrid?.(term.cols, term.rows);
       };
 
       /**
@@ -3179,6 +3231,18 @@ export const TerminalNative: Component<{
       };
       host.addEventListener("paste", onPasteEvent, true);
 
+      // Taking focus is the third moment this terminal is the one being read,
+      // and the only one that covers a grid lost while it sat still: another
+      // device joining the same session moves the window without anything here
+      // firing, so nothing on this side fits and no `shown` arrives. Clicking
+      // into the terminal then gets the size back, which is what a person does
+      // anyway before typing.
+      //
+      // `focusin` rather than `focus` because the element that takes it is
+      // xterm's offscreen helper textarea, a descendant of the host.
+      const onHostFocusIn = (): void => claimGrid();
+      host.addEventListener("focusin", onHostFocusIn);
+
       // `ask` goes through attach.ts's `reportNow`, which re-fires the same
       // `onPhase` above rather than reading the ladder from out here, so the
       // badge is painted through one path whether it was volunteered or asked
@@ -3365,6 +3429,7 @@ export const TerminalNative: Component<{
         host?.removeEventListener("touchcancel", onTouchCancel);
         host?.removeEventListener("wheel", onHostWheel, true);
         host?.removeEventListener("paste", onPasteEvent, true);
+        host?.removeEventListener("focusin", onHostFocusIn);
         document.removeEventListener("visibilitychange", onVisibility);
         // The pinch's document listeners, which outlive this terminal's DOM and
         // would otherwise go on hit-testing against a host nobody can see. The

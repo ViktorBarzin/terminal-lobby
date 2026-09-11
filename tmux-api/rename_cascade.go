@@ -14,10 +14,13 @@ package main
 // every other member's sidebar, revoke its guests without telling either side,
 // and strand its pictures.
 //
-// ADR-0019 made a session's name a minted id that never moves, so renaming is
-// a rare, deliberate act again. Two callers are left, and both need all six
-// stores carried: the one-time migration that gives every pre-ADR session an id
-// (migrate_ids.go), and POST /sessions/{name}/rename.
+// ADR-0019 made a session's name a minted id and renaming a rare, deliberate
+// act. ADR-0022 put the derivation back — a title carries the tmux name with
+// it, so `tmux ls` and the status bar read as words — which makes this the
+// ordinary path again rather than an exceptional one. Three callers, all of
+// which need every one of the six stores carried: name_from_title.go on each
+// title that lands, the one-time migration that gave every pre-ADR session an
+// id (migrate_ids.go), and POST /sessions/{name}/rename.
 //
 // Everything here is best-effort and logged rather than fatal. The tmux rename
 // has already landed by the time any of this runs, so returning an error would
@@ -30,6 +33,9 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"terminal-lobby/sessionio"
 )
 
 // sessionImageRoot is clipboard-upload's per-(user, session) image store. A var
@@ -56,6 +62,45 @@ func carryRenameAcrossStores(osUser, oldName, newName string) {
 	renameShares(osUser, oldName, newName)
 	renameImageDir(osUser, oldName, newName)
 	renameGridPin(osUser, newName)
+	stampBornAs(osUser, oldName, newName)
+}
+
+// stampBornAs records the name a session was FIRST created with, so a client
+// holding that name can still find the session under its new one.
+//
+// The seven moves above are for records the SERVER keeps. This one is for a
+// client that has no record at all. ADR-0022 renames a fresh session the moment
+// its first title lands, which is seconds into the first turn, while GET
+// /sessions is behind a 5-second cache — so a browser routinely never sees the
+// session under the id it minted for it. Everything the lobby uses to follow a
+// rename (tmux's session_id, the previous poll's row) requires having seen it,
+// and none of that is available here. Measured 2026-09-06: of four sessions
+// created that evening, two were renamed 3-5s in, before any poll had listed
+// them, and both left their tab holding a name nothing answered to.
+//
+// ONLY A MINTED ID IS WORTH RECORDING, and that is also what makes this write
+// once without having to read anything back. A minted id is precisely the name
+// a browser holds without ever having been told about the session; a session
+// renamed from a readable name has been in the list for as long as it has had
+// that name, so a client can follow it by session_id like any other rename.
+// Since a derived name is never a minted id, no second rename reaches this.
+// `-o` (tmux's "only if unset") stays as the backstop for that.
+//
+// Best-effort like everything else here: without it a stranded tab is exactly
+// as stranded as it was before this existed.
+func stampBornAs(osUser, oldName, newName string) {
+	if !isMintedName(oldName) {
+		return
+	}
+	// exactPane, not exactSession: `set-option -t =name` is rejected on tmux
+	// 3.4 even for a session that exists, which is why @title is stamped the
+	// same way. See exactPane.
+	out, err := tmuxCmd(osUser, "set-option", "-o", "-t", exactPane(newName),
+		sessionio.OptionBornAs, oldName).CombinedOutput()
+	if err != nil {
+		log.Printf("born-as stamp %s→%s for %s failed: %v: %s",
+			oldName, newName, osUser, err, strings.TrimSpace(string(out)))
+	}
 }
 
 // renameGridPin re-points a watched session's grid pin at the name it has now.

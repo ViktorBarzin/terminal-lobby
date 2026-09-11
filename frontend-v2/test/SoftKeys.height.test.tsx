@@ -1,8 +1,8 @@
 /**
  * The soft-key row publishes its own height as `--sk-h`, which is the space the
  * views above it reserve. The row changes height with no window resize behind
- * it (the overflow tier toggles, the key rows re-wrap), so a ResizeObserver on
- * the element is what keeps the reservation honest.
+ * it (the text-scale setting moves it, a longer label re-wraps it), so a
+ * ResizeObserver on the element is what keeps the reservation honest.
  */
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -66,9 +66,9 @@ describe("<SoftKeys> — --sk-h", () => {
   });
 
   it("republishes when the row changes height with no window resize", () => {
-    // The ⋯ overflow tier expanding is exactly this case: the row grows, no
-    // resize event fires, and without the observer the views above keep
-    // reserving the old height and the toolbar covers them.
+    // Raising the text scale is exactly this case: the row grows, no resize
+    // event fires, and without the observer the views above keep reserving the
+    // old height and the toolbar covers them.
     installResizeObserver();
     stubHeight(50);
     render(() => <SoftKeys send={() => {}} />);

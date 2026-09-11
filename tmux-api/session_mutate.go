@@ -50,12 +50,28 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		setSessionTitle(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "origin" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		setSessionOrigin(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "copy-mode" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		copyModeSession(w, r, osUser, name)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "grid" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		sizeSessionGrid(w, r, osUser, name)
 		return
 	}
 	if len(parts) == 2 && parts[1] == "capture" {
@@ -104,12 +120,12 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 	// snapshot long after the layout has forgotten where it went, and landing
 	// in Ungrouped is where a recovered session is hardest to find again.
 	rememberKilledAssignment(osUser, name)
-	// The title goes with it, for the same reason the persist manifest row
-	// does: a deliberate kill means this session is not coming back, so
-	// keeping its title would only re-stamp a name someone else may reuse.
-	if err := titleStoreInstance.forget(osUser, name); err != nil {
-		log.Printf("title memory: forgetting %s for %s failed: %v", name, osUser, err)
-	}
+	// The title STAYS, unlike the layout entry and the manifest row. Those two
+	// describe a session that is running; a title describes one that existed,
+	// and the picker restores a killed session from an older snapshot long
+	// after both are gone. Since ADR-0019 a name is a minted id, so the reuse
+	// this used to guard against cannot happen, and dropping the title only
+	// left the picker showing that id. pruneLocked still bounds the file.
 	if err := layoutStoreInstance.removeSession(osUser, name); err != nil {
 		log.Printf("layout cleanup after killing %s for %s failed: %v", name, osUser, err)
 	}
@@ -161,15 +177,18 @@ func renameSession(w http.ResponseWriter, r *http.Request, osUser, oldName strin
 
 // setSessionTitle is POST /sessions/{name}/title — every retitle there is.
 //
-// A session's name is an opaque id fixed at creation (ADR-0019), so a title
-// never moves anything else: no rename, no stores to carry, and no
-// re-navigation of the terminal iframe for the person who typed it. PATCH
-// /sessions/{name} used to carry a rename alongside the stamp and was retired
-// with the derivation that produced the new name.
+// The title is what everyone reads, and since ADR-0022 the tmux NAME follows
+// it, so the surfaces the lobby does not draw (`tmux ls`, the status bar, the
+// window title) read as words again. name_from_title.go holds that rule and
+// the six stores a rename has to carry. PATCH /sessions/{name} used to carry a
+// rename alongside the stamp; the rename is derived now, so a caller has
+// nothing to supply.
 //
 // Three callers: the lobby stamping a title onto a session it has just created
 // (creation reaches no server, so this is the first the API hears of it),
-// editing one from a card, and clearing a title back to nothing.
+// editing one from a card, and clearing a title back to nothing. Clearing
+// leaves the name where it is: an empty title derives nothing, and inventing a
+// name for a running session would be worse than keeping a stale one.
 func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string) {
 	var body struct {
 		Title string `json:"title"`
@@ -178,13 +197,66 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
-	if !stampTitle(w, osUser, name, slug.CleanTitle(body.Title)) {
+	title := slug.CleanTitle(body.Title)
+	if !stampTitle(w, osUser, name, title) {
 		return
 	}
+	// After the stamp, never before: a rename that landed first would leave a
+	// session named for a title it does not carry if the stamp then failed.
+	name = renameToDerivedName(osUser, name, title, "api")
 	sessionsCacheInstance.invalidate(osUser)
 	events.Emit("session.retitled", osUser, telemetry.Attrs{
 		"tl.session": name, "tl.client": "api",
 	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// setSessionOrigin is POST /sessions/{name}/origin — the rescue
+// (docs/plans/2026-09-06-test-session-origin-design.md).
+//
+// One caller: dropping a card out of the System group. The drop already writes
+// the layout, and this is how it says the same thing on the SERVER, so the
+// session stops being a system session for the push sender and the telemetry
+// rule too rather than only in the browser that moved it. Without it, a
+// rescued session would sit in a project in the sidebar and still be silent.
+//
+// Only `user` and `test` are accepted. Those are the only two values anything
+// writes (origin.go); the third state is the ABSENCE of the option, and no
+// caller has a reason to ask for it, because a session with no origin already
+// reads as system and that is exactly what the drag is undoing.
+//
+// The shape is setSessionTitle's, and so are the reasons behind each part of
+// it: the pane target form so a name cannot resolve by prefix onto a sibling,
+// tmuxTargetMissing so all four spellings of "it is gone" become a 404 the
+// lobby reads as gone instead of broken, and the cache invalidated so the very
+// next poll carries the new value rather than a body built before the stamp.
+//
+// No event is emitted. The catalog has no name for this yet, and an event
+// about a session the record was told to start keeping is the one event the
+// drop rule would most likely still refuse (telemetry.go).
+func setSessionOrigin(w http.ResponseWriter, r *http.Request, osUser, name string) {
+	var body struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	origin := strings.TrimSpace(body.Origin)
+	if origin != originUser && origin != originTest {
+		http.Error(w, "invalid origin", http.StatusBadRequest)
+		return
+	}
+	if msg, err := setOriginOption(osUser, name, origin); err != nil {
+		if tmuxTargetMissing(msg) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("set %s on %s as %s failed: %v: %s", originOption, name, osUser, err, msg)
+		http.Error(w, "set-option failed", http.StatusInternalServerError)
+		return
+	}
+	sessionsCacheInstance.invalidate(osUser)
 	w.WriteHeader(http.StatusNoContent)
 }
 

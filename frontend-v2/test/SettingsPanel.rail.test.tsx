@@ -43,6 +43,15 @@ describe("the Settings rail", () => {
     expect(container.querySelector(".tl-netusage")).toBeNull();
   });
 
+  it("carries Agent spend between Privacy and Skills", () => {
+    // The readout pages come before the rule; Skills is what sits under it.
+    const { container } = panel();
+    const labels = rail(container).map((r) => r.textContent);
+    expect(labels).toContain("Agent spend");
+    expect(labels.indexOf("Agent spend")).toBe(labels.indexOf("Privacy") + 1);
+    expect(labels.indexOf("Skills")).toBe(labels.indexOf("Agent spend") + 1);
+  });
+
   it("swaps the page on a rail click", async () => {
     const { container } = panel();
     fireEvent.click(rail(container).find((r) => r.textContent === "Terminal")!);

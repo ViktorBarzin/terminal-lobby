@@ -17,6 +17,7 @@ import (
 
 	"terminal-lobby/authuser"
 	"terminal-lobby/sessionio"
+	"terminal-lobby/spendstore"
 	"terminal-lobby/telemetry"
 )
 
@@ -365,6 +366,19 @@ func main() {
 	// loopback authenticates a host, and every lobby user has a shell on this
 	// host, so the "user" in the body was previously anyone's to choose.
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
+	// What a Claude Code session has spent, posted by devvm/tl-usage-record from
+	// the statusLine slot (usage.go). Same two gates as its neighbour, for the
+	// same reason. The readings land in /var/lib/tmux-api/spend/<user>.json,
+	// which tmux-api reads to serve the Settings page; both services run as the
+	// same OS user. TL_SPEND_DIR is the scratch-build override for the dev
+	// harness, the same rationale as tmux-api's TMUX_API_PREFS_DIR: a battery
+	// run against a local build must not write the production store. The
+	// systemd unit sets no environment.
+	spendDir := spendstore.Dir
+	if d := strings.TrimSpace(os.Getenv("TL_SPEND_DIR")); d != "" {
+		spendDir = d
+	}
+	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(spendstore.New(spendDir)))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {

@@ -83,10 +83,10 @@ describe("the model chip", () => {
   it("offers the running CLI's own lists", () => {
     const c = mount({ harness: "codex", model: { model: "gpt-5.6-terra", effort: "medium" } });
     fireEvent.click(chip(c)!);
-    expect(labels(c)).toContain("GPT-5.6 terra");
+    expect(labels(c)).toContain("gpt-5.6-terra");
     expect(labels(c)).toContain("Ultra");
     // Claude's models and Claude's top step are not codex's.
-    expect(labels(c)).not.toContain("Opus");
+    expect(labels(c)).not.toContain("claude-opus-5");
     expect(labels(c)).not.toContain("Ultracode");
   });
 
@@ -104,15 +104,15 @@ describe("the model chip", () => {
     const ticked = items(c)
       .filter((b) => b.getAttribute("aria-checked") === "true")
       .map(label);
-    expect(ticked).toEqual(["Sonnet", "Extra high"]);
+    expect(ticked).toEqual(["claude-sonnet-5", "Extra high"]);
   });
 
   it("applies what was picked", () => {
     const onPick = vi.fn();
     const c = mount({ harness: "claude", model: { model: "claude-opus-5" }, onPick });
     fireEvent.click(chip(c)!);
-    fireEvent.click(row(c, "Haiku"));
-    expect(onPick).toHaveBeenCalledWith("model", "haiku");
+    fireEvent.click(row(c, "claude-haiku-4-5-20251001"));
+    expect(onPick).toHaveBeenCalledWith("model", "claude-haiku-4-5-20251001");
   });
 
   // Driving a picker types into somebody's live pane. Doing that to land on the
@@ -122,7 +122,7 @@ describe("the model chip", () => {
     const onPick = vi.fn();
     const c = mount({ harness: "claude", model: { model: "claude-opus-5" }, onPick });
     fireEvent.click(chip(c)!);
-    fireEvent.click(row(c, "Opus"));
+    fireEvent.click(row(c, "claude-opus-5"));
     expect(onPick).not.toHaveBeenCalled();
   });
 

@@ -8,10 +8,10 @@ import type { TitleSession } from "../src/notify/title";
  *
  * The cold-launch handler runs at boot and again on every return to the
  * foreground, and when it cannot identify a tap it prunes. It pruned every
- * record `stashIsActionable` refused, and that predicate refuses two very
- * different things: a receipt past the 15-minute outer window, which is over,
- * and a receipt whose banner is STILL ON SCREEN, which is not over at all. The
- * reader has simply not tapped it yet.
+ * record the actionable test refused, and that test refuses two very different
+ * things: a receipt past its outer window, which is over, and a receipt whose
+ * banner is STILL ON SCREEN, which is not over at all. The reader has simply
+ * not tapped it yet.
  *
  * So opening the app by its icon, or switching back to it, deleted the record
  * for every notification still sitting in the shade. Tapping one of those
@@ -84,14 +84,23 @@ function makeStash(records: readonly Stashed[]) {
   };
 }
 
-/** The banners currently in the shade, by session. Mutable between launches. */
+/**
+ * The banners currently in the shade, by session. Mutable between launches.
+ *
+ * The page asks ONCE with no argument and filters the tags itself, so the fake
+ * answers the same way: getNotifications({tag}) only began honouring its filter
+ * in WebKit main on 2024-08-29 and same-tag banners do not coalesce on iOS
+ * (WebKit bug 258922), so a per-tag count is not something to build on.
+ */
 function showBanners(sessions: readonly string[]) {
   const open = new Set(sessions);
   Object.defineProperty(globalThis.navigator, "serviceWorker", {
     value: {
       getRegistration: async () => ({
-        getNotifications: async ({ tag }: { tag: string }) =>
-          open.has(tag.replace(/^tl-/, "")) ? [{ tag }] : [],
+        getNotifications: async (filter?: { tag?: string }) => {
+          if (filter !== undefined) throw new Error("ask for the whole shade, not one tag");
+          return [...open].map((s) => ({ tag: "tl-" + s }));
+        },
       }),
       addEventListener: () => {},
       removeEventListener: () => {},
@@ -164,14 +173,14 @@ describe("the foreground prune", () => {
   });
 
   it("still forgets a record past the outer window", async () => {
-    const stash = makeStash([minutesAgo(31, "issues")]);
+    const stash = makeStash([minutesAgo(61, "issues")]);
     showBanners([]);
     expect(await foreground(stash, "trip-casia")).toEqual([]);
     expect(stash.kept()).toEqual([]);
   });
 
   it("forgets the expired one and keeps the live one", async () => {
-    const stash = makeStash([minutesAgo(31, "old"), minutesAgo(3, "issues")]);
+    const stash = makeStash([minutesAgo(61, "old"), minutesAgo(3, "issues")]);
     showBanners(["issues"]);
     expect(await foreground(stash, "trip-casia")).toEqual([]);
     expect(stash.kept()).toEqual(["issues"]);
