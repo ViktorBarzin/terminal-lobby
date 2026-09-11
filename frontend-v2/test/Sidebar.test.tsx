@@ -134,8 +134,15 @@ beforeEach(() => {
 describe("<Sidebar>", () => {
   it("renders grouped sessions with the right state dots", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [sess("running1", { state: "running" }), sess("waiting1", { state: "awaiting" })];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["running1"] }], ungrouped: ["waiting1"] };
+    api.sessionsVal = [
+      sess("running1", { state: "running" }),
+      sess("waiting1", { state: "awaiting" }),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["running1"] }],
+      ungrouped: ["waiting1"],
+    };
     const { getByText, container, store } = mount(api);
     await store.refresh();
 
@@ -181,7 +188,11 @@ describe("<Sidebar>", () => {
     // cursor as the menu opens.
     const api = new FakeApi();
     api.sessionsVal = [sess("solo")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["solo"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["solo"],
+    };
     const { container, getByLabelText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
@@ -325,8 +336,7 @@ describe("<Sidebar>", () => {
     // Measured live rather than assigned once: the rows reorder under the
     // pointer as it travels, and a row has to report the seat it is in now.
     for (const card of live()) {
-      card.getBoundingClientRect = () =>
-        stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
+      card.getBoundingClientRect = () => stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
     }
     document.elementFromPoint = (_x: number, y: number) =>
       live().find((c) => {

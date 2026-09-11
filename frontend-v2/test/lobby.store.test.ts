@@ -172,7 +172,11 @@ describe("lobby store", () => {
   it("loads whoami + sessions + layout and derives groups", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["a"] }], ungrouped: ["b"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a"] }],
+      ungrouped: ["b"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       expect(store.me()).toBe("wizard");
@@ -205,7 +209,10 @@ describe("lobby store", () => {
       await store.refresh();
       const id = await store.create("scratch \u{1F680}", "", "name");
       expect(isSessionId(id)).toBe(true);
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(card?.title).toBe("scratch \u{1F680}");
       // stampTitleWhenAlive's first rung, the same ladder the refresh burst uses
       await vi.advanceTimersByTimeAsync(700);
@@ -222,7 +229,10 @@ describe("lobby store", () => {
     await withStore(api, async (store) => {
       await store.refresh();
       const id = await store.create("Fix the deploy\nit 500s on push", "");
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       // The card reads as the prompt's FIRST LINE while it waits.
       expect(card?.title).toBe("Fix the deploy");
       await vi.advanceTimersByTimeAsync(7000);
@@ -327,7 +337,10 @@ describe("lobby store", () => {
       expect(isSessionId(id)).toBe(true);
       expect(api.puts).toHaveLength(1);
       expect(store.toast()).toBeNull();
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(sessionLabel(card!)).toBe(NEW_SESSION_LABEL);
     });
   });
@@ -500,9 +513,7 @@ describe("lobby store", () => {
       await store.refresh();
       store.select("8tw14vd9gyxs"); // minted here; the server has never seen it
 
-      api.sessionsVal = [
-        { ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" },
-      ];
+      api.sessionsVal = [{ ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" }];
       await store.refresh();
 
       expect(store.selected()?.name).toBe("single-word-reply");
@@ -567,7 +578,12 @@ describe("lobby store", () => {
       publishResolvedWatch("824smya2cmz5", false);
 
       api.sessionsVal = [
-        { ...sess("remove-changed-files-panel"), id: "$41", title: "Remove changed files panel", driven: true },
+        {
+          ...sess("remove-changed-files-panel"),
+          id: "$41",
+          title: "Remove changed files panel",
+          driven: true,
+        },
       ];
       await store.refresh();
 
@@ -639,7 +655,11 @@ describe("lobby store", () => {
   it("move: PUTs a layout with the session in the target project", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["a"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["a"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.move("a", "work");

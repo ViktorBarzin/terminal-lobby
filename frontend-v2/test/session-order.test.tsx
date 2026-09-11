@@ -144,7 +144,10 @@ describe("sidebar.order — the roamed pref", () => {
   it("reports the ordering someone picked, with the value they picked", () => {
     // telemetry/events.go: tl.key is the pref path, tl.to the NEW value. A
     // namespace name in either field answers nothing.
-    const next = { ...PREF_DEFAULTS, sidebar: { ...PREF_DEFAULTS.sidebar, order: "active" as const } };
+    const next = {
+      ...PREF_DEFAULTS,
+      sidebar: { ...PREF_DEFAULTS.sidebar, order: "active" as const },
+    };
     expect(changedPrefPaths(PREF_DEFAULTS, next)).toEqual([["sidebar.order", "active"]]);
   });
 });
@@ -189,10 +192,9 @@ async function wire(
 /** What the sidebar would paint, group by group. */
 const painted = (store: LobbyStore): Record<string, string[]> =>
   Object.fromEntries(
-    store.model().groups.map((g) => [
-      g.kind === "ungrouped" ? "" : g.name,
-      g.sessions.map((s) => s.name),
-    ]),
+    store
+      .model()
+      .groups.map((g) => [g.kind === "ungrouped" ? "" : g.name, g.sessions.map((s) => s.name)]),
   );
 
 const three = (): Session[] => [
@@ -246,11 +248,7 @@ describe("the store paints the list in the chosen order", () => {
    */
   it("hands the keyboard the same order the eye sees", async () => {
     const { store } = await wire(rawOrder(), three(), "created");
-    expect(flatSessionOrder(store.model()).map((s) => s.name)).toEqual([
-      "gamma",
-      "beta",
-      "alpha",
-    ]);
+    expect(flatSessionOrder(store.model()).map((s) => s.name)).toEqual(["gamma", "beta", "alpha"]);
   });
 
   it("leaves the ordering alone when nothing wired one in", async () => {
@@ -332,7 +330,12 @@ describe("dragging a card while a time ordering is deciding positions", () => {
    */
   it("keeps the ordering when a move names a group but no position", async () => {
     const { store, order } = await wire(
-      { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["alpha", "beta", "gamma"], ungroupedIndex: 1 },
+      {
+        ...emptyLayout(),
+        projects: [{ name: "work", sessions: [] }],
+        ungrouped: ["alpha", "beta", "gamma"],
+        ungroupedIndex: 1,
+      },
       three(),
       "created",
     );

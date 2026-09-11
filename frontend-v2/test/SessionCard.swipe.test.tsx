@@ -135,7 +135,14 @@ function swipe(
     ms = 0,
   }: { dx: number; dy?: number; x?: number; y?: number; ms?: number },
 ): void {
-  finger(el, [[dx / 2, dy / 2], [dx, dy]], { x, y, ms });
+  finger(
+    el,
+    [
+      [dx / 2, dy / 2],
+      [dx, dy],
+    ],
+    { x, y, ms },
+  );
 }
 
 /** Was the page allowed to scroll while the finger was moving? */
@@ -214,7 +221,11 @@ describe("swiping a session row", () => {
     const { container, store } = mount(api);
     const card = await firstCard(container, store);
 
-    finger(card, [[-140, 0], [-70, 0], [-8, 0]]);
+    finger(card, [
+      [-140, 0],
+      [-70, 0],
+      [-8, 0],
+    ]);
 
     expect(store.selected()).toBeNull();
   });

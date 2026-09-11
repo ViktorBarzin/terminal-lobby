@@ -8,11 +8,7 @@ import {
   Show,
   type Component,
 } from "solid-js";
-import {
-  createLobbyStore,
-  type NotifyKind,
-  type SelectedSession,
-} from "../store/lobby";
+import { createLobbyStore, type NotifyKind, type SelectedSession } from "../store/lobby";
 import { canActAs } from "../lib/mode";
 import { NAME_RE, sessionLabel, type Layout, type SessionTool } from "../types/lobby";
 import {
@@ -121,8 +117,7 @@ export function projectDirFor(layout: Layout, session: string): string | undefin
  * panel opened from the shell bar.
  */
 export const App: Component = () => {
-  const notify = (message: string, kind: NotifyKind) =>
-    toasts.push({ kind, message });
+  const notify = (message: string, kind: NotifyKind) => toasts.push({ kind, message });
 
   // Ahead of the lobby store, which reads the roamed session ordering out of it.
   const prefs = createPrefsStore();
@@ -298,12 +293,13 @@ export const App: Component = () => {
       permission: notifications.permission(),
       // "checking" is the boot state, and it is exactly `unknown`: nothing is
       // known yet, and claiming either answer would be a guess.
-      device: notifications.deviceState() === "checking" ? "unsupported" : (
-        notifications.deviceState() as Exclude<
-          ReturnType<typeof notifications.deviceState>,
-          "checking"
-        >
-      ),
+      device:
+        notifications.deviceState() === "checking"
+          ? "unsupported"
+          : (notifications.deviceState() as Exclude<
+              ReturnType<typeof notifications.deviceState>,
+              "checking"
+            >),
       // Only Run check asks the server; the passive readout does not, because
       // it would mean a request per repaint for an answer that changes rarely.
       server: "unknown",
@@ -353,8 +349,7 @@ export const App: Component = () => {
             }),
           transcriptStatus: () => sessionStatus(),
           sessionsReport: () => store.pollHealth(),
-          updateReady: () =>
-            status.channels().find((c) => c.id === "build")?.state === "degraded",
+          updateReady: () => status.channels().find((c) => c.id === "build")?.state === "degraded",
         }),
       );
     },
@@ -448,7 +443,11 @@ export const App: Component = () => {
   /** Is a session bar — and so its connection badge — on screen? The sidebar's
    *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
   const barOnScreen = () =>
-    sessionBarOnScreen({ selected: store.selected() !== null, flip: flip(), collapsed: collapsed() });
+    sessionBarOnScreen({
+      selected: store.selected() !== null,
+      flip: flip(),
+      collapsed: collapsed(),
+    });
 
   const toggleSidebar = () => {
     const next = !collapsed();
@@ -527,9 +526,7 @@ export const App: Component = () => {
     window.location.href = actAsUrl(window.location.href, osUser);
   };
   const actAsControl = createMemo(() =>
-    isAdmin()
-      ? { users: actAsUsers, current: actingAs, switchTo: switchToUser }
-      : undefined,
+    isAdmin() ? { users: actAsUsers, current: actingAs, switchTo: switchToUser } : undefined,
   );
 
   const selectedName = createMemo(() => store.selected()?.name ?? null);
@@ -732,7 +729,12 @@ export const App: Component = () => {
           { label: "Rename current session", hint: cur, run: () => run("session.rename.current") },
           { label: "Open image gallery", hint: cur, run: () => run("gallery.open") },
           { label: "Paste into terminal", hint: cur, run: () => run("terminal.paste") },
-          { label: "Kill current session", hint: cur, danger: true, run: () => run("session.kill.current") },
+          {
+            label: "Kill current session",
+            hint: cur,
+            danger: true,
+            run: () => run("session.kill.current"),
+          },
         );
       }
       return acts;
@@ -818,7 +820,8 @@ export const App: Component = () => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     const tag = t?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable)) return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable))
+      return;
     // Another overlay owns the keyboard: opening this one over it is the same
     // context leak the chords carried. This overlay itself is exempt — "/" is
     // one of its own dismiss keys.
@@ -1044,11 +1047,7 @@ export const App: Component = () => {
                         >
                           Skills
                         </button>
-                        <button
-                          class="tl-menu-item"
-                          role="menuitem"
-                          onClick={() => openSettings()}
-                        >
+                        <button class="tl-menu-item" role="menuitem" onClick={() => openSettings()}>
                           Settings
                         </button>
                       </Show>

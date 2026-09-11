@@ -776,9 +776,7 @@ describe("the one key handler xterm stores", () => {
    */
   it("routes the word jump through the input path rather than writing it", () => {
     const r = reduce(world({ macLike: true }), ev({ key: "ArrowRight", altKey: true }));
-    expect(r.actions.filter((a) => a.kind === "send")).toEqual([
-      { kind: "send", data: "\x1bf" },
-    ]);
+    expect(r.actions.filter((a) => a.kind === "send")).toEqual([{ kind: "send", data: "\x1bf" }]);
   });
 
   /**
@@ -858,10 +856,7 @@ const MIRRORING: DataWorld = { mirrorEmitting: true };
  * is `cancelScrollMomentum()`; `mirror-out-of-band` is the `mirrorLineReset()`
  * that the `!mirrorEmitting` gate lets through.
  */
-const HEAD: readonly DataAction[] = [
-  { kind: "cancel-momentum" },
-  { kind: "mirror-out-of-band" },
-];
+const HEAD: readonly DataAction[] = [{ kind: "cancel-momentum" }, { kind: "mirror-out-of-band" }];
 
 interface DataRow {
   readonly name: string;
