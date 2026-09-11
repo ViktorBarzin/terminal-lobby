@@ -40,7 +40,6 @@ export class ApiError extends Error {
  */
 export const RESTORE_TIMEOUT_MS = 30000;
 
-
 async function req(
   path: string,
   init?: RequestInit,
@@ -104,9 +103,7 @@ export async function availableCommands(): Promise<Record<string, boolean>> {
   try {
     const m = await json<Record<string, boolean>>("/new-commands", { cache: "no-store" });
     if (!m || typeof m !== "object" || Array.isArray(m)) return {};
-    return Object.fromEntries(
-      Object.entries(m).filter(([, v]) => typeof v === "boolean"),
-    );
+    return Object.fromEntries(Object.entries(m).filter(([, v]) => typeof v === "boolean"));
   } catch {
     return {};
   }
@@ -134,7 +131,9 @@ export function normalizeLayout(raw: Partial<Layout> | null | undefined): Layout
         .filter((p): p is LayoutProject => !!p && typeof p.name === "string")
         .map((p) => ({
           name: p.name,
-          sessions: Array.isArray(p.sessions) ? p.sessions.filter((s) => typeof s === "string") : [],
+          sessions: Array.isArray(p.sessions)
+            ? p.sessions.filter((s) => typeof s === "string")
+            : [],
           ...(typeof p.dir === "string" && p.dir ? { dir: p.dir } : {}),
         }))
     : [];
@@ -185,12 +184,17 @@ export async function putLayout(layout: Layout): Promise<void> {
  * which the undo handler reports as a kill it cannot take back rather than
  * pretending.
  *
- * A 404 is not an error here: the session was already dead, and the caller's
- * layout PUT is what stops its card coming back on the next poll.
+ * A 404 THROWS, like every other non-2xx, and the caller decides what it
+ * means: no session of that name is there, which is not the same as one this
+ * call killed. The store treats the two differently — it still drops the local
+ * layout entry, since the name really is gone, and it reports the kill as not
+ * having happened, so undoing a create whose session tmux-api has since
+ * renamed (ADR-0022) refuses instead of reporting a kill that landed on
+ * nothing while the session went on running (store/lobby.ts sendKill).
  */
 export async function killSession(name: string): Promise<RestoreSelection | null> {
   const res = await req(`/sessions/${encodeURIComponent(name)}`, { method: "DELETE" });
-  if (!res.ok && res.status !== 404) throw new ApiError(res.status, `kill HTTP ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, `kill HTTP ${res.status}`);
   return await asRestoreSelection(res);
 }
 
@@ -367,7 +371,9 @@ export async function listSnapshots(): Promise<SnapshotList> {
  *  set: per row, what restoring it would do and whether it starts ticked.
  *  Resolution is server-side so this and the vanilla lobby cannot drift. */
 export async function getSnapshot(ts: string): Promise<SnapshotRow[]> {
-  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, { cache: "no-store" });
+  const rows = await json<SnapshotRow[]>(`/snapshots/${encodeURIComponent(ts)}`, {
+    cache: "no-store",
+  });
   return Array.isArray(rows) ? rows : [];
 }
 

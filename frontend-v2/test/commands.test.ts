@@ -139,20 +139,25 @@ describe("runAppCommand — edit.undo / edit.redo", () => {
     const redo = vi.fn(() => Promise.resolve<UndoResult>({ ok: true }));
     const { run, notify } = makeRun({ undo: stack({ undo, redo }) });
     run(cmd);
-    await vi.waitFor(() =>
-      expect(cmd === "edit.undo" ? undo : redo).toHaveBeenCalledTimes(1),
-    );
+    await vi.waitFor(() => expect(cmd === "edit.undo" ? undo : redo).toHaveBeenCalledTimes(1));
     expect(notify).not.toHaveBeenCalled();
     // ...and only its own direction ran.
     expect(cmd === "edit.undo" ? redo : undo).not.toHaveBeenCalled();
   });
 
-  it.each(["edit.undo", "edit.redo"] as const)("%s toasts a refusal's reason", async (cmd) => {
+  it.each([
+    ["edit.undo", "Can't undo: that session is gone"],
+    ["edit.redo", "Can't redo: that session is gone"],
+  ] as const)("%s toasts a refusal's reason under its own lead-in", async (cmd, message) => {
+    // A reason is a sentence written to follow one (store/undo.ts
+    // UndoHandler.check), so it starts lower case and reads as a fragment on
+    // its own. The lead-in is added here rather than in the store, which does
+    // not know which direction the press was going.
     const refuse = () => Promise.resolve<UndoResult>({ ok: false, reason: "that session is gone" });
     const { run, notify } = makeRun({ undo: stack({ undo: refuse, redo: refuse }) });
     run(cmd);
     await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
-    expect(notify).toHaveBeenCalledWith("that session is gone", "warning");
+    expect(notify).toHaveBeenCalledWith(message, "warning");
   });
 
   it.each(["edit.undo", "edit.redo"] as const)("%s stays silent on an empty stack", async (cmd) => {

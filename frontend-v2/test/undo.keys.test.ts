@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createKeybindingEngine, type KeybindingEngine } from "../src/keybindings/engine";
 import { keyContext, type KeyContextInput } from "../src/keybindings/bindings.logic";
+import { Terminal } from "@xterm/xterm";
 import { isEditingTarget } from "../src/keybindings/editing";
 import { EMPTY_HELD } from "../src/terminal/held";
 import { reduce, type KeyWorld } from "../src/terminal/keys";
@@ -91,6 +92,60 @@ describe("isEditingTarget — who owns Cmd+Z right now", () => {
     const editor = el('<div class="cm-editor"><div class="cm-line"></div></div>');
     const line = editor.querySelector(".cm-line") as Element;
     expect(isEditingTarget(line)).toBe(true);
+  });
+
+  /**
+   * The one case the flag exists to get right, and the one a fixture cannot
+   * check: the terminal.
+   *
+   * xterm types through a hidden `<textarea class="xterm-helper-textarea">`
+   * inside its `.xterm` element, and `term.focus()` focuses exactly that
+   * (@xterm/xterm 6.0.0). It is a plain non-readonly TEXTAREA, so reading the
+   * tag alone says "a field is being typed into" for every attached session —
+   * and then Cmd+Z does nothing in a session and Ctrl+Z goes on suspending the
+   * foreground job, which is the pair ADR-0024 turned down.
+   *
+   * Focused for real rather than passed in, because App reads
+   * `document.activeElement` (components/App.tsx keyContext) and the bug was
+   * invisible to every test that hands the flag over as a fixture.
+   */
+  it("does not yield to the terminal, whose input proxy is a textarea", () => {
+    // The REAL xterm, opened and focused, rather than markup written from
+    // memory: what this has to be right about is upstream's DOM, and a fixture
+    // of it would go on passing after an xterm bump moved the class.
+    (window as unknown as Record<string, unknown>).matchMedia = () => ({
+      matches: false,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    });
+    const host = document.createElement("div");
+    Object.defineProperty(host, "clientWidth", { value: 800 });
+    Object.defineProperty(host, "clientHeight", { value: 600 });
+    document.body.appendChild(host);
+    const term = new Terminal({ cols: 80, rows: 24 });
+    term.open(host);
+    term.focus();
+
+    const active = document.activeElement as HTMLTextAreaElement;
+    expect(active.tagName, "xterm focuses its helper textarea").toBe("TEXTAREA");
+    expect(active.readOnly, "xterm only sets readOnly under disableStdin").toBe(false);
+    expect(isEditingTarget(active)).toBe(false);
+
+    term.dispose();
+    host.remove();
+  });
+
+  it("does not yield to xterm's accessibility tree either", () => {
+    // Anything xterm mounts inside its own element is the terminal, which is
+    // why the test is by ancestry rather than on the helper textarea's class.
+    const host = document.createElement("div");
+    host.innerHTML =
+      '<div class="xterm"><div class="xterm-accessibility">' +
+      '<div contenteditable="true"></div></div></div>';
+    const live = host.querySelector("[contenteditable]") as Element;
+    expect(isEditingTarget(live)).toBe(false);
   });
 
   it("does not yield to a readonly field", () => {

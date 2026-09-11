@@ -124,19 +124,24 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
     [
       "Undo",
       [
-        // The table binds ctrl+ AND meta+ for each of these, so the row shows
-        // whichever this keyboard has. test/bindings.logic.test.ts checks both
-        // spellings are documented, by building this table for both platforms.
+        // The table binds ctrl+ AND meta+ for each of these, on every platform.
+        // A Mac therefore has TWO chords for one command, and the second one
+        // costs something a Mac user would not expect: Ctrl+Z stops suspending
+        // the foreground job in a session. So the Mac rows name both keys
+        // rather than only the one this keyboard would reach for first.
+        // Elsewhere Ctrl and the Mod label are the same key, so the row stays a
+        // single chip. test/bindings.logic.test.ts checks both spellings are
+        // documented ON EACH platform's own table.
         //
         // Not marked "always on", and that is the point rather than an
         // omission: these two are ordinary default rows, so the switch named
         // below turns them off — which is how somebody gets Ctrl+Z back as the
         // shell's suspend key inside a session.
         [
-          [`${MOD}+Z`],
+          isMac ? [`${MOD}+Z`, "Ctrl+Z"] : [`${MOD}+Z`],
           "Undo the last change to the sidebar (kill, new, rename, reorder, move, project)",
         ],
-        [[`${MOD}+Shift+Z`], "Redo it"],
+        [isMac ? [`${MOD}+Shift+Z`, "Ctrl+Shift+Z"] : [`${MOD}+Shift+Z`], "Redo it"],
       ],
     ],
   ];

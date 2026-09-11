@@ -53,6 +53,23 @@ const TEXT_INPUT_TYPES: ReadonlySet<string> = new Set([
 export function isEditingTarget(el: Element | null | undefined): boolean {
   if (!el) return false;
 
+  // THE TERMINAL IS NOT A TEXT FIELD, whatever its DOM says. xterm types
+  // through a hidden proxy — `<textarea class="xterm-helper-textarea">` inside
+  // its `.xterm` element (node_modules/@xterm/xterm 6.0.0, Terminal.open) —
+  // and `term.focus()` focuses exactly that, so an attached session leaves
+  // document.activeElement on a TEXTAREA. It carries no readOnly either
+  // (xterm sets that only under `disableStdin`, which this app never passes),
+  // so without this line the branch below reads every attached session as a
+  // field being typed into: `editing` would be true wherever a session is
+  // open, Cmd+Z would do nothing there, and Ctrl+Z would go on suspending the
+  // foreground job. That is the outcome ADR-0024 turned down.
+  //
+  // By ancestry rather than by the textarea's own class, so the accessibility
+  // tree and anything else xterm mounts inside its element is covered too.
+  // Nothing of ours lives in there: `.xterm` is the element xterm creates
+  // inside our container, not the container (terminal/TerminalNative.tsx).
+  if (el.closest(".xterm")) return false;
+
   // The editor first, and by ancestry: a click can leave focus on a `.cm-line`
   // rather than on the contentDOM, and CodeMirror's keymap still runs from
   // there. Nothing in this app mounts it readonly.

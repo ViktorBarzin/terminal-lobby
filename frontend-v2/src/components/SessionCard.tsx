@@ -1,11 +1,4 @@
-import {
-  createSignal,
-  For,
-  onCleanup,
-  Show,
-  type Accessor,
-  type Component,
-} from "solid-js";
+import { createSignal, For, onCleanup, Show, type Accessor, type Component } from "solid-js";
 import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
@@ -84,8 +77,7 @@ export const SessionCard: Component<{
   const lens = () => lensTarget(props.store.whoami(), ACT_AS);
   const choice = () => watchChoice(s().name, lens());
   const willWatch = () =>
-    resolvedWatchFor(s().name) ??
-    resolveWatch(choice(), s().driven === true, !!lens());
+    resolvedWatchFor(s().name) ?? resolveWatch(choice(), s().driven === true, !!lens());
 
   const setChoice = (c: WatchChoice) => {
     saveWatch(s().name, c, lens());
@@ -93,7 +85,7 @@ export const SessionCard: Component<{
   };
   const isActive = () =>
     props.store.selected()?.name === s().name &&
-    (props.store.selected()?.owner ?? "") === (foreign() ? s().owner ?? "" : "");
+    (props.store.selected()?.owner ?? "") === (foreign() ? (s().owner ?? "") : "");
 
   // --- On its way out ------------------------------------------------------
   /**
@@ -107,37 +99,37 @@ export const SessionCard: Component<{
    */
   const killing = () => props.store.killing(s().name);
   /**
-   * Is there a press to offer? The arrow appears only when the stack would
-   * actually do something: a lens tab (`?as=bob`) runs with undo off, and a
-   * page App has wired no stack into has none at all. A visible arrow that did
-   * nothing would be worse than the fade on its own.
+   * Is there a press to offer? Whenever the window is running, which is the
+   * whole time this card is dimmed. Retracting a kill that has sent nothing
+   * needs no undo history to do it (store/lobby.ts takeBackKill), so the arrow
+   * is live even in a tab whose stack is switched off — a lens tab (`?as=bob`),
+   * where the session belongs to somebody else and the fade was the only thing
+   * on offer.
    */
-  const canTakeBack = () => killing() && props.store.undo?.canUndo() === true;
+  const canTakeBack = () => killing();
   /**
    * The way back, and on a phone the ONLY one: there is no Cmd+Z on a touch
    * screen, and the right-swipe that kills has no confirm in front of it any
    * more.
    *
-   * This presses the STACK rather than retracting this card's own kill. The
-   * entry has to come off, or a later Cmd+Z would undo a kill that was already
-   * taken back (store/undo.kill.ts). The press is therefore the top of the
-   * stack, exactly as the chord is: two kills held at once and the older card's
-   * arrow brings the NEWER session back, which is the same thing Cmd+Z does and
-   * costs a second press rather than a wrong outcome.
+   * THIS CARD'S KILL, not the top of the stack. The two used to be the same
+   * press, which meant anything done during the eight seconds — a group
+   * collapsed, another card renamed, a second kill — took the arrow's press
+   * instead, silently, while the session it is drawn on went on dying. The
+   * store presses the entry this kill pushed and leaves the rest of the
+   * history alone.
    *
    * The refusal toast is the caller's job, not the store's (store/undo.ts
-   * UndoResult): a `reason` of null is the deliberate silence of an empty
-   * stack, and a success says nothing at all.
+   * UndoResult): a `reason` of null is the deliberate silence of nothing to
+   * do, and a success says nothing at all.
    */
   const takeBack = async (e: MouseEvent) => {
     // Synchronously, before any await: the click bubbles to the row's own
     // handler, and by then the retraction has already flipped `killing` back to
     // false, so the press that rescued the session would go on to open it.
     e.stopPropagation();
-    const stack = props.store.undo;
-    if (!stack) return;
-    const r = await stack.undo();
-    if (!r.ok && r.reason) showToast(r.reason, "warning");
+    const r = await props.store.takeBackKill(s().name);
+    if (!r.ok && r.reason) showToast(`Can't undo: ${r.reason}`, "warning");
   };
 
   const [editing, setEditing] = createSignal(false);
@@ -532,7 +524,10 @@ export const SessionCard: Component<{
       </Show>
 
       <Show when={foreign()}>
-        <span class="tl-card-owner" title={`${s().owner} · ${s().access === "rw" ? "read-write" : "read-only"}`}>
+        <span
+          class="tl-card-owner"
+          title={`${s().owner} · ${s().access === "rw" ? "read-write" : "read-only"}`}
+        >
           {s().access === "rw" ? "✎" : "👁"} {s().owner}
         </span>
       </Show>

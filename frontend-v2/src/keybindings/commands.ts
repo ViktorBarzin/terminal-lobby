@@ -214,14 +214,18 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
       // success toast is deliberate: the sidebar changing back IS the feedback,
       // and a toast per press would bury the screen on a run of them.
       //
-      // The reason is toasted VERBATIM, with no lead-in of ours, because the
-      // dimmed card's undo arrow does the same for the same refusal
-      // (SessionCard.tsx `takeBack`) and one string must not read two ways
-      // depending on which affordance you reached for.
+      // A refusal is a SENTENCE, written lower case to read after a lead-in
+      // ("that session is still running"), and the lead-in is added here
+      // rather than baked into the store: the store stays free of the
+      // direction the press was going, and a toast that began mid-sentence in
+      // lower case read as a bug. The dimmed card's arrow builds the same
+      // prefix (SessionCard.tsx `takeBack`), so one string cannot read two
+      // ways depending on which affordance you reached for.
       const stack = undoStack();
       if (!stack) return;
+      const lead = cmd === "edit.undo" ? "Can't undo" : "Can't redo";
       void (cmd === "edit.undo" ? stack.undo() : stack.redo()).then((r) => {
-        if (!r.ok && r.reason) deps.notify(r.reason, "warning");
+        if (!r.ok && r.reason) deps.notify(`${lead}: ${r.reason}`, "warning");
       });
       return;
     }

@@ -10,10 +10,10 @@
  *
  * THE ARROW IS THE PHONE'S WHOLE UNDO. There is no Cmd+Z on a touch screen and
  * no confirm in front of the right-swipe any more, so this button is the only
- * way back from a swipe nobody meant. It presses the tab's stack
- * (store/undo.ts), the same thing the chord presses, rather than retracting
- * this one card's kill: the entry has to come off the stack, or a later Cmd+Z
- * would undo a kill that was already taken back (store/undo.kill.ts).
+ * way back from a swipe nobody meant. It presses THIS card's kill through
+ * `store.takeBackKill`, which finds that kill's own entry on the stack rather
+ * than taking whatever is on top of it (store/lobby.ts; test/undo.kill.test.ts
+ * drives the store end of it).
  *
  * Rendering is asserted here. What fades, and how big the target is under a
  * finger, are asserted against the stylesheet at the bottom instead, for the
@@ -28,7 +28,7 @@ import { SessionCard } from "../src/components/SessionCard";
 import { toasts } from "../src/store/toast";
 import type { Session } from "../src/types/lobby";
 import type { LobbyStore } from "../src/store/lobby";
-import type { UndoResult, UndoStore } from "../src/store/undo";
+import type { UndoResult } from "../src/store/undo";
 
 const session = (over: Partial<Session> = {}): Session => ({
   name: "main",
@@ -38,38 +38,23 @@ const session = (over: Partial<Session> = {}): Session => ({
   ...over,
 });
 
-/** A stack that accepts every press. Overridden per case. */
-function stubStack(over: Partial<UndoStore> = {}): UndoStore {
-  return {
-    push: () => {},
-    undo: async (): Promise<UndoResult> => ({ ok: true }),
-    redo: async (): Promise<UndoResult> => ({ ok: true }),
-    canUndo: () => true,
-    canRedo: () => false,
-    clear: () => {},
-    carry: () => {},
-    ...over,
-  };
-}
-
 interface Mounted {
   container: HTMLElement;
   select: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
+  takeBackKill: ReturnType<typeof vi.fn>;
 }
 
 /**
  * One card, with the two store members this file is about: `killing`, which the
- * row reads to decide it is going away, and `undo`, this tab's stack. App owns
- * the one instance and hands it to the store, which is how a component that
- * holds a store reaches it (store/lobby.ts LobbyStore.undo).
- *
- * `stack: undefined` is a real state and not an omission: a page with no undo
- * at all, which is what a lens tab (`?as=bob`) has.
+ * row reads to decide it is going away, and `takeBackKill`, which the arrow
+ * presses. The store owns both, and what `takeBackKill` does with the stack is
+ * its business rather than the card's (store/lobby.ts).
  */
-function mount(o: { killing?: boolean; stack?: UndoStore } = {}): Mounted {
+function mount(o: { killing?: boolean; answer?: UndoResult } = {}): Mounted {
   const select = vi.fn();
   const kill = vi.fn(async () => {});
+  const takeBackKill = vi.fn(async (): Promise<UndoResult> => o.answer ?? { ok: true });
   const store = {
     sessions: [],
     me: () => "wizard",
@@ -79,14 +64,14 @@ function mount(o: { killing?: boolean; stack?: UndoStore } = {}): Mounted {
     hold: () => () => {},
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
     killing: () => o.killing ?? false,
-    undo: "stack" in o ? o.stack : stubStack(),
     select,
     kill,
+    takeBackKill,
   } as unknown as LobbyStore;
   const { container } = render(() => (
     <SessionCard store={store} session={session()} groupName="" tick={() => 0} />
   ));
-  return { container, select, kill };
+  return { container, select, kill, takeBackKill };
 }
 
 const card = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-card")!;
@@ -149,13 +134,17 @@ describe("<SessionCard> — a session inside its kill window", () => {
     expect(arrow(container)!.hasAttribute("disabled")).toBe(false);
   });
 
-  it("presses this tab's stack when the arrow is clicked", async () => {
-    const undo = vi.fn(async (): Promise<UndoResult> => ({ ok: true }));
-    const { container } = mount({ killing: true, stack: stubStack({ undo }) });
+  it("takes back THIS session's kill when the arrow is clicked", async () => {
+    // By name, not by "the last thing that happened". Anything can land on the
+    // stack during the eight seconds — a group collapsing, another card's
+    // rename, a second kill — and the arrow on this card must reach this
+    // card's kill through all of it (store/lobby.ts takeBackKill).
+    const { container, takeBackKill } = mount({ killing: true });
 
     arrow(container)!.click();
 
-    await waitFor(() => expect(undo).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(takeBackKill).toHaveBeenCalledTimes(1));
+    expect(takeBackKill).toHaveBeenCalledWith("main");
   });
 
   /**
@@ -186,23 +175,27 @@ describe("<SessionCard> — a session inside its kill window", () => {
    * this path the caller is the card. A refusal that said nothing would look
    * exactly like a button that does not work.
    */
-  it("says why when the stack refuses", async () => {
-    const stack = stubStack({
-      undo: async (): Promise<UndoResult> => ({ ok: false, reason: "that session is already gone" }),
-    });
-    const { container } = mount({ killing: true, stack });
+  it("says why when the store refuses, under a lead-in", async () => {
+    // The sentence is written lower case to read after one (store/undo.ts
+    // UndoHandler.check), and the two affordances that show it — this arrow
+    // and the chord's toast in keybindings/commands.ts — build the same
+    // prefix, so one string cannot read two ways.
+    const answer: UndoResult = { ok: false, reason: "that session is already gone" };
+    const { container } = mount({ killing: true, answer });
 
     arrow(container)!.click();
 
     await waitFor(() =>
-      expect(toasts.toasts().map((t) => t.message)).toEqual(["that session is already gone"]),
+      expect(toasts.toasts().map((t) => t.message)).toEqual([
+        "Can't undo: that session is already gone",
+      ]),
     );
   });
 
-  /** `reason: null` is the store's silent no-op: an empty stack, or a lens tab. */
+  /** `reason: null` is the store's silent no-op: nothing of this kill to take
+   *  back, which is what a press racing the timer gets. */
   it("stays silent when the refusal has nothing to say", async () => {
-    const stack = stubStack({ undo: async (): Promise<UndoResult> => ({ ok: false, reason: null }) });
-    const { container } = mount({ killing: true, stack });
+    const { container } = mount({ killing: true, answer: { ok: false, reason: null } });
 
     arrow(container)!.click();
 
@@ -210,17 +203,13 @@ describe("<SessionCard> — a session inside its kill window", () => {
     expect(toasts.toasts()).toEqual([]);
   });
 
-  it("draws no arrow on a page that has no undo at all", () => {
-    // A lens tab (`?as=bob`), and today also an App that has not wired a stack.
-    // An arrow that did nothing would be worse than the dim on its own.
-    const { container } = mount({ killing: true, stack: undefined });
-    expect(arrow(container)).toBeNull();
+  it("draws the arrow whenever the window is running, stack or no stack", () => {
+    // Including a lens tab (`?as=bob`), which runs with undo off. Retracting a
+    // kill that has sent nothing needs no history to do it, and that tab is
+    // the one where the session belongs to somebody else.
+    const { container } = mount({ killing: true });
+    expect(arrow(container)).not.toBeNull();
     expect(card(container).hasAttribute("data-killing")).toBe(true);
-  });
-
-  it("draws no arrow when there is nothing on the stack to press", () => {
-    const { container } = mount({ killing: true, stack: stubStack({ canUndo: () => false }) });
-    expect(arrow(container)).toBeNull();
   });
 
   it("hides the ⋯ menu, since nothing in it applies to a session that is leaving", () => {
@@ -323,9 +312,7 @@ describe("the killing card, in sidebar.css", () => {
   });
 
   it("strikes the title through, because a dim row alone reads as disabled", () => {
-    expect(body(".tl-card[data-killing] .tl-card-name")).toMatch(
-      /text-decoration:\s*line-through/,
-    );
+    expect(body(".tl-card[data-killing] .tl-card-name")).toMatch(/text-decoration:\s*line-through/);
   });
 
   it("keeps the arrow visible without a hover, which a phone never sends", () => {

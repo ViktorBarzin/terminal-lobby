@@ -116,6 +116,17 @@ export interface KillUndoPorts {
    * the press wanted anyway rather than a failure.
    */
   killLater(session: string): boolean;
+  /**
+   * The DELETE that is out for this session right now, or undefined when
+   * there is none (store/lobby.ts killNow).
+   *
+   * The THIRD state a kill passes through, and the only one the pair above
+   * cannot describe: the grace timer has fired, so no window is pending, and
+   * the session is still in the list, because the prune happens after the
+   * request answers. A press landing there used to be told the session was
+   * still running.
+   */
+  killInFlight(session: string): Promise<boolean> | undefined;
   /** What this page life holds that could bring that session back: the record
    *  its kill answered with, null when the server sent none, and undefined
    *  when this page never killed it (a reload, or somebody else's kill). */
@@ -183,6 +194,10 @@ async function killAgain(ports: KillUndoPorts, session: string): Promise<void> {
 /**
  * Which of the three states this session is in, from the entry's point of view.
  * `check` and both directions all ask, and they must agree.
+ *
+ * A kill whose DELETE is in flight reads as "live" here, which is what `check`
+ * wants — it must not refuse a press that is still in time — and `undo` looks
+ * for that case itself before it trusts the answer (`killInFlight`).
  */
 function state(ports: KillUndoPorts, session: string): "pending" | "live" | "dead" {
   if (ports.pending(session)) return "pending";
@@ -206,6 +221,29 @@ function killHandler(ports: KillUndoPorts): UndoHandler<KillEntry> {
       // put back, because nothing was ever sent.
       if (ports.cancelKill(entry.session)) {
         if (entry.wasSelected) ports.select(entry.session);
+        return;
+      }
+      // The DELETE is already out and has not answered. The press is in time
+      // by every measure a person has — the card is still on screen and the
+      // window has only just run out — so it waits for the request rather than
+      // reading the half-finished world underneath it. The wait is real: that
+      // DELETE snapshots the whole box before it kills (tmux-api/snapshots.go
+      // resurrectRecordFor). Answering from the state as it stands would say
+      // "still running", drop the entry, and leave nothing to bring the
+      // session back with once the kill landed a moment later.
+      const landing = ports.killInFlight(entry.session);
+      if (landing) {
+        await landing;
+        // The kill did not go through (the store has toasted). The session is
+        // where the undo wanted it, so there is nothing left to do but hand
+        // back the selection the kill took.
+        if (ports.isLive(entry.session)) {
+          if (entry.wasSelected) ports.select(entry.session);
+          return;
+        }
+        const landed = ports.killRecord(entry.session);
+        if (!landed) throw new Error(NO_RECORD);
+        await bringBack(ports, entry, landed);
         return;
       }
       // Alive with no window in front of it. This is what a tab that crashed

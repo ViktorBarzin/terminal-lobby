@@ -377,11 +377,31 @@ function orderModeHandler(ports: LayoutUndoPorts): UndoHandler<OrderModeEntry> {
       return null;
     },
     async undo(entry) {
+      const cap = entry.capturedLayout;
+      // The guard AGAIN, here rather than only in `check`, because `check`
+      // cannot see which direction it is about to run and this test only holds
+      // for one of them. The undo below restores a whole document, so it may
+      // only run while the live one is still the document the freeze wrote;
+      // after an undo the live document is `cap.over` instead, which is
+      // exactly what a redo starts from, so the same test in `check` would
+      // refuse every redo.
+      //
+      // `check` therefore asks it only in the state it can be sure of
+      // (`cur === entry.after`), and the hole that leaves is real: the mode
+      // ROAMS through prefs `sidebar.order`, so another device can have moved
+      // it back to `entry.before` while this tab still holds the entry. The
+      // first leg of `check` then passes, the arrangement leg is skipped, and
+      // without this line the undo would PUT a document captured before the
+      // other device's session existed. PUT /api/layout replaces the whole
+      // document with no version check (store/lobby.ts saveLayout), so that
+      // one write is the blind write this whole file exists to avoid.
+      if (cap && !sameArrangement(ports.layout(), cap.wrote)) {
+        throw new Error(ARRANGEMENT_CHANGED);
+      }
       // The mode first. After it the list is back on a timestamp ordering, so
       // the arrangement the write puts back is not on screen while it lands.
       const was = ports.order();
       ports.setOrder(entry.before);
-      const cap = entry.capturedLayout;
       if (cap && !(await ports.save(cap.over))) {
         ports.setOrder(was);
         throw new Error(SAVE_FAILED);

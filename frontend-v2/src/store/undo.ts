@@ -190,6 +190,27 @@ export interface UndoStore {
   push(entry: NewUndoEntry): void;
   undo(): Promise<UndoResult>;
   redo(): Promise<UndoResult>;
+  /**
+   * Undo the NEWEST entry `match` accepts, wherever it sits on the stack,
+   * rather than the one on top. Everything else is an ordinary undo: the same
+   * precondition, the same refusal sentence, and the entry lands on the redo
+   * stack so the action can be done again.
+   *
+   * For an affordance that names ONE action instead of "the last thing you
+   * did". The dimmed card's ↺ arrow is the only one today: it is attached to a
+   * particular session's kill, and pressing the top of the stack from there
+   * undid whatever had happened since — a group collapsing, another card's
+   * rename — while the session it was drawn on went on dying
+   * (components/SessionCard.tsx).
+   *
+   * Out of order is safe for that entry and is not a general licence: an undo
+   * stack is a sequence of inverses, and skipping one only holds where the two
+   * are independent. A kill inside its grace window has sent nothing, so
+   * retracting it changes nothing another entry could be describing.
+   *
+   * A silent no-op when nothing matches, the same shape an empty stack gives.
+   */
+  undoEntry(match: (entry: UndoEntry) => boolean): Promise<UndoResult>;
   canUndo: Accessor<boolean>;
   canRedo: Accessor<boolean>;
   /** Forget everything, both halves. */
@@ -344,13 +365,17 @@ export function createUndoStore(opts: UndoStoreOptions = {}): UndoStore {
    * the entry, land it on the other), and writing them twice is how the two
    * halves of an undo/redo pair drift apart.
    */
-  async function step(dir: "undo" | "redo"): Promise<UndoResult> {
+  async function step(dir: "undo" | "redo", at?: number): Promise<UndoResult> {
     if (!enabled) return NOTHING;
     const from = dir === "undo" ? undoable : redoable;
     const setFrom = dir === "undo" ? setUndoable : setRedoable;
     const setTo = dir === "undo" ? setRedoable : setUndoable;
     const stack = from();
-    const entry = stack[stack.length - 1];
+    // `at` is the one caller that names an entry rather than taking the top
+    // ({@link UndoStore.undoEntry}); everything after this line reads the same
+    // for both.
+    const idx = at ?? stack.length - 1;
+    const entry = stack[idx];
     if (!entry) return NOTHING;
     // Off the stack FIRST, whatever happens next. A refused entry that stayed
     // on top would swallow every further press, and the whole point of dropping
@@ -359,7 +384,7 @@ export function createUndoStore(opts: UndoStoreOptions = {}): UndoStore {
     // Popping before the first `await` is also what makes two fast presses
     // safe: the second one reads a stack the first has already shortened, so it
     // takes the entry below rather than applying the same one twice.
-    setFrom(stack.slice(0, -1));
+    setFrom([...stack.slice(0, idx), ...stack.slice(idx + 1)]);
     const handler = registry.get(entry.kind);
     if (!handler) {
       persist();
@@ -414,10 +439,24 @@ export function createUndoStore(opts: UndoStoreOptions = {}): UndoStore {
     persist();
   }
 
+  async function undoEntry(match: (entry: UndoEntry) => boolean): Promise<UndoResult> {
+    if (!enabled) return NOTHING;
+    const stack = undoable();
+    // Newest first: two kills of the same name cannot both be on the stack
+    // undone, but a kill and its redo can, and the one a person is looking at
+    // is the most recent.
+    for (let i = stack.length - 1; i >= 0; i--) {
+      const entry = stack[i];
+      if (entry && match(entry)) return step("undo", i);
+    }
+    return NOTHING;
+  }
+
   return {
     push,
     undo: () => step("undo"),
     redo: () => step("redo"),
+    undoEntry,
     canUndo: () => undoable().length > 0,
     canRedo: () => redoable().length > 0,
     clear,

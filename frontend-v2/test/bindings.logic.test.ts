@@ -165,16 +165,38 @@ describe("the help overlay enumerates every bound chord", () => {
       .flatMap(([keys]) => keys.flatMap(expand)),
   );
 
-  it.each(
-    [...KB_DEFAULT_BINDINGS, ...KB_ALWAYS_BINDINGS].map((b) => [b.key, b.command] as const),
-  )("%s (%s) has a help row", (key) => {
-    expect(documented.has(norm(key))).toBe(true);
-  });
+  it.each([...KB_DEFAULT_BINDINGS, ...KB_ALWAYS_BINDINGS].map((b) => [b.key, b.command] as const))(
+    "%s (%s) has a help row",
+    (key) => {
+      expect(documented.has(norm(key))).toBe(true);
+    },
+  );
+
+  /**
+   * The union above is honest for every row that names ONE modifier per
+   * platform, and blind for the undo rows, which bind ctrl+ and meta+ on both.
+   * A Mac reader of that table would have seen Cmd+Z alone while Ctrl+Z was
+   * bound underneath it, taking the shell's suspend key with no row saying so.
+   */
+  it.each(["ctrl+z", "meta+z", "ctrl+shift+z", "meta+shift+z"])(
+    "%s is written down on the Mac table too, not only the PC one",
+    (key) => {
+      const mac = new Set(
+        buildShortcutGroups(altLabel(true), true)
+          .flatMap(([, rows]) => rows)
+          .flatMap(([keys]) => keys.flatMap(expand)),
+      );
+      expect(mac.has(norm(key))).toBe(true);
+    },
+  );
 });
 
 describe("matchesAppChord — gating", () => {
   it("matches an enabled default chord in context (Ctrl+Shift+K -> palette.toggle)", () => {
-    const b = matchesAppChord(ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }), input());
+    const b = matchesAppChord(
+      ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }),
+      input(),
+    );
     expect(b?.command).toBe("palette.toggle");
   });
 
@@ -308,10 +330,16 @@ describe("matchesAppChord — gating", () => {
       ["session.next", ev({ altKey: true, shiftKey: true, key: "}", code: "BracketRight" })],
       ["session.prev", ev({ altKey: true, shiftKey: true, key: "{", code: "BracketLeft" })],
       ["session.attach.2", ev({ altKey: true, key: "2", code: "Digit2" })],
-      [
-        "session.next.awaiting",
-        ev({ altKey: true, shiftKey: true, key: "Enter", code: "Enter" }),
-      ],
+      ["session.next.awaiting", ev({ altKey: true, shiftKey: true, key: "Enter", code: "Enter" })],
+      // Undo switches session too: bringing a kill back re-selects the session
+      // the kill took (store/undo.kill.ts bringBack), and the press has no
+      // confirm in front of it. `editing` does not cover this — focus on the
+      // preview's Save or mode button is not a text field — so the draft died
+      // on a press meant to save a session.
+      ["edit.undo", ev({ ctrlKey: true, key: "z", code: "KeyZ" })],
+      ["edit.undo", ev({ metaKey: true, key: "z", code: "KeyZ" })],
+      ["edit.redo", ev({ ctrlKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
+      ["edit.redo", ev({ metaKey: true, shiftKey: true, key: "Z", code: "KeyZ" })],
     ];
 
     for (const [command, e] of switchChords) {
@@ -336,9 +364,21 @@ describe("matchesAppChord — gating", () => {
       ).toBe("sidebar.toggle");
     });
 
+    it("every undo binding carries the guard", () => {
+      const undoRows = KB_DEFAULT_BINDINGS.filter(
+        (b) => b.command === "edit.undo" || b.command === "edit.redo",
+      );
+      expect(undoRows.length).toBe(4); // ctrl and meta, each with and without shift
+      for (const b of undoRows) {
+        expect(b.when, `${b.command} must be gated on !previewDirty`).toContain("!previewDirty");
+      }
+    });
+
     it("every session-switch binding carries the guard", () => {
       const switching = KB_DEFAULT_BINDINGS.filter(
-        (b) => /^session\.(attach\.\d+|prev|next)$/.test(b.command) || b.command === "session.next.awaiting",
+        (b) =>
+          /^session\.(attach\.\d+|prev|next)$/.test(b.command) ||
+          b.command === "session.next.awaiting",
       );
       expect(switching.length).toBe(13); // 10 attach slots + prev + next + next.awaiting
       for (const b of switching) {
@@ -356,12 +396,12 @@ describe("matchesAppChord — gating", () => {
   });
 
   it("maps Alt+0 to session.attach.10 and Alt+9 to session.attach.9", () => {
-    expect(
-      matchesAppChord(ev({ altKey: true, key: "0", code: "Digit0" }), input())?.command,
-    ).toBe("session.attach.10");
-    expect(
-      matchesAppChord(ev({ altKey: true, key: "9", code: "Digit9" }), input())?.command,
-    ).toBe("session.attach.9");
+    expect(matchesAppChord(ev({ altKey: true, key: "0", code: "Digit0" }), input())?.command).toBe(
+      "session.attach.10",
+    );
+    expect(matchesAppChord(ev({ altKey: true, key: "9", code: "Digit9" }), input())?.command).toBe(
+      "session.attach.9",
+    );
   });
 });
 
@@ -448,12 +488,16 @@ describe("the undo chords", () => {
     // name must not cost you Alt+Shift+S.
     const editingCtx = ctx({ editing: true });
     expect(
-      matchesAppChord(ev({ altKey: true, shiftKey: true, key: "S", code: "KeyS" }), input({ ctx: editingCtx }))
-        ?.command,
+      matchesAppChord(
+        ev({ altKey: true, shiftKey: true, key: "S", code: "KeyS" }),
+        input({ ctx: editingCtx }),
+      )?.command,
     ).toBe("sidebar.toggle");
     expect(
-      matchesAppChord(ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }), input({ ctx: editingCtx }))
-        ?.command,
+      matchesAppChord(
+        ev({ ctrlKey: true, shiftKey: true, key: "K", code: "KeyK" }),
+        input({ ctx: editingCtx }),
+      )?.command,
     ).toBe("palette.toggle");
   });
 });

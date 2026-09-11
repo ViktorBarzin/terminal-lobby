@@ -150,6 +150,26 @@ describe("Settings — the App shortcuts checkbox says what it does not cover", 
   it("localizes the Ctrl+J exemption to Cmd on a Mac", () => {
     expect(keyboardGroupText("Option")).toContain("cmd+j");
   });
+
+  /**
+   * The kill chord asked `Kill session "x"?` until the grace window replaced
+   * the confirm (store/lobby.ts kill). ShortcutsHelp and docs/interface.md were
+   * corrected with it; this second copy of the same sentence was not, and
+   * nothing here read it, so the settings page went on promising a question
+   * that no longer appears.
+   */
+  it("does not promise a confirm the kill chord no longer shows", () => {
+    const text = keyboardGroupText("Alt");
+    expect(text).not.toContain("asks first");
+    expect(text).toContain("eight seconds");
+    expect(text).toContain("ctrl+z");
+  });
+
+  it("says the switch is what hands Ctrl+Z back to the shell", () => {
+    // The one cost of the undo chords: with the layer on, Ctrl+Z no longer
+    // suspends a foreground job. The switch is the way back, so it says so.
+    expect(keyboardGroupText("Alt")).toContain("suspend");
+  });
 });
 
 describe("shortcuts help — closing hands the keyboard back", () => {

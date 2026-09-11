@@ -459,6 +459,19 @@ describe("creating a project — round trip", () => {
     expect(projectNames(w.doc())).toContain("notes");
   });
 
+  it("refuses to un-create a project somebody has already deleted", async () => {
+    // `check` cannot answer this one: an absent project reads the same as the
+    // ordinary state a redo starts from, so the guard lives in `undo`, where
+    // the direction is known. Deleting nothing would still cost a PUT and
+    // still say the undo worked.
+    const w = world(doc());
+    await makeProject(w, "notes");
+    w.meddle((l) => deleteProject(l, "notes")); // deleted on another device
+
+    await expectRefusal(w.stack.undo(), /already gone/);
+    expect(w.collapse).toEqual([]);
+  });
+
   it("refuses to re-create a project whose name has been taken since", async () => {
     const w = world(doc());
     await makeProject(w, "notes");
@@ -622,6 +635,66 @@ describe("switching the session order mode — round trip", () => {
     await pickManual(w);
     w.ports.setOrder("active"); // picked on another device, roamed back
     await expectRefusal(w.stack.undo(), /order/);
+  });
+
+  /**
+   * The mode ROAMS. It is the `sidebar.order` pref, so another device can move
+   * it while this tab still holds the entry, and it can land back on the mode
+   * the switch came FROM. `check` reads that as an ordinary starting point (it
+   * cannot see which direction it is about to run), which used to skip the
+   * arrangement guard entirely and leave the undo free to PUT a document
+   * captured before the other device's session existed.
+   */
+  it("refuses the restore when the mode roamed back and the arrangement moved on", async () => {
+    const w = world(doc(), "created", frozen);
+    await pickManual(w);
+    w.ports.setOrder("created"); // picked on the phone, roamed back here
+    w.meddle((l) => moveSession(l, "delta", "work", 0)); // and rearranged there
+
+    await expectRefusal(w.stack.undo(), /arrangement/);
+
+    // The freeze's own PUT and nothing after it: the phone's placement stands.
+    expect(w.puts).toHaveLength(1);
+    expect(members(w.doc(), "work")).toEqual(["delta", "beta", "alpha"]);
+  });
+
+  it("still restores when the mode roamed back but nobody touched the arrangement", async () => {
+    // The guard is about the DOCUMENT, not about the mode: the restore is safe
+    // exactly while the live document is still the one the freeze wrote, and
+    // then it is a restore rather than a blind write.
+    const w = world(doc(), "created", frozen);
+    await pickManual(w);
+    w.ports.setOrder("created");
+
+    await expectOk(w.stack.undo());
+    expect(w.doc()).toEqual(doc());
+  });
+
+  it("keeps the mode it had when the restoring PUT fails", async () => {
+    // Both halves have to move together. A mode left on `before` with the
+    // frozen arrangement still in the document is a sidebar sorted by a rule
+    // nobody picked.
+    const w = world(doc(), "created", frozen);
+    await pickManual(w);
+    w.breakPut();
+
+    await expectRefusal(w.stack.undo(), /layout write/);
+    expect(w.order()).toBe("manual");
+    expect(members(w.doc(), "work")).toEqual(["beta", "alpha"]);
+  });
+
+  it("leaves the mode alone when the redo's freeze fails to write", async () => {
+    const w = world(doc(), "created", frozen);
+    await pickManual(w);
+    await expectOk(w.stack.undo());
+    expect(w.order()).toBe("created");
+    w.breakPut();
+
+    await expectRefusal(w.stack.redo(), /layout write/);
+    // Not switched into manual on a freeze that never landed: the list would
+    // then be in manual order over the arrangement the undo restored.
+    expect(w.order()).toBe("created");
+    expect(w.doc()).toEqual(doc());
   });
 
   it("just flips the mode back when the switch froze nothing", async () => {

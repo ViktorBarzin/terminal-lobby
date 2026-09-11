@@ -67,6 +67,18 @@ class FakeApi implements LobbyApi {
   snapshots = true;
   /** Fail the next DELETE, as a 500 from tmux-api does. */
   killError = false;
+  /** Answer the next DELETE with a 404, as tmux-api does for a name no session
+   *  has — the state a session renamed behind a stale list leaves behind. */
+  killMissing = false;
+  /**
+   * Hold the next DELETE open until this resolves, so a test can press undo
+   * while the request is in flight.
+   *
+   * That gap is not hypothetical: the DELETE snapshots the whole box before it
+   * kills (tmux-api/snapshots.go resurrectRecordFor), which tmux-persist's own
+   * measurement puts at 345 ms idle and seconds under memory pressure.
+   */
+  killHold: Promise<void> | null = null;
   /** Fail the next restore. */
   restoreError = false;
   /**
@@ -97,9 +109,18 @@ class FakeApi implements LobbyApi {
     this.layoutVal = l;
   }
   async killSession(name: string): Promise<RestoreSelection | null> {
+    if (this.killHold) {
+      const hold = this.killHold;
+      this.killHold = null;
+      await hold;
+    }
     if (this.killError) {
       this.killError = false;
       throw new ApiError(500, "x");
+    }
+    if (this.killMissing) {
+      this.killMissing = false;
+      throw new ApiError(404, "session not found");
     }
     this.kills.push(name);
     this.sessionsVal = this.sessionsVal.filter((s) => s.name !== name);
@@ -425,6 +446,58 @@ describe("undoing a kill that has landed", () => {
     expect(cards(w.store)).toEqual([]);
   });
 
+  /**
+   * The press that lands between the timer and the answer.
+   *
+   * `armKill`'s timer drops the pending record and calls `killNow`, which does
+   * not prune the session from the list until the DELETE has answered — and
+   * the DELETE waits on a whole-box `tmux-persist save` first. In that window
+   * the session is neither pending nor gone, and reading it as "live" told the
+   * user their session was still running, dropped the entry, and let the kill
+   * land a moment later with nothing left to bring it back.
+   */
+  it("waits for a DELETE in flight rather than calling the session still running", async () => {
+    const w = await wire(["alpha"]);
+    let answer!: () => void;
+    w.api.killHold = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    await w.store.kill("alpha");
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    // The window is over, the request is out, and nothing has answered yet.
+    expect(w.store.killing("alpha")).toBe(false);
+    expect(w.api.kills).toEqual([]);
+
+    const pressed = w.stack.undo();
+    answer();
+
+    await expectOk(pressed);
+    expect(w.api.restores).toEqual([{ snapshot: "20260910-120000", sessions: ["alpha"] }]);
+    expect(cards(w.store)).toContain("alpha");
+  });
+
+  it("hands the session back rather than resurrecting it when that DELETE fails", async () => {
+    // The kill did not go through, so the session never left: there is nothing
+    // to restore, and the undo has only the selection to give back. Reporting
+    // "nothing to bring it back from" would be a refusal for a session that is
+    // sitting there.
+    const w = await wire(["alpha"]);
+    let answer!: () => void;
+    w.api.killHold = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    w.api.killError = true;
+    await w.store.kill("alpha");
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+
+    const pressed = w.stack.undo();
+    answer();
+
+    await expectOk(pressed);
+    expect(w.api.restores).toEqual([]);
+    expect(cards(w.store)).toContain("alpha");
+  });
+
   it("refuses when the kill never went out and the session is still running", async () => {
     // What a tab that crashed mid-window comes back to: the entry survives in
     // sessionStorage, the timer does not, and the session is alive. There is
@@ -434,6 +507,103 @@ describe("undoing a kill that has landed", () => {
 
     await expectRefusal(w.stack.undo(), /still running/);
     expect(w.api.kills).toEqual([]);
+  });
+});
+
+/**
+ * The ↺ on the dimmed card, which is the phone's whole undo: no Cmd+Z on a
+ * touch screen, and no confirm in front of the right swipe any more.
+ *
+ * It used to press the top of the stack, the same as the chord. Eight seconds
+ * is long enough for anything else to land on top of it, and then the arrow on
+ * one card undid something else — silently, since a working undo says nothing
+ * — while the session it was drawn on went on dying.
+ */
+describe("taking one card's kill back", () => {
+  it("undoes THIS kill, not whatever happened after it", async () => {
+    const w = await wire(["alpha", "beta"]);
+    await w.store.kill("alpha");
+    // Two seconds into the window, somebody makes a project. That entry is now
+    // the top of the stack.
+    await vi.advanceTimersByTimeAsync(2000);
+    await w.store.createProject("notes");
+
+    await expectOk(w.store.takeBackKill("alpha"));
+
+    expect(w.store.killing("alpha")).toBe(false);
+    expect(w.store.layout().projects.map((p) => p.name)).toEqual(["notes"]);
+    // ...and the window is gone with the entry, so nothing reaches the server
+    // when the eight seconds would have been up.
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(w.api.kills).toEqual([]);
+    expect(cards(w.store)).toEqual(["alpha", "beta"]);
+  });
+
+  it("leaves the entries around it in place, in order", async () => {
+    const w = await wire(["alpha"]);
+    await w.store.kill("alpha");
+    await w.store.createProject("notes");
+
+    await expectOk(w.store.takeBackKill("alpha"));
+    // The next chord press reaches the project, which is what was left.
+    await expectOk(w.stack.undo());
+    expect(w.store.layout().projects).toEqual([]);
+    // And nothing below it: the kill entry is off the undo stack, so a third
+    // press has nothing to take.
+    expect(await w.stack.undo()).toEqual({ ok: false, reason: null });
+  });
+
+  it("kills again on redo, since the arrow is an undo like any other", async () => {
+    const w = await wire(["alpha"]);
+    await w.store.kill("alpha");
+
+    await expectOk(w.store.takeBackKill("alpha"));
+    await expectOk(w.stack.redo());
+
+    expect(w.store.killing("alpha")).toBe(true);
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(w.api.kills).toEqual(["alpha"]);
+  });
+
+  it("retracts the window in a tab that has no stack at all", async () => {
+    // A lens tab (`?as=bob`) runs with undo off, and it is the one tab where
+    // the session belongs to somebody else. Retracting a kill that has sent
+    // nothing needs no history to do it.
+    const api = new FakeApi();
+    api.sessionsVal = [sess("alpha")];
+    api.layoutVal = { ...emptyLayout(), ungrouped: ["alpha"] };
+    let store!: LobbyStore;
+    const dispose = createRoot((d) => {
+      const [order] = createSignal<"manual">("manual");
+      store = createLobbyStore({ api, autoStart: false, syncHash: false, sessionOrder: order });
+      return d;
+    });
+    onTestFinished(() => {
+      store.dispose();
+      dispose();
+    });
+    await store.refresh();
+    await store.kill("alpha");
+
+    await expectOk(store.takeBackKill("alpha"));
+
+    expect(store.killing("alpha")).toBe(false);
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    expect(api.kills).toEqual([]);
+  });
+
+  it("says nothing and does nothing when that kill has already landed", async () => {
+    // The arrow is only drawn while the card is dimmed, so this is the race
+    // between a finger and the timer rather than an ordinary press.
+    const w = await wire(["alpha"]);
+    await w.store.kill("alpha");
+    await vi.advanceTimersByTimeAsync(GRACE_MS);
+    // The entry is still on the stack and the chord can still resurrect it;
+    // what the arrow must not do is take a different entry instead.
+    await w.store.createProject("notes");
+
+    expect(await w.store.takeBackKill("beta")).toEqual({ ok: false, reason: null });
+    expect(w.store.layout().projects.map((p) => p.name)).toEqual(["notes"]);
   });
 });
 
@@ -456,6 +626,36 @@ describe("undoing a create", () => {
 
     await expectOk(w.stack.redo());
     expect(w.api.restores).toEqual([{ snapshot: "20260910-120000", sessions: [id] }]);
+    expect(cards(w.store)).toContain(id);
+  });
+
+  it("refuses when the DELETE it sends comes back 404", async () => {
+    // The name has moved. tmux-api renames a session as soon as its first
+    // title lands (ADR-0022) and the list is cached, so a create undone a few
+    // seconds later can DELETE a name nothing answers to while the session
+    // itself runs on under another one. Reporting that as a kill hid a live
+    // session behind a card that came back on the next poll, and left the redo
+    // with no record to restore from.
+    const w = await wire([]);
+    const id = await w.store.create("Fix the deploy", "");
+    w.api.sessionsVal = [sess(id)];
+    await w.store.refresh();
+    w.api.killMissing = true;
+
+    await expectRefusal(w.stack.undo(), /did not go through/);
+    expect(w.api.kills).toEqual([]);
+  });
+
+  it("refuses when the DELETE it sends fails outright", async () => {
+    // A 500 from tmux-api. The session is still there, so the undo has to say
+    // it did not happen rather than dropping the card.
+    const w = await wire([]);
+    const id = await w.store.create("Fix the deploy", "");
+    w.api.sessionsVal = [sess(id)];
+    await w.store.refresh();
+    w.api.killError = true;
+
+    await expectRefusal(w.stack.undo(), /did not go through/);
     expect(cards(w.store)).toContain(id);
   });
 

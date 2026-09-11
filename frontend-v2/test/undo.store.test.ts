@@ -231,6 +231,27 @@ describe("createUndoStore — a refusal drops its entry", () => {
     expect(h.stack.canUndo()).toBe(false);
   });
 
+  it.each([
+    ["a handler that throws an empty string", "   " as unknown],
+    ["a handler that throws nothing useful", new Error("   ")],
+    ["a handler that throws a plain object", { code: 500 } as unknown],
+  ])("has a sentence of its own for %s", async (_what, thrown) => {
+    // Every refusal the user sees is a sentence, and a handler that threw
+    // something with no message in it must not toast an empty one. The three
+    // shapes here are what a `throw` can actually produce in this codebase: an
+    // empty string, an Error nobody filled in, and a rejected fetch body. A
+    // thrown string with words in it IS the sentence, which is why only the
+    // blank one lands here.
+    const h = setup({
+      undo: async () => {
+        throw thrown;
+      },
+    });
+    push(h.stack, "a");
+    expect(await h.stack.undo()).toEqual({ ok: false, reason: "the change did not go through" });
+    expect(h.stack.canUndo()).toBe(false);
+  });
+
   it("survives a handler whose check throws", async () => {
     const h = setup({
       check: () => {
@@ -435,5 +456,107 @@ describe("registerUndoHandler", () => {
     expect(await stack.undo()).toEqual({ ok: true });
     expect(await stack.redo()).toEqual({ ok: true });
     expect(seen).toEqual(["undo", "redo"]);
+  });
+});
+
+/**
+ * Undoing ONE named entry rather than the top of the stack.
+ *
+ * The dimmed card's ↺ arrow is the only caller: it is drawn on one session's
+ * kill, and pressing the top of the stack from there undid whatever had
+ * happened in the eight seconds since — silently, since a working undo says
+ * nothing — while the session it was drawn on went on dying
+ * (components/SessionCard.tsx, store/lobby.ts takeBackKill).
+ */
+describe("createUndoStore — undoEntry", () => {
+  it("undoes the entry that matches, leaving the ones above it alone", async () => {
+    const h = setup();
+    push(h.stack, "a");
+    push(h.stack, "b");
+    push(h.stack, "c");
+
+    expect(await h.stack.undoEntry((e) => e.session === "a")).toEqual({ ok: true });
+
+    expect(h.calls).toEqual(["undo a"]);
+    // b and c are still there, in the order they were pushed.
+    await drain(h.stack);
+    expect(h.calls).toEqual(["undo a", "undo c", "undo b"]);
+  });
+
+  it("takes the newest match when the same session is named twice", async () => {
+    const h = setup();
+    push(h.stack, "a");
+    push(h.stack, "b");
+    push(h.stack, "a");
+
+    await h.stack.undoEntry((e) => e.session === "a");
+    await h.stack.undoEntry((e) => e.session === "a");
+
+    expect(h.calls).toEqual(["undo a", "undo a"]);
+    expect(h.stack.canUndo()).toBe(true); // b, untouched
+  });
+
+  it("lands the entry on the redo stack, like any other undo", async () => {
+    const h = setup();
+    push(h.stack, "a");
+    push(h.stack, "b");
+
+    await h.stack.undoEntry((e) => e.session === "a");
+
+    expect(h.stack.canRedo()).toBe(true);
+    expect(await h.stack.redo()).toEqual({ ok: true });
+    expect(h.calls).toEqual(["undo a", "redo a"]);
+  });
+
+  it("refuses through the same check, and drops the entry with it", async () => {
+    const h = setup({
+      check: (e) => (e.session === "a" ? "that session is already gone" : null),
+    });
+    push(h.stack, "a");
+    push(h.stack, "b");
+
+    expect(await h.stack.undoEntry((e) => e.session === "a")).toEqual({
+      ok: false,
+      reason: "that session is already gone",
+    });
+    expect(h.calls).toEqual([]);
+    await drain(h.stack);
+    expect(h.calls).toEqual(["undo b"]); // a is gone from the stack
+  });
+
+  it("is a silent no-op when nothing matches", async () => {
+    const h = setup();
+    push(h.stack, "a");
+
+    expect(await h.stack.undoEntry((e) => e.session === "zzz")).toEqual({
+      ok: false,
+      reason: null,
+    });
+    expect(h.calls).toEqual([]);
+    expect(h.stack.canUndo()).toBe(true);
+  });
+
+  it("does nothing in a lens tab, where the whole stack is off", async () => {
+    const h = setup({ enabled: false });
+    push(h.stack, "a");
+
+    expect(await h.stack.undoEntry(() => true)).toEqual({ ok: false, reason: null });
+    expect(h.calls).toEqual([]);
+    expect(h.storage.map.has(UNDO_KEY)).toBe(false);
+  });
+
+  it("persists what it removed, so a reload does not bring the entry back", async () => {
+    const h = setup();
+    push(h.stack, "a");
+    push(h.stack, "b");
+
+    await h.stack.undoEntry((e) => e.session === "a");
+
+    const doc = JSON.parse(h.storage.map.get(UNDO_KEY) ?? "{}") as {
+      undo: UndoEntry[];
+      redo: UndoEntry[];
+    };
+    expect(doc.undo.map((e) => e.session)).toEqual(["b"]);
+    expect(doc.redo.map((e) => e.session)).toEqual(["a"]);
   });
 });
