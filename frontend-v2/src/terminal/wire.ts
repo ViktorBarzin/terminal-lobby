@@ -33,7 +33,13 @@
  *
  * WHAT IS DELIBERATELY NOT HERE. The flow-control accounting that decides WHEN
  * to send PAUSE/RESUME (byte counters, the fail-open watchdog) is client
- * policy, not wire format; this module only builds the two frames. The
+ * policy, not wire format; this module only builds the two frames, and as of
+ * 2026-09-06 nothing in the app calls either one. `encodePause` and
+ * `encodeResume` are the wire half of a feature whose policy half was never
+ * ported, which is why the device toggle that used to advertise it went the
+ * same day: it read a key no accounting consumed. The frames stay because they
+ * are what the port would attach to, and because our ttyd patch honours them.
+ * The
  * reconnect ladder, the liveness watchdog and the held-input buffer likewise
  * belong to the component, as does the watch nudge itself: this module says
  * "nudge", and the component owns the toast and the few-seconds throttle that

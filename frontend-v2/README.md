@@ -459,10 +459,13 @@ src/
                          the auto-title rule only fires while @title is unset,
                          so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
-    device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
-                         terminal flow control (tl-flow-control — the terminal
-                         picks a flip up live via a storage event) and the
-                         Clear-local-data wipe
+    device-prefs.ts      Per-BROWSER state the roamed doc must not carry: the
+                         gestures master kill (tl-gestures, read fresh on every
+                         gesture) and the Clear-local-data wipe. It also names
+                         the two keys nothing reads any more, and why they are
+                         left in place rather than migrated: tl-terminal-
+                         renderer (2026-09-05) and tl-flow-control
+                         (2026-09-06)
     toast.ts             Toast stack + the slow-request health coordinator
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
@@ -609,8 +612,10 @@ src/
         AppearancePage.tsx    The nine themes as swatch cards painting their own
                               colours; "System" follows the OS live
         TerminalPage.tsx      Font size, line height, letter spacing, bold
-                              weight, cursor, scrolling, link copy chip, and
-                              flow control
+                              weight, cursor, scrolling, link copy chip. Every
+                              row roams, so nothing here wears the "this
+                              device" chip: the Flow control row went on
+                              2026-09-06 with the group that held it
         SessionsPage.tsx      New-session command, session-list last-active time
         KeyboardPage.tsx      The app-shortcut layer's opt-out, and the four
                               chords that outlive it
