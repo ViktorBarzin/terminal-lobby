@@ -60,6 +60,10 @@ function mount(
     until?: number;
     /** The sidebar's 1Hz tick, so a case can step the countdown by hand. */
     tick?: () => number;
+    /** Session fields this case needs, e.g. a `running` state. */
+    session?: Partial<Session>;
+    /** What the store reports for the working timer that shares the corner. */
+    workingSince?: number;
   } = {},
 ): Mounted {
   const select = vi.fn();
@@ -70,7 +74,7 @@ function mount(
     me: () => "wizard",
     selected: () => null,
     whoami: () => ({ authentik: "wizard", osUser: "wizard" }),
-    workingSince: () => undefined,
+    workingSince: () => o.workingSince,
     hold: () => () => {},
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
     killing: () => o.killing ?? false,
@@ -80,7 +84,12 @@ function mount(
     takeBackKill,
   } as unknown as LobbyStore;
   const { container } = render(() => (
-    <SessionCard store={store} session={session()} groupName="" tick={o.tick ?? (() => 0)} />
+    <SessionCard
+      store={store}
+      session={session(o.session)}
+      groupName=""
+      tick={o.tick ?? (() => 0)}
+    />
   ));
   return { container, select, kill, takeBackKill };
 }
@@ -338,6 +347,23 @@ describe("<SessionCard> — the kill countdown", () => {
   it("is absent when nothing is being killed", () => {
     const { container } = mount();
     expect(counter(container)).toBeNull();
+  });
+
+  it("is the only number on the row, so the two cannot be read as one thing", () => {
+    // Measured on a real card before this: a session six seconds into a turn
+    // with six seconds left to live drew `0:06` beside `6`. The working timer
+    // shares this corner, and how long a session has been working is the least
+    // interesting fact about one that is about to stop.
+    vi.setSystemTime(new Date(1_700_000_000_000));
+    const running = mount({
+      killing: true,
+      until: 1_700_000_008_000,
+      session: { state: "running" },
+      workingSince: 1_699_999_994_000,
+    });
+    expect(counter(running.container)?.textContent).toBe("8");
+    // Omitted, not emptied: the row is a flex container with a gap.
+    expect(running.container.querySelector(".tl-card-time")).toBeNull();
   });
 
   it("is absent when a kill has no deadline, rather than rendering a guess", () => {

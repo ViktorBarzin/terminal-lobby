@@ -279,6 +279,38 @@ describe("the kill grace window", () => {
     expect(w.store.killingUntil("alpha")).toBeUndefined();
   });
 
+  /**
+   * A session is renamed as soon as its first title lands (ADR-0022), seconds
+   * after it is created, so a brand new session killed by mistake can be
+   * renamed INSIDE its own window. The deadline has to travel with it, or the
+   * card comes back under its new name with no number on it.
+   *
+   * Found the honest way: the first live run of the countdown appeared to stall
+   * at 4, because the harness was watching `[data-name=<the minted id>]` and
+   * the rename moved the card out from under the selector.
+   */
+  it("carries the deadline onto the name a rename gives the session", async () => {
+    // Matched on `id`, which is the one field a rename does not move, exactly
+    // as "follows a rename that lands inside the window" below does it.
+    const w = await wire([]);
+    w.api.sessionsVal = [sess("k7m2q9x4tp0v", { id: "$1" })];
+    w.api.layoutVal = { ...emptyLayout(), ungrouped: ["k7m2q9x4tp0v"] };
+    await w.store.refresh();
+    await w.store.kill("k7m2q9x4tp0v");
+    const until = w.store.killingUntil("k7m2q9x4tp0v");
+    expect(until).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(2000);
+    w.api.sessionsVal = [sess("fix-the-deploy", { id: "$1", title: "Fix the deploy" })];
+    await w.store.refresh();
+
+    // The same instant, on the new name: the countdown carries on from where it
+    // was rather than restarting or going blank.
+    expect(w.store.killingUntil("fix-the-deploy")).toBe(until);
+    // And nothing is left behind on the old name for a stale card to read.
+    expect(w.store.killingUntil("k7m2q9x4tp0v")).toBeUndefined();
+  });
+
   it("drops the deadline when the kill is taken back", async () => {
     const w = await wire(["alpha"]);
     await w.store.kill("alpha");
