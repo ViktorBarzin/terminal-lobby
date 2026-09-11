@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // --- a kill has to leave something to come back from --------------------------
@@ -38,7 +39,14 @@ func killTranscript(t *testing.T, name, wrapperScript string) (*httptest.Respons
 	withTempLayoutStore(t)
 	withTempAssignmentStore(t)
 	transcript := withSudoStub(t, wrapperScript)
-	withTmuxStub(t, "printf 'tmux-kill-session\\n' >> '"+transcript+"'")
+	// Branching on the verb because the kill asks tmux TWICE now: once to check
+	// the session is there at all, and once to kill it. The first of those is
+	// what keeps a DELETE for a name nobody has from paying for a root snapshot
+	// (session_mutate.go killSession).
+	withTmuxStub(t, `case "$1" in
+  has-session) printf 'tmux-has-session\n' >> '`+transcript+`' ;;
+  *) printf 'tmux-kill-session\n' >> '`+transcript+`' ;;
+esac`)
 
 	rec := httptest.NewRecorder()
 	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/"+name, "", "alice"))
@@ -90,6 +98,7 @@ func TestKillSnapshotsBeforeItKills(t *testing.T) {
 	_, transcript := killTranscript(t, "qa-undo", wrapperWithSnapshots)
 
 	want := strings.Join([]string{
+		"tmux-has-session",
 		"-n", restoreWrapper, osSelf, "save",
 		"-n", restoreWrapper, osSelf, "list",
 		"tmux-kill-session",
@@ -146,5 +155,71 @@ esac`},
 				t.Errorf("the tombstone was not written: %q", transcript)
 			}
 		})
+	}
+}
+
+// killTranscriptWithTmux is killTranscript with the tmux stub's script handed
+// in, for the cases that need tmux to answer something other than yes.
+func killTranscriptWithTmux(t *testing.T, name, wrapperScript, tmuxScript string) (*httptest.ResponseRecorder, string) {
+	t.Helper()
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	withTempLayoutStore(t)
+	withTempAssignmentStore(t)
+	transcript := withSudoStub(t, wrapperScript)
+	withTmuxStub(t, tmuxScript)
+
+	rec := httptest.NewRecorder()
+	handleSessionByName(rec, sessionReq(http.MethodDelete, "/sessions/"+name, "", "alice"))
+	return rec, recordedArgv(t, transcript)
+}
+
+// A DELETE naming a session nobody has must cost NOTHING privileged.
+//
+// The save is the expensive verb on this box and the only one that is not
+// per-user: the wrapper validates the user it is handed and then snapshots
+// every mapped user, forking tmux and ps per pane and a find per unstamped
+// claude pane (tmux-persist save). Taking it before asking tmux anything meant
+// a DELETE of a name nobody has ran all of that and then answered 404, so a
+// loop of those was an unbounded amount of root work driven by a caller who
+// owns no session at all.
+func TestKillOfAMissingSessionRunsNothingPrivileged(t *testing.T) {
+	noSuchSession := "case \"$1\" in\n  has-session) exit 1 ;;\n  *) exit 0 ;;\nesac"
+	rec, transcript := killTranscriptWithTmux(t, "nope", wrapperWithSnapshots, noSuchSession)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("DELETE /sessions/nope: got %d, want %d (%q)", rec.Code, http.StatusNotFound, rec.Body.String())
+	}
+	if transcript != "" {
+		t.Fatalf("a root wrapper ran for a session nobody has: %q", transcript)
+	}
+}
+
+// The snapshot is bounded, because the client is: lib/http.ts abandons any call
+// at 8s while the handler carries on and kills the session regardless, so the
+// card would report a failed kill for a session that is gone. A save that
+// outruns the budget is therefore dropped rather than waited on, leaving the
+// same "nothing to resurrect from" answer every other snapshot failure gives.
+func TestKillGivesUpOnASlowSnapshot(t *testing.T) {
+	old := preKillSnapshotBudget
+	preKillSnapshotBudget = 150 * time.Millisecond
+	t.Cleanup(func() { preKillSnapshotBudget = old })
+
+	slowSave := "case \"$4\" in\n  save) sleep 10 ;;\n  *) exit 0 ;;\nesac"
+	start := time.Now()
+	rec, transcript := killTranscript(t, "qa-undo", slowSave)
+	waited := time.Since(start)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want the kill to happen anyway (%q)", rec.Code, rec.Body.String())
+	}
+	if got := resurrectOf(t, rec); got != nil {
+		t.Errorf("resurrect record = %+v, want none: the snapshot never finished", got)
+	}
+	if !strings.Contains(transcript, "\ntmux-kill-session\n") {
+		t.Fatalf("the session was not killed: %q", transcript)
+	}
+	if waited > 5*time.Second {
+		t.Errorf("the kill waited %s on a save it had already given up on", waited)
 	}
 }

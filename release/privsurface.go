@@ -47,12 +47,19 @@ var PrivilegedDeps = []PrivilegedDep{
 		Path:      "/usr/local/bin/tmux-persist",
 		Installer: "infra: the devvm playbook, and setup-devvm.sh before it",
 		RunsAs:    "root, through the tmux-restore-user grant in " + SudoersPath,
-		Reached:   "devvm/tmux-restore-user and devvm/tmux-persist-forget exec it, after validating the user against the map",
+		Reached: "devvm/tmux-restore-user and devvm/tmux-persist-forget exec it, after validating the user " +
+			"against the map. Two tmux-api routes reach the first of those: POST /restore, and " +
+			"DELETE /sessions/<name>, which asks for a snapshot before it kills so a kill can be undone " +
+			"once its grace window has elapsed (tmux-api/snapshots.go resurrectRecordFor)",
 		Why: "Snapshots and restores every user's tmux sessions into " +
 			"/var/lib/tmux-persist. It is byte-identical to infra/scripts/tmux-persist.sh " +
 			"and its three units live there too, so a box rebuilt from this package alone " +
 			"has the root grant, the state tree, and no binary: restore fails silently and " +
-			"no snapshots are taken. tmux-restore-user now says so instead of failing quietly.",
+			"no snapshots are taken. tmux-restore-user now says so instead of failing quietly. " +
+			"One verb crosses users by design: `save` validates the user it is handed and then " +
+			"discards it, because tmux-persist's save takes no user and walks every mapped one, " +
+			"which is the same work tmux-persist-save.timer does unattended every 5 minutes. It " +
+			"reads live tmux state and writes snapshot files, restoring and destroying nothing.",
 	},
 	{
 		Path:      "/usr/local/bin/t3-mint",

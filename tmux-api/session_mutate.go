@@ -99,6 +99,17 @@ type killResponse struct {
 }
 
 func killSession(w http.ResponseWriter, osUser, name string) {
+	// Ask tmux whether the session is even there, BEFORE anything privileged
+	// runs. The snapshot below is a root tmux-persist run that walks every
+	// mapped user (snapshots.go resurrectRecordFor), and taking it first meant
+	// a request naming a session nobody has still paid for one: `DELETE
+	// /sessions/nope` did the whole save and then answered 404, so a loop of
+	// them was an unbounded amount of root work for a caller who owns nothing.
+	// One extra tmux round trip is the price of not offering that.
+	if !hasSession(osUser, name) {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
 	// Before the kill, never after: a snapshot taken afterwards is of a box this
 	// session has already left, which is the same as no snapshot at all. Nil
 	// when it could not be taken, which costs the undo and nothing else. See
