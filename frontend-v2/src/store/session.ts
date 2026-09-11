@@ -328,6 +328,11 @@ export function createSessionStore(
     const run = (): void => {
       cacheWriteHandle = 0;
       if (closed || !cachedEpoch) return;
+      // `events` is the store PROXY, and the cache unwraps it on the way to the
+      // backend — IndexedDB cannot structured-clone a proxy, and between
+      // 2026-08-28 and 2026-09-11 every write here threw DataCloneError into a
+      // catch and stored nothing. The unwrap lives in transcript-cache.ts so
+      // that it covers this call and every future one.
       void cache.save(session, cachedEpoch, events);
     };
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
