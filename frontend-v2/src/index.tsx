@@ -15,6 +15,7 @@ import { installSlowRequestTracking } from "./store/toast";
 import { logBuildId } from "./deploy/healer";
 import { startDiagnostics } from "./telemetry/diag";
 import { recordMeasurement } from "./diagnostics/connection";
+import { prefetchTerminalChunk } from "./lib/prefetch";
 
 // Build-id marker (inventory Cat.10): logs `terminal-lobby build: <id>` and
 // stamps documentElement.dataset.tlBuild. Emitting the marker literal is what
@@ -61,3 +62,11 @@ if (root) {
     requestAnimationFrame(() => shell.remove());
   }
 }
+
+// Warm the xterm chunk once the page is idle. AFTER the render call and behind
+// an idle callback, so it cannot compete with the first paint or with the
+// session list: 82 KB gzipped is 1.7 s on a 400 kbps link, and the list is the
+// screen you need first. It buys 413 to 841 ms off the first terminal open of a
+// page load (ADR-0026), and declines itself on a touch device. `lib/prefetch.ts`
+// carries the reasoning.
+prefetchTerminalChunk();
