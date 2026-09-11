@@ -39,7 +39,13 @@ function cardStore(): LobbyStore {
 
 function renderCard(s: Session, unseen: boolean) {
   return render(() => (
-    <SessionCard store={cardStore()} session={s} groupName="" tick={() => 0} isUnseen={() => unseen} />
+    <SessionCard
+      store={cardStore()}
+      session={s}
+      groupName=""
+      tick={() => 0}
+      isUnseen={() => unseen}
+    />
   ));
 }
 

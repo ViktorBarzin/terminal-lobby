@@ -43,9 +43,7 @@ function stubStore(): LobbyStore {
 }
 
 const card = (s: Session) =>
-  render(() => (
-    <SessionCard store={stubStore()} session={s} groupName="" tick={() => 0} />
-  ));
+  render(() => <SessionCard store={stubStore()} session={s} groupName="" tick={() => 0} />);
 
 const badge = (c: HTMLElement) => c.querySelector(".tl-card-watch");
 const menuItem = (c: HTMLElement, text: string) =>
@@ -58,7 +56,10 @@ const openMenu = (c: HTMLElement) =>
 beforeEach(() => {
   localStorage.clear();
   clearResolvedWatch("main");
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response("[]"))),
+  );
 });
 
 describe("<SessionCard> — the watch marker", () => {
@@ -119,18 +120,14 @@ describe("<SessionCard> — the Attach as menu", () => {
     const { container } = card(session());
     openMenu(container);
     fireEvent.click(menuItem(container, "Watch only")!);
-    await waitFor(() =>
-      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro"),
-    );
+    await waitFor(() => expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro"));
   });
 
   it("Take control is storable, so the automatic rule cannot undo it", async () => {
     const { container } = card(session({ driven: true }));
     openMenu(container);
     fireEvent.click(menuItem(container, "Take control")!);
-    await waitFor(() =>
-      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("rw"),
-    );
+    await waitFor(() => expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("rw"));
     expect(badge(container)).toBeNull();
   });
 
@@ -146,9 +143,7 @@ describe("<SessionCard> — the Attach as menu", () => {
 
     openMenu(container);
     fireEvent.click(menuItem(container, "Auto")!);
-    await waitFor(() =>
-      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull(),
-    );
+    await waitFor(() => expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull());
     expect(badge(container)).not.toBeNull(); // driven again, so a viewer again
   });
 
@@ -180,7 +175,7 @@ describe("<SessionCard> — the relative time answers 'when was this last driven
         session={session({
           state: "",
           lastDrive: now - 3 * 3600, // driven 3h ago
-          lastActivity: now - 5,     // "active" 5s ago, because a watcher just attached
+          lastActivity: now - 5, // "active" 5s ago, because a watcher just attached
           created: now - 4 * 3600,
         })}
         groupName=""
@@ -224,12 +219,7 @@ describe("<SessionCard> ⋯ menu — a key inside it stays inside it", () => {
     const select = vi.fn();
     const store = { ...stubStore(), select } as unknown as LobbyStore;
     const { container } = render(() => (
-      <SessionCard
-        store={store}
-        session={session()}
-        groupName=""
-        tick={() => 0}
-      />
+      <SessionCard store={store} session={session()} groupName="" tick={() => 0} />
     ));
     openMenu(container);
     await waitFor(() => expect(container.querySelector(".tl-menu")).not.toBeNull());

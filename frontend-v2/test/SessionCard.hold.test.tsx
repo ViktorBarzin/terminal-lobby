@@ -96,7 +96,14 @@ function layOut(container: HTMLElement): HTMLElement[] {
   const cards = Array.from(container.querySelectorAll<HTMLElement>(".tl-card"));
   cards.forEach((card, i) => {
     card.getBoundingClientRect = () =>
-      ({ top: 100 + i * 40, bottom: 140 + i * 40, height: 40, left: 0, right: 300, width: 300 }) as DOMRect;
+      ({
+        top: 100 + i * 40,
+        bottom: 140 + i * 40,
+        height: 40,
+        left: 0,
+        right: 300,
+        width: 300,
+      }) as DOMRect;
   });
   const scroller = container.querySelector<HTMLElement>(".tl-sidebar-scroll");
   if (scroller) {
