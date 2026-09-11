@@ -45,10 +45,11 @@ links. It is worth 413 to 841 ms on the first terminal open of a page load.
 `transcript-cache.ts:77` returns it unchanged below the 2,000-event cap.
 IndexedDB cannot structured-clone a proxy, so the `put` throws
 `DataCloneError`, the `catch {}` at line 156 swallows it, and the slot is
-dropped. Observed live on 2/2 opens on 2026-09-11, both below the cap. Above it
-`slice()` returns a plain array of proxied elements, which we expect fails the
-same way; that half is inference, not an observation. So text opens have been
-cold since the cache shipped on 2026-08-28, costing 220 to 660 ms each.
+dropped. Observed live on 2/2 opens on 2026-09-11, both below the cap. Above the
+cap `slice()` returns a plain array whose elements are still proxies, which
+fails the same way: verified separately with vitest the same day. So text opens
+have been cold since the cache shipped on 2026-08-28, costing 220 to 660 ms
+each.
 
 ## How it works
 
@@ -90,7 +91,9 @@ a `sudo` and an audit line per card the pointer crosses.
 `ro` for watch. It gains `pre`, and `tmux-attach.sh` maps it to
 `attach-session -f ignore-size`. Read-write, so it can be promoted without a
 second attach, but carrying tmux's ignore-size flag so it cannot move the
-window. It takes the `attach-session` branch rather than `new-session -A`, so a
+window. `wire.ts:367-372` requires `/token` and `/ws` to carry byte-identical
+args, so `pre` has to be built into both from the same `terminalFrameArgs`
+inputs. It takes the `attach-session` branch rather than `new-session -A`, so a
 session that died between the poll and the dwell fails the preload instead of
 being recreated.
 
@@ -111,10 +114,13 @@ exclusion, hovering down the sidebar would restamp every card's timer.
 
 Three commits, landing together.
 
-1. **Fix the transcript cache.** `trimToCap` returns `events.slice()`
-   unconditionally. A test that a Solid store array survives a round trip
-   through the real IndexedDB backend. The existing tests use the in-memory
-   backend, which does not exercise structured cloning.
+1. **Fix the transcript cache.** `unwrap()` from `solid-js/store` before the
+   write. `slice()` is not enough: measured on 2026-09-11 with vitest,
+   `structuredClone` throws on the store array and throws again on
+   `events.slice(0)`, because reading an index of a store returns a proxied
+   element. It succeeds on `unwrap(events)`. Plus a test that a store array
+   survives a round trip through the real IndexedDB backend. The existing tests
+   use the in-memory backend, which does not exercise structured cloning.
 2. **Prefetch the xterm chunk after first paint**, at idle priority rather than
    as a `modulepreload`. On the 400 kbps link this app is built for, a blocking
    82 KB fetch would put 1.7 s of xterm in front of the session list, which is
