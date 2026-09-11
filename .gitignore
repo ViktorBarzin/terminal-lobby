@@ -3,6 +3,7 @@ tmux-api/tmux-api
 clipboard-upload/clipboard-upload
 file-api/file-api
 skills-api/skills-api
+tl-session-watch/tl-session-watch
 /out/
 /tmp-build/
 

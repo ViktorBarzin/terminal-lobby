@@ -1,6 +1,8 @@
 package release
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -223,6 +225,80 @@ func TestSessionWatchIsNotATimer(t *testing.T) {
 	for _, u := range Package.Enable {
 		if strings.HasPrefix(u, "tl-session-watch") && strings.HasSuffix(u, ".timer") {
 			t.Fatalf("tl-session-watch must be a service, not %q: a timer loses the previous snapshot", u)
+		}
+	}
+}
+
+// tl-pkg copies every File.Src out of the build staging tree, and build-deb.sh
+// fills that tree by copying whole source directories across at the paths they
+// have in the checkout (`cp -a devvm/. $STAGE/devvm/`, and the same for the PWA
+// surface). So every Src outside the two generated prefixes below names a real
+// file in this repo, and one that names nothing is a build that dies on a
+// missing file while dpkg-staging, long after the tests went green.
+//
+// That is the failure mode of the change this guard was written for: the five
+// PWA entries moved from frontend/ to frontend-v2/public/ on 2026-09-06, and a
+// single mistyped path there stops the package building with nothing in the
+// test suite saying why.
+func TestEverySourceFileInTheManifestExistsInTheRepo(t *testing.T) {
+	// bin/ holds the Go binaries the build compiles, share/ the surfaces
+	// tl-stamp writes. Neither exists in a checkout, by design.
+	generated := []string{"bin/", "share/"}
+	// This module is release/, so the repo root is its parent.
+	const root = ".."
+	for _, f := range Package.Files {
+		var built bool
+		for _, p := range generated {
+			if strings.HasPrefix(f.Src, p) {
+				built = true
+			}
+		}
+		if built {
+			continue
+		}
+		path := filepath.Join(root, f.Src)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("manifest installs %s from Src %q, which does not exist in the repo (looked for %s)",
+				f.Dest, f.Src, path)
+		}
+	}
+}
+
+// The other half of the same break. A Src can name a file that exists in the
+// repo and still not exist in the STAGING tree tl-pkg copies from, because
+// build-deb.sh fills that tree one directory at a time. Repointing the five PWA
+// entries at frontend-v2/public/ without adding the matching copy line builds
+// clean, tests clean, and dies at dpkg-staging.
+//
+// Read as: for every source Src, build-deb.sh copies some directory that
+// contains it, at its checkout path.
+func TestEveryStagedSourceDirectoryIsCopiedIntoTheStage(t *testing.T) {
+	script, err := os.ReadFile(filepath.Join("..", "packaging", "build-deb.sh"))
+	if err != nil {
+		t.Fatalf("cannot read the build script: %v", err)
+	}
+	build := string(script)
+	generated := []string{"bin/", "share/"}
+	for _, f := range Package.Files {
+		var built bool
+		for _, p := range generated {
+			if strings.HasPrefix(f.Src, p) {
+				built = true
+			}
+		}
+		if built {
+			continue
+		}
+		var staged bool
+		for dir := filepath.Dir(f.Src); dir != "." && dir != "/"; dir = filepath.Dir(dir) {
+			if strings.Contains(build, `cp -a `+dir+`/. "$STAGE/`+dir+`/"`) {
+				staged = true
+				break
+			}
+		}
+		if !staged {
+			t.Errorf("manifest installs %s from Src %q, but build-deb.sh copies no directory containing it into $STAGE",
+				f.Dest, f.Src)
 		}
 	}
 }

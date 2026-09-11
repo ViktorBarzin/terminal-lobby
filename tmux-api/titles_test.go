@@ -79,25 +79,10 @@ func TestTitleStoreRenameOfAnUntitledSessionIsHarmless(t *testing.T) {
 	}
 }
 
-func TestTitleStoreForget(t *testing.T) {
-	s := titlesFixture(t)
-	mustSet(t, s, "wizard", "work", "Work")
-	mustSet(t, s, "wizard", "other", "Other")
-	if err := s.forget("wizard", "work"); err != nil {
-		t.Fatalf("forget: %v", err)
-	}
-	if got := s.get("wizard", "work"); got != "" {
-		t.Fatalf("a forgotten title survives: %q", got)
-	}
-	if got := s.get("wizard", "other"); got != "Other" {
-		t.Fatalf("forget took an unrelated title too: %q", got)
-	}
-}
-
 // The store outlives the sessions it describes on purpose — that is what makes
-// a title survive a reboot — so something has to stop it growing forever. An
-// entry goes when its session is deliberately killed; what accumulates is
-// titles of sessions that died without one and were never restored.
+// a title survive a reboot — so something has to stop it growing forever, and
+// the count bound is the only thing that does: entries are never dropped by
+// age or by their session dying.
 func TestTitleStoreStaysWithinItsBudget(t *testing.T) {
 	s := titlesFixture(t)
 	for i := 0; i < titlesKeep+50; i++ {

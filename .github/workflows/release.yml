@@ -159,6 +159,35 @@ jobs:
           python3 -m pip install --quiet pytest pytest-asyncio aiohttp
           python3 -m pytest scripts/test_qa_harness.py -q
 
+      # A real browser taps a real notification, and the app has to land on the
+      # session the banner named.
+      #
+      # This gate exists because the cheap version of it does not work.
+      # Notification tap routing has been fixed six times since 2026-07-17 and
+      # regressed after every one; each fix was verified against a mocked
+      # navigator.serviceWorker and a stubbed shade, and that suite stayed green
+      # through all six, because what broke was the handshake between a real
+      # service worker, a real notification and a real page. So this one serves
+      # the built bundle with the shipped public/sw.js, delivers a push through
+      # the browser's own plumbing, and dispatches a real NotificationEvent at
+      # the shipped handler.
+      #
+      # It runs after `test (frontend)` because that step's npm ci is what the
+      # bundle build here needs; the suite builds frontend-v2/dist itself.
+      #
+      # `--with-deps` because a bare runner is missing the shared libraries
+      # Chromium links against. The suite drives the FULL Chromium in new
+      # headless mode, not chromium-headless-shell: measured 2026-09-06, the
+      # shell refuses the notifications permission outright, reading "denied" in
+      # both page and worker after a grant, so `playwright install chromium` is
+      # doing more here than fetching a browser.
+      - name: test (notification tap, real browser)
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet pytest playwright
+          python3 -m playwright install --with-deps chromium
+          python3 -m pytest scripts/test_notification_tap_e2e.py -q
+
       - name: version
         id: version
         run: |
@@ -227,23 +256,20 @@ jobs:
             --upload-file "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
             "${FORGEJO_DEB_UPLOAD_URL}"
 
-      # Off-site copy, so a cluster outage cannot block repairing the workstation.
-      - name: attach to a GitHub release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Two copies of one file. The versioned name is what the registry and
-          # a human looking at the release want; the unversioned one is what
-          # makes /releases/latest/download/terminal-lobby_amd64.deb resolve,
-          # which is the install command the README gives. Without it that URL
-          # 404s, because the asset name carries the version.
-          cp "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
-             "out/terminal-lobby_amd64.deb"
-          gh release create "${{ steps.version.outputs.tag }}" \
-            "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
-            "out/terminal-lobby_amd64.deb" \
-            --title "${{ steps.version.outputs.tag }}" --generate-notes
-
+      # THE DEPLOY GOES HERE, directly after the registry the box installs from
+      # and BEFORE the off-site copy. Order is the whole point: the box has
+      # everything it needs the moment the package is published, and nothing
+      # after this step is on the path to shipping.
+      #
+      # It used to run last, after the GitHub release. On 2026-09-06 that cost
+      # a deploy: `gh release create` failed with "tag v0.42.3 exists locally
+      # but has not been pushed to ViktorBarzin/terminal-lobby" — the tag goes
+      # to Forgejo above, and reaches this mirror only when Forgejo's push
+      # mirror syncs, so the two race. The package was already in the Debian
+      # registry; the job went red on a backup copy and the box stayed on
+      # 0.42.2 until someone ran tl-reconcile by hand. docs/deployment.md's
+      # sequence diagram has shown this order since it was drawn.
+      #
       # Runners cannot route to the devvm, so the trigger goes through Woodpecker,
       # which is deploy-only by ADR-0002 and already activated on the infra repo.
       #
@@ -272,3 +298,24 @@ jobs:
             -H "Content-Type: application/json" \
             -d '{"branch":"master","variables":{"PIPELINE":"terminal-lobby-deploy","VERSION":"${{ steps.version.outputs.version }}"}}' \
             "${WOODPECKER_PIPELINE_URL}"
+
+      # Off-site copy, so a cluster outage cannot block repairing the
+      # workstation. Last on purpose: it is a backup, and the deploy above must
+      # not wait on it. It can still go red on its own — the tag it names
+      # arrives here by mirror — but a red step here now costs the release
+      # assets and nothing else.
+      - name: attach to a GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Two copies of one file. The versioned name is what the registry and
+          # a human looking at the release want; the unversioned one is what
+          # makes /releases/latest/download/terminal-lobby_amd64.deb resolve,
+          # which is the install command the README gives. Without it that URL
+          # 404s, because the asset name carries the version.
+          cp "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+             "out/terminal-lobby_amd64.deb"
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "out/terminal-lobby_${{ steps.version.outputs.version }}_amd64.deb" \
+            "out/terminal-lobby_amd64.deb" \
+            --title "${{ steps.version.outputs.tag }}" --generate-notes

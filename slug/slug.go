@@ -1,24 +1,23 @@
 // Package slug derives a tmux session NAME from a display TITLE, and
 // normalizes the TITLE itself.
 //
-// The two halves have different consumers, and after ADR-0019 they no longer
-// belong to the same story:
+// Both halves serve the lobby again, after a spell in which only the first did:
 //
 //   - CleanTitle / MaxTitleRunes normalize the arbitrary text a person typed —
 //     spaces, punctuation, emoji, any script — before it is stored and shown.
 //     tmux-api runs this on every title that reaches it. Its mirror is
 //     frontend-v2/src/lib/title.ts.
 //
-//   - FromTitle / Free / MaxNameLen derive a tmux session name. The LOBBY
-//     stopped using these: a lobby session's name is a minted 12-character id
-//     that never changes, so nothing is derived from a title any more.
-//     t3-bridge still names a bridged session after its working directory
-//     (main.go's Slug, resurrect.go's free-name walk), which is what keeps this
-//     half alive.
+//   - FromTitle / Free / MaxNameLen derive a tmux session name. ADR-0019 left
+//     these with one consumer, t3-bridge, which names a bridged session after
+//     its working directory (main.go's Slug, resurrect.go's free-name walk).
+//     ADR-0022 brought the lobby back: a title carries the tmux name with it,
+//     so `tmux ls`, the status bar and the window title read as words rather
+//     than as a minted id (tmux-api/name_from_title.go).
 //
 // vectors.json holds two lists. `cases` pins the derivation and only this
-// package reads it, because the TypeScript side lost its copy of FromTitle with
-// the lobby's use of it. `cleanTitleCases` pins CleanTitle, which the browser
+// package reads it: the derivation is server-side, so the TypeScript side has
+// no copy of FromTitle to cross-check. `cleanTitleCases` pins CleanTitle, which the browser
 // still has its own copy of, so frontend-v2/test/title.test.ts reads that half
 // and the two implementations cannot drift apart by editing one list.
 package slug
@@ -74,8 +73,8 @@ func CleanTitle(title string) string {
 // FromTitle derives the tmux session name for a title.
 //
 // Returns "" when nothing usable survives — a CJK or emoji-only title, or no
-// title at all. The caller supplies its own fallback; t3-bridge, the one
-// consumer left, uses its own placeholder.
+// title at all. The caller supplies its own fallback: t3-bridge uses a
+// placeholder, and tmux-api leaves the session under the name it already has.
 func FromTitle(title string) string {
 	clean := strings.ToLower(CleanTitle(title))
 
@@ -128,9 +127,10 @@ func nameRune(r rune) bool {
 
 // Free returns base, or the first free base-N variant.
 //
-// This is the suffix walk t3-bridge uses when a resurrection finds its name
-// taken. The lobby has no use for it: its names are minted ids, and a collision
-// there is answered by minting another rather than by suffixing.
+// The suffix walk for two callers: t3-bridge, when a resurrection finds its
+// name taken, and tmux-api's name_from_title.go, when two sessions carry the
+// same title. tmux refuses a duplicate session name outright, so the walk is
+// what turns that refusal into a second usable name rather than a failure.
 //
 // The suffix has to fit the same budget, so a base at the limit is cut to make
 // room. Ten variants is the ceiling before it gives up and returns the last

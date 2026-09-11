@@ -2,10 +2,11 @@
  * Normalizing a session's display TITLE.
  *
  * A title is arbitrary text — spaces, punctuation, emoji, any script — and is
- * the only string on a session that anyone reads. It used to be the source a
- * tmux session NAME was derived from; ADR-0019 ended that, and a name is now a
- * minted id (lib/session-id.ts) that never moves. So nothing here derives
- * anything: it only cleans what a person typed before it is stored.
+ * the only string on a session that anyone reads, and the tmux NAME is derived
+ * from it (ADR-0022) so `tmux ls` and the status bar read as words. That
+ * derivation happens server-side, in Go, where the collision check can see
+ * every live session; nothing here derives anything. This only cleans what a
+ * person typed before it is stored.
  *
  * The mirror of Go's terminal-lobby/slug CleanTitle, which tmux-api runs on
  * every title that reaches it. The two agreeing matters because the browser

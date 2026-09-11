@@ -157,9 +157,18 @@ export function createRunAppCommand(deps: CommandDeps): (cmd: string) => void {
     }
 
     if (cmd === "view.toggle") {
-      // From the palette or the Shortcuts sheet, which are the only ways in.
-      // The SessionView listener this used to name went when the dock reclaimed
-      // Ctrl/Cmd-J (App.tsx's `onDockKey`), so `view.toggle` has no chord.
+      // NO CHORD, on purpose: Viktor settled that on 2026-09-06, and
+      // keybindings/bindings.logic.ts carries the reasoning and the note not to
+      // add a table row. The SessionView listener this arm used to name went
+      // when the dock reclaimed Ctrl/Cmd-J (App.tsx's `onDockKey`).
+      //
+      // Nor does anything else dispatch it as of 2026-09-06: App.tsx's palette
+      // action list has no view-toggle entry, and the Shortcuts sheet only
+      // PRINTS chords. So this arm is reached from test/commands.test.ts and
+      // nowhere else, while people use the [Text | Terminal] control, which
+      // calls setMode directly. It is kept because the palette entry is the
+      // thing that is missing, and this is what that entry would run.
+      //
       // Reached through the bridge because the shell does not own the
       // per-session view mode.
       if (!toggleViewFn()) deps.notify("Open a session first", "error");

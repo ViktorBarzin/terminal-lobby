@@ -71,7 +71,7 @@ func parseClients(out []byte) []client {
 func markDriven(sessions []Session, clients []client) {
 	driving := map[string]bool{}
 	for _, c := range clients {
-		if strings.Contains(c.Flags, "read-only") {
+		if isReadOnly(c.Flags) {
 			continue
 		}
 		driving[c.Session] = true

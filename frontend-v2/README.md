@@ -183,14 +183,14 @@ src/
     title.ts             Normalizes a display TITLE: control characters to a
                          space, whitespace runs collapsed, capped at 64 code
                          points. Mirrors Go's slug.CleanTitle, which tmux-api
-                         runs on every title it stores. It used to derive a
-                         session NAME from the title too; ADR-0019 ended that
-                         and session-id.ts mints the name instead
+                         runs on every title it stores. The session NAME is
+                         derived from the title too (ADR-0022), but server-side
+                         in Go, where the collision check can see every session
     session-id.ts        Mints a session's NAME: 12 characters of lowercase
                          Crockford base32 from crypto.getRandomValues, and the
-                         test that says a name is one of ours. The name is an
-                         opaque id that never moves (ADR-0019), minted here
-                         because creating a session reaches no server. Mirrored
+                         test that says a name is one of ours. A session is
+                         minted with an id here because creating one reaches no
+                         server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
@@ -207,6 +207,10 @@ src/
                          panel says something different about: 409 is a name
                          collision with a diff to show, 404 a list drawn before
                          someone else removed that skill
+    agent-spend.ts       GET /agent-spend client and the wording around it:
+                         Claude's window keys in words, dollars that never
+                         round a real cost to $0.00, compact token counts, and
+                         the filter that drops a window whose reset has passed
     act-as.ts            Admin act-as switch: the URL to navigate to in order
                          to act as a user (or return) — switching is a load —
                          plus lensTarget(), the one answer for "whose account
@@ -467,10 +471,13 @@ src/
                          the auto-title rule only fires while @title is unset,
                          so stamping it would freeze the placeholder in place
     prefs.ts             Roamed prefs (whole-doc GET/PUT /prefs, last-writer-wins)
-    device-prefs.ts      Per-BROWSER switches the roamed doc must not carry:
-                         terminal flow control (tl-flow-control — the terminal
-                         picks a flip up live via a storage event) and the
-                         Clear-local-data wipe
+    device-prefs.ts      Per-BROWSER state the roamed doc must not carry: the
+                         gestures master kill (tl-gestures, read fresh on every
+                         gesture) and the Clear-local-data wipe. It also names
+                         the two keys nothing reads any more, and why they are
+                         left in place rather than migrated: tl-terminal-
+                         renderer (2026-09-05) and tl-flow-control
+                         (2026-09-06)
     toast.ts             Toast stack + the slow-request health coordinator
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
@@ -522,6 +529,13 @@ src/
                          sidebar header the three a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
+    SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
+                         footer beside the gear: today's dollars for Claude
+                         Code, the tighter of the two limits for Codex, nothing
+                         for a shell. Follows the same `tool` the card's mark
+                         does, reads GET /agent-spend on the sidebar's own
+                         session-poll tick with a 30s floor between reads, and
+                         opens Settings → Agent spend when tapped
     NewSessionComposer.tsx
                          The new-session composer: a prompt field plus the three
                          choices a create makes — project, command, model. What
@@ -531,6 +545,10 @@ src/
                          name box, because a shell has no prompt to receive
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
+    menu.logic.ts        PURE placement for a fixed ⋯ popup: which side of the
+                         row it opens on, where its left edge lands, how tall it
+                         may grow. jsdom does no layout, so this is the only
+                         place the decision can be tested
     overlay.ts           A backdrop's press-to-dismiss, on the node rather than
                          as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
@@ -617,8 +635,10 @@ src/
         AppearancePage.tsx    The nine themes as swatch cards painting their own
                               colours; "System" follows the OS live
         TerminalPage.tsx      Font size, line height, letter spacing, bold
-                              weight, cursor, scrolling, link copy chip, and
-                              flow control
+                              weight, cursor, scrolling, link copy chip. Every
+                              row roams, so nothing here wears the "this
+                              device" chip: the Flow control row went on
+                              2026-09-06 with the group that held it
         SessionsPage.tsx      New-session command, session-list last-active time
         KeyboardPage.tsx      The app-shortcut layer's opt-out, and the four
                               chords that outlive it
@@ -629,6 +649,11 @@ src/
                               bytes by period, by named network, by feature
         PrivacyPage.tsx       Send diagnostics, and Clear local data with the
                               roamed-settings opt-in
+        AgentSpendPage.tsx    What Claude Code and Codex have consumed over a
+                              period: Claude's spend, its windows when the seat
+                              reports any, Codex's 5-hour and weekly limits,
+                              plan and credits, and the session rows under each.
+                              A section is drawn only when the server sent it
         ActAsPage.tsx         The admin act-as picker; renders for an admin only
         SkillsPage.tsx        The Skills surface (docs/adr/0011), a rail page
                               since 2026-08-30: a tab per list — this account's
@@ -650,7 +675,12 @@ src/
                               outgrew it into its own overlay in August 2026,
                               and came back as a rail page with the room that
                               overlay was for
-    SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only)
+    SoftKeys.tsx         Mobile soft-key toolbar (coarse-pointer only). ONE
+                         row since 2026-09-06: Tab, Esc, the four arrows, Copy,
+                         Paste, and a pinned keyboard-dismiss. The ⋯ overflow
+                         tier, ⇧Tab and the soft Ctrl/Alt went with it, on 28
+                         days of terminal.softkey telemetry — the glyph keys had
+                         no taps at all and Ctrl could not reach a letter
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
@@ -682,12 +712,28 @@ src/
     notifications.ts     Wires the above + push into the running app
   pwa/
     register.ts          Registers /sw.js + the notification-tap handoff
+    tap.ts               PURE: which pending notification a launch belongs to,
+                         and the reason the journal is told
     push.ts              Web Push subscribe/heal (best-effort)
     vapid.ts             VAPID base64url → Uint8Array
+  dnd/
+    sidebar.ts           Drag and drop for the sidebar, over
+                         @formkit/drag-and-drop: each group's card list and the
+                         sequence of groups are registered as sortables, a mouse
+                         gets native drag events and a finger a synthetic
+                         pointer drag, and the store is written once when the
+                         pointer comes up. Also the reason clipboard/attach.ts
+                         asks before claiming a dragover — its window-level
+                         `dropEffect = "copy"` was refusing every card drop
+    anchor.ts            PURE: the neighbour a dropped card is placed against,
+                         and where a dragged group lands in the raw sequence
   mobile/
     pointer.ts           Coarse-pointer gate for every mobile affordance
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys
-    softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine
+    softmods.ts          PURE one-shot/latched soft Ctrl+Alt machine. No live
+                         caller since the key row dropped Ctrl/Alt; terminal/
+                         keys.ts reduces through it and is where wiring it to
+                         the system keyboard would land
     compose.ts           PURE bracketed-paste + trailing-submit split
     softkeys-reserve.ts  body.has-soft-keys, the height both views reserve for
                          the toolbar and the keyboard. Installed once per APP:
@@ -708,9 +754,6 @@ src/
                          --tl-text-scale, set on .tl-textview, so transcript,
                          answer card and composer move together
     swipe.ts             PURE swipe classification + the session-switch gesture
-    reorder.ts           PURE geometry for dragging a session row with a
-                         finger (which side of the row under it, how fast
-                         the list scrolls itself at its edges)
   clipboard/
     paste-into-terminal.ts  Clipboard -> terminal, READ IN THE LOBBY (the frame
                          has no focus, so it cannot read it) — text via tl-paste,
@@ -728,6 +771,7 @@ src/
     healer.logic.ts      PURE self-update kernel (ADR-0007)
     healer.ts            Its controller: poll own served bytes, TOP-owned reload
   telemetry/track.ts     Batched usage events → tmux-api /telemetry (ADR-0006)
+  telemetry/device.ts    Per-installation id stamped on every event, mirrored to IndexedDB for sw.js
   telemetry/diag.ts      Typed seam onto the shared frontend/diag.js core (ADR-0008)
   theme/theme.css        The 9-theme CSS-var token layer (ported verbatim)
   theme/theme.ts         Live theme switch + xterm ITheme derivation
@@ -788,9 +832,10 @@ All of the following ship in the deployed build:
   and background **Web Push** via `/sw.js` + `/api/sessions/push/*` when the
   browser and the server's VAPID key allow it. A tap routes to the session that
   called (ADR-0014).
-- **Mobile** — a coarse-pointer soft-key toolbar (raw byte sequences a phone
-  keyboard cannot produce), soft Ctrl/Alt modifiers, and visualViewport
-  plumbing so the soft keyboard cannot cover the composer.
+- **Mobile** — a coarse-pointer soft-key row (raw byte sequences a phone
+  keyboard cannot produce: Tab, Esc, the arrows) with Copy, Paste and a
+  keyboard-dismiss, and visualViewport plumbing so the soft keyboard cannot
+  cover the composer.
 - **Settings** — one overlay, navigated by a category rail with a single page
   showing: Appearance, Terminal, Sessions, Keyboard, Notifications, Network,
   Privacy, then Skills, then Act as user for an admin. ↑↓ walk the rail, Enter

@@ -11,8 +11,22 @@ import {
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
-import { SHARED_KEY } from "../store/collapse";
-import { isGroupVisible } from "./lobby.logic";
+import { SHARED_KEY, SYSTEM_KEY } from "../store/collapse";
+import {
+  groupSeqTokens,
+  groupToken,
+  isGroupVisible,
+  sessionsByName,
+  SYSTEM_GROUP_NAME,
+  type RenderGroup,
+} from "./lobby.logic";
+import {
+  attachGroupList,
+  attachSessionList,
+  GROUP_ATTR,
+  liveGroupOrder,
+  liveOrder,
+} from "../dnd/sidebar";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
 import { SessionCard } from "./SessionCard";
@@ -22,6 +36,8 @@ import { SkillsIcon } from "./Icons";
 import { BellIcon } from "./BellIcon";
 import type { NotificationSystem } from "../notify/notifications";
 import { StatusDot } from "./StatusDot";
+import { SpendFigure } from "./SpendFigure";
+import type { Session, SessionTool } from "../types/lobby";
 import { LOBBY_CHANNELS, type Channel } from "../diagnostics/status";
 
 /**
@@ -65,8 +81,22 @@ export const Sidebar: Component<{
   /** The connection badge in the header (ADR-0016), scoped to the channels a
    *  list screen can honestly report. Optional so a test can mount without it. */
   status?: { channels: () => readonly Channel[]; onOpen: () => void };
+  /** Open the Agent spend page. Supplying it is what puts the footer figure on
+   *  screen; a test that does not care about spend mounts without it, and the
+   *  sidebar then reads nothing from the server. */
+  onOpenSpend?: () => void;
 }> = (props) => {
   const store = props.store;
+
+  // Which tool the attached session runs, which is the whole of what the footer
+  // figure follows. `tool` comes off the same /sessions payload the cards read
+  // (tmux-api derives it from the pane's process tree), so the figure and the
+  // card's tool mark cannot disagree.
+  const attachedTool = createMemo<SessionTool | undefined>(() => {
+    const sel = store.selected();
+    if (!sel) return undefined;
+    return store.sessions.find((s) => s.name === sel.name)?.tool;
+  });
 
   // The roamed session-list pref, read once here and threaded to every card
   // (through ProjectGroup for projects and Ungrouped, directly for the
@@ -138,7 +168,25 @@ export const Sidebar: Component<{
   // render so they can be seen and dropped into. Shared with the move-up/down
   // bounds — the two reading different predicates is what let a group's Move
   // item offer a step onto a slot that renders nothing.
-  const visibleGroups = () => store.model().groups.filter(isGroupVisible);
+  //
+  // System is drawn by hand at the foot instead, so it is filtered out here for
+  // the same reason `visibleGroupSeqTokens` drops it: this list is also the
+  // token space the group sortable measures, and a slot the layout cannot store
+  // is a slot no drag may land on.
+  const onScreen = () =>
+    store.model().groups.filter((g) => g.kind !== "system" && isGroupVisible(g));
+  /** The groups to draw: the model's sequence, or the one a header being
+   *  dragged has now (dnd/sidebar.ts holds it for the length of the drag). */
+  const visibleGroups = (): RenderGroup[] => {
+    const order = liveGroupOrder();
+    const groups = onScreen();
+    if (!order) return groups;
+    const byToken = new Map(groups.map((g) => [groupToken(g), g]));
+    return order.flatMap((t) => {
+      const g = byToken.get(t);
+      return g ? [g] : [];
+    });
+  };
 
   // "No sessions yet." is a claim about fetched data, so a load error disowns
   // it: refresh() can bail before /sessions is ever called (denied whoami), and
@@ -151,6 +199,30 @@ export const Sidebar: Component<{
     store.layout().projects.length === 0;
 
   const sharedCollapsed = () => store.collapse.isCollapsed(SHARED_KEY);
+
+  // The System group, or undefined while nothing has landed in it. Hand-rolled
+  // below rather than drawn by <ProjectGroup>, for the same reason "Shared with
+  // me" is: what it shares with a project is a header, a chevron and a count.
+  // It cannot be renamed, deleted, added to, dragged, or moved in the sequence,
+  // and every one of those controls would have needed a branch of its own.
+  const systemGroup = (): RenderGroup | undefined => {
+    const g = store.model().groups.find((x) => x.kind === "system");
+    return g && isGroupVisible(g) ? g : undefined;
+  };
+  const systemCollapsed = () => store.collapse.isCollapsed(SYSTEM_KEY);
+  const toggleSystem = () => store.collapse.toggle(SYSTEM_KEY);
+  /** The cards to draw: the model's order, or the one the pointer has now —
+   *  the same swap ProjectGroup makes, so a card dragged OUT of System leaves
+   *  the list under the finger instead of snapping back until the drop lands. */
+  const systemCards = (g: RenderGroup): Session[] => {
+    const order = liveOrder(SYSTEM_GROUP_NAME);
+    if (!order) return g.sessions;
+    const all = sessionsByName(store.model());
+    return order.flatMap((n) => {
+      const s = all.get(n);
+      return s ? [s] : [];
+    });
+  };
 
   return (
     <div class="tl-sidebar">
@@ -182,9 +254,7 @@ export const Sidebar: Component<{
             type="button"
             aria-label="Reload the app"
             title="Reload the app"
-            onClick={() =>
-              props.onReload ? props.onReload() : window.location.reload()
-            }
+            onClick={() => (props.onReload ? props.onReload() : window.location.reload())}
           >
             ↻
           </button>
@@ -212,8 +282,8 @@ export const Sidebar: Component<{
         </div>
         <Show when={store.whoami()}>
           <p class="tl-sidebar-sub">
-            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}).
-            Sessions are kernel-isolated per Unix user; you only see your own.
+            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}). Sessions are
+            kernel-isolated per Unix user; you only see your own.
           </p>
         </Show>
       </div>
@@ -232,7 +302,21 @@ export const Sidebar: Component<{
         </button>
       </div>
 
-      <div class="tl-sidebar-scroll">
+      <div
+        class="tl-sidebar-scroll"
+        // The groups are a sortable of their own, dragged by their headers.
+        // Each group's cards are a sortable NESTED in one of these nodes, and
+        // the inner list claims a press on a card first, so the two never
+        // answer the same gesture.
+        ref={(el) =>
+          attachGroupList(el, {
+            visible: () => visibleGroups().map(groupToken),
+            sequence: () => groupSeqTokens(store.layout()),
+            reorder: (from, to) => store.reorderGroupsTo(from, to),
+            hold: () => store.hold(),
+          })
+        }
+      >
         <Show when={store.loadError()}>
           <div class="tl-sidebar-msg tl-sidebar-error">{store.loadError()}</div>
         </Show>
@@ -305,6 +389,74 @@ export const Sidebar: Component<{
             </Show>
           </div>
         </Show>
+
+        {/* System, at the very foot: the sessions the lobby's own create path
+            did not make — harness fleets, and whatever else reached the tmux
+            server without saying who it was. Collapsed by default, which is the
+            point of it, so the COUNT is the whole of the evidence that
+            something landed here wrongly and has to be readable without
+            opening the group. Hand-rolled for the reasons at `systemGroup`. */}
+        <Show when={systemGroup()}>
+          {(g) => (
+            <div class="tl-group" classList={{ "tl-group-collapsed": systemCollapsed() }}>
+              <div
+                class="tl-group-header"
+                role="button"
+                tabindex={0}
+                aria-expanded={!systemCollapsed()}
+                aria-label="System group"
+                title="Sessions the lobby did not create. They attach and kill like any other. They do not notify."
+                onClick={toggleSystem}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    toggleSystem();
+                  }
+                }}
+              >
+                <span class="tl-chev">▾</span>
+                <span class="tl-group-title">System</span>
+                <span class="tl-group-badges">
+                  <span class="tl-group-count">{g().sessions.length}</span>
+                </span>
+              </div>
+              <Show when={!systemCollapsed()}>
+                <div
+                  class="tl-group-body"
+                  // A sortable like any other group's, so a card can be dragged
+                  // OUT — which is the rescue (store.move stamps the session
+                  // `user` on the server before it writes the layout). A drop
+                  // back IN reads this name, and the store refuses it: the
+                  // layout has no slot to write.
+                  {...{ [GROUP_ATTR]: SYSTEM_GROUP_NAME }}
+                  ref={(el) =>
+                    attachSessionList(el, {
+                      group: () => SYSTEM_GROUP_NAME,
+                      names: () => g().sessions.map((s) => s.name),
+                      move: (name, group, anchor) => store.move(name, group, anchor),
+                      hold: () => store.hold(),
+                    })
+                  }
+                >
+                  <For each={systemCards(g())}>
+                    {(s) => (
+                      <SessionCard
+                        isUnseen={unseenOf}
+                        store={store}
+                        session={s}
+                        groupName={SYSTEM_GROUP_NAME}
+                        tick={tick}
+                        badge={badge}
+                        confirm={props.confirm}
+                        showLastActive={showLastActive}
+                      />
+                    )}
+                  </For>
+                </div>
+              </Show>
+            </div>
+          )}
+        </Show>
       </div>
 
       <div class="tl-sidebar-foot">
@@ -335,6 +487,14 @@ export const Sidebar: Component<{
           </button>
         </Show>
         {props.actAsChip}
+        {/* Beside the gear, because it is the short answer to the question the
+            gear opens: attach a Claude session and it reads today's spend,
+            attach a Codex one and it reads the tighter of its two limits. */}
+        <Show when={props.onOpenSpend}>
+          {(open) => (
+            <SpendFigure tool={attachedTool} polls={store.polls} onOpen={() => open()()} />
+          )}
+        </Show>
         <Show when={props.onOpenSkills}>
           {(open) => (
             <button

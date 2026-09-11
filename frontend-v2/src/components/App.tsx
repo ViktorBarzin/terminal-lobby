@@ -173,6 +173,13 @@ export const App: Component = () => {
   const skillSessions = createMemo(() =>
     store.sessions.map((s) => ({ name: s.name, state: s.state || "" })),
   );
+  // What the Agent spend page needs to name a row: a session's title, keyed by
+  // the name the spend store recorded it under. A name is an id and nobody
+  // reads one (ADR-0019), so a row falls back to it only when there is nothing
+  // better to show.
+  const sessionTitles = createMemo(() =>
+    store.sessions.map((s) => ({ name: s.name, title: s.title || "" })),
+  );
   // One event per tab boot: the denominator every other count is read against.
   onMount(() => track("app.loaded", { "tl.kind": isCoarsePointer() ? "touch" : "desktop" }));
   onCleanup(() => {
@@ -863,6 +870,12 @@ export const App: Component = () => {
               ? undefined
               : { channels: status.channels, onOpen: () => openSettings("network") }
           }
+          // The footer figure, which is the short answer to what the page it
+          // opens says at length. Unlike the gear it is wired on every screen:
+          // the shell bar has no room for a running total, and "what is this
+          // session costing me" is asked from the desktop as often as from a
+          // phone.
+          onOpenSpend={() => openSettings("spend")}
           // The phone folds the shell bar (and with it the gear) into the
           // session bar, which only exists once a session is open. Without this
           // the sidebar's own screen has no route to Settings at all.
@@ -1037,6 +1050,7 @@ export const App: Component = () => {
           actAs={actAsControl()}
           skills={skills}
           skillSessions={skillSessions}
+          sessionTitles={sessionTitles}
         />
       </Show>
 

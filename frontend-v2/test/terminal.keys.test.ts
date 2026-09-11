@@ -185,7 +185,7 @@ const LEGS: readonly Row[] = [
     /**
      * The ALWAYS-ON chord, and the only kind of appChord that fires with the
      * keybinding layer switched off: `matchesAppChord` walks
-     * `KB_ALWAYS_BINDINGS` before the `enabled` gate (bindings.logic.ts:277-282,
+     * `KB_ALWAYS_BINDINGS` before the `enabled` gate (bindings.logic.ts:289-294,
      * term.html:3528-3533). Every other row in this block is a default chord,
      * which is why this one is here.
      */
@@ -804,7 +804,7 @@ describe("the one key handler xterm stores", () => {
    * `appChord` joined to the REAL matcher rather than asserted as a boolean,
    * for the one configuration a wiring is most likely to skip the read in.
    * `matchesAppChord` walks the always-on table before the `enabled` gate
-   * (bindings.logic.ts:277-282; term.html:3528-3533 in the same order), so
+   * (bindings.logic.ts:289-294; term.html:3528-3533 in the same order), so
    * `alt+shift+backspace` -> `session.kill.current` matches with
    * `enabled: false`, and the lobby context that guards it is hardcoded
    * `lobbyOpen: true` (`keyContext`, :250). A component that read the matcher

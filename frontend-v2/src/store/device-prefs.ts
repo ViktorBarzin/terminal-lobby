@@ -2,19 +2,29 @@
  * Settings that belong to THIS BROWSER rather than to the account.
  *
  * The roamed doc (`store/prefs.ts`, `/prefs`) is the right home for anything
- * that should follow you between devices. These three deliberately do not:
+ * that should follow you between devices. These two deliberately do not:
  *
- *  - **Flow control** is a kill switch for the terminal's XON/XOFF back-
- *    pressure. It exists to rescue a wedged stream on the machine that is
- *    wedged, so roaming it would carry a local rescue to every device.
- *  - **The gestures master kill** is the same shape for touch and wheel
- *    gestures, and rescues the device it is set on for the same reason.
+ *  - **The gestures master kill** turns off every touch and wheel gesture on
+ *    the device it is set on, so roaming it would carry a local rescue to
+ *    every device.
  *  - **Clear local data** is an action on this browser's storage.
  *
- * The two kill switches keep the plain `tl-` key names the vanilla page used.
- * A fourth setting lived here until 2026-09-05, WHICH TERMINAL to render, and
- * it went with the page it selected: there is one terminal now, so there is no
- * question left to answer per device.
+ * The kill switch keeps the plain `tl-` key name the vanilla page used.
+ *
+ * TWO SETTINGS HAVE LEFT THIS FILE, and both left a stored key behind.
+ * WHICH TERMINAL to render (`tl-terminal-renderer`) went on 2026-09-05 with
+ * the page it selected. FLOW CONTROL (`tl-flow-control`), the kill switch for
+ * the terminal's XON/XOFF back-pressure, went on 2026-09-06: the accounting
+ * that would have read it stayed behind in term.html, so the toggle moved a
+ * localStorage key and nothing else while looking to a person like it released
+ * a stuck stream. Viktor chose removal over a disabled row, on the grounds
+ * that a control which does nothing is worse than no control.
+ *
+ * Neither key is read now, and neither is migrated away: nothing here has a
+ * migration path, and an orphan under the `tl-` prefix is already swept by
+ * Clear local data below. A device that still has `tl-flow-control=off` stored
+ * behaves exactly like one that never set it. Porting the accounting means
+ * bringing the key and its reader back out of this file's history.
  *
  * The `term.html:NNNN` citations below index that deleted page at the commit
  * that removed it. They are provenance for the port, not claims about anything
@@ -26,41 +36,16 @@ import { apiUrl } from "../lib/config";
 import { PREF_DEFAULTS, composeDoc } from "./prefs";
 import { closeSharedTranscriptDb } from "./transcript-cache";
 
-/** Terminal flow control (XON/XOFF back-pressure). "off" disables it here. */
-export const FLOW_KILL_KEY = "tl-flow-control";
-
-/** True unless this browser has explicitly turned flow control off. The test
- *  is the page's (`!== 'off'`), so any other value reads as enabled. */
-export function flowControlWanted(): boolean {
-  try {
-    return localStorage.getItem(FLOW_KILL_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
-
-export function setFlowControlEnabled(on: boolean): void {
-  try {
-    // Re-enabling removes the key rather than writing "on": the reader only
-    // looks for "off", so a leftover value would work but would leave the
-    // stored state describing something nobody reads.
-    if (on) localStorage.removeItem(FLOW_KILL_KEY);
-    else localStorage.setItem(FLOW_KILL_KEY, "off");
-  } catch {
-    /* private mode — the setting simply does not stick */
-  }
-}
-
 /**
  * The Wave-5 gestures master kill: `"off"` in this browser turns off every
  * touch and wheel gesture built on top of it.
  *
- * The page gave it the same posture as flow control in as many words
- * (term.html:3078-3086): a plain per-browser key where anything other than
- * `"off"`, unset included, means enabled, so it can rescue a device with no
- * redeploy and even with the prefs machinery broken. That is what keeps it out
- * of the roamed doc. The per-feature opt-outs under `tl:prefs:v1` `gestures.*`
- * are checked IN ADDITION to this one, never instead of it.
+ * The page spelled out its posture at term.html:3078-3086: a plain per-browser
+ * key where anything other than `"off"`, unset included, means enabled, so it
+ * can rescue a device with no redeploy and even with the prefs machinery
+ * broken. That is what keeps it out of the roamed doc. The per-feature opt-outs
+ * under `tl:prefs:v1` `gestures.*` are checked IN ADDITION to this one, never
+ * instead of it.
  *
  * There is no setter, because nothing writes this key: it is read here and
  * nowhere else, and a person sets it by hand when a gesture is misbehaving.
@@ -95,8 +80,18 @@ const OWNED_PREFIXES = ["tl:", "tl-", "tmux-"];
  * Every IndexedDB database this app owns. The big one is `tl-transcripts`, up
  * to twelve sessions at two thousand events each, which the prefix sweep below
  * never touched because it only ever looked at localStorage.
+ *
+ * `tl-device` holds the telemetry installation id, mirrored out of localStorage
+ * so the service worker can stamp the same value (telemetry/device.ts). The
+ * prefix sweep already takes the localStorage copy, so leaving the mirror would
+ * hand the worker an id the page had stopped using until the reload rewrote it.
  */
-const OWNED_DATABASES = ["tl-transcripts", "tl-notif", "tl-badge"];
+const OWNED_DATABASES = [
+  "tl-transcripts",
+  "tl-notif",
+  "tl-badge",
+  "tl-device",
+];
 
 /** How long one deleteDatabase gets before the wipe gives up on it. */
 const IDB_DELETE_TIMEOUT_MS = 1_500;

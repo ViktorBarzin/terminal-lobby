@@ -44,6 +44,25 @@ export function saveMode(session: string, mode: ViewMode): void {
   lsSet(KEY_PREFIX + session, mode === defaultMode() ? null : mode);
 }
 
+/**
+ * Move a session's view choice onto the name a rename gave it (ADR-0022).
+ *
+ * Storage records only a deviation from the default, so an absent key is a
+ * session nobody chose for and there is nothing to move. Without this, reading
+ * a session in the text view and having its first title land put the person
+ * back in the terminal, with no way to tell what had happened.
+ *
+ * `lsSet` rather than `saveMode`, so a rename does not appear in the telemetry
+ * as somebody pressing the switch.
+ */
+export function carryViewMode(from: string, to: string): void {
+  if (from === to) return;
+  const stored = lsGet(KEY_PREFIX + from);
+  if (stored !== "text" && stored !== "terminal") return;
+  lsSet(KEY_PREFIX + from, null);
+  lsSet(KEY_PREFIX + to, stored);
+}
+
 export function createViewMode(
   session: Accessor<string>,
 ): [Accessor<ViewMode>, (m: ViewMode) => void, () => void] {

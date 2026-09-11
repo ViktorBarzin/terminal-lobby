@@ -36,6 +36,11 @@ func TestSetTitleEndpoint(t *testing.T) {
 		wantArgv   []string // substrings every one of which must appear
 		wantNoArgv bool
 		wantStored string
+		// The name the session ANSWERS TO after the call. Empty means it did
+		// not move: the title derived nothing, or derived what it already had.
+		// Since ADR-0022 a title carries the tmux name with it, and the titles
+		// store is one of the six things the rename carries.
+		wantNameAfter string
 	}{
 		{
 			name:   "stamps the option and remembers it",
@@ -60,9 +65,10 @@ func TestSetTitleEndpoint(t *testing.T) {
 			name:   "a pipe in a title is not special any more",
 			method: http.MethodPost, path: "/sessions/work/title",
 			body: `{"title":"Deploy | stage 2"}`, auth: "authself",
-			wantStatus: http.StatusNoContent,
-			wantArgv:   []string{"@title", "Deploy | stage 2"},
-			wantStored: "Deploy | stage 2",
+			wantStatus:    http.StatusNoContent,
+			wantArgv:      []string{"@title", "Deploy | stage 2"},
+			wantStored:    "Deploy | stage 2",
+			wantNameAfter: "deploy-stage-2",
 		},
 		{
 			name:   "an empty title UNSETS the option and forgets it",
@@ -76,9 +82,10 @@ func TestSetTitleEndpoint(t *testing.T) {
 			name:   "control characters are stripped before tmux sees them",
 			method: http.MethodPost, path: "/sessions/work/title",
 			body: `{"title":"line\u0000one\ttwo"}`, auth: "authself",
-			wantStatus: http.StatusNoContent,
-			wantArgv:   []string{"@title", "line one two"},
-			wantStored: "line one two",
+			wantStatus:    http.StatusNoContent,
+			wantArgv:      []string{"@title", "line one two"},
+			wantStored:    "line one two",
+			wantNameAfter: "line-one-two",
 		},
 		{
 			name:   "an over-long title is capped, not refused",
@@ -86,6 +93,8 @@ func TestSetTitleEndpoint(t *testing.T) {
 			body: `{"title":"` + strings.Repeat("a", 200) + `"}`, auth: "authself",
 			wantStatus: http.StatusNoContent,
 			wantStored: strings.Repeat("a", 64),
+			// A name is capped shorter than a title (slug.MaxNameLen).
+			wantNameAfter: strings.Repeat("a", 32),
 		},
 		{
 			name:   "a session that is gone is a 404",
@@ -168,8 +177,14 @@ func TestSetTitleEndpoint(t *testing.T) {
 			}
 			if c.wantStatus == http.StatusNoContent {
 				name := strings.Split(strings.TrimPrefix(c.path, "/sessions/"), "/")[0]
+				if c.wantNameAfter != "" {
+					if !strings.Contains(argv, "rename-session\n") {
+						t.Errorf("a title that derives %q did not rename:\n%s", c.wantNameAfter, argv)
+					}
+					name = c.wantNameAfter
+				}
 				if got := store.get(osSelf, name); got != c.wantStored {
-					t.Errorf("remembered title = %q, want %q", got, c.wantStored)
+					t.Errorf("remembered title under %q = %q, want %q", name, got, c.wantStored)
 				}
 			}
 		})
@@ -209,10 +224,14 @@ func TestTmuxTargetMissingCoversEveryVerbsSpelling(t *testing.T) {
 // because "argv contains X" cannot express "argv contains no Y". This is what
 // stops a retitle from re-navigating the terminal iframe: the name is an id and
 // nothing derived from the title touches it.
-func TestSetTitleNeverRenames(t *testing.T) {
+// A title moves the tmux name with it (ADR-0022), so `tmux ls`, the status bar
+// and the window title read as words rather than as a minted id. This test used
+// to assert the opposite, under ADR-0019.
+func TestSetTitleRenamesToMatch(t *testing.T) {
 	osSelf, _ := twoLocalUsers(t)
 	withUserMap(t, "authself="+osSelf+"\n")
 	withTempLayoutStore(t)
+	swapAssignmentStore(t)
 	swapTitleStore(t)
 	argvFile := withTmuxStub(t, "")
 
@@ -223,7 +242,37 @@ func TestSetTitleNeverRenames(t *testing.T) {
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want 204 (body %q)", w.Code, w.Body)
 	}
+	argv := recordedArgv(t, argvFile)
+	for _, want := range []string{"rename-session", "something-else-entirely"} {
+		if !strings.Contains(argv, want+"\n") {
+			t.Errorf("argv missing %q:\n%s", want, argv)
+		}
+	}
+	// The stamp comes first: a rename that landed before it would leave a
+	// session named for a title it does not carry.
+	if strings.Index(argv, "set-option") > strings.Index(argv, "rename-session") {
+		t.Errorf("renamed before stamping the title:\n%s", argv)
+	}
+}
+
+// Clearing a title derives nothing, so the name stays where it is rather than
+// being invented for a running session.
+func TestClearingATitleLeavesTheNameAlone(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "authself="+osSelf+"\n")
+	withTempLayoutStore(t)
+	swapAssignmentStore(t)
+	swapTitleStore(t)
+	argvFile := withTmuxStub(t, "")
+
+	w := httptest.NewRecorder()
+	handleSessionByName(w, sessionReq(http.MethodPost, "/sessions/work/title",
+		`{"title":""}`, "authself"))
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (body %q)", w.Code, w.Body)
+	}
 	if argv := recordedArgv(t, argvFile); strings.Contains(argv, "rename-session") {
-		t.Fatalf("setting a title called rename-session:\n%s", argv)
+		t.Fatalf("clearing a title renamed the session:\n%s", argv)
 	}
 }

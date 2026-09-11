@@ -28,10 +28,20 @@ import type { SessionTool } from "../types/lobby";
  * setting is honoured from MANAGED settings only — the same block in a user or
  * project settings.json is dropped.
  *
- * A row can be offered and still not be yours to run: `claude-fable-5` is in
- * the list and, on this account today, boots as Sonnet 5 with a warning that
- * the model is restricted. Keeping the row is deliberate, so the day the
- * entitlement lands there is nothing to change.
+ * EVERY ROW HERE IS ONE THIS ACCOUNT CAN ACTUALLY RUN, which is a rule and not
+ * an accident (Viktor, 2026-09-06: "we must only show models we can use").
+ * `claude-fable-5` was in this list for a few hours and is not entitled: asking
+ * for it starts a Sonnet 5 session and prints a warning, so the row promised
+ * one model and delivered another. A row nobody can use is worse than a
+ * missing one.
+ *
+ * How to check before adding a row: `~/.claude.json` carries a
+ * `modelAccessCache` array of `{apiName, entitled}` for the account, which is
+ * the account's own answer. Then start a session on the slug and read the
+ * banner — a fallback names the OTHER model there and adds a ⚠ line. Do not
+ * probe with `claude -p`: the warning is invisible in print mode and the run
+ * answers normally, so an unentitled model looks like a working one. Codex is
+ * blunter and needs no banner reading — an unsupported model there is a 400.
  *
  * `default` is the absence of a choice: no flag, nothing driven, and the
  * session keeps whatever it booted with. It is the value every account starts
@@ -94,12 +104,21 @@ const anyDefault = (noun: string): ModelOption => ({
  * The Claude rows are the slugs measured against `claude --model <slug>` on
  * 2026-09-06 (Claude Code 2.1.263), and they must stay in step with the
  * `modelPicker.options` block in managed settings, which is what makes them
- * rows in the CLI's own picker.
+ * rows in the CLI's own picker. The codex rows are what its own picker listed
+ * on codex-cli 0.153.4 the same day, each one run through `codex exec -m`.
  *
- * Two slugs the CLI knows are deliberately absent. `claude-sonnet-5[1m]` is
+ * `gpt-6-astra` is a reminder that a stale CLI is indistinguishable from a
+ * model that does not exist. It is codex's DEFAULT on 0.153.4 and was absent
+ * from 0.144.3, which this box ran for eight weeks — so the model was missing
+ * from the picker, from the binary and from every probe, and looked like it had
+ * never shipped. The devvm now tracks latest and refreshes daily
+ * (infra playbooks/devvm.yml, codex-update.timer).
+ *
+ * Three slugs the CLI knows are deliberately absent. `claude-sonnet-5[1m]` is
  * accepted and then ignored — the session boots as plain "Sonnet 5", with no
  * 1M marker, because only Opus carries the suffix — so a row for it would
- * promise something the session does not do. `claude-fable-5-1` is not in this
+ * promise something the session does not do. `claude-fable-5` is in the
+ * catalogue and not entitled to this account. `claude-fable-5-1` is not in this
  * build's catalogue at all.
  */
 const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>> = {
@@ -111,7 +130,6 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
       slug("claude-sonnet-5"),
       slug("claude-haiku-4-5-20251001"),
       slug("claude-opus-4-8"),
-      slug("claude-fable-5"),
     ],
     effort: [
       anyDefault("effort"),
@@ -126,6 +144,7 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   codex: {
     model: [
       anyDefault("model"),
+      slug("gpt-6-astra"),
       slug("gpt-5.6-sol"),
       slug("gpt-5.6-terra"),
       slug("gpt-5.6-luna"),

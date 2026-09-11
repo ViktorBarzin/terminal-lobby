@@ -18,26 +18,48 @@ may be a plain shell. Carries a **name**, which nobody reads, and a
 _Avoid_: terminal, tab, thread
 
 **Name** (of a session):
-The tmux session name: an opaque 12-character id, minted by the browser when
-the session is created and **never changed afterwards**. The identity
-everything is keyed by — tmux targets, URL segments, store keys, the
-session-images directory, the `?arg=` attach contract, the push tag — and
-nothing a person is expected to read, which is what lets it stop moving.
-Unique within one OS user's tmux server, so a cross-user reference needs
-the owner too. Sessions predating the migration carried human names derived
-from their titles; ADR-0019 has why that ended.
-_Avoid_: slug (nothing is slugged any more), label, and any surface that
-shows a name where it could show a **title**
+The tmux session name. An opaque 12-character id, minted by the browser when
+the session is created, and **derived from the title from the first title
+onwards** — `Deploy the thing` becomes `deploy-the-thing`, with a `-2` suffix
+when a sibling already holds it. What everything is keyed by: tmux targets,
+URL segments, store keys, the session-images directory, the `?arg=` attach
+contract, the push tag. Unique within one OS user's tmux server, so a
+cross-user reference needs the owner too. It is what `tmux ls`, the status
+bar and the terminal window title show, which is why it reads as words;
+ADR-0022 has the reasoning, and ADR-0019 has the interval when it did not.
+Because it moves, anything recording a session across time keys by tmux's
+own `session_id` instead, which a rename does not change. That only serves
+something which has SEEN the session, and the first rename lands seconds
+after creation — often before any poll has listed the session under the id
+the browser minted. So the first rename away from an id also records that id
+as the session's **birth name**, which is what lets a browser holding the
+name it minted find the session under the name it has now.
+_Avoid_: label; and any surface that shows a name where it could show a
+**title**
+
+**Birth name**:
+The minted id a session was created with, kept on the session (the `@tl_born`
+tmux option, served as `bornAs`) once the first title has renamed it away from
+that id. Written once and only for an id: a session renamed from a readable
+**name** has been listed under it all along, and overwriting would replace the
+one name a stranded browser is holding. Present only on a session that has
+been renamed, which is why nothing may treat it as the session's identity —
+`session_id` is that. It answers one question: *what is the session that used
+to be called this?*
+_Avoid_: original name, old name, alias
 
 **Title**:
 The display text for a session — spaces, punctuation, emoji, any script, up
 to 64 characters. The only name a session has that anyone reads, and what
 every surface shows: sidebar cards, the tab title, the command palette, the
-dock, push bodies, confirmations. Usually a **summary** the lobby adopted
-rather than text a person typed, and a person may replace it at any time.
-Stored on the session itself (the `@title` tmux option), so everyone who can
-see the session sees the same title, and a durable copy re-stamps it after a
-restore. Clearing it hands the session back to the summary. A session with
+dock, push bodies, confirmations, the restore picker. Usually a **summary**
+the lobby adopted rather than text a person typed, and a person may replace
+it at any time. Stored on the session itself (the `@title` tmux option), so
+everyone who can see the session sees the same title, and a durable copy
+(tmux-api `titles.go`) re-stamps it after a restore. That copy is also what
+the restore picker reads: it lists sessions that are not running, and a tmux
+option died with them. It outlives a deliberate kill too, because the picker
+can restore from a snapshot older than the kill. Clearing it hands the session back to the summary. A session with
 no title yet shows the first line of the prompt it was created with, or
 `New session` — except where a question has to name ONE session and the
 answer cannot be taken back, such as a kill confirmation, which falls back
@@ -85,6 +107,22 @@ and (co-equal) may edit it.
 The OS user whose uid the session's process tree runs as — exactly one per
 session. A foreign session (owner ≠ the viewer) is attach-only.
 
+**Origin** (of a session):
+What made a **Session**, which is a different question from **Owner**. Owner is
+whose uid it runs as; origin is what asked for it to exist. A session the
+lobby's own create path made is a user session. One a test harness made, and one
+nothing accounted for at all, is a **system session**. System sessions collect
+in a single group at the foot of the sidebar, **System**, collapsed by default,
+where they stay fully addressable: attach, prompt, kill and open by URL all work
+as they always did. What they lose is the attention a person's session gets,
+since a system session raises no push and is not recorded in telemetry. System
+is not a **Project** and cannot become one, but moving a session out of it into
+a project is how you say a person made this one after all, and that change
+sticks. Absence of an origin counts as system, which only means anything because
+the lobby marks what it makes itself.
+_Avoid_: creator, source, author (each reads as who is working inside the
+session rather than what brought it into being), bot session
+
 **Share**:
 A grant letting a named non-owner attach a specific session, read-only
 (`tmux attach -r`, watch) or read-write (drive — which runs as the owner).
@@ -126,6 +164,32 @@ telemetry, which records both identities.
 _Avoid_: impersonation, sudo mode, admin mode (the switch is one tab's view, not
 a state of the app)
 
+**Created**:
+When a Session became somebody's, which is not when the tmux session was
+made. A create that claims a **Pre-warm slot** renames a session that
+already existed, and tmux's own `session_created` goes on reading the
+slot's age: measured 2026-09-04, a standing slot read 4h33m stale. So the
+claim stamps the session's `@tl_created` tmux option, and that wins
+wherever it is present, with `session_created` the fallback for every
+session that predates it. It is what the sidebar's Created ordering sorts
+on, and so the answer to "which of these did I just make"; it also seeds
+**Last driven** until a first driver is seen, and dates the window the
+auto-title rule watches in.
+_Avoid_: session start, birth time, and anything that suggests it is tmux's
+`session_created`
+
+**Pre-warm slot**:
+A detached session with Claude already booted, started for a directory
+before anyone has committed to making a session there, so a create can skip
+the boot. Two lifetimes: a standing slot, refilled after each claim and
+never collected, and a speculative one, warmed when a create input opens
+and collected by TTL if nobody commits. A claim is a `tmux rename-session`
+onto the slot, which is atomic and refuses a name already in use, and that
+is the whole concurrency story. Slots are named past the length limit a
+client may address, so the lobby never lists one; the rename is also why a
+claimed session's **Created** cannot be tmux's own `session_created`.
+_Avoid_: pool session, warm session, spare session
+
 **Last driven**:
 When a human last had hands on a Session — the newest moment a **read-write**
 client was attached. The relative time the sidebar shows, and the answer to "has
@@ -156,7 +220,12 @@ The size of a session's tmux window, in columns and rows. Owned exclusively by
 its **read-write** clients: a Watch-mode client consumes the Grid and never
 changes it, including when no read-write client is attached at all. Enforced by
 pinning (`window-size manual` plus hooks that re-derive the size from the live
-client list), applied on the first read-only attach and never reverted.
+client list, newest activity first), applied on the first read-only attach and
+never reverted. Among several read-write clients the Grid belongs to the one
+being used, which is what tmux's own `window-size latest` does — but the hooks
+only fire on a client attaching, detaching or resizing, so a device that is
+merely READING a session claims the Grid explicitly
+(`POST /sessions/{name}/grid`).
 _Avoid_: window size (means the browser's), canvas, viewport
 
 **Co-ownership**:
@@ -344,14 +413,17 @@ _Avoid_: chat box, prompt bar
 The prompt field for a session that does not exist yet, shown wherever nothing
 is selected and on a phone as the landing view. You type what you want to do,
 press Enter, and the session is created with your text as its first prompt.
-Three choices sit under it: which **project** it lands in, which command runs,
-and which model. Choosing a plain shell turns it back into a name box, because
-a shell has no prompt to receive.
+Four choices sit under it: which **project** it lands in, which command runs,
+which model, and how hard it thinks. Choosing a plain shell turns it back into
+a name box, because a shell has no prompt to receive.
 _Avoid_: create row, new-session form, session wizard
 
 **First prompt**:
 What the **New-session composer** sends to a session it has just created: the
-model line, when one was picked, and then the message itself. It waits for the
+message, and nothing else. It carried a `/model` line ahead of the message
+until 2026-09-06; the model and the effort are now flags on the process the
+attach starts, so they cost no round trip and leave no command in a
+conversation nobody has begun. It waits for the
 session to be READY rather than merely reachable — a session tmux has made
 accepts input for seconds before the Claude in its pane is ready to read any,
 and text sent into that window is dropped with `POST /prompt` still answering
@@ -505,6 +577,98 @@ browser inflates before anything can measure it still has a **wire bytes**
 number. An estimate by construction — it reproduces the server's algorithm, not
 its exact state.
 _Avoid_: shadow, proxy
+
+### Agent spend
+
+What the agents inside the sessions cost, read in Settings and in one figure
+beside the gear
+(`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`, design in
+`docs/plans/2026-09-06-agent-spend-panel-design.md`). The words below are close
+enough to **Data used** to be worth keeping apart deliberately, so each entry
+says which side it is on.
+
+**Agent spend**:
+What one OS user's Claude Code and Codex conversations have consumed over a
+period, kept server-side in `/var/lib/tmux-api/spend/<user>.json` and served by
+`GET /agent-spend`. Distinct from **Data used** in every respect worth naming:
+that is **wire bytes** a browser moved, counted per browser profile and never
+leaving the device; this is what the agents themselves cost, counted per OS
+user, and it follows the person to any browser they sign in from. The two tools
+are kept apart all the way down, because Claude Code reports dollars and a
+ChatGPT plan reports none.
+_Avoid_: usage (taken: **Data used** owns it, and Codex's rollout spends the
+same word on tokens alone, in `total_token_usage`), cost tracking, billing
+(nothing here bills anyone). The ban is on what a person reads and on new
+names. The recording path was built under the vendor's own word for the slot it
+sits in and keeps it, so `devvm/tl-usage-record`, `POST /hooks/usage`,
+`TL_USAGE_ENDPOINT` and `@tl_usage_cost` all say "usage" and all mean spend.
+Renaming them would mean changing the managed-settings entry in the infra repo
+in the same breath, so they stand — grep for `usage` and expect both meanings.
+
+**Spend**:
+Dollars, and only for Claude Code, which computes `total_cost_usd` itself and
+hands it to the **Recorder** on every render. Never derived here: pricing
+tokens ourselves would mean a rate table with no signal when it went stale.
+A Codex session has no spend figure at all, so its rows carry tokens and stop
+there.
+_Avoid_: cost (fine in prose, but the field a person reads is spend), price
+
+**Limit window**:
+One rate-limit window a vendor reports: how much of it is gone as a percentage,
+and when it resets. Codex reports up to two on every turn and labels each from
+the length it declares, which is where **5-hour limit** and **weekly limit**
+come from; a rollout may carry only one. Claude Code reports `five_hour`,
+`seven_day` and `spend_limit` only for a Claude.ai seat or a gateway carrying a
+spend limit, so an enterprise seat shows spend and no windows. A window whose
+reset has already passed describes a window that no longer exists, so it is
+dropped rather than shown as current. Each vendor's own words are the labels,
+because the person reading them will meet the same words in the CLI.
+_Avoid_: quota, allowance, subscription (taken: a **subscription** in this repo
+is the Web Push registration on the Notifications page, which has nothing to do
+with a vendor's limits)
+
+**Plan**:
+The vendor account tier a tool reports for itself, such as ChatGPT `plus` from
+a Codex rollout. Shown as a fact beside the limits, next to the **credit
+balance** when the account has one, and read from nowhere but the tool's own
+output.
+_Avoid_: subscription (see **Limit window**), tier, seat (Claude's word for it,
+which the panel never has to print)
+
+**Recorder**:
+`devvm/tl-usage-record`, which sits in Claude Code's statusLine slot, posts the
+payload to `POST /hooks/usage` and then runs whatever statusLine the user
+already had with the same JSON on stdin. It is the only place the CLI hands out
+its own cost arithmetic. Everything it does on the recording side is a silent
+no-op on failure and runs in a background subshell, because a statusline that
+breaks somebody's prompt is worse than no feature. Codex has no counterpart and
+needs none: its rollout files already carry what the panel reads.
+_Avoid_: hook (no hook payload carries cost, which is the whole reason this
+exists), agent, collector
+
+**Reading**:
+One statusLine payload as recorded: the conversation's RUNNING TOTAL, not a
+turn's delta. So a write REPLACES that session's row and moves the day's total
+by the difference, and a dropped post costs nothing as long as a later one
+lands.
+_Avoid_: sample, event, tick
+
+**Day rollup**:
+The per-day total a **reading** rolls its difference into. The rollups are the
+complete record, which is what lets **All time** be answered from the days
+alone; the session rows are the detail view of the last 30 days.
+_Avoid_: aggregate, bucket (taken: a **bucket** is one of Data used's five
+features)
+
+**Retired row**:
+A session row past the 30-day window. It keeps the conversation's id and its
+running totals and loses its name and model, and the page stops listing it. The
+totals are why it stays: the next **reading** from that conversation is
+differenced against them, and a row that had been deleted outright would make a
+resumed conversation contribute its whole history to the day it came back. The
+row cap (2,000, retired rows included) is the one place a baseline is dropped
+for good.
+_Avoid_: expired, archived, tombstone (nothing here marks a deletion)
 
 ### Release
 

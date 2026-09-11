@@ -75,9 +75,23 @@ describe("mid-prompt", () => {
     expect(at("cd /usr")).toBeNull();
   });
 
-  it("needs two characters, so a single letter cannot open it", () => {
-    expect(at("in /g")).toBeNull();
+  // The two-character minimum is gone (Viktor, 2026-09-06: "can we trigger it
+  // on the first mention of / rather than after writing / and then a letter").
+  // A slash mid-sentence opens the whole discovered list at once, and what you
+  // type after it narrows the list rather than deciding whether there is one.
+  it("opens on the bare slash, before a single letter is typed", () => {
+    expect(at("in /")).not.toBeNull();
+    expect(at("in /g")).not.toBeNull();
     expect(at("in /gr")).not.toBeNull();
+  });
+
+  // The accepted cost of the line above, stated so nobody reads it as a bug: a
+  // path opens the menu on its slash. It closes again on the next character,
+  // because the rank ceiling refuses `/usr` — which the test above this one
+  // pins from the other direction.
+  it("opens on a path's slash and closes again once the path is typed", () => {
+    expect(at("cd /")).not.toBeNull();
+    expect(at("cd /usr")).toBeNull();
   });
 
   it("offers a project command and a plugin command too", () => {

@@ -11,8 +11,14 @@
 // app, and keep the server's subscription list current across browser key
 // rotations.
 //
-// Push payload (JSON): { title, body, tag: 'tl-<session>', session, badge,
-// waiting: { a: [names awaiting], d: [names done] } }.
+// Push payload: ONE JSON document, read two ways. See readPush below.
+// Flat keys, which is all Chrome and Firefox ever see:
+//   { title, body, tag: 'tl-<session>', session, badge,
+//     waiting: { a: [names awaiting], d: [names done] } }
+// plus, for iOS/iPadOS 18.4 and Safari 18.4, the Declarative Web Push envelope
+// alongside them: { web_push: 8030, notification: { title, body,
+// navigate, tag, app_badge, data: { session, waiting } } }. No "mutable" —
+// see readPush for what sending it cost.
 // Coalescing is by tag ONLY — a re-fire for the same session REPLACES
 // the visible notification; `renotify` is intentionally omitted so a
 // repeat never re-alerts the user (tripit-proven).
@@ -137,6 +143,70 @@ function readSeenDone() {
     });
 }
 
+// The per-installation telemetry id, mirrored where a worker can reach it.
+//
+// The page mints it once (16 random bytes of hex) and keeps it in localStorage,
+// which a service worker cannot read, so telemetry/device.ts also writes it to
+// db 'tl-device', store 'meta', key 'id'. Same page-writes/worker-reads
+// shape as tl-badge. A separate database from tl-notif on purpose: the worker
+// opens tl-notif at version 1, and a new store there would need a version bump
+// that this worker's open would then fail, taking the tap stash with it.
+//
+// Null means the page has not mirrored yet. OMIT the attribute in that case
+// rather than minting an id here, which would split one device into two series.
+function readDeviceId() {
+    return new Promise((resolve) => {
+        let req;
+        try { req = indexedDB.open('tl-device', 1); } catch (e) { resolve(null); return; }
+        // Never CREATE the store from the worker, for the same reason as
+        // readSeenDone: an upgrade here would race the page's own write.
+        req.onupgradeneeded = () => { try { req.result.createObjectStore('meta'); } catch (e) {} };
+        req.onerror = () => resolve(null);
+        req.onsuccess = () => {
+            const db = req.result;
+            try {
+                const tx = db.transaction('meta', 'readonly');
+                const get = tx.objectStore('meta').get('id');
+                const done = (v) => { try { db.close(); } catch (e) {} resolve(v); };
+                tx.oncomplete = () => done(typeof get.result === 'string' ? get.result : null);
+                tx.onerror = () => done(null);
+                tx.onabort = () => done(null);
+            } catch (e) { try { db.close(); } catch (e2) {} resolve(null); }
+        };
+    });
+}
+
+// The one place the worker talks to the telemetry intake.
+//
+// A worker MAY fetch() from a push or click handler (that is a network request,
+// not a navigation intercept, see the header). credentials:'same-origin'
+// carries the ingress identity header, so this authenticates like the page does.
+//
+// Every event is stamped with the same tl.device the page stamps, which is what
+// lets a stash written here be joined to the read that consumed it in the app:
+// without a device dimension one person's phone and laptop are one series.
+//
+// Best-effort to the point of indifference: any failure resolves, because a
+// missing telemetry line must never cost a notification.
+function postEvents(events) {
+    try {
+        return readDeviceId()
+            .then((device) => {
+                if (device) for (const ev of events) ev.attrs['tl.device'] = device;
+                return fetch('/api/sessions/telemetry', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ client: 'sw', build: 'sw', events })
+                });
+            })
+            .then(() => {})
+            .catch(() => {});
+    } catch (e) {
+        return Promise.resolve();
+    }
+}
+
 // How many sessions are waiting, from the named set the server sent minus what
 // this device has already shown.
 //
@@ -208,23 +278,9 @@ function paintBadge(count) {
     }
 }
 
-// One telemetry line for whether the icon could be drawn. Same intake and the
-// same indifference to failure as reportStash.
+// One telemetry line for whether the icon could be drawn.
 function reportBadge(kind, count) {
-    try {
-        return fetch('/api/sessions/telemetry', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                client: 'sw',
-                build: 'sw',
-                events: [{ name: 'notify.badge_set', attrs: { 'tl.kind': kind, 'tl.count': count } }]
-            })
-        }).then(() => {}).catch(() => {});
-    } catch (e) {
-        return Promise.resolve();
-    }
+    return postEvents([{ name: 'notify.badge_set', attrs: { 'tl.kind': kind, 'tl.count': count } }]);
 }
 
 // Report one fact the page can never see: did the tap record survive being
@@ -235,31 +291,29 @@ function reportBadge(kind, count) {
 // only through stashPendingSession — and if that write fails, every downstream
 // fix is pointless and nothing anywhere says so. IndexedDB inside a service
 // worker is exactly where a silent failure is plausible.
-//
-// A worker MAY fetch() from a push handler (that is a network request, not a
-// navigation intercept — see the header). credentials:'same-origin' carries the
-// ingress identity header, so this authenticates like the page does.
-//
-// Best-effort to the point of indifference: any failure resolves, because a
-// missing telemetry line must never cost a notification.
 function reportStash(session, ok) {
-    try {
-        return fetch('/api/sessions/telemetry', {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                client: 'sw',
-                build: 'sw',
-                events: [{
-                    name: 'notify.stash_written',
-                    attrs: { 'tl.session': session, 'tl.kind': ok ? 'ok' : 'fail' }
-                }]
-            })
-        }).then(() => {}).catch(() => {});
-    } catch (e) {
-        return Promise.resolve();
-    }
+    return postEvents([{
+        name: 'notify.stash_written',
+        attrs: { 'tl.session': session, 'tl.kind': ok ? 'ok' : 'fail' }
+    }]);
+}
+
+// Report which arm the tap took.
+//
+// The click handler emitted nothing at all, so the only instrument on this path
+// was the page's notify.stash_read, which by construction cannot see a tap that
+// never reached a page, and that is the failure being fixed here.
+//
+// tl.kind is one value per arm: 'acked' (a lobby answered the switch), 'posted'
+// (every lobby was posted to and none answered inside ACK_MS), 'opened' (no
+// lobby was open, so openWindow was called), 'focused' (a session-less test tap,
+// foreground only), 'failed' (the chosen arm could not be carried out).
+// tl.count is how many window clients matchAll returned. A session-less tap
+// omits tl.session rather than sending an empty one.
+function reportTap(session, kind, count) {
+    const attrs = { 'tl.kind': kind, 'tl.count': count };
+    if (session) attrs['tl.session'] = session;
+    return postEvents([{ name: 'notify.tap', attrs }]);
 }
 
 // Did the record actually land? stashPendingSession resolves on success AND on
@@ -285,45 +339,125 @@ function verifyStash(session) {
     });
 }
 
-self.addEventListener('push', (event) => {
+// One payload, two deliveries, normalised here so nothing below has to know
+// which browser it is running on.
+//
+// Chrome and Firefox do not implement Declarative Web Push at all. They hand
+// the whole JSON document to the push event untouched, so event.data.json()
+// still yields the flat { title, body, tag, session, badge, waiting } the server
+// has always sent, with the declarative envelope sitting alongside as keys they
+// ignore.
+//
+// iOS/iPadOS 18.4 and Safari 18.4 parse the SAME document declaratively (the
+// top-level "web_push": 8030 marker) and, with no "mutable" member, draw the
+// banner themselves WITHOUT starting this worker. So on iOS the branch below
+// normally does not run at all; it stays because an engine that does start a
+// worker for a declarative message hands the payload over as event.notification
+// with event.data NULL, and reading it costs nothing.
+//
+// The server used to send "mutable": true to keep this worker in the loop for
+// ADR-0015's device-side badge subtraction. That is not what the member means:
+// true tells WebKit a REPLACEMENT banner is coming from the worker, and WebKit
+// then shows nothing of its own while it waits. The branch below deliberately
+// draws no replacement, so between 2026-09-08 and 2026-09-10 Viktor's iPhone
+// displayed none of the 58 pushes Apple accepted with a 201. The badge now
+// falls back to the payload's app_badge, which is the trade the banner is worth.
+//
+// event.data is the discriminator rather than the presence of event.notification:
+// when the JSON we control is readable, read that.
+//
+// event.data is the discriminator rather than the presence of event.notification:
+// when the JSON we control is readable, read that.
+function readPush(event) {
+    if (!event.data && event.notification) {
+        const n = event.notification;
+        const d = n.data && typeof n.data === 'object' ? n.data : {};
+        return {
+            declarative: true,
+            title: n.title || 'Terminal',
+            body: n.body || '',
+            tag: n.tag || 'tl',
+            session: d.session || null,
+            waiting: d.waiting || null,
+            // app_badge is a sibling of title in the JSON, but WebKit does not
+            // put it on the Notification it builds: a Notification carries
+            // title, body, tag and data, and the count is exposed on the EVENT
+            // instead, as PushEvent.appBadge (WebKit IDL, gated on the
+            // DeclarativeWebPush setting). Reading n.app_badge alone found
+            // undefined every time and silently dropped the fallback. The
+            // payload-shaped read stays behind it because it costs nothing and
+            // a future engine may hand the value over that way.
+            // Absent leaves the icon unchanged; 0 clears it.
+            badge: typeof event.appBadge === 'number'
+                ? event.appBadge
+                : (typeof n.app_badge === 'number' ? n.app_badge : null)
+        };
+    }
     let data = {};
     try { data = event.data ? event.data.json() : {}; } catch (e) { data = {}; }
-    const title = data.title || 'Terminal';
-    const options = {
+    return {
+        declarative: false,
+        title: data.title || 'Terminal',
         body: data.body || '',
         tag: data.tag || 'tl',
-        icon: '/icon-192.png',
-        data: { session: data.session || null }
+        session: data.session || null,
+        waiting: data.waiting || null,
+        badge: typeof data.badge === 'number' ? data.badge : null
     };
+}
+
+self.addEventListener('push', (event) => {
+    const p = readPush(event);
     event.waitUntil((async () => {
         // Show the notification and stash the session CONCURRENTLY. iOS revokes
         // notification permission if a push handler shows nothing, so the stash
         // (best-effort, for the killed-PWA cold-launch handoff) must NEVER gate
         // or delay showNotification — kick both off and allSettled so a stalled
         // or aborted stash can't hold up (or reject away) the notification.
-        const tasks = [self.registration.showNotification(title, options)];
-        if (data.session) {
+        const tasks = [];
+        if (!p.declarative) {
+            // Chrome REQUIRES a notification from every push handler, or it
+            // shows its own "site updated in background" notice instead.
+            tasks.push(self.registration.showNotification(p.title, {
+                body: p.body,
+                tag: p.tag,
+                icon: '/icon-192.png',
+                data: { session: p.session }
+            }));
+        }
+        // Nothing to show on the declarative path: WebKit drew the banner from
+        // the payload before this worker was considered, and a showNotification
+        // here would REPLACE it — which needs its own valid ABSOLUTE navigate in
+        // the options or WebKit throws TypeError, losing the notification and
+        // with it the permission. The routing it would have set up travels by
+        // the payload's navigate URL instead (notificationclick is never
+        // dispatched on the declarative path). This is also why the server must
+        // not send "mutable": promising a replacement from here and then drawing
+        // none is a push that displays nothing at all.
+        if (p.session) {
             // Chain the report onto the write so it records the real outcome,
             // and keep BOTH off showNotification's path.
             tasks.push(
-                stashPendingSession(data.session, false)
-                    .then(() => verifyStash(data.session))
-                    .then((ok) => reportStash(data.session, ok))
+                stashPendingSession(p.session, false)
+                    .then(() => verifyStash(p.session))
+                    .then((ok) => reportStash(p.session, ok))
             );
         }
         // Same rule as the stash: the badge is a courtesy and must never gate or
         // delay showNotification (iOS revokes permission if a push shows nothing).
-        // showNotification was CALLED on the line above, so its promise is
-        // already in flight and the client lookup inside badgeIfHidden cannot
-        // hold it up.
+        // showNotification was CALLED above, so its promise is already in flight
+        // and the client lookup inside badgeIfHidden cannot hold it up.
         // Prefer the NAMED set: it lets this device subtract what it has already
         // shown, so the number matches what the page would have drawn. `badge`
-        // is the fallback for a payload over the name cap, and for a server that
-        // predates `waiting`.
-        if (data.waiting) {
-            tasks.push(badgeIfHidden(badgeFromWaiting(data.waiting, data.session)));
-        } else if (typeof data.badge === 'number') {
-            tasks.push(badgeIfHidden(data.badge));
+        // is the fallback for a payload over the name cap, for a server that
+        // predates `waiting`, and on the declarative path for app_badge.
+        // setAppBadge called during the event overrides the payload's app_badge,
+        // which is the point: WebKit's number has not had this device's seen set
+        // subtracted from it.
+        if (p.waiting) {
+            tasks.push(badgeIfHidden(badgeFromWaiting(p.waiting, p.session)));
+        } else if (p.badge !== null) {
+            tasks.push(badgeIfHidden(p.badge));
         }
         await Promise.allSettled(tasks);
     })());
@@ -360,6 +494,13 @@ function looksLikeTerminal(url) {
 }
 
 // How long a client gets to say it took the switch.
+//
+// Kept at 400 ms now that a missed acknowledgement is no longer fatal (every
+// branch below writes a tap record). Lengthening it would not help the case it
+// looks like it should: on iOS the page is not running JS when
+// clients.matchAll() resolves, and postMessage to a waking client is DROPPED
+// rather than queued (WebKit bug 268797), so no amount of waiting produces a
+// reply. It would only add latency per candidate on the browsers that do reply.
 const ACK_MS = 400;
 
 // Hand the switch to one client and find out whether it LANDED.
@@ -392,6 +533,12 @@ function deliver(client, session) {
     });
 }
 
+// notificationclick fires on Chrome, on Android, and on Apple devices below
+// iOS/iPadOS 18.4. It is NEVER dispatched on the declarative path: the
+// Notifications spec (2.7 steps 5 and 6) says a notification with a navigation
+// URL navigates on activation and returns, so on a current iPhone the routing
+// happens entirely through the payload's absolute `navigate` URL and this
+// handler never runs. It stays for everything else.
 self.addEventListener('notificationclick', (event) => {
     event.notification.close();
     // A real awaiting/done push always carries data.session; the /push/test
@@ -400,61 +547,85 @@ self.addEventListener('notificationclick', (event) => {
     // 'main' here — an empty/absent session means "focus only".
     const session = event.notification.data && event.notification.data.session;
     event.waitUntil((async () => {
-        // Bring the app to the foreground AND switch it to the notified session.
-        // A handler that only focused foregrounded a resident PWA on whatever
-        // session was last shown and never switched — the original
-        // "resident-PWA focus-without-switch" bug. The switch travels by
-        // postMessage to the page's navigator.serviceWorker 'message' listener,
-        // NOT WindowClient.navigate(): navigate() needs a CONTROLLED client
-        // (it rejects on the uncontrolled windows matchAll surfaces right after
-        // a fresh register/update), has inconsistent hash-fragment semantics on
-        // WebKit, and can reload — tearing down the live terminal and its
-        // WebSocket. postMessage reaches an uncontrolled client, survives a
-        // rejected focus(), and on iOS standalone is the only reliable warm-path
-        // switch, since openWindow drops the hash.
-        const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
-            .filter((c) => 'focus' in c);
-        // A tab still on a pre-deletion lobby build surfaces its terminal iframe
-        // here too, and that frame has neither the message listener nor
-        // activateSession — both are lobby-only.
-        const lobbies = wins.filter((c) => !looksLikeTerminal(c.url));
-        // A focused window before a background one: with several lobbies open,
-        // the switch belongs to the one the user is actually looking at.
-        lobbies.sort((a, b) => (a.focused ? 0 : 1) - (b.focused ? 0 : 1));
-
-        if (lobbies.length) {
-            try { await lobbies[0].focus(); } catch (e) { /* focus() can reject (InvalidAccessError) and is moot for foregrounding on iOS; the switch below still stands */ }
-            if (!session) return; // test tap: foreground, never switch
-            for (const c of lobbies) {
-                if (await deliver(c, session)) return;
-            }
-            // Nobody acknowledged, but every lobby has now been posted to and an
-            // older page half acts without replying. The app is already up, so
-            // opening a second window on top of it would be the worse answer.
-            return;
-        }
-
-        // No lobby open — a cold start, or only a stranded terminal frame. Carry the
-        // session in the hash so boot-hash activation attaches it on load; a
-        // session-less test tap just opens the lobby. (On iOS a KILLED PWA
-        // cold-launches at start_url and can drop this hash — a documented WebKit
-        // limitation, not fixable from the click handler.)
+        // ALWAYS leave a tap record, in every branch, started before any routing.
         //
-        // Re-stash, marked as a tap: this is the branch where the hash can be
-        // dropped, and the record left at push time may by now be minutes old and
-        // no longer trusted by boot. openWindow is called FIRST and the stash
-        // started immediately after — never the other way round: openWindow needs
-        // the click's transient activation, which awaiting an IndexedDB write
-        // could spend. The write still lands long before a launching page can
-        // parse the app and read it. Best-effort throughout (allSettled).
-        const opening = self.clients.openWindow
-            ? self.clients.openWindow(session ? '/#' + session : '/')
-            : Promise.resolve();
-        if (session) {
-            await Promise.allSettled([stashPendingSession(session, true), opening]);
-        } else {
-            await opening;
+        // This is the fix for the tap that vanished. Over 7 days of the deployed
+        // build, 376 of 795 notify.stash_read reads came back `absent`, with no
+        // record at all, and this handler is why: when window clients existed it
+        // posted the switch, waited ACK_MS for a reply nobody was awake to send
+        // (WebKit bug 268797), and returned having written nothing. The tap left
+        // no trace anywhere.
+        //
+        // STARTED, not awaited: openWindow below needs the click's transient
+        // activation, and awaiting an IndexedDB write could spend it. The write
+        // still lands long before a launching page can parse the app and read it.
+        //
+        // Harmless on the paths that already worked: the page consumes the
+        // session's record when it acts on the switch message (pwa/register.ts),
+        // so a tap that DID land warm cannot route a second time.
+        const stashed = session ? stashPendingSession(session, true) : Promise.resolve();
+        // 'failed' until an arm completes, so an unexpected throw is reported as
+        // what it is rather than as a routed tap.
+        let kind = 'failed';
+        let count = 0;
+        try {
+            // Bring the app to the foreground AND switch it to the notified
+            // session. A handler that only focused foregrounded a resident PWA on
+            // whatever session was last shown and never switched — the original
+            // "resident-PWA focus-without-switch" bug. The switch travels by
+            // postMessage to the page's navigator.serviceWorker 'message'
+            // listener, NOT WindowClient.navigate(): navigate() needs a
+            // CONTROLLED client (it rejects on the uncontrolled windows matchAll
+            // surfaces right after a fresh register/update), has inconsistent
+            // hash-fragment semantics on WebKit, and can reload — tearing down the
+            // live terminal and its WebSocket. postMessage reaches an
+            // uncontrolled client, survives a rejected focus(), and on iOS
+            // standalone is the only reliable warm-path switch, since openWindow
+            // drops the hash.
+            const wins = (await self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+                .filter((c) => 'focus' in c);
+            count = wins.length;
+            // A tab still on a pre-deletion lobby build surfaces its terminal
+            // iframe here too, and that frame has neither the message listener nor
+            // activateSession — both are lobby-only.
+            const lobbies = wins.filter((c) => !looksLikeTerminal(c.url));
+            // A focused window before a background one: with several lobbies open,
+            // the switch belongs to the one the user is actually looking at.
+            lobbies.sort((a, b) => (a.focused ? 0 : 1) - (b.focused ? 0 : 1));
+
+            if (lobbies.length) {
+                try { await lobbies[0].focus(); } catch (e) { /* focus() can reject (InvalidAccessError) and is moot for foregrounding on iOS; the switch below still stands */ }
+                if (!session) {
+                    kind = 'focused'; // test tap: foreground, never switch
+                } else {
+                    // Nobody acknowledging is the NORMAL iPhone case, not a
+                    // failure: every lobby has been posted to, an older page half
+                    // acts without replying, and the record above covers the rest.
+                    // The app is already up, so opening a second window on top of
+                    // it would be the worse answer.
+                    kind = 'posted';
+                    for (const c of lobbies) {
+                        if (await deliver(c, session)) { kind = 'acked'; break; }
+                    }
+                }
+            } else {
+                // No lobby open — a cold start, or only a stranded terminal frame.
+                // Carry the session in the hash so boot-hash activation attaches it
+                // on load; a session-less test tap just opens the lobby. (On iOS a
+                // KILLED PWA cold-launches at start_url and can drop this hash — a
+                // documented WebKit limitation, not fixable from the click handler,
+                // and the reason the record above matters most here.)
+                if (self.clients.openWindow) {
+                    kind = 'opened';
+                    await self.clients.openWindow(session ? '/#' + session : '/');
+                }
+            }
+        } catch (e) {
+            kind = 'failed';
         }
+        // Best-effort tail: neither the record nor the report may reject away the
+        // routing that has already happened.
+        await Promise.allSettled([stashed, reportTap(session, kind, count)]);
     })());
 });
 
@@ -475,12 +646,38 @@ self.addEventListener('pushsubscriptionchange', (event) => {
                 userVisibleOnly: true,
                 applicationServerKey: urlB64ToUint8Array(key)
             });
-            await fetch(PUSH_SUBS_API, {
+            const body = sub.toJSON ? sub.toJSON() : sub;
+            // Send the origin too. The server records it per subscription so it
+            // can build the ABSOLUTE `navigate` URL Declarative Web Push
+            // requires: WebKit parses that URL with no base, so a relative one is
+            // a SyntaxError and the whole message is dropped, banner and all. A
+            // rotation mints a NEW endpoint, so the store's same-endpoint
+            // preservation does not cover it. Without this line the rotated
+            // device silently drops back to the flat payload and stops routing
+            // taps on iOS.
+            //
+            // https ONLY, the same test pwa/push.ts secureOrigin applies. The
+            // server validates this field strictly (push.go validatePushOrigin)
+            // and 400s anything else, which would take the whole subscription
+            // PUT with it. http://localhost and http://127.0.0.1 are secure
+            // contexts, so a worker DOES run there and a rotation there must
+            // still re-subscribe; it simply keeps the flat payload.
+            try {
+                const loc = self.location;
+                if (loc && loc.protocol === 'https:' && loc.origin) body.origin = loc.origin;
+            } catch (e) { /* no origin: the server falls back to the flat payload */ }
+            const stored = await fetch(PUSH_SUBS_API, {
                 method: 'PUT',
                 credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(sub.toJSON ? sub.toJSON() : sub)
+                body: JSON.stringify(body)
             });
+            // Nothing is retired until the replacement is actually stored. A
+            // rejected PUT with the DELETE still running leaves the device with
+            // no subscription at all and no background push until someone opens
+            // the app; the old endpoint is the one thing still working, and the
+            // server prunes it on its own next 404/410 anyway.
+            if (!stored || !stored.ok) return;
             // Drop the superseded endpoint if the event surfaced it.
             const old = event.oldSubscription;
             if (old && old.endpoint && old.endpoint !== sub.endpoint) {

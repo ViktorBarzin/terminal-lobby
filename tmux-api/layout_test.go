@@ -457,3 +457,68 @@ func TestHandleLayoutRequiresAuth(t *testing.T) {
 		}
 	}
 }
+
+// A rename onto a name the layout already lists must not leave the layout
+// holding that name twice. tmux refuses to rename a session onto a live one,
+// so a collision reaching this store always means the sitting entry belongs to
+// a session that is already dead — the layout keeps a dead session's placement
+// so a restore regroups it. Keeping both entries produced a document that
+// validateLayout rejects, and since the client PUTs back the whole document,
+// EVERY later layout write failed with "session listed more than once": drags
+// between projects and the placement of a newly created session both stopped
+// working (live on the devvm, 2026-09-06, after derived names began renaming
+// sessions on every title).
+func TestLayoutRenameOntoExistingNameDropsTheStaleEntry(t *testing.T) {
+	st := testStore(t)
+	if err := st.save("alice", Layout{
+		Version: 1,
+		Projects: []Project{{
+			Name:     "code",
+			Sessions: []string{"f1", "keep", "7cqyknqjr73w"},
+		}},
+		Ungrouped: []string{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.renameSession("alice", "7cqyknqjr73w", "f1"); err != nil {
+		t.Fatalf("renameSession: %v", err)
+	}
+	l, _ := st.load("alice")
+	if err := validateLayout(l); err != nil {
+		t.Fatalf("layout invalid after rename: %v", err)
+	}
+	// The renamed session is the live one, so it keeps ITS place; the dead
+	// session's entry is the one that goes.
+	if got := l.Projects[0].Sessions; len(got) != 2 || got[0] != "keep" || got[1] != "f1" {
+		t.Fatalf("sessions after rename: %v, want [keep f1]", got)
+	}
+}
+
+// A layout file that already holds a duplicate must heal on read rather than
+// wedge every future write. Without this the only way out of the state above
+// was to edit the JSON on the box by hand: the client GETs the document, PUTs
+// it back, and the server rejects its own output.
+func TestLayoutLoadDropsDuplicateSessions(t *testing.T) {
+	st := testStore(t)
+	corrupt := `{"version":1,"projects":[{"name":"code","sessions":["f1","keep","f1"]},` +
+		`{"name":"tripit","sessions":["keep","almaty"]}],"ungrouped":["f1","scratch"],"ungroupedIndex":2}`
+	if err := os.WriteFile(filepath.Join(st.dir, "alice.json"), []byte(corrupt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l, err := st.load("alice")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := validateLayout(l); err != nil {
+		t.Fatalf("loaded layout still invalid: %v", err)
+	}
+	if got := l.Projects[0].Sessions; len(got) != 2 || got[0] != "f1" || got[1] != "keep" {
+		t.Fatalf("project code: %v, want [f1 keep]", got)
+	}
+	if got := l.Projects[1].Sessions; len(got) != 1 || got[0] != "almaty" {
+		t.Fatalf("project tripit: %v, want [almaty]", got)
+	}
+	if got := l.Ungrouped; len(got) != 1 || got[0] != "scratch" {
+		t.Fatalf("ungrouped: %v, want [scratch]", got)
+	}
+}

@@ -20,6 +20,7 @@
 
 import { apiUrl } from "../lib/config";
 import { BUILD_ID } from "../lib/config";
+import { DEVICE_ATTR, deviceId, mirrorDeviceId } from "./device";
 
 export type TlEvent =
   // app lifecycle
@@ -112,6 +113,11 @@ export type TlEvent =
   // The iOS cold-launch chain. sw.js reports notify.stash_written itself (it
   // cannot reach this batcher), and the page reports what boot decided.
   | "notify.stash_read"
+  // The tap, as sw.js saw it: tl.kind is acked | posted | opened | focused |
+  // failed. The worker is the emitter, for the same reason as above; the name
+  // lives here so the Go catalog and this union stay diffable (the parity check
+  // in test/docs.truth.test.ts reads both).
+  | "notify.tap"
   // Whether the app-icon count could be drawn at all (iOS may not expose the
   // Badging API inside a service worker).
   | "notify.badge_set"
@@ -141,6 +147,9 @@ export interface TrackerOptions {
   flushMs?: number;
   /** Off in tests that drive flushing by hand. */
   autoFlush?: boolean;
+  /** This installation's id. Injected in tests so a batch is comparable; the
+   *  default is the localStorage-backed one from ./device. */
+  deviceId?: () => string;
 }
 
 export interface Tracker {
@@ -157,6 +166,7 @@ const TELEMETRY_TIMEOUT_MS = 8000;
 
 export function createTracker(opts: TrackerOptions = {}): Tracker {
   const flushMs = opts.flushMs ?? DEFAULT_FLUSH_MS;
+  const readDeviceId = opts.deviceId ?? deviceId;
   const post =
     opts.post ??
     (async (batch: unknown) => {
@@ -192,7 +202,21 @@ export function createTracker(opts: TrackerOptions = {}): Tracker {
 
   function track(name: TlEvent, attrs: TlAttrs = {}): void {
     if (disposed) return;
-    buffer.push({ name, attrs });
+    // Stamped here rather than at each call site, so an event added later
+    // cannot forget it, and stamped LAST so a call site cannot overwrite the
+    // dimension with something that is not this device. A reader that throws
+    // costs the attribute and never the event: telemetry does not raise into
+    // the app (rule 1 in the header).
+    let device: string | undefined;
+    try {
+      device = readDeviceId();
+    } catch {
+      /* a browser that refuses every store; the event still goes */
+    }
+    buffer.push({
+      name,
+      attrs: device === undefined ? attrs : { ...attrs, [DEVICE_ATTR]: device },
+    });
     // Keep the NEWEST events: during a storm the recent ones explain it.
     if (buffer.length > MAX_BUFFER) buffer = buffer.slice(-MAX_BUFFER);
   }
@@ -249,6 +273,14 @@ export function createTracker(opts: TrackerOptions = {}): Tracker {
  * would be noise — telemetry is not part of any component's contract.
  */
 export const tracker: Tracker = createTracker();
+
+// Hand the id to the service worker, which cannot read localStorage and is the
+// only context awake when a notification is tapped on the cold path. Done here
+// rather than at a boot call site because this module is imported by every
+// surface that emits anything, so there is no order in which the mirror is
+// missing while events are already flowing. Fire and forget: the write resolves
+// on every path and nothing waits on it.
+void mirrorDeviceId();
 
 /** Shorthand used at call sites. */
 export const track = (name: TlEvent, attrs?: TlAttrs): void => tracker.track(name, attrs);

@@ -8,7 +8,7 @@
  * with which rules between the groups.
  *
  * Three tiers, separated by a rule each:
- *   - preferences, the seven pages everyone has;
+ *   - preferences, the eight pages everyone has;
  *   - Skills, which is a thing you manage rather than a preference;
  *   - Act as user, which only renders for a caller who administers the box.
  */
@@ -21,6 +21,7 @@ export type PageId =
   | "notifications"
   | "network"
   | "privacy"
+  | "spend"
   | "skills"
   | "actas";
 
@@ -41,6 +42,7 @@ const PREFERENCES: readonly RailEntry[] = [
   { id: "notifications", label: "Notifications" },
   { id: "network", label: "Network" },
   { id: "privacy", label: "Privacy" },
+  { id: "spend", label: "Agent spend" },
 ];
 
 /**

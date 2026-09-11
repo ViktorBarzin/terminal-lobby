@@ -44,10 +44,21 @@ type pushKeys struct {
 // pushSubscription is one device's Web Push registration. added_at is
 // server-stamped on first insert (the client's value, if any, is ignored)
 // and preserved across re-subscribes at the same endpoint.
+//
+// Origin is the page origin this device is served from, e.g.
+// "https://terminal.viktorbarzin.me". It exists because a Declarative Web Push
+// message must carry an ABSOLUTE navigate URL (pushsender.go) and this server
+// has no public-origin config: it sees only the ingress-forwarded request, so
+// the browser is the one that knows. Absent for a subscription recorded before
+// the field existed, which is what makes the sender fall back to the flat
+// payload for that device. Like added_at it is preserved across re-subscribes
+// at the same endpoint, because the service worker re-subscribes on its own
+// (register.ts) with no page origin to send.
 type pushSubscription struct {
 	Endpoint string   `json:"endpoint"`
 	Keys     pushKeys `json:"keys"`
 	AddedAt  string   `json:"added_at"`
+	Origin   string   `json:"origin,omitempty"`
 }
 
 type pushStore struct {
@@ -119,6 +130,13 @@ func (s *pushStore) upsert(osUser string, sub pushSubscription) error {
 	for i := range subs {
 		if subs[i].Endpoint == sub.Endpoint {
 			sub.AddedAt = subs[i].AddedAt // preserve first-seen time
+			if sub.Origin == "" {
+				// A re-subscribe with nothing to say about the origin (the
+				// service worker's own, or a client too old to send one) keeps
+				// what we know rather than dropping this device back to the
+				// flat payload.
+				sub.Origin = subs[i].Origin
+			}
 			subs[i] = sub
 			return s.saveLocked(osUser, subs)
 		}
@@ -181,9 +199,38 @@ func (s *pushStore) users() ([]string, error) {
 	return users, nil
 }
 
+// validatePushOrigin checks the page origin a client sent with its
+// subscription and returns it normalized. "" is valid and means "not told" —
+// the sender then omits the declarative half for this device.
+//
+// The rules are strict because the value ends up spliced into a navigate URL
+// the operating system opens. https only (a push subscription needs a secure
+// context anyway, and the client withholds the value on a plain-http page), and
+// nothing past the host: a path, a query or a fragment would either address the
+// wrong thing or, malformed, make WebKit drop the whole message with no banner
+// to explain it. A trailing slash is the one shape normalized rather than
+// refused, since it names the same origin (location.origin never emits one).
+func validatePushOrigin(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Scheme != "https" || u.Host == "" || u.Opaque != "" || u.User != nil {
+		return "", errors.New("origin must be an absolute https origin, e.g. https://lobby.example")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", errors.New("origin must carry no path")
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", errors.New("origin must carry no query or fragment")
+	}
+	return u.Scheme + "://" + u.Host, nil
+}
+
 // validatePushSubscription parses and checks a PUT body: exactly one JSON
-// object with a usable https/http endpoint and both key halves. Unknown
-// fields (e.g. the browser's expirationTime) are ignored, not rejected.
+// object with a usable https/http endpoint, both key halves, and — when the
+// client sends one — a usable page origin. Unknown fields (e.g. the browser's
+// expirationTime) are ignored, not rejected.
 func validatePushSubscription(raw []byte) (pushSubscription, error) {
 	var sub pushSubscription
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -200,6 +247,11 @@ func validatePushSubscription(raw []byte) (pushSubscription, error) {
 	if sub.Keys.P256dh == "" || sub.Keys.Auth == "" {
 		return sub, errors.New("keys.p256dh and keys.auth are required")
 	}
+	origin, err := validatePushOrigin(sub.Origin)
+	if err != nil {
+		return sub, err
+	}
+	sub.Origin = origin
 	return sub, nil
 }
 
@@ -285,19 +337,36 @@ func handlePushSubscriptions(w http.ResponseWriter, r *http.Request) {
 
 // buildTestPayload is the on-demand self-diagnosis push. Its own fixed tag
 // tl-test (never a tl-<session>) keeps it in a separate coalescing lane, and
-// it carries no session — a click just focuses the app. Built directly rather
+// it carries no session — a tap just opens the app. Built directly rather
 // than via marshalPayload, whose tag is derived from the session.
 //
 // It carries no badge either, and that is the point of the pointer field: a
 // diagnostic must not repaint the app icon. Proving delivery works should never
-// clear a count of real work the user has not dealt with yet.
-func buildTestPayload() []byte {
-	b, _ := json.Marshal(pushPayload{
+// clear a count of real work the user has not dealt with yet. app_badge follows
+// the same rule for the same reason — omitted, so iOS leaves the icon alone.
+//
+// It is a payloadBuilder so it goes out declarative on a device that recorded
+// its origin, which makes the test button exercise the same delivery path the
+// real notifications take. navigate is the app root, since there is no session
+// to open.
+func buildTestPayload(origin string) []byte {
+	p := pushPayload{
 		Title:   "Test notification",
 		Body:    "If you can read this, push delivery works on this device.",
 		Tag:     "tl-test",
 		Session: "",
-	})
+	}
+	if origin != "" {
+		p.WebPush = declarativeWebPushVersion
+		p.Notification = &declarativeNotification{
+			Title:    p.Title,
+			Body:     p.Body,
+			Navigate: navigateURL(origin, ""),
+			Tag:      p.Tag,
+			Data:     &declarativeData{Session: ""},
+		}
+	}
+	b, _ := json.Marshal(p)
 	return b
 }
 
@@ -326,7 +395,7 @@ func handlePushTest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "push not configured", http.StatusServiceUnavailable)
 		return
 	}
-	sent, pruned := sender.send(osUser, "", buildTestPayload(), kindTest)
+	sent, pruned := sender.send(osUser, "", buildTestPayload, kindTest)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]int{"sent": sent, "pruned": pruned})
