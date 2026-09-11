@@ -515,6 +515,49 @@ func reviewOnScreen(region []string) bool {
 	return asks && tabs
 }
 
+// reviewTail is the review screen's own lines, for the ONE dialog screen the
+// CLI draws with no footer at all.
+//
+// Measured against CLI 2.1.268 on 2026-09-11, driving a real four-question
+// call to its end: the review screen carries the tab bar with every box ☒,
+// both review wordings, and a numbered "Submit answers" row, and it carries no
+// "Enter to select … Esc to cancel" line. read() requires that footer before
+// it will parse anything, so the last answer of every multi-question call came
+// back Done — the card would have said the dialog was over while the session
+// sat blocked on Submit, which is the exact silence this feature exists to end.
+//
+// All THREE landmarks are required together. Any one of them alone appears in
+// ordinary conversation, this repository's own design doc included; a pane that
+// also draws a live tab bar and a numbered Submit row at its foot is the
+// screen, not a quotation of it.
+func reviewTail(lines []string) []string {
+	top, asks, submits := -1, false, false
+	for i, line := range lines {
+		if reTabBar.MatchString(line) {
+			top, asks, submits = i, false, false // a later tab bar wins
+			continue
+		}
+		if top < 0 {
+			continue
+		}
+		t := strings.TrimSpace(stripDialogBorder(line))
+		if t == reviewTitle || t == readyPrompt {
+			asks = true
+		}
+		if m := reOption.FindStringSubmatch(line); m != nil && strings.TrimSpace(m[3]) == submitRow {
+			submits = true
+		}
+	}
+	if top < 0 || !asks || !submits {
+		return nil
+	}
+	return lines[top:]
+}
+
+// submitRow is the label of the review screen's commit row. The tab bar draws
+// "✔ Submit" for the same step; this is the numbered row underneath.
+const submitRow = "Submit answers"
+
 // leftPresses is how many ← presses reach the question `header` names from the
 // question at index `from`, where the review screen counts as one past the
 // last question.

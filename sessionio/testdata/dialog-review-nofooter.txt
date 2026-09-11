@@ -1,0 +1,17 @@
+←  ☒ Fruit  ☒ Picks  ☒ Drink  ☒ Size  ✔ Submit  →
+
+Review your answers
+
+ ● Which fruit
+   → Pear
+ ● Pick any toppings
+   → Nuts, Cream
+ ● Which drink
+   → Coffee
+ ● Which size
+   → Large
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel
