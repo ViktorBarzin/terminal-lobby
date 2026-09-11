@@ -51,7 +51,12 @@ import {
  * sentinel wedged between them, so a group reorder and a project delete both
  * have a position that is not simply "first" or "last".
  *
- * Its token sequence is ["p:work", "u", "p:play"] (groupSeqTokens).
+ * Its token sequence is ["p:work", "u", "p:play", "s"] (groupSeqTokens). The
+ * trailing "s" is the system group, which `deriveSidebar` materializes for the
+ * sessions nobody made and `reorderGroups` pins last: it treats the final token
+ * as immovable, so no drag can leave it anywhere else. Every expectation below
+ * carries it for that reason, and an undo that dropped it would be a bug rather
+ * than a stale fixture.
  */
 const doc = (): Layout => ({
   version: LAYOUT_VERSION,
@@ -389,13 +394,13 @@ describe("reordering the groups — round trip", () => {
   it("puts the group back in the slot it was dragged out of", async () => {
     const w = world(doc());
     await dragGroup(w, 2, 0); // play to the top
-    expect(groupSeqTokens(w.doc())).toEqual(["p:play", "p:work", "u"]);
+    expect(groupSeqTokens(w.doc())).toEqual(["p:play", "p:work", "u", "s"]);
 
     await expectOk(w.stack.undo());
-    expect(groupSeqTokens(w.doc())).toEqual(["p:work", "u", "p:play"]);
+    expect(groupSeqTokens(w.doc())).toEqual(["p:work", "u", "p:play", "s"]);
 
     await expectOk(w.stack.redo());
-    expect(groupSeqTokens(w.doc())).toEqual(["p:play", "p:work", "u"]);
+    expect(groupSeqTokens(w.doc())).toEqual(["p:play", "p:work", "u", "s"]);
   });
 
   it("moves the group it named, not whatever now sits at that index", async () => {
@@ -536,10 +541,10 @@ describe("deleting a project — round trip", () => {
   it("restores a project that sat first among the groups", async () => {
     const w = world(doc());
     await dropProject(w, "work");
-    expect(groupSeqTokens(w.doc())).toEqual(["u", "p:play"]);
+    expect(groupSeqTokens(w.doc())).toEqual(["u", "p:play", "s"]);
 
     await expectOk(w.stack.undo());
-    expect(groupSeqTokens(w.doc())).toEqual(["p:work", "u", "p:play"]);
+    expect(groupSeqTokens(w.doc())).toEqual(["p:work", "u", "p:play", "s"]);
     expect(members(w.doc(), "work")).toEqual(["alpha", "beta"]);
     expect(members(w.doc(), "")).toEqual(["delta"]);
   });
@@ -742,6 +747,7 @@ class FakeApi implements LobbyApi {
     this.layoutVal = l;
   }
   async killSession(_name: string) {}
+  async setSessionOrigin() {}
   async setSessionTitle(_name: string, _title: string) {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
@@ -878,9 +884,9 @@ describe("the store records what it did", () => {
       "manual",
     );
     await w.store.reorderGroupsTo(2, 0);
-    expect(groupSeqTokens(w.api.layoutVal)).toEqual(["p:play", "p:work", "u"]);
+    expect(groupSeqTokens(w.api.layoutVal)).toEqual(["p:play", "p:work", "u", "s"]);
     await expectOk(w.stack.undo());
-    expect(groupSeqTokens(w.api.layoutVal)).toEqual(["p:work", "u", "p:play"]);
+    expect(groupSeqTokens(w.api.layoutVal)).toEqual(["p:work", "u", "p:play", "s"]);
   });
 
   it("freezes the visible order when the picker goes manual, and undoes the freeze", async () => {

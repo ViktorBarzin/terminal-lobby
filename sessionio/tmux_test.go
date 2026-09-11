@@ -193,6 +193,28 @@ func TestNewSessionCreatesADrivableSession(t *testing.T) {
 	}
 }
 
+// A resurrected session is somebody's conversation, so it has to say so.
+//
+// The bridge is the mechanism, not the reason: a person opened the thread in T3
+// and this is the session behind it. Left unstamped it reads as unattributed,
+// which files a live conversation into the lobby's System group, stops its
+// completions reaching a phone, and keeps it out of every tmux-persist snapshot
+// so a reboot loses it. That gap was real and open between the origin feature
+// landing (fe767d7) and this test.
+func TestNewSessionSaysAPersonAskedForIt(t *testing.T) {
+	in, osUser, _ := scratchServer(t)
+
+	if err := in.NewSession(NewSessionSpec{
+		OSUser: osUser, Name: "t3e2e-origin", Command: []string{"sh"},
+	}); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	v, ok := in.Option(osUser, "t3e2e-origin", OptionOrigin)
+	if !ok || v != OriginUser {
+		t.Fatalf("%s = (%q, %v), want (%q, true)", OptionOrigin, v, ok, OriginUser)
+	}
+}
+
 // Creating over a name that is already taken must FAIL. Resurrection asks for a
 // session it believes is dead; if it is not, silently attaching to whatever
 // holds the name would paste a thread's prompts into somebody else's live

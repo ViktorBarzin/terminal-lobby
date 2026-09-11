@@ -320,8 +320,10 @@ function bootInputBar(): InputBarPosture {
  *
  * Device-local rather than roamed for the reason that page gives at
  * :3168-3180: claiming the browser's own pinch-zoom stream is a per-DEVICE
- * choice, so the key sits beside `tl-gestures` and `tl-flow-control` in shape
- * (store/device-prefs.ts) rather than inside `tl:prefs:v1`. Read PER GESTURE
+ * choice, so the key has the shape of `tl-gestures` (store/device-prefs.ts)
+ * rather than sitting inside `tl:prefs:v1`. `tl-flow-control` had the same
+ * shape and was the other example here until 2026-09-06, when it went for
+ * having no reader. Read PER GESTURE
  * and never cached, so turning it off rescues the next pinch rather than the
  * next reload.
  *
@@ -582,8 +584,12 @@ function heldWord(
  * or held.
  *
  * WHAT IT IS NOT YET. Web links, the held-key overlay, flow-control accounting,
- * OSC 52 clipboard and the live pref bridge still belong to term.html; sixel is
- * retired from both terminals on purpose. Three legs of what IS here are
+ * OSC 52 clipboard and the live pref bridge stayed behind in term.html and were
+ * deleted with it on 2026-09-05, so they are unwritten here rather than living
+ * anywhere else; sixel is retired on purpose. Flow control lost its Settings
+ * toggle on 2026-09-06 for the same reason it is on this list: the toggle wrote
+ * `tl-flow-control` and no accounting here ever read it. Three legs of what IS
+ * here are
  * waiting on one of those rather than on themselves: Escape cannot discard an
  * offline hold while nothing exposes one to discard, the copy chord's recovery
  * arm is dead until something stashes a selection, and the A−/A+ stepper cannot

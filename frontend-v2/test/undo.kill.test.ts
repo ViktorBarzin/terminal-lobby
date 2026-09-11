@@ -168,6 +168,7 @@ class FakeApi implements LobbyApi {
             };
     }
   }
+  async setSessionOrigin() {}
   async setSessionTitle(_name: string, _title: string) {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}

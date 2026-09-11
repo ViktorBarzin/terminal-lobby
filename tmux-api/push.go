@@ -358,7 +358,6 @@ func buildTestPayload(origin string) []byte {
 	}
 	if origin != "" {
 		p.WebPush = declarativeWebPushVersion
-		p.Mutable = true
 		p.Notification = &declarativeNotification{
 			Title:    p.Title,
 			Body:     p.Body,

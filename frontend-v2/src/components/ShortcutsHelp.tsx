@@ -107,8 +107,13 @@ export function buildShortcutGroups(altLabel: string, isMac: boolean): HelpGroup
         // Still always-on: `onDockKey` is a raw window listener that never
         // consults the engine's `enabled` gate. "Desktop only" is its early
         // return on `dock.allowed()`, which is `!coarse()` (store/dock.ts).
-        // The view toggle keeps the [Text | Terminal] control and the palette,
-        // which is what `test/SessionView.viewswitch.test.tsx` pins.
+        //
+        // The view toggle keeps the [Text | Terminal] control, which is what
+        // `test/SessionView.viewswitch.test.tsx` pins. It has no chord and
+        // there is no row for it in this table on purpose: Viktor settled that
+        // on 2026-09-06, and keybindings/bindings.logic.ts carries the
+        // reasoning. The palette entry he named as the second way in has not
+        // been added, so do not read a missing row here as an oversight.
         [[`${MOD}+J`], "Scratch shell at the foot of the screen (desktop only; always on)"],
         // Find has no Ctrl/Cmd+F row because Ctrl+F belongs to the TUI. This
         // chord is the only keyboard way in, which is why leaving it out of

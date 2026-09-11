@@ -1,51 +1,26 @@
 import { describe, it, expect, beforeEach, onTestFinished, vi } from "vitest";
 import {
-  FLOW_KILL_KEY,
   GESTURES_KILL_KEY,
   clearLocalData,
-  flowControlWanted,
   gesturesEnabled,
-  setFlowControlEnabled,
 } from "../src/store/device-prefs";
 import { closeSharedTranscriptDb, sharedIndexedDbBackend } from "../src/store/transcript-cache";
 
 beforeEach(() => localStorage.clear());
 
 /**
- * Flow control is a PER-BROWSER kill switch, not a roamed pref: the same
- * posture the vanilla page gave it. It exists to rescue a wedged stream on the
- * machine that is wedged, so roaming it would carry a local rescue everywhere.
+ * `tl-flow-control` and its reader lived here until 2026-09-06, with four
+ * tests over the key. They went because no consumer was ever ported: the
+ * accounting that would have read the answer stayed in term.html, so the
+ * toggle wrote a key nothing looked at. What replaced these tests is a guard
+ * on the Settings page rather than on the store, since the store now has
+ * nothing to say about flow control: SettingsPanel.rail.test.tsx pins that the
+ * Terminal page draws no such row even on a device that still has the key set,
+ * and that no row on that page wears the "this device" chip.
  *
- * These tests cover the key and its read. Nothing in the native terminal
- * consumes the answer yet — flow-control accounting is one of the things
- * SessionView lists as having gone with term.html on 2026-09-05 — so a flip
- * currently changes what this function returns and nothing else.
+ * The stored key is left alone on purpose. It is a `tl-` key, so
+ * `clearLocalData` below sweeps it with the rest.
  */
-describe("flow control — the per-browser kill switch", () => {
-  it("is on when the key is unset", () => {
-    expect(flowControlWanted()).toBe(true);
-  });
-
-  it("is off only for the literal 'off'", () => {
-    setFlowControlEnabled(false);
-    expect(localStorage.getItem(FLOW_KILL_KEY)).toBe("off");
-    expect(flowControlWanted()).toBe(false);
-  });
-
-  it("re-enabling REMOVES the key rather than writing a truthy value", () => {
-    // The terminal page tests `!== 'off'`, so any leftover value reads as on —
-    // but leaving one behind would make the doc lie about what is stored.
-    setFlowControlEnabled(false);
-    setFlowControlEnabled(true);
-    expect(localStorage.getItem(FLOW_KILL_KEY)).toBeNull();
-    expect(flowControlWanted()).toBe(true);
-  });
-
-  it("treats anything else as on, matching the page's own test", () => {
-    localStorage.setItem(FLOW_KILL_KEY, "yes");
-    expect(flowControlWanted()).toBe(true);
-  });
-});
 
 /**
  * The gestures master kill, which `terminal/wheel.ts` needs as half of its
@@ -123,6 +98,11 @@ describe("clearLocalData", () => {
     localStorage.setItem("tl:keybindings:v1", "{}");
     localStorage.setItem("tl-font-size", "14");
     localStorage.setItem("tl-diagnostics", "off");
+    // Two keys nothing reads any more: the terminal choice (2026-09-05) and
+    // flow control (2026-09-06). Neither gets a migration, so the sweep IS
+    // what eventually removes them, and this is where that is checked.
+    localStorage.setItem("tl-terminal-renderer", "iframe");
+    localStorage.setItem("tl-flow-control", "off");
     localStorage.setItem("tmux-theme", "carbon");
     localStorage.setItem("tmux-sidebar-collapsed", "1");
     localStorage.setItem("unrelated-app-key", "keep me");
@@ -137,6 +117,8 @@ describe("clearLocalData", () => {
     expect(localStorage.getItem("tl:keybindings:v1")).toBeNull();
     expect(localStorage.getItem("tl-font-size")).toBeNull();
     expect(localStorage.getItem("tl-diagnostics")).toBeNull();
+    expect(localStorage.getItem("tl-terminal-renderer")).toBeNull();
+    expect(localStorage.getItem("tl-flow-control")).toBeNull();
     expect(localStorage.getItem("tmux-theme")).toBeNull();
     expect(localStorage.getItem("tmux-sidebar-collapsed")).toBeNull();
     // not ours

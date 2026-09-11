@@ -129,6 +129,7 @@ class FakeApi implements LobbyApi {
       this.sessionsVal = [...this.sessionsVal, sess(name)];
     }
   }
+  async setSessionOrigin() {}
   async setSessionTitle(_name: string, _title: string) {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}

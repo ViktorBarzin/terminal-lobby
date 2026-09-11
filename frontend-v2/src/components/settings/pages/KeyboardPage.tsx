@@ -24,6 +24,10 @@ export interface KeybindingsControl {
  * that matches a J chord, it never reads the `enabled` gate, and it returns
  * early on a coarse pointer, which is where "on a desktop" comes from.
  * ShortcutsHelp carries the same correction and the longer note.
+ *
+ * The view toggle has no chord at all now, which Viktor settled on 2026-09-06
+ * (keybindings/bindings.logic.ts). This hint is where someone would go to
+ * promise it one again, so: it is not on this list because it is not bound.
  */
 export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (props) => {
   const alt = () => props.keybindings.altLabel ?? "Alt";

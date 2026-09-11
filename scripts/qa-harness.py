@@ -120,6 +120,9 @@ Blocked (403):
      session and hand the agent a live keyboard into it)
   9. DELETE /push-subscriptions         (would unsubscribe real devices)
  10. POST /restore, but only when the reaper is disarmed — see below
+ 11. POST /telemetry                   (the fleet's page events name no session,
+                                        so nothing downstream can separate them
+                                        from a person's usage — see THE ORIGIN)
 
 POST /restore is the one mutation that cannot be scoped by name: it shells
 `tmux-persist restore <osUser>`, which recreates EVERY session in that user's
@@ -131,6 +134,24 @@ the live session set, forwards the request, and kills whatever came back that is
 new AND not qa-*. If it cannot do that — the injected identity maps to a
 different OS user, or `tmux list-sessions` fails — the reaper is disarmed and
 /restore gets the 403 instead.
+
+THE ORIGIN
+----------
+A session carries `@tl_origin`, a tmux option saying who made it (the ADR is
+"A session knows who made it"). The lobby's own create path stamps `user` on
+everything it creates, and a session whose origin is anything else is a SYSTEM
+session: it collects in the collapsed System group at the foot of the sidebar,
+it fires no Web Push, and it is left out of telemetry. It stays fully
+addressable — attach, prompt, kill and open-by-URL all work.
+
+The fleet is not a person, so every session this run owns is stamped `test`.
+That has to be an OVERWRITE rather than a first write: an agent creates a session
+by driving `/?session=<minted-id>`, which is the lobby's real path, so the box
+stamps it `user` before this proxy ever sees it exist. OriginStamper does the
+correcting, and confirms on a later pass than its write because the two are
+racing (its own docstring has the reasoning). Nothing here changes what an agent
+can DO with a session — only which half of the sidebar it lands in, and whether
+wizard's phone lights up when it finishes a turn.
 
 Allowed, but restored on exit: PUT /layout and PUT /prefs rewrite wizard's real
 sidebar arrangement and roamed preferences. Both are snapshotted at startup and
@@ -170,7 +191,8 @@ import re
 import signal
 import subprocess
 import sys
-from typing import Optional
+import time
+from typing import Callable, Optional
 from urllib.parse import unquote
 
 try:
@@ -305,6 +327,84 @@ def tmux_kill_session(name: str) -> bool:
     return r.returncode == 0
 
 
+# The session option that says who made a session (the ADR of that name, "A
+# session knows who made it"). The lobby's own create path stamps `user` on everything
+# it creates, so a session with any OTHER value — or none — is a system session:
+# it collects in the collapsed System group, it fires no Web Push, and it is not
+# recorded in telemetry. `test` is what a harness stamps on its own sessions.
+ORIGIN_OPTION = "@tl_origin"
+ORIGIN_TEST = "test"
+
+# `=name:` rather than `=name`, the spelling devvm/tmux-user-attach settled on:
+# set-option rejects the bare exact form, and a plain `name` resolves by
+# unambiguous PREFIX, which on a box where the fleet and wizard share one tmux
+# server could stamp a neighbour instead.
+def _origin_target(name: str) -> str:
+    return f"={name}:"
+
+
+def tmux_origins() -> Optional[dict[str, str]]:
+    """`@tl_origin` for every live session of THIS OS user, or None if tmux is
+    unreadable. An unset option reads as "".
+
+    One fork for the whole set rather than one per name, and it answers liveness
+    at the same time: a name that is not a key is a session that does not exist
+    yet. Measured on the box 2026-09-10, that second part is why this is not a
+    per-session `display-message`: `display-message -p -t "=nope:"` answers
+    exit 0 and an empty line for a session that is not there, which is the same
+    answer as a live session with no option set — the one distinction the
+    stamper turns on.
+    """
+    try:
+        r = subprocess.run(
+            ["tmux", "list-sessions", "-F",
+             f"#{{session_name}}\t#{{{ORIGIN_OPTION}}}"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        # No server at all is a real, empty answer — the same distinction
+        # tmux_session_names() draws, for the same reason.
+        if "no server running" in (r.stderr or "").lower():
+            return {}
+        return None
+    out: dict[str, str] = {}
+    for line in r.stdout.splitlines():
+        if not line.strip():
+            continue
+        name, _, origin = line.partition("\t")
+        out[name] = origin
+    return out
+
+
+def tmux_stamp_origin(name: str, value: str = ORIGIN_TEST) -> Optional[str]:
+    """Stamp `@tl_origin` and read it back in ONE tmux invocation.
+
+    One invocation because the two halves are then a single command list on the
+    server, so nothing else can land between the write and the read. What can
+    still land BEFORE or AFTER the pair is the create path's own
+    `set-option @tl_origin user` (devvm/tmux-user-attach), which the harness is
+    racing by construction: the session it is stamping was created moments ago by
+    a QA agent driving the lobby. OriginStamper is what resolves that, by
+    confirming on a later pass rather than trusting this read-back.
+
+    Returns the value read back, or None if the session is not there.
+    """
+    try:
+        r = subprocess.run(
+            ["tmux",
+             "set-option", "-t", _origin_target(name), ORIGIN_OPTION, value,
+             ";",
+             "display-message", "-p", "-t", _origin_target(name),
+             f"#{{{ORIGIN_OPTION}}}"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout.strip()
+
+
 def proxy_os_user() -> str:
     """The OS user whose tmux server this process can actually reach — read
     from the uid, not from $USER, which a launcher can set to anything."""
@@ -357,6 +457,12 @@ class Guard:
         # to attach. `qa-*` is still a namespace and needs no record; an id does,
         # because there is nothing in the string that says whose it is.
         self.own_sessions: set[str] = set()
+        # Sessions owed an `@tl_origin test` stamp, and the ones that got it.
+        # Queued rather than stamped inline because the attach the guard is
+        # admitting is what CREATES the session — there is nothing to set an
+        # option on until it exists. OriginStamper drains this.
+        self.pending_origin: set[str] = set()
+        self.stamped: list[str] = []
         self.blocked: list[str] = []
         # Armed at startup once the proxy has proved it can undo a /restore.
         # Default off: a Guard that has not proved it refuses.
@@ -430,6 +536,22 @@ class Guard:
                     "session of the OS user, and this proxy cannot undo it "
                     "(the reaper is disarmed; see the startup log for why)")
 
+        # POST /telemetry is the browser's usage batch (docs/adr/0006-usage-
+        # telemetry.md) and the diagnostics batch (ADR-0008) both. Refused here
+        # rather than filtered by session downstream, because most of what a
+        # fleet emits names NO session at all — app.loaded, theme.changed, a
+        # view switch, every diag counter — so a rule keyed on `tl.session`
+        # cannot see it, and it would land in Loki as wizard's own usage. The
+        # 403 costs the fleet nothing it can notice: telemetry/track.ts swallows
+        # a failed flush ("telemetry is never worth surfacing"), and toast.ts
+        # exempts /telemetry from slow-request tracking, so no agent sees a toast
+        # and mis-files it.
+        if tail == "telemetry" and method == "POST":
+            return ("refusing to post telemetry — the fleet's page events name "
+                    "no session, so nothing downstream can tell them from real "
+                    "usage; they would be filed against the account this proxy "
+                    "authenticates as")
+
         if tail.startswith("push-subscriptions") and method == "DELETE":
             return "refusing to delete push subscriptions — real devices are subscribed"
 
@@ -498,12 +620,21 @@ class Guard:
 
         The liveness check is what makes the third safe, so an unreadable tmux
         refuses rather than guesses.
+
+        Every attach this admits also queues an `@tl_origin test` stamp. The
+        attach is the moment the harness takes ownership of a name, whichever of
+        the three routes it came by, and it is the only moment that sees the
+        name at all — a qa-* attach needs no ownership record but still needs the
+        option, because the option is what the sidebar reads. Re-queued on a
+        reconnect on purpose: a session killed and recreated under the same name
+        carries the create path's `user` again.
         """
         args = query.getall("arg", [])
         if not args:
             return None  # no session named; ttyd falls back to its unit default
         session = args[0]
         if self.may_drive(session):
+            self.pending_origin.add(session)
             return None
         if is_minted(session):
             live = tmux_session_names()
@@ -512,6 +643,7 @@ class Guard:
                         f"tmux session list, so cannot tell a new session from a real one")
             if session not in live:
                 self.own_sessions.add(session)
+                self.pending_origin.add(session)
                 return None
             return (f"refusing a terminal attach to {session!r} — that id is already a "
                     f"live session and this run did not create it")
@@ -523,6 +655,105 @@ class Guard:
     def deny(self, reason: str, where: str) -> web.Response:
         self.blocked.append(f"{where}: {reason}")
         return web.Response(status=403, text=f"qa-harness guard: {reason}\n")
+
+
+# How often the stamper looks at its queue, and how long it keeps looking at one
+# name. The window is generous because the thing it waits for is a Claude boot
+# behind a ttyd attach (~2.7s cold, longer on a loaded box), and cheap because a
+# name only costs one tmux fork per pass while it is pending.
+STAMP_POLL_S = 0.5
+STAMP_WINDOW_S = 90.0
+
+
+class OriginStamper:
+    """Overwrites `@tl_origin` to `test` on every session this run owns.
+
+    Why anything has to overwrite: a QA agent creates a session by driving
+    `/?session=<minted-id>`, which is the lobby's own path, and that path stamps
+    `@tl_origin user` on what it creates (devvm/tmux-user-attach). Faithfulness
+    is the point of this harness, so the harness cannot avoid being stamped as a
+    person — it can only correct itself afterwards, and it is the only thing that
+    knows which sessions are its own.
+
+    Two passes, not one. The create's `set-option ... user` rides in the same
+    tmux command list as its `new-session`, and this process learns the name from
+    an HTTP upgrade that arrives BEFORE either has run, so a single write can
+    land in front of the create's and be overwritten a moment later. A name
+    therefore leaves the queue only when a read taken on a LATER pass than the
+    write still says `test`. Costs one extra pass, ~0.5s, and removes the whole
+    class of race.
+
+    A name that never becomes a session (an agent navigated away before the
+    terminal attached) is dropped after STAMP_WINDOW_S rather than retried for
+    the length of the run.
+    """
+
+    def __init__(self, guard: Guard, *, window: float = STAMP_WINDOW_S,
+                 poll: float = STAMP_POLL_S,
+                 log: Optional[Callable[[str], None]] = None) -> None:
+        self.guard = guard
+        self.window = window
+        self.poll = poll
+        self.log = log or (lambda _msg: None)
+        self._deadlines: dict[str, float] = {}
+        self._written: set[str] = set()
+
+    async def _confirmed(self, name: str, live: dict[str, str]) -> bool:
+        """One pass over one name. True when the stamp is proved to have stuck."""
+        current = live.get(name)
+        if current is None:
+            return False  # not created yet — the attach that makes it is in flight
+        if name in self._written and current == ORIGIN_TEST:
+            return True
+        # Off the event loop: tmux is a subprocess, and a hung one would freeze
+        # every agent sharing this proxy for the length of its timeout.
+        await asyncio.to_thread(tmux_stamp_origin, name, ORIGIN_TEST)
+        self._written.add(name)
+        return False
+
+    async def step(self) -> None:
+        if not self.guard.pending_origin:
+            return
+        live = await asyncio.to_thread(tmux_origins)
+        if live is None:
+            # An unreadable tmux is not evidence about any name, so this pass
+            # confirms nothing and gives up on nothing. A name already in the
+            # queue keeps its deadline and a name queued during the outage
+            # starts its clock when the list can be read again, which is the
+            # only point from which waiting means anything.
+            self.log("origin stamper: could not read the session list this pass")
+            return
+        now = time.monotonic()
+        for name in sorted(self.guard.pending_origin):
+            deadline = self._deadlines.setdefault(name, now + self.window)
+            was_written = name in self._written
+            if await self._confirmed(name, live):
+                self.guard.pending_origin.discard(name)
+                self.guard.stamped.append(name)
+                self.log(f"stamped {name!r} {ORIGIN_OPTION}={ORIGIN_TEST} — it is "
+                         f"the fleet's, not a person's")
+            elif not was_written and name in self._written:
+                # The wait for the session to exist is over; the wait for the
+                # confirming read has not started. Give it its own window rather
+                # than the remains of the first one, or a session that appears
+                # late is dropped one pass after it was correctly stamped and
+                # reported as never stamped at all.
+                self._deadlines[name] = now + self.window
+            elif now >= deadline:
+                self.guard.pending_origin.discard(name)
+                self.log(f"gave up stamping {ORIGIN_OPTION} on {name!r} after "
+                         f"{self.window:.0f}s — it never became a session, or "
+                         f"something kept overwriting the stamp")
+
+    async def run(self) -> None:
+        while True:
+            try:
+                await self.step()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # never take the proxy down over a stamp
+                self.log(f"origin stamper error (ignored): {exc}")
+            await asyncio.sleep(self.poll)
 
 
 def build_app(args: argparse.Namespace) -> web.Application:
@@ -848,9 +1079,29 @@ def build_app(args: argparse.Namespace) -> web.Application:
             timeout=aiohttp.ClientTimeout(total=None, sock_connect=10))
         await arm_reaper(app)
         await snapshot(app)
+        # Sessions named with --allow-session are this run's by declaration, so
+        # they are owed the stamp too even if the fleet never re-attaches them.
+        guard.pending_origin.update(ALLOWED)
+        stamper = OriginStamper(guard, log=log)
+        app["origin_stamper"] = stamper
+        app["origin_stamper_task"] = asyncio.create_task(stamper.run())
 
     async def on_cleanup(app: web.Application) -> None:
+        task = app.get("origin_stamper_task")
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await restore(app)
+        if guard.stamped:
+            log(f"stamped {len(guard.stamped)} session(s) "
+                f"{ORIGIN_OPTION}={ORIGIN_TEST}: {', '.join(guard.stamped)}")
+        if guard.pending_origin:
+            log(f"NEVER stamped {len(guard.pending_origin)} session(s): "
+                f"{', '.join(sorted(guard.pending_origin))} — if any is live it "
+                f"will read as a person's session in the sidebar")
         if guard.reaped:
             log(f"reaped {len(guard.reaped)} session(s) a /restore "
                 f"resurrected: {', '.join(guard.reaped)}")

@@ -98,6 +98,17 @@ export interface Session {
   pane_title?: string;
   /** Which command the session runs; drives the sidebar tool mark. */
   tool?: SessionTool;
+  /** Who made this session, from its `@tl_origin` tmux option: `user` when the
+   *  lobby's own create path made it, `test` when a harness stamped it.
+   *
+   *  Absent means nobody said, and that is deliberately NOT the same as `user`:
+   *  a mark can only mean something once the path a person uses leaves one, so
+   *  everything unstamped is a system session (`isSystemSession` in
+   *  components/lobby.logic.ts). Absent also covers a server that predates the
+   *  field, which is why tmux-api stamps every live session `user` once at
+   *  start — without that pass an upgrade would sweep the whole list into
+   *  System. */
+  origin?: string;
 }
 
 /** A per-user layout project (sidebar grouping + ordering). */

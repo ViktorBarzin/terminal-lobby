@@ -62,7 +62,7 @@ export function isEditingTarget(el: Element | null | undefined): boolean {
   // so without this line the branch below reads every attached session as a
   // field being typed into: `editing` would be true wherever a session is
   // open, Cmd+Z would do nothing there, and Ctrl+Z would go on suspending the
-  // foreground job. That is the outcome ADR-0024 turned down.
+  // foreground job. That is the outcome ADR-0025 turned down.
   //
   // By ancestry rather than by the textarea's own class, so the accessibility
   // tree and anything else xterm mounts inside its element is covered too.

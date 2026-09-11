@@ -364,6 +364,20 @@ class QaAgent:
         r = subprocess.run(argv, capture_output=True, text=True)
         if r.returncode != 0 and "duplicate session" not in r.stderr:
             raise RuntimeError(f"tmux new-session failed: {r.stderr.strip()}")
+        # Say who made it, immediately (the ADR is "A session knows who made
+        # it"). A session with no @tl_origin is a system session and stays out
+        # of the sidebar's main list, out of Web Push and out of telemetry —
+        # but "no origin" is also what an
+        # unattributed hand-made session looks like, so a harness that leaves it
+        # blank is relying on a default instead of stating a fact. `test` is the
+        # fact. Nothing here goes through the lobby's create path, so there is
+        # no `user` stamp to race and no confirming read to take.
+        #
+        # `=name:` and not `=name`: set-option rejects the bare exact form, and a
+        # plain `name` resolves by unambiguous PREFIX, which on a shared tmux
+        # server could stamp somebody else's session.
+        subprocess.run(["tmux", "set-option", "-t", f"={name}:",
+                        "@tl_origin", "test"], capture_output=True, text=True)
         self._created.append(name)
 
     def create_claude_session(self, name: str, *, cwd: str = "/tmp",

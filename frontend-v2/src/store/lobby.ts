@@ -7,6 +7,7 @@ import {
   deleteProject,
   deriveSidebar,
   groupSeqTokens,
+  isSystemSession,
   materializeGroup,
   moveSession,
   moveSessionToAnchor,
@@ -15,6 +16,7 @@ import {
   reorderGroups,
   sameLayout,
   stabilizeModel,
+  SYSTEM_GROUP_NAME,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
@@ -26,7 +28,7 @@ import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { registerLocalUndoHandlers } from "./undo.local";
 import { registerTitleUndoHandlers } from "./undo.titles";
-import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
+import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,
@@ -976,6 +978,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         lastDrive: nowSec,
         created: nowSec,
         state: "",
+        // This IS the lobby's own create path, so the card says so. The server
+        // stamps @tl_origin=user a moment later when the attach creates the
+        // tmux session (devvm/tmux-user-attach), but the card exists before
+        // that — and an unstamped card is a SYSTEM session, so a create the
+        // user is watching would vanish into a collapsed group for the second
+        // or two until the first poll that knows the session.
+        origin: ORIGIN_USER,
       },
     ]);
     // The line the card reads until Claude's summary lands. Persisted rather
@@ -1386,7 +1395,47 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return saveLayout(next ? { ...rest, dock: next } : rest);
   }
 
+  /**
+   * Adopt a session the lobby did not make, because somebody has just dragged
+   * it out of System. Answers false when the adoption did not land, and the
+   * caller then writes no layout at all.
+   *
+   * The order matters and it is the opposite of the usual optimistic one. With
+   * the layout written first, a failed POST would leave the card sitting in a
+   * project while tmux still called the session `test` — and deriveSidebar
+   * honours an explicit project placement over the origin, so the next poll
+   * would AGREE with the arrangement. The card would look rescued, go on not
+   * pushing and not recording, and nothing would ever say otherwise. Asking the
+   * server first costs one round trip on the rescue alone (an ordinary move
+   * never reaches this) and leaves both halves either done or untouched.
+   */
+  async function adoptSystemSession(name: string): Promise<boolean> {
+    const s = sessions.find((x) => x.name === name);
+    if (!s || !isSystemSession(s)) return true;
+    try {
+      await api.setSessionOrigin(name, ORIGIN_USER);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Couldn't take this session out of System");
+      return false;
+    }
+    // The origin the next poll would have brought back, applied now. Without
+    // it the card springs straight back into System for the rest of the poll
+    // interval: a system session is filed there whatever layout.ungrouped says,
+    // which is the whole reason a harness's sessions do not sit in the list.
+    setSessions((x) => x.name === name, "origin", ORIGIN_USER);
+    return true;
+  }
+
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
+    // System is not a place the layout can put anything: it is derived from
+    // each session's origin, and ":system" is a name no project has. Writing it
+    // would strip every reference to the card and file it nowhere, so a session
+    // dropped back in would reappear in Ungrouped having quietly lost the
+    // project it was in.
+    if (group === SYSTEM_GROUP_NAME) return;
+    // The rescue (design doc §Rescue), before anything is written down.
+    if (!(await adoptSystemSession(name))) return;
     // A drop that names a POSITION cannot be honoured while a timestamp is
     // deciding positions: the layout is the only place a position can be
     // written, and the sort would put the card straight back on the next

@@ -36,8 +36,19 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
+
+/** A session the lobby did not make: it renders in System, which the layout
+ *  has no slot for. */
+const stray = (name: string, over: Partial<Session> = {}): Session => {
+  const s = sess(name, over);
+  delete s.origin;
+  return s;
+};
 
 const names = (list: readonly Session[]): string[] => list.map((s) => s.name);
 
@@ -121,7 +132,10 @@ describe("sorting by last active", () => {
     // ordered instead of collapsing it onto one tie-break.
     expect(lastActiveAt(sess("x", { created: 400 }))).toBe(400);
     expect(lastActiveAt(sess("x", { created: 400, lastDrive: 900 }))).toBe(900);
-    const list = [sess("no-stamp", { created: 900 }), sess("driven", { created: 100, lastDrive: 500 })];
+    const list = [
+      sess("no-stamp", { created: 900 }),
+      sess("driven", { created: 100, lastDrive: 500 }),
+    ];
     expect(names(sortSessions(list, "active"))).toEqual(["no-stamp", "driven"]);
   });
 
@@ -169,8 +183,14 @@ describe("applying an ordering to the whole render model", () => {
     // its members. A sort that ran across the whole list would dissolve the
     // projects into one pile.
     const sorted = applySessionOrder(model(), "created");
-    expect(sorted.groups.map((g) => g.kind)).toEqual(["project", "ungrouped"]);
-    expect(groupNames(sorted)).toEqual({ work: ["w-new", "w-old"], "": ["u-new", "u-old"] });
+    expect(sorted.groups.map((g) => g.kind)).toEqual(["project", "ungrouped", "system"]);
+    // System is pinned last and stands empty here — every fixture session is
+    // stamped `user`.
+    expect(groupNames(sorted)).toEqual({
+      work: ["w-new", "w-old"],
+      "": ["u-new", "u-old"],
+      ":system": [],
+    });
   });
 
   it("returns the model untouched for manual", () => {
@@ -284,7 +304,11 @@ describe("capturing the visible order into the layout", () => {
     // record names (deriveSidebar's leftovers sweep). It occupies a seat backed
     // by no index at all, so a drop anchored on it resolves against nothing —
     // the capture is what gives it one.
-    const before: Layout = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungroupedIndex: 1 };
+    const before: Layout = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungroupedIndex: 1,
+    };
     const live = [sess("swept", { created: 500, project: "work" })];
     const sorted = applySessionOrder(deriveSidebar(before, live, "wizard"), "created");
     expect(captureVisibleOrder(before, sorted).projects[0]!.sessions).toEqual(["swept"]);
@@ -322,6 +346,39 @@ describe("capturing the visible order into the layout", () => {
     expect(new Set(all).size).toBe(all.length);
     expect(next.projects[0]!.sessions).toContain("u-new");
     expect(next.ungrouped).not.toContain("u-new");
+  });
+
+  it("records no entry for the System group", () => {
+    // System is derived from each session's origin, not from the document: the
+    // layout has no field for it and ":system" is a name no project can take.
+    // A capture that wrote it down would put a group in the layout that nothing
+    // can read back, and PUT /api/layout would carry it forever.
+    const before: Layout = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungroupedIndex: 1,
+    };
+    const live = [sess("mine", { created: 500 }), stray("shell-2", { created: 600 })];
+    const sorted = applySessionOrder(deriveSidebar(before, live, "wizard"), "created");
+    const next = captureVisibleOrder(before, sorted);
+    expect(next.projects.map((p) => p.name)).toEqual(["work"]);
+    expect(next.ungrouped).toEqual(["mine"]);
+  });
+
+  it("leaves a system session's own layout entry where it is", () => {
+    // qa-harness drives the ordinary create flow, so its sessions are filed in
+    // layout.ungrouped exactly like a person's before the harness overwrites
+    // the origin to `test`. The card renders in System, not in Ungrouped — and
+    // a capture that read that as "gone from Ungrouped" would delete the entry,
+    // so the session it belongs to would come back at the bottom of the list
+    // the moment somebody rescued it.
+    const before: Layout = { ...emptyLayout(), ungrouped: ["mine", "qa-slug"] };
+    const live = [
+      sess("mine", { created: 500 }),
+      sess("qa-slug", { created: 600, origin: "test" }),
+    ];
+    const sorted = applySessionOrder(deriveSidebar(before, live, "wizard"), "created");
+    expect(captureVisibleOrder(before, sorted).ungrouped).toEqual(["mine", "qa-slug"]);
   });
 
   it("is a no-op under manual, where the layout already IS the visible order", () => {
