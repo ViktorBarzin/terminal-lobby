@@ -248,6 +248,48 @@ describe("the kill grace window", () => {
     expect(w.store.killing("beta")).toBe(false);
   });
 
+  /**
+   * The deadline behind the card's countdown.
+   *
+   * `killing` says a row is going away; it cannot say WHEN, and a row that only
+   * says "going away" leaves the reader guessing how long they have to change
+   * their mind. So the store publishes the moment the kill lands and the card
+   * subtracts (components/SessionCard.tsx). An absolute deadline rather than a
+   * remaining count on purpose: a count would have to be re-published every
+   * second by whoever owns it, and the card already re-renders on the sidebar's
+   * 1Hz tick.
+   */
+  it("publishes the deadline a countdown reads, and drops it with the window", async () => {
+    const w = await wire(["alpha", "beta"]);
+    const armed = Date.now();
+    await w.store.kill("alpha");
+
+    const until = w.store.killingUntil("alpha");
+    expect(until).toBeDefined();
+    expect(until! - armed).toBe(GRACE_MS);
+    // Only the session going away has one.
+    expect(w.store.killingUntil("beta")).toBeUndefined();
+
+    // It does not drift as the window runs down: the same instant throughout,
+    // which is what lets the card compute a number without being told one.
+    await vi.advanceTimersByTimeAsync(GRACE_MS - 1);
+    expect(w.store.killingUntil("alpha")).toBe(until);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(w.store.killingUntil("alpha")).toBeUndefined();
+  });
+
+  it("drops the deadline when the kill is taken back", async () => {
+    const w = await wire(["alpha"]);
+    await w.store.kill("alpha");
+    expect(w.store.killingUntil("alpha")).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(3000);
+    await expectOk(w.store.takeBackKill("alpha"));
+    expect(w.store.killingUntil("alpha")).toBeUndefined();
+    expect(w.store.killing("alpha")).toBe(false);
+  });
+
   it("kills once, when the window is up", async () => {
     const w = await wire(["alpha", "beta"]);
     await w.store.kill("alpha");
