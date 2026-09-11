@@ -742,7 +742,15 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 	// question opens the cursor on the row it already holds, which may sit
 	// below a row that has to be cleared.
 	at := focusedRow(rows)
-	var keys []string
+	// ONE BATCH PER TOGGLE, so the settle between batches falls between two
+	// Spaces. Packing them into one send-keys loses all but the first toggle:
+	// measured against CLI 2.1.268 on 2026-09-11, asking for Nuts and Cream on
+	// a three-row question sent [Space Down Down Space] as a single run, and
+	// the pane came back `1. [✔] Nuts` / `3. [ ] Cream` with the cursor sitting
+	// on Cream. Every key was delivered — the cursor had moved two rows — and
+	// the second toggle still did not take. The unit tests could not see it:
+	// their stand-in reads its input as a stream and records both.
+	var batches [][]string
 	for i := range rows {
 		if rows[i].checked == pick[i] {
 			continue // already how the reader wants it
@@ -754,8 +762,8 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 			// so it is left exactly as it is.
 			continue
 		}
-		keys = append(keys, walkTo(at, i)...)
-		keys = append(keys, "Space")
+		step := append(walkTo(at, i), "Space")
+		batches = append(batches, chunkKeys(step)...)
 		at = i
 	}
 	// Space only toggles. Enter is what leaves a multi-select question, and it
@@ -765,7 +773,7 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 	// the answer path allowed nothing, which is one of the four candidates the
 	// field data could not rule out. An Enter that outruns its toggle leaves the
 	// question with no pick at all.
-	return choicePlan{Batches: append(chunkKeys(keys), []string{"Enter"})}, nil
+	return choicePlan{Batches: append(batches, []string{"Enter"})}, nil
 }
 
 // selectRow is how to act on one row: its digit when the widget has one to
