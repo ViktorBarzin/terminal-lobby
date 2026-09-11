@@ -77,6 +77,7 @@ import {
   type MirrorState,
 } from "../terminal/mirror";
 import { shouldKeepFocus, takesFocus } from "../terminal/keepfocus";
+import { createLinkTracker, type LinkTracker } from "../terminal/links";
 import {
   hostHeightStyle,
   NO_KEYBOARD_RESERVE,
@@ -934,6 +935,27 @@ export const TerminalNative: Component<{
       if (disposed || !host) return;
 
       const prefs = bootPrefs();
+      /**
+       * OSC 8 hyperlinks. Claude Code prints them, xterm parses them, and until
+       * now nothing here said what to do with one — so xterm fell back to
+       * `confirm("Do you want to navigate to …? WARNING: This link could
+       * potentially be dangerous")`, over a keyboard the same tap had just
+       * raised. `terminal/links.ts` carries the reasoning and the allowlist;
+       * `tapFocus` above reads `overLink()` to leave the keyboard down.
+       */
+      const links: LinkTracker = createLinkTracker({
+        open: (url) => {
+          // noopener because the opened page must not reach back through
+          // `window.opener` into this origin, which holds the live terminal.
+          window.open(url, "_blank", "noopener,noreferrer");
+        },
+        refused: (raw) => {
+          // A dead tap with no explanation reads as a broken app. Naming the
+          // scheme is also the only signal a session printing `javascript:` at
+          // you ever gives.
+          showToast(`Not opening that link: ${raw.slice(0, 60)}`, "warning", 3500);
+        },
+      });
       const term = new Terminal({
         // EVERY option here is one term.html passes (:5006-5074), and each is
         // either a user pref or a value that page argues for at the site.
@@ -981,10 +1003,50 @@ export const TerminalNative: Component<{
         // tmux copy-mode's job; it matters only if the alt screen is ever
         // disabled (term.html:5054, argued at :5048-5053).
         scrollback: 10000,
+        // What happens to an OSC 8 link, replacing xterm's `confirm()` fallback.
+        // `hover`/`leave` are not decoration: they are the only way to ask "is
+        // the finger on a link" at the end of a tap, because the public buffer
+        // API exposes no URL for a cell (checked against @xterm/xterm 6.0.0).
+        linkHandler: {
+          activate: (event, text) => links.activate(event, text),
+          hover: () => links.hover(),
+          leave: () => links.leave(),
+        },
       });
       const fit = new FitAddon();
       term.loadAddon(fit);
       term.open(host);
+
+      /**
+       * THE OTHER THING THAT RAISES THE KEYBOARD ON A LINK TAP.
+       *
+       * xterm's own mousedown listener is `e.preventDefault(); this.focus();`,
+       * so every press focuses its hidden helper textarea — and a focused
+       * textarea IS the keyboard on Android. Suppressing our own `tapFocus` was
+       * therefore only half the job: measured on the emulator with that guard
+       * demonstrably working (`overLink` true at both of our focus calls), the
+       * tap still ended on `TEXTAREA.xterm-helper-textarea` with visualViewport
+       * at 471.2 instead of 783.2.
+       *
+       * Shadowing `focus` on the ELEMENT, for two reasons. Wrapping
+       * `term.focus` does nothing: the listener lives in xterm's core and calls
+       * the core's own method, not the public one (measured — the keyboard came
+       * up regardless). And stopping the mousedown would take the link with it,
+       * since that same press is what arms `Linkifier2`, which decides on the
+       * matching mouseup whether to activate.
+       *
+       * Narrow by construction: `overLink()` is only true between xterm's own
+       * hover and leave, so every press that is not on a link focuses exactly
+       * as before.
+       */
+      const helperTextarea = term.textarea;
+      if (helperTextarea) {
+        const realFocus = helperTextarea.focus.bind(helperTextarea);
+        helperTextarea.focus = (opts?: FocusOptions): void => {
+          if (links.overLink()) return;
+          realFocus(opts);
+        };
+      }
 
       /**
        * Re-rasterize once the webfonts have actually arrived.
@@ -1337,6 +1399,12 @@ export const TerminalNative: Component<{
        * rather than in the field they were typing in.
        */
       const tapFocus = (): void => {
+        // A tap that landed on a link meant "follow this", not "type here".
+        // xterm activates the link from the click that follows, and without
+        // this the same tap ALSO raised the keyboard: measured on the shared
+        // Android emulator against the deployed build, visualViewport went
+        // 783.24 -> 471.24 while the link's dialog was on screen.
+        if (links.overLink()) return;
         if (mirrorField && readPersistedPrefs().input.tapFocus === "field") {
           mirrorField.focus();
           return;
@@ -1615,8 +1683,55 @@ export const TerminalNative: Component<{
           t: e.timeStamp,
           th: performance.now(),
         });
-      const onTouchEnd = (e: TouchEvent): void =>
+      /**
+       * Ask xterm what is under the finger, before the tap decides anything.
+       *
+       * xterm learns about a link from `mousemove`, and on a touchscreen that
+       * arrives as a COMPAT event AFTER `touchend` — while the tap's focus is
+       * decided at `touchend`. So the honest answer was simply not available
+       * yet: the fix opened the link and raised the keyboard on the same tap
+       * (measured on the emulator: visualViewport 783.24 -> 471.24 with the link
+       * opening anyway).
+       *
+       * Handing xterm the same point a moment early closes that gap.
+       * `_handleMouseMove` -> `_handleHover` -> `provideLinks` is synchronous
+       * for OSC 8 links (they are read straight off the buffer cell), so
+       * `overLink()` is correct by the time `feedTouch` runs, in the same task,
+       * which is what keeps a NORMAL tap's `focus()` inside its user gesture.
+       *
+       * Dispatched on the screen element, which is where xterm's own listener
+       * is, and untrusted — so this file's capture-phase mousemove sees an
+       * `isTrusted: false` event with no press pending and does nothing with it.
+       */
+      const probeLinkAt = (touch: Touch | undefined): void => {
+        const screen = screenOf();
+        if (!screen || !touch) return;
+        screen.dispatchEvent(
+          // No `view`. xterm reads the coordinates and the target and never the
+          // window, and passing one costs portability for nothing: under vitest
+          // with `globals: true` the global `window` is the runner's own object
+          // rather than jsdom's `Window`, so jsdom refuses it outright
+          // ("member view is not of type Window") and the throw takes the whole
+          // lift with it. A browser accepts either shape.
+          new MouseEvent("mousemove", {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: touch.clientX,
+            clientY: touch.clientY,
+          }),
+        );
+      };
+      const onTouchEnd = (e: TouchEvent): void => {
+        // The lifted finger, which is where the tap was. A browser's touchend
+        // always carries one, so the optional read is not about the happy path:
+        // it is that NOTHING in this listener may throw. A TypeError here is
+        // swallowed by the dispatcher and takes `feedTouch` with it, so the tap
+        // never focuses and a flick never coasts, which is how a probe that
+        // reads one field too eagerly can cost the whole scroller.
+        probeLinkAt(e.changedTouches?.[0]);
         feedTouch({ type: "touchend", t: e.timeStamp, th: performance.now() });
+      };
       const onTouchCancel = (): void => feedTouch({ type: "touchcancel" });
 
       /**
