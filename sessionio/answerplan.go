@@ -783,6 +783,31 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 	// the answer path allowed nothing, which is one of the four candidates the
 	// field data could not rule out. An Enter that outruns its toggle leaves the
 	// question with no pick at all.
+	// LEAVING a multi-select question is its own row, not an Enter on the
+	// option you just ticked.
+	//
+	// Measured against CLI 2.1.268 on 2026-09-11 by filming the pane during a
+	// real request: the Space ticked Cream at 418ms and something UNTICKED it
+	// at 549ms. That something was the Enter this used to append. The widget's
+	// own footer says "Enter to select", and on a multi-select every numbered
+	// row is a toggle, so an Enter on the focused row toggles it back off.
+	//
+	// Below the free-text row the widget draws an UNNUMBERED row labelled
+	// "Next", and Enter THERE commits the question and advances. Confirmed on
+	// the same dialog: walking onto it and pressing Enter moved to the
+	// following question with both picks kept. It carries no digit, so it can
+	// only be reached by walking one row past the free-text row.
+	free := rowIndex(rows, optionOther)
+	if free < 0 {
+		// No free-text row means a shape we have not seen, and guessing how
+		// far down the commit sits would press Enter on whatever is there.
+		// The toggles stand, and the reader finishes the question with one
+		// more tap once the pane has been re-read.
+		return choicePlan{Batches: batches}, nil
+	}
+	if walk := walkTo(at, free+1); len(walk) > 0 {
+		batches = append(batches, chunkKeys(walk)...)
+	}
 	return choicePlan{Batches: append(batches, []string{"Enter"})}, nil
 }
 
