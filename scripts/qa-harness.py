@@ -20,6 +20,7 @@ what the agents click is byte-for-byte what terminal.viktorbarzin.me serves.
       ├─ /prompt/*  /cancel/*    → :7685 session-events, no strip, authed
       ├─ /earlier/* /result/*    → :7685 session-events, no strip, authed
       │  /pane/*    /keys/*         (the rest of the production ingress rule)
+      │  /answer/*                  (answers one question of a dialog)
       ├─ /permission/*           → :7681 ttyd catch-all, as in production (†)
       ├─ /build-id               → :7681 ttyd catch-all, as in production (‡)
       ├─ /files/*                → :7686 file-api, no strip, authed
@@ -112,7 +113,7 @@ Blocked (403):
      did not create
   6. POST /prompt/<s>, /cancel/<s>,
      /keys/<s>, /answer-text/<s>,       unless the run owns s
-     /model/<s>
+     /answer/<s>, /model/<s>
   7. POST /files/write                  unless the NORMALISED path is under
                                         --scratch (see THE SCRATCH below)
   8. WS upgrade whose first ?arg= is neither owned nor a free minted id
@@ -436,7 +437,7 @@ class Guard:
         return None
 
     def check_events(self, method: str, path: str) -> Optional[str]:
-        m = re.match(r"^/(prompt|cancel|keys|answer-text|model)/([^/]+)", path)
+        m = re.match(r"^/(prompt|cancel|keys|answer-text|answer|model)/([^/]+)", path)
         if m and method == "POST":
             verb, session = m.group(1), unquote(m.group(2))
             if not self.may_drive(session):
@@ -886,8 +887,14 @@ def build_app(args: argparse.Namespace) -> web.Application:
     # or the model chip got the SPA's HTML 404 and no way to tell that apart
     # from a real one. /permission keeps its own handling below — production
     # has no rule for it, and reproducing that is the point.
+    #
+    # /answer/ is the exception, and deliberately ahead of production: the rule
+    # for it is not in main.tf yet (session-events/DEPLOY.md says so). Routing
+    # it here means the fleet exercises the answer card the way the ingress
+    # will once the rule lands, rather than recording a 200 of index.html as
+    # the card being broken.
     for prefix in ("prompt", "cancel", "earlier", "result", "pane", "keys",
-                   "search", "answer-text", "model", "permission"):
+                   "search", "answer-text", "answer", "model", "permission"):
         app.router.add_route("*", f"/{prefix}/{{tail:.*}}", control_proxy)
     app.router.add_route("*", "/files/{tail:.*}", files_proxy)
     # Both forms: the inventory is GET /skills exactly, the rest are /skills/<verb>.

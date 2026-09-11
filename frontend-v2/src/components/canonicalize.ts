@@ -260,6 +260,18 @@ export function commandOutput(result: unknown, fallback: string): CommandOutput 
 export interface QuestionOption {
   label: string;
   description: string;
+  /**
+   * The multi-select box the PANE drew filled. Never present from the
+   * transcript, which records the call and not the answering of it: it
+   * arrives only on a reading the pane watcher took (`sessionio.Dialog`,
+   * marshalled whole into the `asking` meta event).
+   *
+   * It is carried through rather than dropped because the answer card needs
+   * it to add a pick to a multi-select instead of replacing one, and a reader
+   * who loads the page onto a half-answered question has no other source for
+   * it — there is no reply from this session to read it off.
+   */
+  checked?: boolean;
 }
 export interface Question {
   question: string;
@@ -280,7 +292,11 @@ export function questions(input: unknown): Question[] {
       options: Array.isArray(q.options)
         ? q.options
             .filter((o): o is Record<string, unknown> => !!o && typeof o === "object")
-            .map((o) => ({ label: str(o.label), description: str(o.description) }))
+            .map((o) => ({
+              label: str(o.label),
+              description: str(o.description),
+              checked: o.checked === true,
+            }))
         : [],
     }));
 }

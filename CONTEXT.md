@@ -448,9 +448,27 @@ unsettled, and is what the view shows in place of streaming text.
 **Blocking prompt**:
 Something the CLI is waiting on a human for, which the transcript does not
 report while it is pending — a permission prompt, or an `AskUserQuestion`
-menu. The text view mirrors it as a card and answers it by injecting keys into
-the pty (ADR-0010). Distinct from **Session state** *awaiting input*, which is
-the sidebar's coarser signal that some prompt exists.
+menu. The text view mirrors it as a card; `session-events` answers it by
+injecting keys into the pty (ADR-0010). Distinct from **Session state**
+*awaiting input*, which is the sidebar's coarser signal that some prompt exists.
+
+**Drawn question**:
+The one question of an `AskUserQuestion` call that the pane is showing. A
+multi-question call draws them one at a time, so the drawn question is what
+decides where a dialog is, and it is the only question an answer may address.
+_Avoid_: current question, active question; and do not infer it from the tab
+bar's `☒` tally, which is a **dialog progress** count.
+
+**Dialog progress**:
+How many of a call's questions the tab bar marks `☒`. A progress signal, not a
+position: a multi-select question's box fills on its first toggle, before the
+question is left, so the tally can run one ahead of the **drawn question**.
+
+**Marker fingerprint**:
+Which of the CLI's known landmarks a capture carried — the tab bar, the box
+glyphs, the two review wordings, the footer, the free-text and chat rows.
+Recorded when the parser cannot fully read a screen, so a CLI restyle shows up
+as a signal rather than as a bug report. Structure only, never screen text.
 
 ### T3 interoperability
 

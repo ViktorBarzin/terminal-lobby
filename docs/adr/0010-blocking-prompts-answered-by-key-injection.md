@@ -50,3 +50,61 @@ read from the pane with `capture-pane`.
   session is both watched in text mode and known to be awaiting input.
 - The `permission_request` / `permission_resolved` event kinds kept in
   `event.go` after `575d4f5` have a producer again.
+
+## Amended 2026-09-10 — the browser no longer drives the walk
+
+The decision above stands: key injection, not a hook broker. That is still the
+expensive part to reverse and nothing here touches it. Two of the consequences
+written alongside it have changed, and this section is what replaces them.
+
+**What prompted the amendment.** The client-side walk planned every step ahead:
+each step's expectation was the *next* question's text, and the last step's was
+the review screen's title. Ten days of field telemetry
+(`{job="devvm-journal", unit="tmux-api.service"}`, `TLEVENT`) recorded 15
+answers: four-question calls landed 1 and failed 4, one-question calls landed 8
+and failed 2. All six failures are `desync` — the plan predicted a screen and did
+not find it — with none refused and none unreadable, so the keys always went in
+and the pane was always readable. The full working is in
+`docs/plans/2026-09-10-text-mode-answers-dialogs-design.md`.
+
+**One tap, one request.** `POST /answer/{session}` carries one reader action
+addressed by its question *header*. `session-events` answers the question the
+pane is drawing and returns a fresh reading. The browser renders what comes
+back. Nothing predicts a screen, and there is no ordered list of answers for an
+index to slip in.
+
+A single-select question sends the label chosen. A multi-select one sends the
+desired final set, because its rows are toggles the CLI is already holding: the
+reader's tap is applied against what the pane shows ticked, so a second pick
+adds rather than replacing the first.
+
+- *Was:* the text view mirrors the prompt and sends the answer as keystrokes.
+  *Now:* the text view sends the reader's choice, and `session-events` does the
+  mirroring and the keystrokes. The channel into the pty is unchanged.
+- *Was:* "treat a failure to parse as an unknown prompt: show the honest
+  fallback to the terminal." *Now:* show the captured pane itself, with the
+  lines that look like numbered rows made tappable. Detecting those rows is a
+  guess, and a CLI restyle can make it wrong; that was weighed against offering
+  a plain arrow-key row and chosen deliberately, because a reader on a phone
+  reaching a screen we cannot parse should still be able to answer it.
+
+**What position means.** The question the pane is *drawing* decides which
+question is on screen. The tab bar supplies the count and the headers, and its
+`☒` tally is a progress signal rather than an index: measured 2026-09-10, a
+multi-select question's box fills on the first `Space`, before the `Enter` that
+leaves the question, so the tally runs one ahead there.
+
+**Whoever answers first still wins.** A request for a question the pane is not
+drawing is refused rather than typed, and the refusal carries the current
+reading, so the card re-renders against what is actually on screen. Stopping is
+now cheap, which is what lets the card drop the latch that used to disable
+`Send` after a failed walk.
+
+**Keeping up with the CLI.** A capture the parser cannot fully read is recorded
+as a set of present and absent landmarks — structure only, never screen text,
+per ADR-0008. Claude Code updates roughly daily and our fixtures are static
+captures; one marker was already stale when this was written, the free-text
+option having become `Type something` while the frontend still called it
+`Other`. A synthetic nightly check was considered and declined, because making
+the CLI draw an `AskUserQuestion` needs a real model call and that is recurring
+spend. The fingerprint rides on dialogs that happen anyway.

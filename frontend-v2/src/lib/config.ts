@@ -210,6 +210,18 @@ export function paneUrl(session: string): string {
 }
 
 /**
+ * POST target that answers ONE question of a blocking dialog (session-events).
+ *
+ * Body and reply are `AnswerRequest` / `AnswerResponse` in `lib/answer-api.ts`,
+ * mirroring `sessionio/answerapi.go`. One choice per request: the server
+ * answers the question the pane is drawing and returns the next reading, so no
+ * client ever plans a walk against a screen it cannot see.
+ */
+export function answerUrl(session: string): string {
+  return withActAs(`${API_BASE}/answer/${encodeURIComponent(session)}`);
+}
+
+/**
  * GET target for finding text anywhere in the session (session-events).
  *
  * The server searches the WHOLE transcript, not the window this client holds:

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -109,6 +110,24 @@ type recorderEnv struct {
 	sink                        *usageSink
 }
 
+// killSock ends the test's tmux server AND removes the socket file, which
+// kill-server leaves behind.
+//
+// Unlinking matters because the socket name above carries the pid. Before it
+// did, every run reused one file per test; now each run makes its own, and
+// without this a full pass left 22 dead sockets in /tmp/tmux-1000 — measured
+// 2026-09-11 against a directory that had already collected 1,754. The same
+// form is in sessionio/tmux_test.go, which grew the leak from the same fix on
+// the same day.
+func killSock(sock string) {
+	exec.Command("tmux", "-L", sock, "kill-server").Run()
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	os.Remove(filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), sock))
+}
+
 func newRecorderEnv(t *testing.T) recorderEnv {
 	t.Helper()
 	for _, bin := range []string{"tmux", "jq", "curl"} {
@@ -117,12 +136,20 @@ func newRecorderEnv(t *testing.T) recorderEnv {
 		}
 	}
 	script := recorderScript(t)
-	sock := "usage-test-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
-	exec.Command("tmux", "-L", sock, "kill-server").Run()
+	// The pid is in the socket name because the test name alone is not unique
+	// across CONCURRENT runs of this package, and the kill-server below is
+	// unconditional. Two runs in one checkout — two agents, or a local run
+	// against CI on the same box — shared a socket, and whichever started
+	// second tore down the first one's server mid-test. Seen 2026-09-11: a run
+	// that normally takes 24s failed at 54s while a second run was in flight,
+	// then passed five times alone.
+	sock := fmt.Sprintf("usage-test-%d-%s", os.Getpid(),
+		strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
+	killSock(sock)
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo", "sh").Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 
 	sockPath, err := exec.Command("tmux", "-L", sock, "display-message", "-p", "#{socket_path}").Output()
 	if err != nil {

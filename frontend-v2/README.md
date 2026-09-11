@@ -103,7 +103,7 @@ without CORS (`vite.config.ts`):
 
 | Prefix | Target | Mapping |
 |---|---|---|
-| `/events`, `/prompt`, `/cancel`, `/earlier`, `/result`, `/pane`, `/keys`, `/commands`, `/search`, `/answer-text` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root. The list is the prod IngressRoute's, prefix for prefix; a prefix missing here reaches ttyd's `location /` and answers 200 with the SPA's own index.html, so `res.json()` throws and the caller's catch returns an empty fallback with nothing logged |
+| `/events`, `/prompt`, `/cancel`, `/earlier`, `/result`, `/pane`, `/keys`, `/commands`, `/search`, `/answer-text`, `/answer`, `/model` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root. The list is the prod IngressRoute's, prefix for prefix; a prefix missing here reaches ttyd's `location /` and answers 200 with the SPA's own index.html, so `res.json()` throws and the caller's catch returns an empty fallback with nothing logged |
 | `/api/sessions` | **tmux-api** (`TL_TMUX_API`, default `:7684`) | strips the whole prefix |
 | `/clipboard` | **clipboard-upload** (`TL_CLIPBOARD_UPLOAD`, default `:7683`) | strips the prefix |
 | `/files` | **file-api** (`TL_FILE_API`, default `:7686`) | verbatim — its own routes carry `/files` |
@@ -154,6 +154,11 @@ src/
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
                          retitle/title/…)
+    answer-api.ts        POST /answer: one choice, one request. The shapes a
+                         request and a reading may carry, mirroring
+                         sessionio/answerapi.go, plus the client that sends
+                         one. Nothing here predicts a screen — every reply is
+                         a reading of the pane taken after the keys went in
     http.ts              The transport: a deadline on every request and
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
@@ -566,12 +571,21 @@ src/
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip
-    answer.logic.ts      PURE plan for answering an AskUserQuestion — the keys
-                         each question needs, and what the pane must show
-                         afterwards — plus the runner that checks between steps
-    QuestionCard.tsx     The docked answer card: walks the questions, reviews,
-                         then sends. Nothing is typed until Send, so abandoning
-                         the walk leaves the dialog untouched
+    QuestionCard.tsx     The docked answer card. It draws the ONE question the
+                         pane is showing, the tab bar as chips that walk ←
+                         back to an answered one, and nothing else — a tap is a
+                         request, the reply is a fresh reading, and that is
+                         what gets drawn next. So a choice commits when you
+                         make it, and the CLI's own review screen is where
+                         everything is seen before Submit. It held a whole
+                         four-question draft until 2026-09-10, and predicting
+                         each next screen is what failed 4 of those 5 answers
+    PaneKeypad.tsx       The half of the card for a screen ParseDialog refused:
+                         the capture as monospaced text with the lines that
+                         look like numbered rows made tappable. Detecting rows
+                         is a guess and only ever runs on screens we do not
+                         understand; it replaced sending the reader to the
+                         Terminal, which was 22.4% of this box's calls
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns

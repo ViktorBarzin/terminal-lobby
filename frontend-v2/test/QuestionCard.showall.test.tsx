@@ -15,11 +15,19 @@
  * Both get the same control: a toggle that unclamps every description at once,
  * so "show me everything" is one press rather than a tour. The clamp stays the
  * default because comparing four options wants four summaries, not four essays.
+ *
+ * The card takes a READING now rather than a call's question list, and a tap
+ * on a row is a request rather than a draft — so "expanded only the chosen
+ * row" has become "expanded only the row whose request is in flight", and the
+ * toggle is the only way to read all of them at rest. That makes this control
+ * matter more than it did, not less
+ * (docs/plans/2026-09-10-text-mode-answers-dialogs-design.md).
  */
 import { describe, it, expect } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { QuestionCard } from "../src/components/QuestionCard";
 import { QuestionRowView } from "../src/components/rows";
+import type { DialogView } from "../src/lib/answer-api";
 import type { Question } from "../src/components/canonicalize";
 import type { QuestionRow } from "../src/components/timeline.logic";
 
@@ -37,6 +45,22 @@ const questions: Question[] = [
   },
 ];
 
+/** The same question as the pane draws it back to the card. */
+const reading = (q: Question): DialogView => ({ questions: [q], count: 1 });
+
+const card = (dialog: DialogView) =>
+  render(() => (
+    <QuestionCard
+      dialog={dialog}
+      busy={false}
+      onChoose={async () => {}}
+      onBack={async () => {}}
+      onSubmit={async () => {}}
+      onKeys={async () => {}}
+      onChat={() => {}}
+    />
+  ));
+
 const row = (over: Partial<QuestionRow> = {}): QuestionRow =>
   ({
     kind: "question",
@@ -50,16 +74,12 @@ const row = (over: Partial<QuestionRow> = {}): QuestionRow =>
 
 describe("the live card can show every description", () => {
   it("clamps by default", () => {
-    const { container } = render(() => (
-      <QuestionCard questions={questions} onSend={async () => {}} onChat={() => {}} />
-    ));
+    const { container } = card(reading(questions[0]!));
     expect(container.querySelector(".tl-qcard-options")!.getAttribute("data-full")).toBeNull();
   });
 
   it("unclamps all of them on one press, and says how to go back", () => {
-    const { container, getByText } = render(() => (
-      <QuestionCard questions={questions} onSend={async () => {}} onChat={() => {}} />
-    ));
+    const { container, getByText } = card(reading(questions[0]!));
     fireEvent.click(getByText(/show all/i));
     expect(container.querySelector(".tl-qcard-options")!.getAttribute("data-full")).toBe("true");
     fireEvent.click(getByText(/show less/i));
@@ -67,11 +87,30 @@ describe("the live card can show every description", () => {
   });
 
   it("offers the toggle only when something is actually clamped", () => {
-    const short: Question[] = [
-      { ...questions[0]!, options: [{ label: "Yes", description: "" }] },
-    ];
+    const short = { ...questions[0]!, options: [{ label: "Yes", description: "" }] };
+    const { queryByText } = card(reading(short));
+    expect(queryByText(/show all/i)).toBeNull();
+  });
+
+  it("offers no toggle on the review screen, which has no descriptions", () => {
+    // The review screen's reading carries no options at all, so the head would
+    // otherwise show a control that expands nothing.
     const { queryByText } = render(() => (
-      <QuestionCard questions={short} onSend={async () => {}} onChat={() => {}} />
+      <QuestionCard
+        dialog={{
+          questions: [{ question: "Ready to submit your answers?", options: [] }],
+          headers: ["Push path", "Lane"],
+          count: 2,
+          answered: 2,
+        }}
+        review
+        busy={false}
+        onChoose={async () => {}}
+        onBack={async () => {}}
+        onSubmit={async () => {}}
+        onKeys={async () => {}}
+        onChat={() => {}}
+      />
     ));
     expect(queryByText(/show all/i)).toBeNull();
   });

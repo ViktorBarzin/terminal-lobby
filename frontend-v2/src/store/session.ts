@@ -33,6 +33,7 @@ import {
   type PendingPrompt,
 } from "../logic/compose.logic";
 import { fetchWithDeadline } from "../lib/http";
+import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
 
 /**
  * Transcript reads move real bytes — loadEarlier asks for up to 400KB
@@ -76,6 +77,10 @@ export interface SessionStore {
   /** Type free text into the pane WITHOUT submitting it — how the "Other"
    *  option of an AskUserQuestion is answered. Returns true on 204. */
   answerText: (text: string) => Promise<boolean>;
+  /** Put ONE request to a blocking AskUserQuestion and read back what the pane
+   *  shows afterwards. Null only when the call failed; a refusal is a normal
+   *  reply carrying the current reading. */
+  answerOne: (req: AnswerRequest) => Promise<AnswerResponse | null>;
   /** Find text anywhere in the session. The server searches the whole
    *  transcript, not the window held here. */
   search: (q: string) => Promise<SearchHit[]>;
@@ -659,6 +664,23 @@ export function createSessionStore(
     }
   };
 
+  /**
+   * One choice of a blocking AskUserQuestion, answered where the parser lives.
+   *
+   * The transport is `lib/answer-api`, which carries the same deadline and the
+   * same null-on-failure convention as everything else here — it is a separate
+   * module only because the wire types are shared with the card and mirror
+   * `sessionio/answerapi.go`.
+   *
+   * No notify, deliberately, and it is the one call here that keeps that to
+   * itself. A refusal comes back as a REPLY, carrying the reading of what is
+   * actually on screen, and the card renders it; a toast saying "that did not
+   * work" over a card that has just corrected itself is noise. The caller
+   * raises the one case that is genuinely a failure, a null.
+   */
+  const answerOne = (req: AnswerRequest): Promise<AnswerResponse | null> =>
+    sendAnswer(session, req);
+
   const search = async (q: string): Promise<SearchHit[]> => {
     try {
       const res = await fetchWithDeadline(searchUrl(session, q));
@@ -765,6 +787,7 @@ export function createSessionStore(
     interrupt,
     answer,
     answerText,
+    answerOne,
     search,
     pane,
     commands,

@@ -99,6 +99,11 @@ const proxy: Record<string, ProxyOptions> = {
   "/commands": sessionEventsProxy,
   "/search": sessionEventsProxy,
   "/answer-text": sessionEventsProxy,
+  // AFTER /answer-text, not before it. Vite matches a context by startsWith,
+  // so "/answer" put first would also swallow /answer-text/<session>. Both
+  // forward verbatim to the same upstream, so nothing would visibly break —
+  // which is exactly why the order is written down rather than left to luck.
+  "/answer": sessionEventsProxy,
   "/model": sessionEventsProxy,
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).

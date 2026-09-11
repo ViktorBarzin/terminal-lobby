@@ -933,7 +933,7 @@ export const SessionView: Component<{
             onOpenPreview={(path) => void preview.open(path)}
             onKeys={store.answer}
             onPane={store.pane}
-            onAnswerText={store.answerText}
+            onAnswer={store.answerOne}
             notify={props.notify}
             onCommands={store.commands}
             pendingPrompts={store.pendingPrompts}

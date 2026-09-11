@@ -54,7 +54,7 @@ func pickerSessionLagging(t *testing.T, lag string) (*Injector, string) {
 	// run of the same test fails on a name rather than on anything it tested.
 	// Measured 2026-09-05, with 462 stale sockets in that directory.
 	sock := fmt.Sprintf("sio-picker-%d-%d", os.Getpid(), pickerSeq.Add(1))
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 	cmd := "python3 " + script
 	if lag != "" {
 		cmd = "FAKEPICKER_LAG=" + lag + " " + cmd
