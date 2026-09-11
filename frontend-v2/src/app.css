@@ -1554,16 +1554,46 @@ label.tl-set-row-label {
 .tl-markdown a {
   color: var(--accent);
 }
+/* A table scrolls sideways INSIDE ITS OWN BOX, and that needs two elements.
+   The table used to be the scroller and the content at once (`display: block;
+   overflow-x: auto`), which cannot work: an element cannot be wider than its
+   own scrollport, so it took the column width and squeezed the columns rather
+   than overflowing. Measured on a phone at 390px, on a five-column table: 221px
+   tall with 3 lines in every cell, and `on-screen-here` broken into 3 pieces
+   each carrying its own code background. With the split it is 116px, one line
+   per cell, one piece.
+
+   Markdown.tsx wraps every table in the scroller, so this pairing is not
+   optional and the two rules must move together. */
+.tl-table-scroll {
+  overflow-x: auto;
+  /* Reaching the end of the table must not hand the swipe to the transcript
+     behind it. Chrome and Firefox honour this; WebKit does not yet apply it to
+     the back-swipe (bug 240183), so on iOS the last few pixels of a table can
+     still start a history navigation. */
+  overscroll-behavior-x: contain;
+  /* Always visible, not hover-revealed: there is no hover on a phone, and a
+     scroller nobody can see is a table that looks truncated. */
+  scrollbar-width: thin;
+  margin: 0.6em 0;
+}
 .tl-markdown table {
   border-collapse: collapse;
-  display: block;
-  overflow-x: auto;
-  margin: 0.6em 0;
+  /* As wide as the content wants. The scroller above is what stays 390px. */
+  width: max-content;
+  max-width: none;
+  margin: 0;
 }
 .tl-markdown th,
 .tl-markdown td {
   border: 1px solid var(--border);
   padding: 4px 8px;
+}
+/* An identifier is one thing, so it breaks between cells rather than inside
+   itself. This is what turned `on-screen-here` into three stacked fragments. */
+.tl-markdown th code,
+.tl-markdown td code {
+  white-space: nowrap;
 }
 .tl-markdown blockquote {
   margin: 0.6em 0;
