@@ -1,4 +1,5 @@
 import {
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -17,9 +18,12 @@ import {
   keepSelected,
   keyOf,
   pruneKept,
+  type KeptSession,
   type Selected,
 } from "../store/keepalive";
+import { createPreloadStore } from "../store/preload";
 import { Sidebar } from "./Sidebar";
+import { PreloadHoverContext } from "./SessionCard";
 import { NewSessionComposer } from "./NewSessionComposer";
 import { SessionView } from "./SessionView";
 import { SettingsPanel, type PageId } from "./SettingsPanel";
@@ -106,6 +110,55 @@ function readSidebarCollapsed(): boolean {
 export function projectDirFor(layout: Layout, session: string): string | undefined {
   const project = layout.projects.find((p) => p.sessions.includes(session));
   return project?.dir || undefined;
+}
+
+/**
+ * The session mounts the shell renders, and the identity `<For>` keys them by.
+ *
+ * Two lists arrive here: the sessions `store/keepalive.ts` says to keep, and
+ * the ONE `store/preload.ts` is holding for the pointer. They render from a
+ * single `<For>` so that a preload PROMOTED by a click is the row it already
+ * was — the same DOM node, the same TerminalNative, the same open socket, which
+ * is the 627 ms the hover paid for in advance (ADR-0026).
+ *
+ * That only holds if the item `<For>` is keyed by does not change as a session
+ * moves from one list to the other, and the two lists hand over different
+ * objects for the same session. So this keeps one object per key and returns it
+ * to both, and forgets it when the session leaves both — where a later hover on
+ * the same name is a fresh mount, as it should be.
+ *
+ * Order is keepalive's, with the preload last: its list only ever grows at the
+ * end, so nothing already mounted moves.
+ */
+type MountKey = {
+  readonly key: string;
+  readonly name: string;
+  readonly owner?: string;
+};
+
+export function createMountList(): (
+  kept: readonly KeptSession[],
+  preloaded: MountKey | null,
+) => KeptSession[] {
+  const byKey = new Map<string, KeptSession>();
+  return (kept, preloaded) => {
+    const out: KeptSession[] = [];
+    const live = new Set<string>();
+    const take = (s: MountKey) => {
+      if (live.has(s.key)) return; // kept AND preloaded is still one mount
+      live.add(s.key);
+      let slot = byKey.get(s.key);
+      if (!slot) {
+        slot = { key: s.key, name: s.name, owner: s.owner };
+        byKey.set(s.key, slot);
+      }
+      out.push(slot);
+    };
+    for (const k of kept) take(k);
+    if (preloaded) take(preloaded);
+    for (const key of byKey.keys()) if (!live.has(key)) byKey.delete(key);
+    return out;
+  };
 }
 
 /**
@@ -600,7 +653,12 @@ export const App: Component = () => {
   const newLaunch = (): { model: string; effort: string } => {
     const h = modelHarness(newCommand() as SessionTool);
     if (!h) return { model: "", effort: "" };
-    return modelRequest(h, modelChoiceFor(prefs.prefs(), h)) ?? { model: "", effort: "" };
+    return (
+      modelRequest(h, modelChoiceFor(prefs.prefs(), h)) ?? {
+        model: "",
+        effort: "",
+      }
+    );
   };
 
   // A selected session the poll has never returned does not exist in tmux yet:
@@ -634,9 +692,44 @@ export const App: Component = () => {
     const sel = selectedSession();
     return sel ? keyOf(sel) : null;
   });
+
+  // ---- the session under the pointer (store/preload.ts, ADR-0026) ----------
+  // Keepalive solved the SECOND open of a session. This is the same idea 250 ms
+  // before the FIRST: a hover starts the real tmux attach, hidden, and the
+  // click that follows reveals it instead of paying 627 ms for one. The store
+  // decides; this wires it to the three facts it cannot see for itself.
+  const preload = createPreloadStore({
+    // A phone has no hover, so it preloads nothing. Read live rather than at
+    // boot: a 2-in-1 crosses this query.
+    isCoarsePointer: createCoarsePointer(),
+    // Already mounted or already on screen: a kept session is attached and the
+    // selected one is the view, so there is nothing left to buy.
+    alreadyOpen: (sel) => {
+      const key = keyOf(sel);
+      return key === selectedKey() || kept().list.some((k) => k.key === key);
+    },
+    // Own sessions only. A foreign attach runs tmux-api's /internal/attach
+    // authorization per connection — a round trip, a sudo and an audit line per
+    // card the pointer crosses — and "" before /whoami answers preloads
+    // nothing, which is the fail-closed direction.
+    me: store.me,
+  });
+  onCleanup(() => preload.dispose());
+  /** One mount per session: the kept ones, plus the preloaded one. */
+  const mountList = createMountList();
+  const mounted = createMemo(() => mountList(kept().list, preload.preloaded()));
+
   createEffect(() => {
     const sel = selectedSession();
-    setKept((state) => keepSelected(state, sel, Date.now()));
+    // BOTH WRITES, IN THIS ORDER, IN ONE BATCH. Keepalive takes the session on
+    // first and the preload slot empties second, so the mount list never sees a
+    // moment where the promoted session is in neither — which would unmount the
+    // row and throw away the attach the hover paid for. `select` reads nothing
+    // reactive, so calling it here subscribes this effect to nothing new.
+    batch(() => {
+      setKept((state) => keepSelected(state, sel, Date.now()));
+      preload.select(sel);
+    });
   });
   /** Drop what is not worth holding: a day unvisited, or gone from the lobby. */
   const prune = () =>
@@ -663,7 +756,10 @@ export const App: Component = () => {
   // A session switch disposes that view and the unsaved draft inside it, so the
   // keyboard routes into a switch have to know about it (the mouse route
   // already does — it goes through the overlay's own discard confirm).
-  const [previewState, setPreviewState] = createSignal({ open: false, dirty: false });
+  const [previewState, setPreviewState] = createSignal({
+    open: false,
+    dirty: false,
+  });
 
   // ---- keybinding engine + command palette + shortcuts help (pillar #2) ----
   // The lobby SPA owns the sidebar, palette and session switching, and its one
@@ -709,9 +805,22 @@ export const App: Component = () => {
     actions: () => {
       const cur = store.selected()?.name ?? null;
       const acts: PaletteAction[] = [
-        { label: "New session", hint: "name box", keepFocus: true, run: () => run("session.new") },
-        { label: "Keyboard shortcuts", hint: "/", run: () => run("shortcuts.help") },
-        { label: "Skills", hint: "install, disable, share", run: () => openSettings("skills") },
+        {
+          label: "New session",
+          hint: "name box",
+          keepFocus: true,
+          run: () => run("session.new"),
+        },
+        {
+          label: "Keyboard shortcuts",
+          hint: "/",
+          run: () => run("shortcuts.help"),
+        },
+        {
+          label: "Skills",
+          hint: "install, disable, share",
+          run: () => openSettings("skills"),
+        },
       ];
       // Undo / redo, shown only when a press would do something — the same rule
       // the dimmed card's arrow follows (SessionCard.tsx). An empty stack means
@@ -719,16 +828,36 @@ export const App: Component = () => {
       // whose stack is disabled and therefore always empty, shows neither.
       const mod = engine.isMac ? "Cmd" : "Ctrl";
       if (undoStack.canUndo()) {
-        acts.push({ label: "Undo", hint: `${mod}+Z`, run: () => run("edit.undo") });
+        acts.push({
+          label: "Undo",
+          hint: `${mod}+Z`,
+          run: () => run("edit.undo"),
+        });
       }
       if (undoStack.canRedo()) {
-        acts.push({ label: "Redo", hint: `${mod}+Shift+Z`, run: () => run("edit.redo") });
+        acts.push({
+          label: "Redo",
+          hint: `${mod}+Shift+Z`,
+          run: () => run("edit.redo"),
+        });
       }
       if (cur) {
         acts.push(
-          { label: "Rename current session", hint: cur, run: () => run("session.rename.current") },
-          { label: "Open image gallery", hint: cur, run: () => run("gallery.open") },
-          { label: "Paste into terminal", hint: cur, run: () => run("terminal.paste") },
+          {
+            label: "Rename current session",
+            hint: cur,
+            run: () => run("session.rename.current"),
+          },
+          {
+            label: "Open image gallery",
+            hint: cur,
+            run: () => run("gallery.open"),
+          },
+          {
+            label: "Paste into terminal",
+            hint: cur,
+            run: () => run("terminal.paste"),
+          },
           {
             label: "Kill current session",
             hint: cur,
@@ -904,43 +1033,51 @@ export const App: Component = () => {
       }}
     >
       <aside class="tl-shell-sidebar">
-        <Sidebar
-          store={store}
-          prefs={prefs}
-          onNewSession={openComposer}
-          altActive={engine.altActive}
-          notifications={notifications}
-          // ONE connection indicator at a time. This one exists for the screens
-          // that have no session bar — the phone's list, which is the whole
-          // viewport, and the desktop empty state — and it stands down whenever
-          // the session bar's badge is on screen. Two dots 40px apart, scoped
-          // differently, meant a dropped terminal showed amber in the bar and
-          // green up here at the same time: individually correct, together a
-          // contradiction (measured 2026-09-02).
-          status={
-            barOnScreen()
-              ? undefined
-              : { channels: status.channels, onOpen: () => openSettings("network") }
-          }
-          // The footer figure, which is the short answer to what the page it
-          // opens says at length. Unlike the gear it is wired on every screen:
-          // the shell bar has no room for a running total, and "what is this
-          // session costing me" is asked from the desktop as often as from a
-          // phone.
-          onOpenSpend={() => openSettings("spend")}
-          // The phone folds the shell bar (and with it the gear) into the
-          // session bar, which only exists once a session is open. Without this
-          // the sidebar's own screen has no route to Settings at all.
-          onOpenSettings={flip() ? () => openSettings() : undefined}
-          // The Skills panel needs the same phone route as Settings: its button
-          // lives on the folded-away shell bar, and the session-bar menu that
-          // also carries it is only there once a session is open.
-          onOpenSkills={flip() ? () => openSettings("skills") : undefined}
-          // Same reason as onOpenSettings: on a phone the shell bar that
-          // carries the chip is folded away, so the list screen needs its own
-          // one-tap route back to your own lobby.
-          actAsChip={flip() ? actAsChip() : undefined}
-        />
+        {/* The cards are the preload's only consumer: a pointer resting on
+            one is what starts the attach, and the store it asks is the
+            shell's (SessionCard's PreloadHoverContext). */}
+        <PreloadHoverContext.Provider value={preload}>
+          <Sidebar
+            store={store}
+            prefs={prefs}
+            onNewSession={openComposer}
+            altActive={engine.altActive}
+            notifications={notifications}
+            // ONE connection indicator at a time. This one exists for the screens
+            // that have no session bar — the phone's list, which is the whole
+            // viewport, and the desktop empty state — and it stands down whenever
+            // the session bar's badge is on screen. Two dots 40px apart, scoped
+            // differently, meant a dropped terminal showed amber in the bar and
+            // green up here at the same time: individually correct, together a
+            // contradiction (measured 2026-09-02).
+            status={
+              barOnScreen()
+                ? undefined
+                : {
+                    channels: status.channels,
+                    onOpen: () => openSettings("network"),
+                  }
+            }
+            // The footer figure, which is the short answer to what the page it
+            // opens says at length. Unlike the gear it is wired on every screen:
+            // the shell bar has no room for a running total, and "what is this
+            // session costing me" is asked from the desktop as often as from a
+            // phone.
+            onOpenSpend={() => openSettings("spend")}
+            // The phone folds the shell bar (and with it the gear) into the
+            // session bar, which only exists once a session is open. Without this
+            // the sidebar's own screen has no route to Settings at all.
+            onOpenSettings={flip() ? () => openSettings() : undefined}
+            // The Skills panel needs the same phone route as Settings: its button
+            // lives on the folded-away shell bar, and the session-bar menu that
+            // also carries it is only there once a session is open.
+            onOpenSkills={flip() ? () => openSettings("skills") : undefined}
+            // Same reason as onOpenSettings: on a phone the shell bar that
+            // carries the chip is folded away, so the list screen needs its own
+            // one-tap route back to your own lobby.
+            actAsChip={flip() ? actAsChip() : undefined}
+          />
+        </PreloadHoverContext.Provider>
       </aside>
 
       <div class="tl-shell-content">
@@ -992,20 +1129,43 @@ export const App: Component = () => {
           </Show>
           {/* Every session opened in this tab stays mounted, and the one being
               read is the one not hidden. The slots are appended and never
-              reordered, so a live terminal is never moved in the DOM. */}
-          <For each={kept().list}>
+              reordered, so a live terminal is never moved in the DOM.
+
+              The session under the POINTER is in here too, hidden like the
+              rest and attached with `pre` (ADR-0026). Clicking it is the
+              cheapest thing this list does: the slot stops being a preload,
+              loses `tl-hidden`, and the terminal it already has is what you
+              are looking at. */}
+          <For each={mounted()}>
             {(k) => {
               const shown = () => k.key === selectedKey();
+              /** Mounted by a hover, and nobody has asked to see it yet. */
+              const preloading = () => preload.preloaded()?.key === k.key;
               const label = () =>
                 sessionLabel(store.sessions.find((s) => s.name === k.name) ?? { name: k.name });
               return (
-                <div class="tl-session-slot" classList={{ "tl-hidden": !shown() }}>
+                <div
+                  class="tl-session-slot"
+                  classList={{ "tl-hidden": !shown() }}
+                  // The presence of the attribute is the whole message: this
+                  // slot is a speculative attach rather than a session somebody
+                  // opened. It goes the moment a click promotes it.
+                  data-preload={preloading() ? "" : undefined}
+                >
                   <SessionView
                     session={k.name}
                     label={label()}
                     owner={k.owner}
                     me={store.me}
                     lens={lens}
+                    preloading={preloading}
+                    // Only the slot this describes is listening; the store
+                    // checks the key before it acts on either answer.
+                    onPreload={(state) => {
+                      const sel = { name: k.name, owner: k.owner };
+                      if (state === "landed") preload.markLanded(sel);
+                      else preload.markFailed(sel);
+                    }}
                     otherSessions={() =>
                       flatSessionOrder(store.model())
                         .filter((o) => o.name !== k.name)
@@ -1020,8 +1180,27 @@ export const App: Component = () => {
                     status={{
                       channels: status.channels,
                       onOpen: () => openSettings("network"),
-                      onTranscript: setSessionStatus,
-                      onTerminalConn,
+                      // A PRELOAD SAYS NOTHING HERE. Every mounted view
+                      // publishes its stream state, and a preload publishes
+                      // `null` the moment it mounts — which would report "no
+                      // transcript" about the session someone is reading, on a
+                      // hover that has nothing to do with it. Every other
+                      // mount still speaks, including the one leaving the
+                      // screen: its `null` is how the shell learns the stream
+                      // it was reporting is no longer the one on screen.
+                      onTranscript: (s) => {
+                        if (!preloading()) setSessionStatus(s);
+                      },
+                      // AND NOTHING HERE, for the same reason. A preload
+                      // mounts hidden, and a hidden view WITHDRAWS its
+                      // terminal from the model — so passed unguarded, a
+                      // pointer resting on an unrelated card cleared the amber
+                      // badge and the Reconnect button belonging to the
+                      // session on screen, and answered an in-flight
+                      // `Run check` with "not reporting".
+                      onTerminalConn: (r) => {
+                        if (!preloading()) onTerminalConn(r);
+                      },
                       askConn: (ask) => (askTerminalConn = ask),
                       retryConn: (retry) => (retryTerminalConn = retry),
                     }}

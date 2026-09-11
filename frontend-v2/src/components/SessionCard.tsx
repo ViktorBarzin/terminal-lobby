@@ -1,5 +1,16 @@
-import { createSignal, For, onCleanup, Show, type Accessor, type Component } from "solid-js";
+import {
+  createContext,
+  createEffect,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  useContext,
+  type Accessor,
+  type Component,
+} from "solid-js";
 import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
+import type { Selected } from "../store/keepalive";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
 import { backgroundLabel, formatWorking, relativeTime, stateLabel } from "./lobby.logic";
@@ -17,6 +28,45 @@ import { showToast } from "../store/toast";
 import { lensTarget } from "../lib/act-as";
 import { SWIPE_MIN_PX } from "../mobile/swipe";
 import { ACT_AS } from "../lib/config";
+
+/**
+ * The hover seam, as little of `store/preload.ts` as a card needs.
+ *
+ * A CONTEXT rather than a prop because the shell is four components away from
+ * the row: App renders Sidebar, Sidebar renders its groups, and a group renders
+ * these. Threading two callbacks through all of that would put the preload in
+ * the signature of everything in between, none of which has an opinion about
+ * it. It is declared here, beside its only consumer, and provided by App with
+ * the store it built.
+ *
+ * Absent is a legitimate answer: a card mounted without a provider preloads
+ * nothing, which is what every suite that mounts a sidebar does today.
+ */
+export interface PreloadHover {
+  /** The pointer arrived on this card. Starts the dwell; sends nothing yet. */
+  hoverEnter(sel: Selected): void;
+  /** The pointer left. Cancels the dwell, and aborts an attach still in flight. */
+  hoverLeave(sel: Selected): void;
+}
+
+export const PreloadHoverContext = createContext<PreloadHover>();
+
+/**
+ * Does this pointer HOVER at all?
+ *
+ * A finger fires `pointerenter` on the way to a tap, and a phone that preloaded
+ * there would pay for a tmux attach on every card a thumb brushed past.
+ * `store/preload.ts` refuses a coarse pointer on its own, but the event knows
+ * before the store is asked, and a 2-in-1 crosses that media query while the
+ * event never lies about the device in the hand.
+ *
+ * Only `mouse` and `pen` pass, so anything unrecognised — a synthesized event,
+ * a browser that reports nothing — preloads nothing. Fail-closed is the same
+ * direction the store takes for an owner it cannot name yet.
+ */
+function hovers(e: PointerEvent): boolean {
+  return e.pointerType === "mouse" || e.pointerType === "pen";
+}
 
 /**
  * A thin session row (inventory Cat.2 "Session card"): state dot + name (left),
@@ -458,6 +508,83 @@ export const SessionCard: Component<{
     setSwipeDx(0);
   };
 
+  /**
+   * Attach this session early, because the pointer is resting on it.
+   *
+   * Opening a session this tab has not opened before costs 779 ms, and 627 ms
+   * of that is the tmux attach, which only a real attach can buy back — so a
+   * hover starts one and the click promotes it (ADR-0026). Everything about
+   * WHEN is `store/preload.ts`'s: the 250 ms dwell, the single slot, the 60 s
+   * TTL, own sessions only. What the card decides is the two things the store
+   * cannot see from where it sits.
+   *
+   *   - THE POINTER TYPE, above. A tap is not a hover.
+   *   - WATCH MODE. A read-only attach calls `PinGrid`, and `grid.go` never
+   *     reverts a pin, so a hover that resolved to a watch would change the
+   *     sizing of every card the pointer crossed, for the life of the session.
+   *     That is the outcome ADR-0026 exists to avoid, and it is also why
+   *     `terminal-url.ts` throws when asked for both: they share arg5.
+   *
+   * The owner travels exactly as it does into `store.select` below, so the
+   * hover and the click name the same session — `keyOf` puts the owner in the
+   * key, and a mismatch would read as a different session and attach twice.
+   */
+  const hover = useContext(PreloadHoverContext);
+  const hoverTarget = (): Selected => ({
+    name: s().name,
+    owner: foreign() ? s().owner : undefined,
+  });
+  /** Has this card asked for a preload it has not taken back yet? Read by the
+   *  retraction below, which must not speak for a card the pointer never
+   *  reached. `onPointerLeave` needs no such guard: it fires for a pointer that
+   *  WAS on this row, whatever it was doing there. */
+  let asked = false;
+  const onHoverEnter = (e: PointerEvent) => {
+    if (!hover || !hovers(e)) return;
+    if (killing() || editing() || willWatch()) return;
+    asked = true;
+    hover.hoverEnter(hoverTarget());
+  };
+  /**
+   * Both jobs on the way out, and the swipe's comes first.
+   *
+   * `cancelSwipe` was here before the preload was, and it stays: a finger that
+   * leaves the row mid-gesture has decided nothing. The hover's half runs
+   * whatever the pointer type, because aborting a preload that is not there
+   * costs nothing and failing to abort one holds a socket open.
+   */
+  const onPointerLeave = () => {
+    cancelSwipe();
+    asked = false;
+    hover?.hoverLeave(hoverTarget());
+  };
+  /**
+   * Take the hover back if the answer changes under it.
+   *
+   * The gate above is read when the pointer ARRIVES, and 250 ms is long enough
+   * for the lobby poll to land `driven: true` inside the dwell. The preload
+   * store re-checks only what it can see from where it sits — pointer type,
+   * ownership, already open — so without this the dwell fires on a session
+   * this device would now join as a viewer, and a read-only attach calls
+   * PinGrid: `grid.go` never reverts a pin, so a row the pointer merely
+   * crossed would keep one device's window size for the life of the session
+   * (ADR-0026).
+   *
+   * `hoverLeave` is the whole retraction: it cancels this card's dwell and
+   * drops its slot while the attach is still in flight. A LANDED preload stays,
+   * and is harmless — it is already attached read-write with ignore-size, and
+   * an open socket's mode never changes.
+   *
+   * Only for a hover this card actually asked for. Every card's answer runs
+   * this effect, including the ones that have always resolved to a watch, and a
+   * row the pointer never touched has nothing to take back.
+   */
+  createEffect(() => {
+    if (!willWatch() || !asked) return;
+    asked = false;
+    hover?.hoverLeave(hoverTarget());
+  });
+
   return (
     <div
       // the ⋯ button and its popup both live in here, so the row is the menu's
@@ -514,7 +641,10 @@ export const SessionCard: Component<{
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerCancel={cancelSwipe}
-      onPointerLeave={cancelSwipe}
+      // Enter and leave are the hover; leave is ALSO the swipe's cancel, which
+      // is why one handler does both (see onPointerLeave).
+      onPointerEnter={onHoverEnter}
+      onPointerLeave={onPointerLeave}
       onContextMenu={(e) => {
         // A long press raises the platform context menu on top of ours.
         if (holdFired) e.preventDefault();

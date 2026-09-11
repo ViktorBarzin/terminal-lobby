@@ -97,6 +97,16 @@ inputs. It takes the `attach-session` branch rather than `new-session -A`, so a
 session that died between the poll and the dwell fails the preload instead of
 being recreated.
 
+### The pin
+
+`PinGrid` sizes a watched session through a hook that reads the client list and
+calls `resize-window` itself, so tmux's ignore-size flag does not reach it. The
+hook gains a `grep -v ignore-size` filter beside the `grep -v read-only` it
+already had, and `gridHookMark` goes to `tl-grid-v3` so `repairStaleGridPins`
+reinstalls it on sessions pinned by an older build. Without this a hover moved
+a pinned session's window to the hovering client's size, measured 80x39 to
+200x49 on 2026-09-11, and pins are never reverted.
+
 ### The promotion
 
 `POST /sessions/{name}/grid` already means "the client being read says what size

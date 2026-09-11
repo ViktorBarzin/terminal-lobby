@@ -32,6 +32,14 @@ Two legs, each exercising real shipped code rather than a description of it:
      pin both directions: asking to watch produces `-r`, and a server that says
      rw produces no `-r` however the client asked.
 
+     arg5 gained a third answer on 2026-09-11 — "pre", the attach a HOVER makes
+     (ADR-0026) — and it is the one mode with no server hop in front of it, so
+     leg 2 pins its whole argv: `-f ignore-size`, an EXACT `=name` target (a
+     bare one resolves by prefix, and `deploy`/`deploy-2` are an everyday pair
+     here), and no create path. Its refusals are pinned too, because a preload
+     is refused at a hidden terminal nobody is reading: own-sessions-only, and
+     without a banner or a hold that a click could promote into view.
+
 The last test joins them: the arg vector leg 1 builds is handed to leg 2
 verbatim, so the two halves are checked against each other rather than against
 two hand-written lists that could drift apart.
@@ -54,6 +62,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 
 import pytest
 
@@ -75,8 +84,8 @@ def _esbuild() -> str:
     return local if os.access(local, os.X_OK) else (shutil.which("esbuild") or "")
 
 
-@functools.lru_cache(maxsize=1)
-def _builder_module() -> str:
+@functools.lru_cache(maxsize=None)
+def _builder_module(act_as: str = "") -> str:
     """Transpile terminal-url.ts to CJS and return the path node should require.
 
     NOT a bundle and not a copy of the logic: esbuild strips the types and
@@ -84,7 +93,12 @@ def _builder_module() -> str:
     import is `./config`, whose ACT_AS is read at module scope and would drag in
     the whole runtime-config module (and its window reads), so a two-line stub
     stands in for it beside the output. `terminalFrameArgs` treats ACT_AS as a
-    DEFAULT for the owner slot, and these cases pass an owner or none.
+    DEFAULT for the owner slot, and most cases pass an owner or none.
+
+    `act_as` is what that stub answers. An as-bob tab is the one place the
+    default fires on its own, and it is how a PRELOAD becomes foreign without
+    anybody asking for a foreign attach — so the value is a parameter here and
+    each one gets its own output directory.
     """
     if not os.path.exists(TERMINAL_URL_TS):
         pytest.fail(
@@ -103,7 +117,7 @@ def _builder_module() -> str:
     )
     assert r.returncode == 0, f"esbuild failed: {r.stderr}"
     with open(os.path.join(out, "config.js"), "w", encoding="utf-8") as f:
-        f.write('exports.ACT_AS = "";\n')
+        f.write(f"exports.ACT_AS = {json.dumps(act_as)};\n")
     return mod
 
 
@@ -112,9 +126,10 @@ def _run_builder(**kw) -> str:
     node = shutil.which("node") or shutil.which("nodejs")
     if not node:
         pytest.skip("node not available")
-    opts = {k: kw[k] for k in ("cmd", "dir", "owner", "watch", "model", "effort") if k in kw}
+    keys = ("cmd", "dir", "owner", "watch", "preload", "model", "effort")
+    opts = {k: kw[k] for k in keys if k in kw}
     script = (
-        f"const m = require({json.dumps(_builder_module())});\n"
+        f"const m = require({json.dumps(_builder_module(kw.get('act_as', '')))});\n"
         # A rename or a signature change has to be loud rather than a TypeError
         # from a hundred lines away, because this is the whole entry point.
         'if (typeof m.terminalFrameArgs !== "function")'
@@ -265,8 +280,14 @@ def attach(tmp_path):
         env = dict(os.environ)
         env["TTYD_USER"] = auth
         env["PATH"] = f"{shim}:{env['PATH']}"
+        started = time.monotonic()
         proc = subprocess.run(["bash", str(script), *args], capture_output=True,
                               text=True, env=env, timeout=30)
+        # How long the refusal HELD is part of what these tests assert. Every
+        # denial in the script sleeps so a person can read the banner; a preload
+        # has no reader, and a hold is the window in which a click promotes the
+        # hidden mount and shows the denial instead of the session.
+        secs = time.monotonic() - started
         post = tmp_path / "post.json"
         return {
             "rc": proc.returncode,
@@ -274,6 +295,7 @@ def attach(tmp_path):
             "argv": log.read_text().strip().splitlines() if log.exists() else [],
             "post": json.loads(post.read_text()) if post.exists() else None,
             "me": me,
+            "secs": secs,
         }
 
     yield run
@@ -289,7 +311,7 @@ def test_no_watch_request_keeps_the_create_path(attach):
 
 def test_watching_your_own_session_attaches_read_only(attach):
     r = attach(["main", "default", "default", "", "ro"], mode="ro")
-    assert r["argv"] == [f"tmux attach-session -r -t main"], r["argv"]
+    assert r["argv"] == ["tmux attach-session -r -t =main"], r["argv"]
 
 
 def test_the_watch_request_is_forwarded_to_the_server(attach):
@@ -312,7 +334,7 @@ def test_read_only_comes_from_the_server_not_the_client(attach):
     only because the SERVER said ro. When the server says rw, no `-r` appears
     however the client asked — the flag is never sourced from the argument."""
     r = attach(["main", "default", "default", "other", "ro"], mode="rw")
-    assert any("attach-session -t main" in line for line in r["argv"]), r["argv"]
+    assert any("attach-session -t =main" in line for line in r["argv"]), r["argv"]
     assert not any("-r" in line for line in r["argv"]), r["argv"]
 
 
@@ -321,7 +343,7 @@ def test_a_foreign_attach_still_runs_as_the_owner_under_sudo(attach):
     assert len(r["argv"]) == 1, r["argv"]
     line = r["argv"][0]
     assert line.startswith("sudo -n -H -u other "), line
-    assert line.endswith("attach-session -r -t main"), line
+    assert line.endswith("attach-session -r -t =main"), line
 
 
 def test_the_mode_is_read_whichever_way_the_json_is_spaced(attach):
@@ -330,7 +352,7 @@ def test_the_mode_is_read_whichever_way_the_json_is_spaced(attach):
     So the parse accepts both spellings rather than depending on the encoder's
     current formatting."""
     r = attach(["main", "default", "default", "", "ro"], mode="ro", spaced=True)
-    assert r["argv"] == ["tmux attach-session -r -t main"], r["argv"]
+    assert r["argv"] == ["tmux attach-session -r -t =main"], r["argv"]
 
 
 def test_a_denied_attach_execs_no_tmux_at_all(attach):
@@ -340,7 +362,13 @@ def test_a_denied_attach_execs_no_tmux_at_all(attach):
     assert "Access denied" in r["stdout"]
 
 
-@pytest.mark.parametrize("bad", ["", "RO", "ro ", "rw;id", "../../etc", "readonly", "1"])
+@pytest.mark.parametrize(
+    "bad",
+    # The last four are near-misses of the preload mode added in ADR-0026:
+    # MODE_RE gained "pre", and a gate that accepted any of these would
+    # attach with ignore-size on a value nobody meant to send.
+    ["", "RO", "ro ", "rw;id", "../../etc", "readonly", "1", "pre ", "PRE", "prefix", "pr"],
+)
 def test_a_malformed_watch_argument_is_ignored(attach, bad):
     """arg5 is validated against ^(ro|rw)$ before it is used. Anything else is
     no request at all, so the attach keeps today's behaviour — it must never be
@@ -359,6 +387,146 @@ def test_the_session_name_is_still_the_only_client_shaped_value_in_the_argv(atta
 
 
 # --------------------------------------------------------------------------
+# Leg 2b — the preload branch (ADR-0026): ignore-size, an EXACT target, and a
+# refusal that costs nothing
+# --------------------------------------------------------------------------
+
+def test_a_preload_attaches_with_ignore_size_and_asks_no_server(attach):
+    """The whole of the hover attach, in one argv.
+
+    `-f ignore-size` is what makes a hover safe: read-write, so the click
+    promotes this same client, but unable to move the session's window. And a
+    preload of your OWN session authorizes itself by ownership, so it must not
+    spend an /internal/attach round trip — that round trip, once per card the
+    pointer crosses, is the cost the own-sessions-only rule exists to avoid.
+    """
+    r = attach(["main", "default", "default", "", "pre"])
+    assert r["argv"] == ["tmux attach-session -f ignore-size -t =main"], r["argv"]
+    assert r["post"] is None, f"a preload called the internal endpoint: {r['post']}"
+
+
+def test_a_preload_names_its_session_exactly(attach):
+    """`-t =main`, never `-t main`, or a dead card attaches its NEIGHBOUR.
+
+    tmux resolves a bare -t target exact-first, then by PREFIX, then by
+    fnmatch, and prefix siblings are this lobby's ordinary state: slug.Free
+    appends -2, -3 when two sessions carry the same title, so `deploy` and
+    `deploy-2` are listed together. A card can only be hovered while it is
+    listed, so the case this guards is the session dying between the poll and
+    the 250 ms dwell — ADR-0026 says the preload then fails, and a bare target
+    instead puts a live READ-WRITE client on the sibling. The click promotes
+    that mount and every keystroke lands in a session the label does not name.
+
+    Measured on tmux 3.4 on the devvm, 2026-09-11, against a server running
+    only `deploy-staging`: `has-session -t deploy` returned rc=0 and
+    `attach-session -f ignore-size -t deploy` attached to `deploy-staging`,
+    while `-t '=deploy'` returned "can't find session: deploy".
+    """
+    r = attach(["main", "default", "default", "", "pre"])
+    target = r["argv"][0].split(" -t ", 1)[1]
+    assert target == "=main", f"a preload used a fuzzy target: {r['argv']}"
+
+
+def test_a_bare_target_really_does_resolve_by_prefix_on_this_tmux(tmp_path):
+    """The premise of the test above, against the tmux this box runs.
+
+    Shimmed argv assertions can only pin what we ASK tmux to do. This one runs
+    the real binary on a private socket holding a single `main-2`, which is
+    exactly the state slug.Free produces, and shows that `-t main` is a hit
+    while `-t =main` is a miss.
+    """
+    tmux = shutil.which("tmux")
+    if not tmux:
+        pytest.skip("tmux not installed")
+    # A short directory: a unix socket path is capped at ~107 bytes and
+    # pytest's tmp_path plus a socket name can pass it.
+    home = tempfile.mkdtemp(prefix="tl-tmux-")
+    atexit.register(shutil.rmtree, home, True)
+    sock = os.path.join(home, "s")
+    run = lambda *a: subprocess.run([tmux, "-S", sock, *a], capture_output=True, text=True)
+    try:
+        assert run("new-session", "-d", "-s", "main-2", "sleep 60").returncode == 0
+        assert run("has-session", "-t", "main").returncode == 0, (
+            "this tmux did not prefix-match, so the `=` guard above may be moot; "
+            "check `man tmux` on target resolution before relaxing it"
+        )
+        exact = run("has-session", "-t", "=main")
+        assert exact.returncode != 0, "an exact target matched a prefix sibling"
+        assert run("has-session", "-t", "=main-2").returncode == 0
+    finally:
+        run("kill-server")
+
+
+def test_a_preload_never_creates_a_session(attach):
+    """`attach-session`, never `new-session -A`.
+
+    -A creates when the name is absent, and a preload must not bring a session
+    into being from a mouse movement (ADR-0026). tmux-user-attach is the create
+    path, so its absence from the argv is the assertion.
+    """
+    r = attach(["main", "default", "default", "", "pre"])
+    assert not any("tmux-user-attach" in line for line in r["argv"]), r["argv"]
+
+
+def test_a_foreign_preload_is_refused_before_the_server_is_asked(attach):
+    """Own sessions only, and refused HERE rather than by the server.
+
+    This is the shape an act-as tab builds on its own: /whoami answers with the
+    lens target, so the frontend reads that user's cards as the caller's own and
+    the owner slot is filled from ?as=, while ttyd resolves its identity from
+    the Authentik header — the admin. The gate denies it, and nothing about the
+    denial may reach tmux.
+    """
+    r = attach(["main", "default", "default", "other", "pre"])
+    assert r["rc"] != 0, r
+    assert r["argv"] == [], f"a refused preload still ran something: {r['argv']}"
+    assert r["post"] is None, f"a refused preload called the internal endpoint: {r['post']}"
+
+
+def test_a_refused_preload_holds_nothing_and_says_nothing(attach):
+    """The refusal costs a journal line, and nothing else.
+
+    Every other denial in this script prints a banner and sleeps, because a
+    person is looking at an empty terminal. A preload has no reader: the only
+    way that banner can be SEEN is for a click to promote the hidden mount, and
+    the sleep is precisely the window in which that happens — a 5 s hold put
+    "A preload only ever attaches your own session" on screen where the session
+    should have been. Exiting at once instead lets the terminal report the
+    preload failed, which empties the slot, so the click that follows attaches
+    the ordinary way.
+    """
+    r = attach(["main", "default", "default", "other", "pre"])
+    assert "Access denied" not in r["stdout"], r["stdout"]
+    assert r["stdout"].strip() == "", f"a preload refusal printed: {r['stdout']!r}"
+    assert r["secs"] < 2.0, f"the refusal held the socket for {r['secs']:.1f}s"
+
+
+def test_naming_yourself_as_the_owner_is_not_a_foreign_preload(attach):
+    """The gate compares arg4 to the resolved OS user, not to "is arg4 set".
+
+    The sidebar sends an empty owner for your own session, but the same card
+    named explicitly has to attach identically — otherwise the gate would
+    refuse a caller their own session.
+    """
+    me = attach(["main", "default", "default", "", "pre"])["me"]
+    r = attach(["main", "default", "default", me, "pre"])
+    assert r["argv"] == ["tmux attach-session -f ignore-size -t =main"], r["argv"]
+    assert r["post"] is None, r["post"]
+
+
+@pytest.mark.parametrize("bad", ["PRE", "pre ", "preload", "prefetch", "pre;id", "p"])
+def test_a_near_miss_of_the_preload_token_is_no_request_at_all(attach, bad):
+    """MODE_RE is ^(ro|rw|pre)$ and nothing near it.
+
+    A value that is not exactly "pre" must fall through to today's behaviour
+    rather than being guessed at — and it must never reach a command line.
+    """
+    r = attach(["main", "default", "default", "", bad])
+    assert any("tmux-user-attach main" in line for line in r["argv"]), (bad, r["argv"])
+    assert not any("ignore-size" in line for line in r["argv"]), (bad, r["argv"])
+
+
+# --------------------------------------------------------------------------
 # The two legs, joined
 # --------------------------------------------------------------------------
 
@@ -373,5 +541,45 @@ def test_the_vector_the_browser_builds_is_the_one_the_devvm_reads(attach):
     """
     args = _args(_run_builder(arg="main", watch=True))
     r = attach(args, mode="ro")
-    assert r["argv"] == ["tmux attach-session -r -t main"], (args, r["argv"])
+    assert r["argv"] == ["tmux attach-session -r -t =main"], (args, r["argv"])
     assert r["post"]["requested"] == "ro", (args, r["post"])
+
+
+def test_the_preload_vector_the_browser_builds_is_the_one_the_devvm_reads(attach):
+    """The same joining, for arg5's third answer.
+
+    A preload is the one attach mode with no server hop to catch a mistake: it
+    authorizes itself by ownership and goes straight to tmux. So the browser's
+    vector has to be run through the script rather than described, all the way
+    down to the flag and the exact target.
+    """
+    args = _args(_run_builder(arg="main", preload=True))
+    assert args == ["main", "default", "default", "", "pre"], args
+    r = attach(args)
+    assert r["argv"] == ["tmux attach-session -f ignore-size -t =main"], (args, r["argv"])
+    assert r["post"] is None, (args, r["post"])
+
+
+def test_an_act_as_tabs_preload_is_refused_end_to_end(attach):
+    """The one vector the two legs build together that must NOT attach.
+
+    ttyd never sees ?as=, so `terminalFrameArgs` puts the act-as target in the
+    owner slot — and /whoami answers with that same target, which is why the
+    hover thinks the card is the caller's own and fires at all. The result is a
+    foreign preload nobody asked for, and the script's own-sessions-only gate
+    is what stops it. Joined here because neither leg can see the collision on
+    its own: leg 1 builds a legal-looking vector, leg 2 refuses a vector it has
+    no reason to expect.
+    """
+    me = subprocess.run(["id", "-un"], capture_output=True, text=True).stdout.strip()
+    lens = "lensuser" if me != "lensuser" else "lensuser2"
+    args = _args(_run_builder(arg="main", preload=True, act_as=lens))
+    assert args == ["main", "default", "default", lens, "pre"], args
+    r = attach(args)
+    assert r["rc"] != 0, (args, r)
+    assert r["argv"] == [], f"a lens preload reached tmux: {r['argv']}"
+    assert r["post"] is None, f"a lens preload called the internal endpoint: {r['post']}"
+    # And it neither held the socket nor wrote anything a promoted mount could
+    # show. The click that follows has to be an ordinary attach, not a banner.
+    assert r["stdout"].strip() == "", r["stdout"]
+    assert r["secs"] < 2.0, f"the refusal held the socket for {r['secs']:.1f}s"
