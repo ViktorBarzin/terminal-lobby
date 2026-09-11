@@ -1,6 +1,7 @@
 # Text mode answers the dialog, one choice at a time
 
-**Status:** design, agreed 2026-09-10 through `/grill-with-docs`. Not yet built.
+**Status:** shipped 2026-09-11 and verified against the deployed service, v0.50.4.
+See "What production found" below. Designed 2026-09-10 through `/grill-with-docs`.
 **Reported by:** Viktor. **Author:** Claude (measurement + design).
 **Scope:** `frontend-v2/`, `session-events/`, `sessionio/`, `docs/adr/0010`.
 
@@ -262,15 +263,52 @@ against whatever is actually there.
 - **A lock during a walk.** It cannot stop a human typing into the pty, so it
   would not actually serialise access to the dialog.
 
+## What production found
+
+The design shipped green: 5,040 frontend tests, three Go suites, every build.
+Then driving one real four-question dialog against the deployed service found
+four defects in a row, none of which any test could see. They are recorded here
+because the pattern is the lesson, not the individual bugs.
+
+```stats
+4 | defects found by driving the real CLI, after every suite was green
+0 | of them reproducible against the stand-in TUI the unit tests drive
+5 | versions shipped in one afternoon, 0.50.0 through 0.50.4
+```
+
+| version | what was wrong | how it showed |
+|---|---|---|
+| 0.50.1 | two toggles packed into one `send-keys` run lose all but the first | asked for two toppings, got one |
+| 0.50.2 | a `Space` behind two navigation keys is eaten by the repaint; one navigation key survives, so the shape of the option list decided whether an answer landed | same symptom, narrower |
+| 0.50.3 | `Enter` on a multi-select row **toggles it back off**. The widget's footer says `Enter to select`, and the commit is an unnumbered `Next` row below the free-text option | filming the pane: the pick appeared at 418 ms and vanished at 549 ms |
+| 0.50.4 | the review screen carries **no footer**, and the reader refused to parse anything footerless, so the last answer of every multi-question call reported `done` while the session sat waiting on Submit | the card would have gone quiet on a blocked session |
+
+**Why the tests could not catch any of them.** The Go tests drive a stand-in TUI
+that reads its input as a stream and records every keystroke it sees. A real
+widget that drops a key during a repaint, or treats `Enter` as a toggle, reads
+to that stand-in as a widget that accepted everything. The fixtures had the same
+blind spot from the other side: `dialog-multi.txt` has carried the `Next` line
+all along, parsed as a description of option 4.
+
+The instrument that worked was filming the pane during a live request, printing
+the option rows every few milliseconds against the elapsed clock. Two of the
+four were only legible that way.
+
+**What the verification run proved.** Four questions answered by tapping in the
+deployed text view at 414px, including a multi-select built up to two picks
+across a tap on an answered chip to go back, then Submit. Claude received
+`Fruit → Pear`, `Picks → Nuts, Cream`, `Drink → Coffee`, `Size → Large`. No
+Terminal hand-off at any point.
+
 ## Open questions
 
-- **Which of the four candidates fires is unresolved.** The telemetry pins
-  *where* the walk stops to the step and the expectation length, and rules out
-  the keys being refused or the pane being unreadable. It does not say why a
-  prediction missed. Isolating it needs the pane captured at the moment of a real
-  failure, which no instrument records today. The design does not wait on that:
-  one request per choice removes the prediction, so every candidate stops
-  applying.
+- **Which of the four candidates fired was never isolated, and no longer can
+  be.** The telemetry pinned *where* the old walk stopped and ruled out refused
+  keys and an unreadable pane, but not why a prediction missed. The code that
+  predicted is deleted, so the question is now closed rather than answered. What
+  the shipping work did establish is that the real widget drops keystrokes under
+  conditions the old plan never accounted for, which is consistent with at least
+  two of those candidates.
 - **n is small.** 15 events, one user, 10 days. The 80% figure for four-question
   calls rests on 5 attempts, of which 1 succeeded.
 - **The event carries no session name**, only `user.id` and `tl.device`, so a
