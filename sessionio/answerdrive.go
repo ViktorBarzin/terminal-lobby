@@ -79,6 +79,18 @@ func (in *Injector) read(osUser, session string) (answerReading, error) {
 	// screen this route cannot verify against is not one it should be typing
 	// into, so the region goes with the footer here.
 	if len(r.region) == 0 || footerAt(strings.Split(pane, "\n")) < 0 {
+		// THE REVIEW SCREEN IS THE ONE DIALOG WITH NO FOOTER, so the check
+		// above throws it away and the last answer of every multi-question
+		// call reported Done while the session sat waiting on Submit.
+		// reviewTail only matches on all three of its landmarks at once, so
+		// this does not give back the quoted-dialog hole the footer closes.
+		if tail := reviewTail(strings.Split(pane, "\n")); tail != nil {
+			r.region = tail
+			r.dialog = ParseDialog(strings.Join(tail, "\n"))
+			if r.dialog != nil {
+				return r, nil
+			}
+		}
 		return answerReading{pane: pane}, nil
 	}
 	r.dialog = ParseDialog(strings.Join(r.region, "\n"))
