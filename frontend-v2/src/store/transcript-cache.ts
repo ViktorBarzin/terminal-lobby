@@ -57,7 +57,14 @@ export interface CacheBackend {
   read(session: string): Promise<CacheRecord | null>;
   write(record: CacheRecord): Promise<void>;
   remove(session: string): Promise<void>;
-  /** Every session held, for eviction. Order is not guaranteed. */
+  /**
+   * Every session held, for eviction. Order is not guaranteed.
+   *
+   * Two fields, and an implementation may not read a transcript to answer it:
+   * this runs on every save, and the events it would have to deserialise are
+   * the largest thing the cache holds. The IndexedDB backend answers it from an
+   * index for exactly that reason.
+   */
   list(): Promise<ReadonlyArray<{ session: string; touchedAt: number }>>;
   /**
    * Release whatever handle the backend holds. `deleteDatabase` blocks
@@ -186,8 +193,14 @@ export function createTranscriptCache(backend: CacheBackend | null, now: () => n
 export type TranscriptCache = ReturnType<typeof createTranscriptCache>;
 
 const DB_NAME = "tl-transcripts";
-const DB_VERSION = 1;
+/** v2 adds `by-touchedAt`. A v1 database written by the version that had no
+ *  index is upgraded on the next open, where IndexedDB builds the index over
+ *  the records already there. No migration, and nothing rewritten. */
+const DB_VERSION = 2;
 const STORE = "sessions";
+/** Eviction's whole read: `touchedAt` as the index key, `session` as the
+ *  primary key it carries. */
+const TOUCHED_INDEX = "by-touchedAt";
 
 /**
  * The IndexedDB adapter. Returns null wherever IndexedDB is unavailable or
@@ -204,19 +217,44 @@ function indexedDbBackend(): CacheBackend | null {
   let opening: Promise<IDBDatabase> | null = null;
   const db = (): Promise<IDBDatabase> => {
     if (opening) return opening;
-    opening = new Promise<IDBDatabase>((resolve, reject) => {
+    let abandoned = false;
+    const attempt = new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
         const database = req.result;
-        if (!database.objectStoreNames.contains(STORE)) {
-          database.createObjectStore(STORE, { keyPath: "session" });
+        const store = database.objectStoreNames.contains(STORE)
+          ? req.transaction?.objectStore(STORE)
+          : database.createObjectStore(STORE, { keyPath: "session" });
+        if (store && !store.indexNames.contains(TOUCHED_INDEX)) {
+          store.createIndex(TOUCHED_INDEX, "touchedAt");
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        // A blocked open was REJECTED, not cancelled: the request stays live
+        // and completes if the other connection ever lets go. Nothing is
+        // waiting on it by then, and a handle nobody holds is exactly what
+        // blocks the next `deleteDatabase`, which close() exists to allow.
+        if (abandoned) req.result.close();
+        else resolve(req.result);
+      };
       req.onerror = () => reject(req.error);
-      req.onblocked = () => reject(new Error("indexedDB open blocked"));
+      req.onblocked = () => {
+        // Another tab holds an older version of this database open, so the
+        // upgrade cannot start. Asking for v2 is what makes this reachable in
+        // ordinary use: a tab still running the version with no index holds v1
+        // until it is closed or reloaded.
+        abandoned = true;
+        reject(new Error("indexedDB open blocked"));
+      };
     });
-    return opening;
+    // A failed open is not remembered. Memoising the rejected promise would
+    // leave this tab with no cache for as long as it lives, including long
+    // after whatever blocked the upgrade has gone.
+    attempt.catch(() => {
+      if (opening === attempt) opening = null;
+    });
+    opening = attempt;
+    return attempt;
   };
 
   const tx = async <T>(
@@ -238,10 +276,43 @@ function indexedDbBackend(): CacheBackend | null {
       tx<CacheRecord | undefined>("readonly", (s) => s.get(session)).then((r) => r ?? null),
     write: (record) => tx("readwrite", (s) => s.put(record)).then(() => undefined),
     remove: (session) => tx("readwrite", (s) => s.delete(session)).then(() => undefined),
-    list: () =>
-      tx<CacheRecord[]>("readonly", (s) => s.getAll() as IDBRequest<CacheRecord[]>).then((all) =>
-        all.map((r) => ({ session: r.session, touchedAt: r.touchedAt })),
-      ),
+    /**
+     * Eviction's read, and the cheapest one IndexedDB offers: a KEY cursor over
+     * `by-touchedAt`. Each step carries the index key (touchedAt) and the
+     * primary key (session) and materialises no record, so the transcripts stay
+     * on disk where they belong.
+     *
+     * `getAll()` stood here, which deserialised every cached event, up to
+     * MAX_EVENTS_PER_SESSION per session across every cached session, on the
+     * main thread, on every idle-scheduled save, to read two numbers.
+     *
+     * Entries now arrive oldest-first rather than in primary-key order.
+     * `evictionList` sorts by `touchedAt` itself, and a tie between two equal
+     * timestamps resolves by primary key either way, so the victims are the
+     * same ones. The conversions are identity: the index key IS `touchedAt` and
+     * the primary key IS `session`.
+     */
+    list: async () => {
+      const database = await db();
+      return new Promise<ReadonlyArray<{ session: string; touchedAt: number }>>(
+        (resolve, reject) => {
+          const t = database.transaction(STORE, "readonly");
+          const held: { session: string; touchedAt: number }[] = [];
+          const req = t.objectStore(STORE).index(TOUCHED_INDEX).openKeyCursor();
+          req.onsuccess = () => {
+            const cursor = req.result;
+            if (!cursor) {
+              resolve(held);
+              return;
+            }
+            held.push({ session: String(cursor.primaryKey), touchedAt: Number(cursor.key) });
+            cursor.continue();
+          };
+          req.onerror = () => reject(req.error);
+          t.onabort = () => reject(t.error);
+        },
+      );
+    },
     close: async () => {
       const pending = opening;
       // Dropped BEFORE the await, so a read racing the close reopens rather

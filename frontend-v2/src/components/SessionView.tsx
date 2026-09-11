@@ -8,7 +8,13 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
-import { createSessionStore, JUMP_STEP_BYTES, type NotifyKind } from "../store/session";
+import {
+  createSessionStore,
+  JUMP_STEP_BYTES,
+  OFF_SCREEN_PARK_MS,
+  WINDOW_PARK_MS,
+  type NotifyKind,
+} from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch } from "../store/watchmode";
@@ -213,6 +219,89 @@ export const SessionView: Component<{
    */
   const onScreen = () => props.visible !== false;
 
+  /**
+   * IS THE WINDOW AWAY — hidden behind another tab, or behind another app?
+   *
+   * The other two thirds of the same question the terminal's battery saver
+   * asks of its socket (terminal/battery.ts, `isAway`). Read live off the
+   * document and re-read on visibilitychange, rather than kept as a flag, for
+   * the reason that file gives: a stored copy is a task behind whenever the
+   * browser queues the event.
+   *
+   * The tab being hidden, and nothing else. `document.hasFocus()` was here for
+   * a few hours on 2026-09-11 and came out with the matching input in
+   * battery.ts: parking the session you are LOOKING AT because the window sits
+   * behind an editor costs the terminal bell, and that file carries the whole
+   * reckoning.
+   */
+  const readWindowAway = (): boolean =>
+    typeof document !== "undefined" && document.hidden;
+  const [windowAway, setWindowAway] = createSignal(readWindowAway());
+  const noteWindow = (): void => {
+    setWindowAway(readWindowAway());
+  };
+  if (typeof window !== "undefined") {
+    document.addEventListener("visibilitychange", noteWindow);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", noteWindow);
+    });
+  }
+
+  /**
+   * The transcript stream is parked while nobody is reading this session.
+   *
+   * Every session visited stays mounted for 24 hours, so without this each one
+   * holds an open SSE stream for the rest of the day and re-derives its whole
+   * timeline on every frame an event arrives in — a cost that grows with the
+   * number of sessions visited rather than with the one in front of you.
+   *
+   * THE SAME THREE CONDITIONS THE SOCKET PARKS ON, and for the same reason: a
+   * session behind another session, a tab in the background, and a window
+   * sitting visible behind an editor. Off screen alone was the first cut of
+   * this, and it left the ONE session on screen streaming and re-deriving for
+   * as long as the lobby sat on a second monitor — which is the case the
+   * parking design was written for. A visible-but-unfocused window still runs
+   * its rAFs at full rate, so nothing else was throttling that derive.
+   *
+   * The graces are battery.ts's, through the store: half a minute for a session
+   * merely behind another one, a full minute for the two window-wide ones.
+   *
+   * The countdown is re-armed only when there is none running, so an effect
+   * re-run while the session is still away does not restart it — otherwise a
+   * session whose Text view opened while it was off screen would push its own
+   * park 30 seconds further out.
+   *
+   * This sits ABOVE the two status effects on purpose. They publish this view's
+   * stream and terminal status up to the shared model, and returning to a
+   * parked session would otherwise publish `closed` for one flush before the
+   * reopen below corrected it.
+   */
+  let parkTimer: ReturnType<typeof setTimeout> | undefined;
+  const cancelPark = (): void => {
+    if (parkTimer === undefined) return;
+    clearTimeout(parkTimer);
+    parkTimer = undefined;
+  };
+  createEffect(() => {
+    const offScreen = !onScreen();
+    if (!offScreen && !windowAway()) {
+      cancelPark();
+      store.unpark();
+      return;
+    }
+    // Nothing to park until the Text view has opened the stream, and the effect
+    // re-runs by itself when that happens.
+    if (!store.started() || parkTimer !== undefined) return;
+    parkTimer = setTimeout(
+      () => {
+        parkTimer = undefined;
+        store.park();
+      },
+      offScreen ? OFF_SCREEN_PARK_MS : WINDOW_PARK_MS,
+    );
+  });
+  onCleanup(cancelPark);
+
   // The terminal's two levers, captured on mount and published UP only while
   // this view is the one on screen. Every visited session stays mounted, so the
   // shell must be talking to the terminal a person is actually looking at —
@@ -317,12 +406,15 @@ export const SessionView: Component<{
   // transcript at all: session-events answers 404, so the eager connect also
   // cost a console error per session per load.
   //
-  // Only the FIRST connect is deferred. Once open the stream stays open for the
-  // life of this view, including while the terminal is showing, because the
-  // [Text] segment's activity dot is precisely the promise that the timeline
-  // keeps filling behind it. `start()` is idempotent, so this effect re-running
-  // (and the remembered-Text case, where it is true on the very first run)
-  // opens exactly one stream.
+  // Only the FIRST connect is deferred, and only to the view. Once open the
+  // stream stays open while the TERMINAL is showing too, because the [Text]
+  // segment's activity dot is precisely the promise that the timeline keeps
+  // filling behind it. What it does not survive is the session leaving the
+  // screen: the park effect above closes it after a grace and reopens it on
+  // return, and the dot below says so while that is in flight. `start()` is
+  // idempotent and one-way — a parked stream comes back through `unpark()`, not
+  // through here — so this effect re-running (and the remembered-Text case,
+  // where it is true on the very first run) opens exactly one stream.
   createEffect(() => {
     if (mode() === "text") store.start();
   });
@@ -361,7 +453,26 @@ export const SessionView: Component<{
   createEffect(() => {
     if (mode() === "text") setSeenText(maxId());
   });
-  const textDot = createMemo(() => mode() !== "text" && maxId() > seenText());
+  /**
+   * The [Text] segment's activity dot: has the timeline moved since you last
+   * read it?
+   *
+   * `maxId() > seenText()` can only answer that while something is listening,
+   * and since the stream parks with the session there is a moment — from
+   * returning to a session until its resume lands — where the newest id held is
+   * as old as the park. Answering "nothing new" from it would be a guess, and
+   * the guess is wrong in the direction that costs something: a quiet-looking
+   * segment over a turn that finished while you were elsewhere. So the dot
+   * declines to go dark until the stream has spoken, and it stays lit if the
+   * resume never lands at all, which is the honest answer to "I do not know".
+   *
+   * It is only ever a moment, and only on the way back from a real park: a
+   * first open sets nothing, and a switch away and back inside the grace parks
+   * nothing.
+   */
+  const textDot = createMemo(
+    () => mode() !== "text" && (maxId() > seenText() || store.catchingUp()),
+  );
 
   // The mirror dot: pty output (or a BEL) that arrived while the TERMINAL view
   // was hidden. There is no event stream to diff for it the way textDot diffs
@@ -947,6 +1058,8 @@ export const SessionView: Component<{
               await store.loadEarlier();
             }}
             hasEarlier={store.hasEarlier()}
+            onPinned={store.setPinnedToBottom}
+            pinned={store.pinned()}
             onOpenTerminal={() => setMode("terminal")}
             sessionState={store.state()}
             onListDir={listDir}

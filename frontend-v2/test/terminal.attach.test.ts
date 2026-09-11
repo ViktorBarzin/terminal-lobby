@@ -10,10 +10,46 @@
  * Everything is injected, so this runs with no browser, no network and no
  * clock.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { attach, type AttachDeps, type Attachment } from "../src/terminal/attach";
 import { STABLE_AFTER_MS } from "../src/terminal/reconnect";
 import { WS_SUBPROTOCOL } from "../src/terminal/wire";
+import { HIDDEN_SUSPEND_MS, OFFSCREEN_SUSPEND_MS } from "../src/terminal/battery";
+
+/**
+ * THE TAB THESE TESTS RUN IN.
+ *
+ * jsdom answers `document.hidden === false`, which is the world almost every
+ * case below wants: an ordinary visible tab with nothing counting down. The few
+ * that want otherwise move `tabHidden` and then dispatch the event the browser
+ * would have, so the listener under test is the one doing the work rather than
+ * a call the test made itself.
+ *
+ * A getter redefined around every test rather than `vi.spyOn(document,
+ * "hidden", "get")` inside each case that needs it: half a dozen of them do,
+ * and each one was carrying its own try/finally to put the spy back.
+ *
+ * `document.hasFocus()` was stubbed here until 2026-09-11, when the battery
+ * saver stopped reading it. Nothing attach.ts touches asks the question any
+ * more, so jsdom's answer of false costs these tests nothing and the stub went
+ * with the input.
+ */
+let tabHidden = false;
+const hide = (): void => {
+  tabHidden = true;
+  document.dispatchEvent(new Event("visibilitychange"));
+};
+const show = (): void => {
+  tabHidden = false;
+  document.dispatchEvent(new Event("visibilitychange"));
+};
+beforeEach(() => {
+  tabHidden = false;
+  Object.defineProperty(document, "hidden", { configurable: true, get: () => tabHidden });
+});
+afterEach(() => {
+  Object.defineProperty(document, "hidden", { configurable: true, value: false });
+});
 
 /** A WebSocket that never touches the network and can be driven from a test. */
 class FakeSocket {
@@ -861,6 +897,366 @@ describe("the once-per-attach signal (term.html:10293-10294)", () => {
     await flush();
     FakeSocket.made[1]!.open();
     expect(attaches).toBe(2);
+    a.dispose();
+  });
+});
+
+/**
+ * WHO IS READING THIS SESSION, which is two questions rather than one.
+ *
+ * battery.ts decides; this file owns the stamp, the countdown and the two
+ * listeners that feed it, so what is worth pinning here is the wiring a pure
+ * decision cannot express: that a real visibilitychange reaches the module at
+ * all, that the on-screen accessor is READ each time rather than captured at
+ * attach, and that the countdown the component arms is the length the decision
+ * asked for.
+ *
+ * The plan is docs/plans/2026-09-11-client-cpu-parking-design.md. Before it,
+ * `document.hidden` was the only input, so a lobby with fifteen mounted
+ * terminals parked exactly none of the fourteen nobody was looking at.
+ */
+describe("parking a session nobody is reading", () => {
+  /**
+   * The countdown the component armed, by its length. Only safe before a socket
+   * opens, which is where the boot cases below use it.
+   */
+  const graceTimer = (h: Harness, ms: number) => h.timers.find((t) => t.ms === ms);
+
+  /**
+   * The timer `run` armed, identified by what is NEW rather than by its length.
+   *
+   * The off-screen grace and the ladder's stability proof are both 30_000ms
+   * (reconnect.ts, STABLE_AFTER_MS), so on an open socket `find(ms === 30_000)`
+   * picks up whichever was armed first and the case below would be asserting
+   * against the wrong clock. The two lengths agreeing is a coincidence: one is
+   * how long a person takes to come back to a session, the other is how long a
+   * socket has to hold to prove itself. Pinning either to the other would be
+   * wrong; telling them apart here is the cheaper answer.
+   */
+  const armedBy = (
+    h: Harness,
+    ms: number,
+    run: () => void,
+  ): { fn: () => void; ms: number; id: number } | undefined => {
+    const before = new Set(h.timers.map((t) => t.id));
+    run();
+    return h.timers.find((t) => t.ms === ms && !before.has(t.id));
+  };
+
+  it("counts nothing for a session on screen in a visible tab", async () => {
+    FakeSocket.made = [];
+    const h = harness();
+    const a = attach(h.deps);
+    await flush();
+    expect(graceTimer(h, HIDDEN_SUSPEND_MS)).toBeUndefined();
+    expect(graceTimer(h, OFFSCREEN_SUSPEND_MS)).toBeUndefined();
+    a.dispose();
+  });
+
+  /**
+   * The lobby's own version of the background-tab boot: keepalive mounts a
+   * session behind the one being read, so the terminal starts off screen with
+   * no transition coming and has to arm its own countdown or nothing ever will.
+   */
+  it("arms the shorter countdown for a session that boots off screen", async () => {
+    FakeSocket.made = [];
+    const h = harness({ onScreen: () => false });
+    const a = attach(h.deps);
+    await flush();
+    expect(graceTimer(h, OFFSCREEN_SUSPEND_MS), "the 30s off-screen countdown").toBeTruthy();
+    expect(graceTimer(h, HIDDEN_SUSPEND_MS)).toBeUndefined();
+    a.dispose();
+  });
+
+  /**
+   * The listener half of the hidden tab. A boot-hidden case a few describes up
+   * arms the countdown from the load; this is the ordinary path, where a real
+   * visibilitychange reaches the module and the countdown it hands back is the
+   * one that ends in a dropped socket.
+   */
+  it("drops the socket once the tab has been hidden for the grace", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    const h = harness({ now: () => now });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+
+    hide();
+    const grace = graceTimer(h, HIDDEN_SUSPEND_MS);
+    expect(grace, "a visibilitychange starts the countdown").toBeTruthy();
+    expect(a.state().phase, "and costs the socket nothing yet").toBe("open");
+
+    now += HIDDEN_SUSPEND_MS;
+    h.runTimer(grace!.id);
+    expect(a.state().phase).toBe("suspended");
+    a.dispose();
+  });
+
+  it("drops the socket once the session has been off screen for half a minute", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    let onScreen = true;
+    const h = harness({ now: () => now, onScreen: () => onScreen });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+
+    const grace = armedBy(h, OFFSCREEN_SUSPEND_MS, () => {
+      onScreen = false;
+      a.screenChanged();
+    });
+    expect(grace, "the session's own countdown, not the window's").toBeTruthy();
+    expect(graceTimer(h, HIDDEN_SUSPEND_MS), "and not the window's minute").toBeUndefined();
+    expect(a.state().phase).toBe("open");
+
+    now += OFFSCREEN_SUSPEND_MS;
+    h.runTimer(grace!.id);
+    expect(a.state().phase).toBe("suspended");
+    a.dispose();
+  });
+
+  /**
+   * THE ACCESSOR IS READ, NOT CAPTURED. A snapshot taken at attach would answer
+   * for the slot the session mounted into and never change, which is the whole
+   * of what this input is for: the terminal outlives every one of these
+   * transitions.
+   */
+  it("reads the on-screen accessor each time rather than capturing it", async () => {
+    FakeSocket.made = [];
+    let reads = 0;
+    let onScreen = true;
+    const h = harness({
+      onScreen: () => {
+        reads++;
+        return onScreen;
+      },
+    });
+    const a = attach(h.deps);
+    await flush();
+    const atBoot = reads;
+    expect(atBoot).toBeGreaterThan(0);
+
+    onScreen = false;
+    a.screenChanged();
+    expect(reads).toBeGreaterThan(atBoot);
+    expect(graceTimer(h, OFFSCREEN_SUSPEND_MS)).toBeTruthy();
+    a.dispose();
+  });
+
+  /**
+   * Flicking between two sessions is the gesture the 30s grace exists to keep
+   * free. Coming back inside it must leave the socket alone entirely, rather
+   * than suspend and resume, which would cost the reconnect the grace is there
+   * to avoid.
+   */
+  it("costs nothing to look at another session and come straight back", async () => {
+    FakeSocket.made = [];
+    let onScreen = true;
+    const h = harness({ onScreen: () => onScreen });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+    const socketsAfterOpen = FakeSocket.made.length;
+
+    const grace = armedBy(h, OFFSCREEN_SUSPEND_MS, () => {
+      onScreen = false;
+      a.screenChanged();
+    });
+    onScreen = true;
+    a.screenChanged();
+
+    expect(a.state().phase).toBe("open");
+    expect(FakeSocket.made).toHaveLength(socketsAfterOpen); // nothing reconnected
+    expect(
+      h.timers.some((t) => t.id === grace!.id),
+      "and the countdown is put away",
+    ).toBe(false);
+    a.dispose();
+  });
+
+  /**
+   * Away is the OR of two, so coming back is the AND. Showing the tab onto a
+   * session that is still behind another session is not coming back to THAT
+   * session, and a socket reopened there is exactly the cost this pass removes.
+   */
+  it("stays parked when one condition clears and the other still holds", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    let onScreen = true;
+    const h = harness({ now: () => now, onScreen: () => onScreen });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+
+    // Look at another session, then put the whole tab in the background too.
+    const grace = armedBy(h, OFFSCREEN_SUSPEND_MS, () => {
+      onScreen = false;
+      a.screenChanged();
+    });
+    hide();
+    now += OFFSCREEN_SUSPEND_MS;
+    h.runTimer(grace!.id);
+    expect(a.state().phase).toBe("suspended");
+
+    // Back in the lobby, still on another session.
+    show();
+    expect(a.state().phase, "the session is still behind another one").toBe("suspended");
+
+    // And now the session itself.
+    onScreen = true;
+    a.screenChanged();
+    expect(a.state().phase).not.toBe("suspended");
+    a.dispose();
+  });
+
+  /**
+   * The shorter clock wins when both apply, because the off-screen row earns
+   * the suspend on its own and waiting the longer minute would park a MORE away
+   * session later.
+   */
+  it("takes the shorter grace for a session off screen in a hidden tab", async () => {
+    FakeSocket.made = [];
+    tabHidden = true;
+    const h = harness({ onScreen: () => false });
+    const a = attach(h.deps);
+    await flush();
+    expect(graceTimer(h, OFFSCREEN_SUSPEND_MS)).toBeTruthy();
+    expect(graceTimer(h, HIDDEN_SUSPEND_MS)).toBeUndefined();
+    a.dispose();
+  });
+
+  /**
+   * The deadline is anchored to when the away run BEGAN. A second condition
+   * joining it must not re-arm from now, or a terminal collecting transitions
+   * would push its own suspend out forever, which is the failure battery.ts
+   * names at `grace`.
+   */
+  it("does not push the deadline out when a second condition joins", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    let onScreen = true;
+    const h = harness({ now: () => now, onScreen: () => onScreen });
+    const a = attach(h.deps);
+    await flush();
+    FakeSocket.made[0]!.open();
+
+    const grace = armedBy(h, OFFSCREEN_SUSPEND_MS, () => {
+      onScreen = false;
+      a.screenChanged();
+    })!;
+
+    now += 15_000;
+    hide();
+    // The same timer, still counting to the same deadline.
+    expect(h.timers.filter((t) => t.id === grace.id)).toHaveLength(1);
+    now += 15_000;
+    h.runTimer(grace.id);
+    expect(a.state().phase).toBe("suspended");
+    a.dispose();
+  });
+
+  it("takes its listeners off on dispose", async () => {
+    FakeSocket.made = [];
+    const h = harness();
+    const a = attach(h.deps);
+    await flush();
+    a.dispose();
+    hide();
+    expect(h.timers).toHaveLength(0);
+  });
+
+  /**
+   * A PARK HAS TO REACH THE ATTEMPT, not just the socket.
+   *
+   * The /token fetch carries no abort signal, and on a black-holed path it can
+   * hang for over a minute, longer than either of the two graces. So the park
+   * can land while an attempt is still waiting on its token, and if the attempt
+   * still owns the live generation when that token finally arrives, it opens a
+   * socket and attaches to tmux against a ladder that is already `suspended`.
+   * Nothing can then take it down: `reduce` answers `opened` with nothing while
+   * suspended, every later grace-elapsed is a no-op on an already-suspended
+   * ladder, and the liveness watchdog stands off for a battery suspend. It
+   * would stream every pane redraw for the rest of the 24h keepalive window.
+   *
+   * battery.ts asks for exactly this at `suspend`: "tear down through the
+   * shared abandon path so a /token fetch in flight or a socket still in
+   * CONNECTING is abandoned too".
+   */
+  it("opens no socket for a /token that lands after the park", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    let release: (() => void) | null = null;
+    const h = harness({
+      now: () => now,
+      fetch: (async () => {
+        await new Promise<void>((r) => {
+          release = r;
+        });
+        return { json: async () => ({ token: "tok" }) };
+      }) as unknown as typeof fetch,
+    });
+    const a = attach(h.deps);
+    await flush();
+    expect(FakeSocket.made, "still waiting on the token").toHaveLength(0);
+
+    hide();
+    const grace = graceTimer(h, HIDDEN_SUSPEND_MS);
+    now += HIDDEN_SUSPEND_MS;
+    h.runTimer(grace!.id);
+    expect(a.state().phase).toBe("suspended");
+
+    release!();
+    await flush();
+    expect(FakeSocket.made, "the park outlived the fetch, so nothing is attached").toHaveLength(0);
+    expect(a.state().phase, "and it stays parked").toBe("suspended");
+    a.dispose();
+  });
+
+  /**
+   * A hold is a promise to replay INTO THE PROMPT IT WAS TYPED AT, and a park
+   * outlives that prompt by design.
+   *
+   * held.ts flushes the text however old it is, because it has been on screen
+   * the whole time; only the Enter expires, at 3s. That is the right trade for
+   * a reconnect seconds later and the wrong one for a park that can last an
+   * hour, where the pane is now a pager, a vim buffer or a y/n prompt. held.ts
+   * says so in its owed-effects list, and battery.ts repeats it at `suspend`.
+   */
+  it("lets go of held input when the session parks", async () => {
+    FakeSocket.made = [];
+    let now = 1_000;
+    const holds: { text: string; verdict: string }[] = [];
+    const h = harness({
+      now: () => now,
+      onHeld: (state, verdict) => void holds.push({ text: state.text, verdict }),
+    });
+    const a = attach(h.deps);
+    await flush();
+    const first = FakeSocket.made[0]!;
+    first.open();
+    first.drop(); // the socket is gone; the ladder is climbing
+
+    a.send("git reset --hard origin/master");
+    expect(holds.at(-1)).toEqual({ text: "git reset --hard origin/master", verdict: "held" });
+
+    hide();
+    const grace = graceTimer(h, HIDDEN_SUSPEND_MS);
+    now += HIDDEN_SUSPEND_MS;
+    h.runTimer(grace!.id);
+    expect(a.state().phase).toBe("suspended");
+    expect(holds.at(-1)?.text, "the park does not carry a command across it").toBe("");
+
+    show();
+    await flush();
+    const second = FakeSocket.made[1]!;
+    second.open();
+    second.onmessage?.({ data: new TextEncoder().encode("0ready").buffer } as MessageEvent);
+    const sent = second.sent
+      .slice(1)
+      .map((b) => new TextDecoder().decode(b as Uint8Array))
+      .join("");
+    expect(sent, "and nothing is typed at whatever the pane has become").not.toContain("git reset");
     a.dispose();
   });
 });
