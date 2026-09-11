@@ -6,7 +6,13 @@ import { MessageTextIcon, TerminalIcon } from "./Icons";
  * Segmented [ Text | Terminal ] XOR switch (design pillar #2). A two-state
  * segment control reads honestly as "pick one view of this session" (vs T3's
  * pressed-toggle "add a pane"). An activity dot marks the inactive segment when
- * its hidden view has unseen content. Cmd/Ctrl-J drives the same toggle.
+ * its hidden view has unseen content.
+ *
+ * THIS CONTROL IS THE WAY IN. Cmd/Ctrl-J drove the same toggle until the dock
+ * reclaimed the chord, and the view toggle has had no chord since, which Viktor
+ * settled on 2026-09-06 (keybindings/bindings.logic.ts). The palette entry that
+ * would be the second way in does not exist yet, so on that date this is the
+ * only one.
  *
  * The text view carries an `α` mark: it is the newer of the two and still in
  * testing, and the mark says so in the one glyph the bar can spare — at its

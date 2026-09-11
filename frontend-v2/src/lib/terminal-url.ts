@@ -77,12 +77,19 @@ export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): str
   const model = opts.model ?? "";
   const effort = opts.effort ?? "";
   if (model || effort) {
-    // The deepest slots there are, so EVERY earlier one is emitted — including
+    // The deepest slots there are, so EVERY earlier one is emitted, including
     // the two that are usually absent. arg4 stays blank for your own session
     // (tmux-attach.sh reads a blank owner as "mine") and arg5 carries the watch
     // request only when there is one, because MODE_RE takes ro/rw and nothing
-    // else. arg7 is emitted even when only the model was chosen, so that an
-    // effort on its own cannot land on $6.
+    // else.
+    //
+    // arg6 is emitted whether or not a model was chosen, which is what keeps an
+    // effort on its own off $6: effort alone sends an EMPTY arg6 and lands at
+    // arg7. arg7 itself is only appended when there is an effort, so a model on
+    // its own stops at six args. Checked end-to-end in
+    // scripts/test_watch_mode_e2e.py
+    // (test_a_launch_model_cannot_push_the_watch_flag_off_arg5), which also
+    // pins that "ro" stays on $5 down this branch.
     const tail = effort ? "&arg=" + encodeURIComponent(effort) : "";
     return (
       u +
