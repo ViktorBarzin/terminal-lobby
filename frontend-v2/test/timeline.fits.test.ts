@@ -78,7 +78,13 @@ describe("what does not fit is wrapped or scrolled in its own box", () => {
 
   it.each([
     [".tl-code", "code blocks"],
-    [".tl-markdown table", "markdown tables"],
+    // A table's scroller is now its WRAPPER, not the table. The table was both
+    // at once (`display: block; overflow-x: auto`), and an element cannot be
+    // wider than its own scrollport, so it took the column's width and squeezed
+    // every cell instead of overflowing. The guarantee this case exists for is
+    // unchanged and still asserted here; what moved is which box holds it.
+    // `markdown-table.css.test.ts` carries the measurement and the pairing.
+    [".tl-table-scroll", "markdown tables"],
     [".tl-mermaid", "diagrams"],
     [".tl-diff", "diffs"],
   ])("keeps %s scrolling inside itself (%s)", (selector) => {

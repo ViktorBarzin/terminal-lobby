@@ -315,6 +315,14 @@ src/
                          and blurs the mirror, taking the keyboard with it. Inside
                          the grid dragselect already prevents it, which is why the
                          top of a phone screen always worked
+    links.ts             PURE: which OSC 8 URL may be opened, and whether the
+                         pointer is on a link. Claude Code prints real OSC 8
+                         hyperlinks, so nothing pattern-matches the scrollback.
+                         xterm's fallback asked confirm() over a keyboard the
+                         same tap had just raised; `overLink()` is what lets
+                         tapFocus leave the keyboard down, and is the only way to
+                         ask the question, since the public buffer API exposes no
+                         URL for a cell
     reconnect.ts         The backoff ladder as a reducer: attempts, generations
                          (so a late /token or session answer cannot install a
                          socket nobody is waiting for), the 30s proof that only

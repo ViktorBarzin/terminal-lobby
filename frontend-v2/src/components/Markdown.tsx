@@ -195,6 +195,18 @@ const components: SolidMarkdownComponents = {
     );
   },
   img: imgFor(),
+  // A table gets its own scroller, and the reason is a shape CSS cannot express
+  // on one element: the scrollport has to stay the width of the phone while the
+  // table is free to be wider. With `display: block; overflow-x: auto` on the
+  // table alone it was both, so it took the container's width and squeezed the
+  // columns instead of overflowing. Measured on the real stylesheet at 390px,
+  // on a five-column table: 221px tall, 3 lines per cell, and an inline code
+  // span broken into 3 pieces; with the wrapper, 116px, 1 line, 1 piece.
+  table: (props) => (
+    <div class="tl-table-scroll">
+      <table>{props.children}</table>
+    </div>
+  ),
   a: (props) => (
     <a href={props.href} target="_blank" rel="noopener noreferrer">
       {props.children}
