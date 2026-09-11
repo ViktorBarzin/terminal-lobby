@@ -1,7 +1,7 @@
 # A session knows who made it
 
-**Status**: approved, not yet built
-**Date**: 2026-09-06, revised 2026-09-10
+**Status**: shipped 2026-09-11 (terminal-lobby v0.48.1, infra a5c3a952)
+**Date**: 2026-09-06, revised 2026-09-11
 **Repos**: `terminal-lobby` (most of it), `infra` (one file)
 
 ## The problem
@@ -231,6 +231,40 @@ never enters a snapshot and a reboot never brings it back.
 Landing is two pushes: terminal-lobby, whose own CI builds the package the box
 installs, and infra, where CI applies on push to master.
 
+## What changed on the way in
+
+Five things the design did not anticipate, found while building it.
+
+**The origin column is not last.** `parseSessions` splits with `SplitN`, so the
+final column absorbs every leftover separator, and `tmuxListFmt` ends in
+`#{pane_title}` — text the program inside the pane writes over OSC 2. Placed
+last, a pane could forge its own origin by printing a tab and the word `user`,
+walking itself out of System and back into the push path. It sits before
+`pane_title` instead. `infra/scripts/tmux-persist.sh` had the same shape in bash,
+where `read` gives its final variable the leftovers: there a tab in a pane's cwd
+would have handed `origin` the transcript with `user` glued on, dropping a real
+session from every snapshot. Origin sits third there.
+
+**t3-bridge had to stamp too.** It creates a session whenever T3 attaches a
+thread whose session is gone, and stamped nothing, so from the first release a
+resurrected conversation would have been filed into System and silenced. The
+bridge is the mechanism, not the reason: a person opened the thread, so
+`sessionio.NewSession` stamps `user` (`cdb5744`).
+
+**The snapshot filter arms itself.** Every session alive before the stamper
+reaches a box is unstamped, so an unconditional rule would have stopped
+persisting everybody's work the moment infra deployed. The origin half engages
+only once a capture sees one stamped session; the reserved-name half needs no
+arming and always applies.
+
+**The ADR is 0024, not 0021.** 0021, 0022 and 0023 landed while this was being
+written. ADR-0022 also renames a session when a title arrives, which is safe
+here: a tmux option survives a rename, and `derivedNameFor`
+(`tmux-api/name_from_title.go:50`) declines to rename a `reservedName`.
+
+**`listFields` went 14 to 15, not 12 to 13.** `@tl_created` landed after the
+doc was written.
+
 ## What this does not catch, and what it costs
 
 A creator that starts using the lobby's own attach path and never stamps
@@ -244,6 +278,18 @@ behind one click rather than in front of you, which is the point, and is also
 the failure mode to watch for in the first weeks. The count in the collapsed
 header is what makes it noticeable.
 
-Verification is the sidebar and the phone, not the test suite. After this lands,
-a fleet run should leave the main list unchanged, the System count should move,
-and no push should arrive. That is what gets checked before it is called done.
+## What was verified on the live box
+
+| check | result |
+|---|---|
+| the grandfather pass | 29 live sessions stamped `user`, `qa-grid-a` skipped by its prefix, pool slot untouched |
+| `GET /sessions` | 30 sessions, 29 `origin: "user"`, one system |
+| the deployed lobby | System group last, collapsed, count 1, holding `qa-grid-a`; build stamp `fe767d7` |
+| expanding it | one card, `qa-grid-a` |
+| the telemetry drop | killing `qa-grid-a` returned 204 and the session died, and no `session.killed` TLEVENT was written, while six other events fired in the same window |
+| the snapshot filter | two probe sessions created live, one `qa-` and one unstamped, both excluded; the real `born-as-probe` stays in; no new snapshot written, so nothing real was dropped |
+| the create-path stamp | on tmux 3.4: the trailing `;` separates after a multi-word shell command, the stamp lands while the client attaches, and a reattach leaves an existing `test` alone |
+
+Not verified: nothing on a phone. No push was expected during the window, so the
+silence proves nothing on its own; what was measured is that the sender and the
+telemetry emitter both skip these sessions.
