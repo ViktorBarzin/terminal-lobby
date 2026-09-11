@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
@@ -14,6 +15,20 @@ import (
 // "demo" and returns an Injector bound to it, the current OS user, and the
 // socket name. Skips where tmux (or the current user) is unavailable; the
 // server dies with the test.
+// killSock stops a scratch server and removes its socket file. tmux leaves the
+// file behind on kill-server, and these names carry a pid, so without the
+// remove every run of this package adds one file per scratch server to the
+// socket directory. Counted 2026-09-11: 497 of the 1,732 files in
+// /tmp/tmux-1000 were leftovers of this shape.
+func killSock(sock string) {
+	exec.Command("tmux", "-L", sock, "kill-server").Run()
+	dir := os.Getenv("TMUX_TMPDIR")
+	if dir == "" {
+		dir = "/tmp"
+	}
+	os.Remove(filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), sock))
+}
+
 func scratchSession(t *testing.T) (*Injector, string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -23,12 +38,22 @@ func scratchSession(t *testing.T) (*Injector, string, string) {
 	if err != nil {
 		t.Skip("no current user")
 	}
-	sock := "se-test-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	// The pid is in the socket name because the test name alone repeats across
+	// CONCURRENT runs of this package, and the kill-server below is
+	// unconditional, so a second run tears down the first one's server mid-test.
+	// Measured 2026-09-11 on TestPinnedGridGoesToTheClientBeingTypedInto, three
+	// concurrent pairs each time: without the pid, three of six runs died at
+	// grid_resize_test.go:51 with "new-session: exit status 1"; with it, none
+	// of six did. answerdrive_test.go and setmodel_test.go already name their
+	// sockets this way. The remaining failures in that run were a separate
+	// one-second-resolution tie, fixed in typeInto.
+	sock := fmt.Sprintf("se-test-%d-%s", os.Getpid(),
+		strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	exec.Command("tmux", "-L", sock, "kill-server").Run() // clean any leftover
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo", "sh").Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 	time.Sleep(150 * time.Millisecond)
 	return NewInjectorOnSocket(u.Username, sock), u.Username, sock
 }
@@ -148,9 +173,12 @@ func scratchServer(t *testing.T) (*Injector, string, string) {
 	if err != nil {
 		t.Skip("no current user")
 	}
-	sock := "sio-test-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	// Pid for the reason scratchSession gives: concurrent runs of this package
+	// otherwise share a socket, and the kill-server below is unconditional.
+	sock := fmt.Sprintf("sio-test-%d-%s", os.Getpid(),
+		strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	exec.Command("tmux", "-L", sock, "kill-server").Run() // clean any leftover
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 	return NewInjectorOnSocket(u.Username, sock), u.Username, sock
 }
 

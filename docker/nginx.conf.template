@@ -79,6 +79,11 @@ server {
   location /pane/    { proxy_pass http://session_events; }
   location /commands/ { proxy_pass http://session_events; }
   location /keys/    { proxy_pass http://session_events; }
+  # One choice of a blocking dialog, answered server-side (ADR-0010, amended
+  # 2026-09-10). Without this route the card's every tap reaches ttyd's
+  # `location /` below and is answered 200 with the SPA's own index.html, so
+  # the JSON parse throws and the card looks dead rather than broken.
+  location /answer/  { proxy_pass http://session_events; }
   location /model/   { proxy_pass http://session_events; }
 
   location /files/ { proxy_pass http://file_api; }

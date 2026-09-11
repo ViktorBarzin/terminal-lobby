@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -48,12 +49,15 @@ func newHookEnv(t *testing.T) hookEnv {
 		t.Skip("tmux not available")
 	}
 	script := hookScript(t)
-	sock := "hook-test-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	// Pid for the reason scratchSession gives: concurrent runs of this package
+	// otherwise share a socket, and the kill-server below is unconditional.
+	sock := fmt.Sprintf("hook-test-%d-%s", os.Getpid(),
+		strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	exec.Command("tmux", "-L", sock, "kill-server").Run()
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo", "sh").Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 	time.Sleep(150 * time.Millisecond)
 
 	sockPath, err := exec.Command("tmux", "-L", sock, "display-message", "-p", "#{socket_path}").Output()

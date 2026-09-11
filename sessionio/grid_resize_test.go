@@ -27,6 +27,21 @@ import (
 // byte is an Escape, which every shell discards.
 func (c *client) typeInto(t *testing.T) {
 	t.Helper()
+	// The keystroke waits for a new wall-clock second before it is sent,
+	// because #{client_activity} has one-second resolution and the hook breaks
+	// a tie by keeping the last client to attach (grid.go: `tac` ahead of
+	// `sort -s -k1,1rn`). A keystroke 600ms after the phone attaches lands in
+	// the phone's own second about half the time, and the test then reads the
+	// tie rather than the behaviour it means to check. Measured 2026-09-11 on
+	// TestPinnedGridGoesToTheClientBeingTypedInto: 3 of 6 runs failed at :69
+	// without this wait, 6 of 6 passed with it.
+	//
+	// The tie is real outside the test as well. A phone attaching and a
+	// desktop keystroke inside the same second leave the grid with the phone
+	// until the next event moves it, which is a property of the hook, not of
+	// this helper.
+	now := time.Now()
+	time.Sleep(now.Truncate(time.Second).Add(time.Second).Sub(now) + 20*time.Millisecond)
 	if _, err := syscall.Write(c.fd, []byte{0x1b}); err != nil {
 		t.Fatalf("write to client: %v", err)
 	}

@@ -53,6 +53,21 @@ type DialogQuestion struct {
 type DialogOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	// Checked is the multi-select box drawn filled — `[✔]` rather than `[ ]`.
+	// Always false on a single-select question, which draws no boxes.
+	//
+	// It is what a client needs to ADD a pick rather than replace one. Space
+	// is a toggle, so answering a multi-select is a diff against what the CLI
+	// is already holding, and the desired final state a request carries
+	// (AnswerRequest.Choices) can only be worked out by a card that can see
+	// the current one. Without it a second tap could only name the label it
+	// tapped, which on a question holding another pick clears that pick.
+	//
+	// The rule is answerRows': anything between the brackets but blank is a
+	// filled box. Matching on "✔" instead would make a restyle to "x" read as
+	// "nothing picked" here while the planner still read it as picked, and the
+	// two disagreeing is exactly how an answer gets deleted.
+	Checked bool `json:"checked,omitempty"`
 }
 
 // The two options the CLI adds to every AskUserQuestion, whatever the caller
@@ -239,7 +254,15 @@ func ParseDialog(pane string) *Dialog {
 		if o.box != "" {
 			multi = true
 		}
-		kept = append(kept, DialogOption{Label: o.label, Description: o.desc})
+		// The box being PRESENT is what makes the list multi-select; the box
+		// being non-blank is what makes this row a pick. Two different reads
+		// of the same capture group, and conflating them would report every
+		// row of a fresh multi-select as already chosen.
+		kept = append(kept, DialogOption{
+			Label:       o.label,
+			Description: o.desc,
+			Checked:     strings.TrimSpace(o.box) != "",
+		})
 	}
 	if !sawChat && !sawOther {
 		return nil // a menu, not a question

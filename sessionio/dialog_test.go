@@ -240,3 +240,51 @@ func TestParseDialogReadsAFooterThePaneWrapped(t *testing.T) {
 		t.Fatalf("count=%d partial=%v, want 2 and true", d.Count, d.Partial)
 	}
 }
+
+// WHICH BOXES THE PANE HAS FILLED. It is what makes a second pick add to a
+// multi-select instead of replacing it: the card sends the DESIRED FINAL STATE
+// of the question (AnswerRequest.Choices), and it can only work that state out
+// if the reading says what the CLI is already holding.
+//
+// The rule is deliberately the same one answerRows applies on the planning
+// side — anything between the brackets but blank is a filled box — rather than
+// a match on "✔". A restyle to "x" or "*" would otherwise read as "nothing
+// picked" here while the planner read it as picked, and the two disagreeing is
+// how a reader's first fruit gets deleted by their second.
+func TestParseDialogReportsWhichBoxesAreTicked(t *testing.T) {
+	pane := strings.Replace(fixture(t, "dialog-multi.txt"), "  2. [ ] Pear", "  2. [✔] Pear", 1)
+	if !strings.Contains(pane, "2. [✔] Pear") {
+		t.Fatal("the fixture's option rows have moved; this test edits them by hand")
+	}
+	d := ParseDialog(pane)
+	if d == nil {
+		t.Fatal("a multi-select with a pick on it did not parse")
+	}
+	opts := d.Questions[0].Options
+	if len(opts) != 3 {
+		t.Fatalf("options = %+v", opts)
+	}
+	for i, want := range []bool{false, true, false} {
+		if opts[i].Checked != want {
+			t.Errorf("%s checked = %v, want %v", opts[i].Label, opts[i].Checked, want)
+		}
+	}
+}
+
+// An empty box is not a pick, and a single-select row has no box at all.
+// Neither may come back as checked: a phantom tick would have the card send a
+// desired state the reader never asked for, and on a revisit that is a pick
+// they did not make.
+func TestParseDialogTicksNothingOnAnUntouchedQuestion(t *testing.T) {
+	for _, name := range []string{"dialog-multi.txt", "dialog-single.txt"} {
+		d := ParseDialog(fixture(t, name))
+		if d == nil {
+			t.Fatalf("%s did not parse", name)
+		}
+		for _, o := range d.Questions[0].Options {
+			if o.Checked {
+				t.Errorf("%s: %q came back ticked on a question nobody has answered", name, o.Label)
+			}
+		}
+	}
+}

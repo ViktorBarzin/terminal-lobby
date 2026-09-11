@@ -35,8 +35,6 @@
   // its line. Every file not listed here is gated from today, which is the
   // whole point: the ratchet only ever gets shorter.
   "ignoreIssues": {
-    "src/components/QuestionCard.tsx": ["exports"], // hasDescriptions
-    "src/components/answer.logic.ts": ["exports"], // ANSWERED_MARK, PANE_CHECK_DELAYS_MS
     "src/components/canonicalize.ts": ["exports"], // failed
     "src/components/rows.tsx": ["exports"], // ITEM_GLYPH, ITEM_NOUN, clockTime, formatCharCount, formatDuration, formatTokens
     "src/components/settings/controls.tsx": ["exports"], // ScopeChip

@@ -176,8 +176,14 @@ supplies the count and the headers, which it reports reliably.
 
 The tab bar becomes tappable chips in the card. Tapping an answered chip sends
 `←` until that question is on screen; the pane then shows the pick itself —
-measured, the chosen row renders as `2. Pear ✔` — and choosing again replaces it.
-Revision costs no state on our side, because the CLI is already holding it.
+measured, the chosen row renders as `2. Pear ✔`. Revision costs no state on our
+side, because the CLI is already holding it.
+
+What a second pick does depends on the question. Single-select replaces, which
+is what the widget does. Multi-select **adds**: its rows are toggles, so the
+request carries the desired final set and the server changes only the rows whose
+state differs. Sending one label there would have unticked the first pick, which
+is what the first build did until it was measured on 2026-09-11.
 
 There is no local draft to revise, so a choice commits when you make it. The
 CLI's own review screen at the end is still the place to see everything before

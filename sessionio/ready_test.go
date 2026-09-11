@@ -2,6 +2,8 @@ package sessionio
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"os/exec"
 	"os/user"
 	"strings"
@@ -20,12 +22,15 @@ func paneSession(t *testing.T, cmd string) (*Injector, string, string) {
 	if err != nil {
 		t.Skip("no current user")
 	}
-	sock := "se-ready-" + strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())
+	// Pid for the reason scratchSession gives: concurrent runs of this package
+	// otherwise share a socket, and the kill-server below is unconditional.
+	sock := fmt.Sprintf("se-ready-%d-%s", os.Getpid(),
+		strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
 	exec.Command("tmux", "-L", sock, "kill-server").Run()
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo", cmd).Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
-	t.Cleanup(func() { exec.Command("tmux", "-L", sock, "kill-server").Run() })
+	t.Cleanup(func() { killSock(sock) })
 	return NewInjectorOnSocket(u.Username, sock), u.Username, sock
 }
 
