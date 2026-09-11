@@ -15,6 +15,7 @@ package main
 // from resolveOSUser, never from the request body.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"terminal-lobby/telemetry"
 )
@@ -81,6 +83,47 @@ type SnapshotRow struct {
 func persistCmd(osUser string, args ...string) *exec.Cmd {
 	return exec.Command(sudoBinary, append([]string{"-n", restoreWrapper, osUser}, args...)...)
 }
+
+// persistCmdContext is persistCmd with a deadline: the process is killed when
+// ctx is done. Only the pre-kill snapshot uses it, because it is the only
+// wrapper call a person is waiting on with a request already half-run.
+func persistCmdContext(ctx context.Context, osUser string, args ...string) *exec.Cmd {
+	c := exec.CommandContext(ctx, sudoBinary, append([]string{"-n", restoreWrapper, osUser}, args...)...)
+	// Without this the deadline does not bind. The wrapper is a shell script,
+	// so killing it on ctx leaves its CHILDREN holding the pipes this call is
+	// reading, and CombinedOutput blocks until the last of them exits: a save
+	// that hangs for ten seconds still costs ten seconds. WaitDelay closes the
+	// pipes shortly after the kill and returns.
+	c.WaitDelay = 500 * time.Millisecond
+	return c
+}
+
+// preKillSnapshotBudget is how long the whole pre-kill snapshot may take —
+// waiting for a turn plus the save plus the list.
+//
+// Well under the 8s the browser abandons a request at (frontend-v2
+// lib/http.ts REQUEST_TIMEOUT_MS), because past that deadline the client gives
+// up and toasts a failed kill while this handler carries on and kills the
+// session anyway: the card then says the kill failed, the session is gone, and
+// the undo entry has no record to work from. A snapshot that costs more than
+// the kill is not worth the kill, so it is dropped and the session dies
+// undoable-from-nothing, which is the same outcome as any other failed save.
+//
+// A var so a test can shorten it.
+var preKillSnapshotBudget = 4 * time.Second
+
+// saveSlot lets ONE pre-kill snapshot run at a time.
+//
+// `save` is not per-user work however it is called: the wrapper validates the
+// user it is handed and then snapshots every mapped user on the box
+// (tmux-persist save), walking each one's panes with tmux, ps, and for a claude
+// pane with no stamp a find over that user's transcripts. Two of those at once
+// duplicate all of it, and handlers run one per request, so without this a
+// burst of DELETEs fans out into as many concurrent root runs as there are
+// requests. A caller that cannot get the slot inside the budget goes without a
+// record rather than queueing, which is the same best-effort answer every
+// other snapshot failure gets.
+var saveSlot = make(chan struct{}, 1)
 
 // SnapshotList is the GET /snapshots payload. MemAvailableMB rides along so the
 // picker can warn before a large restore without a second round trip: restoring
@@ -321,19 +364,29 @@ func newestSnapshotTS(out string) string {
 // to kill it. A wrapper too old to know `save` fails the same way, so a box
 // mid-upgrade kills exactly as it did before.
 //
-// Two costs, both accepted. The save is synchronous, so a kill waits on one
-// tmux-persist run: it walks every user, as the timer does, and writes nothing
-// for a user whose session set has not changed. And it runs before the kill has
-// been shown to be possible, so a DELETE that ends in a 404 pays for it too,
-// which is the price of not asking tmux twice about a session it is about to
-// destroy.
+// ONE COST, ACCEPTED: the save is synchronous, so a kill waits on one
+// tmux-persist run, which walks every user as the timer does and writes nothing
+// for a user whose session set has not changed. It is bounded at both ends —
+// preKillSnapshotBudget caps how long the caller waits, and saveSlot caps how
+// many of these run at once — and the caller only reaches here once tmux has
+// confirmed the session exists (session_mutate.go killSession).
 func resurrectRecordFor(osUser, name string) *restoreSelection {
-	if out, err := persistCmd(osUser, "save").CombinedOutput(); err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), preKillSnapshotBudget)
+	defer cancel()
+	select {
+	case saveSlot <- struct{}{}:
+		defer func() { <-saveSlot }()
+	case <-ctx.Done():
+		log.Printf("pre-kill snapshot for %s/%s gave up waiting for its turn, killing without one",
+			osUser, name)
+		return nil
+	}
+	if out, err := persistCmdContext(ctx, osUser, "save").CombinedOutput(); err != nil {
 		log.Printf("pre-kill snapshot for %s/%s failed, killing without one: %v: %s",
 			osUser, name, err, strings.TrimSpace(string(out)))
 		return nil
 	}
-	out, err := persistCmd(osUser, "list").Output()
+	out, err := persistCmdContext(ctx, osUser, "list").Output()
 	if err != nil {
 		log.Printf("snapshot list after the pre-kill save for %s/%s failed: %v", osUser, name, err)
 		return nil
