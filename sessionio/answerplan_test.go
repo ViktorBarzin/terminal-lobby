@@ -404,10 +404,14 @@ func TestPlanChoiceUsesTheDigitTheDialogDrew(t *testing.T) {
 // Enter to leave the question. The walk starts from the row the cursor is on,
 // read off the pane, rather than assuming it opens on row one.
 //
-// The Enter is a batch of its own because a settle lands between batches, and
-// the model picker on this same TUI has waited keySettle before every
-// committing keystroke since it was written (setmodel.go:177-182). An Enter
-// that outruns its toggle leaves the question with nothing chosen.
+// EVERY TOGGLE is a batch of its own, and so is the Enter, because a settle
+// lands between batches. Two Spaces in one send-keys loses the second:
+// measured against CLI 2.1.268 on 2026-09-11 driving a real dialog, where
+// [Space Down Down Space] as one run ticked the first row and left the third
+// clear with the cursor on it. The model picker on this same TUI has waited
+// keySettle before every committing keystroke since it was written
+// (setmodel.go:177-182). An Enter that outruns its toggle leaves the question
+// with nothing chosen.
 func TestPlanChoiceWalksAMultiSelect(t *testing.T) {
 	pane := fixture(t, "dialog-multi.txt")
 	d, region := ParseDialog(pane), answerRegion(pane)
@@ -417,9 +421,9 @@ func TestPlanChoiceWalksAMultiSelect(t *testing.T) {
 	}{
 		{[]string{"Apple"}, [][]string{{"Space"}, {"Enter"}}},
 		{[]string{"Pear"}, [][]string{{"Down", "Space"}, {"Enter"}}},
-		{[]string{"Apple", "Plum"}, [][]string{{"Space", "Down", "Down", "Space"}, {"Enter"}}},
+		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down", "Space"}, {"Enter"}}},
 		// Out of order in, list order out: the cursor only ever walks one way.
-		{[]string{"Plum", "Pear"}, [][]string{{"Down", "Space", "Down", "Space"}, {"Enter"}}},
+		{[]string{"Plum", "Pear"}, [][]string{{"Down", "Space"}, {"Down", "Space"}, {"Enter"}}},
 	} {
 		t.Run(strings.Join(tc.choices, "+"), func(t *testing.T) {
 			plan, err := planChoice(d, region, tc.choices, "")
@@ -450,7 +454,7 @@ func TestPlanChoiceReplacesThePickAlreadyOnScreen(t *testing.T) {
 		t.Fatalf("planChoice: %v", err)
 	}
 	// Up from the cursor's row to Apple to clear it, then down to Plum.
-	if !sameKeys(plan.Batches, [][]string{{"Up", "Space", "Down", "Down", "Space"}, {"Enter"}}) {
+	if !sameKeys(plan.Batches, [][]string{{"Up", "Space"}, {"Down", "Down", "Space"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want the old pick cleared and Plum toggled on", plan.Batches)
 	}
 }
