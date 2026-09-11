@@ -48,8 +48,14 @@ nothing parks.
 `store/session.ts:321` records the cost from a previous measurement: 10 ms per
 derivation, 2,644 ms when run per event. Events flush on `requestAnimationFrame`,
 so a live turn can run that 10 ms sixty times a second. The open is already
-windowed (`lib/config.ts:101` sends `rev=1&turns=20`), but nothing sheds the old
-end afterwards, so the array grows all day and the 10 ms grows with it.
+bounded, but not the way this doc first said, and the difference matters. The
+browser always sends `rev=1`, and `session-events/sse.go:250` answers that with
+`src.Backfill(0, OpenBackfillBytes)`, which is 100 KB (`sse.go:95`). `turns=` is
+read only in the `!reverseOpen` branch at `sse.go:215`, the fallback for a server
+that predates the reverse open, and `lib/config.ts:123` omits it entirely at the
+default of 20. So the open is bounded in BYTES and is routinely wider than 20
+turns. Nothing sheds the old end afterwards either, so the array grows all day and
+the 10 ms grows with it.
 
 Today, one visit buys a permanent cost:
 
@@ -71,7 +77,6 @@ After, a session's cost follows whether anyone is reading it:
 stateDiagram-v2
     [*] --> Live: opened
     Live --> Parked: 30 s off screen
-    Live --> Parked: 60 s window unfocused
     Live --> Parked: 60 s tab hidden
     Parked --> Live: back on screen
     note right of Parked
@@ -95,8 +100,12 @@ Four changes, smallest first.
 | input | source | grace |
 |---|---|---|
 | tab hidden | `document.hidden` | 60 s (unchanged) |
-| window unfocused | `document.hasFocus()` | 60 s |
 | session off screen | the `ownsBridges` prop `SessionView` already passes | 30 s |
+
+A third input, `document.hasFocus()`, was built with these two and then removed
+the same day. The Risks section below carries the reasoning; the short version is
+that it parked exactly one terminal the other two do not already cover, the one
+being read, and that cost the terminal bell.
 
 The 30-second grace on the off-screen case means flicking between two sessions
 costs nothing. `attach.ts` owns the countdown and the listeners already, so this
@@ -115,9 +124,15 @@ reopens on return. `SseClient` already resumes from a cursor
 
 ### 3. Slide the transcript window
 
-Hold the last 20 turns, matching what the open already asks for. Drop the oldest
-beyond that. Scroll-up refetches through `loadEarlier`, which exists and pages in
-40 KB to 400 KB steps.
+Hold the last 20 turns. Drop the oldest beyond that. Scroll-up refetches through
+`loadEarlier`, which exists and pages in 40 KB to 400 KB steps.
+
+The trim CREATES that window rather than maintaining one the open already
+established, because the open is bounded in bytes (above). A 100 KB open can
+deliver well over 20 turns of a terse session, so the trim has to run from the
+opening `ready` frame's flush and not only when live events arrive. Otherwise an
+idle session that over-delivered on open keeps the excess for as long as it stays
+open, which is the case this whole design is about.
 
 **The window only slides while the reader is pinned to the bottom.** Scrolled up,
 trimming stops, so history paged in on purpose is not thrown out from under the
@@ -127,8 +142,8 @@ person reading it. Returning to the bottom resumes trimming.
 
 The lobby poll is what repaints the tab title and the favicon badge, and it is
 one request every few seconds. It parks on `document.hidden` today and that
-stays. It does **not** park on unfocus, because that is exactly when a badge
-telling you a session is waiting is worth most.
+stays. Nothing parks on unfocus, which started as a deliberate exception for the
+poll and ended up true of the whole design.
 
 ## Decisions
 
@@ -137,9 +152,8 @@ telling you a session is waiting is worth most.
 | Cap the kept mounts? | No. Keep them, park the idle ones. The 2026-08-19 call stands. |
 | What a parked session keeps | Socket down, xterm buffer kept, so return is instant. |
 | Off-screen grace | 30 s |
-| Unfocused grace | 60 s |
 | Hidden grace | 60 s, unchanged |
-| Park the poll on unfocus? | No. Badges are the reason the tab is open. |
+| Park anything on unfocus? | No. Built, then removed the same day; see Risks. |
 | Park the poll when hidden? | Yes, unchanged. Web Push covers notifications there. |
 | Transcript window | 20 turns, trimmed only while pinned to the bottom |
 | Incremental deriveRows | Not in this pass. See below. |
@@ -155,6 +169,16 @@ rewriting the turn grouping in `timeline.logic.ts`, which carries the fold
 logic, the superseded-question rule and the out-of-order merge. That is the part
 of the timeline most likely to mis-render if it moves. The plan is to bound the
 window, measure again, and only rewrite the derive if it is still on top.
+
+### What the window costs
+
+`cache.save` replaces a session's stored record rather than merging into it, so
+once memory holds 20 turns the IndexedDB copy holds 20 turns too, and
+`MAX_EVENTS_PER_SESSION = 2000` stops being reachable. Open cost is unaffected,
+since a resume still starts from the newest id held. What is lost is offline
+scroll-back depth, which `loadEarlier` refetches when there is a network. Keeping
+more would mean holding 2,000 events in memory, which is the thing being removed,
+so this is accepted rather than solved.
 
 ## What this does not change
 
@@ -189,9 +213,29 @@ session, and re-claims on return.
 
 **A session that goes quiet while parked.** Output arriving at a parked session
 is not lost, tmux keeps it in the pane and repaints on reattach, but anything
-reading the live byte stream for side effects would miss it. The attention
-signal for bells is one of those, and it only matters for the session on screen,
-which is never parked.
+reading the live byte stream for side effects misses it. The bell is one of
+those. `term.onBell` fires from bytes the socket delivers, so a park silences
+it, and the output-while-hidden signal goes the same way.
+
+**And, while `unfocused` was an input, it reached the session on screen.**
+Unfocused is a window-wide condition, so a minute after an alt-tab the session
+being read had parked too. A bell rung after that raised no `● <name>` title
+prefix and no dot on the [Terminal] segment, because `notify/attention.ts` latches only on a signal that
+arrives, and none does. What still arrives is everything the poll drives: the
+`(N●)`/`(N✓)` count badge, the favicon's awaiting and done kinds, and the
+per-session OS notification or Web Push, which names the session in its own
+text. So what is lost is which session rang, inside the page, and not that
+something happened.
+
+**So the input came out.** `unfocused` parked exactly one terminal that the other
+two rows do not already cover, the one being read: a session off screen parks on
+its own 30 s row, and a hidden tab on its own 60 s row. Viktor's call on
+2026-09-11 was to keep the bell, on the grounds that a lobby left visible on a
+second monitor is open precisely to be noticed. So `document.hasFocus()` is not
+an away input, in `battery.ts` or in the transcript stream's park, and a window
+sitting behind an editor keeps one live terminal out of fifteen. The earlier
+paragraph is kept rather than deleted because it is the reasoning that decided
+it.
 
 ## Verification
 
@@ -208,6 +252,10 @@ which is never parked.
   keeps buffers for the full 24 hours, so a heavy day could accumulate. If it
   turns out to matter, releasing the xterm after a longer parked period is the
   next step, and it was considered and set aside here rather than ruled out.
+- The `[Text]` activity dot now stays lit while a resumed stream is catching up,
+  rather than going dark for the round trip after you return to a parked session.
+  Both readings are wrong for about the same length of time; this one errs
+  toward "go look", and it covers the resume that never lands.
 - `sse/client.ts:14` says text mode is the default view for every session.
   `store/viewmode.ts:31` says the default is the terminal, changed 2026-08-19.
   The comment is stale; worth fixing when that file is next touched.

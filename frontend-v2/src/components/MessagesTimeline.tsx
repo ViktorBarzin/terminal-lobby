@@ -1,13 +1,16 @@
 import {
+  createComputed,
   createEffect,
   createMemo,
   createSignal,
   For,
   onCleanup,
   Show,
+  untrack,
   type Accessor,
   type Component,
   type JSX,
+  type Setter,
 } from "solid-js";
 import type { Event } from "../types/events";
 import { diag } from "../telemetry/diag";
@@ -169,6 +172,20 @@ const sameKeys = (a: readonly string[], b: readonly string[]): boolean =>
   a.length === b.length && a.every((k, i) => k === b[i]);
 
 /**
+ * One mounted row's current derivation, and the derivation it was last given.
+ *
+ * `last` is what the change detection compares against, and it is deliberately
+ * a plain field rather than a read of `row()`: the pass that writes these
+ * signals must not read them, or it lands in its own observer list and runs a
+ * second time for every event.
+ */
+interface RowHolder {
+  row: Accessor<TimelineRow>;
+  set: Setter<TimelineRow>;
+  last: TimelineRow;
+}
+
+/**
  * The oldest CONTENT row — the anchor both scroll compensations measure.
  *
  * It has to exclude the timeline's own chrome. `.tl-row-earlier` and
@@ -192,8 +209,9 @@ const ANCHOR_ROW_SELECTOR = ".tl-row:not(.tl-row-filling):not(.tl-row-earlier)";
  * rebuilt the entire timeline DOM on every stream event — an expanded tool row
  * snapped shut mid-turn and every mermaid diagram re-mounted. `<For>` therefore
  * maps over the row KEYS (reconciled by value), and each view reads its row
- * back through a per-key memo whose equality is `sameRow`: an unchanged row
- * never notifies, a changed one updates its existing node in place.
+ * back out of a per-key signal that is written only when `sameRow` says the
+ * content moved: an unchanged row never notifies, a changed one updates its
+ * existing node in place.
  */
 export const MessagesTimeline: Component<{
   events: Event[];
@@ -213,6 +231,33 @@ export const MessagesTimeline: Component<{
   onLoadEarlier?: () => Promise<void>;
   /** true while older turns exist to load. */
   hasEarlier?: boolean;
+  /**
+   * The reader reached the bottom of the transcript, or left it.
+   *
+   * The store holds only the last TRANSCRIPT_WINDOW_TURNS turns, and it trims
+   * ONLY while the reader is pinned — turns paged in on purpose must not be
+   * dropped out from under the person reading them. This view is the only
+   * thing that knows where the reader is, so it says so here.
+   *
+   * Called on each CHANGE rather than on every write: the store walks its
+   * event array to answer this, and a scroll writes the same `true` many times
+   * a second.
+   */
+  onPinned?: (pinned: boolean) => void;
+  /**
+   * What the store currently holds for the pin, so this view can tell when it
+   * has been moved from the other end.
+   *
+   * `loadEarlier` unpins the store directly — it has to, or the window would
+   * trim away what it has just fetched before this view reported the scroll —
+   * and a view deduping against its OWN last published value goes stale the
+   * moment that happens. Being stale in that direction is the expensive one: it
+   * believes it already said `true`, so it never says it again, and the store
+   * stops trimming for the rest of the session. Absent (the tests, and any
+   * caller that does not hold a store) it falls back to the last value
+   * published, which is what this did before.
+   */
+  pinned?: boolean;
   /**
    * The effective OS user. Attachments in a message are drawn only when this
    * says the file is ours to fetch: the clipboard read-back routes resolve inside
@@ -253,20 +298,63 @@ export const MessagesTimeline: Component<{
     equals: sameKeys,
   });
 
+  /**
+   * Every mounted row's current derivation, PUSHED in by the pass below.
+   *
+   * This used to be pulled: each row held a memo that read `keyed()` to find
+   * itself and used `sameRow` as its equality. `keyed` returns a fresh object
+   * literal every run and carries no `equals`, so it notifies on every stream
+   * event, and reading it from inside each row's memo put every mounted row in
+   * its observer list. One event therefore re-ran one memo per mounted row,
+   * 679 of them on the 675-row session the note at the top of this file cites,
+   * sixty times a second while a turn runs.
+   *
+   * The comparison itself cannot be avoided. deriveRows allocates fresh row
+   * objects on every call, so nothing short of comparing them can tell a
+   * recomputed row from a changed one, and both shapes run it once per row per
+   * event. What it does not need is one Solid computation per row to carry it:
+   * one pass compares each row once and wakes only the rows that moved.
+   * Measured over 120 stream appends into a mounted timeline of 679 rows
+   * (jsdom, rows handed down the way SessionView hands them, alternating runs):
+   * 13.2 ms per event before, 4.5 ms after.
+   *
+   * Giving `keyed` an `equals` instead was the other option and it is the
+   * wrong one. It only helps when NOTHING changed, which during a live turn is
+   * never, and stacking it on top of this pass would compare every row twice
+   * per event rather than once.
+   */
+  const holders = new Map<string, RowHolder>();
+
+  createComputed(() => {
+    const byKey = keyed().byKey;
+    for (const [key, holder] of holders) {
+      const row = byKey.get(key);
+      // A row leaving the list can still be read once before its node is
+      // disposed; leave the holder on its last value rather than clearing it.
+      if (!row || sameRow(holder.last, row)) continue;
+      holder.last = row;
+      holder.set(() => row);
+    }
+  });
+
   /** One row, held stable while its content is unchanged. */
   const rowAt = (key: string): Accessor<TimelineRow> => {
-    let last = keyed().byKey.get(key)!;
-    return createMemo<TimelineRow>(
-      () => {
-        // A row leaving the list can still be read once before its node is
-        // disposed; hold the last value rather than crashing on undefined.
-        const row = keyed().byKey.get(key);
-        if (row) last = row;
-        return last;
-      },
-      last,
-      { equals: sameRow },
-    );
+    // Untracked because this runs inside <For>'s mapping: subscribing THAT to
+    // `keyed` would put the whole list back under the per-event notification
+    // this change exists to remove.
+    const initial = untrack(() => keyed().byKey.get(key))!;
+    const [row, set] = createSignal<TimelineRow>(initial);
+    const holder: RowHolder = { row, set, last: initial };
+    holders.set(key, holder);
+    // Keys do leave. Re-folding a turn takes its children out of the visible
+    // list, and the sliding transcript window drops the oldest turns; without
+    // this the pass above would keep walking their holders for the life of the
+    // session. Guarded on identity because a key that leaves and comes back
+    // registers its new holder before the old one's cleanup runs.
+    onCleanup(() => {
+      if (holders.get(key) === holder) holders.delete(key);
+    });
+    return row;
   };
 
   const toggleTurn = (turnKey: string) => {
@@ -488,7 +576,31 @@ export const MessagesTimeline: Component<{
   // the bottom while it is at the bottom, and lets go the moment the operator
   // scrolls up to read something.
   let scroller: HTMLDivElement | undefined;
-  const [pinned, setPinned] = createSignal(true);
+  const [pinned, writePinned] = createSignal(true);
+  /**
+   * Every write to the pin goes through here, so that a call site added later
+   * cannot forget to tell the store.
+   *
+   * `published` is a plain variable rather than a read of `pinned()` because
+   * this runs inside whatever scope called it, and reading the signal here
+   * would subscribe that scope to the value it is in the middle of writing.
+   * `props.pinned` is read through `untrack` for the same reason.
+   *
+   * And it is read at all because the store moves the pin on its own: every
+   * `loadEarlier` unpins it, from the reader's scroll, from the auto-fill below
+   * and from a find-in-session jump, none of which pass through here. Believing
+   * the local copy after one of those left the store unpinned forever, which
+   * turns the sliding window off for the rest of the session.
+   */
+  let published = true;
+  const setPinned = (next: boolean): void => {
+    writePinned(next);
+    const stored = untrack(() => props.pinned);
+    if (stored !== undefined) published = stored;
+    if (next === published) return;
+    published = next;
+    props.onPinned?.(next);
+  };
 
   const atBottom = (): boolean => {
     const el = scroller;

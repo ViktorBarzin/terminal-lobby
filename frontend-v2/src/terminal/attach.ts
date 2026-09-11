@@ -56,11 +56,7 @@ import {
   watchSocket,
   type Watch,
 } from "./liveness";
-import {
-  decide as decideBattery,
-  HIDDEN_SUSPEND_MS,
-  type BatteryState,
-} from "./battery";
+import { decide as decideBattery, isAway, type BatteryEvent, type BatteryState } from "./battery";
 import { EMPTY_HELD, flush as flushHeld, offer as offerHeld, type HeldState, type HeldVerdict } from "./held";
 
 export interface AttachDeps {
@@ -120,6 +116,26 @@ export interface AttachDeps {
    */
   watch?: () => boolean;
   /**
+   * IS THIS SESSION'S SLOT THE ONE ON SCREEN. The third input to the battery
+   * saver, and the only one that is per-session rather than per-window.
+   *
+   * An ACCESSOR, read every time it is wanted rather than captured, because the
+   * terminal outlives every one of these transitions: the lobby keeps every
+   * visited session mounted and CSS-hides all but one, so a snapshot taken at
+   * attach would answer for the slot the session mounted into and never change
+   * again. A change is announced separately, through `screenChanged` below,
+   * because nothing in this file subscribes to anything reactive.
+   *
+   * Omitted means on screen, which is the direction that parks nothing: a
+   * caller that has not been taught this question keeps the behaviour it had.
+   *
+   * NOT "the terminal view is the one showing". A session read in TEXT view
+   * still sends to this pty from its composer, and switching back has to be
+   * instant, so a terminal behind the text view of a session on screen is being
+   * read. The component passes the session's own visibility for that reason.
+   */
+  onScreen?: () => boolean;
+  /**
    * What is being held for replay changed, or a keystroke was refused. The
    * component draws the glyphs and says why; this file only decides.
    */
@@ -150,6 +166,17 @@ export interface Attachment {
   resize(): void;
   /** The Reconnect button: starts an attempt from any phase, `ended` included. */
   reconnect(): void;
+  /**
+   * The answer to `deps.onScreen` just changed: this session came to the front
+   * of the lobby, or went behind another one.
+   *
+   * A poke rather than a value, because the accessor is the source of truth and
+   * a value passed here could disagree with it. This file subscribes to nothing
+   * reactive, so the component's effect on that prop is what calls this; the
+   * two window-wide inputs need no equivalent because the DOM has events for
+   * them.
+   */
+  screenChanged(): void;
   /**
    * Say what the terminal is doing right now, on demand.
    *
@@ -321,8 +348,38 @@ export function attach(deps: AttachDeps): Attachment {
         return;
       case "stand-down":
         detach();
+        discardHeld();
         return;
     }
+  }
+
+  /**
+   * Let go of what was being held for replay.
+   *
+   * held.ts names the two cases at the end of its owed-effects list —
+   * "Resetting the state to EMPTY_HELD whenever the hold ends without a replay:
+   * Esc, a battery suspend, or the session it belonged to going away" — and
+   * `stand-down` is the second and third of those: `reason: "suspended"` and
+   * `reason: "session-ended"`.
+   *
+   * A SUSPEND OUTLIVES THE REPLAY WINDOW BY DESIGN. The hold is only ever
+   * flushed by the first output frame of a socket that comes back, and the
+   * contract there is that the TEXT goes however old it is (held.ts, `flush`);
+   * only the Enter expires, at 3s. Kept across a park that can last an hour,
+   * those bytes are typed into whatever the pane has become — a pager, a vim
+   * buffer, a y/n prompt. An abandon does NOT discard, and that difference is
+   * the whole rule: the ladder is coming back within seconds and the hold is
+   * what it comes back for.
+   *
+   * Reachable once a minute of hidden tab; a window that lost focus and a
+   * session that went behind another one reach it many times a day.
+   */
+  function discardHeld(): void {
+    if (held === EMPTY_HELD) return;
+    held = EMPTY_HELD;
+    // The verdict the component already words as "Not connected — your input
+    // did not reach the session", which is what happened.
+    deps.onHeld?.(held, "refused:suspended");
   }
 
   /** Drop the current socket without letting its handlers reach the ladder. */
@@ -330,6 +387,26 @@ export function attach(deps: AttachDeps): Attachment {
     if (probeTimer !== null) clearTimer(probeTimer);
     probeTimer = null;
     watch = idleWatch();
+    // THE WHOLE ATTEMPT GOES, not just its socket. `liveGen` is what every
+    // async continuation checks itself against, and the /token fetch in
+    // `openSocket` carries no abort signal, so an attempt torn down while that
+    // fetch is still in the air has to stop owning this number or the fetch
+    // will resolve later and open a socket for a ladder that walked away.
+    //
+    // The suspend path is where it bites, because it is the one abandon that
+    // starts no replacement: every other one is followed by an `openSocket`
+    // that would have claimed the number on its way in. Left as it was, a fetch
+    // that hung through a park came back to `gen === liveGen`, installed a
+    // socket and attached to tmux on a `suspended` ladder — which `reduce`
+    // answers with nothing, the liveness watchdog leaves alone, and no later
+    // suspend can reach, so it streamed every pane redraw for the rest of the
+    // 24h keepalive window. battery.ts asks for exactly this at `suspend`:
+    // "tear down through the shared abandon path so a /token fetch in flight
+    // or a socket still in CONNECTING is abandoned too".
+    //
+    // -1 is safe as the "nobody owns this" value: `startAttempt` hands out
+    // generations from 1 up, so no attempt can ever carry it.
+    liveGen = -1;
     const s = socket;
     socket = null;
     if (!s) return;
@@ -533,43 +610,86 @@ export function attach(deps: AttachDeps): Attachment {
   }
 
   // ---- the battery saver ---------------------------------------------------
-  // A hidden tab holding a socket keeps the radio warm for nobody. battery.ts
-  // decides; this owns the countdown and the visibility listeners.
-  let hiddenSince: number | null = null;
+  // A socket nobody is reading keeps the radio warm and the CPU busy for
+  // nobody. battery.ts decides WHETHER; this owns the stamp, the countdown and
+  // the three listeners that feed it.
+  //
+  // Three, where there was one. `document.hidden` answered the whole question
+  // for frontend/term.html because that page was a single terminal; in the
+  // lobby it misses the two cases that cost the most, a window sitting visible
+  // behind another app and a session sitting mounted behind another session.
+  // docs/plans/2026-09-11-client-cpu-parking-design.md has the measurements.
+  /**
+   * When the current away RUN began, or null while someone is reading.
+   *
+   * ONE stamp for the run rather than one per condition, and it is what anchors
+   * the deadline: a second condition joining an away run already under way
+   * leaves this alone, so the countdown keeps counting to the moment it was
+   * always going to reach. Re-stamping there would let a terminal collecting
+   * transitions push its own suspend out forever, which is the failure
+   * battery.ts names at `grace`.
+   */
+  let awaySince: number | null = null;
   let graceTimer: number | null = null;
 
   const batteryState = (): BatteryState => ({
     hidden: typeof document === "undefined" ? false : document.hidden,
-    msHidden: hiddenSince === null ? null : clock() - hiddenSince,
+    // No accessor means on screen: a caller that has not been taught this
+    // question keeps the behaviour it had.
+    offScreen: deps.onScreen ? deps.onScreen() !== true : false,
+    msAway: awaySince === null ? null : clock() - awaySince,
     suspended: state.phase === "suspended",
   });
 
-  const onBattery = (event: Parameters<typeof decideBattery>[1]): void => {
-    const { action } = decideBattery(batteryState(), event);
-    if (action === "suspend") dispatch({ type: "suspend" });
-    else if (action === "resume") dispatch({ type: "resume", why: String(event) });
+  const clearGrace = (): void => {
+    if (graceTimer !== null) clearTimer(graceTimer);
+    graceTimer = null;
   };
 
-  const armGrace = (): void => {
-    if (graceTimer !== null) clearTimer(graceTimer);
+  /**
+   * One event into the decision, and the countdown put where the decision says.
+   *
+   * The countdown rules, in the order they are applied below:
+   *   - everyone back    drop the stamp with the timer, so the next away run
+   *                      starts a fresh clock rather than measuring from the
+   *                      last one.
+   *   - away, socket down  nothing left to count down to. The stamp STAYS, so
+   *                      the run keeps its identity for as long as it lasts.
+   *   - already counting  leave it. Arming again on every event is what pushes
+   *                      a deadline out forever.
+   *   - otherwise        stamp now and arm for the length the decision asked
+   *                      for. That is both the start of an away run and the
+   *                      resume that leaves a terminal still away, where the
+   *                      socket has only just come back and so the clock on it
+   *                      is genuinely new.
+   */
+  const onBattery = (event: BatteryEvent): void => {
+    const before = batteryState();
+    const d = decideBattery(before, event);
+    if (d.action === "suspend") dispatch({ type: "suspend" });
+    else if (d.action === "resume") dispatch({ type: "resume", why: d.why });
+
+    if (!isAway(before)) {
+      clearGrace();
+      awaySince = null;
+      return;
+    }
+    if (!d.grace) {
+      clearGrace();
+      return;
+    }
+    if (graceTimer !== null) return;
+    awaySince = clock();
     graceTimer = setTimer(() => {
       graceTimer = null;
       onBattery("grace-elapsed");
-    }, HIDDEN_SUSPEND_MS);
+    }, d.graceMs);
   };
 
   const onVisibility = (): void => {
     const hidden = typeof document !== "undefined" && document.hidden;
-    if (hidden) {
-      hiddenSince = clock();
-      armGrace();
-      onBattery("hidden");
-      return;
-    }
-    if (graceTimer !== null) clearTimer(graceTimer);
-    graceTimer = null;
-    hiddenSince = null;
-    onBattery("visible");
+    onBattery(hidden ? "hidden" : "visible");
+    if (hidden) return;
     // Coming back is when a socket most often turns out to have died while we
     // were away, so the watchdog re-anchors AND takes a reading now rather than
     // waiting out a full interval on a terminal that is already frozen.
@@ -577,19 +697,30 @@ export function attach(deps: AttachDeps): Attachment {
     void tickLiveness();
   };
 
+  /**
+   * The window changing hands, which is the case `document.hidden` never saw.
+   *
+   * NO re-anchor on the way back, where `onVisibility` has one. The strikes the
+   * watchdog would manufacture are a HIDDEN tab's, whose timers Chrome throttles
+   * to once a minute; a window that is merely behind another one runs its timers
+   * at full speed, so its readings were never stale and there is nothing to
+   * re-anchor from. A focus that resumes a suspend goes through the ladder
+   * anyway, which takes its own fresh reading.
+   */
   const onOnline = (): void => dispatch({ type: "network", online: true });
   const onOffline = (): void => dispatch({ type: "network", online: false });
   if (typeof window !== "undefined") {
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onVisibility);
-    // A tab opened into the background boots hidden and no visibilitychange
-    // ever fires for it, so the countdown has to be armed here too.
-    if (typeof document !== "undefined" && document.hidden) {
-      hiddenSince = clock();
-      armGrace();
-      onBattery("boot");
-    }
+    // A terminal that boots away arms its own countdown, because the event that
+    // would have started it already happened. Three boots land here: a tab
+    // opened into the background (term.html:9966's case), a window opened
+    // behind another app, and the lobby's own, a session mounted behind the
+    // one being read. Unconditional now, where this used to test
+    // `document.hidden`: the decision answers `grace: false` for a terminal
+    // someone is reading, so there is nothing left for a gate here to add.
+    onBattery("boot");
   }
 
   /**
@@ -681,6 +812,16 @@ export function attach(deps: AttachDeps): Attachment {
     },
     reconnect(): void {
       dispatch({ type: "reconnect-tapped", why: "asked by the lobby" });
+    },
+    /**
+     * Silent once disposed, as `dispatch` is. A session slot can flip during
+     * the same teardown that unmounts the terminal, since the lobby switches
+     * away and disposes in one turn, and arming a countdown there would leave
+     * a timer behind a socket that no longer exists.
+     */
+    screenChanged(): void {
+      if (disposed) return;
+      onBattery(deps.onScreen?.() === false ? "off-screen" : "on-screen");
     },
     /**
      * The answer goes out through the SAME callback the change path uses, so

@@ -838,6 +838,32 @@ export const TerminalNative: Component<{
     showToast(message, kind);
   };
 
+  /**
+   * IS ANYONE READING THIS TERMINAL. The question the battery saver and the
+   * mouse gate both ask, and the only place it is worked out.
+   *
+   * It is an OR of the two props because neither one answers it alone at BOTH
+   * call sites, and there is no third prop to add:
+   *
+   *   - SessionView passes `ownsBridges={onScreen()}` and
+   *     `active={mode() === "terminal" && onScreen()}`. `ownsBridges` is the
+   *     one to read: a session showing its TEXT view is still being read, its
+   *     composer still sends to this pty and switching views has to be instant,
+   *     and `active` is false for exactly that case. `active` never adds
+   *     anything here, since it already implies `onScreen()`.
+   *   - The dock passes a literal `ownsBridges={false}`, because it must not
+   *     claim the window bridges, which are named globals the session above it
+   *     owns, and `active`, because it renders only while it is showing
+   *     (Dock.tsx). So
+   *     `ownsBridges` alone would read every docked shell as unread and park it
+   *     thirty seconds after the person opened it.
+   *
+   * Which makes the OR the one expression that is right at both sites: the
+   * wider of two answers, where each site gives a true answer through a
+   * different prop.
+   */
+  const beingRead = (): boolean => props.ownsBridges !== false || props.active === true;
+
   /* ------------------------------------------------------------------ *
    * ATTENTION: the two things this terminal knows that could be news.
    * ------------------------------------------------------------------ */
@@ -946,6 +972,28 @@ export const TerminalNative: Component<{
     const onScreen = props.ownsBridges !== false;
     if (!onScreen) return;
     viewShown?.();
+  });
+
+  /**
+   * TELL THE SOCKET WHO IS READING IT.
+   *
+   * `attach` reads `beingRead` through the accessor it was given, so this only
+   * has to say that the answer moved. It subscribes to nothing reactive itself,
+   * which is deliberate: it is the terminal's one impure module and it owns
+   * timers and a socket, not a Solid graph.
+   *
+   * At component scope rather than in the mount body, for the reason `teardown`
+   * gives at the top of this file: by the time the two dynamic imports resolve,
+   * Solid's owner for this component is gone and an effect created there would
+   * never run. `attachment` is null until they do, and that costs nothing. The
+   * accessor is read at attach, so a terminal that mounts off screen arms its
+   * countdown from `attach`'s own boot rather than from here.
+   */
+  createEffect(() => {
+    // Read through the helper so both props are tracked, then hand over. The
+    // value goes nowhere: attach asks the accessor for it.
+    beingRead();
+    attachment?.screenChanged();
   });
 
   onMount(() => {
@@ -2330,6 +2378,13 @@ export const TerminalNative: Component<{
           props.onConn?.(report(phase, attempt));
         },
         watch: () => props.watch?.() === true,
+        // WHO IS READING THIS SESSION, the third input to the battery saver and
+        // the only per-session one. Passed as the accessor rather than as a
+        // value because this terminal outlives every switch away from it: the
+        // lobby keeps it mounted and CSS-hidden while another session is in
+        // front. The effect above says WHEN this answer moved; this says what
+        // it is.
+        onScreen: beingRead,
         onHeld,
       });
       const a = attachment;
@@ -2966,6 +3021,34 @@ export const TerminalNative: Component<{
         perform(r, e, e.target);
       };
       const onMotion = (e: MouseEvent): void => {
+        /**
+         * NOT FOR A TERMINAL NOBODY IS LOOKING AT, and this is the one handler
+         * of the three where that is worth checking.
+         *
+         * `worldAt` is not free: a `querySelector` for this terminal's screen
+         * node, a `contains` against the event target, and a `hasSelection()`
+         * into xterm. A move fires at roughly 100Hz, and the lobby keeps every
+         * visited session mounted with its own copy of this listener, so a
+         * fifteen-session day pays fifteen of those per move for gestures that
+         * can only ever land in the one terminal on screen. The press and the
+         * release below fire once per click and cost nothing worth gating; a
+         * release in particular is how the reducer learns a drag ended, so
+         * gating it would leave a session that went off screen mid-drag holding
+         * `drag` forever and misreading the next press it ever saw.
+         *
+         * A READ, not a listener swap. Detaching and re-attaching three capture
+         * listeners on every session switch is more lifecycle to get wrong for
+         * the same saving, and the design says so
+         * (docs/plans/2026-09-11-client-cpu-parking-design.md).
+         *
+         * A gesture already in flight is let through regardless, which is what
+         * the two null tests are: a press held back or a drag under way is
+         * state the reducer has to be allowed to finish. Reaching that needs a
+         * keyboard, since with a mouse you cannot switch sessions without
+         * letting go first, and it is cheap to be right about because both
+         * fields are null on exactly the idle terminals this gate is for.
+         */
+        if (!beingRead() && gesture.drag === null && gesture.pending === null) return;
         const ev = { type: "motion", motion: e } as const;
         perform(reduceGesture(gesture, ev, worldAt(e.target)), e, pressTarget);
       };
