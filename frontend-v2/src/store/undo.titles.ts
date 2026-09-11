@@ -4,7 +4,7 @@
  *
  * THIS ONE IS NOT EXACTLY REVERSIBLE, and the code has to admit it. Since
  * ADR-0022 the tmux NAME follows the title: tmux-api re-derives it on every
- * title that lands (tmux-api/session_mutate.go:183 → name_from_title.go
+ * title that lands (tmux-api/session_mutate.go:241 → name_from_title.go
  * `derivedNameFor`) and hands a collision the next free `-N`, so putting the
  * old title back can land the session under a name it never had. The TITLE is
  * what this entry promises; the name is the server's to decide, and nothing
@@ -13,7 +13,7 @@
  * WHICH SESSION, THOUGH. The name is the last thing to trust, since it is the
  * thing that moves. Three links, in the order `resolve` tries them:
  *
- *   1. tmux's own session id (`Session.id`, types/lobby.ts:41), the one field a
+ *   1. tmux's own session id (`Session.id`, types/lobby.ts:48), the one field a
  *      rename does not change. Recorded whenever the server supplies one.
  *   2. the name the entry carries, for a server that supplies no id. It is
  *      kept current by the stack's `carry`, which store/lobby.ts calls for
