@@ -17,13 +17,16 @@ and the watch choice. The stack is `frontend-v2/src/store/undo.ts`, and each
 store registers the inverses of its own actions (`undo.kill.ts`,
 `undo.layout.ts`, `undo.titles.ts`, `undo.local.ts`).
 
-Built over nine commits on `wizard/undo-redo`, 2026-09-10.
+Built on `wizard/undo-redo`, 2026-09-10 and 11. Nine commits built it and the
+rest are repairs from the review that followed; a count here goes stale on the
+next one, so the branch is what to read.
 
 ## What we decided
 
 **The chord is Ctrl+Z, claimed for the whole page, the terminal included.** Four
 rows in `KB_DEFAULT_BINDINGS` (`ctrl+z` and `meta+z` to `edit.undo`, the shifted
-pair to `edit.redo`), each carrying `!editing && !overlayOpen`. Both spellings of
+pair to `edit.redo`), each carrying `!editing && !overlayOpen && !previewDirty`
+(`UNDO_WHEN`; the third leg has a section of its own below). Both spellings of
 the modifier are rows of their own because `parseChord` keeps ctrl and meta as
 separate flags. A chord the layer matches makes the terminal decline the key
 (`terminal/keys.ts`, the `appChord` field), so `Ctrl+Z` no longer reaches the

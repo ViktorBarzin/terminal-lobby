@@ -5,7 +5,7 @@
  *
  * One handler per kind, each of them an INVERSE OPERATION re-applied to the
  * document as it is right now. PUT /api/layout replaces the whole document and
- * carries no etag or version (store/lobby.ts:705 saveLayout), so an undo that
+ * carries no etag or version (store/lobby.ts:828 saveLayout), so an undo that
  * re-PUT the layout its action was looking at would erase a session another
  * device created in the meantime, or a project somebody added on their phone.
  * Every undo here therefore reads `ports.layout()`, folds the inverse into it
@@ -66,7 +66,7 @@ export interface MoveEntry extends UndoEntryBase {
   readonly toGroup: string;
   readonly toIndex: number;
   /** The ordering mode as it was BEFORE the drag, set only when the drop
-   *  flipped it to manual (store/lobby.ts:1009, where a drop that names a
+   *  flipped it to manual (store/lobby.ts:1389, where a drop that names a
    *  position hands ordering back to the user, because a timestamp sort would
    *  put the card straight back). Undoing the drag without undoing that
    *  leaves the sidebar stuck in manual, with nothing on screen saying why. */
@@ -143,7 +143,7 @@ export interface LayoutUndoPorts {
    *  live sidebar model, which is what a switch into manual freezes. */
   capture(): Layout;
   /** Collapse is keyed on the project NAME, a per-browser view preference
-   *  rather than layout (store/lobby.ts:1044), so it travels with a rename and
+   *  rather than layout (store/lobby.ts:1522), so it travels with a rename and
    *  goes with a delete. */
   renameCollapse(from: string, to: string): void;
   removeCollapse(name: string): void;
@@ -199,7 +199,7 @@ function sameArrangement(a: Layout, b: Layout): boolean {
 /**
  * Write a layout, moving the ordering mode with it when the entry says so.
  *
- * The mode changes BEFORE the write, the same order store/lobby.ts:1009 uses
+ * The mode changes BEFORE the write, the same order store/lobby.ts:1413 uses
  * and for the same reason: a frame rendered while the old ordering still ran
  * would sort the card straight back out of the seat the write just gave it. A
  * write that does not land takes the mode back with it.

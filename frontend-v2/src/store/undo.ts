@@ -22,7 +22,7 @@
  * into the lobby to undo a kill.
  *
  * AN ENTRY IS AN INVERSE OPERATION, never a copy of a document. PUT /layout
- * replaces the WHOLE layout and carries no etag or version (store/lobby.ts:705
+ * replaces the WHOLE layout and carries no etag or version (store/lobby.ts:828
  * saveLayout), so re-PUTting a layout captured before the action would erase
  * whatever another device did in the meantime. An entry says what to undo, and
  * its handler re-applies that against the layout as it is NOW, or refuses.
