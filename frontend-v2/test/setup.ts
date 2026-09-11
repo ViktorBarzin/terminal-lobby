@@ -60,3 +60,42 @@ if (typeof window !== "undefined" && typeof (window as { PointerEvent?: unknown 
   (window as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
   (globalThis as unknown as { PointerEvent: unknown }).PointerEvent = PointerEventShim;
 }
+
+/**
+ * Three DOM methods the drag library reaches for that jsdom does not implement.
+ *
+ * `dnd/sidebar.ts` registers @formkit/drag-and-drop on every group list, so
+ * these are touched by any test that mounts a sidebar, not only the ones about
+ * dragging: `elementFromPoint` is how it decides what a drag is over, and the
+ * popover pair is how a synthetic drag puts its cloned row in the top layer.
+ * Each throws rather than returning nothing in jsdom, which failed mounts that
+ * had no interest in a drag at all.
+ */
+if (typeof document !== "undefined") {
+  const doc = document as unknown as { elementFromPoint?: unknown };
+  if (typeof doc.elementFromPoint !== "function") doc.elementFromPoint = () => null;
+  const proto = HTMLElement.prototype as unknown as Record<string, unknown>;
+  if (typeof proto.showPopover !== "function") proto.showPopover = () => {};
+  if (typeof proto.hidePopover !== "function") proto.hidePopover = () => {};
+}
+
+/**
+ * A no-op Web Animations API, which jsdom does not implement.
+ *
+ * The drag library's animations plugin slides a row out of the way with
+ * `Element.animate`, so any test that drags a session in jsdom would throw
+ * there. Nothing asserts on the animation; the order the rows end up in is what
+ * matters, and that is decided before the slide starts.
+ */
+if (typeof Element !== "undefined") {
+  const proto = Element.prototype as unknown as Record<string, unknown>;
+  if (typeof proto.animate !== "function") {
+    proto.animate = () => ({
+      finished: Promise.resolve(),
+      cancel() {},
+      finish() {},
+      addEventListener() {},
+      removeEventListener() {},
+    });
+  }
+}

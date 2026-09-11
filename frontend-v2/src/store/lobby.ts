@@ -6,6 +6,7 @@ import {
   addSessionToGroup,
   deleteProject,
   deriveSidebar,
+  isSystemSession,
   materializeGroup,
   moveSession,
   moveSessionToAnchor,
@@ -14,17 +15,13 @@ import {
   reorderGroups,
   sameLayout,
   stabilizeModel,
+  SYSTEM_GROUP_NAME,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
-import {
-  applySessionOrder,
-  captureVisibleOrder,
-  type SessionOrder,
-} from "../logic/order.logic";
+import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
-import type { DropSpot } from "../mobile/reorder";
-import { ApiError, lobbyApi, type LobbyApi } from "../lib/lobby-api";
+import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi } from "../lib/lobby-api";
 import {
   emptyLayout,
   NAME_RE,
@@ -47,6 +44,11 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY } from "./visits";
+import { carryWatch } from "./watchmode";
+import { carryViewMode } from "./viewmode";
+import { carryDraft } from "./drafts";
+import { lensTarget } from "../lib/act-as";
+import { ACT_AS } from "../lib/config";
 import { lsGet, lsSet } from "../lib/storage";
 
 export interface SelectedSession {
@@ -96,17 +98,6 @@ export interface LobbyStore {
   pollHealth: Accessor<SessionsReport>;
   selected: Accessor<SelectedSession | null>;
   toast: Accessor<string | null>;
-  /** name of the session card currently being dragged (HTML5 DnD), or null. */
-  dragName: Accessor<string | null>;
-  setDragName: (name: string | null) => void;
-  /** group token ("p:<name>" | "u") of the group header being dragged, or null. */
-  dragGroup: Accessor<string | null>;
-  setDragGroup: (token: string | null) => void;
-  /** Where a FINGER-dragged row would land, or null. The mouse has the
-   *  browser's own dragover for this; a touch drag has to publish it, because
-   *  the row that shows the indicator is never the row being dragged. */
-  dropSpot: Accessor<DropSpot | null>;
-  setDropSpot: (spot: DropSpot | null) => void;
   collapse: CollapseStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
   workingSince: (name: string) => number | undefined;
@@ -273,9 +264,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     opts.initialSelected ?? null,
   );
   const [toast, setToast] = createSignal<string | null>(null);
-  const [dragName, setDragName] = createSignal<string | null>(null);
-  const [dropSpot, setDropSpot] = createSignal<DropSpot | null>(null);
-  const [dragGroup, setDragGroup] = createSignal<string | null>(null);
 
   const me = () => whoami()?.osUser ?? "";
   const collapse = createCollapseStore(me);
@@ -386,34 +374,107 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   /**
    * Move the selection to a session that was renamed under it.
    *
-   * Nothing renames any more — a name is an opaque id fixed at creation
-   * (ADR-0019) — with ONE exception, and it is the one this exists for.
-   * tmux-api's migration renames every session that predates ids, once, on the
-   * release that ships them (tmux-api/migrate_ids.go). A tab open at that
-   * moment holds a name that is about to stop existing, and it holds it in the
-   * terminal's `?arg=` (built by `terminalFrameArgs`, handed to TerminalNative):
-   * ttyd spawns a fresh `tmux new-session -A -s <name>` per websocket, so the
-   * next reconnect would CREATE the old name as an empty
+   * This is load-bearing again. A session is created with a minted id and keeps
+   * it until its first title lands, at which point tmux-api renames it to
+   * something readable (ADR-0022) — which for a fresh session is seconds into
+   * the first turn, with nobody having asked. The tab is holding the OLD name
+   * in the terminal's `?arg=` (built by `terminalFrameArgs`, handed to
+   * TerminalNative), and ttyd spawns a fresh `tmux new-session -A -s <name>`
+   * per websocket, so the next reconnect would CREATE the old name as an empty
    * session and leave the person looking at a blank shell while their
-   * conversation ran on under the id.
+   * conversation ran on under the new name.
    *
-   * tmux's session id is the only thing that survives a rename, so it is what
-   * identifies "the same session under a new name". Matching on anything else
-   * (creation time, position) would eventually follow the wrong one.
+   * Both retitle paths refresh immediately rather than waiting out a poll, so
+   * the window where a tab holds a stale name is one round trip for a typed
+   * title and one poll for a summary.
+   *
+   * What counts as "the same session under a new name" is `renamesBetween`,
+   * which matches on tmux's session id and, for a session no poll ever listed
+   * under its old name, on the birth name the server records.
    *
    * Re-selecting is also what drops the stale mount: App prunes a kept
    * SessionView whose name has left the session list, and the selection moving
    * is what makes that effect run (components/App.tsx, prune).
    */
+  /**
+   * Carry the per-browser records a rename would otherwise strand.
+   *
+   * ADR-0022 made renaming an ordinary background event again: a title lands
+   * and tmux-api derives a name from it, seconds into a fresh session's first
+   * turn, with nobody having asked. Anything keyed by the session NAME has to
+   * follow. The six server-side stores do (`carryRenameAcrossStores`), and
+   * store/visits.ts sidesteps it by keying on tmux's session id — but three
+   * records live in this browser under the name, and this is the only place
+   * that knows the rename happened at all.
+   *
+   * Watch mode is the one that MISBEHAVES rather than merely forgets, and it is
+   * why this exists: the view remounts under the new name, re-takes the join
+   * decision, and reads the session it is itself driving as one somebody else
+   * is driving (store/watchmode.ts `carryWatch` has the mechanism). The other
+   * two just lose something — the view a session was being read in, and an
+   * unsent message.
+   *
+   * OWN SESSIONS ONLY. A foreign row's id comes from another user's tmux
+   * server, where the same `$41` names an unrelated session, so matching ids
+   * across the two accounts would move this user's records onto a stranger's
+   * name. Same reason `followRenamedSelection` will not follow one.
+   */
+  function carryRenamedRecords(prev: readonly Session[], next: readonly Session[]): void {
+    // The same namespace the views record under, so a decision made about bob's
+    // session through a lens is carried against bob's session and not your own.
+    const as = lensTarget(whoami(), ACT_AS);
+    for (const [was, now] of renamesBetween(prev, next)) {
+      carryWatch(was, now, as);
+      carryViewMode(was, now);
+      carryDraft(was, now);
+    }
+  }
+
+  /**
+   * Which sessions changed name between two polls, as [old, new] pairs.
+   *
+   * TWO LINKS, and the second is the one that matters most. tmux's session id
+   * survives a rename, so a session seen in BOTH lists is matched on that. But
+   * a fresh session is renamed as soon as its first title lands (ADR-0022) —
+   * seconds in, while GET /sessions is behind a 5-second cache — so it is quite
+   * ordinary for the minted id never to appear in a list at all, and then there
+   * is no earlier row to match. That is what `bornAs` is for: the server records
+   * the name the session was created with, which is exactly the name this tab is
+   * holding.
+   *
+   * A birth name is believed only when nothing in the new list still ANSWERS to
+   * it. A session that is still listed has not been renamed, whatever some other
+   * session claims to have been born as.
+   *
+   * OWN SESSIONS ONLY. A foreign row's id comes from another user's tmux server,
+   * where the same `$41` names an unrelated session, so matching ids across the
+   * two accounts would pair up sessions that have nothing to do with each other.
+   */
+  function renamesBetween(
+    prev: readonly Session[],
+    next: readonly Session[],
+  ): Array<[string, string]> {
+    const mine = (s: Session) => !s.owner || s.owner === me();
+    const wasNamed = new Map<string, string>();
+    for (const s of prev) if (s.id && mine(s)) wasNamed.set(s.id, s.name);
+    const live = new Set(next.filter(mine).map((s) => s.name));
+    const moved: Array<[string, string]> = [];
+    for (const s of next) {
+      if (!mine(s)) continue;
+      const was = (s.id ? wasNamed.get(s.id) : undefined) ?? s.bornAs;
+      if (was === undefined || was === s.name || live.has(was)) continue;
+      moved.push([was, s.name]);
+    }
+    return moved;
+  }
+
   function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
     const sel = selected();
     if (!sel || sel.owner) return; // foreign sessions are not ours to follow
     if (next.some((s) => s.name === sel.name)) return; // still there
-    const id = prev.find((s) => s.name === sel.name)?.id;
-    if (!id) return; // never saw an id for it — a server that predates the field
-    const moved = next.find((s) => s.id === id);
+    const moved = renamesBetween(prev, next).find(([was]) => was === sel.name);
     if (!moved) return; // genuinely gone, not renamed
-    applySelection(moved.name, undefined);
+    applySelection(moved[1], undefined);
   }
 
   /** Stamp state transitions and prune dead sessions (vanilla trackStateChanges). */
@@ -504,6 +565,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       const list = withPromptLines(sRes.value);
       trackStates(list);
       // Before setSessions, which is what makes `sessions` the OLD list here.
+      // The carry runs FIRST: moving the selection is what mounts a view under
+      // the new name, and that view reads the records this call moves.
+      carryRenamedRecords(sessions, sRes.value);
       followRenamedSelection(sessions, sRes.value);
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
@@ -655,8 +719,14 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   function updateHash(sel: SelectedSession | null): void {
     if (!syncHash || typeof window === "undefined") return;
     try {
-      const hash = sel ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "") : "";
-      window.history.replaceState(null, "", window.location.pathname + window.location.search + hash);
+      const hash = sel
+        ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "")
+        : "";
+      window.history.replaceState(
+        null,
+        "",
+        window.location.pathname + window.location.search + hash,
+      );
     } catch {
       /* no history */
     }
@@ -757,11 +827,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * prompt. A layout write that fails is toasted and drops the optimistic card,
    * but the session itself is still started by the attach.
    */
-  async function create(
-    text: string,
-    group: string,
-    kind: CreateKind = "prompt",
-  ): Promise<string> {
+  async function create(text: string, group: string, kind: CreateKind = "prompt"): Promise<string> {
     const t = kind === "name" ? cleanTitle(text) : firstPromptLine(text);
     const n = freshSessionName();
     // Creation is a lobby-only act: tmux-api never sees it, so this is the only
@@ -785,6 +851,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
         lastDrive: nowSec,
         created: nowSec,
         state: "",
+        // This IS the lobby's own create path, so the card says so. The server
+        // stamps @tl_origin=user a moment later when the attach creates the
+        // tmux session (devvm/tmux-user-attach), but the card exists before
+        // that — and an unstamped card is a SYSTEM session, so a create the
+        // user is watching would vanish into a collapsed group for the second
+        // or two until the first poll that knows the session.
+        origin: ORIGIN_USER,
       },
     ]);
     // The line the card reads until Claude's summary lands. Persisted rather
@@ -840,8 +913,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    *
    * Emptying the rename box is the only way back to a bare name, and it is the
    * state every session that predates titles is already in. The NAME is left
-   * exactly where it is — deriving one from an empty title would mean renaming
-   * a running session to something arbitrary.
+   * exactly where it is — an empty title derives nothing (ADR-0022), and a name
+   * invented for a running session would be worse than a stale one.
    */
   async function clearTitle(name: string): Promise<boolean> {
     // Clearing hands the session back to its summary, so the placeholder goes
@@ -859,14 +932,15 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   }
 
   /**
-   * Retitle a session: set the text everyone reads.
+   * Retitle a session: set the text everyone reads, and the name tmux shows.
    *
-   * Only the title moves. The name is an opaque id fixed at creation
-   * (ADR-0019), so nothing downstream is keyed by anything this touches: no
-   * layout to mirror, no per-browser record to carry, and nothing to
-   * re-navigate: TerminalNative reads `props.args` once at mount and never
-   * re-attaches. Two sessions may end up reading the same, which is fine now
-   * that no name is derived from the text.
+   * The tmux name is derived from the title again (ADR-0022), so this DOES move
+   * something: tmux-api renames the session and carries the six stores keyed by
+   * the old name. The `refresh` below is what closes the gap — it brings back
+   * the new name, and `followRenamedSelection` moves the selection onto it by
+   * session id, which also re-navigates the terminal away from a name that no
+   * longer exists. Two sessions may still read the same; the second gets a
+   * `-2` suffix on its name and nothing else changes.
    */
   async function rename(name: string, title: string): Promise<boolean> {
     const t = cleanTitle(title);
@@ -916,7 +990,47 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return saveLayout(next ? { ...rest, dock: next } : rest);
   }
 
+  /**
+   * Adopt a session the lobby did not make, because somebody has just dragged
+   * it out of System. Answers false when the adoption did not land, and the
+   * caller then writes no layout at all.
+   *
+   * The order matters and it is the opposite of the usual optimistic one. With
+   * the layout written first, a failed POST would leave the card sitting in a
+   * project while tmux still called the session `test` — and deriveSidebar
+   * honours an explicit project placement over the origin, so the next poll
+   * would AGREE with the arrangement. The card would look rescued, go on not
+   * pushing and not recording, and nothing would ever say otherwise. Asking the
+   * server first costs one round trip on the rescue alone (an ordinary move
+   * never reaches this) and leaves both halves either done or untouched.
+   */
+  async function adoptSystemSession(name: string): Promise<boolean> {
+    const s = sessions.find((x) => x.name === name);
+    if (!s || !isSystemSession(s)) return true;
+    try {
+      await api.setSessionOrigin(name, ORIGIN_USER);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
+      else showToast("Couldn't take this session out of System");
+      return false;
+    }
+    // The origin the next poll would have brought back, applied now. Without
+    // it the card springs straight back into System for the rest of the poll
+    // interval: a system session is filed there whatever layout.ungrouped says,
+    // which is the whole reason a harness's sessions do not sit in the list.
+    setSessions((x) => x.name === name, "origin", ORIGIN_USER);
+    return true;
+  }
+
   async function move(name: string, group: string, anchor?: DropAnchor): Promise<void> {
+    // System is not a place the layout can put anything: it is derived from
+    // each session's origin, and ":system" is a name no project has. Writing it
+    // would strip every reference to the card and file it nowhere, so a session
+    // dropped back in would reappear in Ungrouped having quietly lost the
+    // project it was in.
+    if (group === SYSTEM_GROUP_NAME) return;
+    // The rescue (design doc §Rescue), before anything is written down.
+    if (!(await adoptSystemSession(name))) return;
     // A drop that names a POSITION cannot be honoured while a timestamp is
     // deciding positions: the layout is the only place a position can be
     // written, and the sort would put the card straight back on the next
@@ -1084,12 +1198,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     },
     selected,
     toast,
-    dragName,
-    setDragName,
-    dropSpot,
-    setDropSpot,
-    dragGroup,
-    setDragGroup,
     collapse,
     workingSince,
     refresh,

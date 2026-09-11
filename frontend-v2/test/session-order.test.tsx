@@ -36,10 +36,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   whoamiVal: Whoami = { authentik: "wiz@x", osUser: "wizard" };
   sessionsVal: Session[] = [];
   layoutVal: Layout = emptyLayout();
@@ -144,7 +150,10 @@ describe("sidebar.order — the roamed pref", () => {
   it("reports the ordering someone picked, with the value they picked", () => {
     // telemetry/events.go: tl.key is the pref path, tl.to the NEW value. A
     // namespace name in either field answers nothing.
-    const next = { ...PREF_DEFAULTS, sidebar: { ...PREF_DEFAULTS.sidebar, order: "active" as const } };
+    const next = {
+      ...PREF_DEFAULTS,
+      sidebar: { ...PREF_DEFAULTS.sidebar, order: "active" as const },
+    };
     expect(changedPrefPaths(PREF_DEFAULTS, next)).toEqual([["sidebar.order", "active"]]);
   });
 });
@@ -189,10 +198,9 @@ async function wire(
 /** What the sidebar would paint, group by group. */
 const painted = (store: LobbyStore): Record<string, string[]> =>
   Object.fromEntries(
-    store.model().groups.map((g) => [
-      g.kind === "ungrouped" ? "" : g.name,
-      g.sessions.map((s) => s.name),
-    ]),
+    store
+      .model()
+      .groups.map((g) => [g.kind === "ungrouped" ? "" : g.name, g.sessions.map((s) => s.name)]),
   );
 
 const three = (): Session[] => [
@@ -235,8 +243,10 @@ describe("the store paints the list in the chosen order", () => {
     expect(store.model().groups.map((g) => (g.kind === "ungrouped" ? "" : g.name))).toEqual([
       "work",
       "",
+      ":system",
     ]);
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta"] });
+    // System is pinned after them both, empty while every session is a user's.
+    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta"], ":system": [] });
   });
 
   /**
@@ -246,11 +256,7 @@ describe("the store paints the list in the chosen order", () => {
    */
   it("hands the keyboard the same order the eye sees", async () => {
     const { store } = await wire(rawOrder(), three(), "created");
-    expect(flatSessionOrder(store.model()).map((s) => s.name)).toEqual([
-      "gamma",
-      "beta",
-      "alpha",
-    ]);
+    expect(flatSessionOrder(store.model()).map((s) => s.name)).toEqual(["gamma", "beta", "alpha"]);
   });
 
   it("leaves the ordering alone when nothing wired one in", async () => {
@@ -318,10 +324,18 @@ describe("dragging a card while a time ordering is deciding positions", () => {
       [...three(), sess("delta", { created: 700, lastDrive: 700 })],
       "created",
     );
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["delta", "beta"] });
+    expect(painted(store)).toEqual({
+      work: ["gamma", "alpha"],
+      "": ["delta", "beta"],
+      ":system": [],
+    });
     await store.move("beta", "", { name: "delta", side: "above" });
     expect(api.puts.at(-1)!.projects[0]!.sessions).toEqual(["gamma", "alpha"]);
-    expect(painted(store)).toEqual({ work: ["gamma", "alpha"], "": ["beta", "delta"] });
+    expect(painted(store)).toEqual({
+      work: ["gamma", "alpha"],
+      "": ["beta", "delta"],
+      ":system": [],
+    });
   });
 
   /**
@@ -332,13 +346,18 @@ describe("dragging a card while a time ordering is deciding positions", () => {
    */
   it("keeps the ordering when a move names a group but no position", async () => {
     const { store, order } = await wire(
-      { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["alpha", "beta", "gamma"], ungroupedIndex: 1 },
+      {
+        ...emptyLayout(),
+        projects: [{ name: "work", sessions: [] }],
+        ungrouped: ["alpha", "beta", "gamma"],
+        ungroupedIndex: 1,
+      },
       three(),
       "created",
     );
     await store.move("beta", "work");
     expect(order()).toBe("created");
-    expect(painted(store)).toEqual({ work: ["beta"], "": ["gamma", "alpha"] });
+    expect(painted(store)).toEqual({ work: ["beta"], "": ["gamma", "alpha"], ":system": [] });
   });
 
   it("leaves a manual list exactly as it always behaved", async () => {

@@ -10,7 +10,9 @@ package main
 // must not have. tmux-persist recreates sessions after a reboot or an OOM from
 // a snapshot of names, cwds and claude uuids — a title is none of those, so
 // without this file every recovery would hand back a sidebar of bare session
-// names, which since ADR-0019 are opaque ids nobody can read.
+// names. Since ADR-0022 a titled session's name reads as words again, but an
+// untitled one's is a minted id, and a name that survived a restore is no
+// proof of a title either way: this file is what says what it was called.
 //
 // So: the same shape as the killed-assignment memory next door (assignments.go)
 // — one small JSON document per OS user, holding the one fact that has to
@@ -43,9 +45,9 @@ const (
 	titlesDir     = "/var/lib/tmux-api/titles"
 	// titlesKeep bounds the file, mirroring assignmentsKeep next door.
 	//
-	// An entry is removed when its session is deliberately killed, so what
-	// accumulates here is titles of sessions that died WITHOUT a kill — an OOM,
-	// a reboot — and were never restored. That is a slow trickle rather than a
+	// Nothing else removes an entry: a title outlives its session on
+	// purpose, a deliberate kill included, because the picker restores from
+	// snapshots older than the kill. That is a slow trickle rather than a
 	// growth rate, but "slow" is not "bounded", and the oldest entries are the
 	// least likely to be restored.
 	titlesKeep = 500
@@ -148,12 +150,6 @@ func (s *titleStore) rename(osUser, oldName, newName string) error {
 	})
 }
 
-// forget drops one session's title — a deliberate kill, mirroring what
-// killSession already does to the layout and the persist manifest.
-func (s *titleStore) forget(osUser, name string) error {
-	return s.update(osUser, func(titles map[string]Title) { delete(titles, name) })
-}
-
 // pruneLocked drops the oldest entries once the file is over budget.
 //
 // Bounding by COUNT rather than by "is this session still restorable" is the
@@ -177,6 +173,30 @@ func pruneLocked(titles map[string]Title) {
 	for _, r := range rows[:len(rows)-titlesKeep] {
 		delete(titles, r.name)
 	}
+}
+
+// annotateRowTitles fills in each snapshot row's display title.
+//
+// A snapshot carries names, cwds and claude uuids, and since ADR-0019 a name is
+// an opaque id — so the rows arrive unreadable, which is what the restore
+// picker showed until 2026-09-06. This file is the one place a title outlives
+// its session, and a session that is no longer running is the whole point of
+// the picker, so it is the only store that can answer.
+//
+// A title equal to the name is dropped: the id-migration stamped some sessions
+// with their own name, and carrying that through prints the id twice in one row
+// rather than once.
+func annotateRowTitles(osUser string, rows []SnapshotRow) []SnapshotRow {
+	if len(rows) == 0 {
+		return rows
+	}
+	remembered := titleStoreInstance.all(osUser)
+	for i := range rows {
+		if title := remembered[rows[i].Name]; title != rows[i].Name {
+			rows[i].Title = title
+		}
+	}
+	return rows
 }
 
 // restoreRememberedTitles re-stamps @title on sessions a restore just brought

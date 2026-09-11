@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -24,6 +25,114 @@ var (
 	// stamps X-TL-Req and the middleware echoes it back to join the two.
 	timing = telemetry.NewTiming(diagEvents, telemetry.TimingOpts{})
 )
+
+// System sessions are not recorded
+// (docs/plans/2026-09-06-test-session-origin-design.md). The QA fleet drives
+// the real deployed lobby against the real backends on purpose, so its turns
+// are real events from a real service and only the session they name says they
+// are not a person's work. The rule below is what tells the emitter that.
+//
+// Installed on `events` alone. Diagnostics (ADR-0008) is health data — a stall,
+// an exception, a dropped connection — and a fleet session hitting a bug is
+// exactly as interesting as a person hitting it. The decision was about the
+// USAGE record.
+//
+// The browser leg of the same question is answered elsewhere: an event like
+// app.loaded or theme.changed carries no tl.session, so a session-keyed rule
+// cannot see it, and the qa-harness proxy refuses POST /telemetry outright.
+func init() {
+	events.SetDropRule(systemSessionRule.isSystem)
+}
+
+// How long one parse of the cached list answers for, and how stale that answer
+// may get before the rule stops trusting it.
+//
+// The refresh window is the sessions cache's own, so the rule tracks the list
+// the service is serving rather than lagging it. The max age exists because the
+// memo is the only thing that can answer while the cache is COLD, which is not
+// a rare case here: the mutating handlers invalidate the cache and THEN emit,
+// so session.killed, session.renamed and session.retitled all arrive in the
+// window between. A memo seconds old answers those correctly; a memo minutes
+// old is describing a box that has moved on, and a wrong "system" there means
+// a person's event silently lost.
+const (
+	systemSessionRefresh = sessionsTTL
+	systemSessionMaxAge  = time.Minute
+)
+
+// systemSessionMemo answers "is this session tooling's" for the telemetry drop
+// rule, out of the body the sessions cache already holds.
+//
+// It NEVER lists sessions itself, and that is a correctness requirement rather
+// than a performance one. Building the list emits events of its own —
+// autoTitleSessions and backfillDerivedNames rename sessions and say so — so a
+// rule that listed on a miss would re-enter the emitter that called it, from
+// inside Emit, on every event. The cost of not listing is the fallback below.
+type systemSessionMemo struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	seen map[string]systemSessionSnapshot
+}
+
+// systemSessionSnapshot is one user's verdicts, with the time they were read.
+// verdict holds EVERY session the list carried, not just the system ones, so a
+// name that is absent from it can be told apart from one that is present and a
+// person's.
+type systemSessionSnapshot struct {
+	at      time.Time
+	verdict map[string]bool
+}
+
+var systemSessionRule = &systemSessionMemo{now: time.Now, seen: map[string]systemSessionSnapshot{}}
+
+// isSystem is the predicate the emitter consults. It answers from the cached
+// list when it can, and from the session's NAME when it cannot.
+//
+// The name fallback is not a guess: reservedName is half of isSystemSession
+// already, so a harness session called qa-… or t3e2e-… is answered correctly
+// with no list at all. What the fallback cannot see is an unstamped session
+// whose name looks ordinary — and there it fails towards RECORDING, which is
+// the direction telemetry has to fail in: a wrongly-kept event is noise in a
+// query, a wrongly-dropped one is invisible.
+func (m *systemSessionMemo) isSystem(osUser, session string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	snap, have := m.seen[osUser]
+	if !have || now.Sub(snap.at) > systemSessionRefresh {
+		if body, warm := sessionsCacheInstance.get(osUser); warm {
+			snap = systemSessionSnapshot{at: now, verdict: systemSessionVerdicts(body)}
+			m.seen[osUser] = snap
+			have = true
+		}
+	}
+	if have && now.Sub(snap.at) <= systemSessionMaxAge {
+		if sys, known := snap.verdict[session]; known {
+			return sys
+		}
+	}
+	return reservedName(session)
+}
+
+// systemSessionVerdicts reads the served list back into one verdict per
+// session. Parsing the body rather than keeping a parallel structure is what
+// makes this free of the list-building path: the bytes are already there, and
+// this runs at most once per user per refresh window however many events
+// arrive in it.
+func systemSessionVerdicts(body []byte) map[string]bool {
+	var sessions []Session
+	if err := json.Unmarshal(body, &sessions); err != nil {
+		// "[]" is the historic tmux-is-down body and parses fine; anything
+		// that does not is a body nobody should be answering from.
+		log.Printf("telemetry drop rule: the cached session list would not parse: %v", err)
+		return nil
+	}
+	out := make(map[string]bool, len(sessions))
+	for _, s := range sessions {
+		out[s.Name] = isSystemSession(s)
+	}
+	return out
+}
 
 // The browser intake. The lobby pages cannot write to the journal themselves,
 // so they POST batches here: tmux-api already authenticates every request via

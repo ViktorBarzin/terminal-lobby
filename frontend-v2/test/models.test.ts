@@ -23,7 +23,9 @@ import {
  * Every Claude id is an EXACT SLUG, measured against `claude --model <slug>` on
  * 2026-09-06 (Claude Code 2.1.263), and every one of them is a row in the CLI's
  * own picker because managed settings declares it (`modelPicker.options`).
- * Codex's ids are what codex-cli 0.144.3 offered, which were already slugs.
+ * Codex's ids are what codex-cli 0.153.4 offered, which were already slugs, and
+ * each was run through `codex exec -m`. The list gained gpt-6-astra when the
+ * box was moved off 0.144.3, where the model did not exist at all.
  */
 describe("the model catalogue", () => {
   it("offers each harness its own models", () => {
@@ -34,10 +36,10 @@ describe("the model catalogue", () => {
       "claude-sonnet-5",
       "claude-haiku-4-5-20251001",
       "claude-opus-4-8",
-      "claude-fable-5",
     ]);
     expect(modelsFor("codex").map((m) => m.id)).toEqual([
       "default",
+      "gpt-6-astra",
       "gpt-5.6-sol",
       "gpt-5.6-terra",
       "gpt-5.6-luna",
@@ -156,6 +158,15 @@ describe("the model catalogue", () => {
     expect(phraseFor("claude", "model", "default")).toBe("default model");
     expect(phraseFor("codex", "model", "default")).toBe("default model");
     expect(phraseFor("claude", "effort", "default")).toBe("default effort");
+  });
+
+  // Nothing is offered that the account cannot run. claude-fable-5 sat here for
+  // a few hours and starts a Sonnet 5 session instead, so it is out — a row
+  // that delivers a different model than it names is worse than no row.
+  it("offers no model this account cannot run", () => {
+    const ids = modelsFor("claude").map((m) => m.id);
+    expect(ids).not.toContain("claude-fable-5");
+    expect(ids).not.toContain("claude-sonnet-5[1m]");
   });
 
   it("falls back to the id itself for a value the catalogue has never heard of", () => {

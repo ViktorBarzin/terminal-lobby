@@ -25,6 +25,32 @@ export const PUSH_TEST_API = "/api/sessions/push/test";
 // because the connection probes and the tests reach for them.
 const PUSH_FOCUS_API = "/api/sessions/push/focus";
 
+/** Just the two fields secureOrigin reads, so a test can hand it a page. */
+export interface OriginLocation {
+  protocol: string;
+  origin: string;
+}
+
+/**
+ * The page origin to record on the subscription, or undefined for "do not send
+ * one".
+ *
+ * The server has no public-origin config: it sees only the ingress-forwarded
+ * request, so the browser is the half that knows where the app is served from.
+ * It needs the value because a Declarative Web Push message must carry an
+ * ABSOLUTE navigate URL (tmux-api/pushsender.go) — WebKit parses navigate with
+ * no base, and a relative URL drops the entire message, banner included.
+ *
+ * https only, and that guard is what keeps the dev harness working: the server
+ * validates the origin strictly and 400s a bad one, which would take the whole
+ * subscription PUT with it. A page on plain http sends nothing and gets today's
+ * flat payload, which is all a dev browser ever needed.
+ */
+export function secureOrigin(loc: OriginLocation | undefined): string | undefined {
+  if (!loc || loc.protocol !== "https:") return undefined;
+  return loc.origin;
+}
+
 function pushSupported(): boolean {
   return (
     typeof navigator !== "undefined" &&
@@ -55,10 +81,18 @@ export async function subscribePush(): Promise<void> {
         applicationServerKey: base64urlToUint8Array(key),
       });
     }
+    // The origin rides along with the subscription rather than in a call of
+    // its own: it belongs to this device the way the endpoint and the keys do,
+    // and the server preserves it across re-subscribes at the same endpoint.
+    const origin = secureOrigin(globalThis.location);
+    const body = {
+      ...(sub.toJSON ? sub.toJSON() : sub),
+      ...(origin ? { origin } : {}),
+    };
     await fetchWithDeadline(PUSH_SUBS_API, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sub.toJSON ? sub.toJSON() : sub),
+      body: JSON.stringify(body),
     });
   } catch {
     /* enhancement only — the foreground path still delivers */

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"encoding/json"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -118,5 +119,131 @@ func TestEmitBoundsAttrs(t *testing.T) {
 	}
 	if s, ok := out["tl.session"].(string); ok && len(s) > MaxValueLen {
 		t.Errorf("value not truncated: %d > %d", len(s), MaxValueLen)
+	}
+}
+
+// --- the drop rule (docs/plans/2026-09-06-test-session-origin-design.md) ----
+
+// syncCapture is capture with a lock, for the concurrency case. The plain one
+// stays lock-free because every other test emits from one goroutine and a
+// mutex there would say nothing about the code under test.
+type syncCapture struct {
+	mu    sync.Mutex
+	lines []string
+}
+
+func (c *syncCapture) Write(line string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lines = append(c.lines, line)
+}
+
+func (c *syncCapture) count() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.lines)
+}
+
+// A system session is not recorded: it is the QA fleet or a harness driving the
+// real lobby, and counting its turns as usage is what makes the usage numbers
+// wrong.
+func TestEmitDropsEventsNamingADroppedSession(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	e.SetDropRule(func(osUser, session string) bool {
+		return osUser == "wizard" && session == "qa-slug"
+	})
+
+	e.Emit("session.created", "wizard", Attrs{"tl.session": "qa-slug"})
+	if len(c.lines) != 0 {
+		t.Fatalf("a dropped session still wrote: %q", c.lines)
+	}
+
+	// Same session name, a different OS user: the rule gets both, because a
+	// session name is only unique inside one user's tmux server.
+	e.Emit("session.created", "emo", Attrs{"tl.session": "qa-slug"})
+	if len(c.lines) != 1 {
+		t.Fatalf("want the other user's event kept, got %d lines: %q", len(c.lines), c.lines)
+	}
+
+	e.Emit("session.created", "wizard", Attrs{"tl.session": "worktree"})
+	if len(c.lines) != 2 {
+		t.Fatalf("want an allowed session emitted, got %d lines: %q", len(c.lines), c.lines)
+	}
+	got := decode(t, c.lines[1])
+	attrs, _ := got["attrs"].(map[string]any)
+	if attrs["tl.session"] != "worktree" {
+		t.Errorf("an allowed event must be untouched, got %v", attrs)
+	}
+}
+
+// An event with no tl.session names no session, so the rule cannot judge it and
+// must not be asked to. app.loaded and theme.changed are page-level and arrive
+// this way; the browser leg is refused at the qa-harness proxy instead.
+func TestEmitKeepsEventsWithNoSessionAttr(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	asked := false
+	e.SetDropRule(func(string, string) bool {
+		asked = true
+		return true // drop everything it is allowed to judge
+	})
+
+	e.Emit("app.loaded", "wizard", Attrs{"tl.client": "web"})
+	e.Emit("app.loaded", "wizard", nil)
+	// A non-string tl.session is not a session name either.
+	e.Emit("app.loaded", "wizard", Attrs{"tl.session": 7})
+
+	if len(c.lines) != 3 {
+		t.Fatalf("want all 3 session-less events written, got %d: %q", len(c.lines), c.lines)
+	}
+	if asked {
+		t.Error("the rule was consulted for an event carrying no tl.session string")
+	}
+}
+
+// The rule is optional. An emitter that was never given one, and one handed a
+// nil rule, both behave exactly as they did before this existed.
+func TestNilDropRuleDropsNothing(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	e.Emit("session.created", "wizard", Attrs{"tl.session": "qa-slug"})
+
+	e.SetDropRule(func(string, string) bool { return true })
+	e.Emit("session.created", "wizard", Attrs{"tl.session": "qa-slug"})
+
+	e.SetDropRule(nil)
+	e.Emit("session.created", "wizard", Attrs{"tl.session": "qa-slug"})
+
+	if len(c.lines) != 2 {
+		t.Fatalf("want the two unruled emits and nothing from the ruled one, got %d: %q",
+			len(c.lines), c.lines)
+	}
+}
+
+// The rule is installed once at startup and then read from every request
+// goroutine in the service, so the field it lives in is shared state. Run with
+// -race.
+func TestDropRuleIsConcurrencySafe(t *testing.T) {
+	c := &syncCapture{}
+	e := New("tmux-api", "v1", c)
+	e.SetDropRule(func(_, session string) bool { return session == "qa-slug" })
+
+	var wg sync.WaitGroup
+	for i := 0; i < 64; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if i%8 == 0 {
+				e.SetDropRule(func(_, session string) bool { return session == "qa-slug" })
+			}
+			e.Emit("session.created", "wizard", Attrs{"tl.session": "qa-slug"})
+			e.Emit("session.created", "wizard", Attrs{"tl.session": "worktree"})
+		}(i)
+	}
+	wg.Wait()
+
+	if got := c.count(); got != 64 {
+		t.Fatalf("want the 64 allowed emits and none of the dropped ones, got %d", got)
 	}
 }

@@ -52,7 +52,12 @@ const (
 	// field, now good for two: a title cannot contain one, because CleanTitle
 	// strips every control character before a title is ever stored, and
 	// pane_title stays LAST so an embedded tab is soaked into the trailing
-	// field rather than shifting the row.
+	// field rather than shifting the row. @tl_created goes immediately BEFORE
+	// it and not after, so the stamp is never the field a stray tab lands in:
+	// measured on tmux 3.4, both OSC 2 and `select-pane -T` strip a tab out of
+	// a pane title, but a claimed session silently falling back to
+	// session_created is the very bug the stamp exists to fix, so it should not
+	// rest on stripping tmux does not document.
 	//
 	// session_id leads. It is the one field with a guaranteed shape ($N) and
 	// it SURVIVES A RENAME, which is what lets a second tab follow a session
@@ -64,11 +69,14 @@ const (
 		"#{@claude_state}" + listSep +
 		"#{" + sessionBackgroundOption + "}" + listSep +
 		"#{pane_pid}" + listSep + "#{pane_current_command}" + listSep +
-		"#{" + sessionTitleOption + "}" + listSep + "#{pane_title}"
+		"#{" + sessionTitleOption + "}" + listSep +
+		"#{" + sessionBornAsOption + "}" + listSep +
+		"#{" + createdStampOption + "}" + listSep +
+		"#{" + originOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 12
+	listFields = 15
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -76,6 +84,27 @@ const (
 	// gives the final field whatever separators are left over, which is the
 	// only thing protecting the row from a title that contains one.
 	bgColumn = 7
+
+	// bornColumn is where the birth name sits in tmuxListFmt: after @title and
+	// before pane_title, which stays last for the reason bgColumn gives.
+	bornColumn = 11
+
+	// createdColumn is where the claim stamp sits: the last column before
+	// pane_title, for the same reason bgColumn gives. Only the row builders in
+	// the tests address it by name; parseSessions reads it positionally like
+	// every other field.
+	createdColumn = 12
+
+	// originColumn is where the origin stamp sits: the last column before
+	// pane_title, which pushed pane_title from 13 to 14 and moved nothing
+	// ahead of it. Same reason bgColumn gives, and here it is load-bearing
+	// rather than tidy — pane_title is text an application writes for itself
+	// via OSC 2, and SplitN hands the LAST field every separator left over, so
+	// an origin parsed out of the tail would be whatever the pane last said. A
+	// session could then talk itself out of the System group by printing a tab
+	// and the word `user`. Only the row builders in the tests address this by
+	// name; parseSessions reads it positionally like every other field.
+	originColumn = 13
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
@@ -85,11 +114,35 @@ const (
 	// title across a restore.
 	sessionTitleOption = sessionio.OptionTitle
 
+	// sessionBornAsOption carries the name a session was created with, stamped
+	// by the first rename that moves it. It rides this format for the same
+	// reason @title does — the option is already on the session, so reading it
+	// costs nothing — and sits before pane_title, which has to stay last.
+	sessionBornAsOption = sessionio.OptionBornAs
+
 	// sessionBackgroundOption holds the session's outstanding background work
 	// as `<kind>:<id>` tokens, written by the same hook script as
 	// @claude_state. It rides the list format rather than costing a second
 	// tmux call, exactly as @claude_state does.
 	sessionBackgroundOption = sessionio.OptionBackground
+
+	// createdStampOption is when a session became somebody's, as opposed to
+	// when the tmux session was made. The SHELL writes it and this service only
+	// reads it: tmux-user-attach stamps it at the moment a create claims a
+	// pre-warmed slot, because that claim is a `rename-session` and a rename
+	// leaves #{session_created} reading the slot's own age (measured 4h33m
+	// stale on 2026-09-04, and days stale for a standing slot). Spelled as a
+	// literal rather than via sessionio for the same reason @last_drive is —
+	// nothing in Go sets it, so there is no writer to agree with; the guard
+	// that keeps the two spellings together is a test against the script.
+	//
+	// It sits ahead of pane_title, which keeps pane_title the field that soaks
+	// up a stray tab. That cost one index when it landed: pane_title moved from
+	// 12 to 13, and every column ahead of it, bgColumn and bornColumn included,
+	// stayed where it was. @tl_origin has since taken the slot immediately
+	// before pane_title for the same reason, moving pane_title again to 14 and
+	// leaving this stamp at 12.
+	createdStampOption = "@tl_created"
 
 	// sessionsTTL coalesces repeat GET /sessions polls for the same OS
 	// user. Foolery / lobby pollers hit at ~5 s cadence, so the TTL
@@ -245,10 +298,14 @@ func main() {
 	// for the migration having not finished yet, and the lobby's five-second
 	// poll picks up each new name as it lands.
 	// One goroutine, in order: the rename pass makes a pin stale, so the sweep
-	// that repairs stale pins has to follow it rather than race it.
+	// that repairs stale pins has to follow it rather than race it. The origin
+	// grandfather goes LAST for the same reason — it lists sessions itself, and
+	// listing after the renames means it stamps the names the sessions will
+	// keep rather than ones the pass above is about to change underneath it.
 	go func() {
 		migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
 		repairStaleGridPins(mappedOSUsers(), userSessions)
+		grandfatherSessionOrigins(mappedOSUsers(), userSessions)
 	}()
 
 	// Localhost token the devvm attach path uses to record a shared attach's
@@ -277,6 +334,7 @@ func main() {
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/netinfo", handleNetinfo)
+	http.HandleFunc("/agent-spend", handleAgentSpend)
 	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
 	http.HandleFunc("/push/focus", handlePushFocus)

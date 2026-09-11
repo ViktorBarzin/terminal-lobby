@@ -36,8 +36,11 @@ interface Window {
   // command palette and the Paste chord share the button's routine.
   __tlDoPaste?: () => boolean;
   // Set by the mounted SessionView so the lobby's runAppCommand can flip the
-  // per-session text/terminal view. The palette and the Shortcuts sheet both
-  // run `view.toggle` by name, and neither knows which session is mounted.
+  // per-session text/terminal view, since a caller that names `view.toggle`
+  // does not know which session is mounted. That caller is not built yet: as of
+  // 2026-09-06 the palette has no view-toggle entry, the Shortcuts sheet only
+  // prints chords, and the toggle has no chord by decision (see
+  // keybindings/bindings.logic.ts). People use the [Text | Terminal] control.
   // Returns true if a session view was mounted to toggle.
   __tlToggleView?: () => boolean;
   // Set by the mounted MessagesTimeline — scrolls to an event by id and flashes

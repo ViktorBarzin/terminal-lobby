@@ -22,6 +22,9 @@ on:
       - "clipboard-upload/**"
       - "authuser/**"
       - "sessionio/**"
+      # session-events writes the spend store and tmux-api reads it, so a
+      # change to either side has to rebuild the image.
+      - "spendstore/**"
       # skills-api replaces terminal-lobby/skillscan, tmux-api replaces
       # terminal-lobby/slug — both are bundled, so a fix there must rebuild.
       - "skillscan/**"

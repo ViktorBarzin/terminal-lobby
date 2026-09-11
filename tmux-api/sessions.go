@@ -92,13 +92,19 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
-	// A session's name is an opaque id, so a title is the only readable thing
-	// about it — and nobody types one any more. Claude Code's own conversation
-	// summary arrives in the pane title a few seconds after the first prompt,
-	// and this is where it becomes the session's title (autotitle.go). Runs
-	// AFTER clearDeadStates, so a claude that died at launch leaves its session
-	// untitled rather than taking whatever the dead pane last wrote.
+	// A session is created with an opaque id for a name, and nobody types a
+	// title any more. Claude Code's own conversation summary arrives in the pane
+	// title a few seconds after the first prompt, and this is where it becomes
+	// the session's title (autotitle.go). Runs AFTER clearDeadStates, so a
+	// claude that died at launch leaves its session untitled rather than taking
+	// whatever the dead pane last wrote.
 	autoTitleSessions(osUser, sessions, time.Now())
+	// …and the title carries the tmux NAME with it (ADR-0022), so `tmux ls` and
+	// the status bar read as words. autoTitleSessions renames what it titles;
+	// this catches a session titled before the rule existed, and one restored
+	// under an id. Both are fixed points, so a poll with nothing to do costs a
+	// comparison per session.
+	backfillDerivedNames(osUser, sessions)
 	return sessions, activity
 }
 
@@ -209,6 +215,19 @@ func parseSessions(out []byte) []Session {
 		// which is every session predating the option — dropping those rows
 		// would empty the sidebar on the deploy that introduced the field.
 		lastDrive, _ := strconv.ParseInt(parts[5], 10, 64)
+		// @tl_created is parsed leniently for the same reason and wins when it
+		// is there: Created means when the session became SOMEBODY'S, not when
+		// the tmux session was made. A create that claims a pre-warmed slot
+		// does it with `rename-session`, which leaves #{session_created}
+		// reading the slot's own age — hours for a fresh slot, days for a
+		// standing one — so a claimed session would otherwise sort that far
+		// down a newest-first list. tmux-user-attach stamps the option at the
+		// moment of the claim; anything it did not stamp (every session that
+		// predates the stamp, every cold create, every session renamed by hand)
+		// renders empty here and keeps session_created.
+		if claimed, err := strconv.ParseInt(parts[12], 10, 64); err == nil && claimed > 0 {
+			created = claimed
+		}
 		state := parts[6]
 		if !knownStates[state] {
 			state = ""
@@ -226,7 +245,18 @@ func parseSessions(out []byte) []Session {
 			PanePID:      panePID,
 			Command:      parts[9],
 			Title:        parts[10],
-			PaneTitle:    parts[11],
+			BornAs:       parts[11],
+			// @tl_origin is read raw and leniently, for the same reason
+			// @last_drive is: an unset option renders EMPTY, which is what
+			// every session alive on the deploy that introduces it reports,
+			// and rejecting the row for it would empty the sidebar. The parser
+			// does not judge the value either — isSystemSession (origin.go) is
+			// the single place that decides what a stamp means, so a value
+			// nothing in this repo writes reaches it intact rather than being
+			// quietly normalised to "" here and read as a different kind of
+			// unknown.
+			Origin:    parts[13],
+			PaneTitle: parts[14],
 		})
 	}
 	return sessions

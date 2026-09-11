@@ -33,6 +33,14 @@ built in the cluster. `svu` derives the version from conventional commits, so a
 anonymously, so the box needs no apt credential. GitHub releases carry the same
 package as an off-site copy, which is what to reach for if the cluster is down.
 
+The deploy trigger fires as soon as that package is published, and the GitHub
+release is attached afterwards. The order is worth keeping: the box installs
+from the registry, so nothing after the trigger is on the path to shipping, and
+a backup copy that fails should cost the release assets rather than the deploy.
+On 2026-09-06, with the trigger running last, `gh release create` hit a tag that
+had not yet mirrored from Forgejo, the job went red, and a published 0.42.3 sat
+undeployed until someone ran `tl-reconcile` by hand.
+
 **Woodpecker** carries the trigger and nothing else. Runners cannot route to the
 box, and Woodpecker is deploy-only by ADR-0002.
 
@@ -186,6 +194,17 @@ composer's default command runs. Claude is a pinned binary at `/usr/local/bin/cl
 would disappear the first time anyone followed the README. Credentials and
 config live in `~/.claude`, which is inside the mount and so persists. Claude
 signs in on first run, and it accounts for about 335MB of the image.
+
+Settings → Agent spend stays empty here. Claude Code hands its cost figures to
+whatever sits in its statusLine slot and to nothing else, and the image owns no
+Claude configuration to point at a recorder: `~/.claude` belongs to the mounted
+home, and writing into it would make the image the first install shape that
+edits a user's Claude config for them. Filling the page takes two things the
+image does not carry: a copy of `devvm/tl-usage-record` from this repo, named as
+`statusLine.command` in your own `~/.claude/settings.json`, and `jq`, which the
+recorder needs and no-ops without. It posts the reading and then runs whatever
+statusLine was there before. Reasoning:
+`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
 
 Codex is the one option in that dropdown with nothing behind it, and the lobby
 says so: it greys the option out and labels it "not installed", because

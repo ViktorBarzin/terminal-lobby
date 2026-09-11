@@ -8,21 +8,35 @@ import {
   type Component,
 } from "solid-js";
 import type { RenderGroup } from "./lobby.logic";
-import { countStates, groupSeqTokens, groupToken, visibleGroupSeqTokens } from "./lobby.logic";
+import {
+  countStates,
+  groupSeqTokens,
+  groupToken,
+  sessionsByName,
+  visibleGroupSeqTokens,
+} from "./lobby.logic";
 import type { LobbyStore } from "../store/lobby";
 import { UNGROUPED_KEY } from "../store/collapse";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { track } from "../telemetry/track";
 import { SessionCard } from "./SessionCard";
 import { StateDot } from "./StateDot";
-import { hasFinePointer } from "../mobile/pointer";
+import {
+  attachSessionList,
+  GROUP_ATTR,
+  sessionDragActive,
+  liveOrder,
+  TOKEN_ATTR,
+} from "../dnd/sidebar";
 
 /**
  * One sidebar group — a project or the Ungrouped section (inventory Cat.2/3):
  * a collapsible header (chevron/title/count/+/⋯) over its session cards. The
- * header is a drop target for a dragged session (append into this group) and,
- * for reordering, is itself draggable + accepts a dragged header. Reorder and
- * move-up/down go through the store's whole-layout transforms.
+ * body is a sortable list of cards and the header is the handle the group
+ * itself is dragged by, both of them registered with the drag library in
+ * `dnd/sidebar.ts`; move-up/down go through the store's whole-layout
+ * transforms. A collapsed group springs open when a dragged session hovers its
+ * header, which is how a session reaches a group whose cards are not on screen.
  */
 export const ProjectGroup: Component<{
   store: LobbyStore;
@@ -60,7 +74,9 @@ export const ProjectGroup: Component<{
   const canUp = () => seqPos().pos > 0;
   const canDown = () => seqPos().pos >= 0 && seqPos().pos < seqPos().len - 1;
 
-  const menu = createDismissableMenu(() => props.store.hold());
+  // Placed against the window, same as a session card's ⋯: a collapsed project
+  // sitting low in the sidebar had the same popup running off the bottom of it.
+  const menu = createDismissableMenu(() => props.store.hold(), { placed: true });
   /** How many of this group's finished sessions have not been read. */
   const unseenCount = (): number =>
     props.isUnseen ? props.group.sessions.filter((sn) => props.isUnseen!(sn)).length : 0;
@@ -122,98 +138,87 @@ export const ProjectGroup: Component<{
   const moveUp = () => moveBy(-1);
   const moveDown = () => moveBy(1);
 
-  // ---- session drop target (append into this group) + header drag reorder ----
-  // Same rule as a session card: a mouse is present, so native drag is usable.
-  const headerDraggable = () => hasFinePointer();
-  // A drag lives in the DOM node being dragged, so the poll must not rebuild
-  // the group set underneath it — the same hold the add box, the menu and a
-  // card drag take. Without it a poll mid-drag detaches the source (the browser
-  // then fires neither drop nor dragend, and the move is silently swallowed) or
-  // reflows a different group under the cursor (the move persists into the
-  // wrong slot, and saveLayout only toasts in its catch, so nothing says so).
-  let releaseHeaderDrag: (() => void) | null = null;
-  const endHeaderDrag = () => {
-    releaseHeaderDrag?.();
-    releaseHeaderDrag = null;
-  };
-  // dragend is not guaranteed: the drop's own reorder re-creates every header,
-  // and a source that is already detached never receives it. Unmount is the
-  // backstop so a missed dragend cannot strand the poll for good.
-  onCleanup(endHeaderDrag);
-  const onHeaderDragStart = (e: DragEvent) => {
-    if (!headerDraggable()) return;
-    // Guarded like beginAdd above: one drag, one hold, never a second.
-    if (!releaseHeaderDrag) releaseHeaderDrag = props.store.hold();
-    props.store.setDragGroup(token());
-    if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-  };
-  const onHeaderDragEnd = () => {
-    props.store.setDragGroup(null);
+  // ---- drag ----
+  // A collapsed group has no card list to aim at, so hovering its header with a
+  // session in hand opens it and hands the drop to the ordinary sortable
+  // underneath. Springing open beats the old "drop on the header to append"
+  // because it lands the card WHERE the pointer is rather than at the end, and
+  // it is the same gesture on a mouse and a finger — the synthetic drag moves a
+  // clone that takes no pointer events, so `pointermove` still reaches whatever
+  // is under the finger.
+  const SPRING_MS = 550;
+  let springTimer: ReturnType<typeof setTimeout> | undefined;
+  let headerEl: HTMLElement | undefined;
+  const cancelSpring = () => {
+    if (springTimer) clearTimeout(springTimer);
+    springTimer = undefined;
     setDragOver(false);
-    endHeaderDrag();
   };
-  const onDragOver = (e: DragEvent) => {
-    if (props.store.dragName() || props.store.dragGroup()) {
-      e.preventDefault();
-      setDragOver(true);
-    }
+  /**
+   * Left the header, or only crossed something inside it?
+   *
+   * `dragleave` fires on the way into a CHILD as well as on the way out, and
+   * the header is four of them — a chevron, a title, a count and the ⋯ button.
+   * Cancelling on each restarted the timer under a pointer that had not gone
+   * anywhere, so the group never opened and the highlight flickered. A finger
+   * needs no such check: `pointerleave` does not fire for a child.
+   */
+  const leaveHeader = (e: { relatedTarget: EventTarget | null }) => {
+    const to = e.relatedTarget;
+    if (to instanceof Node && headerEl?.contains(to)) return;
+    cancelSpring();
   };
-  const onDragLeave = () => setDragOver(false);
-  /** A FINGER-dragged row is over this header, which means "into this group".
-   *  The mouse gets its highlight from dragover; a touch drag has no such
-   *  event, so it publishes where it is instead (store.dropSpot). */
-  const fingerOver = () => {
-    const spot = props.store.dropSpot();
-    return (
-      !!spot && !spot.anchor && spot.group === (isUngrouped() ? "" : props.group.name)
-    );
+  const overHeader = () => {
+    if (!sessionDragActive()) return;
+    setDragOver(true);
+    if (!collapsed() || springTimer) return;
+    springTimer = setTimeout(() => {
+      springTimer = undefined;
+      props.store.collapse.expand(collapseKey());
+    }, SPRING_MS);
   };
-  const onDrop = async (e: DragEvent) => {
-    setDragOver(false);
-    // Covers the drop that lands back on the header it started from: no
-    // reorder, so nothing re-creates this node and no unmount follows.
-    endHeaderDrag();
-    const sessionName = props.store.dragName() || e.dataTransfer?.getData("text/tl-session");
-    const grp = props.store.dragGroup();
-    if (grp) {
-      e.preventDefault();
-      const tokens = groupSeqTokens(props.store.layout());
-      const from = tokens.indexOf(grp);
-      const to = tokens.indexOf(token());
-      if (from >= 0 && to >= 0 && from !== to) await props.store.reorderGroupsTo(from, to);
-      return;
-    }
-    if (sessionName) {
-      e.preventDefault();
-      await props.store.move(sessionName, isUngrouped() ? "" : props.group.name);
-    }
-  };
+  onCleanup(cancelSpring);
+
+  /** The cards to draw: the model's order, or the one the pointer has now. */
+  const rendered = createMemo(() => {
+    const order = liveOrder(isUngrouped() ? "" : props.group.name);
+    if (!order) return props.group.sessions;
+    const all = sessionsByName(props.store.model());
+    return order.flatMap((n) => {
+      const s = all.get(n);
+      return s ? [s] : [];
+    });
+  });
 
   return (
     <div
       class="tl-group"
+      // Read by the sidebar's own sortable: a group the layout can place says
+      // which slot it holds, and the read-only "Shared with me" group says
+      // nothing, which is what keeps it out of the sequence.
+      {...{ [TOKEN_ATTR]: token() }}
       classList={{
         "tl-group-collapsed": collapsed(),
-        "tl-group-dragover": dragOver() || fingerOver(),
+        "tl-group-dragover": dragOver(),
       }}
     >
       <div
+        ref={(el) => {
+          headerEl = el;
+        }}
         class="tl-group-header"
-        // Read by a finger dragging a row over it: dropping here means "into
-        // this group", and "" is Ungrouped.
-        data-group={isUngrouped() ? "" : props.group.name}
         role="button"
         tabindex={0}
         aria-expanded={!collapsed()}
         aria-label={`${isUngrouped() ? "Ungrouped" : props.group.name} group`}
-        draggable={headerDraggable()}
         onClick={toggleCollapse}
         onKeyDown={onHeaderKey}
-        onDragStart={onHeaderDragStart}
-        onDragEnd={onHeaderDragEnd}
-        onDragOver={onDragOver}
-        onDragLeave={onDragLeave}
-        onDrop={onDrop}
+        onDragOver={overHeader}
+        onDragLeave={leaveHeader}
+        onDrop={cancelSpring}
+        onPointerMove={overHeader}
+        onPointerLeave={cancelSpring}
+        onPointerUp={cancelSpring}
       >
         <span class="tl-chev">▾</span>
         <span class="tl-group-title">{isUngrouped() ? "Ungrouped" : props.group.name}</span>
@@ -280,7 +285,14 @@ export const ProjectGroup: Component<{
             ⋯
           </button>
           <Show when={menu.open()}>
-            <div class="tl-menu" role="menu" onClick={stopMenuClick} onKeyDown={stopMenuActivationKey}>
+            <div
+              class="tl-menu tl-menu-placed"
+              role="menu"
+              ref={menu.popup}
+              style={menu.style()}
+              onClick={stopMenuClick}
+              onKeyDown={stopMenuActivationKey}
+            >
               <Show when={!isUngrouped()}>
                 <button class="tl-menu-item" role="menuitem" onClick={() => void rename()}>Rename project</button>
               </Show>
@@ -295,8 +307,21 @@ export const ProjectGroup: Component<{
       </div>
 
       <Show when={!collapsed()}>
-        <div class="tl-group-body">
-          <For each={props.group.sessions}>
+        <div
+          class="tl-group-body"
+          // The sortable list of this group's cards, and the name a drop reads
+          // back off to say where it landed. "" is Ungrouped.
+          {...{ [GROUP_ATTR]: isUngrouped() ? "" : props.group.name }}
+          ref={(el) =>
+            attachSessionList(el, {
+              group: () => (isUngrouped() ? "" : props.group.name),
+              names: () => props.group.sessions.map((s) => s.name),
+              move: (name, group, anchor) => props.store.move(name, group, anchor),
+              hold: () => props.store.hold(),
+            })
+          }
+        >
+          <For each={rendered()}>
             {(s) => (
               <SessionCard
                 isUnseen={props.isUnseen}

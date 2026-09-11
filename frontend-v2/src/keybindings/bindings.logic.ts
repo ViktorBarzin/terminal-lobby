@@ -19,12 +19,24 @@
  * chord would come back with the dock pillar.
  *
  * The dock landed and took the chord back, as `onDockKey` in App.tsx rather
- * than as a table row. `view.toggle` is in neither table, no listener here
- * matches its chord, and `onDockKey` is the only handler in the tree that
- * matches a J chord at all, so the view toggle has no chord: it runs from the
- * [Text | Terminal] control and from the palette. ShortcutsHelp and
- * settings/pages/KeyboardPage told the user otherwise until 2026-09-06 and now
- * name the dock. Neither table changed.
+ * than as a table row. ShortcutsHelp and settings/pages/KeyboardPage promised
+ * the view toggle on that chord until 2026-09-06, and both now name the dock.
+ * Neither table changed.
+ *
+ * THE VIEW TOGGLE HAS NO CHORD, AND THAT IS SETTLED, not an omission waiting
+ * to be tidied up. `view.toggle` is in neither table below, and `onDockKey` is
+ * the only handler in this tree that matches a J chord at all. Viktor was
+ * asked directly on 2026-09-06 and chose to leave it that way: the
+ * [Text | Terminal] control is the way in, and the command palette is the
+ * other one he named. So DO NOT add a `view.toggle` row below to close the
+ * gap. Reversing the decision means picking a chord that is actually free (J
+ * is the dock's) and changing the two help surfaces back in the same commit.
+ *
+ * One thing to know before reversing it: the palette half of that answer is
+ * not wired. `App.tsx`'s palette action list has no view-toggle entry, so on
+ * 2026-09-06 the segmented control is the only way a person reaches the
+ * toggle, and `runAppCommand`'s `view.toggle` arm runs from tests alone. That
+ * is a gap in the palette, not a reason for a chord.
  */
 import {
   eventMatchesChord,

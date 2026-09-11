@@ -13,10 +13,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: Math.floor(Date.now() / 1000) - 30,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz", osUser: "wizard" };
@@ -110,20 +116,19 @@ async function poll(api: FakeApi, store: LobbyStore, times = 3): Promise<void> {
   }
 }
 
-/** jsdom has no layout: give a card a real box so the drop edge is decidable. */
-function stubRect(el: Element, top: number, height = 20): void {
-  (el as HTMLElement).getBoundingClientRect = () =>
-    ({
-      top,
-      bottom: top + height,
-      height,
-      left: 0,
-      right: 100,
-      width: 100,
-      x: 0,
-      y: top,
-      toJSON: () => ({}),
-    }) as DOMRect;
+/** jsdom has no layout: a real box, so a drag has somewhere to aim. */
+function stubbedRect(top: number, height = 20): DOMRect {
+  return {
+    top,
+    bottom: top + height,
+    height,
+    left: 0,
+    right: 100,
+    width: 100,
+    x: 0,
+    y: top,
+    toJSON: () => ({}),
+  } as DOMRect;
 }
 
 beforeEach(() => {
@@ -137,8 +142,15 @@ beforeEach(() => {
 describe("<Sidebar>", () => {
   it("renders grouped sessions with the right state dots", async () => {
     const api = new FakeApi();
-    api.sessionsVal = [sess("running1", { state: "running" }), sess("waiting1", { state: "awaiting" })];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["running1"] }], ungrouped: ["waiting1"] };
+    api.sessionsVal = [
+      sess("running1", { state: "running" }),
+      sess("waiting1", { state: "awaiting" }),
+    ];
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["running1"] }],
+      ungrouped: ["waiting1"],
+    };
     const { getByText, container, store } = mount(api);
     await store.refresh();
 
@@ -184,7 +196,11 @@ describe("<Sidebar>", () => {
     // cursor as the menu opens.
     const api = new FakeApi();
     api.sessionsVal = [sess("solo")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["solo"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["solo"],
+    };
     const { container, getByLabelText, store } = mount(api);
     await store.refresh();
     await waitFor(() => expect(container.querySelector(".tl-card")).not.toBeNull());
@@ -306,9 +322,11 @@ describe("<Sidebar>", () => {
     store.dispose();
   });
 
-  it("drops a card where the indicator promised, past dead layout refs", async () => {
+  it("drops a card where the pointer left it, past dead layout refs", async () => {
     // The project holds two dead refs before the live cards, so the rendered
-    // index and the layout index disagree by two.
+    // index and the layout index disagree by two. The drop is written against
+    // the NEIGHBOUR the card came to rest past (dnd/anchor.ts), which is what
+    // keeps those two coordinate systems from being confused for each other.
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b"), sess("c")];
     api.layoutVal = {
@@ -319,16 +337,43 @@ describe("<Sidebar>", () => {
     await store.refresh();
     await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(3));
 
-    const cards = [...container.querySelectorAll(".tl-card")];
-    stubRect(cards[1]!, 0, 20);
-    fireEvent.dragStart(cards[0]!); // drag "a"
-    fireEvent.dragOver(cards[1]!, { clientY: 15 }); // lower half of "b" → below
-    expect(cards[1]!.classList.contains("tl-drop-below")).toBe(true);
-    fireEvent.drop(cards[1]!);
+    const live = (): HTMLElement[] =>
+      [...container.querySelectorAll<HTMLElement>(".tl-card")].filter(
+        (c) => c.id !== "dnd-dragged-node-clone",
+      );
+    // Measured live rather than assigned once: the rows reorder under the
+    // pointer as it travels, and a row has to report the seat it is in now.
+    for (const card of live()) {
+      card.getBoundingClientRect = () => stubbedRect(100 + Math.max(0, live().indexOf(card)) * 20);
+    }
+    document.elementFromPoint = (_x: number, y: number) =>
+      live().find((c) => {
+        const r = c.getBoundingClientRect();
+        return y >= r.top && y < r.bottom;
+      }) ?? null;
+
+    const point = (el: Element, type: string, y: number) =>
+      el.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          clientX: 50,
+          clientY: y,
+          pointerType: "touch",
+        }),
+      );
+    const a = live()[0]!;
+    point(a, "pointerdown", 110);
+    await new Promise((r) => setTimeout(r, 600)); // past the 450ms hold
+    point(a, "pointermove", 115);
+    await new Promise((r) => setTimeout(r, 60));
+    point(document.elementFromPoint(50, 135) ?? document.body, "pointermove", 135);
+    await new Promise((r) => setTimeout(r, 60));
+    point(document.elementFromPoint(50, 135) ?? document.body, "pointerup", 135);
 
     await waitFor(() => expect(api.puts.length).toBe(1));
     expect(api.puts[0]!.projects[0]!.sessions).toEqual(["d1", "d2", "b", "a", "c"]);
-    expect([...container.querySelectorAll(".tl-card-name")].map((n) => n.textContent)).toEqual([
+    expect(live().map((n) => n.querySelector(".tl-card-name")?.textContent)).toEqual([
       "b",
       "a",
       "c",

@@ -139,6 +139,43 @@ export function resolvedWatchFor(session: string): boolean | undefined {
 }
 
 /**
+ * Move a session's watch record onto the name a rename gave it.
+ *
+ * WHY A RENAME BREAKS THIS ONE AND NOT THE OTHERS. A session is created with a
+ * minted id and renamed the moment its first title lands (ADR-0022), seconds
+ * into the first turn. The selection follows, App mounts a fresh SessionView
+ * under the new name, and that view RE-TAKES the join decision — while this
+ * client is still attached read-write to the very session it is deciding about.
+ * `driven` counts our own attach, so the automatic rule reads a session we are
+ * driving as one somebody else is driving and joins it as a viewer. Reported
+ * 2026-09-06: a new session went read-only a few seconds after it was created,
+ * and every one of them had to be taken back by hand.
+ *
+ * So an explicit choice MOVES, and an automatic one is WRITTEN DOWN: what the
+ * open view resolved when it took the session on is the answer the rule would
+ * still give, and recording it is what stops the rule being re-run against a
+ * `driven` count that now includes us. Nothing to carry means no view is open
+ * and no client of ours holds the session, and there the rule is right alone.
+ *
+ * Writes go through `lsSet` rather than `saveWatch` because a rename is not a
+ * person switching, and a `watch.switched` event for one would make the
+ * telemetry read as though they had.
+ */
+export function carryWatch(from: string, to: string, as = ""): void {
+  if (from === to) return;
+  const choice = loadWatch(from, as) ?? resolvedWatch.get(from);
+  if (choice === undefined) return;
+  lsSet(watchKey(from, as), null);
+  lsSet(watchKey(to, as), choice ? "ro" : "rw");
+  // The old view's own cleanup would clear `from` a moment later; moving it now
+  // is what keeps the sidebar card from showing the automatic answer in
+  // between. Only when there WAS a view — this map means "a view is open on
+  // this session", and an entry for one nobody has open would be a lie.
+  if (resolvedWatch.delete(from)) resolvedWatch.set(to, choice);
+  setRev((n) => n + 1);
+}
+
+/**
  * Resolved watch state for the current session, plus a setter that always
  * records an EXPLICIT choice (so the automatic rule cannot immediately undo it).
  *

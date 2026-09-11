@@ -42,6 +42,7 @@ import type { DraftAttachment } from "../store/drafts";
 import { StatusDot } from "./StatusDot";
 import { TerminalNative } from "./TerminalNative";
 import { terminalFrameArgs } from "../lib/terminal-url";
+import { setSessionGrid } from "../lib/lobby-api";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
 import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { modelHarness } from "../lib/models";
@@ -269,6 +270,45 @@ export const SessionView: Component<{
   // described.
   onCleanup(() => clearResolvedWatch(session));
 
+  /**
+   * The last grid this view claimed, and when. A claim is idempotent and cheap,
+   * but the terminal fires one on every landed fit and on every focus, so a
+   * drag-resize or a click-happy minute would otherwise be a request each.
+   */
+  let claimedGrid = "";
+  let claimedAt = 0;
+  /** How long the same grid stays claimed before it is worth saying again. */
+  const GRID_CLAIM_QUIET_MS = 1500;
+  /**
+   * Point this session's tmux window at the device reading it.
+   *
+   * TWO REFUSALS, both of which have to be here rather than in the terminal or
+   * the server:
+   *
+   *   - WATCHING. A read-only client taking the size is the whole of what
+   *     PinGrid refuses, and the server cannot tell this device from the
+   *     desktop it is watching — one identity header, and no way to say which
+   *     tmux client an HTTP request belongs to. So the watching device declines,
+   *     and that is what keeps Watch mode's promise that a phone opening a
+   *     session never reflows the desktop driving it.
+   *   - SOMEONE ELSE'S SESSION. The endpoint acts on the caller's own OS user,
+   *     so a shared attach would only ever 404 against a name it does not have.
+   *
+   * Fire-and-forget past that: the client swallows its own failures, and a
+   * window that did not move is a terminal at the wrong width rather than
+   * anything to report.
+   */
+  const claimGrid = (cols: number, rows: number): void => {
+    if (watch()) return;
+    if (props.owner && props.owner !== props.me?.()) return;
+    const grid = `${cols}x${rows}`;
+    const now = Date.now();
+    if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
+    claimedGrid = grid;
+    claimedAt = now;
+    void setSessionGrid(session, cols, rows);
+  };
+
   // The transcript stream is opened by the Text view, not by mounting this one.
   // v1 is terminal-first: a session opens on the Terminal view and Text is
   // opt-in, so a store that connected at construction spent a
@@ -338,14 +378,18 @@ export const SessionView: Component<{
   });
 
   // Ctrl/Cmd+J belongs to the scratch-shell dock, as it does on the vanilla
-  // page — the view toggle keeps the [Text|Terminal] control and the
-  // `view.toggle` command, which is what a chord would have run anyway. Text
-  // mode is deferred for v1, so the segmented control is enough for it.
+  // page, and the view toggle has had no chord since. Viktor settled that on
+  // 2026-09-06: the [Text|Terminal] control is enough, and the reasoning plus
+  // the note not to add a binding row are in keybindings/bindings.logic.ts.
 
   // Publish the toggle so the lobby's command dispatcher can reach it without
-  // the shell owning the view mode: `view.toggle` runs from the palette and
-  // from the Shortcuts sheet, neither of which knows which session is mounted.
-  // Same bridge pattern as __tlOpenFind.
+  // the shell owning the view mode. Same bridge pattern as __tlOpenFind.
+  //
+  // Nothing dispatches `view.toggle` today (2026-09-06): App.tsx's palette
+  // action list has no entry for it and the Shortcuts sheet only prints chords,
+  // so this bridge is installed for a caller that does not exist yet. It stays
+  // because the missing piece is the palette entry, and this is what that entry
+  // would need in order to reach whichever session is mounted.
   const toggleView = (): boolean => {
     toggleMode();
     return true;
@@ -925,7 +969,13 @@ export const SessionView: Component<{
               resizing went with it, and sixel went on purpose (the de-iframe
               plan supersedes ADR-0004). Those are gaps to close here, not a
               reason to keep a second terminal: a way back that nobody
-              maintains is a second thing to break. */}
+              maintains is a second thing to break.
+
+              One gap has been made honest rather than closed. The Settings
+              toggle for flow control went on 2026-09-06, because it wrote
+              `tl-flow-control` and the accounting on this list is what would
+              have read it. Porting the accounting means bringing that control
+              back with it. */}
           <TerminalNative
             args={terminalFrameArgs(session, {
               cmd: props.creating ? props.newCommand?.() : undefined,
@@ -952,6 +1002,10 @@ export const SessionView: Component<{
             // handed `args`, not a name. It is in our own document, so the
             // name is ours to supply and there is nothing to validate.
             onAttention={(kind) => noteAttention(kind, session)}
+            // Which session's window to size, and whether this device may say
+            // so at all, both belong here for the same reason `onAttention`'s
+            // name does: the terminal is handed `args`, not a session.
+            onGrid={claimGrid}
             // Only the session ON SCREEN speaks for the terminal channel.
             // Every visited session stays mounted, so without this guard a
             // hidden tab's terminal would keep overwriting the badge for the
@@ -970,9 +1024,9 @@ export const SessionView: Component<{
         </section>
       </main>
 
-      {/* TERMINAL view only. The keys are terminal affordances — Esc, ⇧Tab, the
-          arrows, Ctrl/Alt — and text mode has a text field, not a pty: they
-          took two rows above the keyboard for nothing (Viktor, 2026-08-17).
+      {/* TERMINAL view only. The keys are terminal affordances — Tab, Esc, the
+          arrows, Copy, Paste — and text mode has a text field, not a pty: they
+          took a row above the keyboard for nothing (Viktor, 2026-08-17).
           Unmounting rather than hiding, so the toolbar's own cleanup hands
           --sk-h back to the view and the composer sits on the keyboard.
 

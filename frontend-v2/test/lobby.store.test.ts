@@ -13,6 +13,9 @@ import {
 } from "../src/types/lobby";
 import { promptLineFor } from "../src/store/prompt-line";
 import { isSessionId } from "../src/lib/session-id";
+import { loadWatch, publishResolvedWatch, resolveWatch } from "../src/store/watchmode";
+import { loadMode, saveMode } from "../src/store/viewmode";
+import { loadDraft, saveDraft } from "../src/store/drafts";
 
 const sess = (name: string, over: Partial<Session> = {}): Session => ({
   name,
@@ -20,10 +23,16 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  // Somebody's own session. An unstamped one is a SYSTEM session and files
+  // itself under System instead (components/lobby.logic.ts isSystemSession).
+  origin: "user",
   ...over,
 });
 
 class FakeApi implements LobbyApi {
+  /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
+   *  card out of System, so it only has to exist. */
+  async setSessionOrigin() {}
   async prewarm(_dir: string) {}
   async releasePrewarm(_dir: string) {}
   whoamiVal: Whoami = { authentik: "wiz@x", osUser: "wizard" };
@@ -164,7 +173,11 @@ describe("lobby store", () => {
   it("loads whoami + sessions + layout and derives groups", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: ["a"] }], ungrouped: ["b"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: ["a"] }],
+      ungrouped: ["b"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       expect(store.me()).toBe("wizard");
@@ -197,7 +210,10 @@ describe("lobby store", () => {
       await store.refresh();
       const id = await store.create("scratch \u{1F680}", "", "name");
       expect(isSessionId(id)).toBe(true);
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(card?.title).toBe("scratch \u{1F680}");
       // stampTitleWhenAlive's first rung, the same ladder the refresh burst uses
       await vi.advanceTimersByTimeAsync(700);
@@ -214,7 +230,10 @@ describe("lobby store", () => {
     await withStore(api, async (store) => {
       await store.refresh();
       const id = await store.create("Fix the deploy\nit 500s on push", "");
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       // The card reads as the prompt's FIRST LINE while it waits.
       expect(card?.title).toBe("Fix the deploy");
       await vi.advanceTimersByTimeAsync(7000);
@@ -319,7 +338,10 @@ describe("lobby store", () => {
       expect(isSessionId(id)).toBe(true);
       expect(api.puts).toHaveLength(1);
       expect(store.toast()).toBeNull();
-      const card = store.model().groups.flatMap((g) => g.sessions).find((c) => c.name === id);
+      const card = store
+        .model()
+        .groups.flatMap((g) => g.sessions)
+        .find((c) => c.name === id);
       expect(sessionLabel(card!)).toBe(NEW_SESSION_LABEL);
     });
   });
@@ -472,6 +494,142 @@ describe("lobby store", () => {
     });
   });
 
+  /**
+   * THE RENAME NOBODY SAW COMING, which is the one that actually stranded tabs.
+   *
+   * A session is renamed the moment its first title lands, seconds in, and the
+   * session list is behind a 5-second cache — so the poll can go straight from
+   * "no such session" to the new name, with the minted id never appearing in a
+   * list at all. There is no previous row to match an id against, so the server
+   * records the name the session was created with and the selection follows
+   * that instead.
+   *
+   * Measured on the box 2026-09-06: of four sessions created that evening, two
+   * were renamed 3-5s in, before any poll had listed them.
+   */
+  it("follows a rename of a session the poll never saw under its old name", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("8tw14vd9gyxs"); // minted here; the server has never seen it
+
+      api.sessionsVal = [{ ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs" }];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("single-word-reply");
+    });
+  });
+
+  it("carries the watch decision across a rename it never saw either", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("8tw14vd9gyxs");
+      publishResolvedWatch("8tw14vd9gyxs", false);
+
+      api.sessionsVal = [
+        { ...sess("single-word-reply"), id: "$41", bornAs: "8tw14vd9gyxs", driven: true },
+      ];
+      await store.refresh();
+
+      expect(loadWatch("single-word-reply")).toBe(false);
+    });
+  });
+
+  it("does not take a birth name as proof when the old name is still live", async () => {
+    // Two sessions can carry the same text, and a session that is still in the
+    // list has not been renamed. The live row wins.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("mine"), id: "$1" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("mine");
+
+      api.sessionsVal = [
+        { ...sess("mine"), id: "$1" },
+        { ...sess("other"), id: "$2", bornAs: "mine" },
+      ];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("mine");
+    });
+  });
+
+  /**
+   * THE BUG A RENAME USED TO CAUSE, and the reason this carry exists.
+   *
+   * A fresh session is created with a minted id and renamed the moment its
+   * first title lands (ADR-0022). The selection follows, App mounts a new
+   * SessionView under the new name, and that view re-takes the join decision —
+   * with THIS CLIENT still attached read-write. `driven` counts it, so the
+   * session the person is driving reads as one somebody else is driving, and
+   * the view joins it as a viewer. Reported 2026-09-06: "once the session is
+   * created, it's renamed then the web ui shows it as view-only".
+   */
+  it("a rename carries the watch decision, so a session you are driving stays yours to drive", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("824smya2cmz5"), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("824smya2cmz5");
+      // What the open view resolved when it took the session on: nobody had
+      // chosen, nobody was driving, so it drives.
+      publishResolvedWatch("824smya2cmz5", false);
+
+      api.sessionsVal = [
+        {
+          ...sess("remove-changed-files-panel"),
+          id: "$41",
+          title: "Remove changed files panel",
+          driven: true,
+        },
+      ];
+      await store.refresh();
+
+      expect(store.selected()?.name).toBe("remove-changed-files-panel");
+      // Explicit, so the automatic rule cannot read our own attach as somebody
+      // else's and downgrade the new mount to a viewer.
+      expect(loadWatch("remove-changed-files-panel")).toBe(false);
+      expect(resolveWatch(loadWatch("remove-changed-files-panel"), true)).toBe(false);
+    });
+  });
+
+  it("a rename carries the view a session was being read in, and its unsent draft", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("824smya2cmz5"), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      saveMode("824smya2cmz5", "text");
+      saveDraft("824smya2cmz5", { text: "half a thought", attachments: [], at: 1 });
+
+      api.sessionsVal = [{ ...sess("beads"), id: "$41", title: "Beads" }];
+      await store.refresh();
+
+      expect(loadMode("beads")).toBe("text");
+      expect(loadDraft("beads")?.text).toBe("half a thought");
+      expect(loadDraft("824smya2cmz5")).toBeNull();
+    });
+  });
+
+  it("does not carry records across a rename in somebody else's account", async () => {
+    // A foreign session's id comes from ANOTHER tmux server, where the same
+    // `$41` names an unrelated session. Matching ids across the two accounts
+    // would move this user's records onto a stranger's name.
+    const api = new FakeApi();
+    api.sessionsVal = [{ ...sess("theirs", { owner: "bob" }), id: "$41" }];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      publishResolvedWatch("theirs", false);
+
+      api.sessionsVal = [{ ...sess("mine"), id: "$41" }];
+      await store.refresh();
+
+      expect(loadWatch("mine")).toBeUndefined();
+    });
+  });
+
   it("kill: calls the API and removes the session from the model", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a"), sess("b")];
@@ -488,7 +646,11 @@ describe("lobby store", () => {
   it("move: PUTs a layout with the session in the target project", async () => {
     const api = new FakeApi();
     api.sessionsVal = [sess("a")];
-    api.layoutVal = { ...emptyLayout(), projects: [{ name: "work", sessions: [] }], ungrouped: ["a"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "work", sessions: [] }],
+      ungrouped: ["a"],
+    };
     await withStore(api, async (store) => {
       await store.refresh();
       await store.move("a", "work");

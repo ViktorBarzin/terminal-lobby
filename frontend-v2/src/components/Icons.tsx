@@ -55,6 +55,14 @@ export const ClipboardIcon: Component<{ size?: number }> = (props) => (
   </Svg>
 );
 
+/** lucide `copy` — copy the terminal selection (the mobile key row's Copy). */
+export const CopyIcon: Component<{ size?: number }> = (props) => (
+  <Svg size={props.size}>
+    <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+    <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+  </Svg>
+);
+
 /** lucide `file-text` — the file preview overlay. */
 export const FileTextIcon: Component<{ size?: number }> = (props) => (
   <Svg size={props.size}>
