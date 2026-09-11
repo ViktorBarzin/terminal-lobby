@@ -145,6 +145,17 @@ export interface LobbyStore {
   /** Is this session inside its kill window: on its way out, still in the
    *  list, and drawn dimmed with an undo arrow instead of vanishing? */
   killing(name: string): boolean;
+  /**
+   * When this session's kill lands, as epoch ms, or undefined when it is not
+   * inside a window.
+   *
+   * The DEADLINE rather than a remaining count, because a count would have to
+   * be re-published every second by whoever owns the timer, and nothing here
+   * wants a second 1Hz signal: the sidebar already has one, and the card
+   * subtracts on it (components/SessionCard.tsx). Reactive on arming and
+   * disarming, not on the clock.
+   */
+  killingUntil(name: string): number | undefined;
   /** Take back THIS session's kill, which is what the dimmed card's arrow
    *  presses. See the function: it undoes that kill's own entry rather than
    *  the top of the stack, and works in a tab that has no stack at all. */
@@ -347,6 +358,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
   interface PendingKill {
     name: string;
     timer?: ReturnType<typeof setTimeout>;
+    /** When the timer above fires, so the card can count down to it. */
+    until: number;
   }
 
   /** Kills waiting out their window, keyed by the name they are waiting on. */
@@ -1213,7 +1226,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // seconds reads as a kill that missed. The entry remembers it was open, so
     // an undo hands it straight back.
     if (selected()?.name === name) deselect();
-    const rec: PendingKill = { name };
+    const rec: PendingKill = { name, until: Date.now() + GRACE_MS };
     rec.timer = setTimeout(() => {
       // Out of the map first, so the killNow below finds no window to cancel.
       pendingKills.delete(rec.name);
@@ -1843,6 +1856,12 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     rename,
     kill,
     killing: (name) => killingNames().includes(name),
+    // Reads the signal before the map, so a card that renders a countdown is
+    // subscribed to arming and disarming. The map itself is not reactive, and
+    // the deadline inside it never changes once written, so there is nothing
+    // else to track: the clock is the card's own tick.
+    killingUntil: (name) =>
+      killingNames().includes(name) ? pendingKills.get(name)?.until : undefined,
     takeBackKill,
     move,
     setSessionOrderMode,

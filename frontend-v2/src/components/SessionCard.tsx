@@ -108,6 +108,29 @@ export const SessionCard: Component<{
    */
   const canTakeBack = () => killing();
   /**
+   * Whole seconds until this kill lands, or 0 when there is nothing to count.
+   *
+   * Eight seconds is short enough that "plenty of time" and "about to go" are
+   * the whole decision, and a row that only fades cannot tell them apart. The
+   * store publishes the DEADLINE (`killingUntil`) and this subtracts, so the
+   * only clock involved is the sidebar's existing 1Hz `tick` — reading it here
+   * is what makes this re-run, exactly as `rightText` does for a working timer.
+   *
+   * Rounded UP: at 2.5s left this says 3. Rounding down would show 2 with two
+   * and a half seconds to go, which is the direction that costs somebody a
+   * session they were still deciding about. It also means the last number seen
+   * is 1 rather than 0, and 0 is hidden — a zero would sit on screen for the
+   * moment between the deadline and the store clearing `killing`, reading as a
+   * countdown that stalled.
+   */
+  const secondsLeft = () => {
+    if (!killing()) return 0;
+    props.tick();
+    const until = props.store.killingUntil(s().name);
+    if (until === undefined) return 0;
+    return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+  };
+  /**
    * The way back, and on a phone the ONLY one: there is no Cmd+Z on a touch
    * screen, and the right-swipe that kills has no confirm in front of it any
    * more.
@@ -589,6 +612,17 @@ export const SessionCard: Component<{
         >
           ⋯
         </button>
+      </Show>
+
+      {/* How long there is, to the left of the way out, so the pair reads as
+          "three seconds, and here is the button". `aria-hidden` because a live
+          number in the accessible tree would announce itself every second; the
+          arrow beside it carries the one label worth reading, and it does not
+          change. */}
+      <Show when={secondsLeft() > 0}>
+        <span class="tl-card-countdown" aria-hidden="true">
+          {secondsLeft()}
+        </span>
       </Show>
 
       {/* The way out of a kill, in the slot the ⋯ button just gave up so the

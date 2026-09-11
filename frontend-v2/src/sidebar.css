@@ -565,11 +565,16 @@
   background: color-mix(in srgb, var(--danger) 10%, transparent);
   cursor: default;
 }
-/* Everything fades EXCEPT the arrow. `opacity` on the row itself would take the
-   way out down with it: opacity makes a group, and no child can climb back out
-   of one. ::before is the active/unseen accent bar, which is part of the row
-   rather than a child of it. */
-.tl-card[data-killing] > *:not(.tl-card-undo),
+/* Everything fades EXCEPT the arrow and the seconds beside it. `opacity` on the
+   row itself would take the way out down with it: opacity makes a group, and no
+   child can climb back out of one. ::before is the active/unseen accent bar,
+   which is part of the row rather than a child of it.
+
+   The countdown is exempt for the same reason the arrow is. It is the half of
+   the pair that says how long there is, and a number at 0.45 against a faded
+   row is the first thing to become unreadable at a glance, which is the one
+   moment it matters. */
+.tl-card[data-killing] > *:not(.tl-card-undo, .tl-card-countdown),
 .tl-card[data-killing]::before {
   opacity: 0.45;
 }
@@ -763,6 +768,24 @@
 }
 .tl-card-undo:hover {
   background: var(--hover-tint);
+}
+/* The seconds left, beside the arrow. Tabular figures so the row does not jog
+   sideways as 8 becomes 7: the digits are different widths in a proportional
+   face, and a number that shifts every second reads as the layout settling
+   rather than a clock running down. `--danger` because this is the half that
+   says the row is going, while the arrow stays in the ordinary text colour as
+   the half that says it need not. */
+.tl-card-countdown {
+  font-size: 12px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--danger);
+  padding: 0 2px;
+  flex-shrink: 0;
+  /* Two digits never happen at eight seconds, but the width is reserved so the
+     arrow sits in one place for the whole window. */
+  min-width: 12px;
+  text-align: right;
 }
 /* The row's own focus ring, on the button inside it: this is reached by Tab, so
    it needs to say where the keyboard is. */

@@ -20,7 +20,8 @@
  * reason test/card.longpress.css.test.ts gives: jsdom does no layout and
  * evaluates no media query.
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render, waitFor } from "@solidjs/testing-library";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -51,7 +52,16 @@ interface Mounted {
  * presses. The store owns both, and what `takeBackKill` does with the stack is
  * its business rather than the card's (store/lobby.ts).
  */
-function mount(o: { killing?: boolean; answer?: UndoResult } = {}): Mounted {
+function mount(
+  o: {
+    killing?: boolean;
+    answer?: UndoResult;
+    /** The instant the kill lands, as store/lobby.ts `killingUntil` reports it. */
+    until?: number;
+    /** The sidebar's 1Hz tick, so a case can step the countdown by hand. */
+    tick?: () => number;
+  } = {},
+): Mounted {
   const select = vi.fn();
   const kill = vi.fn(async () => {});
   const takeBackKill = vi.fn(async (): Promise<UndoResult> => o.answer ?? { ok: true });
@@ -64,12 +74,13 @@ function mount(o: { killing?: boolean; answer?: UndoResult } = {}): Mounted {
     hold: () => () => {},
     layout: () => ({ version: 1, projects: [], ungrouped: [], ungroupedIndex: 0 }),
     killing: () => o.killing ?? false,
+    killingUntil: () => o.until,
     select,
     kill,
     takeBackKill,
   } as unknown as LobbyStore;
   const { container } = render(() => (
-    <SessionCard store={store} session={session()} groupName="" tick={() => 0} />
+    <SessionCard store={store} session={session()} groupName="" tick={o.tick ?? (() => 0)} />
   ));
   return { container, select, kill, takeBackKill };
 }
@@ -267,6 +278,88 @@ describe("<SessionCard> — a session inside its kill window", () => {
 });
 
 /**
+ * The countdown beside the arrow.
+ *
+ * The dim and the strike say a row is leaving. They cannot say how long is
+ * left, and eight seconds is short enough that the difference between "plenty
+ * of time" and "about to go" is the whole decision. So the row counts the
+ * seconds down.
+ *
+ * The number is computed here, not published by the store: the store hands out
+ * the DEADLINE (`killingUntil`) and the sidebar's existing 1Hz tick is what
+ * makes this re-read it, so no second timer exists and nothing has to be
+ * pushed every second.
+ */
+describe("<SessionCard> — the kill countdown", () => {
+  // Scoped to this suite: the swipe cases above run on real timers.
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  const counter = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-card-countdown");
+
+  it("opens on the whole window, so the first thing read is how long there is", () => {
+    vi.setSystemTime(new Date(1_700_000_000_000));
+    const { container } = mount({ killing: true, until: 1_700_000_008_000 });
+    expect(counter(container)?.textContent).toBe("8");
+  });
+
+  it("counts down as the tick advances", () => {
+    vi.setSystemTime(new Date(1_700_000_000_000));
+    const [tick, setTick] = createSignal(0);
+    const { container } = mount({ killing: true, until: 1_700_000_008_000, tick });
+    expect(counter(container)?.textContent).toBe("8");
+
+    // A second of wall clock plus the tick that tells the row to look again.
+    // Both are needed, and that is the point: the tick alone would re-render
+    // the same number, and the clock alone would move nothing on screen.
+    vi.setSystemTime(new Date(1_700_000_001_000));
+    setTick(1);
+    expect(counter(container)?.textContent).toBe("7");
+
+    vi.setSystemTime(new Date(1_700_000_005_500));
+    setTick(5);
+    // Rounded UP: 2.5s left reads "3", because a row that says 2 with two and a
+    // half seconds to go is lying in the direction that costs someone a session.
+    expect(counter(container)?.textContent).toBe("3");
+  });
+
+  it("never shows a zero or a negative, however late the last tick lands", () => {
+    vi.setSystemTime(new Date(1_700_000_000_000));
+    const [tick, setTick] = createSignal(0);
+    const { container } = mount({ killing: true, until: 1_700_000_008_000, tick });
+
+    // The deadline has passed but this row has not been told yet: the store
+    // clears `killing` from a timer, and a tick can land first.
+    vi.setSystemTime(new Date(1_700_000_009_000));
+    setTick(9);
+    expect(counter(container)).toBeNull();
+  });
+
+  it("is absent when nothing is being killed", () => {
+    const { container } = mount();
+    expect(counter(container)).toBeNull();
+  });
+
+  it("is absent when a kill has no deadline, rather than rendering a guess", () => {
+    // A store that reports `killing` and no deadline is the shape an older
+    // build had. The row still dims and still offers the arrow; it just has no
+    // number to show.
+    const { container } = mount({ killing: true });
+    expect(counter(container)).toBeNull();
+    expect(arrow(container)).not.toBeNull();
+  });
+
+  it("stays out of the accessible name, so nothing announces every second", () => {
+    vi.setSystemTime(new Date(1_700_000_000_000));
+    const { container } = mount({ killing: true, until: 1_700_000_008_000 });
+    expect(counter(container)!.getAttribute("aria-hidden")).toBe("true");
+    // The arrow keeps the one label a screen reader should read, unchanged by
+    // the clock.
+    expect(arrow(container)!.getAttribute("aria-label")).toBe("Undo kill");
+  });
+});
+
+/**
  * The two halves that live in the stylesheet. Both are behaviour rather than
  * decoration: what fades decides whether the way out is still readable, and the
  * target size decides whether a thumb can hit it at all.
@@ -307,8 +400,16 @@ describe("the killing card, in sidebar.css", () => {
   it("fades the row without taking the way out down with it", () => {
     // opacity makes a group, so a child cannot climb back out of a faded
     // parent: the fade has to skip the arrow rather than undo itself on it.
-    expect(css).toContain(".tl-card[data-killing] > *:not(.tl-card-undo)");
+    // The countdown is exempt for the same reason — it is the half of the pair
+    // that says how long there is, and it is unreadable first.
+    expect(css).toContain(".tl-card[data-killing] > *:not(.tl-card-undo, .tl-card-countdown)");
     expect(body(".tl-card[data-killing]::before")).toMatch(/opacity:\s*0?\.\d+/);
+  });
+
+  it("holds the digits to one width, so the row does not jog as it counts", () => {
+    // 8 and 7 are different widths in a proportional face, and a number that
+    // shifts every second reads as the layout settling rather than a clock.
+    expect(body(".tl-card-countdown")).toMatch(/font-variant-numeric:\s*tabular-nums/);
   });
 
   it("strikes the title through, because a dim row alone reads as disabled", () => {

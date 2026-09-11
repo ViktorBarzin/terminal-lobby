@@ -94,7 +94,8 @@ written over the new one.
 
 **Killing waits instead of asking.** There is no "Kill session X?" box any
 more. The card stays in the sidebar for eight seconds, dimmed and struck
-through, with a `↺` arrow in the slot its `⋯` button gave up, and nothing
+through, with a `↺` arrow in the slot its `⋯` button gave up and the seconds
+left counting down beside it, and nothing
 reaches the server until those eight seconds are out. Press the arrow, press
 `Ctrl+Z`, or pick **Undo** from the palette, and the session was never killed.
 The arrow is the way back on a phone, where there is no `Ctrl+Z` to press.

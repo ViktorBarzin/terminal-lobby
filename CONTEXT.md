@@ -280,7 +280,8 @@ happened; this one holds only what can still be taken back)
 **Grace window**:
 The eight seconds a killed session stays in the sidebar before the DELETE goes
 out (`GRACE_MS`, `store/lobby.ts`). The card is dimmed and struck through and
-carries a `↺` arrow, the session is deselected, and nothing has reached
+carries a `↺` arrow with the **seconds left** beside it, the session is
+deselected, and nothing has reached
 tmux-api yet. Taking the kill back inside the window is therefore a cancelled
 timer rather than a recovery, and it cannot fail. The arrow takes back the kill
 of the card it sits on, whatever else has landed on the **undo stack** since,
@@ -289,8 +290,21 @@ X?" question on every kill path, which is why no kill asks anything now. Kept
 per session **name** in the lobby store, in the browser and nowhere else: a tab
 that goes away mid-window sends its kill from `pagehide` rather than handing
 the window to the next page life.
-_Avoid_: countdown (nothing counts down on screen), soft delete, trash,
-deferred kill
+_Avoid_: soft delete, trash, deferred kill
+
+**Seconds left**:
+The whole seconds until a **Grace window** closes, counted down on the dimmed
+card beside its `↺` arrow. The store publishes the DEADLINE (`killingUntil`,
+`store/lobby.ts`) and the card subtracts on the sidebar's existing 1Hz tick, so
+there is no second timer and nothing is pushed per second. Rounded UP, so 2.5
+seconds left reads `3`: rounding down would show a number lower than the time
+actually remaining, which is the direction that costs somebody a session they
+were still deciding about. Hidden at zero rather than shown, because the
+moment between the deadline and the store clearing the window would otherwise
+read as a counter that stalled. Marked `aria-hidden`: a number in the
+accessible tree announces itself every second, and the arrow beside it already
+carries the one label worth reading.
+_Avoid_: timer, timeout, TTL
 
 **Resurrection record**:
 What a landed kill leaves behind so it can still be undone: the tmux-persist
