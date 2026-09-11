@@ -183,6 +183,13 @@ export const SessionCard: Component<{
   // second, so a card with the time hidden and nothing running stops
   // re-rendering on the clock entirely.
   const rightText = () => {
+    // Nothing while the row is leaving. The countdown sits in this corner for
+    // those eight seconds, and two numbers side by side that mean different
+    // things is worse than either alone: measured on a real card, a session six
+    // seconds into a turn with six seconds left to live drew `0:06` beside `6`.
+    // How long it has been working is also the least interesting fact about a
+    // session that is about to stop.
+    if (killing()) return "";
     if (s().state === "running") {
       props.tick();
       const since = props.store.workingSince(s().name);
