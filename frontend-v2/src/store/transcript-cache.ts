@@ -21,8 +21,20 @@
  * a dependency to test our own arithmetic is the wrong trade. The policy here —
  * what to keep, what to evict, where to resume — is pure and tested against an
  * in-memory backend; `indexedDbBackend()` is the thin adapter that puts it on
- * disk, and it is the only part a browser is needed to exercise.
+ * disk. The adapter's own schema decisions — which version, which index, what a
+ * sweep is allowed to read — are driven in the tests against a hand-rolled fake
+ * store that records what was asked for, because "it never called getAll()" is
+ * the assertion that matters and no real browser is needed to make it.
+ *
+ * WHY solid-js/store IS IMPORTED HERE and nowhere else in this file. What a
+ * caller holds a transcript in is its own business, but what reaches a backend
+ * has to survive the structured clone algorithm, and only this module knows
+ * that. `unwrap` is a pure function over data — it brings no DOM, no
+ * reactivity and nothing jsdom lacks — so the policy above is still testable
+ * without a browser.
  */
+import { unwrap } from "solid-js/store";
+
 import type { Event } from "../types/events";
 
 /** Newest events kept per session. A turn is a handful of events, so this is
@@ -57,7 +69,13 @@ export interface CacheBackend {
   read(session: string): Promise<CacheRecord | null>;
   write(record: CacheRecord): Promise<void>;
   remove(session: string): Promise<void>;
-  /** Every session held, for eviction. Order is not guaranteed. */
+  /**
+   * Every session held, for eviction. Order is not guaranteed.
+   *
+   * Metadata ONLY: an implementation must answer this without reading the
+   * transcripts. It runs after every save, and a save runs once per idle window
+   * for as long as a turn is streaming.
+   */
   list(): Promise<ReadonlyArray<{ session: string; touchedAt: number }>>;
   /**
    * Release whatever handle the backend holds. `deleteDatabase` blocks
@@ -146,9 +164,28 @@ export function createTranscriptCache(backend: CacheBackend | null, now: () => n
       await backend.write({
         session,
         epoch,
-        events: trimToCap(events),
+        /**
+         * UNWRAPPED BEFORE IT IS TRIMMED, which is the whole of the fix.
+         *
+         * The transcript a caller holds is a Solid store (session.ts keeps it
+         * in a `createStore`), and a store is a Proxy, which IndexedDB cannot
+         * structured-clone: `put` throws DataCloneError, the catch below
+         * swallows it, and the slot is dropped. That is what happened on every
+         * write between 2026-08-28 and 2026-09-11 — the cache stored nothing,
+         * and every text open paid the 220-660 ms it was built to save.
+         *
+         * `trimToCap(unwrap(...))`, not `unwrap(trimToCap(...))`: reading an
+         * index of a store returns a proxied ELEMENT, so trimming first leaves
+         * a plain array full of proxies, which fails identically. Unwrapping a
+         * store is a single `$RAW` read; unwrapping a plain array is identity
+         * over data it already owns.
+         */
+        events: trimToCap(unwrap(events)),
         touchedAt: now(),
       });
+      // Cheap by contract: metadata for every held session, and on the
+      // IndexedDB backend that is a walk of the `touchedAt` index rather than a
+      // read of the records. See DB_VERSION below for what it cost before.
       const entries = await backend.list();
       for (const victim of evictionList(entries, session)) {
         await backend.remove(victim);
@@ -186,8 +223,30 @@ export function createTranscriptCache(backend: CacheBackend | null, now: () => n
 export type TranscriptCache = ReturnType<typeof createTranscriptCache>;
 
 const DB_NAME = "tl-transcripts";
-const DB_VERSION = 1;
+/**
+ * v2 added the `touchedAt` index, and that is the whole of the version.
+ *
+ * Eviction wants two scalars per session and nothing else. v1 got them from
+ * `getAll()`, which materialises every record — so a sweep over a full cache
+ * (MAX_CACHED_SESSIONS x MAX_EVENTS_PER_SESSION, against the 766,661 to
+ * 2,098,703 byte windows this module's header measured) deserialised about
+ * 18 MB to read 24 numbers. Measured on the devvm with `structuredClone` over a
+ * synthetic 12 x 2,000 payload, 18,015,369 bytes of JSON: 171, 106, 81 and
+ * 105 ms across four passes, and the iPadOS 15.8 floor this build supports is
+ * slower again. The sweep runs after every save, on the main thread — which is
+ * exactly the render path `scheduleCacheWrite` hands to `requestIdleCallback`
+ * to stay off.
+ *
+ * It went unnoticed because it was unreachable: every write threw
+ * DataCloneError on the Solid store proxy before the sweep could run, so the
+ * cost only arrives now that writes succeed.
+ */
+const DB_VERSION = 2;
 const STORE = "sessions";
+/** Keyed on `touchedAt`, so a key cursor answers eviction whole: the index key
+ *  IS the timestamp and the primary key IS the session name, and neither comes
+ *  from the record. */
+const TOUCHED_INDEX = "touchedAt";
 
 /**
  * The IndexedDB adapter. Returns null wherever IndexedDB is unavailable or
@@ -204,19 +263,45 @@ function indexedDbBackend(): CacheBackend | null {
   let opening: Promise<IDBDatabase> | null = null;
   const db = (): Promise<IDBDatabase> => {
     if (opening) return opening;
-    opening = new Promise<IDBDatabase>((resolve, reject) => {
+    const handle = new Promise<IDBDatabase>((resolve, reject) => {
       const req = indexedDB.open(DB_NAME, DB_VERSION);
       req.onupgradeneeded = () => {
         const database = req.result;
-        if (!database.objectStoreNames.contains(STORE)) {
-          database.createObjectStore(STORE, { keyPath: "session" });
+        // Both directions in one branch: a database that has never existed
+        // needs the store, and a v1 database already has it and needs only the
+        // index put on it. `req.transaction` is the version-change transaction,
+        // which is the only handle an existing store can be reached through
+        // here.
+        const store = database.objectStoreNames.contains(STORE)
+          ? req.transaction?.objectStore(STORE)
+          : database.createObjectStore(STORE, { keyPath: "session" });
+        if (store && !store.indexNames.contains(TOUCHED_INDEX)) {
+          store.createIndex(TOUCHED_INDEX, "touchedAt");
         }
       };
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const database = req.result;
+        /**
+         * Let go when another tab wants a newer version.
+         *
+         * An open connection blocks a version change, and this database gained
+         * one when the index landed. Without this, a tab still holding v1 would
+         * park every other tab's open on `blocked` — which fails soft, but soft
+         * for the life of the tab, with the cache off and every text open
+         * paying the full window again. Dropping `opening` lets the next call
+         * reopen at whatever version won.
+         */
+        database.onversionchange = () => {
+          database.close();
+          if (opening === handle) opening = null;
+        };
+        resolve(database);
+      };
       req.onerror = () => reject(req.error);
       req.onblocked = () => reject(new Error("indexedDB open blocked"));
     });
-    return opening;
+    opening = handle;
+    return handle;
   };
 
   const tx = async <T>(
@@ -233,15 +318,43 @@ function indexedDbBackend(): CacheBackend | null {
     });
   };
 
+  /**
+   * Eviction's two scalars, read from the index and never from a record.
+   *
+   * A key cursor walks index entries: `key` is the `touchedAt` it is keyed on
+   * and `primaryKey` is the session name, so this touches no `events` array at
+   * all. `getAll()` would answer the same question by deserialising every
+   * cached transcript — see DB_VERSION for what that measured.
+   *
+   * Its own helper rather than `tx()` because a cursor request fires
+   * `onsuccess` once per entry, and `tx()` resolves on the first one.
+   */
+  const listTouched = async (): Promise<Array<{ session: string; touchedAt: number }>> => {
+    const database = await db();
+    return new Promise<Array<{ session: string; touchedAt: number }>>((resolve, reject) => {
+      const t = database.transaction(STORE, "readonly");
+      const req = t.objectStore(STORE).index(TOUCHED_INDEX).openKeyCursor();
+      const entries: Array<{ session: string; touchedAt: number }> = [];
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) {
+          resolve(entries);
+          return;
+        }
+        entries.push({ session: String(cursor.primaryKey), touchedAt: Number(cursor.key) });
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+      t.onabort = () => reject(t.error);
+    });
+  };
+
   return {
     read: (session) =>
       tx<CacheRecord | undefined>("readonly", (s) => s.get(session)).then((r) => r ?? null),
     write: (record) => tx("readwrite", (s) => s.put(record)).then(() => undefined),
     remove: (session) => tx("readwrite", (s) => s.delete(session)).then(() => undefined),
-    list: () =>
-      tx<CacheRecord[]>("readonly", (s) => s.getAll() as IDBRequest<CacheRecord[]>).then((all) =>
-        all.map((r) => ({ session: r.session, touchedAt: r.touchedAt })),
-      ),
+    list: listTouched,
     close: async () => {
       const pending = opening;
       // Dropped BEFORE the await, so a read racing the close reopens rather
