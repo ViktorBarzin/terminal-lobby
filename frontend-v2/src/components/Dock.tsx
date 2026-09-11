@@ -43,21 +43,56 @@ export const Dock: Component<{
 
   const onGutterDown = (e: PointerEvent): void => {
     e.preventDefault();
+    // Whatever the last drag left behind goes first. A pointerdown can land
+    // while an earlier drag is still live, which is what a second finger on the
+    // gutter does, and `endDrag` holds ONE reference. Starting a drag without
+    // ending the previous one is how the first one became unreachable.
+    endDrag?.();
     setDragging(true);
+
+    // One signal for every listener this drag adds, so ending the drag is a
+    // single call that cannot miss one.
+    //
+    // What it replaces was a remover wired to `pointerup` alone. A cancelled
+    // touch or pen drag (a scroll takeover, palm rejection, the page losing the
+    // pointer) fires `pointercancel` and never `pointerup`, so both window
+    // listeners stayed for the life of the page, each `pointermove` paying a
+    // getBoundingClientRect (a forced layout) and a signal write for a drag
+    // nobody is doing any more. `pointercancel` is the event that was missing,
+    // but listening for one more ending only fixes the endings we thought of.
+    // An AbortController makes the next one impossible to leak, including a
+    // listener added here later.
+    //
+    // Pointer capture was the other candidate and is not used: it guarantees
+    // the terminating event reaches the GUTTER, which is a different problem
+    // (these listeners are on `window` on purpose, so a pointer dragged over
+    // the terminal or out of the window still resizes), and capturing removes
+    // nothing by itself, so the remover would still have to be right.
+    //
+    // The build targets safari15 (vite.config.ts) and the `signal` option
+    // shipped in Safari 15.0, Chrome 90 and Firefox 86 (MDN compat data), so
+    // this is on the baseline and needs nothing from baseline-polyfills.ts.
+    const drag = new AbortController();
+    const { signal } = drag;
+
     const move = (ev: PointerEvent): void => {
       const box = wrapEl?.parentElement?.getBoundingClientRect();
       if (!box || box.height <= 0) return;
       d.setRatio(((box.bottom - ev.clientY) / box.height) * 100);
     };
-    const up = (): void => {
+    const end = (): void => {
       endDrag = null;
+      // `.tl-dock-dragging .tl-dock-body` is `pointer-events: none`
+      // (sidebar.css), so a drag state left set by an ending we did not handle
+      // leaves the docked terminal unclickable until the panel is rebuilt.
       setDragging(false);
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
+      drag.abort();
     };
-    endDrag = up;
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
+
+    endDrag = end;
+    window.addEventListener("pointermove", move, { signal });
+    window.addEventListener("pointerup", end, { signal });
+    window.addEventListener("pointercancel", end, { signal });
   };
 
   return (

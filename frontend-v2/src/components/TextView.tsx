@@ -139,6 +139,13 @@ export const TextView: Component<{
   /** take one step further back through the transcript. */
   onLoadEarlier?: () => Promise<void>;
   hasEarlier?: boolean;
+  /** the reader reached the bottom of the transcript, or left it — the store
+   *  trims its window only while pinned. Forwarded from MessagesTimeline,
+   *  which is what knows. */
+  onPinned?: (pinned: boolean) => void;
+  /** what the store currently holds for that pin, so the timeline can tell when
+   *  it has been moved from the other end (loadEarlier unpins directly). */
+  pinned?: boolean;
   /** what the held window cannot carry: the mode, the newest /context reading,
    *  the queue and the composer's history, folded over the whole session. */
   sessionState?: SessionState | null;
@@ -696,6 +703,8 @@ export const TextView: Component<{
         onLoadFull={props.onLoadFull}
         onLoadEarlier={props.onLoadEarlier}
         hasEarlier={props.hasEarlier}
+        onPinned={props.onPinned}
+        pinned={props.pinned}
         me={props.me}
       />
       {/* The transcript closes the turn when the main thread stops talking, so
