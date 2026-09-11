@@ -39,10 +39,12 @@ export const KeyboardPage: Component<{ keybindings: KeybindingsControl }> = (pro
         hint={
           <>
             Press <kbd>/</kbd> for the full list. Off sends these keys to the
-            terminal instead. Four chords stay on either way: <kbd>/</kbd> and{" "}
-            <kbd>?</kbd> (that list), <kbd>{alt()}+Shift+Backspace</kbd> (kill the
-            attached session, asks first) and <kbd>{ctrl()}+J</kbd> (the scratch
-            shell, on a desktop).
+            terminal instead, <kbd>Ctrl+Z</kbd> included, which is how a shell
+            gets its suspend key back. Four chords stay on either way:{" "}
+            <kbd>/</kbd> and <kbd>?</kbd> (that list),{" "}
+            <kbd>{alt()}+Shift+Backspace</kbd> (kill the attached session; the
+            card dims for eight seconds and <kbd>{ctrl()}+Z</kbd> takes it back)
+            and <kbd>{ctrl()}+J</kbd> (the scratch shell, on a desktop).
           </>
         }
       >

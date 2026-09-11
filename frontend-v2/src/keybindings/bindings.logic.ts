@@ -99,8 +99,18 @@ const SWITCH_WHEN = "!overlayOpen && !previewDirty";
  * `!overlayOpen` for the same reason every other lobby chord carries it: the
  * lobby must not act BEHIND a dialog. Cmd+Z with Settings open would resurrect
  * a session nobody can see from there.
+ *
+ * `!previewDirty` for the reason SWITCH_WHEN above carries it, and it is the
+ * same loss: undoing a kill re-selects the session the kill took
+ * (store/undo.kill.ts), and a switch unmounts the file-preview store with an
+ * unsaved draft inside it. The preview is deliberately not part of
+ * `overlayOpen`, and focus sitting on its Save or mode button rather than in
+ * CodeMirror clears `editing` too, so without this leg the one chord that can
+ * switch sessions with no confirm in front of it would be the one that
+ * destroys the draft. Undo waits until the draft is saved or discarded, the
+ * same as Alt+1..9 and Alt+Shift+[ ].
  */
-const UNDO_WHEN = "!editing && !overlayOpen";
+const UNDO_WHEN = "!editing && !overlayOpen && !previewDirty";
 
 /**
  * Opt-in-toggleable, user-overridable bindings. Chord choices follow the vanilla

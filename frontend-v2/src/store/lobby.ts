@@ -21,7 +21,7 @@ import {
 import { applySessionOrder, captureVisibleOrder, type SessionOrder } from "../logic/order.logic";
 import { createCollapseStore, type CollapseStore } from "./collapse";
 import { toasts } from "./toast";
-import { UNDO_CAP, type UndoStore } from "./undo";
+import { UNDO_CAP, type UndoResult, type UndoStore } from "./undo";
 import { registerKillUndoHandlers } from "./undo.kill";
 import { locate, registerLayoutUndoHandlers, type OrderModeCapture } from "./undo.layout";
 import { registerLocalUndoHandlers } from "./undo.local";
@@ -109,10 +109,10 @@ export interface LobbyStore {
    *
    * Handed straight back out of {@link LobbyStoreOptions.undo}, because a
    * component that holds the store has no other route to the one instance App
-   * owns: the dimmed card's undo arrow is the only way back from a kill on a
-   * phone, where there is no Cmd+Z to press (components/SessionCard.tsx). It
-   * presses the STACK rather than retracting its own kill, so the entry comes
-   * off and a later chord cannot undo the same kill twice.
+   * owns: the command layer reads it from here when App hands it no stack of
+   * its own (keybindings/commands.ts). The dimmed card's arrow does NOT use
+   * it — it goes through {@link LobbyStore.takeBackKill}, which presses that
+   * kill's own entry rather than the top of the stack.
    */
   undo?: UndoStore;
   /** epoch ms a session was first observed running (working-timer anchor). */
@@ -143,6 +143,10 @@ export interface LobbyStore {
   /** Is this session inside its kill window: on its way out, still in the
    *  list, and drawn dimmed with an undo arrow instead of vanishing? */
   killing(name: string): boolean;
+  /** Take back THIS session's kill, which is what the dimmed card's arrow
+   *  presses. See the function: it undoes that kill's own entry rather than
+   *  the top of the stack, and works in a tab that has no stack at all. */
+  takeBackKill(name: string): Promise<UndoResult>;
   /** Move into `group`; with an anchor, immediately above/below that card. */
   move(name: string, group: string, anchor?: DropAnchor): Promise<void>;
   /** Change which order the session list comes in. Goes through the store
@@ -356,6 +360,19 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * (store/undo.kill.ts says the same from the other side).
    */
   const killRecords = new Map<string, RestoreSelection | null>();
+  /**
+   * The DELETEs that are out right now, keyed by name, each one the promise
+   * `killNow` handed its caller.
+   *
+   * A kill is neither pending nor landed while its request is in flight, and
+   * that gap is long enough to press Cmd+Z in: the grace timer drops the
+   * pending record before it calls `killNow`, the session stays in the list
+   * until the DELETE answers, and the DELETE itself waits on a whole-box
+   * snapshot first (tmux-api/snapshots.go resurrectRecordFor). Without this
+   * map an undo landing there read the session as still running, refused, and
+   * dropped its own entry while the kill went on to succeed.
+   */
+  const killsInFlight = new Map<string, Promise<boolean>>();
   const [killingNames, setKillingNames] = createSignal<readonly string[]>([]);
   /** Republish the dim set. A signal rather than a bare Map so the sidebar
    *  repaints the card the moment a kill starts, lands or is taken back. */
@@ -1212,16 +1229,50 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * would put the session back goes into `killRecords` rather than to the
    * caller, because the caller that wants it is a later press.
    */
-  async function killNow(name: string): Promise<boolean> {
+  function killNow(name: string): Promise<boolean> {
+    // One DELETE per name at a time, and the promise stays reachable while it
+    // is out. Both halves matter to undo. A press that lands in that window
+    // used to read the session as "still running" — the timer had already
+    // dropped the pending record and the prune only happens after the await —
+    // so the entry was refused and dropped while the DELETE went on to land,
+    // leaving the person no way back from a kill they had just taken back. The
+    // undo handler awaits this promise instead (store/undo.kill.ts).
+    //
+    // The window is not small: the DELETE runs a whole-box `tmux-persist save`
+    // before it kills (tmux-api/snapshots.go resurrectRecordFor).
+    const already = killsInFlight.get(name);
+    if (already) return already;
+    const landing = sendKill(name).finally(() => {
+      killsInFlight.delete(name);
+    });
+    killsInFlight.set(name, landing);
+    return landing;
+  }
+
+  async function sendKill(name: string): Promise<boolean> {
     cancelKill(name); // landing it now, so its window is over either way
     let record: RestoreSelection | null = null;
+    let killed = true;
     try {
       record = (await api.killSession(name)) ?? null;
-    } catch {
-      showToast("Couldn't kill session");
-      return false;
+    } catch (e) {
+      // A 404 is not a failed kill, but it is not a kill either: no session
+      // answers to that name here. The commonest way to get one is a name that
+      // has MOVED — tmux-api renames a session as soon as its first title
+      // lands (ADR-0022), and the session list is behind a cache — so the
+      // session is very probably still running under another name. The local
+      // cleanup below still runs, because the name really is not there; what
+      // changes is the ANSWER, so undoing a create refuses instead of
+      // reporting a kill that did not happen.
+      if (!(e instanceof ApiError) || e.status !== 404) {
+        showToast("Couldn't kill session");
+        return false;
+      }
+      killed = false;
     }
-    killRecords.set(name, record);
+    // Only for a session this really killed. A record for a 404 would be a
+    // promise to resurrect something that never died.
+    if (killed) killRecords.set(name, record);
     // Bounded by the stack's own depth, since a record whose entry has fallen
     // off the end of it can never be asked for again. A Map keeps insertion
     // order, so the first key is the oldest kill.
@@ -1238,7 +1289,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     setPending((p) => p.filter((s) => s.name !== name));
     if (selected()?.name === name) deselect();
     await refresh();
-    return true;
+    return killed;
   }
 
   /** Drop a kill still inside its window: the timer goes, the card un-dims,
@@ -1250,6 +1301,38 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     pendingKills.delete(name);
     publishKilling();
     return true;
+  }
+
+  /**
+   * The dimmed card's ↺ arrow: take back THIS session's kill.
+   *
+   * It presses the entry the kill pushed, wherever that entry now sits on the
+   * stack, rather than the top of it. Anything at all can have happened in the
+   * eight seconds since — a group collapsed, another card renamed, a second
+   * kill — and pressing the top from a button drawn on one card undid that
+   * other thing instead while this session went on dying, with no toast, since
+   * a working undo says nothing.
+   *
+   * Going through the stack rather than straight to `cancelKill` is what keeps
+   * the two affordances the same action: the entry comes off the undo stack
+   * (so a later Cmd+Z cannot take the same kill back twice) and lands on the
+   * redo stack (so Cmd+Shift+Z kills again, on a fresh window).
+   *
+   * The fallback underneath it is for a tab with no stack — a lens tab
+   * (`?as=bob`) runs with undo off (store/undo.ts UndoStoreOptions), and it is
+   * the one tab where the session belongs to somebody else. Retracting a
+   * window that has sent nothing needs no history to do it, so the arrow works
+   * there too rather than being drawn dead.
+   */
+  async function takeBackKill(name: string): Promise<UndoResult> {
+    const stack = opts.undo;
+    if (stack) {
+      const r = await stack.undoEntry((e) => e.kind === "kill" && e.session === name);
+      // ok, or a refusal with something to say. Only "nothing matched" falls
+      // through, which is the silent no-op shape (reason null).
+      if (r.ok || r.reason !== null) return r;
+    }
+    return cancelKill(name) ? { ok: true } : { ok: false, reason: null };
   }
 
   /** Move a pending kill onto the name its session now answers to. */
@@ -1630,6 +1713,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       cancelKill,
       killNow,
       killLater: armKill,
+      killInFlight: (session) => killsInFlight.get(session),
       killRecord: (session) => killRecords.get(session),
       resurrect: async (record) => {
         await resurrect(record);
@@ -1710,6 +1794,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     rename,
     kill,
     killing: (name) => killingNames().includes(name),
+    takeBackKill,
     move,
     setSessionOrderMode,
     reorderGroupsTo,

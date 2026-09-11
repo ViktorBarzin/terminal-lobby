@@ -99,6 +99,14 @@ reaches the server until those eight seconds are out. Press the arrow, press
 `Ctrl+Z`, or pick **Undo** from the palette, and the session was never killed.
 The arrow is the way back on a phone, where there is no `Ctrl+Z` to press.
 
+The arrow takes back the kill of the card it sits on, whatever else you have
+done since, so collapsing a group or renaming another session during those
+eight seconds does not get in its way. `Ctrl+Z` is the other rule: it takes the
+last thing you did, which with two cards dimmed at once is the newer of the two
+kills. The arrow works in a tab acting as another user too, even though the
+rest of undo does not: it only has to call off a request that has not been
+sent.
+
 Once those eight seconds are up the session is really gone, and undo brings it
 back rather than calling anything off. tmux-api snapshots a session before it kills it and hands
 the record back, and undo posts that record to `/restore`, which recreates the

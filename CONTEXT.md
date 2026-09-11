@@ -240,7 +240,9 @@ The eight seconds a killed session stays in the sidebar before the DELETE goes
 out (`GRACE_MS`, `store/lobby.ts`). The card is dimmed and struck through and
 carries a `↺` arrow, the session is deselected, and nothing has reached
 tmux-api yet. Taking the kill back inside the window is therefore a cancelled
-timer rather than a recovery, and it cannot fail. It replaced the "Kill session
+timer rather than a recovery, and it cannot fail. The arrow takes back the kill
+of the card it sits on, whatever else has landed on the **undo stack** since,
+and works in a Lens tab too, which has no stack to press. It replaced the "Kill session
 X?" question on every kill path, which is why no kill asks anything now. Kept
 per session **name** in the lobby store, in the browser and nowhere else: a tab
 that goes away mid-window sends its kill from `pagehide` rather than handing

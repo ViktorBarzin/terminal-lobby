@@ -44,12 +44,33 @@ be moved downstream: the engine's listener is capture-phase on `window` while
 CodeMirror's own Mod-z is bubble-phase on its contentDOM, so a match here fires
 first and nothing afterwards can give the key back.
 
+The terminal is the exception the flag has to name, because xterm types through
+a hidden `<textarea class="xterm-helper-textarea">` and `term.focus()` focuses
+exactly that. Read by tag alone the flag is true wherever a session is
+attached, which is the terminal-focused leg the options below turn down: `Cmd+Z`
+would be inert in a session and `Ctrl+Z` would go on suspending the foreground
+job. `isEditingTarget` therefore answers false for anything inside `.xterm`
+before it looks at the tag.
+
+**An unsaved file-editor draft blocks the chords too** (`!previewDirty`, the leg
+`SWITCH_WHEN` already carried). Undoing a kill re-selects the session the kill
+took, and a session switch unmounts the preview store with the draft inside it.
+The preview is deliberately not an overlay and focus on its Save button is not a
+text field, so without that leg undo was the one session switch with neither a
+confirm nor a guard in front of it.
+
 **A kill waits eight seconds instead of asking** (`GRACE_MS`, `store/lobby.ts`).
 The card stays in the sidebar, dimmed and struck through, with a `↺` arrow in the
 slot its `⋯` button gave up, and the DELETE does not go out until the window
 elapses. Inside the window an undo is a cancelled timer: nothing reached the
-server, so nothing has to be put back, and it cannot fail. The arrow presses the
-same stack the chord does, which is what gives a phone a way back at all.
+server, so nothing has to be put back, and it cannot fail. The arrow is what
+gives a phone a way back at all, and it takes back THE KILL OF THE CARD IT SITS
+ON rather than the top of the stack: eight seconds is long enough for a collapse
+or a rename to land on top, and pressing the stack from a button drawn on one
+card undid that other thing instead, silently, while the session went on dying.
+It goes through `store.takeBackKill`, which presses that kill's own entry and
+falls back to cancelling the window outright in a tab that has no stack — a lens
+tab, the one place the session belongs to somebody else.
 
 **Past the window, undo resurrects rather than cancels.** tmux-api snapshots a
 session before killing it and returns the record in the DELETE's body
@@ -155,15 +176,25 @@ untouched.
   mark-seen (nothing chooses it, so there is nothing to take back) and anything
   typed into a terminal.
 - The command palette lists **Undo** and **Redo** only while a press would do
-  something, which is also the rule the card's arrow follows. An empty stack
-  and a lens tab show neither.
+  something: an empty stack and a lens tab show neither. The card's arrow
+  follows a different rule, because it presses one known kill rather than the
+  stack: it is drawn whenever the window is running, lens tab included.
+- A kill's DELETE is in flight for as long as the pre-kill snapshot takes, and a
+  press landing in that gap waits for the request rather than reading the
+  half-finished state, which used to answer "that session is still running" and
+  drop the entry. tmux-api bounds the gap from its end: it asks tmux whether the
+  session exists before running anything privileged, runs one snapshot at a time
+  and abandons one that outlives `preKillSnapshotBudget`.
 
 ## What was driven, and what was not
 
 The chords were driven in a real Chrome: `Ctrl+Z`, `Cmd+Z` and both shifted
 forms fired their commands with a button focused and fired nothing at all with
 focus in an input, a textarea or a CodeMirror editor, where the field's own undo
-took the typing back instead. The dimmed card was measured against the real
+took the typing back instead. The terminal was not among those four, and that
+gap is what let `editing` read true for xterm's input proxy; it is now covered
+by a test that focuses a real xterm-shaped element rather than passing the flag
+in as a fixture (`test/undo.keys.test.ts`). The dimmed card was measured against the real
 stylesheet in Chrome rather than in jsdom: the arrow at full opacity over a
 0.45 row, the strike-through, the danger tint at 10%, and focus landing on the
 arrow. A real kill was driven against a scratch tmux-api on loopback, which is
