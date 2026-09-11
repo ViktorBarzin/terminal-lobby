@@ -278,32 +278,95 @@ describe("how tall the panel opens", () => {
   });
 });
 
-describe("the gutter resizes the panel up and down", () => {
-  /** Give the content column a real box; jsdom measures everything as zero. */
-  function boxed(el: Element, top: number, height: number): void {
-    el.getBoundingClientRect = () =>
-      ({
-        top,
-        bottom: top + height,
-        height,
-        left: 0,
-        right: 1000,
-        width: 1000,
-        x: 0,
-        y: top,
-      }) as DOMRect;
-  }
+// ---- the gutter drag -----------------------------------------------------
 
-  const drag = (gutter: Element, ys: number[]): void => {
-    gutter.dispatchEvent(
-      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: ys[0] }),
-    );
-    for (const y of ys.slice(1)) {
-      window.dispatchEvent(new PointerEvent("pointermove", { clientY: y }));
-    }
-    window.dispatchEvent(new PointerEvent("pointerup", {}));
+/**
+ * Give the content column a real box; jsdom measures everything as zero.
+ *
+ * The returned counter is how the leak tests below tell a live `pointermove`
+ * handler from a dead one: every move that is still listening measures this
+ * box, and that measurement is a forced layout in a real browser.
+ */
+function boxed(el: Element, top: number, height: number): { measured: number } {
+  const seen = { measured: 0 };
+  el.getBoundingClientRect = () => {
+    seen.measured++;
+    return {
+      top,
+      bottom: top + height,
+      height,
+      left: 0,
+      right: 1000,
+      width: 1000,
+      x: 0,
+      y: top,
+    } as DOMRect;
   };
+  return seen;
+}
 
+const drag = (gutter: Element, ys: number[]): void => {
+  gutter.dispatchEvent(
+    new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: ys[0] }),
+  );
+  for (const y of ys.slice(1)) {
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: y }));
+  }
+  window.dispatchEvent(new PointerEvent("pointerup", {}));
+};
+
+/**
+ * The drag's window listeners that are still live, by type.
+ *
+ * Counted rather than spied on, because there are two doors a listener can
+ * leave by and only one of them is a call: `removeEventListener`, and an
+ * `AbortSignal` firing, which the DOM acts on without telling anyone. A test
+ * that watched `removeEventListener` alone would read an aborted listener as
+ * still attached, and would once have read a listener that was never added as
+ * removed. This answers the question the leak is actually about: after the
+ * drag, is anything still on `window`?
+ */
+function liveDragListeners(): () => string[] {
+  const watched = ["pointermove", "pointerup", "pointercancel"];
+  const live: { type: string; fn: unknown }[] = [];
+  const realAdd = window.addEventListener;
+  const realRemove = window.removeEventListener;
+
+  window.addEventListener = ((
+    type: string,
+    fn: EventListenerOrEventListenerObject,
+    opts?: boolean | AddEventListenerOptions,
+  ) => {
+    if (watched.includes(type)) {
+      const entry = { type, fn };
+      live.push(entry);
+      const signal = typeof opts === "object" && opts !== null ? opts.signal : undefined;
+      signal?.addEventListener("abort", () => {
+        const i = live.indexOf(entry);
+        if (i >= 0) live.splice(i, 1);
+      });
+    }
+    return realAdd.call(window, type, fn, opts);
+  }) as typeof window.addEventListener;
+
+  window.removeEventListener = ((
+    type: string,
+    fn: EventListenerOrEventListenerObject,
+    opts?: boolean | EventListenerOptions,
+  ) => {
+    const i = live.findIndex((e) => e.type === type && e.fn === fn);
+    if (i >= 0) live.splice(i, 1);
+    return realRemove.call(window, type, fn, opts);
+  }) as typeof window.removeEventListener;
+
+  onTestFinished(() => {
+    window.addEventListener = realAdd;
+    window.removeEventListener = realRemove;
+  });
+  return () => live.map((e) => e.type).sort();
+}
+
+describe("the gutter resizes the panel up and down", () => {
   it("measures the DOCK's share of the content column, growing upward", async () => {
     const { store, dock, container } = mountDock(false);
     await loaded(store);
@@ -334,14 +397,112 @@ describe("the gutter resizes the panel up and down", () => {
     const { store, container, unmount } = mountDock(false);
     await loaded(store);
     const gutter = container.querySelector(".tl-dock-gutter")!;
-    const off = vi.spyOn(window, "removeEventListener");
+    const live = liveDragListeners();
     gutter.dispatchEvent(
       new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY: 300 }),
     );
+    expect(live()).not.toEqual([]);
     unmount();
-    const dropped = off.mock.calls.map((c) => c[0]);
-    expect(dropped).toContain("pointermove");
-    expect(dropped).toContain("pointerup");
-    off.mockRestore();
+    expect(live()).toEqual([]);
+  });
+});
+
+/**
+ * A DRAG THAT ENDS ANY OTHER WAY THAN `pointerup` USED TO LEAVE ITS LISTENERS
+ * ON THE WINDOW FOREVER.
+ *
+ * `pointerup` was the only remover, so a cancelled touch or pen drag (a scroll
+ * takeover, palm rejection, the tab losing the pointer) stranded a
+ * `pointermove` handler for the life of the page. Every pointer movement
+ * anywhere in the lobby then paid a `getBoundingClientRect` on the content
+ * column (a forced layout) and a signal write, for a drag nobody is doing. The
+ * stranded pair was also unreachable: the component's cleanup holds one
+ * `endDrag`, and the next pointerdown overwrote it.
+ *
+ * The assertions below are about what is still attached to `window`, not about
+ * which call detached it, so they hold whichever way the fix removes them.
+ */
+describe("a drag never strands a listener on the window", () => {
+  /** The drag has started and the window is listening. */
+  function press(gutter: Element, clientY: number, pointerId = 1): void {
+    gutter.dispatchEvent(
+      new PointerEvent("pointerdown", { bubbles: true, cancelable: true, clientY, pointerId }),
+    );
+  }
+
+  it("lets go when the pointer is cancelled, not only when it is released", async () => {
+    const { store, dock, container } = mountDock(false);
+    await loaded(store);
+    const body = container.querySelector(".tl-shell-body")!;
+    const box = boxed(body, 100, 400); // the column runs y=100..500
+    const gutter = container.querySelector(".tl-dock-gutter")!;
+    const live = liveDragListeners();
+
+    press(gutter, 300);
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 300 }));
+    expect(dock.ratio()).toBe(50);
+
+    // What a finger does when the browser decides the gesture was a scroll.
+    window.dispatchEvent(new PointerEvent("pointercancel", {}));
+    expect(live()).toEqual([]);
+
+    // And the proof that it costs nothing afterwards: a later pointermove
+    // neither measures the column nor moves the split.
+    const measured = box.measured;
+    window.dispatchEvent(new PointerEvent("pointermove", { clientY: 150 }));
+    expect(box.measured).toBe(measured);
+    expect(dock.ratio()).toBe(50);
+  });
+
+  it("stops showing the drag state when the pointer is cancelled", async () => {
+    // Not cosmetic: `.tl-dock-dragging .tl-dock-body` is `pointer-events: none`
+    // (sidebar.css), so a drag state left set by a cancelled drag leaves the
+    // docked terminal unclickable until the panel is rebuilt.
+    const { store, container } = mountDock(false);
+    await loaded(store);
+    boxed(container.querySelector(".tl-shell-body")!, 100, 400);
+    const gutter = container.querySelector(".tl-dock-gutter")!;
+
+    press(gutter, 300);
+    expect(container.querySelector(".tl-dock")!.className).toContain("tl-dock-dragging");
+    window.dispatchEvent(new PointerEvent("pointercancel", {}));
+    expect(container.querySelector(".tl-dock")!.className).not.toContain("tl-dock-dragging");
+  });
+
+  it("does not accumulate a pair per drag", async () => {
+    const { store, dock, container } = mountDock(false);
+    await loaded(store);
+    const body = container.querySelector(".tl-shell-body")!;
+    const box = boxed(body, 100, 400);
+    const gutter = container.querySelector(".tl-dock-gutter")!;
+    const live = liveDragListeners();
+
+    drag(gutter, [300, 300]);
+    expect(live()).toEqual([]);
+    const afterFirst = box.measured;
+
+    // One move, one measurement. Two live handlers would measure twice.
+    drag(gutter, [300, 200]);
+    expect(box.measured - afterFirst).toBe(1);
+    expect(live()).toEqual([]);
+    expect(dock.ratio()).toBe(75);
+  });
+
+  it("does not strand the first drag when a second pointer lands on the gutter", async () => {
+    // Two fingers on the gutter. A window `pointerup` reaches every drag's
+    // handler at once, so the ordinary ending covers both; what the second
+    // pointerdown used to break is the ONE reference the panel's cleanup
+    // holds. It overwrote that, and the first drag's pair then outlived the
+    // panel.
+    const { store, container, unmount } = mountDock(false);
+    await loaded(store);
+    boxed(container.querySelector(".tl-shell-body")!, 100, 400);
+    const gutter = container.querySelector(".tl-dock-gutter")!;
+    const live = liveDragListeners();
+
+    press(gutter, 300, 1);
+    press(gutter, 250, 2);
+    unmount();
+    expect(live()).toEqual([]);
   });
 });

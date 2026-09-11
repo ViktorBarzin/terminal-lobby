@@ -7,6 +7,7 @@ import {
   type SseStatus,
 } from "../sse/client";
 import { track } from "../telemetry/track";
+import { HIDDEN_SUSPEND_MS, OFFSCREEN_SUSPEND_MS } from "../terminal/battery";
 import {
   createTranscriptCache,
   sharedIndexedDbBackend,
@@ -42,6 +43,54 @@ import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answ
  * them, which are all a keystroke or a short JSON body.
  */
 const TRANSCRIPT_READ_TIMEOUT_MS = 30_000;
+
+/**
+ * How long a session stays off screen before what it holds open is let go.
+ *
+ * The lobby keeps every session you have opened MOUNTED and CSS-hides the rest
+ * (store/keepalive.ts), so "mounted" stopped meaning "someone is reading this"
+ * a long time ago. Off screen is the signal that nobody is; the grace is what
+ * keeps that signal from costing anything, because flicking between two
+ * sessions to compare them would otherwise be a reconnect each way.
+ *
+ * Thirty seconds is the number the 2026-09-11 parking design settled on for the
+ * off-screen case, against sixty for a hidden tab and sixty for an unfocused
+ * window: a person switching sessions comes back in seconds or not at all,
+ * while a person who alt-tabbed is usually coming straight back.
+ *
+ * The terminal's own off-screen suspend answers the same question and wants
+ * the same number, so this IS that number rather than a second copy of it.
+ * terminal/battery.ts holds the knob for all three graces and imports nothing,
+ * so reading it from a store costs nothing and the two cannot drift. The name
+ * differs because what these callers park is an SSE stream, not a socket.
+ */
+export const OFF_SCREEN_PARK_MS = OFFSCREEN_SUSPEND_MS;
+
+/**
+ * How long the WINDOW stays away before the same things are let go.
+ *
+ * The tab going into the background and the window going behind another app
+ * are the other two ways nobody is reading this, and neither is answered by the
+ * off-screen question above: the session on screen is still on screen while the
+ * lobby sits on a second monitor. A full minute rather than the off-screen
+ * half, because a person who alt-tabbed is usually coming straight back, and
+ * because a reconnect flicker on every glance at another window would cost more
+ * than it saves.
+ *
+ * terminal/battery.ts holds this knob for the socket; this is that same number,
+ * for the stream.
+ */
+export const WINDOW_PARK_MS = HIDDEN_SUSPEND_MS;
+
+/**
+ * How many turns the live transcript holds, before the oldest are let go.
+ *
+ * The same 20 the OPEN asks for (lib/config.ts sends `rev=1&turns=20`), so the
+ * window a session settles at is the window it started with rather than a
+ * second, larger number nothing chose. Everything below it is still on the
+ * server and `loadEarlier` fetches it back a step at a time.
+ */
+export const TRANSCRIPT_WINDOW_TURNS = 20;
 
 export interface SessionStore {
   /** Reactive, ordered, deduped event list (Solid store proxy). */
@@ -100,6 +149,51 @@ export interface SessionStore {
   /** The session state frame: what a small backfill cannot carry (mode, the
    *  newest /context reading, the queue, prompt history). Null until it lands. */
   state: Accessor<SessionState | null>;
+  /**
+   * Close the stream because nobody is reading this session, keeping every
+   * event, cursor and pending prompt held.
+   *
+   * Reversible, which is the whole difference from `close()`: the SSE client
+   * keeps its own cursor across this, so `unpark()` asks for the gap above the
+   * newest event held rather than for the window again. A no-op on a stream
+   * `start()` has never opened — a terminal-only session has nothing to park,
+   * and conjuring a connection in order to close it would cost exactly what
+   * this exists to save.
+   */
+  park: () => void;
+  /** Reopen a parked stream. A no-op unless `park()` closed one. */
+  unpark: () => void;
+  /**
+   * True from the moment a parked stream is asked to reopen until it has
+   * answered, and false at every other time — including before anything has
+   * ever been parked.
+   *
+   * What is held is then as old as the park, so anything derived from it that
+   * means "nothing has happened" is a guess rather than an answer. The [Text]
+   * segment's activity dot is the one that matters (SessionView), and this is
+   * what stops it claiming a quiet timeline it has not checked.
+   */
+  catchingUp: Accessor<boolean>;
+  /**
+   * Whether the reader is parked at the bottom of the transcript.
+   *
+   * The window below only slides while they are, so this is what keeps history
+   * somebody scrolled up to read from being dropped underneath them. The
+   * timeline is what knows; the store starts assuming yes, because a freshly
+   * opened transcript is at its newest end.
+   */
+  setPinnedToBottom: (pinned: boolean) => void;
+  /**
+   * Where the store currently believes the reader is.
+   *
+   * Exposed because the store also moves it ITSELF: `loadEarlier` unpins, so
+   * that a window just paged in is not trimmed straight back out before the
+   * timeline has had a chance to report the scroll. A view that kept its own
+   * copy of what it last published then went stale against that, and — since it
+   * only reports CHANGES — could never say `true` again. The store is the one
+   * answer; read it rather than remembering it.
+   */
+  pinned: Accessor<boolean>;
   close: () => void;
 }
 
@@ -115,6 +209,46 @@ export const EARLIER_STEPS_BYTES = [40_000, 80_000, 160_000, 400_000];
 
 /** What a jump to a search hit asks for: it already knows it is reaching far. */
 export const JUMP_STEP_BYTES = 400_000;
+
+/**
+ * Where the newest `turns` turns begin in an id-ordered event list, or 0 when
+ * there are not that many to begin with.
+ *
+ * The turn boundaries are `components/timeline.logic.ts`'s, deliberately: the
+ * window the reader sees is derived from these same events, so counting turns a
+ * different way here would drop rows the timeline was still grouping together.
+ * A transcript carrying no `turnId` — which is every transcript today — has its
+ * turns synthesized at user messages, so a long run of assistant output with no
+ * prompt in it is one turn and stays whole however long it runs.
+ */
+export function windowStart(events: readonly Event[], turns: number): number {
+  if (turns <= 0 || events.length === 0) return 0;
+  const starts: number[] = [];
+  const seenKeys = new Set<string>();
+  let current: string | null = null;
+  let synthetic = 0;
+  for (let i = 0; i < events.length; i++) {
+    const e = events[i]!;
+    let key: string;
+    if (e.turnId) {
+      key = e.turnId;
+    } else if (e.kind === "user" || current === null) {
+      synthetic += 1;
+      key = `s${synthetic}`;
+    } else {
+      key = current;
+    }
+    current = key;
+    // First appearance only. An id that comes back after another turn has
+    // started rejoins the turn it named, exactly as groupTurns has it, rather
+    // than opening a second one.
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    starts.push(i);
+  }
+  if (starts.length <= turns) return 0;
+  return starts[starts.length - turns]!;
+}
 
 /**
  * Merge two id-ordered event lists into one, dropping ids already present.
@@ -200,12 +334,46 @@ export function createSessionStore(
    * starts — paging from it would skip everything in between, permanently.
    */
   let cursor = 0;
+  /**
+   * The oldest id still held after the window last slid, or 0 while nothing has
+   * been dropped.
+   *
+   * It floors the cursor. A `ready` frame names where the SERVER's window
+   * began, which is below turns this device has since let go of, and taking its
+   * lower number would make those turns unreachable: the next step back would
+   * fetch from beneath them and the gap would never close.
+   */
+  let droppedBelow = 0;
+  /**
+   * Is the reader parked at the bottom of the transcript?
+   *
+   * Starts true because a freshly opened transcript is at its newest end, and
+   * the timeline reports it from there (`setPinnedToBottom`).
+   */
+  const [pinned, setPinned] = createSignal(true);
+  /**
+   * Is a parked stream on its way back, with nothing heard from it yet?
+   *
+   * Declared up here with the other reactive state because the client's own
+   * callbacks below are what clear it: the `ready` frame that ends the resume,
+   * and the two statuses that mean no `ready` is ever coming.
+   */
+  const [catchingUp, setCatchingUp] = createSignal(false);
   /** Which log the held ids belong to (the server's ready.epoch), and the cache
    *  that stores the transcript against it. */
   let cachedEpoch = "";
   /** How many events this open started with, from disk. The other half of the
    *  measurement is what the server sent anyway. */
   let seededFromCache = 0;
+  /**
+   * How many events the sliding window has shed since this open.
+   *
+   * `text.open`'s "fetched" is what crossed the wire, and the trim below runs
+   * inside the same `ready` handler that reports it — so without this the
+   * measurement would count what survived the trim instead, and a cached open
+   * of a long session would report having fetched nothing at all.
+   */
+  let shed = 0;
   let openReported = false;
   const cache = opts.cache ?? defaultTranscriptCache();
   /** How far up the step ladder a run of paging has climbed. */
@@ -342,6 +510,41 @@ export function createSessionStore(
       : setTimeout(run, 500);
   };
 
+  /**
+   * Slide the window down to the newest TRANSCRIPT_WINDOW_TURNS turns.
+   *
+   * Three things go together here, and leaving any of them out breaks the
+   * scroll-up that is supposed to bring the dropped turns back:
+   *
+   *   - the ids leave `seen` with their events. Dedup is by id, so an id held
+   *     after its event has gone makes the refetch arrive and be discarded as
+   *     "already held", and the reader is told there is nothing above.
+   *   - the cursor moves up to the oldest event still held. Below it there is
+   *     now a hole, and the next step back has to start at the near edge of it
+   *     rather than at the server's, which is under the far edge.
+   *   - `hasEarlier` goes back to true. It is false once paging has reached the
+   *     start of the session, and a trim has just put history behind us again.
+   *
+   * Nothing happens while the opening window is still landing: it arrives
+   * newest-first in several batches, so a trim mid-delivery would drop turns
+   * that were about to be joined by older ones, and the `ready` frame that
+   * names the cursor has not been read yet.
+   */
+  const trimWindow = (): void => {
+    if (holding || !pinned()) return;
+    const from = windowStart(events, TRANSCRIPT_WINDOW_TURNS);
+    if (from <= 0) return;
+    const kept = events.slice(from);
+    for (let i = 0; i < from; i++) seen.delete(events[i]!.id);
+    shed += from;
+    droppedBelow = kept[0]!.id;
+    cursor = droppedBelow;
+    batch(() => {
+      setEvents(kept);
+      setHasEarlier(true);
+    });
+  };
+
   const flush = (): void => {
     flushHandle = 0;
     // History first, and never behind the hold: this batch is what ends it.
@@ -354,50 +557,59 @@ export function createSessionStore(
     }
     // Still waiting on the rest of an ASCENDING opening window: keep buffering.
     if (holding) return;
-    if (pending.length === 0) return;
     const arrived = takeFresh(pending);
     pending = [];
-    if (arrived.length === 0) return;
-    scheduleCacheWrite();
-    // batch() so the derivation runs once for the whole group rather than once
-    // per index write.
-    batch(() => {
-      // Ordered merge rather than a bare append: with a reverse backfill in
-      // flight, a live event and a history frame can land in the same batch.
-      const newest = events.length > 0 ? events[events.length - 1]!.id : 0;
-      if (arrived.every((e) => e.id > newest)) {
-        for (const e of arrived) setEvents(events.length, e);
-      } else {
-        setEvents((prev) => mergeById(prev, [...arrived].sort((a, b) => a.id - b.id)));
-      }
-      // The transcript caught up with something we were standing in for.
-      // One record accounts for ONE prompt, oldest first: sending two in
-      // quick succession queues them, and the first record must not clear the
-      // second prompt as well.
-      const spoken = arrived.filter((e) => e.kind === "user");
-      if (spoken.length > 0) {
-        setPendingPrompts((cur) => {
-          let left = cur;
-          const drop = (i: number) => (left = left.filter((_, n) => n !== i));
-          for (const e of spoken) {
-            // Either kind is let go when the transcript says the same thing.
-            const said = left.findIndex((p) => sameCommand(e.body ?? "", p.text));
-            if (said >= 0) {
-              drop(said);
-              continue;
+    if (arrived.length > 0) {
+      scheduleCacheWrite();
+      // batch() so the derivation runs once for the whole group rather than once
+      // per index write.
+      batch(() => {
+        // Ordered merge rather than a bare append: with a reverse backfill in
+        // flight, a live event and a history frame can land in the same batch.
+        const newest = events.length > 0 ? events[events.length - 1]!.id : 0;
+        if (arrived.every((e) => e.id > newest)) {
+          for (const e of arrived) setEvents(events.length, e);
+        } else {
+          setEvents((prev) =>
+            mergeById(
+              prev,
+              [...arrived].sort((a, b) => a.id - b.id),
+            ),
+          );
+        }
+        // The transcript caught up with something we were standing in for.
+        // One record accounts for ONE prompt, oldest first: sending two in
+        // quick succession queues them, and the first record must not clear the
+        // second prompt as well.
+        const spoken = arrived.filter((e) => e.kind === "user");
+        if (spoken.length > 0) {
+          setPendingPrompts((cur) => {
+            let left = cur;
+            const drop = (i: number) => (left = left.filter((_, n) => n !== i));
+            for (const e of spoken) {
+              // Either kind is let go when the transcript says the same thing.
+              const said = left.findIndex((p) => sameCommand(e.body ?? "", p.text));
+              if (said >= 0) {
+                drop(said);
+                continue;
+              }
+              // No text match. Prose is ALWAYS recorded, so a record made after
+              // one was sent is that one — whatever the CLI did to the text on
+              // the way in (it trims trailing whitespace). A command is not
+              // released this way: it may never be recorded at all, and a later
+              // prompt must not sweep away the only account of it.
+              const oldest = left.findIndex((p) => !p.command && p.afterId < e.id);
+              if (oldest >= 0) drop(oldest);
             }
-            // No text match. Prose is ALWAYS recorded, so a record made after
-            // one was sent is that one — whatever the CLI did to the text on
-            // the way in (it trims trailing whitespace). A command is not
-            // released this way: it may never be recorded at all, and a later
-            // prompt must not sweep away the only account of it.
-            const oldest = left.findIndex((p) => !p.command && p.afterId < e.id);
-            if (oldest >= 0) drop(oldest);
-          }
-          return left;
-        });
-      }
-    });
+            return left;
+          });
+        }
+      });
+    }
+    // Outside the batch above, and run even when nothing arrived: the other
+    // caller is the `ready` frame, whose own flush has no events in it and
+    // whose byte-bounded opening window is routinely wider than 20 turns.
+    trimWindow();
   };
 
   const scheduleFlush = (): void => {
@@ -435,6 +647,10 @@ export function createSessionStore(
     seen.clear();
     cursor = 0;
     step = 0;
+    // Nothing has been dropped from a transcript that no longer exists, and the
+    // new one opens at its newest end the way any first open does.
+    droppedBelow = 0;
+    setPinned(true);
     batch(() => {
       setEvents([]);
       setPendingPrompts([]);
@@ -463,14 +679,23 @@ export function createSessionStore(
       scheduleFlush();
     },
     onState: (st: SessionState) => setSessionState(st),
-    onStatus: setStatus,
+    onStatus: (s: SseStatus) => {
+      // Neither of these will ever send a `ready`, and waiting on one would
+      // leave the view saying "catching up" for good: `no-transcript` is a
+      // session no Claude ever ran in, and `closed` is a stream that has been
+      // stopped for the last time.
+      if (s === "no-transcript" || s === "closed") setCatchingUp(false);
+      setStatus(s);
+    },
     onReady: (r: ReadyFrame) => {
+      setCatchingUp(false);
       // A reverse open names where the next step back begins; a resume does
       // not, because the client's own cursor is the correct one and clobbering
       // it with a backfill cursor would strand the history already held.
       if (typeof r.cursor === "number") {
-        cursor = r.cursor;
-        setHasEarlier(r.cursor > 0);
+        // Never below what the window has already let go of: see droppedBelow.
+        cursor = Math.max(r.cursor, droppedBelow);
+        setHasEarlier(cursor > 0);
       }
       // Which log the ids in this stream belong to. Stored beside the events so
       // a later open can tell whether what it holds still describes this
@@ -486,7 +711,7 @@ export function createSessionStore(
           "tl.session": session,
           "tl.cache": seededFromCache > 0 ? "hit" : "miss",
           "tl.cached": seededFromCache,
-          "tl.fetched": Math.max(0, events.length - seededFromCache),
+          "tl.fetched": Math.max(0, events.length + shed - seededFromCache),
         });
       }
     },
@@ -504,6 +729,9 @@ export function createSessionStore(
    */
   const [started, setStarted] = createSignal(false);
   let closed = false;
+  /** Is the stream closed because nobody is reading this session? A third
+   *  state beside started and closed: asked for, and coming back. */
+  let parked = false;
 
   /**
    * Open the stream, resuming from what this device already holds.
@@ -529,6 +757,11 @@ export function createSessionStore(
       }
       client.resumeFrom(resumeCursor(cached.events), cached.epoch);
     }
+    // The session went off screen while this read was in flight. Seeding still
+    // stands — it is what makes the eventual connect a resume — but opening the
+    // socket now would undo the park in the same breath as it was decided.
+    // `unpark()` is what connects instead.
+    if (parked) return;
     client.start();
   };
 
@@ -549,20 +782,73 @@ export function createSessionStore(
     void startWithCache();
   };
 
-  const close = (): void => {
-    closed = true;
-    // Anything buffered is delivered rather than dropped: a client that closes
-    // right after the replay would otherwise show a timeline missing its tail.
-    // The frame is cancelled first so the flush cannot run twice.
+  /**
+   * Deliver what is buffered rather than dropping it: a stream that stops right
+   * after a replay would otherwise show a timeline missing its tail. The frame
+   * is cancelled first so the flush cannot run twice.
+   */
+  const flushNow = (): void => {
     if (flushHandle) {
       if (typeof cancelAnimationFrame === "function") cancelAnimationFrame(flushHandle);
       clearTimeout(flushHandle);
       flushHandle = 0;
     }
     flush();
+  };
+
+  const close = (): void => {
+    closed = true;
+    flushNow();
     // Safe on a client that never opened anything: with no source, no timer and
     // no registered listeners, every teardown step inside is a no-op.
     client.close();
+  };
+
+  /**
+   * Stop paying for a session nobody is looking at.
+   *
+   * The socket goes and everything else stays: the events, the cursor, the
+   * pending prompts, the opening hold's answer. `SseClient.close()` removes its
+   * listeners and closes the source properly, so this is a real close rather
+   * than a pause — and `SseClient` keeps its own `lastEventId` through it,
+   * which is what makes the way back a resume.
+   *
+   * Nothing to do before `start()`: a session showing only its terminal has no
+   * transcript stream, and opening one here in order to close it would spend
+   * exactly what parking exists to save.
+   */
+  const park = (): void => {
+    if (closed || parked || !started()) return;
+    parked = true;
+    flushNow();
+    client.close();
+  };
+
+  /**
+   * Reopen a parked stream, from the newest event held.
+   *
+   * `SseClient.start()` clears its own `stopped` flag and connects on the
+   * cursor it kept, so the server replays the gap rather than the window — the
+   * same exchange a cached open makes, which is why this needs nothing the
+   * resume path did not already have. The `ready` frame that answers is also
+   * where `foreignLog` decides whether those ids still mean anything, so a
+   * session whose Claude was replaced while nobody was reading it resyncs here
+   * exactly as it would on any other reconnect.
+   */
+  const unpark = (): void => {
+    if (closed || !parked) return;
+    parked = false;
+    setCatchingUp(true);
+    client.start();
+  };
+
+  const setPinnedToBottom = (atBottom: boolean): void => {
+    setPinned(atBottom);
+    // Trim on the way back rather than waiting for the next event to drive one:
+    // a session that has gone quiet would otherwise hold everything it piled up
+    // while the reader was up in the history, which is exactly the session this
+    // change is about.
+    if (atBottom) trimWindow();
   };
 
   if (opts.autoStart !== false) start();
@@ -738,6 +1024,12 @@ export function createSessionStore(
   };
 
   const loadEarlier = async (bytes?: number): Promise<number> => {
+    // Reaching for history means the reader is not at the bottom: the timeline
+    // only asks for this from the top of what is held, and a jump to a search
+    // hit lands mid-transcript and unpins itself for the same reason. Saying so
+    // here is what keeps the window from sliding what was just fetched straight
+    // back out, without waiting for the timeline to report the scroll.
+    setPinned(false);
     // Before the first `ready`, fall back to the oldest event held. It is the
     // right answer while nothing has split — and the only one available against
     // a server that does not send a cursor at all.
@@ -802,6 +1094,11 @@ export function createSessionStore(
     loadEarlier,
     hasEarlier,
     state: sessionState,
+    park,
+    unpark,
+    catchingUp,
+    setPinnedToBottom,
+    pinned,
     close,
   };
 }

@@ -352,12 +352,21 @@ describe("the IndexedDB adapter — eviction reads the index, not the transcript
       return req;
     };
 
+    /** Index name -> the key path it was created on, as `createIndex` recorded it. */
+    const indexKeyPaths = new Map<string, string>();
+
     /** Index entries, ascending, exactly as IndexedDB orders them — and with no
      *  record body attached, which is the point of the index. */
     const keyCursor = (indexName: string) => {
+      // An index is named independently of the field it is built on, so the
+      // cursor reads the KEY PATH that `createIndex` was given, not the index's
+      // own name. Reading the name would make every key `undefined` the moment
+      // someone renames an index, and the sort below would silently degrade to
+      // insertion order while still looking like it worked.
+      const keyPath = indexKeyPaths.get(indexName) ?? indexName;
       const entries = [...records.values()]
         .map((r) => ({
-          key: (r as unknown as Record<string, number>)[indexName]!,
+          key: (r as unknown as Record<string, number>)[keyPath]!,
           primaryKey: r.session,
         }))
         .sort((a, b) => a.key - b.key);
@@ -379,6 +388,7 @@ describe("the IndexedDB adapter — eviction reads the index, not the transcript
       indexNames: { contains: (n: string) => indexes.has(n) },
       createIndex: (name: string, keyPath: string) => {
         calls.push(`createIndex(${name},${keyPath})`);
+        indexKeyPaths.set(name, keyPath);
         indexes.add(name);
       },
       get: (session: string) => {
@@ -479,7 +489,7 @@ describe("the IndexedDB adapter — eviction reads the index, not the transcript
     await (await freshBackend()).list();
     expect(idb.opens).toEqual([2]);
     expect(idb.calls).toContain("createObjectStore(sessions,session)");
-    expect(idb.calls).toContain("createIndex(touchedAt,touchedAt)");
+    expect(idb.calls).toContain("createIndex(by-touchedAt,touchedAt)");
   });
 
   it("adds the index to a v1 database without recreating the store", async () => {
@@ -491,7 +501,7 @@ describe("the IndexedDB adapter — eviction reads the index, not the transcript
       { session: "b", touchedAt: 1 },
       { session: "a", touchedAt: 5 },
     ]);
-    expect(idb.calls).toContain("createIndex(touchedAt,touchedAt)");
+    expect(idb.calls).toContain("createIndex(by-touchedAt,touchedAt)");
     expect(idb.calls.filter((c) => c.startsWith("createObjectStore"))).toEqual([]);
     expect(idb.records.size).toBe(2);
   });
@@ -506,7 +516,7 @@ describe("the IndexedDB adapter — eviction reads the index, not the transcript
     ]);
     // The finding: `getAll()` deserialises every cached transcript in full to
     // read two scalars per session, on the main thread, after every save.
-    expect(idb.calls).toContain("index(touchedAt)");
+    expect(idb.calls).toContain("index(by-touchedAt)");
     expect(idb.calls).not.toContain("getAll");
   });
 
