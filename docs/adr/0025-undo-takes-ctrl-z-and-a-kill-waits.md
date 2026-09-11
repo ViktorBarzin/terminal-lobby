@@ -213,3 +213,45 @@ answered 401 for that identity through the dev proxy, so the store's own
 interface and its handlers are what the tests drive. And nothing here has been
 exercised on a phone: the arrow's size and behaviour are asserted from the
 stylesheet and the CSSOM rather than from a finger.
+
+## Amendment — 2026-09-11: the three gaps closed, and the card counts down
+
+The section above records three things as undriven. All three have since been
+driven against the deployed build (v0.49.0, then v0.51.0), so the list stands
+as history rather than as the current state.
+
+**The snapshot's happy path.** The wrapper installed on the box now carries the
+`save` verb, which the deploy is what delivers. Killing a session, letting the
+eight seconds elapse and then pressing `Ctrl+Z` brought the session back under
+its own name: the DELETE landed 9.8 s after the click, and the restore that
+followed relaunched the conversation. The path is no longer covered by Go tests
+with a stubbed wrapper alone.
+
+**An undo of a real action in a browser.** The 401 was an identity, not a
+missing capability. Both backends resolve the OS user from the Authentik
+username, and for `wizard` that is `vbarzin` (`/etc/ttyd-user-map`); `wizard`
+in the header answers 403. With `TL_DEV_AUTH=vbarzin`, `vite preview`
+reproduces the prod ingress well enough to drive the real SPA against the real
+tmux-api, and 18 assertions ran that way: the missing confirm, the dimmed card,
+nothing reaching the server inside the window, `Ctrl+Z` at 3.9 s keeping the
+session alive, and the resurrect past the window.
+
+**A phone.** Driven on the shared Android emulator, not a resized desktop
+browser. A right-swipe killed, the row dimmed in place with its arrow, and
+tapping the arrow left the session alive 12 s later, which is past the window.
+
+What remains undriven is narrower than the list above and worth stating
+plainly: nobody has sat a foreground job in a real pane and confirmed that
+`Ctrl+Z` no longer suspends it. That follows from the binding and from
+`terminal/keys.ts`, and `test/undo.keys.test.ts` covers the chord, but the
+expensive half of this decision has not been watched failing to happen.
+
+**The card also counts down.** The description above, "dimmed and struck
+through, with a `↺` arrow", is now short by one element: the whole seconds
+until the kill lands sit beside the arrow. The store publishes the deadline
+(`killingUntil`) and the card subtracts on the sidebar's existing 1 Hz tick, so
+no second timer exists. Rounded up, hidden at zero, and `aria-hidden` so a
+screen reader is not handed a new number every second. The working timer that
+shares that corner is omitted for the window's length, because a session six
+seconds into a turn with six seconds left to live drew `0:06` beside `6`.
+CONTEXT.md carries the term as **Seconds left**.
