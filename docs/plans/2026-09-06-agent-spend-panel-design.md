@@ -145,3 +145,22 @@ contribute its whole history to the day it came back.
 - Whether Loki is worth adding later as an optional backend for devvm
   installs, which would give retroactive history that the local recorder
   cannot.
+
+## What actually shipped, 2026-09-11
+
+Built and landed on 2026-09-06 as v0.46.0, and the design above is what got
+built. Two things have moved since, both recorded in full as an amendment to
+`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
+
+The Codex half runs on this box with nothing installed, reading the rollout
+files as designed. Windows disappear from the panel once their `resets_at`
+passes, which is the intended behaviour rather than a gap.
+
+The Claude half is built, tested and inert here. Viktor declined to put the
+recorder in the statusLine slot, because `meta-statusline-pro` already renders
+`cost.total_cost_usd` and the wrapper would add nothing visible in the
+terminal. Loki turns out to answer the same question on the devvm with nothing
+installed: 13 sessions and $1,489.29 over 24 hours, keyed by `tmux_session`.
+The open question is now whether to read from Loki as a second source behind
+the same endpoint, and whether that should cover only lobby sessions or all of
+a user's Claude spend.

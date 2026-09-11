@@ -120,3 +120,37 @@ Design: `docs/plans/2026-09-06-agent-spend-panel-design.md`.
   `docs/deployment.md` carries that note where an operator will meet it. The
   `.deb` ships the script to `/usr/local/bin/tl-usage-record` for the devvm,
   where infra owns the managed-settings entry that uses it.
+
+## Amendment, 2026-09-11: the devvm is not taking the statusLine slot
+
+The decision above stands for the general case. The devvm is now expected to
+read from Loki instead, so the managed-settings entry the last paragraph
+anticipates was never added.
+
+Viktor declined the slot: "i don't want to replace the status line - that
+already has a lot of context, including cost". The recorder wraps rather than
+replaces, and that was demonstrated against the deployed binary, including the
+env-prefixed command shape emo's prompt uses and the case where the endpoint is
+unreachable. Both drew their prompt unchanged and exited 0. The objection holds
+regardless: `meta-statusline-pro` already renders `cost.total_cost_usd`, so on
+this box the wrapper adds a number the terminal was showing anyway.
+
+Measured the same day, Loki answers the same question here with nothing
+installed. `sum by (tmux_session) (sum_over_time(... | unwrap cost_usd [24h]))`
+over `{service_name="claude-code"}` returned 13 sessions and $1,489.29 for the
+last 24 hours, keyed by the session name this app already uses. Claude Code
+emits `cost_usd` itself; the label is not homelab enrichment. It also covers 30
+days retroactively, which the local recorder cannot.
+
+State as of this amendment: `/etc/claude-code/managed-settings.json` has no
+`statusLine` entry, `/var/lib/tmux-api/spend/` is empty, and the Claude section
+does not render on the devvm. The Codex half needs none of this and works.
+
+Open, and not yet decided:
+
+- Whether to add a Loki reader as a second source behind `GET /agent-spend`,
+  chosen at runtime, keeping the recorder as the path for installs with no Loki.
+- If so, whether it reports only the sessions the lobby shows, or all of a
+  user's Claude spend. Loki is keyed by `os_user`, so it also carries headless
+  agents and the prewarmed-pool slot, which came to $66.11 of that 24-hour
+  total.
