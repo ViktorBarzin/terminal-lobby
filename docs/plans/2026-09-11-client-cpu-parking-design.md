@@ -30,11 +30,22 @@ that or gone from the lobby. `TerminalNative`'s `onMount`
 (`components/TerminalNative.tsx:949`) opens an xterm, a ttyd WebSocket and a
 tmux attach with no gate on whether the session is on screen, and the default
 view is the terminal (`store/viewmode.ts:31`), so this happens for every visit.
-Visit fifteen sessions and the tab is running fifteen terminals, each parsing
-and rendering whatever its Claude prints. Claude Code animates a spinner while a
-turn runs and tmux pushes every redraw to every attached client, so a working
-session is not an idle one. The frame rate of that spinner has not been measured
-here.
+Visit fifteen sessions and the tab is running fifteen terminals. A hidden one
+does not paint, which is worth saying precisely: xterm pauses its renderer
+through an IntersectionObserver (`RenderService.ts:126-151` bails before the
+frame), so `display: none` costs zero drawing. What it does cost is the VT
+parser, a 10,000-line scrollback, an open WebSocket and an attached tmux client,
+for each of the fifteen. Claude Code animates a spinner while a turn runs and
+tmux pushes every redraw to every attached client, so a working session is not an
+idle one. The frame rate of that spinner has not been measured here.
+
+**Each mounted terminal also listens on `document` for every mouse move.**
+`TerminalNative.tsx:2980` registers `mousemove` at capture, permanently, and
+`onMotion` has no early exit: it calls `worldAt()`, which runs
+`host.querySelector(".xterm-screen")`, `contains()` and `term.hasSelection()`
+before anything learns the terminal is hidden. Fifteen terminals means fifteen of
+those per mouse move, at roughly 100 moves a second while the pointer is over the
+page.
 
 **The battery saver that would stop this only watches the tab.**
 `terminal/battery.ts` already knows how to drop a socket losslessly and bring it
@@ -51,6 +62,16 @@ so a live turn can run that 10 ms sixty times a second. The open is already
 windowed (`lib/config.ts:101` sends `rev=1&turns=20`), but nothing sheds the old
 end afterwards, so the array grows all day and the 10 ms grows with it.
 
+**And the timeline re-runs every row memo on top of that.**
+`MessagesTimeline.tsx:241`'s `keyed` memo has no `equals` and returns a fresh
+object, so every mounted row's memo re-runs on every event. Each re-run calls
+`sameRow` (`timeline.logic.ts:835`), which recurses into every hidden leaf of a
+folded turn and `JSON.stringify`s both sides of any object field, because a fresh
+derivation fails reference equality on all of them. `allKeys` carries
+`equals: sameKeys` so the `<For>` itself is spared; the memo bodies are not. Rows
+are never unmounted by design, so this scales with transcript length the same way
+`deriveRows` does.
+
 Today, one visit buys a permanent cost:
 
 ```mermaid
@@ -58,8 +79,12 @@ flowchart TD
     V[visit a session] --> M[SessionView mounts]
     M --> T["xterm + ttyd socket<br/>+ tmux attach"]
     M --> S["SSE stream,<br/>once Text is opened"]
-    T --> R["parse and render<br/>every output frame"]
+    T --> X["mousemove handler<br/>on document, at capture"]
+    T --> R["VT parser + scrollback<br/>on every output frame"]
     S --> D["deriveRows over the<br/>WHOLE transcript<br/>10 ms, up to 60x/sec"]
+    D --> K["every row memo re-runs,<br/>sameRow JSON.stringify"]
+    K --> C
+    X --> C
     R --> C{{"CPU, for 24 hours"}}
     D --> C
     H["tab hidden 60 s"] -.->|the only thing<br/>that parks anything| T
@@ -130,6 +155,29 @@ one request every few seconds. It parks on `document.hidden` today and that
 stays. It does **not** park on unfocus, because that is exactly when a badge
 telling you a session is waiting is worth most.
 
+### 5. Gate the mousemove handler on being read
+
+`onMotion` returns immediately when its session is not the one on screen. The
+signal is the same one change 1 introduces, so this is two lines and it removes
+fourteen of fifteen handlers' work.
+
+### 6. Give the `keyed` memo an equality
+
+Stop every row memo re-running on every event. This sits on top of the
+`deriveRows` cost and multiplies it by the row count, so bounding the window does
+not remove it on its own.
+
+### 7. Two smaller repairs found while scanning
+
+`Dock.tsx:59` adds `window` pointermove and pointerup on each gutter drag and
+removes them only on pointerup. A cancelled touch drag strands the pair, and each
+stranded handler forces a layout per pointermove. It needs a `pointercancel`
+listener.
+
+`transcript-cache.ts:154` calls `backend.list()` on every idle cache write, which
+`getAll()`s every cached record to read two fields for eviction. It wants an
+index or a cursor rather than a full deserialise.
+
 ## Decisions
 
 | question | answer |
@@ -143,6 +191,10 @@ telling you a session is waiting is worth most.
 | Park the poll when hidden? | Yes, unchanged. Web Push covers notifications there. |
 | Transcript window | 20 turns, trimmed only while pinned to the bottom |
 | Incremental deriveRows | Not in this pass. See below. |
+| Mousemove handler | Gated on being read, not detached |
+| `keyed` memo equality | Fixed in this pass |
+| Dock pointercancel | Fixed in this pass |
+| transcript-cache `getAll` | Fixed in this pass |
 | Return UX | Nothing. Stale screen, then repaint. |
 | Rollout | Straight to master |
 | Target | A hidden idle tab near 0%, a visible idle tab under about 2%, flat over hours |
@@ -174,6 +226,12 @@ passes. With parking in place those attaches park 30 seconds after the pointer
 moves on, which bounds a cost the preload plan would otherwise leave open.
 Whichever lands second inherits the other's assumptions, so they want landing in
 this order: parking, then preload.
+
+> [!NOTE]
+> Changes 5, 6 and 7 came from three scanning agents run over the frontend, and
+> each was verified against the code before it was written down here. The same
+> scan corrected an earlier claim in this doc: a hidden xterm does not repaint,
+> it only parses.
 
 ## Risks
 
