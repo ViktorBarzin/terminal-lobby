@@ -420,10 +420,10 @@ func TestPlanChoiceWalksAMultiSelect(t *testing.T) {
 		want    [][]string
 	}{
 		{[]string{"Apple"}, [][]string{{"Space"}, {"Enter"}}},
-		{[]string{"Pear"}, [][]string{{"Down", "Space"}, {"Enter"}}},
-		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down", "Space"}, {"Enter"}}},
+		{[]string{"Pear"}, [][]string{{"Down"}, {"Space"}, {"Enter"}}},
+		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down"}, {"Space"}, {"Enter"}}},
 		// Out of order in, list order out: the cursor only ever walks one way.
-		{[]string{"Plum", "Pear"}, [][]string{{"Down", "Space"}, {"Down", "Space"}, {"Enter"}}},
+		{[]string{"Plum", "Pear"}, [][]string{{"Down"}, {"Space"}, {"Down"}, {"Space"}, {"Enter"}}},
 	} {
 		t.Run(strings.Join(tc.choices, "+"), func(t *testing.T) {
 			plan, err := planChoice(d, region, tc.choices, "")
@@ -454,7 +454,7 @@ func TestPlanChoiceReplacesThePickAlreadyOnScreen(t *testing.T) {
 		t.Fatalf("planChoice: %v", err)
 	}
 	// Up from the cursor's row to Apple to clear it, then down to Plum.
-	if !sameKeys(plan.Batches, [][]string{{"Up", "Space"}, {"Down", "Down", "Space"}, {"Enter"}}) {
+	if !sameKeys(plan.Batches, [][]string{{"Up"}, {"Space"}, {"Down", "Down"}, {"Space"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want the old pick cleared and Plum toggled on", plan.Batches)
 	}
 }
@@ -781,7 +781,7 @@ func TestPlanChoiceAddsToAPickAlreadyOnScreen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("planChoice: %v", err)
 	}
-	if !sameKeys(add.Batches, [][]string{{"Down", "Space"}, {"Enter"}}) {
+	if !sameKeys(add.Batches, [][]string{{"Down"}, {"Space"}, {"Enter"}}) {
 		t.Errorf("batches = %v, want Pear toggled on and Apple left alone", add.Batches)
 	}
 	if got := strings.Join(toggledRows(t, rows, add), ","); got != "Pear" {
