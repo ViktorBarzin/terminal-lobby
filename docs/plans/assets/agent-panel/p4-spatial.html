@@ -36,6 +36,7 @@
   /* runway geometry */
   --rw-head:252px;
   --rw-num:124px;
+  --rw-act:250px;
   --rw-lane-h:24px;
 }
 *{box-sizing:border-box}
@@ -145,7 +146,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
 /* header */
 .rw-head{
-  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-num);
+  display:grid;grid-template-columns:var(--rw-head) 1fr calc(var(--rw-act) + var(--rw-num));
   align-items:stretch;gap:0;padding:0 12px 0 clamp(12px,3vw,18px);
   border-bottom:1px solid var(--border);flex:0 0 32px;height:32px;overflow:hidden;
 }
@@ -160,7 +161,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .rw-legend{font-family:var(--font-mono);font-size:calc(9.5px * var(--tl-text-scale));color:var(--text-muted);white-space:nowrap}
 .rw-chev{color:var(--text-muted);padding:2px 5px;border-radius:5px;font-size:calc(12px * var(--tl-text-scale))}
 .rw-chev:hover{background:var(--hover-tint);color:var(--text-primary)}
-.rw-hint{font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted)}
 
 /* body: chart | reader */
 .rw-body{display:flex;min-height:0;flex:1;position:relative}
@@ -168,10 +168,9 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .rw-chart{flex:1 1 auto;min-width:0;overflow-y:auto;overflow-x:hidden;position:relative;padding:5px 12px 7px clamp(12px,3vw,18px)}
 .rw-rows{position:relative}
 .rw-canvas{position:absolute;top:0;left:0;pointer-events:none}
-.rw-hit{position:absolute;top:0;left:0;cursor:crosshair}
 
 .rw-row{
-  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-num);
+  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-act) var(--rw-num);
   align-items:center;height:var(--rw-lane-h);position:relative;width:100%;text-align:left;
 }
 button.rw-row:hover{background:var(--hover-tint)}
@@ -180,16 +179,15 @@ button.rw-row:hover{background:var(--hover-tint)}
 .rw-glyph{width:11px;flex:0 0 11px;text-align:center;font-size:calc(10px * var(--tl-text-scale));line-height:1}
 .rw-desc{font-size:calc(12.5px * var(--tl-text-scale));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .rw-row.is-settled .rw-desc{color:var(--text-muted)}
-.rw-more{position:absolute;right:2px;top:50%;transform:translateY(-50%);color:var(--text-muted);opacity:0;font-size:calc(11px * var(--tl-text-scale))}
+.rw-more{position:absolute;right:2px;top:50%;transform:translateY(-50%);color:var(--text-muted);opacity:.3;font-size:calc(11px * var(--tl-text-scale))}
 button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
 .rw-lane{position:relative;height:100%;min-width:0}
 .rw-row.in-wf .rw-name{box-shadow:inset 1px 0 0 var(--border-strong);padding-left:7px}
 .rw-tool{
-  position:absolute;top:0;left:0;right:0;white-space:nowrap;font-family:var(--font-mono);
-  font-size:calc(10.5px * var(--tl-text-scale));line-height:calc(11px * var(--tl-text-scale));
-  height:calc(11px * var(--tl-text-scale));overflow:hidden;
-  pointer-events:none;z-index:2;
-  text-shadow:0 0 3px var(--bg-page),0 0 2px var(--bg-page),0 1px 2px var(--bg-page);
+  white-space:nowrap;font-family:var(--font-mono);
+  font-size:calc(10.5px * var(--tl-text-scale));line-height:1;
+  overflow:hidden;text-overflow:ellipsis;min-width:0;
+  padding:0 10px 0 12px;pointer-events:none;position:relative;z-index:2;
 }
 .rw-tool .tn{color:var(--text-primary)}
 .rw-tool .ta{color:var(--text-muted)}
@@ -280,13 +278,14 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   .rw-head{grid-template-columns:1fr auto}
   .rw-head-c,.rw-legend{display:none}
   .rw-row{
-    grid-template-columns:1fr 106px;
+    grid-template-columns:1fr 124px;
     grid-template-areas:"name num" "lane lane";
     height:auto;align-items:center;padding-block:3px 4px;
   }
   .rw-name{grid-area:name}
   .rw-num{grid-area:num}
   .rw-lane,.rw-phase{grid-area:lane;height:21px}
+  .rw-num{font-size:calc(10px * var(--tl-text-scale))}
   .rw-row .rw-desc{font-size:calc(13px * var(--tl-text-scale))}
   .rw-wf{height:auto;padding-block:3px;flex-wrap:wrap}
   .rw-wf .st{margin-left:0;width:100%}
@@ -395,7 +394,6 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
         <div class="rw-chart" id="rw-chart">
           <div class="rw-rows" id="rw-rows">
             <canvas class="rw-canvas" id="rw-canvas"></canvas>
-            <div class="rw-hit" id="rw-hit"></div>
           </div>
         </div>
         </div>
@@ -434,7 +432,7 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   <h2>Runway</h2>
   <p class="sub">prototype 4 · spatial</p>
   <h3>Where the panel lives</h3>
-  <p>It grows out of the background strip at the bottom of the main column, above the composer. That is where the strip already sits, it is the full width a time axis needs, and it is next to where your eye already is. On a phone it stays the one line the strip occupies today and opens upward over the timeline, so nothing new claims the bottom of the screen.</p>
+  <p>It grows out of the background strip at the bottom of the main column, above the composer. That is where the strip already sits, it is the full width a time axis needs, and it is next to where your eye already is. On a phone it stays the one line the strip occupies today, and opening it pushes the timeline up rather than covering anything, so the composer keeps the bottom of the screen.</p>
   <h3>The idea I want judged</h3>
   <p>Every agent gets a lane on one shared time axis, and every tool call is a tick on that lane. Start times, fan-out, nesting and the straggler everyone is waiting on are all read as shape rather than compared as numbers, and a long silence is a visible gap the panel never has to name. The ticks are also the index into the agent's transcript, so clicking one opens the reader at that call. Finished agents fold into a sediment band that keeps their bars and drops their text, so the run's shape survives the collapse.</p>
   <h3>What I would fix next</h3>
@@ -661,7 +659,7 @@ function axis(t){ return Math.max(60, t / 0.88); }
    3. dock DOM
    =========================================================== */
 const rw = $("#rw"), rows = $("#rw-rows"), chart = $("#rw-chart"),
-      cv = $("#rw-canvas"), hit = $("#rw-hit"), silo = $("#rw-silo"),
+      cv = $("#rw-canvas"), silo = $("#rw-silo"),
       stripSilo = $("#strip-silo"), reader = $("#rw-reader");
 let SEL = null, SEDIMENT_OPEN = false, DOCK_H = 246, COLLAPSED = false, USER_H = null, FORCE_OPEN = false;
 let rowEls = new Map(), rowSig = "", geo = [], laneRect = {x:0,w:0};
@@ -702,11 +700,15 @@ function buildRow(p){
     name.appendChild(el("span","rw-more","›"));
     b.appendChild(name);
     const lane = el("div","rw-lane");
-    lane.appendChild(el("div","rw-tool"));
     b.appendChild(lane);
+    b.appendChild(el("div","rw-tool"));
     b.appendChild(el("div","rw-num"));
     if(a.group === "wf") b.classList.add("in-wf");
-    b.addEventListener("click", ()=>select(a.id));
+    b.addEventListener("click", ev=>{
+      const ln = b.querySelector(".rw-lane"), r = ln.getBoundingClientRect();
+      const px = ev.clientX - r.left;
+      select(a.id, (px >= 0 && px <= r.width) ? nearestTick(a, px, r.width) : -1);
+    });
     return b;
   }
   if(p.type === "wfhead"){
@@ -732,6 +734,7 @@ function buildRow(p){
     n.innerHTML = '<span class="rw-glyph" style="color:var(--state-awaiting)">◇</span><span class="rw-desc"></span>';
     d.appendChild(n);
     d.appendChild(el("div","rw-lane"));
+    d.appendChild(el("div","rw-tool"));
     d.appendChild(el("div","rw-num"));
     return d;
   }
@@ -742,6 +745,7 @@ function buildRow(p){
   n.innerHTML = '<span class="rw-glyph" style="color:var(--success)">✓</span><span class="rw-desc"></span><span class="rw-more">›</span>';
   b.appendChild(n);
   b.appendChild(el("div","rw-lane"));
+  b.appendChild(el("div","rw-tool"));
   b.appendChild(el("div","rw-num"));
   b.addEventListener("click", ()=>{ SEDIMENT_OPEN = !SEDIMENT_OPEN; rowSig = ""; frame(true); });
   return b;
@@ -754,10 +758,10 @@ function syncRows(st){
   rowSig = sig;
   fitSoon = true;
   /* remove everything but the canvas + hit layer, rebuild */
-  [...rows.children].forEach(c=>{ if(c!==cv && c!==hit) c.remove(); });
+  [...rows.children].forEach(c=>{ if(c !== cv) c.remove(); });
   rowEls = new Map();
   const dense = st.live.length > 9;
-  rows.style.setProperty("--rw-lane-h", dense ? "21px" : "24px");
+  rows.style.setProperty("--rw-lane-h", dense ? "20px" : "24px");
   plan.forEach(p=>{
     const e = buildRow(p);
     if(dense) e.classList.add("is-dense");
@@ -771,9 +775,11 @@ function syncRows(st){
 let fitSoon = false;
 function fitHeight(){
   if(USER_H != null) return;
-  let want = 6 /*grip*/ + 32 /*header*/ + 12 /*chart padding*/ + rows.scrollHeight;
+  let content = 0;
+  for(const c of rows.children){ if(c !== cv) content = Math.max(content, c.offsetTop + c.offsetHeight); }
+  let want = 6 /*grip*/ + 32 /*header*/ + 12 /*chart padding*/ + content;
   if(SEL) want = Math.max(want, 400);
-  const cap = window.matchMedia("(max-width:860px)").matches ? 0.62 : 0.52;
+  const cap = window.matchMedia("(max-width:860px)").matches ? 0.62 : 0.53;
   const h = Math.round(clamp(want, 92, window.innerHeight * cap));
   if(Math.abs(h - DOCK_H) > 1){ DOCK_H = h; rw.style.height = DOCK_H + "px"; return true; }
   return false;
@@ -789,11 +795,10 @@ function measure(){
   cv.style.cssText = "position:absolute;top:0;left:"+laneRect.x+"px;width:"+laneRect.w+"px;height:"+h+"px";
   cv.width = laneRect.w * dpr; cv.height = h * dpr;
   cv.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
-  hit.style.cssText = "position:absolute;top:0;left:"+laneRect.x+"px;width:"+laneRect.w+"px;height:"+h+"px";
   /* per-row geometry */
   geo = [];
   [...rows.children].forEach(c=>{
-    if(c===cv||c===hit) return;
+    if(c === cv) return;
     const ln = c.querySelector(".rw-lane") || c.querySelector(".rw-phase");
     geo.push({el:c, id:c.dataset.id||null, y:c.offsetTop, h:c.offsetHeight,
               ly: c.offsetTop + (ln ? ln.offsetTop : 0), lh: ln ? ln.offsetHeight : c.offsetHeight});
@@ -860,18 +865,15 @@ function updateRows(st, plan){
       const pct = v => (100 * clamp(v, 0, W) / W) + "%";
       if(!lab.tn && !lab.ta){ tool.textContent = ""; }
       else if(s.settled){
-        /* settled: the label sits to the right of the point where the agent stopped */
-        tool.style.textAlign = "left";
-        tool.style.paddingLeft = pct(endX + 5);
-        tool.style.paddingRight = "0";
-        const room = Math.max(0, W - endX - 8);
+        /* settled: the label hangs off the point where the agent stopped, on
+           whichever side of that point has more room */
+        const roomR = Math.max(0, W - endX - 8), roomL = Math.max(0, endX - 6);
+        const right = roomR >= 170 || roomR >= roomL;
+        const room = Math.min(300, right ? roomR : roomL);
         tool.innerHTML = '<span class="'+(lab.bad?"tn":"ta")+'"'+(lab.bad?' style="color:var(--danger)"':"")+'>'+
                          truncRight(lab.ta||"", room) + '</span>';
       } else {
         /* running: the label ends at the live edge, where the work is happening */
-        tool.style.textAlign = "right";
-        tool.style.paddingRight = pct(W - endX + 4);
-        tool.style.paddingLeft = "0";
         const room = Math.min(290, Math.max(0, endX - 6));
         const rest = Math.max(0, room - lab.tn.length*6.4 - (lab.tq ? lab.tq.length*6.4 + 6 : 0) - 8);
         tool.innerHTML = '<span class="tn">'+lab.tn+'</span>'+
@@ -973,9 +975,6 @@ function draw(st, plan){
     });
   }
 
-  if(window.__DBG){ geo.forEach(g=>{ ctx.fillStyle="rgba(255,0,255,.9)"; ctx.fillRect(0,g.ly,70,1);
-      ctx.fillStyle="rgba(0,255,0,.9)"; ctx.fillRect(0,g.ly+g.lh-1,70,1);
-      ctx.fillStyle="rgba(255,255,0,.9)"; ctx.fillRect(70,g.y,40,1); }); }
   /* rows */
   plan.forEach(p=>{
     if(p.type !== "agent") return;
@@ -1104,16 +1103,34 @@ function drawSilo(c, st, compact){
 /* ===========================================================
    5. drill-in reader
    =========================================================== */
-function select(id){
+/* which tool call is under this x on the lane */
+function nearestTick(a, px, w){
+  const span = axis(LAST.t);
+  let best = -1, bd = 7;
+  a.events.forEach((e,i)=>{
+    if(e.t > LAST.t) return;
+    const d = Math.abs((e.t/span)*w - px);
+    if(d < bd){ bd = d; best = i; }
+  });
+  return best;
+}
+function select(id, tick){
   SEL = (SEL === id) ? null : id;
   reader.hidden = !SEL;
   fitSoon = true;
   document.querySelectorAll("[data-agent]").forEach(b=>b.classList.toggle("is-sel", b.dataset.agent === SEL));
   if(SEL) renderReader(true);
   frame(true);
+  if(SEL && tick >= 0) requestAnimationFrame(()=>jumpToTick(tick));
 }
-$("#rd-close").addEventListener("click", ()=>select(SEL));
-document.addEventListener("keydown", e=>{ if(e.key === "Escape" && SEL) select(SEL); });
+function jumpToTick(i){
+  const body = $("#rd-body");
+  body.querySelectorAll(".rw-e.tool.on").forEach(x=>x.classList.remove("on"));
+  const t = document.getElementById("tx-"+i);
+  if(t){ t.classList.add("on"); t.scrollIntoView({block:"center"}); }
+}
+$("#rd-close").addEventListener("click", ()=>select(SEL, -1));
+document.addEventListener("keydown", e=>{ if(e.key === "Escape" && SEL) select(SEL, -1); });
 
 let readerSig = "";
 function renderReader(force){
@@ -1172,43 +1189,12 @@ function renderReader(force){
   if(force || atEnd) body.scrollTop = body.scrollHeight;
 }
 
-/* ticks scrub the transcript */
-hit.addEventListener("click", ev=>{
-  const r = hit.getBoundingClientRect();
-  const px = ev.clientX - r.left, py = ev.clientY - r.top + chart.scrollTop;
-  const g = geo.find(q=>q.id && py >= q.y && py < q.y + q.h);
-  if(!g) return;
-  const a = AGENTS.find(q=>q.id === g.id); if(!a) return;
-  const span = axis(LAST.t), W = laneRect.w;
-  let best = -1, bd = 9;
-  a.events.forEach((e,i)=>{
-    const ex = (e.t/span)*W, d = Math.abs(ex - px);
-    if(d < bd && e.t <= LAST.t){ bd = d; best = i; }
-  });
-  if(SEL !== a.id) select(a.id); else renderReader(true);
-  if(best >= 0){
-    requestAnimationFrame(()=>{
-      const t = document.getElementById("tx-"+best);
-      if(t){
-        $("#rd-body").querySelectorAll(".rw-e.tool.on").forEach(x=>x.classList.remove("on"));
-        t.classList.add("on");
-        t.scrollIntoView({block:"center"});
-      }
-    });
-  }
-});
-hit.addEventListener("mousemove", ev=>{
-  const r = hit.getBoundingClientRect();
-  const py = ev.clientY - r.top + chart.scrollTop;
-  const g = geo.find(q=>q.id && py >= q.y && py < q.y + q.h);
-  hit.style.cursor = g ? "pointer" : "default";
-});
 
 /* timeline rows select the same agent */
 document.querySelectorAll("[data-agent]").forEach(b=>{
   b.addEventListener("click", ()=>{
     if(COLLAPSED){ COLLAPSED = false; rw.classList.remove("is-collapsed"); }
-    select(b.dataset.agent);
+    select(b.dataset.agent, -1);
   });
 });
 
@@ -1259,19 +1245,21 @@ function setMark(id, st){
   else { m.textContent = "✓"; m.className = "m ok"; }
 }
 
-function tick(now){
+/* One shared clock for the whole panel. Nothing redraws while it is paused,
+   and no row owns a timer of its own. */
+function tick(){
+  const now = performance.now();
   const dt = Math.min(0.25, (now - prev)/1000); prev = now;
-  if(PLAYING){
-    T += dt * SPEED;
-    if(T > SCRIPT_END){ T = SCRIPT_END; PLAYING = false; $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on = "0"; }
-  }
+  if(!PLAYING) return;
+  T += dt * SPEED;
+  if(T > SCRIPT_END){ T = SCRIPT_END; PLAYING = false; $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on = "0"; }
   frame();
-  requestAnimationFrame(tick);
 }
 
 function jump(t){ T = t; readerSig = ""; frame(true); }
 $("#ph-play").addEventListener("click", e=>{
   PLAYING = !PLAYING;
+  prev = performance.now();
   e.currentTarget.textContent = PLAYING ? "Pause" : "Play";
   e.currentTarget.dataset.on = PLAYING ? "1" : "0";
 });
@@ -1334,7 +1322,6 @@ function applyNarrow(){
   if(q.get("sel")) SEL = q.get("sel");
   if(q.get("sediment") === "1") SEDIMENT_OPEN = true;
   if(q.get("open") === "1") FORCE_OPEN = true;
-  if(q.get("dbg") === "1") window.__DBG = true;
 })();
 
 readTokens();
@@ -1347,7 +1334,8 @@ applyHeight();
 if(SEL){ reader.hidden = false; }
 window.addEventListener("resize", ()=>{ rowSig = ""; applyHeight(); });
 frame(true);
-requestAnimationFrame(tick);
+prev = performance.now();
+setInterval(tick, 50);
 </script>
 </body>
 </html>
