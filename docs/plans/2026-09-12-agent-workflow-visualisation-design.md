@@ -4,6 +4,26 @@
 **Owner:** wizard. **Repos touched:** terminal-lobby.
 **Decisions from:** a grilling session on 2026-09-12.
 
+## The five to choose between
+
+Open one, press `16 agents`, then `idle`. That pair separates them faster than
+anything else on this page. Each one plays a scripted session on a compressed
+clock, so the motion can be judged rather than imagined.
+
+| | open it | where it puts the panel | the bet |
+|---|---|---|---|
+| 1 | **[Marginalia](agent-panel/p1-ambient.html)** | a rail down the right margin, no card, one hairline | identity and nesting drawn by a single coloured rule, and no spinner anywhere |
+| 2 | **[Console](agent-panel/p2-instrument.html)** | a resizable dock, grown out of today's strip | a `LAST 12` column of tool-call bars, the only honest shape data with no denominator makes |
+| 3 | **[Strand](agent-panel/p3-narrative.html)** | inline in the timeline, where the spawn happened | a running head appears only once the live work scrolls off, so there is no second place the facts live |
+| 4 | **[Runway](agent-panel/p4-spatial.html)** | a dock with every agent on one time axis | a fan-out has a shape, and a silence is a visible gap nothing has to name |
+| 5 | **[Foreground](agent-panel/p5-focus.html)** | a sticky band above the timeline | one agent leads, picked by stated facts, and the card says which rule fired |
+
+Five agents built these independently from one brief and a different design
+thesis each, so four of the five chose a different placement. The rest of this
+page is the reasoning and the measurements they were built against.
+
+## The problem
+
 A session that spawns subagents or runs a `Workflow` tells the text view almost
 nothing about them. This design adds a surface that names each piece of
 concurrent work and says what it is doing right now, and it records what the
@@ -66,8 +86,8 @@ screen.
 
 **The drill target grew.** The interview first settled on "jump to its result in
 the main timeline", on the assumption that a subagent's inner work was not
-available. Section 3 found that it is, in full, so the decision was revisited and
-tapping an agent now opens its whole conversation.
+available. The measurements below found that it is, in full, so the decision was
+revisited and tapping an agent now opens its whole conversation.
 
 ## The data, measured 2026-09-12
 
@@ -185,29 +205,26 @@ anything that ticks sits in a fixed-width cell; the volatile string truncates
 rather than wraps; and timers tick by direct DOM write so a running row costs no
 re-renders per second.
 
-## The prototypes
+## How the prototypes were made
 
-Five self-contained HTML prototypes, each built by an independent agent that
-could not see the others, each carrying a scripted session that plays so the
-motion can be judged rather than imagined. Each was given the same facts and a
-different design thesis:
+Five agents, one identical brief, a different design thesis each, and no sight
+of one another's work. The brief carried the decisions above, the measured data
+model, the real design tokens, and the two existing implementations (the Claude
+Code CLI's own tree, and t3code's `AgentsPanel.tsx`) so nobody spent their
+invention rediscovering solved mechanics.
 
-| # | name | thesis | where it put the panel |
-|---|---|---|---|
-| 1 | [Marginalia](agent-panel/p1-ambient.html) | Ambient. A monitoring surface that demands attention has failed. Encode state in position, weight and hue so a glance costs nothing. | A narrow rail down the right margin, beside the transcript. |
-| 2 | [Console](agent-panel/p2-instrument.html) | Instrument. The person running sixteen agents is an operator. Aligned columns, every number visible, density read as order. | A full-width table between the timeline and the composer. |
-| 3 | [Strand](agent-panel/p3-narrative.html) | Narrative. Delegation happened in the conversation, so it belongs in the timeline rather than in a panel beside it. | Inline, in the 860px column, at the moment the spawn happened. |
-| 4 | [Runway](agent-panel/p4-spatial.html) | Spatial. A list throws away the shape of the work. Sixteen agents across three phases is a shape, and shapes read faster than rows. | A resizable dock under the timeline. |
-| 5 | [Foreground](agent-panel/p5-focus.html) | Focus. Sixteen rows of equal weight is sixteen things nobody read. Surface the one that matters, keep the rest as a thin index. | A band above the timeline, pinned while work is live. |
+| thesis | given to |
+|---|---|
+| Ambient. A monitoring surface that demands attention has failed. Encode state in position, weight and hue so a glance costs nothing. | Marginalia |
+| Instrument. The person running sixteen agents is an operator. Aligned columns, every number visible, density read as order. | Console |
+| Narrative. Delegation happened in the conversation, so it belongs in the timeline rather than in a panel beside it. | Strand |
+| Spatial. A list throws away the shape of the work. Sixteen agents across three phases is a shape, and shapes read faster than rows. | Runway |
+| Focus. Sixteen rows of equal weight is sixteen things nobody read. Surface the one that matters, keep the rest as a thin index. | Foreground |
 
-Each prototype chose its own placement, since where this lives is one of the
-things being judged. Each page carries its own state buttons (`3 agents`,
-`16 agents`, `workflow`, `one failed`, `all done`, `idle`) so the same moment
-can be compared across all five, and a replay control for watching the motion.
-
-The states worth comparing, in order: `16 agents` for whether the design
-survives a fan-out, `idle` for whether it leaves cleanly, and a replay from the
-start for whether the motion is informative or distracting.
+Each page carries the same state buttons (`3 agents`, `16 agents`, `workflow`,
+`one failed`, `all done`, `idle`) so one moment can be compared across all five,
+and a replay control for watching the motion. Every one was verified by driving
+it at 1440x900 and reading the screenshots back.
 
 ## What this costs to build
 
