@@ -2053,6 +2053,13 @@ label.tl-set-row-label {
 .tl-send {
   background: var(--accent);
 }
+/* Only the new-session composer ever draws it this way: there, Send CREATES
+   the session, so an empty box has to look like it cannot. The same 0.5 and
+   default cursor every other unavailable control here uses. */
+.tl-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .tl-stop {
   background: var(--danger);
 }
