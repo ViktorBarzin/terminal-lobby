@@ -283,7 +283,10 @@ class FakeSocket {
   onclose: (() => void) | null = null;
   readonly sent: unknown[] = [];
 
-  constructor(readonly url: string, readonly protocol: string) {
+  constructor(
+    readonly url: string,
+    readonly protocol: string,
+  ) {
     sockets.push(this);
   }
   send(data: unknown): void {
@@ -397,8 +400,7 @@ beforeEach(() => {
   localStorage.clear();
   document.body.style.removeProperty("--font-mono");
   (globalThis as unknown as { WebSocket: unknown }).WebSocket = FakeSocket;
-  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver =
-    FakeResizeObserver;
+  (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
   // /token, answered the way ttyd answers it.
   (globalThis as unknown as { fetch: unknown }).fetch = async () => ({
     json: async () => ({ token: "qa-token" }),
@@ -1017,11 +1019,7 @@ describe("the paste bridge goes through term.paste (term.html:9404-9409)", () =>
  */
 describe("the paste chord (term.html:8585-8587)", () => {
   /** xterm consulting the one handler it stores. */
-  const consult = (
-    m: Mounted,
-    type: "keydown" | "keyup",
-    init: KeyboardEventInit,
-  ): boolean => {
+  const consult = (m: Mounted, type: "keydown" | "keyup", init: KeyboardEventInit): boolean => {
     const handler = m.term.keyHandler;
     if (!handler) throw new Error("no custom key event handler was installed");
     return handler(new KeyboardEvent(type, init));
@@ -1126,9 +1124,7 @@ describe("the browser paste event reaches the pty", () => {
 
   /** xterm's own input proxy, which is where a paste is really dispatched. */
   const textareaOf = (m: Mounted): HTMLTextAreaElement => {
-    const ta = m.term.host?.querySelector<HTMLTextAreaElement>(
-      ".xterm-helper-textarea",
-    );
+    const ta = m.term.host?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (!ta) throw new Error("the terminal has no helper textarea");
     return ta;
   };
@@ -1632,9 +1628,7 @@ describe("the focus a view switch takes (TerminalView.tsx:307-311)", () => {
 
 describe("xterm's helper textarea (term.html:6339-6347)", () => {
   const textarea = (): HTMLTextAreaElement => {
-    const el = document.querySelector<HTMLTextAreaElement>(
-      ".xterm-helper-textarea",
-    );
+    const el = document.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     if (!el) throw new Error("xterm made no helper textarea");
     return el;
   };
@@ -1673,9 +1667,7 @@ describe("xterm's helper textarea (term.html:6339-6347)", () => {
     decoy.className = "xterm-helper-textarea";
     document.body.insertBefore(decoy, document.body.firstChild);
     const m = await mount();
-    const own = m.term.host?.querySelector<HTMLTextAreaElement>(
-      ".xterm-helper-textarea",
-    );
+    const own = m.term.host?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea");
     expect(own?.getAttribute("type")).toBe("password");
     expect(decoy.getAttribute("type")).toBeNull();
     decoy.remove();
@@ -2405,9 +2397,7 @@ describe("plain-drag selection (term.html:5921-6055)", () => {
     expect(seen).toHaveLength(0); // held back, not cloned
     expect(m.term.focused).toBe(focusedBefore);
 
-    screen.dispatchEvent(
-      trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }),
-    );
+    screen.dispatchEvent(trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }));
     expect(sgr(m.socket())).toEqual(["\x1b[<0;11;24M", "\x1b[<0;11;24m"]);
   });
 
@@ -2421,9 +2411,7 @@ describe("plain-drag selection (term.html:5921-6055)", () => {
     const screen = boxScreen(m.term, GRID);
 
     screen.dispatchEvent(press({ clientX: 100, clientY: 470 }));
-    screen.dispatchEvent(
-      trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }),
-    );
+    screen.dispatchEvent(trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }));
 
     expect(sgr(m.socket())).toEqual([]);
   });
@@ -2439,9 +2427,7 @@ describe("plain-drag selection (term.html:5921-6055)", () => {
     const screen = boxScreen(m.term, GRID);
 
     screen.dispatchEvent(press({ clientX: 100, clientY: 470 }));
-    screen.dispatchEvent(
-      trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }),
-    );
+    screen.dispatchEvent(trusted("mouseup", { button: 0, buttons: 0, clientX: 100, clientY: 470 }));
 
     expect(sgr(m.socket())).toEqual([]);
     expect(messages()[0]).toContain("Watching");
@@ -2725,8 +2711,7 @@ describe("the live-theme global survives an out-of-order unmount", () => {
  * resize at all, so it is left for whoever wants the polish.
  */
 describe("the live font-size bridge (term.html:9173-9203)", () => {
-  const prefsLive = (): ((p: { fontSize: number }) => boolean) | undefined =>
-    window.__tlPrefsLive;
+  const prefsLive = (): ((p: { fontSize: number }) => boolean) | undefined => window.__tlPrefsLive;
 
   it("is claimed by a mounted terminal", async () => {
     await mount();
@@ -2930,10 +2915,14 @@ describe("touch scroll (term.html:6478-6556)", () => {
 
   /** A flick: two moves fast enough to leave a coast behind, then the lift. */
   const flick = (m: Mounted): void => {
-    finger(m, [300, 0], [
-      [260, 10],
-      [220, 20],
-    ]);
+    finger(
+      m,
+      [300, 0],
+      [
+        [260, 10],
+        [220, 20],
+      ],
+    );
     hostOf(m).dispatchEvent(touchEvent("touchend", [], 25));
   };
 
@@ -3063,9 +3052,7 @@ describe("touch scroll (term.html:6478-6556)", () => {
     const field = m.mirror();
     field.blur();
     finger(m, [300, 0], [[298, 10]]); // 2px: still a tap
-    hostOf(m).dispatchEvent(
-      touchEvent("touchend", [], 20, [{ clientX: 12, clientY: 298 }]),
-    );
+    hostOf(m).dispatchEvent(touchEvent("touchend", [], 20, [{ clientX: 12, clientY: 298 }]));
     expect(seen).toHaveLength(1);
     expect(seen[0]?.clientX).toBe(12);
     expect(seen[0]?.clientY).toBe(298);
@@ -3202,10 +3189,14 @@ describe("touch scroll (term.html:6478-6556)", () => {
     restoreNow?.();
     let now = NOW;
     restoreNow = fakeNow(() => now);
-    finger(m, [300, 0], [
-      [260, 10],
-      [220, 20],
-    ]);
+    finger(
+      m,
+      [300, 0],
+      [
+        [260, 10],
+        [220, 20],
+      ],
+    );
     now = NOW + 400;
     hostOf(m).dispatchEvent(touchEvent("touchend", [], 420));
     expect(frames?.outstanding()).toBe(0);
@@ -3237,9 +3228,7 @@ describe("touch scroll (term.html:6478-6556)", () => {
 
   it("does not let its own synthetic wheels end the coast", async () => {
     const { m } = await coasting();
-    hostOf(m).dispatchEvent(
-      new WheelEvent("wheel", { deltaY: -1, deltaMode: 1, bubbles: true }),
-    );
+    hostOf(m).dispatchEvent(new WheelEvent("wheel", { deltaY: -1, deltaMode: 1, bubbles: true }));
     expect(frames?.outstanding()).toBe(1);
   });
 
@@ -3366,10 +3355,14 @@ describe("touch scroll (term.html:6478-6556)", () => {
    */
   it("drops the gesture on touchcancel", async () => {
     const { m } = await onTouch();
-    finger(m, [300, 0], [
-      [260, 10],
-      [220, 20],
-    ]);
+    finger(
+      m,
+      [300, 0],
+      [
+        [260, 10],
+        [220, 20],
+      ],
+    );
     hostOf(m).dispatchEvent(touchEvent("touchcancel", [], 22));
     hostOf(m).dispatchEvent(touchEvent("touchend", [], 25));
     expect(frames?.outstanding()).toBe(0);
@@ -4076,10 +4069,7 @@ describe("the compose mirror (term.html:7077-7509)", () => {
     return e;
   };
 
-  const backspace = (
-    field: HTMLTextAreaElement,
-    opts: { composing?: boolean } = {},
-  ): void => {
+  const backspace = (field: HTMLTextAreaElement, opts: { composing?: boolean } = {}): void => {
     field.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "Backspace",
@@ -4116,13 +4106,10 @@ describe("the compose mirror (term.html:7077-7509)", () => {
   });
 
   /** Every attribute mirror.ts carries, from the constant rather than by hand. */
-  it.each(Object.entries(MIRROR_FIELD_ATTRIBUTES))(
-    "sets %s to %s",
-    async (name, value) => {
-      const m = await onPhone();
-      expect(m.mirror().getAttribute(name)).toBe(value);
-    },
-  );
+  it.each(Object.entries(MIRROR_FIELD_ATTRIBUTES))("sets %s to %s", async (name, value) => {
+    const m = await onPhone();
+    expect(m.mirror().getAttribute(name)).toBe(value);
+  });
 
   /**
    * THE OMISSION, which is the one that removes the feature without breaking
@@ -5006,9 +4993,7 @@ describe("pinch to font size (term.html:7758-7965)", () => {
     const first = twoAt(0, target)[0];
     if (!first) throw new Error("unreachable");
     host.dispatchEvent(pinchEvent("touchstart", [first], target));
-    host.dispatchEvent(
-      pinchEvent("touchstart", twoAt(opts.span0 ?? SPAN0, target), target),
-    );
+    host.dispatchEvent(pinchEvent("touchstart", twoAt(opts.span0 ?? SPAN0, target), target));
     const moves: Event[] = [];
     for (const span of spans) {
       const e = pinchEvent("touchmove", twoAt(span, target), target, opts.cancelable);
@@ -5089,9 +5074,15 @@ describe("pinch to font size (term.html:7758-7965)", () => {
   const pinchTypes = (seen: readonly Registered[]): string[] =>
     seen
       .filter((r) =>
-        ["touchstart", "touchmove", "touchend", "touchcancel", "gesturestart", "gesturechange", "gestureend"].includes(
-          r.type,
-        ),
+        [
+          "touchstart",
+          "touchmove",
+          "touchend",
+          "touchcancel",
+          "gesturestart",
+          "gesturechange",
+          "gestureend",
+        ].includes(r.type),
       )
       .map((r) => r.type);
 
@@ -5173,7 +5164,14 @@ describe("pinch to font size (term.html:7758-7965)", () => {
     listeners = watchDocListeners();
     await mountOpen();
     const pinchOnes = listeners.seen.filter((r) =>
-      ["touchstart", "touchend", "touchcancel", "gesturestart", "gesturechange", "gestureend"].includes(r.type),
+      [
+        "touchstart",
+        "touchend",
+        "touchcancel",
+        "gesturestart",
+        "gesturechange",
+        "gestureend",
+      ].includes(r.type),
     );
     expect(pinchOnes).toEqual([
       { type: "touchstart", capture: true, passive: true },
