@@ -162,9 +162,11 @@ another client reading the same Session, and does not count as driving (**Last
 driven** stays put). Alone on a Session it sizes the window like any other
 client, which is what opening it would have done anyway. A
 promotion clears the flag on the same client, so the socket the hover opened is
-the one the user then types into; there is no second attach. The third value of
-the client's attach request, beside watch and drive, and resolved by the server
-downgrade-only like the others. Speculative and collected: one at a time, on a
+the one the user then types into; there is no second attach. It also ends the
+mode: the next connect this mount makes, after a park or a dropped socket, is an
+ordinary attach, so the window follows the device again (ADR-0026, amended
+2026-09-12). The third value of the client's attach request, beside watch and
+drive, and resolved by the server downgrade-only like the others. Speculative and collected: one at a time, on a
 TTL, and it never creates a Session that has gone away. _Compare_: **Pre-warm
 slot**, which speculates on CREATING a session for a directory; this speculates
 on OPENING one that exists. _Avoid_: warm attach, pre-warmed session, prefetch
