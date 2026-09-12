@@ -161,12 +161,50 @@ func (p *privReader) close() {
 }
 
 // ReadFrom implements sessionio.Reader.
+//
+// A read from offset 0 is the whole transcript, and it does not use the shared
+// child. The long-lived child exists so a 200 ms tail poll does not cost a fork,
+// and those polls return only the bytes appended since the last offset; a first
+// read returns everything, and running it on the shared pipe held every other
+// read for this user behind it. emo's 16 sessions and his 39 MB transcript are
+// what measured this. A bulk read costs one fork, once per session per process.
 func (p *privReader) ReadFrom(path string, off int64) ([]string, int64, error) {
-	resp, err := p.do(privRequest{Op: "readfrom", Path: path, Off: off})
+	run := p.do
+	if off == 0 {
+		run = p.doOnce
+	}
+	resp, err := run(privRequest{Op: "readfrom", Path: path, Off: off})
 	if err != nil {
 		return nil, off, err
 	}
+	if len(resp.Blob) > 0 {
+		return sessionio.SplitLines(resp.Blob), resp.Next, nil
+	}
+	// A child from the previous build, still answering in the per-line form.
 	return resp.Lines, resp.Next, nil
+}
+
+// doOnce runs one operation on a child of its own, which is then shut down. It
+// takes no lock, so it runs concurrently with whatever the shared child is
+// doing and with other doOnce calls.
+func (p *privReader) doOnce(req privRequest) (privResponse, error) {
+	c, err := p.spawn()
+	if err != nil {
+		return privResponse{}, err
+	}
+	defer func() {
+		if err := c.stop(); err != nil {
+			log.Printf("privreader: %s: one-shot child exited: %v", p.osUser, err)
+		}
+	}()
+	resp, err := c.roundTrip(req)
+	if err != nil {
+		return privResponse{}, fmt.Errorf("privreader: %s: %w", p.osUser, err)
+	}
+	if !resp.OK {
+		return resp, errors.New(resp.Err)
+	}
+	return resp, nil
 }
 
 // FullResult implements sessionio.Reader.
