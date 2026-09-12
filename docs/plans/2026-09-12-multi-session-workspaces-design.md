@@ -39,6 +39,13 @@ already holds the live terminals, so putting four on screen starts nothing new.
 
 ## What this costs, and why it is less than it looks
 
+```stats
+0 | new connections per extra tile
+779 ms | to rebuild one terminal, if a slot ever moves
+240 px | smallest tile a split may produce
+1 | workspace a session may belong to
+```
+
 `frontend-v2/src/store/keepalive.ts` already keeps every session opened in a tab
 mounted for 24 hours, each holding one ttyd WebSocket, one attached tmux client,
 one SSE stream and one xterm buffer. `App.tsx:1139-1148` renders them all and
@@ -55,12 +62,13 @@ That single equality is the entire single-session assumption. Showing four
 sessions at once adds no connections, no attaches and no xterms. It reveals what
 is already running.
 
-**The constraint that shapes everything else** is in the comment above that
-loop: *"The slots are appended and never reordered, so a live terminal is never
-moved in the DOM."* Moving a slot's node disposes `TerminalNative`, which drops
-the xterm, the ttyd socket and the tmux attach — the 1,797 ms rebuild keepalive
-exists to avoid. So the split tree is a **positioning layer over a fixed DOM
-order**, never a reordering of it. ADR-0027 records this.
+> [!IMPORTANT]
+> The constraint that shapes everything else is in the comment above that loop:
+> *"The slots are appended and never reordered, so a live terminal is never
+> moved in the DOM."* Moving a slot's node disposes `TerminalNative`, which
+> drops the xterm, the ttyd socket and the tmux attach — the 1,797 ms rebuild
+> keepalive exists to avoid. So the split tree is a **positioning layer over a
+> fixed DOM order**, never a reordering of it. ADR-0027 records this.
 
 Two consequences follow, and both are visible to a person:
 
@@ -97,10 +105,10 @@ work in twice.
 
 N-ary rows and columns, like tmux's own layout. Three tiles across are one row
 of three, so a divider moves exactly its two neighbours. A binary tree is easier
-to serialise and makes one divider shift tiles nobody touched.
+to serialise and lets one divider shift tiles that were not being dragged.
 
 ```mermaid
-flowchart LR
+flowchart TD
   R["row"] --> A["tile: auth"]
   R --> C["column"]
   C --> B["tile: deploy"]
@@ -156,9 +164,8 @@ is claimed. With four, four are — so a session in a 45-column tile has a
 45-column tmux window, for every device attached to it, and Claude Code re-wraps
 its output to fit.
 
-This is deliberate and it is the honest behaviour: the tile is the size the
-session is. Two alternatives were considered and declined. Shrinking the font
-per tile to preserve ~80 columns keeps other devices out of it but makes a
+This is deliberate: the tile is the size the session is. Two alternatives were
+considered and declined. Shrinking the font per tile to preserve ~80 columns keeps other devices out of it but makes a
 terminal font render at fractional sizes. Flooring the grid and scrolling the
 tile puts a horizontal scrollbar on a terminal.
 
@@ -178,7 +185,7 @@ a tile is a mode to get stuck in.
 ### Watching tiles
 
 A tile attached read-only carries the existing watch indicator in its header,
-**never** calls `claimGrid`, and renders the session at whatever size its drivers
+never calls `claimGrid`, and renders the session at whatever size its drivers
 gave it, centred with dead space around it where the tile does not match. A
 read-only client taking the size is the one thing the pinning exists to stop,
 and the server cannot tell two devices of one person apart — the caller
@@ -260,10 +267,10 @@ and for the same reason.
 | touch above 720px | full split view, finger drag included. `@formkit/drag-and-drop` was adopted partly for touch, so edge-drop should largely come for free — worth a real device check before calling it done |
 | lens (`?as=<user>`) | reads the target's membership and highlights members. The split tree is the lens tab's own, since geometry is device-local. It cannot add, remove or reorder members |
 
-The notification change is worth calling out separately: a push about a member
-of a workspace you are looking at will stop arriving, and notification tap
-routing has broken three times before (2026-09-01 was the most recent). It wants
-its own test.
+> [!WARNING]
+> The notification change deserves its own test. A push about a member of a
+> workspace you are looking at will stop arriving, and notification tap routing
+> has broken three times before, most recently on 2026-09-01.
 
 ## Build notes
 

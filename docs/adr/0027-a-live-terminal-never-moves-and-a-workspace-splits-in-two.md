@@ -85,7 +85,8 @@ that session alone. Three things follow.
   with nothing on screen to explain why.
 - Two tabs on one machine must agree. Per-browser storage gives them separate
   copies of an exclusivity rule — a session belongs to at most one workspace —
-  and two tabs disagreeing about that is a bug factory.
+  and two tabs disagreeing about that produces conflicting writes with nothing
+  to reconcile them.
 - A kill must not silently drop membership, so a restored session returns to its
   workspace. `assignments/<user>.json` already does exactly this for project
   assignment, and it is server-side for the same reason.
@@ -118,8 +119,8 @@ session cannot find its group.
 
 **All of it server-side, geometry included.** Fully portable and backed up.
 Needs a rule for what a narrow screen renders from a tree it cannot fit, and
-that rule has to feel predictable every time the window is resized — a cost paid
-continuously in exchange for a benefit collected rarely.
+that rule has to feel predictable every time the window is resized, which is a
+cost paid on every resize for a benefit collected when a device is new.
 
 ## Status
 
