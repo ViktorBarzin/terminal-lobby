@@ -1,0 +1,1343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strand - agent work in the Terminal Lobby text view</title>
+<style>
+/* ------------------------------------------------------------------ *
+   Strand. Prototype 3 of 5 for the Terminal Lobby text view.
+   Every colour below comes from a theme token or color-mix over one,
+   except the seven agent identity hues, which mirror Claude Code's
+   own `color` field and are mid-tone so they survive a light theme.
+ * ------------------------------------------------------------------ */
+
+:root{
+  --font-mono:"JetBrains Mono","Fira Code",Menlo,Monaco,"Courier New",monospace;
+  --font-ui:"DM Sans Variable","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --radius:10px;
+}
+body.theme-slate{
+  --bg-page:#0d1117;
+  --bg-sidebar:#11151c;
+  --bg-card:#161b22;
+  --bg-card-hover:#1c2128;
+  --text-primary:#e6e8eb;
+  --text-muted:#7d8590;
+  --border:#1f242d;
+  --border-strong:#30363d;
+  --accent:#4493f8;
+  --danger:#f47067;
+  --success:#56d364;
+  --state-running:#4493f8;
+  --state-awaiting:#a371f7;
+  --state-done:#56d364;
+  --surface-shadow:0 4px 6px -1px rgba(0,0,0,.05), inset 0 1px rgba(255,255,255,.06);
+  --hover-tint:rgba(255,255,255,.04);
+  --scrollbar-thumb:rgba(255,255,255,.1);
+
+  --ag-blue:#4493f8;   --ag-green:#3fb950;  --ag-yellow:#d29922;
+  --ag-red:#f47067;    --ag-magenta:#a371f7;--ag-cyan:#39c5cf;
+  --ag-orange:#e3873c;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{
+  background:var(--bg-page); color:var(--text-primary);
+  font-family:var(--font-ui); font-size:14px; line-height:1.5;
+  margin-block:0; margin-inline:0;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding-block:0;padding-inline:0}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ================= prototype harness (not part of the app) ========= */
+.hx{
+  background:var(--bg-sidebar);
+  border-bottom:1px dashed var(--border-strong);
+  padding-block:8px; padding-inline:12px;
+  display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+  position:relative; z-index:40;
+}
+.hx-tag{
+  font-family:var(--font-mono); font-size:10.5px; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--text-muted);
+  padding-inline-end:6px; margin-inline-end:2px;
+  border-right:1px solid var(--border-strong);
+}
+.hx button{
+  font-size:12px; color:var(--text-muted);
+  padding-block:4px; padding-inline:9px;
+  border:1px solid var(--border); border-radius:calc(var(--radius) - 4px);
+  background:var(--bg-card); cursor:pointer;
+}
+.hx button:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.hx button[aria-pressed="true"]{
+  background:var(--bg-card-hover); color:var(--text-primary);
+  border-color:var(--border-strong); box-shadow:var(--surface-shadow);
+}
+.hx-sep{width:1px;height:18px;background:var(--border-strong);margin-inline:4px}
+.hx-clock{
+  font-family:var(--font-mono); font-size:11.5px; color:var(--text-muted);
+  font-variant-numeric:tabular-nums; margin-inline-start:auto;
+}
+.hx-clock b{color:var(--text-primary);font-weight:500}
+
+/* ============================ app shell =========================== */
+.tl-shell{
+  display:grid; grid-template-columns:260px 1fr;
+  height:clamp(560px,82vh,880px);
+  border-bottom:1px solid var(--border);
+}
+.tl-shell-sidebar{
+  width:260px; background:var(--bg-sidebar);
+  border-right:1px solid var(--border);
+  display:flex; flex-direction:column; min-height:0;
+}
+.tl-shellbar{
+  height:41px; flex:0 0 41px;
+  padding-block:8px; padding-inline:12px;
+  background:var(--bg-sidebar); border-bottom:1px solid var(--border);
+  display:flex; align-items:center; gap:10px;
+}
+.tl-brand{font-weight:600;font-size:13.5px;letter-spacing:-.01em;white-space:nowrap}
+.tl-shellbar .lnk{white-space:nowrap}
+.tl-icon{color:var(--text-muted);font-size:13px;cursor:pointer;line-height:1}
+.tl-icon:hover{color:var(--text-primary)}
+.tl-shellbar .sp{margin-inline-start:auto}
+.tl-shellbar .lnk{font-size:12px;color:var(--text-muted);cursor:pointer}
+.tl-shellbar .lnk:hover{color:var(--text-primary)}
+
+.tl-sessions{overflow-y:auto;padding-block:8px;padding-inline:8px;display:flex;flex-direction:column;gap:2px;min-height:0}
+.tl-sess-h{
+  font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--text-muted);padding-block:6px 4px;padding-inline:6px;
+}
+.tl-sess{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding-block:7px;padding-inline:8px;border-radius:calc(var(--radius) - 3px);
+  cursor:pointer;color:var(--text-muted);
+}
+.tl-sess:hover{background:var(--hover-tint)}
+.tl-sess.is-active{background:var(--bg-card);color:var(--text-primary);box-shadow:var(--surface-shadow)}
+.tl-sess-dot{width:7px;height:7px;border-radius:50%;flex:0 0 7px;background:var(--text-muted)}
+.tl-sess-dot.run{background:var(--state-running)}
+.tl-sess-dot.await{background:var(--state-awaiting)}
+.tl-sess-dot.done{background:var(--state-done)}
+.tl-sess-n{font-family:var(--font-mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-sess-t{margin-inline-start:auto;font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.tl-sess-sub{
+  font-size:11px;color:var(--text-muted);padding-inline:8px 8px;
+  padding-block:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+.tl-main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+
+/* session bar */
+.tl-session-bar{
+  height:40px;flex:0 0 40px;
+  padding-block:6px;padding-inline:12px;
+  background:var(--bg-page);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:8px;
+}
+.tl-chip{
+  font-family:var(--font-mono);font-size:12px;color:var(--text-muted);
+  padding-block:2px;padding-inline:8px;border:1px solid var(--border);
+  border-radius:var(--radius);display:inline-flex;align-items:center;gap:6px;cursor:pointer;
+}
+.tl-chip:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.tl-conn{width:8px;height:8px;border-radius:50%;background:var(--state-running);flex:0 0 8px}
+.tl-sb-sp{margin-inline-start:auto}
+.tl-switch{
+  display:inline-flex;background:var(--bg-card);border:1px solid var(--border);
+  border-radius:var(--radius);padding-block:2px;padding-inline:2px;gap:2px;
+}
+.tl-switch button{
+  padding-block:5px;padding-inline:12px;font-size:13px;
+  border-radius:calc(var(--radius) - 4px);color:var(--text-muted);cursor:pointer;
+}
+.tl-switch button[aria-pressed="true"]{
+  background:var(--bg-card-hover);color:var(--text-primary);box-shadow:var(--surface-shadow);
+}
+.tl-sb-act{font-size:12.5px;color:var(--text-muted);cursor:pointer}
+.tl-sb-act:hover{color:var(--text-primary)}
+
+/* ---------------- running head (the one piece of chrome) ---------- */
+.tl-runhead{
+  position:absolute; inset-inline:0; top:40px; z-index:20;
+  height:calc(26px * var(--tl-text-scale,1));
+  display:none; align-items:center; gap:8px;
+  padding-inline:clamp(12px,6vw,80px);
+  background:var(--bg-page);
+  border-bottom:1px solid var(--border);
+  box-shadow:0 6px 12px -8px rgba(0,0,0,.9);
+  font-family:var(--font-mono);
+  font-size:calc(11.5px * var(--tl-text-scale,1));
+  color:var(--text-muted); cursor:pointer; text-align:left;
+  width:100%;
+}
+.tl-runhead.is-on{display:flex}
+.tl-runhead:hover{background:var(--bg-card)}
+.tl-runhead-in{
+  max-width:860px;width:100%;margin-inline:auto;margin-block:0;
+  display:flex;align-items:center;gap:8px;min-width:0;
+}
+.tl-runhead .rh-dot{width:7px;height:7px;border-radius:50%;background:var(--state-running);flex:0 0 7px}
+.tl-runhead .rh-n{color:var(--text-primary)}
+.tl-runhead .rh-what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.tl-runhead .rh-t{font-variant-numeric:tabular-nums;margin-inline-start:auto;flex:0 0 auto}
+.tl-runhead .rh-go{flex:0 0 auto;color:var(--accent)}
+
+/* ------------------------------ timeline -------------------------- */
+.tl-timeline{
+  --tl-text-scale:1;
+  flex:1 1 auto; overflow-y:auto; min-height:0;
+  padding-block:16px; padding-inline:clamp(12px,6vw,80px);
+  display:flex; flex-direction:column; gap:14px;
+}
+.tl-timeline > *{max-width:860px;width:100%;margin-inline:auto;margin-block:0}
+.tl-timeline > .is-hidden{display:none}
+
+.tl-user{
+  background:var(--bg-card); border:1px solid var(--border);
+  border-radius:var(--radius);
+  padding-block:9px; padding-inline:12px;
+  font-size:calc(13.5px * var(--tl-text-scale,1));
+}
+.tl-user .who{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale,1));
+  letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);
+  display:block;padding-block:0 4px;
+}
+.tl-assistant{font-size:calc(14px * var(--tl-text-scale,1));line-height:1.6}
+.tl-assistant code{
+  font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale,1));
+  background:var(--bg-card);padding-block:1px;padding-inline:5px;
+  border-radius:5px;border:1px solid var(--border);
+}
+
+/* the generic timeline row. A live agent block is this row, open. */
+.tl-row{
+  border:1px solid var(--border); border-radius:var(--radius);
+  background:var(--bg-card); overflow:hidden;
+}
+.tl-row-head{
+  display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+  padding-block:7px; padding-inline:11px; cursor:pointer;
+  min-height:calc(32px * var(--tl-text-scale,1));
+}
+.tl-row-head:hover{background:var(--bg-card-hover)}
+.tl-row-glyph{
+  flex:0 0 auto;color:var(--text-muted);
+  font-size:calc(12px * var(--tl-text-scale,1));line-height:1;width:1em;text-align:center;
+}
+.tl-row-kind{
+  flex:0 0 auto;font-size:calc(11px * var(--tl-text-scale,1));
+  letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);
+}
+.tl-row-label{
+  font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale,1));
+  color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.tl-row-meta{
+  margin-inline-start:auto;flex:0 0 auto;display:flex;align-items:center;gap:9px;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale,1));
+  color:var(--text-muted);font-variant-numeric:tabular-nums;
+}
+.tl-row-meta > span + span::before{content:"\00b7";padding-inline-end:9px;opacity:.55}
+.tl-row-mark{flex:0 0 auto;font-size:calc(12px * var(--tl-text-scale,1))}
+.mark-done{color:var(--success)}
+.mark-err{color:var(--danger)}
+.tl-row-body{
+  padding-block:2px 9px; padding-inline:11px;
+  border-top:1px solid var(--border);
+}
+.tl-row.is-live{border-color:var(--border-strong)}
+.tl-row-detail{
+  font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale,1));
+  color:var(--text-muted);padding-block:6px 8px;padding-inline:11px;
+  border-top:1px solid var(--border);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* --------------------------- the strand rail ---------------------- */
+.tl-strands{
+  padding-block:6px 0; padding-inline:0;
+  border-left:1px solid var(--border);
+  margin-inline-start:calc(6px + 1em);
+  padding-inline-start:12px;
+}
+.tl-ag-wrap{position:relative}
+.tl-ag-wrap[data-depth="1"]{padding-inline-start:18px}
+.tl-ag-wrap[data-depth="2"]{padding-inline-start:36px}
+.tl-ag-wrap[data-depth="1"]::before,
+.tl-ag-wrap[data-depth="2"]::before{
+  content:"";position:absolute;inset-block-start:0;inset-block-end:50%;
+  inset-inline-start:5px;width:9px;
+  border-left:1px solid var(--border-strong);
+  border-bottom:1px solid var(--border-strong);
+  border-bottom-left-radius:4px;
+  pointer-events:none;
+}
+.tl-ag-wrap[data-depth="2"]::before{inset-inline-start:23px}
+
+.tl-ag{
+  position:relative; width:100%; text-align:left; cursor:pointer;
+  display:grid; align-items:center; gap:0 9px;
+  grid-template-columns:
+    calc(15px * var(--tl-text-scale,1))
+    minmax(0,1fr)
+    minmax(0,1.28fr)
+    calc(34px * var(--tl-text-scale,1))
+    calc(48px * var(--tl-text-scale,1))
+    calc(52px * var(--tl-text-scale,1))
+    calc(12px * var(--tl-text-scale,1));
+  padding-block:3px; padding-inline:0 2px;
+  border-radius:5px;
+}
+.tl-ag:hover{background:var(--hover-tint)}
+.tl-ag::before{
+  content:"";position:absolute;
+  inset-inline-start:-13px;inset-block:2px;
+  width:2px;border-radius:2px;background:var(--ag);
+}
+.tl-ag.is-settled::before{background:color-mix(in srgb,var(--ag) 34%,transparent)}
+.tl-ag.is-dimmed{opacity:.42}
+
+.ag-dot{
+  width:calc(8px * var(--tl-text-scale,1));height:calc(8px * var(--tl-text-scale,1));
+  border-radius:50%;background:var(--ag);justify-self:center;
+}
+.ag-dot.is-quiet{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ag)}
+.ag-dot.is-done{background:transparent;box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--success) 70%,transparent)}
+.ag-dot.is-err{background:var(--danger)}
+
+.ag-name{display:flex;align-items:baseline;gap:6px;min-width:0}
+.ag-desc{
+  flex:0 1 auto;
+  font-size:calc(13px * var(--tl-text-scale,1));color:var(--text-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.ag-type{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale,1));
+  color:color-mix(in srgb,var(--text-muted) 72%,transparent);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 9 auto;
+}
+.ag-act{
+  display:flex;align-items:baseline;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;
+  font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale,1));
+}
+.ag-trail{
+  flex:0 0 auto;width:10ch;text-align:right;color:var(--text-primary);
+  letter-spacing:.1em;
+  font-size:calc(11px * var(--tl-text-scale,1));
+}
+.ag-trail i{font-style:normal}
+.ag-arrow{flex:0 0 auto;color:var(--text-muted)}
+.ag-arrow.done{color:var(--success)}
+.ag-arrow.err{color:var(--danger)}
+.ag-tool{flex:0 0 auto;color:var(--text-primary)}
+.ag-arg{overflow:hidden;text-overflow:ellipsis;min-width:0;color:var(--text-muted)}
+.ag-arg.err{color:var(--danger)}
+.ag-age{flex:0 0 auto;color:var(--text-muted);font-variant-numeric:tabular-nums}
+.ag-n,.ag-tok,.ag-el{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--text-muted);font-variant-numeric:tabular-nums;text-align:right;
+  overflow:hidden;white-space:nowrap;
+}
+.ag-el{color:color-mix(in srgb,var(--text-primary) 62%,transparent)}
+.ag-go{
+  color:var(--text-muted);opacity:.28;text-align:center;
+  font-size:calc(12px * var(--tl-text-scale,1));
+}
+.tl-ag:hover .ag-go,.tl-ag:focus-visible .ag-go{opacity:1;color:var(--text-primary)}
+
+/* folded group of finished agents */
+.tl-fold{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;cursor:pointer;
+  padding-block:4px;padding-inline:0;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale,1));
+  color:var(--text-muted);border-radius:5px;
+}
+.tl-fold:hover{background:var(--hover-tint);color:var(--text-primary)}
+.tl-fold .tick{color:var(--success)}
+.tl-fold .names{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;opacity:.72}
+.tl-fold .car{margin-inline-start:auto;flex:0 0 auto;opacity:.5}
+
+/* ------------------------------ workflow -------------------------- */
+.tl-ph{padding-block:1px}
+.tl-ph-head{
+  display:grid;width:100%;text-align:left;cursor:pointer;align-items:center;gap:0 9px;
+  grid-template-columns:calc(15px * var(--tl-text-scale,1)) minmax(0,1fr) minmax(0,1.28fr) auto;
+  padding-block:5px;padding-inline:0 2px;border-radius:5px;
+}
+.tl-ph-head:hover{background:var(--hover-tint)}
+.tl-ph-i{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--text-muted);text-align:center;
+}
+.tl-ph-t{
+  font-size:calc(12.5px * var(--tl-text-scale,1));letter-spacing:.02em;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.tl-ph.is-queued .tl-ph-t,.tl-ph.is-queued .tl-ph-i{color:color-mix(in srgb,var(--text-muted) 65%,transparent)}
+.tl-ph.is-live .tl-ph-t{color:var(--text-primary)}
+.tl-ph.is-done .tl-ph-t{color:var(--text-muted)}
+.tl-ph-tally{
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale,1));
+  color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.tl-ph-tally .r{color:var(--text-primary)}
+.tl-ph-tally .f{color:var(--danger)}
+.tl-ph-el{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--text-muted);font-variant-numeric:tabular-nums;text-align:right;
+}
+.tl-ph-body{
+  border-left:1px solid var(--border);
+  margin-inline-start:calc(7px * var(--tl-text-scale,1));
+  padding-inline-start:13px; padding-block:2px 6px;
+}
+.tl-more{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--text-muted);padding-block:3px;
+}
+
+/* --------------------------- drill-in inset ----------------------- */
+.tl-drill{
+  border:1px solid var(--border-strong); border-radius:calc(var(--radius) - 2px);
+  background:var(--bg-page); overflow:hidden;
+  margin-block:5px 7px; margin-inline:0;
+}
+.tl-drill-head{
+  display:flex;align-items:center;gap:9px;
+  padding-block:7px;padding-inline:10px;
+  border-bottom:1px solid var(--border);
+  background:var(--bg-card);
+}
+.tl-drill-strand{width:2px;align-self:stretch;border-radius:2px;background:var(--ag);flex:0 0 2px}
+.tl-drill-t{
+  font-size:calc(12.5px * var(--tl-text-scale,1));color:var(--text-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.tl-drill-m{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale,1));
+  color:var(--text-muted);white-space:nowrap;flex:0 0 auto;
+}
+.tl-drill-x{
+  margin-inline-start:auto;flex:0 0 auto;cursor:pointer;color:var(--text-muted);
+  font-size:calc(12px * var(--tl-text-scale,1));
+  padding-block:2px;padding-inline:6px;border-radius:5px;border:1px solid var(--border);
+}
+.tl-drill-x:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.tl-drill-scroll{
+  max-height:min(52vh,440px);overflow-y:auto;
+  padding-block:9px;padding-inline:11px;
+  display:flex;flex-direction:column;gap:9px;
+}
+.dr{font-size:calc(12.5px * var(--tl-text-scale,1));line-height:1.55}
+.dr-k{
+  font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale,1));
+  letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);
+  display:block;padding-block:0 3px;
+}
+.dr-think{color:var(--text-muted);font-style:italic}
+.dr-tool{
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale,1));
+  border:1px solid var(--border);border-radius:6px;
+  padding-block:5px;padding-inline:8px;background:var(--bg-card);
+}
+.dr-tool b{color:var(--text-primary);font-weight:500}
+.dr-tool span{color:var(--text-muted)}
+.dr-out{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--text-muted);white-space:pre-wrap;
+  padding-block:4px;padding-inline:8px;
+  border-left:1px solid var(--border-strong);
+}
+.dr-end{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale,1));
+  color:var(--success);
+}
+
+/* ----------------------------- composer --------------------------- */
+.tl-composer{
+  background:var(--bg-sidebar);border-top:1px solid var(--border);
+  padding-block:10px;padding-inline:clamp(12px,6vw,80px);flex:0 0 auto;
+}
+.tl-composer-box{
+  max-width:860px;margin-inline:auto;margin-block:0;
+  padding-block:8px;padding-inline:10px;
+  border:1px solid var(--border-strong);border-radius:var(--radius);background:var(--bg-card);
+}
+.tl-composer-field{
+  font-size:13.5px;color:var(--text-muted);
+  padding-block:2px 8px;
+}
+.tl-composer-row{display:flex;align-items:center;gap:8px}
+.tl-cchip{
+  font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+  padding-block:2px;padding-inline:7px;border:1px solid var(--border);border-radius:var(--radius);
+}
+.tl-meter{
+  margin-inline-start:auto;display:flex;align-items:center;gap:6px;
+  font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);
+}
+.tl-meter-bar{width:52px;height:4px;border-radius:3px;background:var(--border);overflow:hidden}
+.tl-meter-bar i{display:block;height:100%;width:62%;background:var(--accent);border-radius:3px}
+.tl-send{
+  font-size:12.5px;padding-block:4px;padding-inline:12px;border-radius:calc(var(--radius) - 4px);
+  background:var(--accent);color:#07131f;cursor:pointer;font-weight:500;
+}
+.tl-stop{
+  font-size:12.5px;padding-block:4px;padding-inline:10px;border-radius:calc(var(--radius) - 4px);
+  border:1px solid var(--border-strong);color:var(--text-muted);cursor:pointer;
+}
+
+/* ------------------------------- note ----------------------------- */
+.note{
+  max-width:860px;margin-inline:auto;margin-block:0;
+  padding-block:28px 48px;padding-inline:clamp(12px,6vw,24px);
+}
+.note h2{font-size:17px;font-weight:600;margin-block:0 4px;letter-spacing:-.01em}
+.note .sub{
+  font-family:var(--font-mono);font-size:11px;color:var(--text-muted);
+  letter-spacing:.06em;text-transform:uppercase;margin-block:0 14px;
+}
+.note p{font-size:13.5px;line-height:1.7;color:color-mix(in srgb,var(--text-primary) 82%,transparent);margin-block:0 12px}
+.note p b{color:var(--text-primary);font-weight:600}
+.note code{
+  font-family:var(--font-mono);font-size:12px;background:var(--bg-card);
+  border:1px solid var(--border);border-radius:5px;padding-block:1px;padding-inline:5px;
+}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+
+/* ------------------------------ narrow ---------------------------- */
+@media (max-width:820px){
+  .tl-shell{grid-template-columns:1fr}
+  .tl-shell-sidebar{display:none}
+  .tl-ag{
+    grid-template-columns:
+      calc(15px * var(--tl-text-scale,1)) minmax(0,1fr)
+      calc(50px * var(--tl-text-scale,1)) calc(12px * var(--tl-text-scale,1));
+    grid-template-areas:"dot name el go" ". act act .";
+    row-gap:1px; padding-block:5px;
+  }
+  .ag-dot{grid-area:dot;align-self:start;margin-block:3px 0}
+  .ag-name{grid-area:name}
+  .ag-act{grid-area:act}
+  .ag-el{grid-area:el}
+  .ag-go{grid-area:go;align-self:start}
+  .ag-n,.ag-tok{display:none}
+  .tl-ph-head{grid-template-columns:calc(15px * var(--tl-text-scale,1)) minmax(0,1fr) auto}
+  .tl-ph-tally{grid-column:2;font-size:calc(11px * var(--tl-text-scale,1))}
+  .tl-timeline{padding-inline:12px}
+  .tl-runhead{padding-inline:12px}
+  .tl-composer{padding-inline:12px}
+  .hx-clock{margin-inline-start:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .tl-timeline{scroll-behavior:auto}
+  *{transition:none !important;animation:none !important}
+}
+</style>
+</head>
+<body class="theme-slate">
+
+<!-- ===================== prototype harness ======================== -->
+<div class="hx">
+  <span class="hx-tag">prototype controls</span>
+  <button id="btn-replay">Replay</button>
+  <button id="btn-play" aria-pressed="true">Pause</button>
+  <span class="hx-sep"></span>
+  <button data-jump="40000">3 agents</button>
+  <button data-jump="210000">16 agents</button>
+  <button data-jump="255000">Workflow</button>
+  <button data-jump="158000">One failed</button>
+  <button data-jump="412000">All done</button>
+  <button data-jump="8000">Idle</button>
+  <span class="hx-sep"></span>
+  <button id="btn-smaller" title="text scale down">A-</button>
+  <button id="btn-bigger" title="text scale up">A+</button>
+  <span class="hx-clock">session <b id="hx-t">00:00</b> at 10x</span>
+</div>
+
+<!-- ========================== app shell =========================== -->
+<div class="tl-shell">
+
+  <aside class="tl-shell-sidebar">
+    <div class="tl-shellbar">
+      <span class="tl-icon" aria-hidden="true">&#9776;</span>
+      <span class="tl-brand">terminal-lobby</span>
+      <span class="sp"></span>
+      <span class="lnk">Skills</span>
+      <span class="lnk">Settings</span>
+    </div>
+    <div class="tl-sessions">
+      <div class="tl-sess-h">Sessions</div>
+
+      <button class="tl-sess is-active">
+        <span class="tl-sess-dot run"></span>
+        <span class="tl-sess-n">agent-panel</span>
+        <span class="tl-sess-t" id="side-clock">now</span>
+      </button>
+      <div class="tl-sess-sub" id="side-sub">4 agents running</div>
+
+      <button class="tl-sess">
+        <span class="tl-sess-dot await"></span>
+        <span class="tl-sess-n">preload-on-hover</span>
+        <span class="tl-sess-t">3m</span>
+      </button>
+      <div class="tl-sess-sub">waiting on your reply</div>
+
+      <button class="tl-sess">
+        <span class="tl-sess-dot done"></span>
+        <span class="tl-sess-n">qa-harness</span>
+        <span class="tl-sess-t">21m</span>
+      </button>
+      <div class="tl-sess-sub">landed on master</div>
+
+      <button class="tl-sess">
+        <span class="tl-sess-dot"></span>
+        <span class="tl-sess-n">cpu-parking</span>
+        <span class="tl-sess-t">2h</span>
+      </button>
+      <div class="tl-sess-sub">idle</div>
+
+      <button class="tl-sess">
+        <span class="tl-sess-dot done"></span>
+        <span class="tl-sess-n">registry-cache</span>
+        <span class="tl-sess-t">1d</span>
+      </button>
+      <div class="tl-sess-sub">landed on master</div>
+    </div>
+  </aside>
+
+  <div class="tl-main">
+    <div class="tl-session-bar">
+      <span class="tl-chip">agent-panel <span aria-hidden="true">&#9662;</span></span>
+      <span class="tl-conn" title="connected"></span>
+      <span class="tl-sb-sp"></span>
+      <div class="tl-switch" role="group" aria-label="View">
+        <button aria-pressed="true">Text</button>
+        <button aria-pressed="false">Terminal</button>
+      </div>
+      <span class="tl-sb-act">Files</span>
+      <span class="tl-sb-act">Watch</span>
+      <span class="tl-sb-act" aria-label="More">&#8943;</span>
+    </div>
+
+    <!-- the running head: compressed form of the live block, top of the
+         timeline, shown only while every live block is off screen -->
+    <button class="tl-runhead" id="runhead" type="button">
+      <span class="tl-runhead-in">
+        <span class="rh-dot"></span>
+        <span class="rh-n" id="rh-n">4 running</span>
+        <span class="rh-what" id="rh-what"></span>
+        <span class="rh-t" id="rh-t"></span>
+        <span class="rh-go" id="rh-go">&#8595;</span>
+      </span>
+    </button>
+
+    <div class="tl-timeline" id="timeline">
+
+      <div class="tl-user">
+        <span class="who">You</span>
+        Read how the text view renders subagents today, then work out what a live
+        agent panel would need. Fan it out, I want this done in parallel.
+      </div>
+
+      <div class="tl-assistant">
+        I will read the renderer first so I know what shape a new row has to fit,
+        then split the rest across agents.
+      </div>
+
+      <div class="tl-row">
+        <div class="tl-row-head" role="button" tabindex="0">
+          <span class="tl-row-glyph">&#9672;</span>
+          <span class="tl-row-kind">Read</span>
+          <span class="tl-row-label">web/src/text-view/Timeline.tsx</span>
+          <span class="tl-row-meta">612 lines</span>
+          <span class="tl-row-mark mark-done">&#10003;</span>
+        </div>
+      </div>
+
+      <div class="tl-assistant">
+        The renderer folds every tool call into one row and drops background work
+        into a counter strip. Four things need reading at once, so I am fanning
+        this out with <code>Agent</code>.
+      </div>
+
+      <div id="anchor-agents"></div>
+      <div id="anchor-bash"></div>
+      <div id="anchor-sched"></div>
+
+      <div class="tl-assistant is-hidden" id="mid-1">
+        While those run, the shape of the change: a live block is the same row
+        the timeline already draws, left open until its agents settle.
+      </div>
+
+      <div class="tl-row is-hidden" id="mid-2">
+        <div class="tl-row-head" role="button" tabindex="0">
+          <span class="tl-row-glyph">&#9672;</span>
+          <span class="tl-row-kind">Edit</span>
+          <span class="tl-row-label">web/src/text-view/AgentBlock.tsx</span>
+          <span class="tl-row-meta">+184 -0</span>
+          <span class="tl-row-mark mark-done">&#10003;</span>
+        </div>
+      </div>
+
+      <div id="anchor-wf"></div>
+
+      <div class="tl-assistant is-hidden" id="mid-3">
+        All four agents and the workflow are back. The dead frontend code is gone
+        in 41 files, the two refusals were both the service worker test, and the
+        bundle graph is 214 KB smaller. Everything is on the branch.
+      </div>
+
+      <p class="sr" id="live-region" aria-live="polite"></p>
+    </div>
+
+    <div class="tl-composer">
+      <div class="tl-composer-box">
+        <div class="tl-composer-field">Reply to this session</div>
+        <div class="tl-composer-row">
+          <span class="tl-cchip">bypass</span>
+          <span class="tl-cchip">opus</span>
+          <span class="tl-meter">
+            <span class="tl-meter-bar"><i></i></span>
+            <span>62%</span>
+          </span>
+          <button class="tl-stop">Stop</button>
+          <button class="tl-send">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================= note ============================= -->
+<section class="note">
+  <h2>Strand</h2>
+  <p class="sub">prototype 3 &#183; narrative</p>
+  <p>
+    <b>Where it goes.</b> In the timeline, at the moment the spawn happened, in
+    the same 860px column as every other row. A live block is an ordinary tool
+    row that has not finished being written, so it uses the same glyph, the same
+    11px noun and the same fold as a finished <code>Read</code>, and when the
+    agents settle it collapses into exactly the ticked row the text view shows
+    today. Nothing appears and nothing disappears. The story just carries on
+    underneath it, which is why the assistant keeps writing while the workflow
+    runs.
+  </p>
+  <p>
+    <b>The idea I want judged</b> is the running head. Live work in a scrolling
+    transcript is unreachable the second you scroll away, and the usual fix is a
+    floating panel, which is a second place the same facts have to live and stay
+    in sync. Instead one line appears at the top of the timeline, and only while
+    every live block is off screen, carrying the same counts and the same current
+    tool in compressed form, with an arrow saying which way to go. It is the
+    block wearing one line, not a copy of it. Scroll the block back into view and
+    the line is gone.
+  </p>
+  <p>
+    <b>The detail I would point at</b> is the tool trail, the eight dim letters
+    sitting in front of the arrow on every agent row. Tool count as a number
+    tells you almost nothing. The same count as a readable run of letters tells
+    you this agent has been grepping for a while and that one just started, and
+    it costs no extra data, because the agent transcript already holds every tool
+    name. It also gives the block its only motion that carries meaning: a letter
+    shifts in when a tool changes. There is no spinner anywhere on this page,
+    because a spinner claims an agent is alive and the transcript cannot tell me
+    that. The only two things that move every second are elapsed and the age of
+    the current call.
+  </p>
+  <p>
+    <b>What I would fix with more time.</b> The workflow phase header should
+    stick while you read a 16 row phase, so you never lose which phase you are
+    in. Two agents open at once should sit side by side instead of stacking. And
+    the seven identity hues are only proven against this theme, so they need a
+    pass on the eight I did not render.
+  </p>
+</section>
+
+<script>
+(function(){
+"use strict";
+
+/* ================================================================== *
+   Everything below derives from one number: sessionNow, in ms of
+   session time. Playing advances it, the jump buttons set it. There
+   is no other state, so a jump and a play land on the same pixels.
+ * ================================================================== */
+
+var RATE = 10;          /* session ms per real ms */
+var END  = 425000;
+var QUIET_AFTER = 45000;  /* show the age of the current call past this */
+
+var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------------------------- helpers ----------------------------- */
+function mul(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function pick(r,arr){return arr[Math.floor(r()*arr.length)%arr.length];}
+function esc(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function dur(ms){var s=Math.max(0,Math.floor(ms/1000)),m=Math.floor(s/60);return m?m+"m"+String(s%60).padStart(2,"0")+"s":s+"s";}
+function clock(ms){var s=Math.max(0,Math.floor(ms/1000));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");}
+function tokfmt(n){return n>=100000?Math.round(n/1000)+"k":n>=1000?(n/1000).toFixed(1)+"k":String(n);}
+
+/* first letter of the tool, so a run of them reads as history */
+var LETTER={Bash:"B",Read:"R",Grep:"G",Write:"W",Edit:"E",WebFetch:"F",Glob:"O",Agent:"A",ListAgents:"L",TodoWrite:"T"};
+
+var ARGS={
+  Bash:['rg -n "spawnDepth" web/src','pnpm -C web typecheck','git log --oneline -20 -- web/src/text-view','wc -l web/src/text-view/*.tsx','ls ~/.claude/projects/*/subagents | head'],
+  Read:['web/src/text-view/Timeline.tsx','subagents/agent-textview-recon-9f2.jsonl','docs/adr/0025-claude-session-telemetry.md','web/src/text-view/ToolRow.tsx','workflows/wf_7c31a8.json','web/src/theme/tokens.css'],
+  Grep:['"workflow_agent" in .claude/projects','"lastToolName" --glob "*.json"','"tl-bg-strip" web/src','"AgentsPanel" -n ../t3code/src'],
+  WebFetch:['docs.anthropic.com/en/docs/claude-code/sub-agents','docs.anthropic.com/en/docs/claude-code/slash-commands'],
+  Write:['docs/plans/assets/agent-panel/notes.md','web/src/text-view/AgentBlock.tsx'],
+  Edit:['web/src/text-view/Timeline.tsx','web/src/text-view/index.ts','web/src/theme/tokens.css'],
+  Glob:['**/subagents/*.meta.json','web/src/**/*.test.tsx'],
+  ListAgents:['team session-408579e1']
+};
+var OUT={
+  Bash:"web/src/text-view/Timeline.tsx:212:  const depth = rec.spawnDepth ?? 0\nweb/src/text-view/ToolRow.tsx:88:   if (depth > 0) pad = depth * 16\n2 matches",
+  Read:"  1  import { For, Show, createMemo } from \"solid-js\";\n  2  import { ToolRow } from \"./ToolRow\";\n  3\n  4  export function Timeline(props: TimelineProps) {\n  5    const rows = createMemo(() => group(props.records));\n ...  612 lines total",
+  Grep:"3 files, 7 matches. The strip is built in Timeline.tsx:441 and\nonly ever counts, it never reads the subagent files.",
+  WebFetch:"Subagents write to subagents/agent-<name>-<id>.jsonl beside the\nparent transcript. A .meta.json lands first and carries agentType,\ndescription, spawnDepth, model and color.",
+  Write:"wrote 84 lines",
+  Edit:"applied, 1 hunk",
+  Glob:"153 files",
+  ListAgents:"6 agents in team session-408579e1, 4 running"
+};
+
+/* ------------------------ agent definitions ----------------------- */
+function makeEvents(s){
+  var r=mul(s.seed),ev=[],t=s.spawn+1400+Math.floor(r()*1100);
+  while(t<s.end-600){
+    if(s.quiet&&t>s.quiet[0]&&t<s.quiet[1]){t=s.quiet[1];continue;}
+    var tool=pick(r,s.tools);
+    ev.push({t:t,tool:tool,arg:pick(r,ARGS[tool]),tok:700+Math.floor(r()*3200)});
+    t+=2400+Math.floor(r()*6800);
+  }
+  if(!ev.length)ev.push({t:s.spawn+1400,tool:s.tools[0],arg:ARGS[s.tools[0]][0],tok:1200});
+  return ev;
+}
+function A(o){o.events=makeEvents(o);return o;}
+
+var READERS=["Read","Grep","Bash","Glob"];
+var MIXED=["Read","Grep","Bash","WebFetch","Write"];
+var EDITORS=["Read","Edit","Bash","Write"];
+
+var BLOCK_A_SPAWN=12000;
+var blockAgents=[
+  A({id:"a1",desc:"Find prior art for agent visualization",type:"priorart-recon",color:"yellow",model:"opus",depth:0,
+     spawn:12000,end:310000,outcome:"done",seed:7,tools:MIXED,
+     result:"Two implementations. Claude Code's CLI tree and t3code AgentsPanel.tsx, 583 lines."}),
+  A({id:"a2",desc:"Map transcript data for subagents",type:"transcript-recon",color:"blue",model:"opus",depth:0,
+     spawn:13000,end:300000,outcome:"done",seed:21,tools:READERS,quiet:[66000,272000],
+     result:"Every field the panel needs is in the agent's own jsonl. Write lag 450ms."}),
+  A({id:"a3",desc:"Read the text view renderer",type:"textview-recon",color:"green",model:"opus",depth:0,
+     spawn:14000,end:65000,outcome:"done",seed:33,tools:READERS,
+     result:"Timeline.tsx:441 builds the strip. It counts, it never opens a file."}),
+  A({id:"a4",desc:"Check meta.json across sessions",type:"schema-audit",color:"magenta",model:"opus",depth:0,
+     spawn:70000,end:150000,outcome:"error",seed:44,tools:READERS,
+     error:"EACCES reading /home/emo/.claude/projects/-home-emo-code/subagents"}),
+  A({id:"a1c",desc:"Read t3code AgentsPanel.tsx",type:"general-purpose",color:"cyan",model:"sonnet",depth:1,parent:"a1",
+     spawn:80000,end:200000,outcome:"done",seed:55,tools:READERS,
+     result:"Rows never reorder. Timers write to the DOM directly, zero re-renders."}),
+  A({id:"a1cc",desc:"Diff the two row layouts",type:"general-purpose",color:"orange",model:"haiku",depth:2,parent:"a1c",
+     spawn:120000,end:175000,outcome:"done",seed:66,tools:READERS,
+     result:"Both put the volatile string last and truncate it."})
+];
+
+/* ----------------------- workflow definition ---------------------- */
+var P1=["map the service worker registration sites","inventory the legacy bundle entry points",
+  "list every dead CSS module under web/src","trace the old router imports","find unreferenced public assets",
+  "audit the vite manual chunk config"];
+var P2=["frontend source + SW","service worker cache invalidation for the legacy bundle",
+  "remove the old router tree and its guards","strip dead CSS modules from the entry point",
+  "drop unreferenced public assets","delete the v1 settings screen","unwire the legacy telemetry hook",
+  "remove the shim for older Safari","delete the old terminal resize path","clear the retired feature flags",
+  "remove the unused theme loader","drop the legacy session cache","delete the old composer draft store",
+  "remove dead i18n strings","strip the retired websocket fallback","delete the old file browser tree"];
+var P3=["typecheck the whole web package","run the text view test suite",
+  "build and diff the bundle graph","smoke the session list on a cold cache"];
+var HUES=["blue","green","yellow","magenta","cyan","orange","red"];
+
+function wfAgents(labels,base,gap,lo,hi,fails,seed,tools){
+  var r=mul(seed);
+  return labels.map(function(l,i){
+    var sp=base+i*gap;
+    var en=sp+lo+Math.floor(r()*(hi-lo));
+    var bad=fails.indexOf(i)>-1;
+    return A({id:"w"+seed+"_"+i,desc:l,type:"general-purpose",color:HUES[i%HUES.length],model:i%5===0?"opus":"sonnet",
+      depth:0,spawn:sp,end:en,outcome:bad?"error":"done",seed:seed*31+i*7,tools:tools,
+      result:"done in "+(i+2)+" files",
+      error:i===3?"tsc: Cannot find module './legacy/router'":"test failed: sw-cache.spec.ts:41"});
+  });
+}
+var WF={
+  spawn:130000,end:345000,title:"Delete the dead frontend code",runId:"wf_7c31a8",
+  phases:[
+    {i:1,title:"Survey",start:130000,end:180000,agents:wfAgents(P1,130000,900,32000,46000,[],3,READERS)},
+    {i:2,title:"Delete",start:182000,end:290000,agents:wfAgents(P2,182000,520,50000,104000,[3,11],9,EDITORS)},
+    {i:3,title:"Refute",start:292000,end:345000,agents:wfAgents(P3,292000,800,36000,50000,[],17,["Bash","Read"])}
+  ]
+};
+var BASH={spawn:26000,end:390000,cmd:"pnpm -C web build --watch"};
+var SCHED={spawn:30000,end:395000,cmd:"/babysit-prs",every:900000};
+
+var ALL={};
+blockAgents.forEach(function(a){ALL[a.id]=a;});
+WF.phases.forEach(function(p){p.agents.forEach(function(a){ALL[a.id]=a;});});
+
+/* --------------------------- derivation --------------------------- */
+function agentAt(s,T){
+  if(T<s.spawn)return null;
+  var settled=T>=s.end, cut=settled?s.end:T, calls=0, tokens=0, last=null, trail=[];
+  for(var i=0;i<s.events.length;i++){
+    var e=s.events[i];
+    if(e.t>cut)break;
+    calls++;tokens+=e.tok;last=e;trail.push(e.tool);
+  }
+  var age=settled?0:(T-(last?last.t:s.spawn));
+  return {s:s,settled:settled,outcome:settled?s.outcome:null,calls:calls,tokens:tokens+1800,
+    elapsed:cut-s.spawn,tool:last?last.tool:null,arg:last?last.arg:"",
+    trail:trail.slice(-8),age:age,quiet:!settled&&age>QUIET_AFTER};
+}
+function listAt(specs,T){var o=[];specs.forEach(function(s){var a=agentAt(s,T);if(a)o.push(a);});return o;}
+function split(rows){
+  var run=[],bad=[],ok=[];
+  rows.forEach(function(a){ if(!a.settled)run.push(a); else if(a.outcome==="error")bad.push(a); else ok.push(a); });
+  return {run:run,bad:bad,ok:ok};
+}
+
+/* ============================ rendering =========================== *
+   Elapsed cells are rendered empty and filled by the single tick
+   pass below, so the markup string is stable between structural
+   changes and a running row costs nothing per second.
+ * ================================================================== */
+
+var folds={};                 /* explicit open/closed overrides */
+var drillOpen=null;           /* one agent transcript at a time */
+
+function isOpen(k,def){return Object.prototype.hasOwnProperty.call(folds,k)?folds[k]:def;}
+
+function trailHtml(tr,live){
+  var n=tr.length,out="";
+  for(var i=0;i<n;i++){
+    var op=n<2?0.5:(0.16+0.34*(i/(n-1)));
+    if(live&&i===n-1)op=0.95;
+    out+='<i style="opacity:'+op.toFixed(2)+'">'+(LETTER[tr[i]]||"?")+'</i>';
+  }
+  return out;
+}
+
+function agentRow(a,dim){
+  var s=a.s,live=!a.settled,err=a.outcome==="error";
+  var arrow=live?"&#9656;":(err?"&#10007;":"&#10003;");
+  var acls=live?"":(err?"err":"done");
+  var tool=live?'<span class="ag-tool">'+esc(a.tool||"")+"</span>":"";
+  var body=live?esc(a.arg):(err?esc(s.error):esc(s.result));
+  var dotc=err?"is-err":(a.settled?"is-done":(a.quiet?"is-quiet":""));
+  return ''+
+  '<div class="tl-ag-wrap" data-depth="'+Math.min(s.depth,2)+'">'+
+    '<button class="tl-ag'+(a.settled?" is-settled":"")+(dim?" is-dimmed":"")+'" type="button" '+
+      'data-ag="'+s.id+'" aria-expanded="'+(drillOpen===s.id)+'" '+
+      'style="--ag:var(--ag-'+s.color+')" '+
+      'title="'+esc(s.desc)+' - open this agent&#39;s transcript">'+
+      '<span class="ag-dot '+dotc+'"></span>'+
+      '<span class="ag-name">'+
+        '<span class="ag-desc">'+(s.depth>2?"&#8627; ":"")+esc(s.desc)+'</span>'+
+        '<span class="ag-type">'+esc(s.type==="general-purpose"?s.model:s.type)+'</span>'+
+      '</span>'+
+      '<span class="ag-act">'+
+        '<span class="ag-trail" title="last tool calls: '+esc(a.trail.join(", "))+'">'+trailHtml(a.trail,live)+'</span>'+
+        '<span class="ag-arrow '+acls+'">'+arrow+'</span>'+
+        tool+
+        '<span class="ag-arg'+(err?" err":"")+'">'+body+'</span>'+
+        '<span class="ag-age" data-tick="age:'+s.id+'"></span>'+
+      '</span>'+
+      '<span class="ag-n">'+a.calls+'</span>'+
+      '<span class="ag-tok">'+tokfmt(a.tokens)+'</span>'+
+      '<span class="ag-el" data-tick="el:'+s.id+'"></span>'+
+      '<span class="ag-go" aria-hidden="true">&#8250;</span>'+
+    '</button>'+
+    (drillOpen===s.id?drillHtml(a):"")+
+  '</div>';
+}
+
+function foldLine(ok,key){
+  if(!ok.length)return "";
+  var open=isOpen(key,false);
+  var names=ok.map(function(a){return a.s.desc;}).join(", ");
+  return '<button class="tl-fold" type="button" data-fold="'+key+'" aria-expanded="'+open+'">'+
+    '<span class="tick">&#10003;</span><span>'+ok.length+" done</span>"+
+    '<span class="names">'+esc(names)+"</span>"+
+    '<span class="car">'+(open?"&#9662;":"&#9656;")+"</span></button>"+
+    (open?ok.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join(""):"");
+}
+
+function group(rows,key,cap){
+  var g=split(rows),out="",shown=g.run;
+  if(cap&&shown.length>cap){
+    out+=shown.slice(0,cap).map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
+    out+='<div class="tl-more">&#183; &#183; &#183; +'+(shown.length-cap)+" more running</div>";
+  }else{
+    out+=shown.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
+  }
+  out+=g.bad.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
+  out+=foldLine(g.ok,key);
+  return out;
+}
+
+/* ------------------------- the agent block ------------------------ */
+function blockA(T){
+  if(T<BLOCK_A_SPAWN)return "";
+  var rows=listAt(blockAgents,T);
+  if(!rows.length)return "";
+  var g=split(rows),live=g.run.length>0;
+  var open=isOpen("A",live);
+  var label,meta;
+  if(live){
+    label=rows.length+" agents";
+    meta='<span>'+g.run.length+" running</span>";
+  }else{
+    label=rows.length+" agents";
+    meta='<span>'+g.ok.length+" done"+(g.bad.length?", "+g.bad.length+" failed":"")+"</span>";
+  }
+  return '<div class="tl-row'+(live?" is-live":"")+'" data-live="'+(live?1:0)+'">'+
+    '<button class="tl-row-head" type="button" data-fold="A" aria-expanded="'+open+'">'+
+      '<span class="tl-row-glyph">'+(live?"&#9671;":"&#9672;")+"</span>"+
+      '<span class="tl-row-kind">Agent</span>'+
+      '<span class="tl-row-label">'+label+"</span>"+
+      '<span class="tl-row-meta">'+meta+'<span data-tick="blk:A"></span></span>'+
+      '<span class="tl-row-mark '+(live?"":(g.bad.length?"mark-err":"mark-done"))+'">'+
+        (live?(open?"&#9662;":"&#9656;"):(g.bad.length?"&#10007;":"&#10003;"))+"</span>"+
+    "</button>"+
+    (open?'<div class="tl-row-body"><div class="tl-strands">'+group(rows,"A.done",20)+"</div></div>":"")+
+  "</div>";
+}
+
+/* -------------------------- the workflow -------------------------- */
+function wfBlock(T){
+  if(T<WF.spawn)return "";
+  var live=T<WF.end, cur=0, html="";
+  WF.phases.forEach(function(p){
+    var started=T>=p.start, fin=T>=p.end;
+    if(started&&!fin)cur=p.i;
+    var rows=started?listAt(p.agents,T):[];
+    var g=split(rows);
+    var cls=!started?"is-queued":(fin?"is-done":"is-live");
+    var open=isOpen("ph"+p.i,started&&!fin);
+    var tally;
+    if(!started)tally='<span>queued, '+p.agents.length+" agents</span>";
+    else if(fin)tally="<span>"+g.ok.length+" done"+(g.bad.length?', <span class="f">'+g.bad.length+" failed</span>":"")+"</span>";
+    else tally='<span class="r">'+g.run.length+" running</span> &#183; "+g.ok.length+" done"+
+      (g.bad.length?' &#183; <span class="f">'+g.bad.length+" failed</span>":"");
+    html+='<div class="tl-ph '+cls+'">'+
+      '<button class="tl-ph-head" type="button" data-fold="ph'+p.i+'" aria-expanded="'+open+'"'+
+        (started?"":" disabled")+'>'+
+        '<span class="tl-ph-i">'+(fin?"&#10003;":(started?"&#9656;":p.i))+"</span>"+
+        '<span class="tl-ph-t">'+esc(p.title)+"</span>"+
+        '<span class="tl-ph-tally">'+tally+"</span>"+
+        '<span class="tl-ph-el" data-tick="ph:'+p.i+'"></span>'+
+      "</button>"+
+      (started&&open?'<div class="tl-ph-body">'+group(rows,"ph"+p.i+".done",20)+"</div>":"")+
+    "</div>";
+  });
+  var open=isOpen("wf",live);
+  return '<div class="tl-row'+(live?" is-live":"")+'" data-live="'+(live?1:0)+'">'+
+    '<button class="tl-row-head" type="button" data-fold="wf" aria-expanded="'+open+'">'+
+      '<span class="tl-row-glyph">'+(live?"&#11040;":"&#11042;")+"</span>"+
+      '<span class="tl-row-kind">Workflow</span>'+
+      '<span class="tl-row-label">'+esc(WF.title)+"</span>"+
+      '<span class="tl-row-meta"><span>'+(live?"phase "+cur+" of 3":"3 phases")+"</span>"+
+        '<span data-tick="blk:wf"></span></span>'+
+      '<span class="tl-row-mark '+(live?"":"mark-done")+'">'+
+        (live?(open?"&#9662;":"&#9656;"):"&#10003;")+"</span>"+
+    "</button>"+
+    (open?'<div class="tl-row-body"><div class="tl-strands">'+html+"</div></div>":"")+
+  "</div>";
+}
+
+/* ------------------- background bash and schedule ----------------- */
+function bashBlock(T){
+  if(T<BASH.spawn)return "";
+  var live=T<BASH.end, el=(live?T:BASH.end)-BASH.spawn;
+  var lines=42+Math.floor(el/2400);
+  return '<div class="tl-row'+(live?" is-live":"")+'" data-live="'+(live?1:0)+'">'+
+    '<button class="tl-row-head" type="button" data-fold="bash" aria-expanded="'+isOpen("bash",false)+'">'+
+      '<span class="tl-row-glyph">$</span>'+
+      '<span class="tl-row-kind">Bash</span>'+
+      '<span class="tl-row-label">'+esc(BASH.cmd)+"</span>"+
+      '<span class="tl-row-meta"><span>'+(live?"background, "+lines+" lines":"exit 0")+"</span>"+
+        '<span data-tick="blk:bash"></span></span>'+
+      '<span class="tl-row-mark '+(live?"":"mark-done")+'">'+(live?"&#9656;":"&#10003;")+"</span>"+
+    "</button>"+
+    (isOpen("bash",false)?'<div class="tl-row-detail">web build  '+lines+
+      " modules transformed, watching for changes</div>":"")+
+  "</div>";
+}
+function schedBlock(T){
+  if(T<SCHED.spawn||T>=SCHED.end)return "";
+  var next=SCHED.end-T;
+  return '<div class="tl-row" data-live="0">'+
+    '<div class="tl-row-head" style="cursor:default">'+
+      '<span class="tl-row-glyph">&#9719;</span>'+
+      '<span class="tl-row-kind">Schedule</span>'+
+      '<span class="tl-row-label">'+esc(SCHED.cmd)+"</span>"+
+      '<span class="tl-row-meta"><span>next run in</span><span data-tick="blk:sched"></span></span>'+
+      '<span class="tl-row-mark" style="color:var(--state-awaiting)">&#9675;</span>'+
+    "</div></div>";
+}
+
+/* ---------------------------- drill-in ---------------------------- */
+function drillHtml(a){
+  var s=a.s,evs=s.events.slice(0,Math.min(5,Math.max(1,a.calls))),out="";
+  out+='<div class="dr"><span class="dr-k">Prompt</span>'+esc(s.desc)+
+    ". Report back with the file paths and what you found. Budget 80k tokens, run quiet.</div>";
+  out+='<div class="dr dr-think"><span class="dr-k">Thinking</span>'+
+    "Starting from the tree so I know what exists before I open anything.</div>";
+  evs.forEach(function(e,i){
+    out+='<div class="dr-tool"><b>'+esc(e.tool)+"</b> <span>"+esc(e.arg)+"</span></div>";
+    out+='<div class="dr-out">'+esc(OUT[e.tool]||"ok")+"</div>";
+    if(i===1)out+='<div class="dr dr-think">That confirms the strip never opens a subagent file, '+
+      "so the counts are all it can know. Checking the other call site.</div>";
+  });
+  if(a.calls>5)out+='<div class="tl-more">&#183; &#183; &#183; '+(a.calls-5)+" more tool calls</div>";
+  if(a.settled&&a.outcome==="error")out+='<div class="dr" style="color:var(--danger)">'+
+    '<span class="dr-k">Error</span>'+esc(s.error)+"</div>";
+  else if(a.settled)out+='<div class="dr"><span class="dr-k">Result</span>'+esc(s.result)+"</div>";
+  else out+='<div class="tl-more">still running</div>';
+  if(a.settled)out+='<div class="dr-end">Done ('+a.calls+" tool uses &#183; "+tokfmt(a.tokens)+
+    " tokens &#183; "+dur(a.elapsed)+")</div>";
+  return '<div class="tl-drill" style="--ag:var(--ag-'+s.color+')">'+
+    '<div class="tl-drill-head">'+
+      '<span class="tl-drill-strand"></span>'+
+      '<span class="tl-drill-t">'+esc(s.desc)+"</span>"+
+      '<span class="tl-drill-m">'+esc(s.type)+" &#183; "+esc(s.model)+" &#183; depth "+s.depth+"</span>"+
+      '<button class="tl-drill-x" type="button" data-close="1">Close</button>'+
+    "</div>"+
+    '<div class="tl-drill-scroll">'+out+"</div></div>";
+}
+
+/* ====================== driver and one clock ====================== */
+var T=0,playing=true,lastReal=0,lastRender=-1e9,following=true;
+var tl=document.getElementById("timeline");
+var rh=document.getElementById("runhead");
+var lastHtml={},tickMap=[];
+var IDS=["anchor-agents","anchor-bash","anchor-sched","anchor-wf"];
+
+function wfAll(){var o=[];WF.phases.forEach(function(p){if(T>=p.start)o=o.concat(p.agents);});return o;}
+function write(el,v){if(el.textContent!==v)el.textContent=v;}
+
+function blockAEnd(){
+  var rows=listAt(blockAgents,T);if(!rows.length)return T;
+  var g=split(rows);if(g.run.length)return T;
+  var m=0;rows.forEach(function(a){if(a.s.end>m)m=a.s.end;});return m;
+}
+
+function buildTickMap(){
+  tickMap=[];
+  var n=tl.querySelectorAll("[data-tick]");
+  for(var i=0;i<n.length;i++){
+    var p=n[i].getAttribute("data-tick").split(":");
+    tickMap.push({el:n[i],k:p[0],id:p[1]});
+  }
+}
+function tick(){
+  for(var i=0;i<tickMap.length;i++){
+    var e=tickMap[i];
+    if(e.k==="el"||e.k==="age"){
+      var a=agentAt(ALL[e.id],T);if(!a)continue;
+      if(e.k==="el")write(e.el,dur(a.elapsed));
+      else write(e.el,a.quiet?"+"+dur(a.age):"");
+    }else if(e.k==="blk"){
+      if(e.id==="A")write(e.el,dur(blockAEnd()-BLOCK_A_SPAWN));
+      else if(e.id==="wf")write(e.el,dur(Math.min(T,WF.end)-WF.spawn));
+      else if(e.id==="bash")write(e.el,dur(Math.min(T,BASH.end)-BASH.spawn));
+      else if(e.id==="sched")write(e.el,dur(SCHED.end-T));
+    }else if(e.k==="ph"){
+      var ph=WF.phases[Number(e.id)-1];
+      write(e.el,T<ph.start?"":dur(Math.min(T,ph.end)-ph.start));
+    }
+  }
+  document.getElementById("hx-t").textContent=clock(T);
+}
+
+/* ------------------------- the running head ----------------------- */
+function liveRows(){
+  return listAt(blockAgents,T).concat(listAt(wfAll(),T)).filter(function(a){return !a.settled;});
+}
+function updateRunhead(){
+  var live=tl.querySelectorAll('[data-live="1"]');
+  if(!live.length){rh.classList.remove("is-on");return;}
+  var box=tl.getBoundingClientRect(),seen=false;
+  var target=live[live.length-1],tr=target.getBoundingClientRect();
+  for(var i=0;i<live.length;i++){
+    var r=live[i].getBoundingClientRect();
+    if(r.bottom>box.top+10&&r.top<box.bottom-10){seen=true;break;}
+  }
+  if(seen){rh.classList.remove("is-on");return;}
+  rh.classList.add("is-on");
+  var run=liveRows(),best=null;
+  run.forEach(function(a){if(!best||a.age<best.age)best=a;});
+  var earliest=T;
+  run.forEach(function(a){if(a.s.spawn<earliest)earliest=a.s.spawn;});
+  if(T>=BASH.spawn&&T<BASH.end&&BASH.spawn<earliest)earliest=BASH.spawn;
+  var n=run.length?run.length+(run.length===1?" agent":" agents")+" running":"background work";
+  document.getElementById("rh-n").textContent=n;
+  document.getElementById("rh-what").textContent=best?
+    best.s.desc+"  ▸ "+best.tool:BASH.cmd;
+  document.getElementById("rh-t").textContent=dur(T-earliest);
+  document.getElementById("rh-go").innerHTML=(tr.top>=box.bottom-10)?"&#8595;":"&#8593;";
+  rh._target=target;
+}
+function topOf(el){
+  return el.getBoundingClientRect().top-tl.getBoundingClientRect().top+tl.scrollTop-10;
+}
+function goToBlock(el,smooth){
+  if(!el)return;
+  following=false;
+  tl.scrollTo({top:topOf(el),behavior:(smooth&&!reduced)?"smooth":"auto"});
+}
+function newestLive(){
+  var n=tl.querySelectorAll('[data-live="1"]');
+  return n.length?n[n.length-1]:null;
+}
+rh.addEventListener("click",function(){goToBlock(rh._target,true);});
+
+/* ---------------------------- rendering --------------------------- */
+function reveal(id,on){
+  var el=document.getElementById(id),was=!el.classList.contains("is-hidden");
+  el.classList.toggle("is-hidden",!on);
+  return was!==on;
+}
+function render(){
+  var html={"anchor-agents":blockA(T),"anchor-bash":bashBlock(T),
+            "anchor-sched":schedBlock(T),"anchor-wf":wfBlock(T)};
+  var changed=false;
+  for(var i=0;i<IDS.length;i++){
+    var k=IDS[i];
+    if(lastHtml[k]!==html[k]){document.getElementById(k).innerHTML=html[k];lastHtml[k]=html[k];changed=true;}
+  }
+  if(reveal("mid-1",T>=90000))changed=true;
+  if(reveal("mid-2",T>=100000))changed=true;
+  if(reveal("mid-3",T>=400000))changed=true;
+  if(changed){
+    buildTickMap();
+    var run=liveRows();
+    document.getElementById("side-sub").textContent=
+      run.length?run.length+(run.length===1?" agent running":" agents running"):
+      (T>=BASH.spawn&&T<BASH.end?"1 background command":"idle");
+    document.getElementById("live-region").textContent=
+      run.length?run.length+" agents running":"no agents running";
+  }
+  tick();
+  if(changed&&following)tl.scrollTop=tl.scrollHeight;
+  updateRunhead();
+}
+
+var pending=false;
+tl.addEventListener("scroll",function(){
+  var d=tl.scrollHeight-tl.scrollTop-tl.clientHeight;
+  following=d<90;
+  if(!pending){pending=true;requestAnimationFrame(function(){pending=false;updateRunhead();});}
+});
+window.addEventListener("resize",updateRunhead);
+
+function frame(ts){
+  if(playing){
+    if(lastReal)T=Math.min(END,T+(ts-lastReal)*RATE);
+    lastReal=ts;
+    if(T>=END){T=END;playing=false;setPlay();}
+  }else lastReal=0;
+  if(ts-lastRender>=100){lastRender=ts;render();}
+  requestAnimationFrame(frame);
+}
+
+/* ------------------------- interaction ---------------------------- */
+tl.addEventListener("click",function(ev){
+  var x=ev.target.closest("[data-close]");
+  if(x){drillOpen=null;lastHtml={};render();return;}
+  var f=ev.target.closest("[data-fold]");
+  if(f){
+    var k=f.getAttribute("data-fold");
+    folds[k]=!(f.getAttribute("aria-expanded")==="true");
+    lastHtml={};render();return;
+  }
+  var a=ev.target.closest("[data-ag]");
+  if(a){
+    var id=a.getAttribute("data-ag");
+    drillOpen=(drillOpen===id)?null:id;
+    lastHtml={};render();
+    if(drillOpen){
+      var el=tl.querySelector('[data-ag="'+drillOpen+'"]');
+      if(el)el.focus({preventScroll:true});
+    }
+  }
+});
+document.addEventListener("keydown",function(ev){
+  if(ev.key==="Escape"&&drillOpen){drillOpen=null;lastHtml={};render();}
+});
+
+/* --------------------------- harness ------------------------------ */
+function setPlay(){
+  var b=document.getElementById("btn-play");
+  b.textContent=playing?"Pause":"Play";
+  b.setAttribute("aria-pressed",String(playing));
+}
+document.getElementById("btn-play").addEventListener("click",function(){
+  playing=!playing;lastReal=0;setPlay();
+});
+document.getElementById("btn-replay").addEventListener("click",function(){
+  T=0;folds={};drillOpen=null;following=true;playing=true;lastReal=0;lastHtml={};
+  setPlay();render();tl.scrollTop=tl.scrollHeight;
+});
+Array.prototype.forEach.call(document.querySelectorAll("[data-jump]"),function(b){
+  b.addEventListener("click",function(){
+    T=Number(b.getAttribute("data-jump"));
+    playing=false;lastReal=0;folds={};drillOpen=null;lastHtml={};
+    setPlay();render();
+    var live=newestLive();
+    if(live)goToBlock(live,false);
+    else{following=true;tl.scrollTop=tl.scrollHeight;}
+    updateRunhead();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-jump]"),function(o){
+      o.setAttribute("aria-pressed",String(o===b));
+    });
+  });
+});
+var scale=1;
+function setScale(v){
+  scale=Math.max(0.8,Math.min(1.35,v));
+  tl.style.setProperty("--tl-text-scale",scale.toFixed(2));
+  rh.style.setProperty("--tl-text-scale",scale.toFixed(2));
+}
+document.getElementById("btn-bigger").addEventListener("click",function(){setScale(scale+0.1);});
+document.getElementById("btn-smaller").addEventListener("click",function(){setScale(scale-0.1);});
+
+/* deep link to a state, so a reviewer can bookmark one:
+   #t=158000  #t=210000,drill=w9_0  #t=40000,scroll=top */
+(function(){
+  var h=location.hash.slice(1);if(!h)return;
+  var q={};h.split(/[,&]/).forEach(function(p){var kv=p.split("=");q[kv[0]]=kv[1];});
+  if(q.t){T=Number(q.t);playing=false;}
+  if(q.drill)drillOpen=q.drill;
+  if(q.scale)setScale(Number(q.scale));
+  if(q.scroll==="top")following=false;
+})();
+
+setPlay();render();
+(function(){
+  if(location.hash.indexOf("scroll=top")>-1){following=false;tl.scrollTop=0;updateRunhead();}
+  else if(!playing){goToBlock(newestLive(),false);updateRunhead();}
+})();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
