@@ -446,13 +446,13 @@ func TestHealthWorstNamesWhicheverResourceRaisedTheTier(t *testing.T) {
 	}
 }
 
-// A window shorter than ten minutes reports every figure and withholds the
-// colour. The thresholds ARE ten-minute rates, so measuring a ninety-second
-// rate against them is a different measurement wearing the same number, and it
-// would cross a line at a rate nobody calibrated. The first ten minutes after a
-// restart is also the worst moment to cry wolf, since it is exactly when
-// someone has just deployed and is watching.
-func TestHealthMarksAWindowShorterThanTenMinutes(t *testing.T) {
+// A window shorter than healthColourMinWindow reports every figure and
+// withholds the colour. The thresholds ARE ten-minute rates, so measuring a
+// ninety-second rate against them is a different measurement wearing the same
+// number, and it would cross a line at a rate nobody calibrated. The bar is
+// four minutes rather than the full ten; the constant carries the measurements
+// behind that choice.
+func TestHealthWithholdsTheColourBelowTheMinimumWindow(t *testing.T) {
 	// Ninety seconds of history, well over the CPU line for all of it.
 	v := healthVerdictFrom(stallRing(10, 10*time.Second, 0.20, 0, 0), defaultLimits())
 	if !v.PartialWindow {

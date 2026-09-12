@@ -522,6 +522,28 @@ describe("the machine channel", () => {
     expect(c.detail).toBe("busy, by load average");
   });
 
+  /**
+   * "Nothing arrived" and "arrived, but over too short a window to judge" are
+   * both `unknown`, and they must not say the same thing. The row prints the
+   * figures underneath, so "not reporting" above a live "Disk 84%" contradicts
+   * itself on screen. tmux-api fills in every figure from the first sample and
+   * withholds only the verdict, until it has four minutes of history.
+   */
+  it("says nothing arrived when nothing arrived", () => {
+    expect(machineChannel(null).detail).toBe("not reporting");
+    expect(machineChannel(reading({ state: "unknown", source: "unknown" })).detail).toBe(
+      "not reporting",
+    );
+  });
+
+  it("says it is still measuring when the reading is real but the window is short", () => {
+    const c = machineChannel(
+      reading({ state: "unknown", source: "psi", windowSeconds: 60, partialWindow: true, ioPct: 84 }),
+    );
+    expect(c.state).toBe("unknown");
+    expect(c.detail).toBe("still measuring");
+  });
+
   /* `worst` names the resource nearest its own line and is always set, so the
    * old "names no resource" case cannot arise. What replaces it is the reading
    * tmux-api produces before its first sample: source `unknown`, which any
