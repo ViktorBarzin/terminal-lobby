@@ -21,6 +21,12 @@ type userState struct {
 	mu     sync.Mutex
 	srcs   map[string]*liveSource // key: tmux session name
 
+	// Sessions whose first read is in flight, so a second caller for the SAME
+	// session waits for that read rather than starting its own. The channel is
+	// closed when the read finishes. Callers for any OTHER session do not
+	// consult this at all — that is the point of it (see source).
+	building map[string]chan struct{}
+
 	// How this user's files are read. The service's own user is read directly;
 	// everyone else goes through a child running as them, because a home is
 	// 0750 and this process cannot open what is inside one. priv is nil for the
@@ -87,8 +93,9 @@ func (rg *registry) user(osUser string) *userState {
 		root := sessionio.ProjectsRoot(rg.homeBase, osUser)
 		us = &userState{
 			osUser: osUser, root: root,
-			sm:   sessionio.NewSessionMap(osUser, root, rg.opts),
-			srcs: map[string]*liveSource{},
+			sm:       sessionio.NewSessionMap(osUser, root, rg.opts),
+			srcs:     map[string]*liveSource{},
+			building: map[string]chan struct{}{},
 		}
 		if osUser == rg.self {
 			us.reader = sessionio.LocalReader{}
@@ -110,29 +117,73 @@ func (rg *registry) user(osUser string) *userState {
 // FileSource's path is fixed at construction, so the cached entry is only still
 // valid while it points at the transcript the sessionMap currently holds —
 // otherwise it is a tailer on a dead session's file and has to be replaced.
+// The first read of a transcript happens in start(), synchronously, and it is
+// the expensive one: the whole file, one JSON parse per line. This function
+// therefore does NOT hold us.mu across it. Holding it meant one session's first
+// read froze every other session of the same user — measured on emo, 16
+// sessions and a 39 MB transcript that took 85 s to read while the box was IO
+// saturated, against a browser that abandons a request after 8 s. Sessions are
+// independent and the lock only ever protected the maps.
+//
+// Two callers asking for the SAME session still read it once: the first records
+// a channel in us.building and the others wait on that, then loop and find the
+// finished source in the cache. That is the only thing serialized here.
 func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool) {
 	us := rg.user(osUser)
-	us.mu.Lock()
-	defer us.mu.Unlock()
-	info, ok := us.sm.Get(session)
-	if !ok {
-		// The mapping is gone (the tmux session was killed, or a plain shell
-		// took its name). Anything still tailing the old transcript is reading
-		// a dead session's file — stop it rather than leak the goroutine.
-		if ls, cached := us.srcs[session]; cached {
+	for {
+		us.mu.Lock()
+		info, ok := us.sm.Get(session)
+		if !ok {
+			// The mapping is gone (the tmux session was killed, or a plain shell
+			// took its name). Anything still tailing the old transcript is reading
+			// a dead session's file — stop it rather than leak the goroutine.
+			if ls, cached := us.srcs[session]; cached {
+				us.retire(session, ls)
+			}
+			us.mu.Unlock()
+			return nil, false
+		}
+		if ls, ok := us.srcs[session]; ok {
+			if ls.fs.Path() == info.Transcript {
+				us.mu.Unlock()
+				return ls.fs, true
+			}
 			us.retire(session, ls)
 		}
-		return nil, false
-	}
-	if ls, ok := us.srcs[session]; ok {
-		if ls.fs.Path() == info.Transcript {
-			return ls.fs, true
+		if wait, inFlight := us.building[session]; inFlight {
+			us.mu.Unlock()
+			<-wait
+			continue // the builder has published it, or failed and left nothing
 		}
-		us.retire(session, ls)
+		done := make(chan struct{})
+		us.building[session] = done
+		reader := us.reader
+		us.mu.Unlock()
+
+		ls := rg.start(session, info.Transcript, reader)
+
+		us.mu.Lock()
+		delete(us.building, session)
+		// The tmux name may have been re-registered against a different
+		// transcript while this one was being read. The source just built is
+		// then already stale, so it is dropped rather than cached, and the loop
+		// builds the one the map now names.
+		cur, still := us.sm.Get(session)
+		if !still || cur.Transcript != info.Transcript {
+			us.mu.Unlock()
+			close(done)
+			ls.stop()
+			ls.fs.Close()
+			continue
+		}
+		if prev, cached := us.srcs[session]; cached {
+			us.retire(session, prev)
+		}
+		us.srcs[session] = ls
+		us.mu.Unlock()
+		close(done)
+		return ls.fs, true
 	}
-	ls := rg.start(session, info.Transcript, us.reader)
-	us.srcs[session] = ls
-	return ls.fs, true
 }
 
 // retire drops a source: the tail goroutine is stopped, the cache entry goes,
