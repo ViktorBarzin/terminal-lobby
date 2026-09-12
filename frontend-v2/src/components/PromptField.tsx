@@ -125,14 +125,19 @@ export const PromptField: Component<{
   /** Controls for the bar's right group, before Send. */
   rightExtra?: JSX.Element;
   /**
-   * An empty field is a real instruction, and Send goes through with "".
+   * Draw Send as unavailable while there is nothing to send.
    *
-   * Off by default, which is the live composer: sending nothing to a session
-   * that is already running does nothing anyone asked for. The new-session
-   * composer turns it on, because pressing Enter on an empty box is how you say
-   * "just give me a session".
+   * An empty send is refused either way — the guard in `submit` is the same for
+   * both composers. What differs is whether the refusal has to be VISIBLE. A
+   * live session is already there, so a keystroke that sends nothing to it
+   * costs nothing and saying so would be noise. On the new-session composer
+   * that keystroke is what CREATES the session, so a silent refusal reads as
+   * the app being broken. Turned on there, and nowhere else.
+   *
+   * "Input" rather than "text" because a held file counts: a screenshot on its
+   * own is a prompt, and it leaves as the path it uploaded to.
    */
-  allowEmpty?: boolean;
+  sendNeedsInput?: boolean;
   /**
    * The tray holds files that have not been uploaded yet.
    *
@@ -196,9 +201,7 @@ export const PromptField: Component<{
     const item = menu.children[i] as HTMLElement | undefined;
     if (!item) return;
     const top =
-      item.getBoundingClientRect().top -
-      menu.getBoundingClientRect().top +
-      menu.scrollTop;
+      item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
   /** Where ↑ has walked to in history; -1 is "not browsing". */
@@ -381,9 +384,7 @@ export const PromptField: Component<{
     ta.focus();
   };
 
-  onMount(() =>
-    props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }),
-  );
+  onMount(() => props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }));
 
   const removeAt = (path: string): void => {
     setTray((current) => current.filter((a) => a.path !== path));
@@ -436,6 +437,15 @@ export const PromptField: Component<{
   };
 
   /**
+   * Whether a send would land at all, by the same rule `submit` refuses on:
+   * prose (whitespace is not prose), a held file, or both.
+   *
+   * Off the `draft` signal rather than the textarea, because an element's
+   * `value` is not reactive and the bar has to redraw as you type.
+   */
+  const sendable = createMemo(() => draft().trim() !== "" || tray().length > 0);
+
+  /**
    * Send the composed message.
    *
    * The field is cleared optimistically because it has to feel instant, and the
@@ -450,8 +460,11 @@ export const PromptField: Component<{
     // old `if (!t) return` would have swallowed a photo sent on its own.
     const message = props.pendingAttachments
       ? raw.trim()
-      : composeMessage(raw, held.map((a) => a.path));
-    if (!message && held.length === 0 && !props.allowEmpty) return;
+      : composeMessage(
+          raw,
+          held.map((a) => a.path),
+        );
+    if (!message && held.length === 0) return;
     clear();
     void props.onSend(message, held).then((ok) => {
       if (ok || !ta || ta.value !== "") return;
@@ -786,6 +799,7 @@ export const PromptField: Component<{
               type="button"
               class="tl-send"
               onClick={submit}
+              disabled={props.sendNeedsInput && !sendable()}
               title={props.sendTitle}
             >
               Send

@@ -1218,6 +1218,35 @@ label.tl-set-row-label {
 .tl-session-slot {
   display: contents;
 }
+/* A preloaded session waiting for the click that shows it (ADR-0026).
+   `App.tsx`'s `slotClasses` carries the reasoning; the geometry is here.
+
+   IT IS LAID OUT, AND THAT IS THE POINT. `.tl-hidden` is `display: none`, and
+   a terminal built inside one cannot measure its own font: xterm reads 0 px
+   for a character, sets its per-row `letter-spacing` to a whole cell, and the
+   first frame after the click is double-width and colourless until a real
+   measurement lands. `visibility: hidden` keeps the box and skips the paint,
+   so the measurement is the one the pane will give it and the reveal has
+   nothing left to correct. It also takes the subtree out of the tab order and
+   the accessibility tree, which `opacity: 0` would not.
+
+   `inset` rather than a flex slot because this has to overlap the session on
+   screen instead of pushing it aside, and `bottom` leaves the scratch-shell
+   panel out: `--tl-dock-h` is the dock's own `height: <ratio>%`, set on
+   `.tl-shell-body` by App.tsx and 0 whenever no panel is up. Without it a
+   preload measured the dock's rows as its own and the click resized them
+   away. */
+.tl-session-slot.tl-offstage {
+  display: flex;
+  flex-direction: column;
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: var(--tl-dock-h, 0px);
+  visibility: hidden;
+  pointer-events: none;
+}
 
 /* ---- Text view + timeline --------------------------------------------- */
 .tl-textview {
@@ -2052,6 +2081,13 @@ label.tl-set-row-label {
 }
 .tl-send {
   background: var(--accent);
+}
+/* Only the new-session composer ever draws it this way: there, Send CREATES
+   the session, so an empty box has to look like it cannot. The same 0.5 and
+   default cursor every other unavailable control here uses. */
+.tl-send:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .tl-stop {
   background: var(--danger);

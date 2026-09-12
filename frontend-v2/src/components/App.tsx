@@ -162,6 +162,33 @@ export function createMountList(): (
 }
 
 /**
+ * How a mounted session that is not the one on screen is taken off it.
+ *
+ * THE TWO ANSWERS ARE NOT INTERCHANGEABLE, and which one a slot gets decides
+ * what its terminal looks like in its first visible frame.
+ *
+ * `tl-hidden` is `display: none`, so the slot has no box at all. That is right
+ * for a KEPT session: it was measured while it was on screen, xterm holds the
+ * cell size and the grid it arrived at, and coming back changes neither.
+ *
+ * A PRELOAD has never been on screen, and `display: none` denies it the one
+ * thing it needs. Measured on the deployed build on 2026-09-12: a preload
+ * mounted hidden reported a 0 px char measurement, so xterm's DOM renderer set
+ * its per-row `letter-spacing` to a whole cell and the click revealed one
+ * frame of double-width, colourless text before a real measurement corrected
+ * it — 90 to 200 ms of it, and 207 ms on the first open of a page load, where
+ * the grid was xterm's constructed 80x24 as well. `tl-offstage` gives the slot
+ * the pane's own box (app.css), so every one of those numbers is settled
+ * before the click rather than after it.
+ *
+ * Nothing is hidden twice: a slot is the one on screen, or offstage, or
+ * hidden.
+ */
+export function slotClasses(shown: boolean, preloading: boolean): Record<string, boolean> {
+  return { "tl-hidden": !shown && !preloading, "tl-offstage": !shown && preloading };
+}
+
+/**
  * The lobby shell: a sidebar of sessions/projects beside the selected session's
  * two-view surface. The lobby store owns the session list, layout, and all
  * mutations (tmux-api); selecting a card mounts a SessionView for it (remounted
@@ -1119,7 +1146,15 @@ export const App: Component = () => {
           {settingsButton()}
         </div>
 
-        <div class="tl-shell-body" ref={(el) => installSessionSwipe(el)}>
+        <div
+          class="tl-shell-body"
+          ref={(el) => installSessionSwipe(el)}
+          // What an offstage preload has to leave out of its own box, so it is
+          // measured against the pane a session actually gets rather than the
+          // whole column (app.css, `.tl-offstage`). Zero whenever the panel is
+          // not on screen, which is every phone and most desktops.
+          style={{ "--tl-dock-h": dock.mounted() ? `${dock.ratio()}%` : "0px" }}
+        >
           {/* Nothing selected is not an empty state any more: it is where a
               session is started. On a phone it is also the LANDING view, so its
               header carries the one control that gets to the list. */}
@@ -1165,7 +1200,7 @@ export const App: Component = () => {
               return (
                 <div
                   class="tl-session-slot"
-                  classList={{ "tl-hidden": !shown() }}
+                  classList={slotClasses(shown(), preloading())}
                   // The presence of the attribute is the whole message: this
                   // slot is a speculative attach rather than a session somebody
                   // opened. It goes the moment a click promotes it.

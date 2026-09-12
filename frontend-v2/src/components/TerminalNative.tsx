@@ -6,7 +6,6 @@ import { ownWhile } from "../lib/ownwhile";
 // into the bundle's CSS, so it costs no extra request.
 import "@xterm/xterm/css/xterm.css";
 import { attach, type Attachment } from "../terminal/attach";
-import { lastGrid, rememberGrid } from "../terminal/lastbox";
 import { toXtermTheme, THEME_LIVE_GLOBAL } from "../terminal/theme";
 import type { LadderState } from "../terminal/reconnect";
 import {
@@ -644,17 +643,6 @@ export const TerminalNative: Component<{
    */
   active?: boolean;
   /**
-   * This terminal will be SHOWN at the size another terminal is already using,
-   * so it may measure against that one rather than its own hidden 0x0 host.
-   *
-   * True only for a preload (ADR-0026), which mounts `display: none` and is
-   * revealed by a click into the slot the visible session occupies now. Any
-   * other hidden terminal keeps fit.ts's refusal, because a hidden session
-   * fitting against a box it does not have is what drags a live tmux window
-   * down to 13 columns. See `terminal/lastbox.ts`.
-   */
-  fitWhileHidden?: boolean;
-  /**
    * This session wants the lobby's notice: the pty rang the bell, or output
    * arrived while nobody could see the terminal. Which of those is which, and
    * the one-shot that keeps ten frames behind a hidden view down to one piece
@@ -1258,26 +1246,6 @@ export const TerminalNative: Component<{
        */
       const safeFit = (type: FitEvent["type"]): boolean => {
         const box = measure();
-        /**
-         * A PRELOAD HAS NO BOX AND CANNOT GET ONE, so it is handed the answer.
-         *
-         * It is mounted `display: none` (ADR-0026), and fit.ts is right to
-         * refuse a 0x0 host — but refusing leaves xterm at its constructed
-         * 80x24, which is what the handshake then carries, so the click that
-         * reveals it pays the reflow the preload was supposed to remove.
-         * Borrowing the last BOX does not help: the fit is the FitAddon, and it
-         * measures the parent element itself, so it proposed 11x5 from the same
-         * hidden host. The grid a visible terminal already fitted to is the
-         * answer, applied directly (terminal/lastbox.ts).
-         */
-        if (props.fitWhileHidden && !(box && box.width > 0 && box.height > 0)) {
-          const grid = lastGrid();
-          if (grid && (grid.cols !== term.cols || grid.rows !== term.rows)) {
-            term.resize(grid.cols, grid.rows);
-            attachment?.resize();
-            return true;
-          }
-        }
         const verdict = reduceFit(fitState, fitEvent(type, box));
         fitState = verdict.state;
         if (verdict.action !== "fit") {
@@ -1293,9 +1261,6 @@ export const TerminalNative: Component<{
         }
         try {
           fit.fit();
-          // What a hidden terminal will borrow. Recorded after the fit, so it is
-          // the grid that was actually reached rather than the one proposed.
-          rememberGrid({ cols: term.cols, rows: term.rows });
         } catch (e) {
           // The debt is already cleared, so a throw is not handed back. The
           // next resize or view switch settles it. term.html has five

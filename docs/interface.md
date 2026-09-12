@@ -48,16 +48,19 @@ typing in the terminal, where `/` belongs to the shell). Inside a session,
 use **`Alt+/`** (`Option+/` on Mac) — a modifier chord, so it opens the
 help from anywhere — or the `Ctrl+Shift+K` palette → **Keyboard shortcuts**.
 
-**Backspace** / **Delete** kill the selected session straight from the
-sidebar — select a session card (click it, or Tab/arrow to it) and press
-Backspace or Delete. Nothing is asked first: the card dims for eight seconds
-and `Ctrl+Z` takes it back, which is the **Undo** section below. Like `/`,
-these are plain keys, so
-they only fire when the sidebar has focus, never while you're typing in a
-terminal. From inside a session — where those keys belong to the shell — use
-`Alt+Shift+Backspace` (in the table above), which kills the attached session
-from anywhere. Rename a session by **double-clicking** its card (single click
-just selects), or from the card's `⋯` menu.
+Killing a session is a chord, never a bare key: `Alt+Shift+Backspace` or
+`Alt+Shift+W` (both in the table above) kill the **attached** session from
+anywhere, mid-type in the terminal included. Nothing is asked first: the card
+dims for eight seconds and `Ctrl+Z` takes it back, which is the **Undo**
+section below. The card's `⋯` menu kills the same way, and a swipe does on
+touch.
+
+Clicking a card selects that session and puts the cursor in its terminal, so
+you can type straight away — as do `Alt+1`…`Alt+0`, the palette and a
+notification tap, which all arrive the same way. A session showing its **Text**
+view is left alone instead, so the composer keeps the keyboard. Rename a
+session by **double-clicking** its card (single click just selects), or from
+the `⋯` menu.
 
 Renaming edits the session's **title**, which is the only thing anyone reads.
 The tmux **name** follows it, so `tmux ls` and the status bar read as words

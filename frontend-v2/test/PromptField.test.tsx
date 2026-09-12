@@ -36,15 +36,35 @@ describe("<PromptField> — an empty send", () => {
     expect(sent).toEqual([]);
   });
 
-  it("lets one through when the caller says an empty box means something", () => {
-    // Pressing Enter on an empty new-session composer is how you say "just give
-    // me a session"; the same keystroke against a live session does nothing
-    // anyone asked for.
-    const { container } = render(() => (
-      <PromptField onSend={onSend} label="Message" allowEmpty />
-    ));
+  it("refuses whitespace, which is nothing typed with the shift key down", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    type(field(container), "   ");
     fireEvent.keyDown(field(container), { key: "Enter" });
-    expect(sent).toEqual([""]);
+    expect(sent).toEqual([]);
+  });
+});
+
+describe("<PromptField> — Send, when the caller needs something in the box", () => {
+  const send = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-send")!;
+
+  // The refusal above is silent, and silence is only tolerable where nothing
+  // was going to happen anyway. On the new-session composer Enter CREATES the
+  // session, so a keystroke that does nothing reads as the app being broken.
+  // `sendNeedsInput` puts the refusal on the control, before it is pressed.
+  it("draws it unavailable until there is something to send", () => {
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" sendNeedsInput />
+    ));
+    expect(send(container).disabled).toBe(true);
+    type(field(container), "fix the deploy");
+    expect(send(container).disabled).toBe(false);
+    type(field(container), "  ");
+    expect(send(container).disabled).toBe(true);
+  });
+
+  it("leaves it available by default, which is the live composer", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    expect(send(container).disabled).toBe(false);
   });
 });
 
@@ -146,7 +166,13 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
     ));
     parkDraft("k7m2q9x4tp0v", {
       text: "look at this",
-      attachments: [{ path: "/var/lib/clipboard-store/wizard/k7m2q9x4tp0v/a.png", name: "a.png", kind: "image" }],
+      attachments: [
+        {
+          path: "/var/lib/clipboard-store/wizard/k7m2q9x4tp0v/a.png",
+          name: "a.png",
+          kind: "image",
+        },
+      ],
       at: 2,
     });
     expect(field(container).value).toBe("look at this");
