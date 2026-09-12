@@ -52,6 +52,14 @@ interface Window {
   // Set by the mounted SessionView while the text view is up — opens the
   // find-in-session overlay. False when no text view is mounted to search.
   __tlOpenFind?: () => boolean;
+  // Set by the mounted SessionView — hands the keyboard to the surface the
+  // session is showing, for the shell's activation funnel (App's `onActivate`,
+  // which every select reaches). The terminal focuses itself whenever it comes
+  // on screen; this is what answers a re-pick of the session ALREADY showing,
+  // where nothing changes but the click has just moved focus to the sidebar
+  // card. False when the text view owns the keyboard, or when there is no
+  // mounted terminal to take it.
+  __tlFocusSession?: () => boolean;
   // Set by the mounted TerminalNative — re-fits xterm after a mobile
   // viewport/keyboard change. Driven by mobile/viewport.ts, which measures the
   // window the terminal cannot measure for itself.

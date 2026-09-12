@@ -713,6 +713,16 @@ export const TerminalNative: Component<{
   /** Installed once xterm is up; before that a view switch has nothing to fit. */
   let viewShown: (() => void) | null = null;
   /**
+   * Installed with xterm, for the effect below that hands this terminal the
+   * keyboard when its view comes on screen.
+   *
+   * A local rather than `__tlFocusTerminal`: that bridge is whoever owns the
+   * bridges, which is a different question from which terminal the effect is
+   * about. Every mounted session has one of these effects, and each must focus
+   * ITSELF or none of them can say which terminal it meant.
+   */
+  let focusTerm: (() => void) | null = null;
+  /**
    * Everything the async mount body below has to hand back, run by the OUTER
    * `onCleanup` at the end of this component.
    *
@@ -984,6 +994,50 @@ export const TerminalNative: Component<{
     const onScreen = props.ownsBridges !== false;
     if (!onScreen) return;
     viewShown?.();
+  });
+
+  /** Did `active` just go from false to true? Read once per effect run. */
+  let wasActive = props.active === true;
+  const becameActive = (): boolean => {
+    const active = props.active === true;
+    const became = active && !wasActive;
+    wasActive = active;
+    return became;
+  };
+
+  /**
+   * THE TERMINAL BECAME THE THING ON SCREEN, so it takes the keyboard.
+   *
+   * TerminalView's effect on `props.active` (TerminalView.tsx:307-311), which
+   * the boot focus above recorded as the one focus site that did not survive
+   * the de-iframe. Two everyday moves landed on `<body>` without it, because
+   * both reach a terminal that is already mounted and so run no boot focus:
+   * selecting a session this tab has opened before (it stays mounted and
+   * CSS-hidden, store/keepalive.ts, so the keyboard stayed on the sidebar card
+   * the click had just focused), and the [Text | Terminal] switch, where the
+   * host regains its box with nothing to focus it.
+   *
+   * ONLY ON THE TRANSITION, never on the first run: the mount is the boot
+   * focus's, gated on a fit that found a box, and a second opinion here would
+   * focus terminals that deliberately booted without one.
+   *
+   * A FRAME LATE, as TerminalView's was. The class flip that gives this host
+   * its box lands in the same update, and `focus()` on an element still inside
+   * `display: none` does nothing at all. The lobby-text-field check is read in
+   * the callback rather than before it, so a rename box opened by the same
+   * double-click keeps the keyboard it has just taken — the steal
+   * TerminalView.tsx:280-305 recorded, from the one component left.
+   */
+  createEffect(() => {
+    if (!becameActive()) return;
+    const focus = (): void => {
+      if (!typingElsewhere()) focusTerm?.();
+    };
+    if (typeof requestAnimationFrame !== "function") {
+      focus();
+      return;
+    }
+    requestAnimationFrame(focus);
   });
 
   /**
@@ -1488,17 +1542,14 @@ export const TerminalNative: Component<{
       // for a reason it recorded at the site. This is the same check, kept
       // because the reason outlived the component.
       //
-      // Nothing re-focuses from here afterwards. A terminal that booted hidden
-      // is focused by a click, or by `__tlFocusTerminal`
-      // (keybindings/refocus.ts) when an overlay hands the keyboard back.
-      // TerminalView ALSO focused when the terminal view became the active one
-      // (an effect on `props.active`, TerminalView.tsx:307-311). That effect
-      // was not ported, so a mode switch from text to terminal still leaves
-      // this unfocused. NOT for want of the prop: SessionView passes
-      // `active={mode() === "terminal" && onScreen()}` here (its `active=`),
-      // and this component's only reader of it is the attention module's `view`
-      // gate (`viewHidden`). Closing the gap is an effect here, not a prop
-      // upstream.
+      // This is the MOUNT's focus and nothing else. A terminal that booted
+      // hidden is focused by a click, by `__tlFocusTerminal`
+      // (keybindings/refocus.ts) when an overlay hands the keyboard back, or by
+      // `becameActive` at component scope, which is TerminalView's effect on
+      // `props.active` (TerminalView.tsx:307-311) ported at last: until it
+      // landed, re-selecting a session this tab already had open focused
+      // nothing, because a kept session runs no mount to reach this line.
+      focusTerm = () => term.focus();
       if (bootFitted && !typingElsewhere()) term.focus();
 
       /**
@@ -3643,6 +3694,7 @@ export const TerminalNative: Component<{
       teardown = () => {
         if (fitTimer !== undefined) clearTimeout(fitTimer);
         viewShown = null;
+        focusTerm = null;
         ro.disconnect();
         // The two outstanding frames, given up through the modules that asked
         // for them rather than cancelled behind their backs: an `interrupt`

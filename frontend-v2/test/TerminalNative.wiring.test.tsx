@@ -340,6 +340,9 @@ let realPush: (t: PushToast) => number;
 /** term.html's refit() debounce (term.html:8471-8481), plus a frame of slack. */
 const PAST_DEBOUNCE_MS = 150;
 
+/** One animation frame, which is what the focus on `active` waits out. */
+const FRAME_MS = 20;
+
 /**
  * `heldSay`'s throttle (term.html:8191-8195), shared by every held-input
  * message and the compose mirror's own. Advancing past it is how a second
@@ -1530,6 +1533,96 @@ describe("the boot focus (term.html:5614-5617)", () => {
     expect(m.term.focused).toBe(0);
     expect(window.__tlFocusTerminal?.()).toBe(true);
     expect(m.term.focused).toBe(1);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 4c. The focus a view switch takes (TerminalView.tsx:307-311)
+ * ------------------------------------------------------------------ */
+
+/**
+ * The boot focus covers a terminal that mounts onto the screen. Everything
+ * else arrives at an ALREADY MOUNTED one: the lobby keeps every session you
+ * have opened (store/keepalive.ts) and keeps this terminal behind the TEXT
+ * view inside the session showing. Both come back as `active` going true, and
+ * until this effect landed neither focused anything — so clicking a session
+ * you had open left the keyboard on the sidebar card and the first thing typed
+ * went into the lobby's own key handling.
+ */
+describe("the focus a view switch takes (TerminalView.tsx:307-311)", () => {
+  /** A terminal that mounted hidden: no box, so no boot focus to confuse this. */
+  async function mountHidden(): Promise<Mounted> {
+    boxW = 0;
+    boxH = 0;
+    const m = await mount({ onScreen: false, active: false });
+    expect(m.term.focused).toBe(0);
+    boxW = 800;
+    boxH = 600;
+    return m;
+  }
+
+  /** The frame the focus is deferred by, since the class flip shares its update. */
+  function frame(): void {
+    vi.advanceTimersByTime(FRAME_MS);
+  }
+
+  it("focuses the session you select from the sidebar", async () => {
+    const m = await mountHidden();
+    m.setOnScreen(true);
+    m.setActive(true);
+    frame();
+    expect(m.term.focused).toBe(1);
+  });
+
+  it("focuses the terminal a view switch brings back", async () => {
+    // The session never left the screen; the TEXT view was over it.
+    boxW = 0;
+    boxH = 0;
+    const m = await mount({ onScreen: true, active: false });
+    expect(m.term.focused).toBe(0);
+    boxW = 800;
+    boxH = 600;
+    m.setActive(true);
+    frame();
+    expect(m.term.focused).toBe(1);
+  });
+
+  /** Once per arrival: an unrelated re-run must not yank the keyboard back. */
+  it("does not focus again while it stays on screen", async () => {
+    const m = await mountHidden();
+    m.setOnScreen(true);
+    m.setActive(true);
+    frame();
+    m.setActive(true);
+    m.observed();
+    frame();
+    expect(m.term.focused).toBe(1);
+  });
+
+  /** Leaving is not arriving. */
+  it("takes nothing when the view goes away", async () => {
+    const m = await mountHidden();
+    m.setActive(false);
+    frame();
+    expect(m.term.focused).toBe(0);
+  });
+
+  /**
+   * The same decline the boot focus makes, and the case it was written for: a
+   * double-click on a card selects the session and then opens the rename box,
+   * whose focus this must not take a frame later.
+   */
+  it("declines to a lobby text field that has the keyboard", async () => {
+    const m = await mountHidden();
+    m.setOnScreen(true);
+    m.setActive(true);
+    const field = document.createElement("input");
+    document.body.appendChild(field);
+    field.focus();
+    frame();
+    expect(m.term.focused).toBe(0);
+    expect(document.activeElement).toBe(field);
+    field.remove();
   });
 });
 
