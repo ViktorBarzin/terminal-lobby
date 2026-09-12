@@ -76,7 +76,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   display:grid; grid-template-columns:260px 1fr;
   height:var(--shellh, calc(100vh - 44px)); min-height:420px; overflow:hidden;
 }
-.tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
+.tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;min-height:0}
 .tl-shellbar{
   height:41px;flex:none;display:flex;align-items:center;gap:10px;
   padding-block:8px;padding-inline:12px;background:var(--bg-sidebar);border-bottom:1px solid var(--border);
@@ -103,7 +103,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   padding-block:10px 4px;padding-inline:9px;
 }
 
-.tl-main{display:flex;flex-direction:column;min-width:0;position:relative}
+.tl-main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
 .tl-session-bar{
   height:40px;flex:none;display:flex;align-items:center;gap:8px;
   padding-block:6px;padding-inline:12px;border-bottom:1px solid var(--border);background:var(--bg-page);
@@ -561,8 +561,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   <button class="pt-btn" data-jump="240">16 agents</button>
   <button class="pt-btn" data-jump="160">workflow</button>
   <button class="pt-btn" data-jump="76">one failed</button>
-  <button class="pt-btn" data-jump="292">long silence</button>
-  <button class="pt-btn" data-jump="362">all done</button>
+  <button class="pt-btn" data-jump="285">long silence</button>
+  <button class="pt-btn" data-jump="368">all done</button>
   <button class="pt-btn" data-jump="392">idle</button>
   <div class="pt-sep"></div>
   <button class="pt-btn" data-speed="1">1x</button>
@@ -757,8 +757,8 @@ A.push({
   id:"a1",name:"priorart-recon",desc:"Find prior art for agent visualization",color:"blue",depth:0,model:"opus",
   start:0,
   steps:steps({from:0,to:92,seed:11,evLo:6,evHi:11,tokLo:900,tokHi:5200})
-        .concat(steps({from:300,to:318,seed:12,evLo:6,evHi:9,tokLo:2200,tokHi:6400,tools:["Write","Read","Write"]})),
-  end:326,
+        .concat(steps({from:330,to:340,seed:12,evLo:6,evHi:9,tokLo:2200,tokHi:6400,tools:["Write","Read","Write"]})),
+  end:348,
   result:"CLI draws a tree with no per-agent activity string. t3code keeps row order stable and truncates the volatile line. Both gaps are the same one."
 });
 A.push({
@@ -796,20 +796,20 @@ var WF_COLORS=["blue","green","yellow","purple","cyan","orange","pink"];
       var st=from+Math.round(i*spread/labels.length);
       var en=st+dur+Math.round(r()*dur*0.9);
       var id="w"+(++k);
-      var isErr=errIdx&&errIdx.indexOf(i)>=0;
+      var isErr=errIdx&&errIdx[i]!=null;
       A.push({
         id:id,name:"wf-"+id,desc:labels[i],color:WF_COLORS[(k+ph)%WF_COLORS.length],depth:0,model:(i%4===0?"haiku":"opus"),
         wf:WF.id,phase:ph,start:st,
         steps:steps({from:st,to:en-3,seed:500+k*7,evLo:5,evHi:11,tokLo:1200,tokHi:9000}),
         end:isErr?null:en,
-        err:isErr?en:null,
+        err:isErr?errIdx[i]:null,
         error:isErr?(i===2?"Write refused: src/sw/cache.ts is outside the allowed paths":"Bash exited 1: 3 imports still reference the deleted module"):null,
         result:"Removed "+(2+(k%5))+" files. No references left in the import graph."
       });
     }
   }
   add(WF_LABELS_1,1,142,12,20,null);
-  add(WF_LABELS_2,2,190,7,55,[2,9]);
+  add(WF_LABELS_2,2,190,7,55,{2:290,9:300});
   add(WF_LABELS_3,3,306,8,22,null);
 })();
 
@@ -1078,7 +1078,7 @@ function buildLead(v){
 
   var top=el("div","fg-lead-top");
   top.appendChild(el("span","fg-dot"));
-  top.appendChild(el("span","fg-lead-name",v.a.name));
+  top.appendChild(el("span","fg-lead-name",v.a.wf?v.a.desc:v.a.name));
   top.appendChild(el("span","fg-lead-kind",(v.a.wf?"workflow · phase "+v.a.phase:"agent")+" · "+v.a.model));
   var why=whyText(v);
   var wb=el("button","fg-why",why.txt);
@@ -1089,7 +1089,7 @@ function buildLead(v){
   top.appendChild(wb);
   card.appendChild(top);
 
-  card.appendChild(el("p","fg-lead-desc",v.a.desc));
+  card.appendChild(el("p","fg-lead-desc",v.a.wf?WF.title:v.a.desc));
 
   if(showRule&&!pinnedId){
     var r=el("div","fg-rule");
@@ -1312,13 +1312,13 @@ function buildRead(){
   var w=world(S), v=w.byId[readId];
   if(!v){closeRead();return}
   var ids=readList();
-  $("#read-name").textContent=v.a.name;
+  $("#read-name").textContent=v.a.wf?v.a.desc:v.a.name;
   var dot=$("#read-dot");
   dot.parentNode.parentNode.setAttribute("data-color",agentColor(v.a));
   $("#read-pos").textContent=(ids.indexOf(readId)+1)+" of "+ids.length;
 
   var sub=$("#read-sub");sub.textContent="";
-  sub.appendChild(el("span","d",v.a.desc));
+  sub.appendChild(el("span","d",v.a.wf?(WF.title+" · phase "+v.a.phase):v.a.desc));
   var bits=[
     (v.state==="error"?"error":v.state),
     fmtDur(v.elapsed),
