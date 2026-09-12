@@ -522,9 +522,15 @@ def _never_touch_the_live_backends(monkeypatch):
 
 
 def harness_args(**over) -> argparse.Namespace:
+    # auth_header and proxy_secret are what the services check: the header name
+    # became configuration on 2026-08-29 and the proxy secret is checked before
+    # identity is read at all. The default here is the module's resolved header
+    # so a test that does not care gets whatever the box would send, and the
+    # secret is empty because the assertions below are about the identity.
     defaults = dict(port=0, user="qa-tester", ttyd_port=0,
                     scratch="/tmp/qa-scratch", permission_shim=False,
-                    stamp_shim=False, no_restore=True, quiet=True)
+                    stamp_shim=False, no_restore=True, quiet=True,
+                    auth_header=qa.AUTH_HEADER, proxy_secret="")
     defaults.update(over)
     return argparse.Namespace(**defaults)
 
