@@ -1,6 +1,6 @@
 # Preload a session on hover
 
-Status: approved, not yet implemented. Viktor, 2026-09-11.
+Status: shipped 2026-09-12 in v0.52.3. Viktor, 2026-09-11.
 Decision record: [ADR-0026](../adr/0026-a-preloaded-terminal-attaches-without-driving.md).
 Glossary: **Preload attach** in [CONTEXT.md](../../CONTEXT.md).
 
@@ -139,7 +139,44 @@ Three commits, landing together.
    `tmux-attach.sh`, the driven-mark exclusion and promotion in tmux-api, and
    the dwell, slot and TTL in the frontend.
 
-## How we will know it worked
+## What happened
+
+Shipped in three parts on 2026-09-11 (v0.52.0) and corrected twice on
+2026-09-12 (v0.52.3). Driven against real sessions each time, which is what
+caught both corrections.
+
+| | click → readable terminal |
+|---|---|
+| preloaded | **39 ms** median, 151 ms worst |
+| cold, same page load | 586 ms |
+| before any of this | 779 ms |
+
+The mechanism was verified rather than inferred: while hovering, the tmux client
+reads `attached,ignore-size,UTF-8`; after the click, `attached,focused,UTF-8`,
+with the same `client_name`. The socket is promoted in place.
+
+### Two corrections after it shipped
+
+**Sessions drifted into Watch mode.** Promotion re-took the join decision, so it
+read `driven` at click time rather than at dwell time. `driven` is true for any
+session holding an attached client, and `keepalive.ts` holds one on every
+session visited in the last day, so clicking a preloaded card resolved to watch
+as a matter of course. It shipped as a passing test asserting watch was the
+right answer. `store/watchmode.ts` already carried the rule this broke: a
+reading that counts your own client is sampled at a decision point and never
+tracked, a rule an earlier version of the same mistake had already cost a
+revert. The decision is taken once again, pinned from both directions.
+
+**The preload opened at the wrong size.** It mounts `display: none`, its host
+measures 0x0, and `fit.ts` refuses to fit against that, so it kept xterm's
+constructed 80x24 and the click paid the reflow. The first fix remembered the
+last host BOX and handed it to the guard, which made it worse: the fit is
+xterm's FitAddon, which measures the parent element itself, so it proposed 11x5
+from the same hidden host. Terminals now record the grid they actually fitted
+to, and a preload is resized to it directly. Measured after: 157x47 while
+hovered, unchanged across the click, identical to a normal open.
+
+## How we knew it worked
 
 Drive the deployed build with Playwright: hover a session never opened in that
 page load, wait out the dwell, click, and time pointerdown to non-empty
