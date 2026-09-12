@@ -427,6 +427,14 @@ src/
                          generation check on each socket handler is what stops an
                          abandoned attempt's close from knocking its replacement
                          off the ladder
+    modes.ts             The modes a departed program leaves set, which a
+                         reattach clears: mouse tracking and focus reporting are
+                         the only two things xterm puts on the wire unprompted,
+                         and the pty spends its first ~500 ms echoing whatever
+                         reaches it, so a terminal still tracking the pointer
+                         paints its own reports across the grid until tmux
+                         redraws. Encodings and bracketed paste stay, since one
+                         sends nothing on its own and the other carries intent
     theme.ts             The app's CSS custom properties mapped to an xterm
                          ITheme, plus the two re-read triggers a component owes
                          it (an explicit pick, and an OS light/dark flip while the
