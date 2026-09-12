@@ -8,9 +8,15 @@
 # Wired org-wide via /etc/claude-code/managed-settings.json (infra repo):
 #
 #   UserPromptSubmit / PreToolUse / PostToolUse  -> running
+#   SubagentStart                                -> running
 #   Stop / SessionStart                          -> done
 #   SessionEnd                                   -> clear (unset)
 #   Notification                                 -> notify (classified below)
+#   TeammateIdle                                 -> teammate-idle (no coarse
+#                                                   meaning: an older copy of
+#                                                   this script does nothing
+#                                                   with the word, which is
+#                                                   the right fallback)
 #
 # The argv word is the COARSE mode; three events share "running" and two share
 # "done", so the fine branch reads `hook_event_name` off the payload. A payload
@@ -167,9 +173,14 @@ id_ok() {
 }
 
 # ---- The outstanding-work set ---------------------------------------------
-# @claude_bg holds space-separated `<kind>:<id>` tokens: `a` an agent, `b` a
-# background command, `w` a workflow. Empty means the session owes nothing and
-# Stop may finish it.
+# @claude_bg holds space-separated `<kind>:<id>` tokens: `a` a background
+# subagent, `b` a background command, `w` a workflow, `t` a teammate. Empty
+# means the session owes nothing and Stop may finish it.
+#
+# The first three are keyed by the harness's own task id and re-derived from
+# its registry at every Stop. A teammate is keyed by its NAME instead, because
+# the registry cannot say whether one is working (bg_sync), and the name is
+# what both events that can — SubagentStart and TeammateIdle — carry.
 
 bg=""
 bg_read() { bg="$(tmux show-option -qv -t "$TMUX_PANE" @claude_bg 2>/dev/null || true)"; }
@@ -209,70 +220,133 @@ bg_del() {
     return 0
 }
 
-# bg_prune drops every outstanding id the harness no longer lists as a task.
+# bg_sync rebuilds the outstanding set from `background_tasks`, the harness's
+# own live registry of what this session started. Stop is the only event that
+# carries the field, and the only one that has to decide.
 #
-# This is the only reliable drain. bg_del runs off a UserPromptSubmit carrying
-# <task-notification>, and that fires ONLY when the task finishes BETWEEN turns.
-# A task that finishes mid-turn has its notification absorbed into the running
-# turn: the transcript records `queue-operation` enqueue and then remove with
-# reason `absorbed_mid_turn`, no UserPromptSubmit fires at all, and the id used
-# to sit in @claude_bg for good — so the session read `running` with nothing
-# running, and handle_notify below also stopped promoting it to `awaiting`.
+# It READS the registry rather than reconciling against it, which is the
+# 2026-09-12 change. A one-way prune can only ever remove an id that a launch
+# recorded, so anything this script did not recognise at launch time was
+# invisible to it for the whole run; reading the list instead picks the work up
+# at the first Stop, whatever started it. That covers a compaction, an
+# interrupt, and a claude restarted under the same tmux session.
 #
-# Measured over 122 transcripts on 2026-09-04, how a completion reached the
-# session: background commands 258 as a prompt against 765 absorbed or silently
-# removed; agents 57 against 35; workflows 36 against 18. Of 56 tasks stopped
-# with the TaskStop tool, 42 never enqueued a notification at all.
+# Three kinds are taken from the list, and the fourth is deliberately not:
 #
-# The Stop payload carries `background_tasks`, the harness's own live registry —
-# `{"id":…,"type":"shell"|"subagent","status":"running",…}` — and it is
-# authoritative: measured live the same day, a task that finished, and a task
-# stopped with TaskStop, both left the list at once. Stop is the only event that
-# carries the field, which is also the only event that has to decide.
+#   shell, subagent, workflow   listed while they work and gone the moment they
+#                               finish or are stopped with TaskStop (measured
+#                               2026-09-04 and again on 2.1.269, 2026-09-12)
+#   teammate                    listed as "running" for as long as the teammate
+#                               EXISTS. Measured three times on 2026-09-12, the
+#                               last 3m30s after the teammate had answered and
+#                               the harness's own bar showed it "idle"
 #
-# A running WORKFLOW is listed too, measured on 2.1.269 on 2026-09-12 by taking a
-# Stop two seconds into a live run: `{"id":"w7t7pnsug","type":"workflow",
-# "status":"running","name":"probe-slow"}`. Until that measurement existed a `w:`
-# token was exempt from the prune, since pruning one on a guess would have
-# reported done in the middle of a half-hour run. It is no longer a guess, so
-# every kind prunes the same way, and a workflow whose completion was absorbed
-# into the running turn finally drains.
+# So a teammate is carried here rather than derived: the `t:` tokens already in
+# the set survive a sync, and SubagentStart and TeammateIdle are what add and
+# retire them. They are dropped only when the registry lists no teammate at
+# all, which is the session having disbanded the team.
 #
-# One limit remains: a payload with no `background_tasks` field prunes nothing,
+# For the same reason a type this script does not know is skipped rather than
+# assumed to be work. Guessing the other way costs more than a late green dot:
+# a session stuck at running refuses the model picker ("the session is working
+# — stop it first") and holds a T3 attach pin open, and nothing retires the id
+# that did it, since there is deliberately no expiry (2026-09-04). A new kind
+# belongs here once someone has watched what its status does when it finishes.
+#
+# Why the list can be believed for the three: the drain it replaces cannot.
+# bg_del runs off a UserPromptSubmit carrying <task-notification>, which fires
+# ONLY when the task finishes BETWEEN turns. Over 122 transcripts on
+# 2026-09-04, how a completion reached the session was 258 prompts against 765
+# absorbed mid-turn or silently removed for background commands, 57 against 35
+# for agents and 36 against 18 for workflows, and 42 of 56 TaskStop kills
+# enqueued no notification at all.
+#
+# The entry shape is compact, with id, type and status in that order for every
+# kind seen:
+#
+#   {"id":"tocihyt26","type":"teammate","status":"running","description":…}
+#
+# Only that exact prefix counts as work. A quote inside a JSON string is
+# escaped, so `"id":"` can only ever be a real key — but it can be the key of
+# something that is not a task, and the same payload carries `session_crons`,
+# so the type and the status have to sit where the registry puts them before an
+# id is taken as outstanding.
+#
+# One limit remains: a payload with no `background_tasks` field syncs nothing,
 # so an older harness keeps the behaviour this script had before.
-#
-# The match is biased on purpose. `"id":"<id>"` can in principle hit something
-# outside the array, which KEEPS an id — the session stays running one turn
-# longer and the next Stop corrects it. Failing the other way would report a
-# session done while its work ran, which is the bug this whole option exists to
-# prevent.
-bg_prune() {
+bg_sync() {
     case "$payload" in
     *'"background_tasks":['*) ;;
     *) return 0 ;;
     esac
-    bg_read
-    [ -n "$bg" ] || return 0
-    kept=""
-    for t in $bg; do
-        keep=0
-        id="${t#*:}"
-        case "$payload" in *"\"id\":\"$id\""*) keep=1 ;; esac
-        if [ "$keep" = 1 ]; then
-            if [ -z "$kept" ]; then kept="$t"; else kept="$kept $t"; fi
-        fi
+    rest="${payload#*\"background_tasks\":[}"
+    new=""
+    n=0
+    team=0
+    while [ "$n" -lt 64 ]; do
+        case "$rest" in
+        *'"id":"'*) ;;
+        *) break ;;
+        esac
+        rest="${rest#*\"id\":\"}"
+        id="${rest%%\"*}"
+        after="${rest#*\"}"
+        id_ok "$id" || continue
+        typ="${after#,\"type\":\"}"
+        typ="${typ%%\"*}"
+        case "$typ" in
+        "" | *[!a-z_]*) continue ;;
+        esac
+        case "$after" in
+        ',"type":"'"$typ"'","status":"running"'*) ;;
+        *) continue ;;
+        esac
+        case "$typ" in
+        subagent) kind=a ;;
+        shell) kind=b ;;
+        workflow) kind=w ;;
+        teammate)
+            team=1
+            continue
+            ;;
+        *) continue ;;
+        esac
+        case " $new " in *" $kind:$id "*) continue ;; esac
+        if [ -z "$new" ]; then new="$kind:$id"; else new="$new $kind:$id"; fi
+        n=$((n + 1))
     done
-    [ "$kept" != "$bg" ] && bg_write "$kept"
+    bg_read
+    if [ "$team" = 1 ]; then
+        for t in $bg; do
+            case "$t" in
+            t:*)
+                case " $new " in *" $t "*) continue ;; esac
+                if [ -z "$new" ]; then new="$t"; else new="$new $t"; fi
+                ;;
+            esac
+        done
+    fi
+    [ "$new" != "$bg" ] && bg_write "$new"
     return 0
 }
 
-# record_launch adds the task a PostToolUse just started, if it started one.
-# Three tools, three field names, all carrying the id that the eventual
-# task-notification will name:
+# record_launch adds the task a PostToolUse just started, if it started one:
 #
-#   Agent (background)  tool_response.agentId,           status async_launched
-#   Workflow            tool_response.taskId,            status async_launched
+#   Agent (background)      tool_response.agentId,   status async_launched
+#   Workflow                tool_response.taskId,    status async_launched
 #   Bash run_in_background  tool_response.backgroundTaskId
+#
+# Each carries the id the eventual task-notification will name, so bg_del can
+# retire them one by one.
+#
+# A TEAMMATE is not recorded here, though its launch comes through this same
+# event as `{"status":"teammate_spawned","name":"counter",…}`. Adding it would
+# be adding an id nothing can take away: its own ids read
+# `counter@session-337349ca`, the registry calls the same agent `tocihyt26` and
+# goes on calling it running once it is idle, and no notification arrives when
+# it finishes. SubagentStart and TeammateIdle are the pair that can, and they
+# are wired together — so a box whose managed-settings predates them keeps the
+# old behaviour rather than gaining a token that sticks.
 record_launch() {
     case "$payload" in
     *'"status":"async_launched"'*)
@@ -327,8 +401,26 @@ handle_notify() {
 
 json_field hook_event_name
 event="$jv"
-json_field agent_id
-agent="$jv"
+
+# Whether THIS event was fired by a subagent rather than by the session's main
+# thread. The marker is a top-level `agent_id`, and it is read from the HEAD of
+# the payload — everything before `tool_input`, which is where every top-level
+# field the harness writes lands.
+#
+# Reading it from the whole payload is what hid an agent team from this script
+# (measured on 2.1.269, 2026-09-12). A teammate launch answers with `agent_id`
+# inside tool_response, naming the agent it just spawned, so the main thread's
+# own PostToolUse looked like a subagent's tool call and left before
+# record_launch could see it. Nothing recorded the teammate, and the Stop that
+# followed reported the session done with the team working.
+head="${payload%%\"tool_input\":*}"
+agent=""
+case "$head" in
+*'"agent_id":"'*)
+    agent="${head#*\"agent_id\":\"}"
+    agent="${agent%%\"*}"
+    ;;
+esac
 
 case "$event" in
 UserPromptSubmit)
@@ -343,7 +435,7 @@ UserPromptSubmit)
     # prompt land mid-run, and each one reported the session done with the run
     # still going — the bug Viktor reported ("the status for that session
     # becomes green"). Talking to a session does not end the work it is doing,
-    # and bg_prune at the next Stop re-derives the set from the harness's own
+    # and bg_sync at the next Stop re-derives the set from the harness's own
     # list, which is what the wipe was standing in for.
     case "$payload" in
     *'"prompt":"<task-notification>'*)
@@ -368,9 +460,10 @@ PostToolUse)
     ;;
 Stop)
     # Stop is the main thread stopping talking, not the end of the turn's work.
-    # What the harness still lists decides, for every kind: the ids match by id
-    # alone, so the kind stored in the token is only ever read by the sidebar.
-    bg_prune
+    # What the harness lists is the whole answer: the set is rebuilt from it,
+    # so a kind no launch could record is picked up here and a finished one is
+    # dropped, both without this script having to recognise the launch.
+    bg_sync
     bg_read
     if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
@@ -394,6 +487,50 @@ SessionStart)
     # the ids and then stamping done would paint the session green anyway.
     bg_read
     if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
+    ;;
+SubagentStart)
+    # A subagent or a teammate has STARTED working. Only a teammate is
+    # recorded, and only here, because it is the one kind the Stop registry
+    # cannot report: it lists a teammate as running for as long as the
+    # teammate exists, idle or not (see bg_sync).
+    #
+    # The two are told apart by the id the harness builds for each, measured
+    # on 2.1.269, 2026-09-12:
+    #
+    #   a plain subagent   agent_id a8574b6e73ce517a0,      agent_type general-purpose
+    #   a teammate         agent_id aprobe2-9b0fe9e64c9f7bdf, agent_type probe2
+    #
+    # so a teammate's id is `a` + its own name + `-` + a hash, and a plain
+    # subagent's is not. The plain one is left to the registry, which retires
+    # it honestly.
+    #
+    # This fires on every activation, not just the spawn: a teammate woken by
+    # SendMessage, or by a person typing into its pane, starts again here.
+    # Watching the Agent tool's own PostToolUse would have caught neither, and
+    # the first of those is how most of a team's work actually arrives.
+    id_ok "$agent" || exit 0
+    json_field agent_type
+    id_ok "$jv" || exit 0
+    case "$agent" in
+    "a$jv-"*)
+        bg_add "t:$jv"
+        stamp running
+        ;;
+    esac
+    ;;
+TeammateIdle)
+    # The teammate stopped working, and this is the only event that says so.
+    # The registry still calls it running, and its answer reaches the lead
+    # over the team's own channel rather than as a prompt, so no
+    # UserPromptSubmit fires either — measured 2026-09-12, a teammate that
+    # finished between turns produced no prompt hook at all.
+    #
+    # Retire the name and stamp nothing. The lead is usually mid-turn when a
+    # teammate reports, since the report is what wakes it, and stamping done
+    # here would paint a working session green until its next tool call. The
+    # turn boundary that follows settles the state the way it always does.
+    json_field teammate_name
+    id_ok "$jv" && bg_del "$jv"
     ;;
 Notification)
     handle_notify

@@ -143,11 +143,15 @@ func (e hookEnv) set(t *testing.T, name, value string) {
 func TestStopKeepsRunningWhileBackgroundWorkIsOutstanding(t *testing.T) {
 	e := newHookEnv(t)
 
+	// Both launches, because stop.json was captured from a session running
+	// both: since Stop rebuilds the set from that list rather than filtering
+	// what a launch recorded, the fixture's own contents are now the scenario.
 	e.fire(t, "running", "userprompt_human.json")
 	e.fire(t, "running", "post_agent_launch.json")
+	e.fire(t, "running", "post_bash_launch.json")
 
-	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
-		t.Fatalf("%s after an async Agent launch = %q, want the agent id", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b b:bmm8ohp9u" {
+		t.Fatalf("%s after the two launches = %q, want both ids", OptionBackground, got)
 	}
 
 	e.fire(t, "done", "stop.json")
@@ -156,19 +160,21 @@ func TestStopKeepsRunningWhileBackgroundWorkIsOutstanding(t *testing.T) {
 		t.Fatalf("%s after Stop with outstanding work = %q, want %q", OptionState, got, StateRunning)
 	}
 
-	// The notification turn is what retires the id, and only then is the
-	// session finished.
+	// A task-notification retires its own id straight away, without waiting
+	// for the Stop that ends the turn it starts.
 	e.fire(t, "running", "userprompt_notification_agent.json")
-	if got := e.opt(t, OptionBackground); got != "" {
-		t.Fatalf("%s after the task-notification = %q, want empty", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "b:bmm8ohp9u" {
+		t.Fatalf("%s after the agent's task-notification = %q, want the command left", OptionBackground, got)
 	}
-	e.fire(t, "done", "stop.json")
+	e.fire(t, "done", "stop_tasks_finished.json")
 	if got := e.opt(t, OptionState); got != StateDone {
 		t.Fatalf("%s after Stop with nothing outstanding = %q, want %q", OptionState, got, StateDone)
 	}
 }
 
 // A session that backgrounds nothing must behave exactly as it did before.
+// stop_tasks_finished.json is the Stop of such a turn: its background_tasks is
+// the empty list.
 func TestStopStillFinishesATurnThatBackgroundedNothing(t *testing.T) {
 	e := newHookEnv(t)
 
@@ -178,7 +184,7 @@ func TestStopStillFinishesATurnThatBackgroundedNothing(t *testing.T) {
 		t.Fatalf("%s mid-turn = %q, want %q", OptionState, got, StateRunning)
 	}
 
-	e.fire(t, "done", "stop.json")
+	e.fire(t, "done", "stop_tasks_finished.json")
 	if got := e.opt(t, OptionState); got != StateDone {
 		t.Fatalf("%s after Stop = %q, want %q", OptionState, got, StateDone)
 	}
@@ -194,8 +200,11 @@ func TestStopStillFinishesATurnThatBackgroundedNothing(t *testing.T) {
 func TestASubagentsOwnToolCallsDoNotTouchTheSession(t *testing.T) {
 	e := newHookEnv(t)
 
+	// Both of the launches stop.json was captured with, so the Stop that holds
+	// the session at running is the one that payload actually describes.
 	e.fire(t, "running", "userprompt_human.json")
 	e.fire(t, "running", "post_agent_launch.json")
+	e.fire(t, "running", "post_bash_launch.json")
 	e.fire(t, "done", "stop.json")
 
 	before := e.opt(t, OptionState)
@@ -207,8 +216,11 @@ func TestASubagentsOwnToolCallsDoNotTouchTheSession(t *testing.T) {
 	// Its background launches carry ids whose notifications go to the SUBAGENT,
 	// never to this session, so counting one would leave an id nothing can remove.
 	e.fire(t, "running", "post_bash_launch_by_subagent.json")
-	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
-		t.Fatalf("%s = %q, want only the main thread's own launch", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b b:bmm8ohp9u" {
+		t.Fatalf("%s = %q, want only the main thread's own launches", OptionBackground, got)
+	}
+	if strings.Contains(e.opt(t, OptionBackground), "bugtixgoo") {
+		t.Fatalf("%s counted the subagent's own background command", OptionBackground)
 	}
 }
 
@@ -560,5 +572,140 @@ func TestStopWithoutTheFieldPrunesNothing(t *testing.T) {
 
 	if got := e.opt(t, OptionBackground); got != before {
 		t.Errorf("%s = %q, want it unchanged at %q", OptionBackground, got, before)
+	}
+}
+
+// The defect Viktor reported next, on 2026-09-12: "the session status when we
+// have sub-agents or agent teams is not correctly shown. Even though the
+// agents are running, the session says it's green or done."
+//
+// A TEAMMATE — the Agent tool given a `name`, which is what an agent team is
+// made of — was invisible to every signal this script had. Its launch answers
+// `teammate_spawned` rather than `async_launched`, so record_launch saw
+// nothing; the Stop registry calls it `tocihyt26` while the launch calls it
+// `counter@session-337349ca`, so no recorded id would have survived a prune;
+// and when it finishes, no task-notification arrives at all. 97 of the 151
+// Agent launches in wizard's own transcripts over the three days to
+// 2026-09-12 were that shape.
+//
+// SubagentStart is the signal that works, and it is better than the launch
+// would have been: it fires on every activation, so a teammate woken by
+// SendMessage or by a person typing into its pane starts the session working
+// again too. Every fixture below is real hook stdin from one run on 2.1.269.
+func TestATeammateHoldsTheSessionRunning(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "subagentstart_teammate.json")
+
+	if got := e.opt(t, OptionBackground); got != "t:probe2" {
+		t.Fatalf("%s after a teammate started = %q, want the teammate by name", OptionBackground, got)
+	}
+
+	e.fire(t, "done", "stop_teammate_working.json")
+	if got := e.opt(t, OptionState); got != StateRunning {
+		t.Errorf("%s at Stop with the teammate working = %q, want %q", OptionState, got, StateRunning)
+	}
+	if got := e.opt(t, OptionBackground); got != "t:probe2" {
+		t.Errorf("%s = %q, want the teammate carried through the sync", OptionBackground, got)
+	}
+
+	e.fire(t, "teammate-idle", "teammate_idle.json")
+	if got := e.opt(t, OptionBackground); got != "" {
+		t.Errorf("%s after TeammateIdle = %q, want empty", OptionBackground, got)
+	}
+
+	e.fire(t, "done", "stop_teammate_idle.json")
+	if got := e.opt(t, OptionState); got != StateDone {
+		t.Errorf("%s once the teammate is idle = %q, want %q", OptionState, got, StateDone)
+	}
+}
+
+// Why the teammate is tracked by name rather than read off the Stop registry
+// like everything else: the registry cannot tell the two apart.
+//
+// Both fixtures are real Stop payloads carrying one teammate. In the first the
+// teammate had been working for a second; in the second it had answered and
+// the harness's own bar showed it "idle". The entry reads status "running" in
+// both, and a third Stop taken 3m30s later still did. So adopting a teammate
+// from the list would pin every session that ever spawned one at running —
+// which refuses the model picker and holds a T3 attach pin open, with nothing
+// left to retire the id.
+func TestATeammateIsNeverAdoptedFromTheRegistry(t *testing.T) {
+	for _, stop := range []string{"stop_teammate_working.json", "stop_teammate_idle.json"} {
+		t.Run(stop, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+
+			e.fire(t, "done", stop)
+
+			if got := e.opt(t, OptionBackground); got != "" {
+				t.Errorf("%s = %q, want empty: the list cannot say a teammate is working", OptionBackground, got)
+			}
+			if got := e.opt(t, OptionState); got != StateDone {
+				t.Errorf("%s = %q, want %q", OptionState, got, StateDone)
+			}
+		})
+	}
+}
+
+// A plain background subagent fires SubagentStart too, and is left alone: the
+// registry lists it honestly and drops it the moment it finishes, so recording
+// the name as well would be a second id to retire. The two are told apart by
+// the id the harness builds — a1cbb…/a8574… for a subagent, `a<name>-<hash>`
+// for a teammate.
+func TestAPlainSubagentIsLeftToTheRegistry(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_agent_launch.json")
+
+	e.fire(t, "running", "subagentstart_subagent.json")
+
+	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
+		t.Errorf("%s = %q, want only the launch's own id", OptionBackground, got)
+	}
+}
+
+// The team disbanding is the other way a name token goes. Nothing else retires
+// one if TeammateIdle never arrives — a teammate removed by hand, or a hook
+// that did not run — so a Stop whose registry lists no teammate at all drops
+// them, and the session is not left stuck at running.
+func TestNoTeammateInTheListDropsTheNames(t *testing.T) {
+	e := newHookEnv(t)
+	e.set(t, OptionBackground, "t:probe2")
+	e.fire(t, "running", "userprompt_human.json")
+
+	e.fire(t, "done", "stop_tasks_finished.json")
+
+	if got := e.opt(t, OptionBackground); got != "" {
+		t.Errorf("%s = %q, want empty: the harness lists no teammate", OptionBackground, got)
+	}
+	if got := e.opt(t, OptionState); got != StateDone {
+		t.Errorf("%s = %q, want %q", OptionState, got, StateDone)
+	}
+}
+
+// Reading the registry rather than reconciling against it is what makes the
+// fix general: work this script never saw launched is picked up at the next
+// Stop anyway. That is what covers a compaction, an interrupt, and a claude
+// restarted under the same tmux session.
+func TestStopAdoptsWorkNoLaunchRecorded(t *testing.T) {
+	for _, tc := range []struct{ name, stop, want string }{
+		{"an agent and a command", "stop.json", "a:a1cbb47bebad51b9b b:bmm8ohp9u"},
+		{"a workflow", "stop_workflow_running.json", "w:w7t7pnsug"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+
+			e.fire(t, "done", tc.stop)
+
+			if got := e.opt(t, OptionBackground); got != tc.want {
+				t.Errorf("%s from an empty set = %q, want %q", OptionBackground, got, tc.want)
+			}
+			if got := e.opt(t, OptionState); got != StateRunning {
+				t.Errorf("%s = %q, want %q", OptionState, got, StateRunning)
+			}
+		})
 	}
 }
