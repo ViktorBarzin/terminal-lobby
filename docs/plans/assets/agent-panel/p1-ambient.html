@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Marginalia — Terminal Lobby agent panel</title>
+<title>Marginalia, a Terminal Lobby agent panel</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -94,8 +94,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 }
 
 /* ===================== the shell ============================= */
-.tl-shell{display:grid;grid-template-columns:260px 1fr;height:100%}
-.tl-shell[data-sidebar="0"]{grid-template-columns:0 1fr}
+.tl-shell{display:grid;grid-template-columns:260px 1fr;height:100%;min-height:0}
+.tl-shell[data-sidebar="0"]{grid-template-columns:1fr}
 .tl-shell[data-sidebar="0"] .tl-shell-sidebar{display:none}
 
 .tl-shell-sidebar{
@@ -174,7 +174,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   letter-spacing:.07em;color:var(--text-muted);margin-bottom:5px;
 }
 .tl-assist{font-size:calc(14px * var(--tl-text-scale));color:var(--text-primary)}
-.tl-assist p{margin:0 0 9px}
+.tl-assist p{margin-block:0 9px}
 .tl-assist p:last-child{margin-bottom:0}
 .tl-tool{
   display:flex;align-items:center;gap:10px;
@@ -196,7 +196,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   padding:10px clamp(12px,6vw,80px);
 }
 .tl-composer-box{
-  max-width:860px;margin:0 auto;padding:8px 10px;border:1px solid var(--border-strong);
+  max-width:860px;margin-block:0;margin-inline:auto;padding:8px 10px;border:1px solid var(--border-strong);
   border-radius:var(--radius);background:var(--bg-card);
 }
 .tl-composer-box .field{color:var(--text-muted);font-size:13.5px;min-height:20px}
@@ -220,7 +220,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
    identity and the tree.
    ============================================================= */
 .tl-margin{
-  flex:none;width:260px;min-width:0;
+  flex:none;width:260px;min-width:0;min-height:0;
   border-left:1px solid var(--border);
   overflow-y:auto;overscroll-behavior:contain;
   padding:0 14px 22px 11px;
@@ -309,6 +309,10 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   letter-spacing:.07em;color:var(--text-muted);display:flex;gap:7px;align-items:baseline;
 }
 .mg-wfhead .k .id{font-family:var(--font-mono);text-transform:none;letter-spacing:0;opacity:.6}
+.mg-wfhead .k .num{
+  margin-left:auto;font-family:var(--font-mono);text-transform:none;letter-spacing:0;
+  opacity:.62;font-variant-numeric:tabular-nums;
+}
 .mg-wfhead .t{
   font-size:calc(12px * var(--tl-text-scale));font-weight:500;margin-top:3px;
   color:color-mix(in srgb, var(--text-primary) 88%, transparent);line-height:1.33;
@@ -335,7 +339,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   content:"";position:absolute;left:0;top:1px;bottom:1px;width:2px;
   background:var(--spine,var(--border-strong));border-radius:1px;
 }
-.mg-wfrow:hover{background:var(--hover-tint)}
+.mg-wfrow:hover,.mg-wfrow[data-open="1"]{background:var(--hover-tint)}
+.mg-wfrow[data-open="1"] .lb{color:var(--text-primary)}
 .mg-wfrow .lb{
   flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   font-size:calc(11.5px * var(--tl-text-scale));
@@ -361,7 +366,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
   letter-spacing:.07em;color:var(--text-muted);
 }
-.mg-donebar .c{flex:1}
+.mg-donebar .c{flex:none}
+.mg-donebar .id{
+  flex:1;min-width:0;font-family:var(--font-mono);text-transform:none;letter-spacing:0;
+  opacity:.6;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
 .mg-donebar .car{font-family:var(--font-mono);opacity:.6;text-transform:none}
 .mg-empty{
   padding:10px 2px 6px 16px;font-size:calc(11px * var(--tl-text-scale));
@@ -429,7 +438,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.07em;
   color:var(--text-muted);margin-bottom:4px;display:block;
 }
-.rd-msg p{margin:0 0 8px}
+.rd-msg p{margin-block:0 8px}
 .rd-msg p:last-child{margin-bottom:0}
 .rd-think{
   color:var(--text-muted);font-style:italic;
@@ -477,9 +486,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   *{transition:none !important;animation:none !important}
 }
 @media (max-width:700px){
-  .proto-frame{margin:8px;height:80vh}
-  .tl-shell{grid-template-columns:0 1fr}
+  .proto-frame{margin:8px;height:82vh}
+  .tl-shell{grid-template-columns:1fr}
   .tl-shell .tl-shell-sidebar{display:none}
+  .tl-session-bar{gap:6px}
+  .tl-barlink[data-collapsible]{display:none}
 }
 </style>
 </head>
@@ -550,8 +561,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         <button aria-pressed="true">Text</button>
         <button aria-pressed="false">Terminal</button>
       </div>
-      <button class="tl-barlink">Files</button>
-      <button class="tl-barlink">Watch</button>
+      <button class="tl-barlink" data-collapsible>Files</button>
+      <button class="tl-barlink" data-collapsible>Watch</button>
       <button class="tl-barlink">⋯</button>
     </div>
 
@@ -617,6 +628,10 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         </div>
       </div>
 
+      <!-- drill-in, in the reading column itself. sits before the margin so the
+           margin stays on the right when the timeline is swapped out. -->
+      <div class="tl-reader" id="reader"></div>
+
       <!-- THE PANEL -->
       <aside class="tl-margin" id="margin" aria-label="Agents running in this session" hidden>
         <div class="mg-tally">
@@ -625,9 +640,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         </div>
         <div class="mg-list" id="mlist"></div>
       </aside>
-
-      <!-- drill-in, in the reading column itself -->
-      <div class="tl-reader" id="reader"></div>
 
     </div>
 
@@ -651,27 +663,22 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 <section class="proto-note">
   <h2>Marginalia</h2>
   <div class="sub">prototype 1 of 5 · agent panel for the text view</div>
-  <p>The panel lives in the right margin of the reading column, 260px wide to match
-  the sidebar, with no card, no background and no badges. A monitoring surface that
-  demands attention has already failed, so this one is built from typeset text on the
-  page background and one hairline. It is marginalia: you absorb it while reading
-  something else, and you read it properly only when you decide to.</p>
-  <p>The idea I want judged is <strong>the spine</strong>. Each entry's 2px left rule is
-  the agent's Claude Code colour, and indenting that same rule is how nesting is drawn,
-  so identity and the tree cost one stroke between them. Workflow runs get a grey spine
-  instead of a coloured one, which is the whole distinction between a run and an ad-hoc
-  agent. Above it sits the tally, one tick per agent, where a dim tick is one that has
-  not written in a while and a short one is finished. Six running with one quiet is
-  legible from that row alone, without reading a word.</p>
-  <p>There is no spinner anywhere. Peripheral vision is most sensitive to movement, so
-  the only things that change are the elapsed digits and the tool name, and both of
-  those are information. Silence is shown by letting the activity line fade as it ages,
-  which puts the fact on screen without the panel ever judging it.</p>
-  <p>The risk I took is discoverability. With no chrome there is no button to press, so
-  clicking an agent is carried by a faint chevron, a hover tint and keyboard focus.
-  With more time I would test whether that chevron is enough, tune the fade curve for
-  silence against real sessions rather than my guess at it, and give the narrow strip
-  the same drill-in the wide margin has instead of an expand-in-place list.</p>
+  <p>The panel lives in the right margin of the reading column, 260px wide to match the
+  sidebar, with no card, no background and no badges, because a monitoring surface that
+  demands attention has already failed. The idea I want judged is <strong>the
+  spine</strong>: each entry's 2px left rule is the agent's Claude Code colour, and
+  indenting that same rule is how nesting is drawn, so identity and the tree cost one
+  stroke between them, while a run gets a grey spine and muted members because inside a
+  workflow you watch a population rather than sixteen individuals. There is no spinner,
+  since peripheral vision is most sensitive to movement, so the only things that change
+  are the elapsed digits and the tool name and both of those are information. Silence is
+  shown by fading the activity line as it ages, which puts the fact on screen without
+  the panel ever judging it, and a failure is the one thing that never folds into the
+  done group. The risk I took is discoverability, since no chrome means no button, so
+  clicking an agent rests on a faint chevron, a hover tint and keyboard focus, and with
+  more time I would test whether that chevron is enough, tune the fade curve against
+  real sessions instead of my guess at it, and give the narrow strip the same drill-in
+  the wide margin has.</p>
 </section>
 
 <script>
@@ -715,6 +722,11 @@ const AGENTS = [
    color:'blue', type:'Explore', depth:1, start:22*S, end:64*S, outcome:'done',
    result:'187 Agent calls, 78 carry a name',
    tools:['Bash','Grep','Read'], hold:11*S, tpc:3900, tok:52},
+
+  {id:'a2c', desc:'Count Agent calls that carry a name', parent:'a2b',
+   color:'purple', type:'Explore', depth:2, start:34*S, end:58*S, outcome:'done',
+   result:'78 of 187',
+   tools:['Grep','Bash'], hold:9*S, tpc:4100, tok:38},
 
   {id:'a3', desc:'Read the text view render path', name:'textview-recon',
    color:'green', type:'general-purpose', depth:0, start:8*S, end:292*S, outcome:'done',
@@ -823,7 +835,11 @@ function phaseState(ph, t){
     else done++;
   });
   const started = mine.filter(a=>t>=a.start).length;
-  const state = (t >= ph.end) ? 'done' : (started===0 ? 'waiting' : 'running');
+  // a phase whose agents have all landed is done, even if its own end marker
+  // has not arrived yet. otherwise the header reads "0 running" for a while.
+  const settled = started===mine.length && running===0;
+  const state = (t >= ph.end || settled) ? 'done'
+              : (started===0 ? 'waiting' : 'running');
   return {state, running, done, failed, total:mine.length, started};
 }
 
@@ -911,10 +927,12 @@ function mkEntry(){
 function mkWfHead(){
   const div=document.createElement('div');
   div.className='mg-wfhead';
-  div.innerHTML='<div class="k">Workflow <span class="id"></span></div><div class="t"></div>';
-  const id=div.querySelector('.id'), t=div.querySelector('.t');
+  div.innerHTML='<div class="k">Workflow <span class="id"></span>'+
+                '<span class="num"></span></div><div class="t"></div>';
+  const id=div.querySelector('.id'), t=div.querySelector('.t'), n=div.querySelector('.num');
   div._upd=(d)=>{ if(id.textContent!==d.wfid) id.textContent=d.wfid;
-                  if(t.textContent!==d.desc) t.textContent=d.desc; };
+                  if(t.textContent!==d.desc) t.textContent=d.desc;
+                  if(n.textContent!==d.num) n.textContent=d.num; };
   return div;
 }
 function mkPhase(){
@@ -953,9 +971,10 @@ function mkFold(){
 function mkDoneBar(){
   const b=document.createElement('button');
   b.className='mg-donebar'; b.type='button';
-  b.innerHTML='<span class="c"></span><span class="car"></span>';
-  const c=b.querySelector('.c'), car=b.querySelector('.car');
+  b.innerHTML='<span class="c"></span><span class="id"></span><span class="car"></span>';
+  const c=b.querySelector('.c'), id=b.querySelector('.id'), car=b.querySelector('.car');
   b._upd=(d)=>{ if(c.textContent!==d.text) c.textContent=d.text;
+                if(id.textContent!==(d.id||'')) id.textContent=d.id||'';
                 car.textContent = d.expanded?'⌃':'⌄';
                 b.onclick=d.onToggle; };
   return b;
@@ -1010,13 +1029,15 @@ function entryDesc(d, opts){
 function buildMargin(snap){
   const out=[];
   const live = snap.live.slice().sort((a,b)=>a.ref.start-b.ref.start);
-  // nest children directly under their parent, spawn order preserved
-  const ordered=[];
-  live.filter(d=>!(d.ref.parent)).forEach(d=>{
-    ordered.push(d);
-    live.filter(c=>c.ref.parent===d.id).forEach(c=>ordered.push(c));
-  });
-  live.filter(d=>d.ref.parent && !ordered.includes(d)).forEach(d=>ordered.push(d));
+  // nest children under their parent to any depth, spawn order preserved
+  // within each level. rows never reorder once placed.
+  const ordered=[], seen=new Set();
+  (function walk(parentId){
+    live.filter(d=>(d.ref.parent||null)===parentId && !seen.has(d.id)).forEach(d=>{
+      seen.add(d.id); ordered.push(d); walk(d.id);
+    });
+  })(null);
+  live.filter(d=>!seen.has(d.id)).forEach(d=>ordered.push(d));
   ordered.forEach(d=>out.push(entryDesc(d)));
 
   // a failure never folds away. it sits with the loose agents, above the
@@ -1025,12 +1046,15 @@ function buildMargin(snap){
   failed.forEach(d=>out.push(entryDesc(d)));
 
   if (snap.wf && !snap.wf.finished){
-    out.push({t:'wfhead', k:'wfh', wfid:WF.id, desc:WF.desc});
+    let wfTok=0;
+    WF_AGENTS.forEach(a=>{ const d=derive(a,snap.t); if(d) wfTok+=d.tokens; });
+    out.push({t:'wfhead', k:'wfh', wfid:WF.id, desc:WF.desc,
+              num: fmtEl(snap.wf.elapsed)+' · '+fmtTok(wfTok)});
     snap.wf.phases.forEach(({p,s})=>{
       let st;
       if (s.state==='waiting') st='';
       else if (s.state==='done') st = s.failed ? ('✓ '+s.done+' · '+s.failed+' failed') : ('✓ '+s.done+' done');
-      else st = s.running+' running';
+      else st = s.running+' running · '+fmtEl(snap.t - p.start);
       out.push({t:'phase', k:'ph'+p.i, nm:p.i+' · '+p.title, st, state:s.state});
       if (s.state==='running'){
         const mine=(snap.wf.agents[p.i]||[]);
@@ -1058,7 +1082,7 @@ function buildMargin(snap){
   const nDone = doneList.length + wfDone;
   if (nDone){
     out.push({t:'done', k:'donebar',
-      text: nDone+' done'+(wfDone?' · workflow '+WF.id:''),
+      text: nDone+' done'+(wfDone?' · workflow':''), id: wfDone?WF.id:'',
       expanded:doneOpen, onToggle:()=>{ doneOpen=!doneOpen; render(); }});
     if (doneOpen){
       doneList.forEach(d=>out.push(entryDesc(d)));
@@ -1141,14 +1165,21 @@ const READS = {
   ListAgents:['session-408579e1']
 };
 const OUTPUTS = {
-  Bash:'src/text-view/BackgroundStrip.tsx:14\nsrc/text-view/Timeline.tsx:221\n2 files, 3 matches',
-  Read:'218 lines read. The strip renders a count only. It reads\nbgCommands.length and nothing else from the record.',
-  Grep:'6 matches across 4 files. All of them read the count.\nNone of them read the per agent record.',
-  WebFetch:'Fetched 41 kB. The panel keeps rows in spawn order and\nnever reorders them, which is what stops the list churning.',
-  Write:'Wrote 84 lines.',
-  Edit:'Applied 1 edit. 3 lines removed.',
-  Glob:'11 files matched.',
-  ListAgents:'6 agents in this team.'
+  Bash:['src/text-view/BackgroundStrip.tsx:14\nsrc/text-view/Timeline.tsx:221\n2 files, 3 matches',
+        '41 transcripts, 6 of them written in the last minute.',
+        '1284 src/text-view/Timeline.tsx\n 218 src/text-view/BackgroundStrip.tsx'],
+  Read:['218 lines read. The strip renders a count only. It reads\nbgCommands.length and nothing else from the record.',
+        '96 lines read. Every agent record carries agentType,\ndescription, spawnDepth, model and color.',
+        'The architecture note predates subagents and does not\ncover them yet.'],
+  Grep:['6 matches across 4 files. All of them read the count.\nNone of them read the per agent record.',
+        'spawnDepth appears in 2 files. It reaches 1 in all of\nthe real data on this box.',
+        '187 Agent calls. 78 of them carry a name.'],
+  WebFetch:['Fetched 41 kB. The panel keeps rows in spawn order and\nnever reorders them, which is what stops the list churning.',
+            'Fetched 18 kB. Anything that ticks gets a fixed width\ncell, so changing digits never reflow the row.'],
+  Write:['Wrote 84 lines.','Wrote 112 lines.'],
+  Edit:['Applied 1 edit. 3 lines removed.','Applied 2 edits. 41 lines removed.'],
+  Glob:['11 files matched.'],
+  ListAgents:['6 agents in this team.']
 };
 function esc(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
 
@@ -1185,10 +1216,11 @@ function renderReader(){
     const tn=spec.tools ? spec.tools[i % spec.tools.length] : 'Bash';
     const args=(READS[tn]||['...'])[i % (READS[tn]||['...']).length];
     const last = (i===nTools-1) && live;
+    const outs = OUTPUTS[tn] || ['done'];
     parts.push('<div class="rd-tool"><div class="hd"><span class="nm">'+esc(tn)+'</span>'+
       '<span class="ar">'+esc(args)+'</span>'+
       (last?'':'<span class="mk">✓</span>')+'</div>'+
-      (last?'':'<div class="out">'+esc(OUTPUTS[tn]||'done')+'</div>')+'</div>');
+      (last?'':'<div class="out">'+esc(outs[i % outs.length])+'</div>')+'</div>');
     if (i===1){
       parts.push('<div class="rd-msg"><p>The strip under the timeline reads one number off '+
         'the session record. Everything else an agent writes is already on disk beside it, '+

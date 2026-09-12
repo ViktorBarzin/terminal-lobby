@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Terminal Lobby — Console (prototype 2)</title>
+<title>Terminal Lobby, Console (prototype 2)</title>
 <style>
 /* ------------------------------------------------------------------ *
  * Terminal Lobby tokens. Every colour below comes from this block.
@@ -142,6 +142,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   display:inline-flex;align-items:center;gap:6px;
 }
 .tl-session-bar .sp{flex:1}
+.tl-session-bar{overflow:hidden}
 .tl-switch{
   display:inline-flex;background:var(--bg-card);border:1px solid var(--border);
   border-radius:var(--radius);padding:2px;gap:2px;
@@ -221,7 +222,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 }
 .ec-strip:hover{color:var(--text-primary)}
 .ec-strip .spin{color:var(--state-running);font-family:var(--font-mono)}
-.ec-strip .caret{margin-left:auto;font-size:var(--fs-10)}
+.ec-strip .caret{margin-left:auto;padding-left:8px;font-size:var(--fs-10);flex:0 0 auto}
+.ec-strip #stripText{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .ec-strip .count{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
 
 /* ---- header: the instrument cluster ---- */
@@ -281,7 +283,6 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 }
 .ec-row:hover{background:var(--hover-tint)}
 .ec-row.is-sel{background:var(--bg-card-hover)}
-.ec-row.is-settled{--ac:transparent}
 .ec-row.is-settled .ec-label,.ec-row.is-settled .ec-now{color:var(--text-muted)}
 .ec-row.is-settled .ec-now.err{color:var(--danger)}
 
@@ -301,16 +302,19 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .ec-kind{
   font-size:var(--fs-10);letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);
   margin-left:6px;flex:0 200 auto;min-width:0;opacity:.8;
-  overflow:hidden;text-overflow:clip;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
 }
 
 .ec-now{
   font-family:var(--font-mono);font-size:var(--fs-115);color:var(--text-primary);
-  display:flex;align-items:baseline;min-width:0;
+  display:flex;align-items:baseline;min-width:0;overflow:hidden;
 }
-.ec-now .main{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1 1 60%;min-width:0}
-.ec-now .since{flex:0 1 auto;min-width:0;overflow:hidden;white-space:nowrap}
-.ec-now .arg{color:var(--text-muted)}
+.ec-now .tn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 1 auto;min-width:4.5em}
+.ec-now.tool .tn{min-width:9em}
+.ec-now .ta{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 200 auto;min-width:0;color:var(--text-muted);margin-left:.8em}
+.ec-now .since{flex:0 0 auto;white-space:nowrap;color:var(--text-muted);margin-left:.8em}
+.tl-dock.is-open .ec-now .ta{display:none}
+
 .ec-now .since{color:var(--text-muted);font-variant-numeric:tabular-nums}
 .ec-now.err{color:var(--danger)}
 .ec-now.res{color:var(--text-muted)}
@@ -334,9 +338,11 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 }
 .ec-group:hover{color:var(--text-primary)}
 .ec-group .gl{
-  grid-column:2 / 4;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;
+  grid-column:2 / 4;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;min-width:0;
 }
-.ec-group .rule{flex:1;height:1px;background:var(--border)}
+.ec-group .gl > span:first-child{overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.ec-group .gl > span:last-child{flex:0 0 auto}
+.ec-group .rule,.ec-phase .rule{flex:1 1 auto;min-width:6px;height:1px;background:var(--border)}
 .ec-group .gk{grid-column:1;text-align:center;font-family:var(--font-mono);text-transform:none;letter-spacing:0;font-size:var(--fs-11)}
 
 /* workflow block */
@@ -354,7 +360,9 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   font-size:var(--fs-10);letter-spacing:.05em;text-transform:uppercase;color:var(--text-muted);
 }
 .ec-phase:hover{color:var(--text-primary)}
-.ec-phase .pl{grid-column:2 / 4;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap}
+.ec-phase .pl{grid-column:2 / 4;display:flex;align-items:center;gap:8px;overflow:hidden;white-space:nowrap;min-width:0}
+.ec-phase .pl > span:first-child{overflow:hidden;text-overflow:ellipsis;flex:0 1 auto;min-width:0}
+.ec-phase .pstat{flex:0 0 auto}
 .ec-phase .pk{grid-column:1;text-align:center;font-family:var(--font-mono);font-size:var(--fs-11);text-transform:none;letter-spacing:0}
 .ec-phase .pstat{font-family:var(--font-mono);text-transform:none;letter-spacing:0;font-variant-numeric:tabular-nums;font-size:var(--fs-11)}
 .ec-phase.is-live{color:var(--text-primary)}
@@ -415,6 +423,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   .ec-table{--ec-cols: 16px minmax(120px,1fr) minmax(130px,2fr) 52px 12px}
   .ec-c-calls,.ec-c-tokens{display:none}
   .ec-readouts{display:none}
+  .ec-now .ta{display:none}
 }
 
 /* ------------------------------------------------------------------ *
@@ -466,6 +475,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
  * ------------------------------------------------------------------ */
 @media (max-width:720px){
   .tl-shell{grid-template-columns:1fr}
+  .tl-bar-hide{display:none}
   .tl-shell-sidebar{display:none}
   .tl-dock-pad{padding-inline:12px}
   .tl-dock-grip{display:none}
@@ -531,8 +541,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
         <button class="is-on">Text</button>
         <button>Terminal</button>
       </div>
-      <button class="tl-bar-btn">Files</button>
-      <button class="tl-bar-btn">Watch</button>
+      <button class="tl-bar-btn tl-bar-hide">Files</button>
+      <button class="tl-bar-btn tl-bar-hide">Watch</button>
       <button class="tl-bar-btn">&#8943;</button>
     </div>
 
@@ -819,7 +829,9 @@ var CMAX = Math.max.apply(null, CONC) || 1;
  * 2. State
  * ================================================================== */
 var S = { now:0, idx:0, live:{}, wf:null, sort:"spawn", dir:-1, sel:null,
-          collapsed:false, open:false, finOpen:false, phaseOpen:{} };
+          collapsed:null, open:false, finOpen:false, phaseOpen:{} };
+function narrow(){ return window.innerWidth<=720; }
+function collapsed(){ return S.collapsed===null ? narrow() : S.collapsed; }
 
 function reset(){
   S.now=0; S.idx=0; S.live={}; S.sel=null; S.open=false; S.finOpen=false; S.phaseOpen={};
@@ -901,26 +913,23 @@ function ribbonSVG(){
  * 4. Rows
  * ================================================================== */
 function nowParts(a){
-  var main="", sub="", cls="";
   if(a.kind==="schedule"){
-    if(a.state==="running"){ main="⏱ "+a.label; sub=" · fires in "+span(Math.max(0,a.fires-S.now)); }
-    else { main=a.result||"fired"; cls="res"; }
-    return {main:main, sub:sub, cls:cls};
+    if(a.state==="running") return {lead:"⏱ "+a.label, tail:"", sub:"· fires in "+span(Math.max(0,a.fires-S.now)), cls:""};
+    return {lead:a.result||"fired", tail:"", sub:"", cls:"res"};
   }
   if(a.kind==="bash"){
-    if(a.state==="running"){ main="$ "+a.label; }
-    else { main=a.result||"exited"; cls="res"; }
-    return {main:main, sub:sub, cls:cls};
+    if(a.state==="running") return {lead:"$ "+a.label, tail:"", sub:"", cls:""};
+    return {lead:a.result||"exited", tail:"", sub:"", cls:"res"};
   }
-  if(a.state==="error") return {main:a.result||"failed", sub:"", cls:"err"};
-  if(a.state==="done")  return {main:a.result||"done", sub:"", cls:"res"};
-  if(!a.tool) return {main:"starting", sub:"", cls:"res"};
-  return {main:"▸ "+a.tool+"  "+a.args, sub:"", cls:""};
+  if(a.state==="error") return {lead:a.result||"failed", tail:"", sub:"", cls:"err"};
+  if(a.state==="done")  return {lead:a.result||"done", tail:"", sub:"", cls:"res"};
+  if(!a.tool) return {lead:"starting", tail:"", sub:"", cls:"res"};
+  return {lead:"▸ "+a.tool, tail:a.args, sub:"", cls:""};
 }
 function silence(a){
   if(a.state!=="running" || a.kind!=="agent") return "";
   var q=S.now-a.lastAt;
-  return q>=30 ? "  · last activity "+span(q) : "";
+  return q>=30 ? "· last activity "+span(q) : "";
 }
 function elapsedOf(a){
   if(a.kind==="schedule" && a.state==="running") return "-";
@@ -950,13 +959,13 @@ function rowEl(a, guide){
   if(guide) lab.appendChild(el("span","ec-guide",guide));
   var name = a.kind==="bash" ? "background command" : a.kind==="schedule" ? "scheduled wakeup" : a.label;
   lab.appendChild(el("span","txt",name));
-  if(a.kind==="agent" && a.agentType) lab.appendChild(el("span","ec-kind",a.agentType));
+  if(a.kind==="agent" && a.agentType && a.agentType!=="general-purpose") lab.appendChild(el("span","ec-kind",a.agentType));
   r.appendChild(lab);
 
   var now=el("div","ec-now ec-c-now");
-  var nmain=el("span","main"); var nsub=el("span","since");
-  now.appendChild(nmain); now.appendChild(nsub);
-  r._now=now; r._nmain=nmain; r._nsub=nsub; r.appendChild(now);
+  var ntn=el("span","tn"), nta=el("span","ta"), nsub=el("span","since");
+  now.appendChild(ntn); now.appendChild(nta); now.appendChild(nsub);
+  r._now=now; r._ntn=ntn; r._nta=nta; r._nsub=nsub; r.appendChild(now);
 
   var tr=document.createElementNS("http://www.w3.org/2000/svg","svg");
   tr.setAttribute("class","ec-trace ec-c-trace"); tr.setAttribute("viewBox","0 0 59 12");
@@ -991,8 +1000,9 @@ function paintRow(r,a){
   if(r._rev===a.rev) return;
   r._rev=a.rev;
   var p=nowParts(a);
-  r._nmain.textContent=p.main;
-  r._now.className="ec-now ec-c-now"+(p.cls?" "+p.cls:"");
+  r._ntn.textContent=p.lead;
+  r._nta.textContent=p.tail;
+  r._now.className="ec-now ec-c-now"+(p.cls?" "+p.cls:"")+(p.tail?" tool":"");
   r._nsub.textContent=p.sub;
   r._trace.innerHTML = (a.kind==="agent") ? traceSVG(a) : "";
   r._spark.innerHTML = (a.kind==="agent") ? sparkSVG(a) : "";
@@ -1006,7 +1016,7 @@ function volatileRow(r,a){
   r._st.textContent = s.g;
   r._st.className="ec-st ec-c-state "+s.c;
   r._ela.textContent=elapsedOf(a);
-  if(a.kind==="schedule" && a.state==="running") r._nsub.textContent=" · fires in "+span(Math.max(0,a.fires-S.now));
+  if(a.kind==="schedule" && a.state==="running") r._nsub.textContent="· fires in "+span(Math.max(0,a.fires-S.now));
   else if(a.kind==="agent" && a.state==="running") r._nsub.textContent=silence(a);
 }
 
@@ -1046,25 +1056,26 @@ function render(){
   dockEl.hidden=!visible;
   if(!visible){ dockEl.style.height=""; renderTimelineRows(); return; }
 
-  stripEl.hidden=!S.collapsed;
-  fullEl.hidden=S.collapsed;
-  dockEl.classList.toggle("is-collapsed",S.collapsed);
-  dockEl.classList.toggle("is-open",S.open && !S.collapsed);
+  var coll=collapsed();
+  stripEl.hidden=!coll;
+  fullEl.hidden=coll;
+  dockEl.classList.toggle("is-collapsed",coll);
+  dockEl.classList.toggle("is-open",S.open && !coll);
 
   var all=ents(), agents=all.filter(function(a){return a.kind==="agent";});
   var running=all.filter(isLive), errs=all.filter(function(a){return a.state==="error";});
   var dones=all.filter(function(a){return a.state==="done"&&a.kind!=="workflow";});
 
-  if(S.collapsed){
+  if(coll){
     var bits=[];
+    if(errs.length) bits.push(errs.length+" failed");
     var ra=running.filter(function(a){return a.kind==="agent";}).length;
     if(ra) bits.push(ra+(ra===1?" agent":" agents"));
     var rb=running.filter(function(a){return a.kind==="bash";}).length;
     if(rb) bits.push(rb+(rb===1?" background command":" background commands"));
     var rs=running.filter(function(a){return a.kind==="schedule";}).length;
     if(rs) bits.push(rs+" scheduled wakeup");
-    if(errs.length) bits.push(errs.length+" failed");
-    if(!bits.length) bits.push(dones.length+" finished");
+    if(!ra && !rb && !rs) bits.push(dones.length+" finished");
     $("stripText").textContent=bits.join(", ");
     dockEl.style.height="";
     renderTimelineRows();
@@ -1097,14 +1108,19 @@ function render(){
   var frag=document.createDocumentFragment();
 
   var adhoc=all.filter(function(a){ return a.kind!=="workflow" && !a.wfId; });
-  var adTop=ordered(adhoc.filter(function(a){ return a.state!=="done" && !a.parentId; }));
+  var unsettled=adhoc.filter(function(a){ return a.state!=="done"; });
+  var shown={};
+  var adTop=ordered(unsettled.filter(function(a){ return !a.parentId; }));
   adTop.forEach(function(a){
-    pushRow(frag,a,a.depth?"└─ ":"");
+    shown[a.id]=1; pushRow(frag,a,"");
     if(S.sort==="spawn"){
-      adhoc.filter(function(c){ return c.parentId===a.id && c.state!=="done"; })
-           .forEach(function(c){ pushRow(frag,c,"└─ "); });
+      unsettled.filter(function(c){ return c.parentId===a.id; })
+               .forEach(function(c){ shown[c.id]=1; pushRow(frag,c,"└─ "); });
     }
   });
+  /* a failed child keeps its row even after its parent has finished */
+  ordered(unsettled.filter(function(a){ return !shown[a.id]; }))
+    .forEach(function(a){ pushRow(frag,a,a.parentId?"└─ ":""); });
 
   /* ---- workflow ---- */
   var wf=S.live["wf1"];
@@ -1182,10 +1198,15 @@ function render(){
 }
 
 function sizeDock(){
-  if(S.collapsed){ dockEl.style.height=""; return; }
+  if(collapsed()){ dockEl.style.height=""; return; }
+  /* the phone drill-in is a full height sheet, so let the stylesheet own it */
+  if(narrow() && S.open){ dockEl.style.height=""; return; }
   if(userHeight){ dockEl.style.height=userHeight+"px"; return; }
   var maxBody = S.open ? Math.min(window.innerHeight*0.58, 600) : Math.min(window.innerHeight*0.39, 380);
-  var want = 34 + 22 + Math.min(bodyEl.scrollHeight+6, maxBody) + 10;
+  /* the body is a flex child, so scrollHeight is the container. Measure the rows. */
+  var content=10, kids=bodyEl.children;
+  for(var i=0;i<kids.length;i++) content += kids[i].offsetHeight + (kids[i].className.indexOf("ec-wf")===0 ? 10 : 0);
+  var want = 34 + 22 + Math.min(content, maxBody) + 10;
   dockEl.style.height = Math.max(140, Math.round(want)) + "px";
 }
 
@@ -1197,7 +1218,7 @@ function renderTimelineRows(){
     var r=el("div","tl-tool is-agent"+(a.state==="running"?" is-live":""));
     r.appendChild(el("span","noun", a.kind==="workflow"?"Workflow":"Agent"));
     r.appendChild(el("span","lbl", a.label));
-    var m=el("span","mark", a.state==="running"?(REDUCED?GLYPH.run:SPIN[frame]) : a.state==="error"?GLYPH.error : GLYPH.done);
+    var m=el("span","mark", a.state==="running"?"\u25cf" : a.state==="error"?GLYPH.error : GLYPH.done);
     if(a.state==="error") m.style.color="var(--danger)";
     r.appendChild(m);
     if(a.kind!=="workflow") r.addEventListener("click",function(){ openAgent(a.id); });
@@ -1223,14 +1244,14 @@ var RESULT=[
  "8 matches across 3 files","no matches","1 file, 214 lines",
  "exit 0 in 1.4s","wrote 62 lines","4 files changed","exit 0","fetched 18kb"
 ];
-function pick(list,seed){ var h=0; for(var i=0;i<seed.length;i++) h=(h*31+seed.charCodeAt(i))|0; return list[Math.abs(h)%list.length]; }
+function pick(list,seed,step){ var h=0; for(var i=0;i<seed.length;i++) h=(h*31+seed.charCodeAt(i))|0; return list[(Math.abs(h)+(step||0))%list.length]; }
 
 function openAgent(id){
   var a=S.live[id]; if(!a||a.kind==="workflow") return;
   S.sel=id; S.open=true; S.collapsed=false; userHeight=null; dirty=true; render();
   var d=$("dScript"); if(d) d.scrollTop=d.scrollHeight;
 }
-function closeDetail(){ S.sel=null; S.open=false; userHeight=null; dirty=true; render(); }
+function closeDetail(){ S.sel=null; S.open=false; S.collapsed=null; userHeight=null; dirty=true; render(); }
 
 function renderDetail(){
   if(!S.open || !S.sel) return;
@@ -1255,14 +1276,14 @@ function renderDetail(){
   var q=el("div"); q.appendChild(el("p","ec-t-role","Prompt from the parent session"));
   var u=el("div","ec-t-user",
     a.kind==="agent"
-      ? a.label+". Report back what you find, with file paths. Do not edit anything outside the paths you were given. Budget 80k tokens."
+      ? a.label.charAt(0).toUpperCase()+a.label.slice(1)+". Report back what you find, with file paths. Do not edit anything outside the paths you were given. Budget 80k tokens."
       : a.label);
   q.appendChild(u); sc.appendChild(q);
 
   var evs=EV.filter(function(e){ return e.k==="tool" && e.id===a.id && e.t<=S.now; });
   evs.forEach(function(e,i){
     if(i%3===0){
-      var t=el("div","ec-t-text", pick(THOUGHT, a.id+i));
+      var t=el("div","ec-t-text", pick(THOUGHT, a.id, i/3));
       sc.appendChild(t);
     }
     var row=el("div","ec-t-tool");
@@ -1271,7 +1292,7 @@ function renderDetail(){
     row.appendChild(el("span","ta",e.args));
     row.appendChild(el("span","tk",tok(e.out)));
     sc.appendChild(row);
-    if(i%2===1) sc.appendChild(el("div","ec-t-res", pick(RESULT, a.id+"r"+i)));
+    if(i%2===1) sc.appendChild(el("div","ec-t-res", pick(RESULT, a.id+"r", (i-1)/2)));
   });
 
   if(a.state==="running"){
@@ -1319,8 +1340,9 @@ function loop(ts){
   if(!paused){
     while(clkAcc>=100){ clkAcc-=100; if(S.now<TOTAL) advance(S.now+1); }
   } else { clkAcc=0; }
+  if(dockEl.hidden === panelVisible()) dirty=true;   /* the panel leaving is a render */
   if(dirty) render(); else { paintAll(); if(S.open) renderDetail(); }
-  if(ribAcc>=1000){ ribAcc=0; var rb=$("ribbon"); if(rb && !dockEl.hidden && !S.collapsed) rb.innerHTML=ribbonSVG(); }
+  if(ribAcc>=1000){ ribAcc=0; var rb=$("ribbon"); if(rb && !dockEl.hidden && !collapsed()) rb.innerHTML=ribbonSVG(); }
   $("ptClock").textContent=clock(S.now);
   requestAnimationFrame(loop);
 }
@@ -1332,7 +1354,7 @@ var SEEK={ "3":28, "16":150, "wf":95, "fail":66, "alldone":272, "idle":286 };
 [].forEach.call(document.querySelectorAll("[data-seek]"), function(b){
   b.addEventListener("click", function(){
     paused=true; $("btnPause").textContent="play"; $("btnPause").setAttribute("aria-pressed","true");
-    S.collapsed=false; S.open=false; S.sel=null; userHeight=null;
+    S.collapsed=null; S.open=false; S.sel=null; userHeight=null;
     [].forEach.call(document.querySelectorAll("[data-seek]"), function(x){ x.setAttribute("aria-pressed", x===b?"true":"false"); });
     seek(SEEK[b.dataset.seek]); render();
   });
@@ -1340,7 +1362,7 @@ var SEEK={ "3":28, "16":150, "wf":95, "fail":66, "alldone":272, "idle":286 };
 $("btnReplay").addEventListener("click", function(){
   [].forEach.call(document.querySelectorAll("[data-seek]"), function(x){ x.setAttribute("aria-pressed","false"); });
   paused=false; $("btnPause").textContent="pause"; $("btnPause").setAttribute("aria-pressed","false");
-  S.collapsed=false; userHeight=null; seek(0); render();
+  S.collapsed=null; userHeight=null; seek(0); render();
 });
 $("btnPause").addEventListener("click", function(){
   paused=!paused;
@@ -1349,6 +1371,7 @@ $("btnPause").addEventListener("click", function(){
 });
 $("btnCollapse").addEventListener("click", function(){ S.collapsed=true; S.open=false; userHeight=null; dirty=true; render(); });
 stripEl.addEventListener("click", function(){ S.collapsed=false; userHeight=null; dirty=true; render(); });
+window.addEventListener("resize", function(){ dirty=true; });
 $("btnCloseDetail").addEventListener("click", closeDetail);
 document.addEventListener("keydown", function(e){ if(e.key==="Escape" && S.open) closeDetail(); });
 

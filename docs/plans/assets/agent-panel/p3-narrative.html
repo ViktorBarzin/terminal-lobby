@@ -198,7 +198,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
   padding-block:16px; padding-inline:clamp(12px,6vw,80px);
   display:flex; flex-direction:column; gap:14px;
 }
-.tl-timeline > *{max-width:860px;width:100%;margin-inline:auto;margin-block:0}
+.tl-timeline > *{max-width:860px;width:100%;margin-inline:auto;margin-block:0;flex:0 0 auto}
 .tl-timeline > .is-hidden{display:none}
 
 .tl-user{
@@ -289,8 +289,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
   display:grid; align-items:center; gap:0 9px;
   grid-template-columns:
     calc(15px * var(--tl-text-scale,1))
+    minmax(0,1.22fr)
     minmax(0,1fr)
-    minmax(0,1.28fr)
     calc(34px * var(--tl-text-scale,1))
     calc(48px * var(--tl-text-scale,1))
     calc(52px * var(--tl-text-scale,1))
@@ -305,7 +305,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
   width:2px;border-radius:2px;background:var(--ag);
 }
 .tl-ag.is-settled::before{background:color-mix(in srgb,var(--ag) 34%,transparent)}
-.tl-ag.is-dimmed{opacity:.42}
+.tl-ag.is-dimmed{opacity:.55}
 
 .ag-dot{
   width:calc(8px * var(--tl-text-scale,1));height:calc(8px * var(--tl-text-scale,1));
@@ -324,7 +324,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 .ag-type{
   font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale,1));
   color:color-mix(in srgb,var(--text-muted) 72%,transparent);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 9 auto;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:0 0 auto;
 }
 .ag-act{
   display:flex;align-items:baseline;gap:6px;min-width:0;white-space:nowrap;overflow:hidden;
@@ -340,6 +340,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 .ag-arrow.done{color:var(--success)}
 .ag-arrow.err{color:var(--danger)}
 .ag-tool{flex:0 0 auto;color:var(--text-primary)}
+.ag-trail+.ag-arrow{margin-inline-start:1px}
 .ag-arg{overflow:hidden;text-overflow:ellipsis;min-width:0;color:var(--text-muted)}
 .ag-arg.err{color:var(--danger)}
 .ag-age{flex:0 0 auto;color:var(--text-muted);font-variant-numeric:tabular-nums}
@@ -371,7 +372,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 .tl-ph{padding-block:1px}
 .tl-ph-head{
   display:grid;width:100%;text-align:left;cursor:pointer;align-items:center;gap:0 9px;
-  grid-template-columns:calc(15px * var(--tl-text-scale,1)) minmax(0,1fr) minmax(0,1.28fr) auto;
+  grid-template-columns:calc(15px * var(--tl-text-scale,1)) minmax(0,1.22fr) minmax(0,1fr) auto;
   padding-block:5px;padding-inline:0 2px;border-radius:5px;
 }
 .tl-ph-head:hover{background:var(--hover-tint)}
@@ -644,6 +645,94 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 
     <div class="tl-timeline" id="timeline">
 
+      <div class="tl-assistant">
+        Picking this up from yesterday. The branch is <code>wizard/agent-panel</code>,
+        the worktree is clean and master is merged in.
+      </div>
+
+      <div class="tl-user">
+        <span class="who">You</span>
+        Before anything else, tell me what the text view does with a session that
+        has agents running in it right now.
+      </div>
+
+      <div class="tl-assistant">
+        Two things. Each spawn becomes one collapsed tool row that turns into a
+        tick about two seconds after launch, and anything still open is counted
+        in a strip under the timeline. The agent itself runs for minutes after
+        that tick.
+      </div>
+
+      <div class="tl-row">
+        <div class="tl-row-head" role="button" tabindex="0">
+          <span class="tl-row-glyph">&#9672;</span>
+          <span class="tl-row-kind">Read</span>
+          <span class="tl-row-label">web/src/text-view/ToolRow.tsx</span>
+          <span class="tl-row-meta"><span>203 lines</span></span>
+          <span class="tl-row-mark mark-done">&#10003;</span>
+        </div>
+      </div>
+
+      <div class="tl-assistant">
+        The tick comes from the tool result landing, which for a spawn is the
+        handoff and not the work. So the row is honest about the call and says
+        nothing about the agent.
+      </div>
+
+      <div class="tl-user">
+        <span class="who">You</span>
+        And the strip at the bottom.
+      </div>
+
+      <div class="tl-assistant">
+        A count of open calls, rendered as "still working in the background: 2
+        commands". No names, no tools, nothing to click.
+      </div>
+
+      <div class="tl-user">
+        <span class="who">You</span>
+        The text view says "still working in the background: 2 commands" and
+        nothing else. What is it actually reading to decide that.
+      </div>
+
+      <div class="tl-assistant">
+        One counter, built in the timeline renderer. It counts tool rows that
+        have not returned yet and never opens the files those agents write, so
+        names, tools and results are all there on disk and none of it reaches
+        the screen.
+      </div>
+
+      <div class="tl-row">
+        <div class="tl-row-head" role="button" tabindex="0">
+          <span class="tl-row-glyph">&#9672;</span>
+          <span class="tl-row-kind">Bash</span>
+          <span class="tl-row-label">ls ~/.claude/projects/*/subagents | wc -l</span>
+          <span class="tl-row-meta"><span>153</span></span>
+          <span class="tl-row-mark mark-done">&#10003;</span>
+        </div>
+      </div>
+
+      <div class="tl-assistant">
+        153 subagent transcripts in this project alone. Each one carries the
+        agent's description, every tool call it made and its token usage, and
+        the meta file beside it carries the colour the CLI already gave it.
+      </div>
+
+      <div class="tl-row">
+        <div class="tl-row-head" role="button" tabindex="0">
+          <span class="tl-row-glyph">&#9672;</span>
+          <span class="tl-row-kind">Grep</span>
+          <span class="tl-row-label">"spawnDepth" ~/.claude/projects</span>
+          <span class="tl-row-meta"><span>41 files</span></span>
+          <span class="tl-row-mark mark-done">&#10003;</span>
+        </div>
+      </div>
+
+      <div class="tl-assistant">
+        Depth reaches 1 in every real case here, so agents spawning agents is
+        normal and the tree needs to hold two levels without getting clever.
+      </div>
+
       <div class="tl-user">
         <span class="who">You</span>
         Read how the text view renders subagents today, then work out what a live
@@ -792,12 +881,24 @@ function tokfmt(n){return n>=100000?Math.round(n/1000)+"k":n>=1000?(n/1000).toFi
 var LETTER={Bash:"B",Read:"R",Grep:"G",Write:"W",Edit:"E",WebFetch:"F",Glob:"O",Agent:"A",ListAgents:"L",TodoWrite:"T"};
 
 var ARGS={
-  Bash:['rg -n "spawnDepth" web/src','pnpm -C web typecheck','git log --oneline -20 -- web/src/text-view','wc -l web/src/text-view/*.tsx','ls ~/.claude/projects/*/subagents | head'],
-  Read:['web/src/text-view/Timeline.tsx','subagents/agent-textview-recon-9f2.jsonl','docs/adr/0025-claude-session-telemetry.md','web/src/text-view/ToolRow.tsx','workflows/wf_7c31a8.json','web/src/theme/tokens.css'],
+  Bash:['rg -n "spawnDepth" web/src','pnpm -C web typecheck','git log --oneline -20 -- web/src/text-view',
+    'wc -l web/src/text-view/*.tsx','ls ~/.claude/projects/*/subagents | head',
+    'git rm -r web/src/router/legacy','pnpm -C web vitest run text-view',
+    'rg -l "safari14" web/src','du -sh web/dist','git diff --stat HEAD~1'],
+  Read:['web/src/text-view/Timeline.tsx','subagents/agent-textview-recon-9f2.jsonl',
+    'docs/adr/0025-claude-session-telemetry.md','web/src/text-view/ToolRow.tsx',
+    'workflows/wf_7c31a8.json','web/src/theme/tokens.css','web/src/sw/cache-names.ts',
+    'web/src/router/legacy/index.ts','web/src/settings/v1/fields.ts','web/src/i18n/en.json'],
   Grep:['"workflow_agent" in .claude/projects','"lastToolName" --glob "*.json"','"tl-bg-strip" web/src','"AgentsPanel" -n ../t3code/src'],
   WebFetch:['docs.anthropic.com/en/docs/claude-code/sub-agents','docs.anthropic.com/en/docs/claude-code/slash-commands'],
-  Write:['docs/plans/assets/agent-panel/notes.md','web/src/text-view/AgentBlock.tsx'],
-  Edit:['web/src/text-view/Timeline.tsx','web/src/text-view/index.ts','web/src/theme/tokens.css'],
+  Write:['docs/plans/assets/agent-panel/notes.md','web/src/text-view/AgentBlock.tsx',
+    'web/src/sw/register.ts','web/public/manifest.webmanifest','web/src/router/routes.ts'],
+  Edit:['web/src/text-view/Timeline.tsx','web/src/text-view/index.ts','web/src/theme/tokens.css',
+    'web/src/router/legacy/guards.ts','web/src/settings/v1/Panel.tsx','web/src/telemetry/hook.ts',
+    'web/src/compat/safari14.ts','web/src/terminal/resize.ts','web/src/flags/retired.json',
+    'web/src/theme/loader.ts','web/src/session/cache.ts','web/src/composer/draft.ts',
+    'web/src/i18n/en.json','web/src/net/ws-fallback.ts','web/src/files/Tree.tsx',
+    'web/vite.config.ts','web/src/styles/legacy.module.css'],
   Glob:['**/subagents/*.meta.json','web/src/**/*.test.tsx'],
   ListAgents:['team session-408579e1']
 };
@@ -1179,7 +1280,8 @@ function updateRunhead(){
   var target=live[live.length-1],tr=target.getBoundingClientRect();
   for(var i=0;i<live.length;i++){
     var r=live[i].getBoundingClientRect();
-    if(r.bottom>box.top+10&&r.top<box.bottom-10){seen=true;break;}
+    var vis=Math.min(r.bottom,box.bottom)-Math.max(r.top,box.top);
+    if(vis>=Math.min(44,r.height)){seen=true;break;}
   }
   if(seen){rh.classList.remove("is-on");return;}
   rh.classList.add("is-on");
@@ -1193,7 +1295,7 @@ function updateRunhead(){
   document.getElementById("rh-what").textContent=best?
     best.s.desc+"  ▸ "+best.tool:BASH.cmd;
   document.getElementById("rh-t").textContent=dur(T-earliest);
-  document.getElementById("rh-go").innerHTML=(tr.top>=box.bottom-10)?"&#8595;":"&#8593;";
+  document.getElementById("rh-go").innerHTML=(tr.top>=box.top)?"&#8595;":"&#8593;";
   rh._target=target;
 }
 function topOf(el){
@@ -1334,6 +1436,11 @@ document.getElementById("btn-smaller").addEventListener("click",function(){setSc
 setPlay();render();
 (function(){
   if(location.hash.indexOf("scroll=top")>-1){following=false;tl.scrollTop=0;updateRunhead();}
+  else if(drillOpen){
+    var d=tl.querySelector('[data-ag="'+drillOpen+'"]');
+    if(d)goToBlock(d.parentNode,false);
+    updateRunhead();
+  }
   else if(!playing){goToBlock(newestLive(),false);updateRunhead();}
 })();
 requestAnimationFrame(frame);

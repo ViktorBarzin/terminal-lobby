@@ -36,6 +36,7 @@ body.theme-slate{
 [data-color=red]    { --ag:#f47067; }
 
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 html,body{padding:0}
 body{
   margin-block:0; margin-inline:0;
@@ -73,7 +74,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 /* ───────────────────────────── shell ───────────────────────────── */
 .tl-shell{
   display:grid; grid-template-columns:260px 1fr;
-  height:calc(100vh - 44px); min-height:560px; overflow:hidden;
+  height:var(--shellh, calc(100vh - 44px)); min-height:420px; overflow:hidden;
 }
 .tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
 .tl-shellbar{
@@ -124,7 +125,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
 /* ─────────────────────────── timeline ─────────────────────────── */
 .tl-timeline{
-  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
   padding-block:16px;padding-inline:clamp(12px,6vw,80px);
 }
 .tl-row{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
@@ -185,6 +186,10 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   display:flex;flex-direction:column;max-height:min(56vh,560px);min-height:0;
 }
 .fg[hidden]{display:none}
+.fg[data-crowd=true]{max-height:min(68vh,660px)}
+.fg[data-reading=true]{display:none}
+.fg[data-crowd=true] .fg-trail{display:none}
+.fg[data-crowd=true] .fg-lead{padding-block:9px 8px}
 .fg-inner{
   max-width:860px;width:100%;margin-block:0;margin-inline:auto;
   display:flex;flex-direction:column;min-height:0;
@@ -357,7 +362,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .fg-bench.list .fg-wf{margin-block:10px}
 .fg-row:hover{background:var(--hover-tint)}
 .fg-row[data-lead=true]{border-color:color-mix(in srgb,var(--ag,var(--accent)) 45%,var(--border));background:var(--hover-tint)}
-.fg-row[data-lead=true] .fg-row-tool{opacity:.5}
+.fg-row[data-lead=true] .fg-row-tool .n,
+.fg-row[data-lead=true] .fg-row-tool .a{opacity:.45}
 .fg-up{color:var(--ag,var(--accent));font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale));flex:none}
 .fg-row-id{display:flex;align-items:center;gap:6px;min-width:0}
 .fg-tick{color:var(--text-muted);font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));flex:none}
@@ -445,8 +451,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
 /* ─────────────────────── reading view (drill-in) ─────────────────────── */
 .fg-read{
-  position:absolute;inset-block-start:40px;inset-block-end:0;inset-inline:0;z-index:30;
-  background:var(--bg-page);display:flex;flex-direction:column;
+  flex:1 1 auto;min-height:0;background:var(--bg-page);display:flex;flex-direction:column;
 }
 .fg-read[hidden]{display:none}
 .fg-read-bar{
@@ -478,7 +483,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 }
 .fg-read-sub .d{font-family:var(--font-ui);font-size:calc(13px * var(--tl-text-scale));color:var(--text-primary)}
 .fg-read-body{
-  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;
+  flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:12px;
   padding-block:16px 28px;padding-inline:clamp(12px,6vw,80px);
 }
 .fg-blk{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
@@ -537,7 +542,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   .fg-lead-desc{font-size:calc(13.5px * var(--tl-text-scale))}
   .fg-trail{display:none}
   .fg-colhead .h-tools,.fg-colhead .h-tok,.fg-row .fg-tools,.fg-row .fg-tok{display:none}
-  .fg-read{inset-block-start:40px}
 }
 @media (prefers-reduced-motion:reduce){
   .fg-now.flash{background:color-mix(in srgb,var(--ag,var(--accent)) 9%,var(--bg-page))}
@@ -641,21 +645,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
       </div>
     </div>
 
-    <div class="tl-composer">
-      <div class="tl-composer-box">
-        <div class="tl-composer-field">Ask anything, or press / for commands</div>
-        <div class="tl-composer-foot">
-          <span class="tl-mini">bypass</span>
-          <span class="tl-mini">opus 5</span>
-          <span class="tl-meter" title="context used"><i></i></span>
-          <span class="tl-mini" style="border:0;padding-inline:0">38%</span>
-          <button class="tl-send">Send</button>
-          <button class="tl-stop">Stop</button>
-        </div>
-      </div>
-    </div>
-
-    <!-- reading view -->
     <div class="fg-read" id="read" hidden>
       <div class="fg-read-bar">
         <div class="fg-read-inner">
@@ -674,6 +663,21 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
       </div>
       <div class="fg-read-body" id="read-body"></div>
     </div>
+
+    <div class="tl-composer">
+      <div class="tl-composer-box">
+        <div class="tl-composer-field">Ask anything, or press / for commands</div>
+        <div class="tl-composer-foot">
+          <span class="tl-mini">bypass</span>
+          <span class="tl-mini">opus 5</span>
+          <span class="tl-meter" title="context used"><i></i></span>
+          <span class="tl-mini" style="border:0;padding-inline:0">38%</span>
+          <button class="tl-send">Send</button>
+          <button class="tl-stop">Stop</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -938,6 +942,8 @@ function render(){
   var visible = anything && S < PANEL_END*1000;
 
   band.hidden=!visible;
+  band.setAttribute("data-crowd",String(live.length>8));
+  if(readId)band.setAttribute("data-reading","true");
   $("#side-n").textContent = live.length?String(live.length):"";
   if(!visible){ sig=""; root.textContent=""; return; }
 
@@ -995,9 +1001,9 @@ function build(w,lead){
 
   /* bench */
   var bench=el("div","fg-bench"+(live.length>6&&mode==="focus"?" dense":"")+(mode==="list"?" list":""));
-  bench.style.setProperty("--cols","minmax(0,1.05fr) minmax(0,1.35fr) 60px 38px 52px 12px");
+  bench.style.setProperty("--cols","minmax(0,1.18fr) minmax(0,1.24fr) 60px 38px 52px 12px");
   var ch=el("div","fg-colhead");
-  ch.style.setProperty("--cols","minmax(0,1.05fr) minmax(0,1.35fr) 60px 38px 52px 12px");
+  ch.style.setProperty("--cols","minmax(0,1.18fr) minmax(0,1.24fr) 60px 38px 52px 12px");
   var chA=el("span","","agent");
   var chB=el("span","");
   chB.innerHTML='current · <span class="fg-hint">click a row to read it</span>';
@@ -1277,10 +1283,15 @@ function readList(){
 function openRead(id){
   readId=id;
   $("#read").hidden=false;
+  $("#timeline").hidden=true;
+  $("#fg").setAttribute("data-reading","true");
   buildRead();
   $("#read-back").focus();
 }
-function closeRead(){ readId=null; $("#read").hidden=true; }
+function closeRead(){
+  readId=null;$("#read").hidden=true;$("#timeline").hidden=false;
+  $("#fg").removeAttribute("data-reading");sig="";render();
+}
 function stepRead(d){
   var ids=readList(); if(!ids.length)return;
   var i=ids.indexOf(readId);
@@ -1390,6 +1401,12 @@ function tick(){
   var t=Math.floor(S/1000);
   $("#pt-clock").textContent="session "+(t<600?"0":"")+Math.floor(t/60)+":"+((t%60)<10?"0":"")+(t%60);
 }
+function fitShell(){
+  var bar=document.querySelector(".pt-bar");
+  document.documentElement.style.setProperty("--shellh",(window.innerHeight-bar.offsetHeight)+"px");
+}
+fitShell();
+window.addEventListener("resize",function(){fitShell();var wide=window.innerWidth>=720;if(!wide&&!collapsed&&!readId){} sig="";render()});
 setInterval(tick,TICK);
 
 /* ───────────────── controls ───────────────── */
