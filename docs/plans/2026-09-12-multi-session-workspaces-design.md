@@ -180,6 +180,24 @@ Removing a tile leaves the session running and in the sidebar where it was.
 Removing down to one tile ends the workspace: you are looking at a session
 again.
 
+**The close path, in order**, because it writes to two stores and the ordering
+is load-bearing. `removeAt(tree, leafKey)` returns the new tree, and then:
+
+| what is left | what happens |
+|---|---|
+| two or more leaves | the workspace stands. `setTree(id, tree)` locally, `PUT` membership without that member, and focus moves to the closed tile's nearest surviving sibling |
+| exactly one leaf | the workspace is over. `forget(id)` locally, delete it server-side (fewer than two members is not a workspace, and tmux-api rejects one), and that leaf becomes the selected session |
+| `removeAt` returns null | unreachable through the close control, since a workspace of one has no tiles to close. Handled defensively by leaving the selection alone rather than trusting it cannot happen |
+
+**Focus moves before or atomically with the tree write, never after.** A
+selection naming a session that is no longer in the tree makes the visible set
+resolve against a dead key, which shows as a blank pane and reads like a
+terminal fault rather than a bookkeeping one.
+
+Note the asymmetry this creates with a kill, which is deliberate: a deliberate
+close removes server-side membership, a kill does not, so a restored session
+comes back to its workspace and a closed one does not.
+
 **The same session cannot occupy two tiles.** keepalive mounts exactly one live
 view per session, keyed by owner and name, so a duplicate means a second tmux
 attach — and two tiles of one session would contend for its grid continuously,
