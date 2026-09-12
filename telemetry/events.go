@@ -153,7 +153,17 @@ var knownEvents = map[string]bool{
 	// quote clipboard content.
 	"terminal.paste_failed": true,
 	"terminal.softkey":      true, // mobile soft-key toolbar (tl.key)
-	"terminal.gesture":      true, // pinch / long-press / swipe (tl.kind)
+	// Rolled-up keystroke-to-first-frame latency, one record a minute per tab
+	// and only when something was typed. Attrs are tl.n/tl.p50/tl.p95/tl.max in
+	// milliseconds. Timing only: this never sees which key or what was on
+	// screen, which keeps it inside the rule above the catalog.
+	//
+	// It exists because everything else measured on 2026-09-12 was a proxy for
+	// the thing a person feels. PSI says the disk is stalled, api.rollup says a
+	// handler was slow, term.ready says a terminal took a while to boot; none of
+	// them says typing was slow.
+	"term.typing_latency": true,
+	"terminal.gesture":    true, // pinch / long-press / swipe (tl.kind)
 
 	// -- settings -----------------------------------------------------------
 	"settings.opened": true,

@@ -267,6 +267,14 @@ src/
                          it. Not a modulepreload: on a 400 kbps link 82 KB
                          would sit in front of the session list
   diagnostics/
+    typing.ts            How long a keystroke takes to appear: the gap from a
+                         key leaving onData to the next frame reaching write,
+                         which is the whole round trip including the user's own
+                         network. Only the first frame after a key is
+                         attributed, bursts keep the first mark, gaps over 5s
+                         are discarded, and the buffer is capped because this
+                         sits on the terminal's hottest path. Timing only,
+                         never which key. Rolled up once a minute
     usage.ts             Data used: what the lobby cost THIS device in wire
                          bytes, so the question the 1.83 GB/24h measurement
                          answered offline can be asked on the device itself.

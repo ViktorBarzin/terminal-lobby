@@ -23,6 +23,11 @@ import { BUILD_ID } from "../lib/config";
 import { DEVICE_ATTR, deviceId, mirrorDeviceId } from "./device";
 
 export type TlEvent =
+  // how long a keystroke takes to appear, rolled up over a window rather than
+  // emitted per keystroke. Timing only: never which key, never what was on
+  // screen. See src/diagnostics/typing.ts for what the number can and cannot
+  // support.
+  | "term.typing_latency"
   // app lifecycle
   | "app.loaded"
   | "app.reloaded"
