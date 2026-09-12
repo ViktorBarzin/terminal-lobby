@@ -555,7 +555,11 @@ is selected and on a phone as the landing view. You type what you want to do,
 press Enter, and the session is created with your text as its first prompt.
 Four choices sit under it: which **project** it lands in, which command runs,
 which model, and how hard it thinks. Choosing a plain shell turns it back into
-a name box, because a shell has no prompt to receive.
+a name box, because a shell has no prompt to receive. Either shape has to have
+something in it — an empty box created a session with nothing in it to
+summarise until 2026-09-12, and Send is now drawn unavailable until you type.
+A held file counts as what was typed, since it leaves as the path it uploaded
+to.
 _Avoid_: create row, new-session form, session wizard
 
 **First prompt**:
