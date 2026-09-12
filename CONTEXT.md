@@ -308,7 +308,10 @@ back in its project rather than Ungrouped.
 The per-user sidebar arrangement owned by tmux-api: the ordered list
 of projects, each project's ordered member sessions, the Ungrouped
 order, and the Ungrouped section's slot among the projects. Collapse
-state is NOT part of the layout — it is a per-browser view preference.
+state is NOT part of the layout — it is a per-browser view preference, and
+so is how WIDE the sidebar is dragged (`tl:sidebar-w:v1`, 200-560px,
+`store/sidebar-width.ts`): a width in pixels answers a question about one
+screen, so it stays on the browser that answered it.
 
 **Tile**:
 One rectangle showing one **Session**, in a **Workspace**. Holds whatever
