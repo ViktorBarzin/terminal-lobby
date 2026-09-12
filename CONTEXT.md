@@ -293,6 +293,36 @@ of projects, each project's ordered member sessions, the Ungrouped
 order, and the Ungrouped section's slot among the projects. Collapse
 state is NOT part of the layout — it is a per-browser view preference.
 
+**Tile**:
+One rectangle showing one **Session**, in a **Workspace**. Holds whatever
+view that session is set to on this device — the terminal by default, the
+**Text view** where that was chosen — plus a thin header carrying the
+**title**, the **Session state**, a watch marker when the tile is read-only,
+and a close control. A tile claims its session's **Grid**, so the session's
+tmux window is the size of the tile, for every device attached to it; a
+tile that is watching never claims. One session can occupy at most one
+tile: keepalive mounts a single live view per session, and two tiles of one
+session would contend for its Grid. _Avoid_: pane (tmux's word for the
+splits inside a session, which `PaneKeypad` drives), cell, window, slot
+(the DOM node a session hangs off, which a tile positions but never moves)
+
+**Workspace**:
+Several **Tile**s arranged as a tree of rows and columns, and the set of
+sessions in them. Unnamed and implicit: the first split makes one, closing
+back to a single tile ends one, and it is identified by its members rather
+than by a name. A session belongs to at most one workspace, so dragging it
+into another moves it. Two stores hold a workspace between them, the same
+split **Project** has: its id and ordered members live in tmux-api beside
+the **Layout**, because membership is durable intent that changes what the
+sidebar does and what a restore puts back; the tree and the tile sizes live
+in this browser, because an arrangement describes one screen. A device that
+has not seen a workspace arranges its members evenly and remembers what you
+drag. Members are marked in the sidebar, and clicking one enters the
+workspace; clicking a non-member leaves it. Splits are the view rather than
+a mode, so a single session is a workspace of one, which is what a phone
+always shows. ADR-0027 has the reasoning.
+_Avoid_: layout, grid, board, split view, tiling mode
+
 **Undo stack**:
 What `Ctrl+Z` walks back: one entry per structural action a person took, in the
 order they took them. Kill, create, retitle, move between projects, reorder
