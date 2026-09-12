@@ -298,14 +298,11 @@ export const SessionView: Component<{
    * `preloading` itself is declared above, beside the watch latch that reads it.
    */
   /**
-   * THE ATTACH MODE IS THE MOUNT'S, read once and never again.
-   *
-   * `terminal/attach.ts` captures the args when it opens the socket, so this
-   * describes a connection that already exists: it stays `pre` for the life of
-   * this mount, promotion included. The tmux client is promoted server-side
-   * instead, by the grid call `claimGrid` already makes (tmux-api/grid_size.go
-   * clears ignore-size in front of its sizing work). Recomputing it on
-   * promotion would only rebuild the terminal this exists to keep.
+   * THIS MOUNT BEGAN AS A PRELOAD, which is a different question from whether
+   * it still is one. Frozen on purpose: the preload REPORT belongs to the mount
+   * the hover paid for (`notePreload`), and so does the one-off focus the
+   * reveal owes it. The attach mode is not frozen with it — see the `preload:`
+   * argument below, which reads `preloading()` live.
    *
    * A WATCH IS NOT A PRELOAD AND CANNOT BE MADE INTO ONE. Both ride arg5,
    * `terminalFrameArgs` throws on the pair, and a read-only attach calls
@@ -1316,10 +1313,28 @@ export const SessionView: Component<{
                 dir: props.dir || undefined,
                 owner: props.owner || undefined,
                 watch: watch(),
-                // Frozen at mount (see `preloadAttach`), except that a watch
-                // takes the slot back if one ever resolves: both ride arg5 and
-                // asking for both throws.
-                preload: preloadAttach && !watch(),
+                // READ LIVE, and `pre` ends the moment the user commits. The
+                // socket already open keeps the args it was opened with —
+                // nothing here reconnects one, and its tmux client is promoted
+                // server-side by the grid call `claimGrid` makes
+                // (tmux-api/grid_size.go clears ignore-size in front of its
+                // sizing work). What this changes is the NEXT connect.
+                //
+                // A mount that kept `pre` for life re-attached as a PRELOAD
+                // every time its socket came back, and a preload client cannot
+                // size the session's window: tmux ignores it, and the pin's
+                // hook filters it out (sessionio/grid.go `gridHook`). Measured
+                // on this box 2026-09-12 — a session parked 30 s off screen,
+                // which is the battery saver dropping the socket
+                // (terminal/battery.ts), came back `attached,ignore-size` and
+                // sat inside the 60-column window a phone had left while its
+                // terminal drew 144 columns around it. Switching to Text and
+                // back was the only thing that moved it, because that is
+                // another fit and another claim.
+                //
+                // A watch still takes the slot back if one ever resolves: both
+                // ride arg5 and asking for both throws.
+                preload: preloading() && !watch(),
               })}
               watch={watch}
               // The bridges are named globals, so a hidden session owning them

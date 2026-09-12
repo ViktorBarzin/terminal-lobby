@@ -2389,7 +2389,14 @@ export const TerminalNative: Component<{
 
       attachment = attach({
         base: "",
-        args: props.args,
+        // A GETTER, so every connect reads the args as they are NOW rather
+        // than as they were at mount. Only one of them moves: the attach mode,
+        // which drops `pre` when a hover is promoted by a click (SessionView's
+        // `preload:` argument says what that cost). attach.ts takes one reading
+        // per attempt, so the token and the socket cannot disagree.
+        get args() {
+          return props.args;
+        },
         write: (bytes) => {
           // ONE ATTENTION EVENT PER OUTPUT FRAME, and attach.ts calls this for
           // output frames alone (a title or prefs frame arrives once per
@@ -2436,6 +2443,22 @@ export const TerminalNative: Component<{
         onAttach: () => {
           feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
           cancelCoast();
+          // AND SAY WHAT SIZE WE ARE, because a socket opening is the one
+          // moment the fit cannot speak for. `claimGrid` rides the fit, and on
+          // the way back to a parked session the fit runs ~120 ms in while the
+          // socket is still climbing its ladder: the claim reaches tmux-api
+          // before this device has a tmux client at all, so there is nothing to
+          // promote and, for a pinned session, nothing driving either — 409,
+          // dropped, never retried (measured 2026-09-12 on `f1-schedule`, and
+          // in the Traefik log 8 times in 24 h). Saying it again here is cheap:
+          // SessionView dedupes a repeat of the same grid, and the server
+          // answers 204 whether or not it moved anything.
+          //
+          // ONLY WHILE THIS SESSION IS THE ONE BEING READ. A hidden mount
+          // reconnecting is someone else's window to lose: the phone reading
+          // the same session would have its grid pulled to this desktop's size
+          // by a socket nobody here is looking at.
+          if (beingRead()) claimGrid();
         },
         onPhase: (phase, attempt) => {
           props.onConn?.(report(phase, attempt));
