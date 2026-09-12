@@ -117,13 +117,16 @@ func (m *Metrics) Handler() http.Handler {
 		if m == nil {
 			return
 		}
-		m.WriteTo(w)
+		m.Render(w)
 	})
 }
 
-// WriteTo renders every series. Output is sorted so a diff between two scrapes
+// Render writes every series. Named Render, not WriteTo: that signature is
+// reserved by io.WriterTo, which must return (int64, error), and go vet's
+// stdmethods check fails the build on a near-miss. `go test` does not run that
+// check, so it passed locally and failed in CI.. Output is sorted so a diff between two scrapes
 // is readable by a human debugging the endpoint.
-func (m *Metrics) WriteTo(w io.Writer) {
+func (m *Metrics) Render(w io.Writer) {
 	if m == nil {
 		return
 	}
