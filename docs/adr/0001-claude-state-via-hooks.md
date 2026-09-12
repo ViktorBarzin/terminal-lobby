@@ -126,11 +126,39 @@ resulting state itself — see "Interrupts have no hook" below.
   `running` while the set is non-empty and `done` when it is not, which is
   the rule `Stop` uses.
 
-  `SubagentStart` and `SubagentStop` do fire and are accurate, and are
-  deliberately unused: wiring them means an infra change reaching every
-  headless Claude on the box. `TaskCreated` and `TaskCompleted` exist as
-  event names in the binary and fired for none of the three launch kinds.
-  Design and the full trace:
+  A TEAMMATE needed events that were not wired (2026-09-12, Viktor: "even
+  though the agents are running, the session says it's green or done").
+  An agent team is the `Agent` tool given a `name`, and none of the three
+  signals above can see one. Its launch answers `teammate_spawned` rather
+  than `async_launched`; the ids in that answer
+  (`counter@session-337349ca`) are not the id the registry uses for the
+  same agent (`tocihyt26`); no task-notification arrives when it
+  finishes, because its answer reaches the lead over the team's own
+  channel and fires no `UserPromptSubmit` at all; and the registry lists
+  a teammate as `running` for as long as it EXISTS, measured three times
+  and last 3m30s after it had answered, with the harness's own bar
+  showing it idle. 97 of the 151 `Agent` launches in wizard's own
+  transcripts over the three days to 2026-09-12 were that shape.
+
+  So two events are now wired, which is the infra change the 2026-09-04
+  design had declined to make: `SubagentStart`, which fires on every
+  activation — a spawn, a `SendMessage`, or a person typing into the
+  teammate's pane — and `TeammateIdle`, which fires when it stops. A
+  teammate is held in the set under its NAME, which both events carry;
+  `Stop` carries the name through rather than re-deriving it, and drops
+  it only when the registry lists no teammate at all. `SubagentStop` is
+  still unused: `TeammateIdle` names the teammate directly, and a plain
+  subagent is retired honestly by the registry. `TaskCreated` and
+  `TaskCompleted` exist as event names in the binary and fired for none
+  of the four launch kinds.
+
+  Adopting a teammate from the registry instead would have cost more than
+  the late green dot it fixed: a session stuck at `running` refuses the
+  model picker ("the session is working — stop it first"), holds a T3
+  attach pin open, and has no expiry to fall back on. That is also why a
+  task type this script does not recognise is skipped rather than counted
+  — a wrong green corrects itself at the next launch, a wrong blue does
+  not. Design and the full trace:
   `docs/plans/2026-09-04-background-work-session-state-design.md`.
 - A session whose Claude died without hooks firing (kill -9, OOM) is
   caught by a liveness backstop: a state only survives while a claude

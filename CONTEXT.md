@@ -411,25 +411,45 @@ _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
 
 **Outstanding work**:
-Background tasks a session launched that have not reported back —
-background subagents, **Workflow** runs and background commands. A
-session with any is *running* rather than *completed*, because it will
-produce more output without anyone prompting it, and the sidebar names
-what it is waiting on ("2 agents", "1 workflow"). Kept as the set of
-task ids in the session's `@claude_bg` option: a launch that returns
-`async_launched` adds one, and it is removed either by that id's
-task-notification or, at the end of any turn, by no longer appearing in
-the harness's own list of live tasks. The second path is the load-bearing
-one, in both directions: a notification for a task that finished mid-turn
-is absorbed into that turn and never arrives as a prompt, and it is also
-the only thing that clears an id nobody retired, since nothing expires.
-Which is why neither a prompt a person types nor a compaction touches the
-set — both used to empty it, and both reported a session finished while a
-workflow ran (2026-09-12). Only the main
-thread's own launches count: a subagent's background tasks report back
-to the subagent, so counting one would leave an id nothing can retire.
+Work a session started that has not finished — background subagents,
+**Workflow** runs, background commands and **teammates**. A session with
+any is *running* rather than *completed*, because it will produce more
+output without anyone prompting it, and the sidebar names what it is
+waiting on ("2 agents", "1 workflow"). Kept in the session's `@claude_bg`
+option, by two different keys for two different reasons.
+
+The first three are kept by the harness's own task id, and at the end of
+every turn the set is rebuilt from `background_tasks`, the list of live
+tasks the harness puts in the `Stop` payload. That list is the
+load-bearing path in both directions: a notification for a task that
+finished mid-turn is absorbed into that turn and never arrives as a
+prompt, and the list is also the only thing that clears an id nobody
+retired, since nothing expires. Which is why neither a prompt a person
+types nor a compaction touches the set — both used to empty it, and both
+reported a session finished while a workflow ran (2026-09-12).
+
+A **teammate** is kept by its NAME, because that same list reports one as
+running for as long as it exists, idle or not. `SubagentStart` says a
+teammate started working and `TeammateIdle` says it stopped; both carry
+the name, a rebuild carries the name tokens through, and they are dropped
+when the list holds no teammate at all.
+
+Only the main thread's own launches count: a subagent's background tasks
+report back to the subagent, so counting one would leave an id nothing
+can retire.
 _Avoid_: pending tasks, background jobs (both read as shell job control),
 and any wording that makes it a fourth **Session state**
+
+**Teammate**:
+A named agent the session's Claude spawned that stays alive between
+tasks, so the same one can be given more work. It is the Agent tool
+called with a `name`, and the harness draws the team in a bar of its own.
+A teammate is **Outstanding work** only while it is working: `SubagentStart`
+says it started, which happens at the spawn and again every time it is
+messaged, and `TeammateIdle` says it stopped. The sidebar counts one as an
+agent, since that is the word a person reading the card wants.
+_Avoid_: subagent (the background kind, which reports once and ends),
+team member (a **Member** belongs to a **Project**)
 
 **Session images**:
 The per-(user, session) store of images the session visually touched —
