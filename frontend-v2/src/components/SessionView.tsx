@@ -1334,10 +1334,6 @@ export const SessionView: Component<{
               // and both halves carry weight — the text view over the terminal,
               // and this session's whole slot CSS-hidden behind another session.
               active={mode() === "terminal" && onScreen()}
-              // A preload is mounted hidden and revealed at the size the
-              // visible session is using, so it opens at that size instead of
-              // xterm's 80x24 default and the click has nothing left to reflow.
-              fitWhileHidden={preloadAttach}
               // WHICH session rang is the caller's to add: this component is
               // handed `args`, not a name. It is in our own document, so the
               // name is ours to supply and there is nothing to validate.
