@@ -33,14 +33,14 @@ The gap between `ws open` and `first frame` is 627 ms: ttyd forking
 JavaScript does not affect it, which is why the preload has to be a real
 attach.
 
-Two other costs surfaced while measuring, and both ship alongside this.
+Two other costs surfaced while measuring, and both shipped alongside this.
 
-**The xterm chunk has no preload hint.** `dist/assets/xterm-D0vEgCRV.js` is
+**The xterm chunk had no preload hint.** `dist/assets/xterm-D0vEgCRV.js` is
 329,698 B raw and 82,870 B gzipped, imported lazily at
 `TerminalNative.tsx:953`, and `dist/index.html` carries zero `modulepreload`
 links. It is worth 413 to 841 ms on the first terminal open of a page load.
 
-**The transcript cache is not writing records.** `session.ts:188` makes
+**The transcript cache was not writing records.** `session.ts:188` makes
 `events` a Solid store, `session.ts:331` hands that proxy to `cache.save`, and
 `transcript-cache.ts:77` returns it unchanged below the 2,000-event cap.
 IndexedDB cannot structured-clone a proxy, so the `put` throws
