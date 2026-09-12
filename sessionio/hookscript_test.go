@@ -584,8 +584,9 @@ func TestStopWithoutTheFieldPrunesNothing(t *testing.T) {
 // `teammate_spawned` rather than `async_launched`, so record_launch saw
 // nothing; the Stop registry calls it `tocihyt26` while the launch calls it
 // `counter@session-337349ca`, so no recorded id would have survived a prune;
-// and when it finishes, no task-notification arrives at all. 85 of the 136
-// Agent launches in the transcripts on this box that week were that shape.
+// and when it finishes, no task-notification arrives at all. 97 of the 151
+// Agent launches in wizard's own transcripts over the three days to
+// 2026-09-12 were that shape.
 //
 // SubagentStart is the signal that works, and it is better than the launch
 // would have been: it fires on every activation, so a teammate woken by
