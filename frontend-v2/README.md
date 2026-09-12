@@ -151,6 +151,7 @@ src/
   global.d.ts            Vite `define` + theme-boot-script global declarations
   app.css                App chrome + timeline styles (theme tokens only)
   sidebar.css            Lobby shell grid + sidebar styles
+  tiles.css              Workspace tile headers + the divider skeleton over them
   types/events.ts        Wire contract — mirrors sessionio/event.go EXACTLY
   types/lobby.ts         tmux-api shapes (Session/Layout/Project/Whoami)
   lib/
@@ -478,6 +479,18 @@ src/
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so
                          driving THEIR `code` decides nothing about yours
+    workspace-tree.ts    PURE geometry for a Workspace: the n-ary tree of rows
+                         and columns, and toRects(), which turns it into one
+                         rectangle per tile. Splitting, moving, closing and
+                         resizing are arithmetic here, over slots that never
+                         move in the DOM (ADR-0027). It has not heard of corvu,
+                         which is what keeps that dependency replaceable
+    workspaces.ts        Per-BROWSER workspace geometry (tl:workspaces:v1):
+                         workspace id → its split tree, and the session→workspace
+                         index DERIVED from that one document rather than kept
+                         beside it, since two keys can disagree. No membership —
+                         that is the server's, because a kill must not drop it
+                         and two tabs on one machine have to agree (ADR-0027)
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
     dock.ts              Ctrl+J scratch-shell dock state (roamed via layout.dock)
@@ -545,6 +558,14 @@ src/
                          watch mode has three states and "nobody has said" does
                          not derive from the other two. Not mark-seen, which
                          nothing chooses, and there is no pin feature to cover
+    undo.workspace.ts    The inverse of every structural change to a Workspace
+                         — a tile added, closed, dragged elsewhere, a divider
+                         moved — as ONE kind, because all four write to both of
+                         a workspace's stores in the same breath. The stored
+                         tree holds INDICES and the names sit flat in `sessions`,
+                         the only place carry() can rewrite them when a first
+                         title renames a session (ADR-0022). Resizes coalesce
+                         for 400 ms, or one divider drag fills all 25 slots
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
     preview.logic.ts     PURE file-type → renderer + transcript → file-path
@@ -618,6 +639,17 @@ src/
     overlay.ts           A backdrop's press-to-dismiss, on the node rather than
                          as a handler, since the surface is not a control
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
+    WorkspaceCanvas.tsx  The dividers of a Workspace and nothing else: nested
+                         @corvu/resizable nodes with no session content in them,
+                         transparent, stacked above the terminals, handing the
+                         caller one rect per tile. Corvu is used off-label
+                         because every split-pane library wants to own the panes
+                         and reparenting one costs a 779 ms terminal rebuild
+    TileHeader.tsx       The ~24px a tile wears: title, state dot, watch marker,
+                         close. Four things, and no fifth — a workspace pays for
+                         this strip once per tile, in rows taken off four live
+                         terminals, so the context meter and the spend figure
+                         stay on the session bar, which follows focus
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
@@ -804,6 +836,14 @@ src/
                          `dropEffect = "copy"` was refusing every card drop
     anchor.ts            PURE: the neighbour a dropped card is placed against,
                          and where a dragged group lands in the raw sequence
+    tiles.ts             Dropping a session INTO a tile, and dragging one back
+                         out. @formkit/drag-and-drop has no positional API — a
+                         parent is an Array<T> through getValues/setValues — so
+                         it contributes the pointer, the long press and the
+                         touch path, and the third/middle/outside hit test and
+                         the drop preview are here. previewBox is pinned to
+                         toRects by test: a shadow that is not where the tile
+                         lands is a promise the drop breaks
   mobile/
     pointer.ts           Coarse-pointer gate for every mobile affordance
     keybytes.ts          Pre-baked terminal byte sequences for the soft keys

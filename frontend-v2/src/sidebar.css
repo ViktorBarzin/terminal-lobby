@@ -587,6 +587,61 @@
 .tl-card[data-killing] .tl-card-name {
   text-decoration: line-through;
 }
+/* A member of the Workspace on screen, other than the focused tile: this
+   session is one of the terminals in front of you, and is not the one taking
+   your keystrokes.
+
+   The QUIETER of two levels, and quiet is the whole design of it. The sidebar's
+   first job is still to say where the typing goes, so this is the active
+   treatment below stepped down rather than a mark of its own: the same 2px bar,
+   in the same place, in the same accent with some of it taken away, and the
+   same card background at part strength. A second colour or a second shape
+   would read as a different KIND of state and leave two vocabularies in one
+   list — the mistake .tl-card-unseen deliberately avoided by reusing the bar.
+
+   The third carrier of the active treatment, the 700 name, is the one this
+   level gives up. Members keep the list's resting 600, so weight alone still
+   separates the focused card from its siblings; a member of a four-tile
+   workspace otherwise puts four rows at 700 and the sidebar stops answering
+   "which one am I typing into".
+
+   Members sit in whichever projects they sit in, which is why each row carries
+   its own mark: they are not adjacent, so nothing can bracket them together.
+
+   THE BAR IS WHAT CARRIES THIS on a dark theme, and the background barely
+   registers. Rendered side by side in slate, carbon and catppuccin-latte, the
+   card tint at 55% is plainly visible on the light theme, where --bg-card is
+   white against a grey list, and very nearly invisible on slate, where
+   --bg-card and --bg-sidebar are two neighbouring shades of near-black. So
+   the tint is a bonus where it lands and the bar and the name weight are what
+   the level actually rests on — the same division .tl-card-unseen found when
+   the dot alone fell under the 3:1 floor on five of the eight themes.
+
+   ORDER MATTERS HERE, which is why this sits above rather than below. The
+   active bar and the unseen bar are both drawn on the same ::before and both
+   are stronger claims than membership — where the keystrokes are going, and
+   what finished while you were away. Equal specificity, so the later rule wins,
+   exactly as it already does between .tl-card-active and .tl-card-unseen. The
+   card never carries this class and .tl-card-active at once (SessionCard
+   isMember), so the only overlap that reaches the stylesheet is the unseen one.
+
+   Nothing here on a phone. The class is never applied there at all — <Sidebar>
+   reads the flip query and answers every card "no workspace", because a screen
+   showing one session at a time has no group to point at (ADR-0027). */
+.tl-card-member {
+  background: color-mix(in srgb, var(--bg-card) 55%, transparent);
+  border-color: color-mix(in srgb, var(--border-strong) 55%, transparent);
+}
+.tl-card-member::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--accent) 45%, transparent);
+}
 .tl-card-active {
   background: var(--bg-card);
   border-color: var(--border-strong);
@@ -969,7 +1024,36 @@
   }
 }
 
-/* ---- Per-session bar (inside content) --------------------------------- */
+/* ---- Per-session bar (in the shell, above the body) -------------------- */
+/* THE STRIP THE SESSION BAR IS DRAWN INTO, and it is deliberately not a box.
+   `App.tsx` puts one of these between `.tl-shellbar` and `.tl-shell-body`, and
+   the focused `SessionView` portals its bar into it. `display: contents` on
+   both this element and the container Solid's `<Portal>` appends leaves
+   `.tl-session-bar` as a DIRECT flex child of `.tl-shell-content`, which is the
+   same relationship it had to `.tl-session-view`: a column, and the bar first
+   in it at `flex: 0 0 auto`. So a lone session's bar sits where it always sat,
+   at the same height, and every rule below still finds it.
+
+   WHY IT IS OUT HERE AT ALL. The bar is 41px of arithmetic (28px of controls,
+   6px of padding each side, a 1px border) and measured 49px in Chrome at
+   1440x900 with the labels showing, and it takes them from whatever box it is
+   in. Drawn inside the focused slot, clicking from one tile to another grew one
+   terminal's host by 48px and shrank the other's by 48px — measured 2026-09-12
+   in a two-tile workspace, 785px against 833px — so both refitted and both
+   claimed their new grid. A tile IS the size of its tmux window (`claimGrid`),
+   so that one click sent three grid POSTs for two different sessions and moved
+   one of them from 49 rows to 46, for every device attached to either. Out here
+   the bar's height comes off the shell column once, before `.tl-shell-body` is
+   measured; the same click now sends one POST, restating the focused tile's
+   unchanged 72x46 because clicking into a terminal re-claims its size
+   (TerminalNative's `onHostFocusIn`), and no tile's rectangle moves at all.
+
+   Empty whenever nothing is open — the composer screen has no bar, exactly as
+   before — and an element with no box and no children draws nothing. */
+.tl-bar-host,
+.tl-bar-host > div {
+  display: contents;
+}
 .tl-session-view {
   display: flex;
   flex-direction: column;
@@ -1124,8 +1208,16 @@
     min-height: 44px;
   }
   /* The active row's accent bar insets from the row's edges; at 40px the old
-     6px left a 28px stub, which reads as a dash rather than a bar. */
+     6px left a 28px stub, which reads as a dash rather than a bar.
+
+     The workspace member's bar is here too, and this block is the reason it has
+     to be: a TABLET is a coarse pointer that the flip query does not claim, so
+     it renders the split view and draws these marks at a finger's row height.
+     Left out, a member's bar would sit 2px shorter than the focused row's
+     beside it, which reads as two different marks rather than two strengths of
+     one. */
   .tl-card-active::before,
+  .tl-card-member::before,
   .tl-card-unseen::before {
     top: 4px;
     bottom: 4px;

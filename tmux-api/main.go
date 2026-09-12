@@ -314,35 +314,7 @@ func main() {
 		log.Printf("internal token init failed (shared-attach kick recording disabled): %v", err)
 	}
 
-	http.HandleFunc("/sessions", handleSessions)
-	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
-	// prefers the longer pattern, but stating the order makes the intent plain.
-	http.HandleFunc("/new-commands", handleNewCommands)
-	http.HandleFunc("/sessions/prewarm", handlePrewarm)
-	http.HandleFunc("/sessions/", handleSessionByName)
-	http.HandleFunc("/whoami", handleWhoami)
-	http.HandleFunc("/restore", handleRestore)
-	http.HandleFunc("/snapshots", handleSnapshots)
-	http.HandleFunc("/snapshots/", handleSnapshotByTS)
-	http.HandleFunc("/layout", handleLayout)
-	http.HandleFunc("/projects", handleProjects)
-	http.HandleFunc("/projects/", handleProjectByID)
-	http.HandleFunc("/shares", handleShares)
-	http.HandleFunc("/shares/", handleShareByPath)
-	http.HandleFunc("/internal/attach", handleInternalAttach)
-	http.HandleFunc("/users", handleUsers)
-	http.HandleFunc("/dirs", handleDirs)
-	http.HandleFunc("/prefs", handlePrefs)
-	http.HandleFunc("/netinfo", handleNetinfo)
-	http.HandleFunc("/agent-spend", handleAgentSpend)
-	http.HandleFunc("/telemetry", handleTelemetry)
-	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
-	http.HandleFunc("/push/focus", handlePushFocus)
-	http.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
-	http.HandleFunc("/push/test", handlePushTest)
-	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("ok"))
-	})
+	registerRoutes(http.DefaultServeMux)
 
 	// Background Web Push sender (Notifications Part 2): a no-op unless a full
 	// VAPID config is in the environment, so a devvm without keys behaves
@@ -387,6 +359,63 @@ func main() {
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
 	go timing.Run(nil)
 	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
+}
+
+// registerRoutes attaches every surface this service serves to mux. This is the
+// whole route table: a path that is not here is a 404 whatever else is true of
+// the handler behind it.
+//
+// It is a function rather than a run of http.HandleFunc calls inside main
+// because nothing could read the list while it lived there. main is not
+// callable from a test — it migrates stores, forks goroutines and blocks in
+// ListenAndServe — and an unregistered handler is invisible everywhere else:
+// Go compiles a package-level func nothing calls, `go vet` passes it, and every
+// test in this package reaches handlers directly, as `handleX(rec,
+// httptest.NewRequest(...))`, which never asks the mux whether a request could
+// arrive there at all.
+//
+// Measured on this branch, 2026-09-12: /workspaces shipped with a complete
+// store, a validated handler and 33 green tests in workspaces_test.go, 12 of
+// which drive handleWorkspaces directly — and no line registering it. Every
+// GET and PUT the lobby sent answered 404, so the browser half kept its empty
+// document and every drag rolled back with "That grouping was not saved."
+// mux_routes_test.go now drives this function's own output and fails when a
+// declared handler has no line here.
+func registerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("/sessions", handleSessions)
+	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
+	// prefers the longer pattern, but stating the order makes the intent plain.
+	mux.HandleFunc("/new-commands", handleNewCommands)
+	mux.HandleFunc("/sessions/prewarm", handlePrewarm)
+	mux.HandleFunc("/sessions/", handleSessionByName)
+	mux.HandleFunc("/whoami", handleWhoami)
+	mux.HandleFunc("/restore", handleRestore)
+	mux.HandleFunc("/snapshots", handleSnapshots)
+	mux.HandleFunc("/snapshots/", handleSnapshotByTS)
+	mux.HandleFunc("/layout", handleLayout)
+	// Beside /layout because they are the same kind of thing: one whole-document
+	// GET/PUT per user, describing where sessions belong. /layout says which
+	// project a session sits in, /workspaces says which sessions are on screen
+	// together (ADR-0027).
+	mux.HandleFunc("/workspaces", handleWorkspaces)
+	mux.HandleFunc("/projects", handleProjects)
+	mux.HandleFunc("/projects/", handleProjectByID)
+	mux.HandleFunc("/shares", handleShares)
+	mux.HandleFunc("/shares/", handleShareByPath)
+	mux.HandleFunc("/internal/attach", handleInternalAttach)
+	mux.HandleFunc("/users", handleUsers)
+	mux.HandleFunc("/dirs", handleDirs)
+	mux.HandleFunc("/prefs", handlePrefs)
+	mux.HandleFunc("/netinfo", handleNetinfo)
+	mux.HandleFunc("/agent-spend", handleAgentSpend)
+	mux.HandleFunc("/telemetry", handleTelemetry)
+	mux.HandleFunc("/push-subscriptions", handlePushSubscriptions)
+	mux.HandleFunc("/push/focus", handlePushFocus)
+	mux.HandleFunc("/push/vapid-public", handlePushVAPIDPublic)
+	mux.HandleFunc("/push/test", handlePushTest)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.Write([]byte("ok"))
+	})
 }
 
 // /whoami → {authentik, osUser}. Used by the lobby HTML to render the

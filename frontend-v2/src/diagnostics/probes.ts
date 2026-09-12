@@ -85,7 +85,8 @@ async function serverHoldsThisDevice(
       : null;
   if (!rows) return "unknown";
   const held = rows.some(
-    (r) => typeof r === "object" && r !== null && (r as { endpoint?: unknown }).endpoint === endpoint,
+    (r) =>
+      typeof r === "object" && r !== null && (r as { endpoint?: unknown }).endpoint === endpoint,
   );
   return held ? "holds" : "missing";
 }

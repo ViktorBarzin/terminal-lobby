@@ -29,7 +29,8 @@ import {
 } from "../dnd/sidebar";
 import { OrderMenu } from "./OrderMenu";
 import { ProjectGroup } from "./ProjectGroup";
-import { SessionCard } from "./SessionCard";
+import { SessionCard, SidebarWorkspacesContext, type SidebarWorkspaces } from "./SessionCard";
+import { createMobileFlip } from "../mobile/pointer";
 import { badgeLabel, flatSessionOrder } from "../keybindings/navigation.logic";
 import { RestorePicker } from "./RestorePicker";
 import { SkillsIcon } from "./Icons";
@@ -83,8 +84,51 @@ export const Sidebar: Component<{
    *  screen; a test that does not care about spend mounts without it, and the
    *  sidebar then reads nothing from the server. */
   onOpenSpend?: () => void;
+  /**
+   * The workspace half of the list: which sessions are tiles on the screen
+   * right now, which workspace any given session belongs to, and where a click
+   * on one should land. The shell owns both halves of a Workspace (membership
+   * in tmux-api, the arrangement in `store/workspaces.ts`) and answers from
+   * them; the sidebar only asks.
+   *
+   * Optional, and absent means there are no workspaces: every card is marked as
+   * it was before tiles existed and a click opens that session alone. That is
+   * what a test mounting the sidebar on its own gets, and what the app itself
+   * gets before the first split.
+   */
+  workspaces?: SidebarWorkspaces;
 }> = (props) => {
   const store = props.store;
+
+  /**
+   * A phone has no workspaces, so the sidebar it draws has no marks and its
+   * cards ask the shell for nothing.
+   *
+   * ADR-0027: a tree of tiles describes a screen, and the one the flip query
+   * claims shows a single session at a time. A mark there would point at a
+   * group this screen cannot draw, and a click that entered one would hand the
+   * shell a tree with nowhere to put it.
+   *
+   * Gated HERE rather than in App, and in TypeScript rather than as a `@media`
+   * rule neutralising the class. In the sidebar because this is the one place
+   * that can read the query once for a whole list instead of once per card, and
+   * in TypeScript because the CLICK has to be gated too — a stylesheet can hide
+   * a mark, and cannot stop a tap entering a workspace.
+   *
+   * The value is a stable object whose methods read `flip()` when they are
+   * called, so it is safe to hand to a context that reads it once: the media
+   * query is live inside the answers rather than around them, and a 2-in-1
+   * crossing the query needs no remount.
+   */
+  const flip = createMobileFlip();
+  const workspaces: SidebarWorkspaces = {
+    current: () => (flip() ? null : (props.workspaces?.current() ?? null)),
+    workspaceOf: (sel) => (flip() ? null : (props.workspaces?.workspaceOf(sel) ?? null)),
+    onOpen: (sel, workspace) => {
+      if (flip()) return;
+      props.workspaces?.onOpen(sel, workspace);
+    },
+  };
 
   // Which tool the attached session runs, which is the whole of what the footer
   // figure follows. `tool` comes off the same /sessions payload the cards read
@@ -223,230 +267,169 @@ export const Sidebar: Component<{
   };
 
   return (
-    <div class="tl-sidebar">
-      {/* The lobby header, as on the vanilla page: the title carries the app,
+    // Every card in the list reads the workspace answers, and they arrive by
+    // three different routes — a project's rows through <ProjectGroup>, the
+    // Shared-with-me rows and System's straight from here. One provider covers
+    // all three, and carries the phone gate with it (see `workspaces` above).
+    <SidebarWorkspacesContext.Provider value={workspaces}>
+      <div class="tl-sidebar">
+        {/* The lobby header, as on the vanilla page: the title carries the app,
           the actions sit on its row, and the line beneath answers "who am I
           here, and whose sessions are these?" — the isolation model is the
           first thing worth knowing about a shared box. The bare "Sessions"
           label this replaces said none of that. */}
-      <div class="tl-sidebar-head">
-        <div class="tl-sidebar-head-row">
-          <h1 class="tl-sidebar-title">tmux sessions</h1>
-          <Show when={props.status}>
-            {(s) => (
-              <StatusDot
-                class="tl-sidebar-status"
-                channels={s().channels}
-                only={LOBBY_CHANNELS}
-                onOpen={s().onOpen}
-              />
-            )}
-          </Show>
-          {/* Through the store rather than straight at the pref: a switch into
+        <div class="tl-sidebar-head">
+          <div class="tl-sidebar-head-row">
+            <h1 class="tl-sidebar-title">tmux sessions</h1>
+            <Show when={props.status}>
+              {(s) => (
+                <StatusDot
+                  class="tl-sidebar-status"
+                  channels={s().channels}
+                  only={LOBBY_CHANNELS}
+                  onOpen={s().onOpen}
+                />
+              )}
+            </Show>
+            {/* Through the store rather than straight at the pref: a switch into
               manual freezes the visible arrangement into the layout first, and
               the switch itself is undoable. The store still writes the choice
               through this same pref (App wires `setSessionOrder` to it), so it
               roams exactly as it did. */}
-          <OrderMenu
-            order={order}
-            onPick={(next) => void store.setSessionOrderMode(next)}
-            hold={() => store.hold()}
-          />
-          <button
-            class="tl-icon-btn tl-head-btn"
-            type="button"
-            aria-label="Reload the app"
-            title="Reload the app"
-            onClick={() => (props.onReload ? props.onReload() : window.location.reload())}
-          >
-            ↻
-          </button>
-          <Show when={props.notifications && props.notifications.bellMode !== "hidden"}>
+            <OrderMenu
+              order={order}
+              onPick={(next) => void store.setSessionOrderMode(next)}
+              hold={() => store.hold()}
+            />
             <button
-              class="tl-icon-btn tl-head-btn tl-notify-btn"
+              class="tl-icon-btn tl-head-btn"
               type="button"
-              classList={{ on: props.notifications!.bellOn() }}
-              aria-label="Notifications"
-              aria-pressed={props.notifications!.bellOn()}
-              title={
-                props.notifications!.bellMode === "install-hint"
-                  ? "Install to Home Screen for notifications"
-                  : props.notifications!.bellTitle()
-              }
-              onClick={() =>
-                props.notifications!.bellMode === "install-hint"
-                  ? props.notifications!.showInstallHint()
-                  : void props.notifications!.toggleBell()
-              }
+              aria-label="Reload the app"
+              title="Reload the app"
+              onClick={() => (props.onReload ? props.onReload() : window.location.reload())}
             >
-              <BellIcon ringing={props.notifications!.bellOn()} />
+              ↻
             </button>
+            <Show when={props.notifications && props.notifications.bellMode !== "hidden"}>
+              <button
+                class="tl-icon-btn tl-head-btn tl-notify-btn"
+                type="button"
+                classList={{ on: props.notifications!.bellOn() }}
+                aria-label="Notifications"
+                aria-pressed={props.notifications!.bellOn()}
+                title={
+                  props.notifications!.bellMode === "install-hint"
+                    ? "Install to Home Screen for notifications"
+                    : props.notifications!.bellTitle()
+                }
+                onClick={() =>
+                  props.notifications!.bellMode === "install-hint"
+                    ? props.notifications!.showInstallHint()
+                    : void props.notifications!.toggleBell()
+                }
+              >
+                <BellIcon ringing={props.notifications!.bellOn()} />
+              </button>
+            </Show>
+          </div>
+          <Show when={store.whoami()}>
+            <p class="tl-sidebar-sub">
+              Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}). Sessions are
+              kernel-isolated per Unix user; you only see your own.
+            </p>
           </Show>
         </div>
-        <Show when={store.whoami()}>
-          <p class="tl-sidebar-sub">
-            Logged in as {store.whoami()!.osUser} ({store.whoami()!.authentik}). Sessions are
-            kernel-isolated per Unix user; you only see your own.
-          </p>
-        </Show>
-      </div>
 
-      {/* The create box moved out of the sidebar and became the composer, which
+        {/* The create box moved out of the sidebar and became the composer, which
           needs the room: it takes a prompt, not a name. This is the route to
           it, and the `+` on each group is the same route with that project
           preselected. */}
-      <div class="tl-new-row">
-        <button
-          class="tl-new-btn tl-new-full"
-          aria-label="New session"
-          onClick={() => props.onNewSession?.()}
+        <div class="tl-new-row">
+          <button
+            class="tl-new-btn tl-new-full"
+            aria-label="New session"
+            onClick={() => props.onNewSession?.()}
+          >
+            + New session
+          </button>
+        </div>
+
+        <div
+          class="tl-sidebar-scroll"
+          // The groups are a sortable of their own, dragged by their headers.
+          // Each group's cards are a sortable NESTED in one of these nodes, and
+          // the inner list claims a press on a card first, so the two never
+          // answer the same gesture.
+          ref={(el) =>
+            attachGroupList(el, {
+              visible: () => visibleGroups().map(groupToken),
+              sequence: () => groupSeqTokens(store.layout()),
+              reorder: (from, to) => store.reorderGroupsTo(from, to),
+              hold: () => store.hold(),
+            })
+          }
         >
-          + New session
-        </button>
-      </div>
+          <Show when={store.loadError()}>
+            <div class="tl-sidebar-msg tl-sidebar-error">{store.loadError()}</div>
+          </Show>
 
-      <div
-        class="tl-sidebar-scroll"
-        // The groups are a sortable of their own, dragged by their headers.
-        // Each group's cards are a sortable NESTED in one of these nodes, and
-        // the inner list claims a press on a card first, so the two never
-        // answer the same gesture.
-        ref={(el) =>
-          attachGroupList(el, {
-            visible: () => visibleGroups().map(groupToken),
-            sequence: () => groupSeqTokens(store.layout()),
-            reorder: (from, to) => store.reorderGroupsTo(from, to),
-            hold: () => store.hold(),
-          })
-        }
-      >
-        <Show when={store.loadError()}>
-          <div class="tl-sidebar-msg tl-sidebar-error">{store.loadError()}</div>
-        </Show>
+          <Show when={store.loading() && store.model().groups.length === 0}>
+            <div class="tl-skeleton" />
+            <div class="tl-skeleton" />
+            <div class="tl-skeleton" />
+          </Show>
 
-        <Show when={store.loading() && store.model().groups.length === 0}>
-          <div class="tl-skeleton" />
-          <div class="tl-skeleton" />
-          <div class="tl-skeleton" />
-        </Show>
+          <Show when={isEmpty()}>
+            <div class="tl-sidebar-msg tl-muted">No sessions yet.</div>
+          </Show>
 
-        <Show when={isEmpty()}>
-          <div class="tl-sidebar-msg tl-muted">No sessions yet.</div>
-        </Show>
+          <For each={visibleGroups()}>
+            {(g) => (
+              <ProjectGroup
+                isUnseen={unseenOf}
+                store={store}
+                group={g}
+                tick={tick}
+                badge={badge}
+                showLastActive={showLastActive}
+                onNewSession={props.onNewSession}
+              />
+            )}
+          </For>
 
-        <For each={visibleGroups()}>
-          {(g) => (
-            <ProjectGroup
-              isUnseen={unseenOf}
-              store={store}
-              group={g}
-              tick={tick}
-              badge={badge}
-              showLastActive={showLastActive}
-              onNewSession={props.onNewSession}
-            />
-          )}
-        </For>
-
-        <Show when={store.model().foreign.length > 0}>
-          {/* hand-rolled rather than a <ProjectGroup> (it is read-only and has
+          <Show when={store.model().foreign.length > 0}>
+            {/* hand-rolled rather than a <ProjectGroup> (it is read-only and has
               no actions), so it has to carry the collapsed class itself — the
               chevron rotation hangs off it. */}
-          <div class="tl-group" classList={{ "tl-group-collapsed": sharedCollapsed() }}>
-            <div
-              class="tl-group-header"
-              role="button"
-              tabindex={0}
-              aria-expanded={!sharedCollapsed()}
-              onClick={() => store.collapse.toggle(SHARED_KEY)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  store.collapse.toggle(SHARED_KEY);
-                }
-              }}
-            >
-              <span class="tl-chev">▾</span>
-              <span class="tl-group-title">Shared with me</span>
-              <span class="tl-group-badges">
-                <span class="tl-group-count">{store.model().foreign.length}</span>
-              </span>
-            </div>
-            <Show when={!sharedCollapsed()}>
-              <div class="tl-group-body">
-                <For each={store.model().foreign}>
-                  {(s) => (
-                    <SessionCard
-                      isUnseen={unseenOf}
-                      store={store}
-                      session={s}
-                      groupName=""
-                      tick={tick}
-                      badge={badge}
-                      showLastActive={showLastActive}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
-          </div>
-        </Show>
-
-        {/* System, at the very foot: the sessions the lobby's own create path
-            did not make — harness fleets, and whatever else reached the tmux
-            server without saying who it was. Collapsed by default, which is the
-            point of it, so the COUNT is the whole of the evidence that
-            something landed here wrongly and has to be readable without
-            opening the group. Hand-rolled for the reasons at `systemGroup`. */}
-        <Show when={systemGroup()}>
-          {(g) => (
-            <div class="tl-group" classList={{ "tl-group-collapsed": systemCollapsed() }}>
+            <div class="tl-group" classList={{ "tl-group-collapsed": sharedCollapsed() }}>
               <div
                 class="tl-group-header"
                 role="button"
                 tabindex={0}
-                aria-expanded={!systemCollapsed()}
-                aria-label="System group"
-                title="Sessions the lobby did not create. They attach and kill like any other. They do not notify."
-                onClick={toggleSystem}
+                aria-expanded={!sharedCollapsed()}
+                onClick={() => store.collapse.toggle(SHARED_KEY)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") {
                     e.preventDefault();
-                    toggleSystem();
+                    store.collapse.toggle(SHARED_KEY);
                   }
                 }}
               >
                 <span class="tl-chev">▾</span>
-                <span class="tl-group-title">System</span>
+                <span class="tl-group-title">Shared with me</span>
                 <span class="tl-group-badges">
-                  <span class="tl-group-count">{g().sessions.length}</span>
+                  <span class="tl-group-count">{store.model().foreign.length}</span>
                 </span>
               </div>
-              <Show when={!systemCollapsed()}>
-                <div
-                  class="tl-group-body"
-                  // A sortable like any other group's, so a card can be dragged
-                  // OUT — which is the rescue (store.move stamps the session
-                  // `user` on the server before it writes the layout). A drop
-                  // back IN reads this name, and the store refuses it: the
-                  // layout has no slot to write.
-                  {...{ [GROUP_ATTR]: SYSTEM_GROUP_NAME }}
-                  ref={(el) =>
-                    attachSessionList(el, {
-                      group: () => SYSTEM_GROUP_NAME,
-                      names: () => g().sessions.map((s) => s.name),
-                      move: (name, group, anchor) => store.move(name, group, anchor),
-                      hold: () => store.hold(),
-                    })
-                  }
-                >
-                  <For each={systemCards(g())}>
+              <Show when={!sharedCollapsed()}>
+                <div class="tl-group-body">
+                  <For each={store.model().foreign}>
                     {(s) => (
                       <SessionCard
                         isUnseen={unseenOf}
                         store={store}
                         session={s}
-                        groupName={SYSTEM_GROUP_NAME}
+                        groupName=""
                         tick={tick}
                         badge={badge}
                         showLastActive={showLastActive}
@@ -456,83 +439,150 @@ export const Sidebar: Component<{
                 </div>
               </Show>
             </div>
-          )}
-        </Show>
-      </div>
+          </Show>
 
-      <div class="tl-sidebar-foot">
-        <Show
-          when={!addingProject()}
-          fallback={
-            <input
-              ref={projInput}
-              class="tl-add-input"
-              placeholder="new project name…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void commitProject();
-                else if (e.key === "Escape") setAddingProject(false);
-              }}
-              onBlur={() => setAddingProject(false)}
-            />
-          }
-        >
-          <button class="tl-foot-btn" onClick={beginProject}>
-            + Project
-          </button>
-          <button
-            class="tl-foot-btn"
-            onClick={() => setRestoreOpen(true)}
-            title="Pick a saved snapshot and choose which sessions to bring back"
+          {/* System, at the very foot: the sessions the lobby's own create path
+            did not make — harness fleets, and whatever else reached the tmux
+            server without saying who it was. Collapsed by default, which is the
+            point of it, so the COUNT is the whole of the evidence that
+            something landed here wrongly and has to be readable without
+            opening the group. Hand-rolled for the reasons at `systemGroup`. */}
+          <Show when={systemGroup()}>
+            {(g) => (
+              <div class="tl-group" classList={{ "tl-group-collapsed": systemCollapsed() }}>
+                <div
+                  class="tl-group-header"
+                  role="button"
+                  tabindex={0}
+                  aria-expanded={!systemCollapsed()}
+                  aria-label="System group"
+                  title="Sessions the lobby did not create. They attach and kill like any other. They do not notify."
+                  onClick={toggleSystem}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      toggleSystem();
+                    }
+                  }}
+                >
+                  <span class="tl-chev">▾</span>
+                  <span class="tl-group-title">System</span>
+                  <span class="tl-group-badges">
+                    <span class="tl-group-count">{g().sessions.length}</span>
+                  </span>
+                </div>
+                <Show when={!systemCollapsed()}>
+                  <div
+                    class="tl-group-body"
+                    // A sortable like any other group's, so a card can be dragged
+                    // OUT — which is the rescue (store.move stamps the session
+                    // `user` on the server before it writes the layout). A drop
+                    // back IN reads this name, and the store refuses it: the
+                    // layout has no slot to write.
+                    {...{ [GROUP_ATTR]: SYSTEM_GROUP_NAME }}
+                    ref={(el) =>
+                      attachSessionList(el, {
+                        group: () => SYSTEM_GROUP_NAME,
+                        names: () => g().sessions.map((s) => s.name),
+                        move: (name, group, anchor) => store.move(name, group, anchor),
+                        hold: () => store.hold(),
+                      })
+                    }
+                  >
+                    <For each={systemCards(g())}>
+                      {(s) => (
+                        <SessionCard
+                          isUnseen={unseenOf}
+                          store={store}
+                          session={s}
+                          groupName={SYSTEM_GROUP_NAME}
+                          tick={tick}
+                          badge={badge}
+                          showLastActive={showLastActive}
+                        />
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </div>
+            )}
+          </Show>
+        </div>
+
+        <div class="tl-sidebar-foot">
+          <Show
+            when={!addingProject()}
+            fallback={
+              <input
+                ref={projInput}
+                class="tl-add-input"
+                placeholder="new project name…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void commitProject();
+                  else if (e.key === "Escape") setAddingProject(false);
+                }}
+                onBlur={() => setAddingProject(false)}
+              />
+            }
           >
-            Restore
-          </button>
-        </Show>
-        {props.actAsChip}
-        {/* Beside the gear, because it is the short answer to the question the
+            <button class="tl-foot-btn" onClick={beginProject}>
+              + Project
+            </button>
+            <button
+              class="tl-foot-btn"
+              onClick={() => setRestoreOpen(true)}
+              title="Pick a saved snapshot and choose which sessions to bring back"
+            >
+              Restore
+            </button>
+          </Show>
+          {props.actAsChip}
+          {/* Beside the gear, because it is the short answer to the question the
             gear opens: attach a Claude session and it reads today's spend,
             attach a Codex one and it reads the tighter of its two limits. */}
-        <Show when={props.onOpenSpend}>
-          {(open) => (
-            <SpendFigure tool={attachedTool} polls={store.polls} onOpen={() => open()()} />
-          )}
-        </Show>
-        <Show when={props.onOpenSkills}>
-          {(open) => (
-            <button
-              class="tl-icon-btn tl-foot-skills"
-              aria-label="Skills"
-              title="Skills"
-              onClick={() => open()()}
-            >
-              <SkillsIcon />
-            </button>
-          )}
-        </Show>
-        <Show when={props.onOpenSettings}>
-          {(open) => (
-            <button
-              class="tl-icon-btn tl-settings-btn tl-foot-settings"
-              aria-label="Settings"
-              title="Settings"
-              onClick={() => open()()}
-            >
-              ⚙
-            </button>
-          )}
+          <Show when={props.onOpenSpend}>
+            {(open) => (
+              <SpendFigure tool={attachedTool} polls={store.polls} onOpen={() => open()()} />
+            )}
+          </Show>
+          <Show when={props.onOpenSkills}>
+            {(open) => (
+              <button
+                class="tl-icon-btn tl-foot-skills"
+                aria-label="Skills"
+                title="Skills"
+                onClick={() => open()()}
+              >
+                <SkillsIcon />
+              </button>
+            )}
+          </Show>
+          <Show when={props.onOpenSettings}>
+            {(open) => (
+              <button
+                class="tl-icon-btn tl-settings-btn tl-foot-settings"
+                aria-label="Settings"
+                title="Settings"
+                onClick={() => open()()}
+              >
+                ⚙
+              </button>
+            )}
+          </Show>
+        </div>
+
+        <Show when={restoreOpen()}>
+          <RestorePicker
+            api={{
+              listSnapshots: () => store.listSnapshots(),
+              getSnapshot: (ts) => store.getSnapshot(ts),
+              restoreSessions: (sel) => store.restore(sel),
+            }}
+            home={home()}
+            onClose={() => setRestoreOpen(false)}
+          />
         </Show>
       </div>
-
-      <Show when={restoreOpen()}>
-        <RestorePicker
-          api={{
-            listSnapshots: () => store.listSnapshots(),
-            getSnapshot: (ts) => store.getSnapshot(ts),
-            restoreSessions: (sel) => store.restore(sel),
-          }}
-          home={home()}
-          onClose={() => setRestoreOpen(false)}
-        />
-      </Show>
-    </div>
+    </SidebarWorkspacesContext.Provider>
   );
 };

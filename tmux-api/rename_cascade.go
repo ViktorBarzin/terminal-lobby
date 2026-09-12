@@ -2,10 +2,11 @@ package main
 
 // Carrying a rename into everything keyed by a session's NAME.
 //
-// A tmux session's identity is its name, and six different places record that
+// A tmux session's identity is its name, and seven different places record that
 // name independently: the per-user layout, the global project store's
 // (owner, name) refs, the share store's grants, the image directory under
-// /var/lib/clipboard-store, the killed-assignment memory, and the titles store.
+// /var/lib/clipboard-store, the killed-assignment memory, the titles store, and
+// the workspace membership document.
 //
 // Only the layout followed a rename before session titles, which was a
 // reasonable place to stop while renaming was a rare, deliberate act. Deriving
@@ -18,9 +19,18 @@ package main
 // act. ADR-0022 put the derivation back — a title carries the tmux name with
 // it, so `tmux ls` and the status bar read as words — which makes this the
 // ordinary path again rather than an exceptional one. Three callers, all of
-// which need every one of the six stores carried: name_from_title.go on each
+// which need every one of the seven stores carried: name_from_title.go on each
 // title that lands, the one-time migration that gave every pre-ADR session an
 // id (migrate_ids.go), and POST /sessions/{name}/rename.
+//
+// The workspace document is the newest of the seven and the one where the
+// timing bites hardest. A workspace is several sessions on screen at once
+// (ADR-0027), and ADR-0022 renames a session as its FIRST title lands, 3-5
+// seconds into the first turn. So a session dragged beside another early in its
+// life is renamed underneath the membership document almost at once: a member
+// that did not follow names a session nothing answers to, the browser filters
+// it out against the live list, the group falls below two members, and the
+// tiles the user just arranged collapse back to one session.
 //
 // Everything here is best-effort and logged rather than fatal. The tmux rename
 // has already landed by the time any of this runs, so returning an error would
@@ -58,6 +68,12 @@ func carryRenameAcrossStores(osUser, oldName, newName string) {
 	if err := assignmentStoreInstance.rename(osUser, oldName, newName); err != nil {
 		log.Printf("assignment memory rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
 	}
+	// Only the caller's OWN sessions move: a tmux rename lands in one user's
+	// server, and a workspace may hold a session somebody shared with you, so
+	// renameSession leaves a member carrying another owner alone.
+	if err := workspaceStoreInstance.renameSession(osUser, oldName, newName); err != nil {
+		log.Printf("workspace membership rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
+	}
 	renameProjectRefs(osUser, oldName, newName)
 	renameShares(osUser, oldName, newName)
 	renameImageDir(osUser, oldName, newName)
@@ -68,7 +84,7 @@ func carryRenameAcrossStores(osUser, oldName, newName string) {
 // stampBornAs records the name a session was FIRST created with, so a client
 // holding that name can still find the session under its new one.
 //
-// The seven moves above are for records the SERVER keeps. This one is for a
+// The eight moves above are for records the SERVER keeps. This one is for a
 // client that has no record at all. ADR-0022 renames a fresh session the moment
 // its first title lands, which is seconds into the first turn, while GET
 // /sessions is behind a 5-second cache — so a browser routinely never sees the
@@ -105,7 +121,7 @@ func stampBornAs(osUser, oldName, newName string) {
 
 // renameGridPin re-points a watched session's grid pin at the name it has now.
 //
-// The other six moves here are STORES keyed by name. This one is state tmux
+// The other seven moves here are STORES keyed by name. This one is state tmux
 // itself holds: PinGrid writes the session name into three hooks, and a rename
 // leaves them naming a session that no longer resolves, so every hook fails into
 // its own `|| true` and nothing resizes the window — while `window-size` stays

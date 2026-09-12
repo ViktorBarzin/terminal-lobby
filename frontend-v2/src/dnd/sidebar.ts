@@ -31,14 +31,16 @@
  * with a list's new order on every crossing and expects the framework to render
  * it. So `setValues` writes a live order that exists only for the length of the
  * drag, and the layout is written once, when the pointer comes up.
+ *
+ * THE TILES GET FIRST REFUSAL ON THAT ONE WRITE. A card let go on a tile edge
+ * was aimed at the workspace, and `dnd/tiles.ts` lands the split from the same
+ * pointer release this module's `onDragend` fires on. Writing a card order as
+ * well would move the session into whichever project's list the pointer crossed
+ * on its way out — the split AND a reassignment nobody asked for. So the one
+ * write asks {@link setTileDropClaim}'s reader first.
  */
 
-import {
-  animations,
-  dragAndDrop,
-  dragstartClasses,
-  tearDown,
-} from "@formkit/drag-and-drop";
+import { animations, dragAndDrop, dragstartClasses, tearDown } from "@formkit/drag-and-drop";
 import { createSignal, onCleanup } from "solid-js";
 import type { DropAnchor } from "../components/lobby.logic";
 import { isMobilePlatform } from "../mobile/pointer";
@@ -127,6 +129,27 @@ export function liveGroupOrder(): string[] | null {
 let inFlight = false;
 
 /**
+ * Whether the workspace's tiles are taking the drop that is ending, or null
+ * whenever no workspace canvas is mounted — which is most of the app's life,
+ * and means every drag is the list's own.
+ *
+ * A reader handed over rather than a function imported, and the direction is
+ * forced rather than chosen. `dnd/tiles.ts` already imports `DRAG_START_EVENT`
+ * from here, which is the right way round — the sidebar is what raises it — so
+ * importing `tileDropClaimed` back would close a two-file cycle, and biome's
+ * `noImportCycles` refuses one (measured: two errors, one for each edge of it).
+ * The claim therefore travels the way the dependency already runs, from the
+ * tiles into the sidebar, and `attachTileDrop` withdraws it with its canvas.
+ */
+let tileClaim: (() => boolean) | null = null;
+
+/** Hand over the tiles' answer, or withdraw it with null. `dnd/tiles.ts` is the
+ *  only caller; nothing else in the app knows what a tile is. */
+export function setTileDropClaim(claimed: (() => boolean) | null): void {
+  tileClaim = claimed;
+}
+
+/**
  * A press this long on a touchscreen lifts what is under it. It is the same
  * 450ms a card's actions menu opens on, deliberately: one press, and what
  * happens next is decided by whether the finger then moves. A shorter press
@@ -203,48 +226,62 @@ export function attachSessionList(el: HTMLElement, deps: SessionListDeps): void 
     release = null;
   };
 
-  register(el, () => dragAndDrop<string>({
-    parent: el,
-    getValues: () => liveOrder(deps.group()) ?? deps.names(),
-    setValues: (names) => setLive((prev) => ({ ...prev, [deps.group()]: names })),
-    config: {
-      group: "tl-sessions",
-      nativeDrag: !isMobilePlatform(),
-      longPress: true,
-      longPressDuration: HOLD_MS,
-      // Someone else's session is read-only here, and reordering it would ask
-      // the layout to hold a name this account does not own.
-      draggable: (child) =>
-        child.classList.contains("tl-card") &&
-        !child.classList.contains("tl-card-foreign"),
-      dragPlaceholderClass: "tl-card-dragging",
-      synthDragPlaceholderClass: "tl-card-dragging",
-      plugins: [animations({ duration: SLIDE_MS })],
-      // Not `onDragstart`, which the library raises for a NATIVE drag only —
-      // measured: a finger's synthetic drag reaches `onDragend` having raised
-      // no start at all, so the poll was never held and the drop was thrown
-      // away as a drag nobody had seen begin. This hook runs on both paths,
-      // which is the whole reason it is the one used.
-      dragstartClasses: (node, nodes, config, isSynth) => {
-        dragstartClasses(node, nodes, config, isSynth);
-        inFlight = true;
-        setDragging("session");
-        // A poll that rebuilt the list mid-drag would move the rows out from
-        // under the pointer, taking the dragged node's own element with them.
-        release ??= deps.hold();
-      },
-      onDragend: ({ parent, values, draggedNode }) => {
-        if (!inFlight) return;
-        inFlight = false;
-        const name = String(draggedNode.data.value);
-        void landSession(name, parent.el, values as string[], deps).finally(done);
-      },
+  register(
+    el,
+    () =>
+      dragAndDrop<string>({
+        parent: el,
+        getValues: () => liveOrder(deps.group()) ?? deps.names(),
+        setValues: (names) => setLive((prev) => ({ ...prev, [deps.group()]: names })),
+        config: {
+          group: "tl-sessions",
+          nativeDrag: !isMobilePlatform(),
+          longPress: true,
+          longPressDuration: HOLD_MS,
+          // Someone else's session is read-only here, and reordering it would ask
+          // the layout to hold a name this account does not own.
+          draggable: (child) =>
+            child.classList.contains("tl-card") && !child.classList.contains("tl-card-foreign"),
+          dragPlaceholderClass: "tl-card-dragging",
+          synthDragPlaceholderClass: "tl-card-dragging",
+          plugins: [animations({ duration: SLIDE_MS })],
+          // Not `onDragstart`, which the library raises for a NATIVE drag only —
+          // measured: a finger's synthetic drag reaches `onDragend` having raised
+          // no start at all, so the poll was never held and the drop was thrown
+          // away as a drag nobody had seen begin. This hook runs on both paths,
+          // which is the whole reason it is the one used.
+          dragstartClasses: (node, nodes, config, isSynth) => {
+            dragstartClasses(node, nodes, config, isSynth);
+            inFlight = true;
+            setDragging("session");
+            // A poll that rebuilt the list mid-drag would move the rows out from
+            // under the pointer, taking the dragged node's own element with them.
+            release ??= deps.hold();
+          },
+          onDragend: ({ parent, values, draggedNode }) => {
+            if (!inFlight) return;
+            inFlight = false;
+            // The tiles first. A card they took is not also a card reorder: both
+            // drags end on the same release, so without this the tile splits AND
+            // the session is written into whichever project's list the pointer
+            // last crossed on its way out to the workspace.
+            //
+            // The answer is read rather than worked out here, because neither
+            // module can pin down which end handler the browser calls first. The
+            // tiles write their claim on every pointer move, so it already holds by
+            // the time either end runs — `dnd/tiles.ts` sets that out at length.
+            if (tileClaim?.()) return done();
+            const name = String(draggedNode.data.value);
+            void landSession(name, parent.el, values as string[], deps).finally(done);
+          },
+        },
+      }),
+    () => {
+      inFlight = false;
+      release?.();
+      release = null;
     },
-  }), () => {
-    inFlight = false;
-    release?.();
-    release = null;
-  });
+  );
 }
 
 /**
@@ -264,55 +301,63 @@ export function attachGroupList(el: HTMLElement, deps: GroupListDeps): void {
     release = null;
   };
 
-  register(el, () => dragAndDrop<string>({
-    parent: el,
-    getValues: () => liveGroupOrder() ?? deps.visible(),
-    setValues: (tokens) => setLiveGroups(tokens),
-    config: {
-      group: "tl-groups",
-      nativeDrag: !isMobilePlatform(),
-      longPress: true,
-      longPressDuration: HOLD_MS,
-      dragHandle: ".tl-group-header",
-      // The scroller also holds the skeletons, the empty-list message and the
-      // read-only "Shared with me" group; only a group the layout can place
-      // carries a token.
-      draggable: (child) =>
-        child.classList.contains("tl-group") && child.hasAttribute(TOKEN_ATTR),
-      // The library disarms a native drag while focus sits inside a child of a
-      // draggable node, so that a text field in a row can be clicked into
-      // without the row being picked up. It listens for `focus` in the CAPTURE
-      // phase, which for a group means every card inside it counts as that
-      // child — and a card IS focusable (tabindex 0), so pressing one set the
-      // group's `draggable` to false, and with it the card's own. Measured in
-      // Chrome: pressing any row flipped draggable true then false in the same
-      // event, and no `dragstart` ever followed. A group is dragged by its
-      // header alone, and `dragHandle` already refuses a drag that began
-      // anywhere else, so the guard has nothing left to protect here.
-      handleNodeFocus: () => {},
-      handleNodeBlur: () => {},
-      dragPlaceholderClass: "tl-group-dragging",
-      synthDragPlaceholderClass: "tl-group-dragging",
-      plugins: [animations({ duration: SLIDE_MS })],
-      // See the session list above for why this and not `onDragstart`.
-      dragstartClasses: (node, nodes, config, isSynth) => {
-        dragstartClasses(node, nodes, config, isSynth);
-        inFlight = true;
-        setDragging("group");
-        release ??= deps.hold();
-      },
-      onDragend: ({ values, draggedNode }) => {
-        if (!inFlight) return;
-        inFlight = false;
-        const token = String(draggedNode.data.value);
-        void landGroup(token, values as string[], deps).finally(done);
-      },
+  register(
+    el,
+    () =>
+      dragAndDrop<string>({
+        parent: el,
+        getValues: () => liveGroupOrder() ?? deps.visible(),
+        setValues: (tokens) => setLiveGroups(tokens),
+        config: {
+          group: "tl-groups",
+          nativeDrag: !isMobilePlatform(),
+          longPress: true,
+          longPressDuration: HOLD_MS,
+          dragHandle: ".tl-group-header",
+          // The scroller also holds the skeletons, the empty-list message and the
+          // read-only "Shared with me" group; only a group the layout can place
+          // carries a token.
+          draggable: (child) =>
+            child.classList.contains("tl-group") && child.hasAttribute(TOKEN_ATTR),
+          // The library disarms a native drag while focus sits inside a child of a
+          // draggable node, so that a text field in a row can be clicked into
+          // without the row being picked up. It listens for `focus` in the CAPTURE
+          // phase, which for a group means every card inside it counts as that
+          // child — and a card IS focusable (tabindex 0), so pressing one set the
+          // group's `draggable` to false, and with it the card's own. Measured in
+          // Chrome: pressing any row flipped draggable true then false in the same
+          // event, and no `dragstart` ever followed. A group is dragged by its
+          // header alone, and `dragHandle` already refuses a drag that began
+          // anywhere else, so the guard has nothing left to protect here.
+          handleNodeFocus: () => {},
+          handleNodeBlur: () => {},
+          dragPlaceholderClass: "tl-group-dragging",
+          synthDragPlaceholderClass: "tl-group-dragging",
+          plugins: [animations({ duration: SLIDE_MS })],
+          // See the session list above for why this and not `onDragstart`.
+          dragstartClasses: (node, nodes, config, isSynth) => {
+            dragstartClasses(node, nodes, config, isSynth);
+            inFlight = true;
+            setDragging("group");
+            release ??= deps.hold();
+          },
+          // No tile claim to ask about here, unlike the session list above: a
+          // project header is not a session, so `attachTileDrop` retires the last
+          // claim on this drag's start event and never begins a drag for it.
+          onDragend: ({ values, draggedNode }) => {
+            if (!inFlight) return;
+            inFlight = false;
+            const token = String(draggedNode.data.value);
+            void landGroup(token, values as string[], deps).finally(done);
+          },
+        },
+      }),
+    () => {
+      inFlight = false;
+      release?.();
+      release = null;
     },
-  }), () => {
-    inFlight = false;
-    release?.();
-    release = null;
-  });
+  );
 }
 
 /** The one move a finished drag asks for, or null when it asks for nothing. */
@@ -361,11 +406,7 @@ async function landSession(
 }
 
 /** The same, for a project header dropped somewhere in the sequence. */
-async function landGroup(
-  token: string,
-  values: string[],
-  deps: GroupListDeps,
-): Promise<void> {
+async function landGroup(token: string, values: string[], deps: GroupListDeps): Promise<void> {
   const sequence = deps.sequence();
   const to = groupSeqTarget(sequence, values, token);
   if (to === null) return;

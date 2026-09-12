@@ -67,8 +67,34 @@ export type BellMode = "toggle" | "install-hint" | "hidden";
 export interface NotificationSystemOptions {
   /** the full poll session list (own + foreign) as a plain snapshot. */
   sessions: Accessor<readonly TitleSession[]>;
-  /** the active session name, or null. */
+  /**
+   * The FOCUSED session's name, or null — the one the URL names, the one the
+   * tab title is about, and the one a notification tap is measured against.
+   *
+   * Still one name after tiles, because each of those three has room for
+   * exactly one. What is on SCREEN is {@link NotificationSystemOptions.visible}.
+   */
   selected: Accessor<string | null>;
+  /**
+   * EVERY SESSION ON SCREEN, focused tile included — the whole visible set.
+   *
+   * The design's surface table: "notifications | every visible tile counts as
+   * open. Whatever suppression the open session gets today — push, bell badge,
+   * unseen marker — applies to the whole visible set." A workspace puts several
+   * live sessions in front of one pair of eyes, and `selected` names only the
+   * one taking keystrokes, so everything gated on it treated the other three
+   * tiles as work you could not see: they kept their unseen mark, they counted
+   * towards the app-icon badge, and a foreground notification fired for output
+   * you were reading at the time.
+   *
+   * OMITTED MEANS THE SELECTED SESSION ALONE, which is the lobby as it has
+   * always worked and what a phone always gets — a workspace of one is a bare
+   * leaf (ADR-0027), so one visible session and one selected session are the
+   * same statement. The shell passes it for real; test/workspace-notify.test.tsx
+   * drives `<App/>` rather than this module precisely because a default this
+   * quiet is exactly what an unwired prop looks like.
+   */
+  visible?: Accessor<readonly string[]>;
   /** OS user, for the title body fallback. */
   osUser: Accessor<string>;
   /** roamed notify prefs (both default true). */
@@ -167,6 +193,22 @@ function computeBellMode(): BellMode {
 export function createNotificationSystem(opts: NotificationSystemOptions): NotificationSystem {
   const bellMode = computeBellMode();
 
+  /**
+   * WHAT THIS DEVICE HAS ON SCREEN, which is what every suppression in this
+   * file is measured against.
+   *
+   * Reactive, so an effect that reads it re-runs when a tile is revealed,
+   * closed, or the workspace is left. The fallback is the whole of "keep a lone
+   * session behaving exactly as it did": no visible set supplied, and the
+   * selected session is the one thing on screen.
+   */
+  const onScreen = (): readonly string[] => {
+    const set = opts.visible?.();
+    if (set) return set;
+    const one = opts.selected();
+    return one ? [one] : [];
+  };
+
   const [optedIn, setOptedIn] = createSignal(notifyOptedIn());
   const [permission, setPermission] = createSignal<NotificationPermission | "unsupported">(
     hasNotificationApi ? Notification.permission : "unsupported",
@@ -194,6 +236,20 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // So the push sender can withhold the session on screen from THIS device and
   // still tell every other one (notify/focus.ts has the why). Only a device the
   // server actually pushes to has anything to report.
+  //
+  // ONE SESSION, AND IN A WORKSPACE THAT IS NOT THE WHOLE ANSWER. The report is
+  // the focused tile, which is right as far as it goes and stops at the wire:
+  // `POST /api/sessions/push/focus` carries `{"endpoint":…,"session":…}` — one name,
+  // validated against `sessionNameRe` — and `focusStore.report` keeps one record
+  // per endpoint, matched with `rec.session != session`
+  // (tmux-api/pushfocus.go). So there is no in-band way to say "these four", and
+  // a push about a visible-but-unfocused tile still reaches the phone in your
+  // pocket while that tile is on screen. Closing it is a set on the wire: a
+  // `sessions` array in `pwa/push.ts` `reportFocus`, a `[]string` in the focus
+  // store with a membership test in `watching`, and `focusedSession` answering
+  // with the visible set instead of one name. Every other suppression in this
+  // file — the unseen mark, the icon badge, the foreground banner — already
+  // follows the whole visible set, and this is the one that cannot yet.
   let lastFocus: FocusReport | null = null;
   let focusInFlight = false;
   // Something moved while a report was in the air. One request at a time keeps
@@ -437,7 +493,10 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
     const prefs = untrack(opts.notifyPrefs);
     const fires = computeTransitions(prev, list, {
       away: away(),
-      activeSession: untrack(opts.selected),
+      // EVERY VISIBLE TILE, not the focused one. A banner about a session whose
+      // output is on screen in the tile beside the one you are typing in is a
+      // notification about something you are already looking at.
+      activeSession: untrack(onScreen),
       onAwaiting: prefs.onAwaiting,
       onDone: prefs.onDone,
       pushDelivers: untrack(pushDelivers),
@@ -508,13 +567,17 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   createEffect(() => {
     if ((opts.polls?.() ?? 1) === 0) return; // nothing known yet
     const list = opts.sessions();
-    const active = opts.selected();
+    const shown = onScreen();
     visits.revision(); // re-run when an out-of-band stamp changes the set
-    // Fold this poll in BEFORE painting: the session on screen is seen by the
+    // Fold this poll in BEFORE painting: every session on screen is seen by the
     // time its badge would be drawn. Stamping inside the effect is safe —
     // `revision` only bumps when the unseen set actually changes, so this
     // settles after one extra pass instead of looping.
-    visits.observe(list, active);
+    //
+    // ALL OF THEM, because the icon badge answers "how many need me" and a tile
+    // you are reading does not. With one name here, a two-tile workspace raised
+    // the badge for the session sitting beside the one being typed into.
+    visits.observe(list, shown);
     applyAppBadge(waitingCount(list, isUnseen, opts.osUser()), undefined, reportBadge);
   });
 
@@ -554,7 +617,10 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // already staring at).
   const onLook = (): void => {
     setAttention((s) => clearAttention(s));
-    visits.stamp(untrack(opts.selected));
+    // Everything on screen, because a look is at the whole screen: coming back
+    // to a four-tile workspace is looking at four sessions, and leaving three of
+    // them marked unread would put a badge on work the eyes just crossed.
+    visits.stamp(untrack(onScreen));
     reportFocusNow(untrack(opts.selected));
     // A tap that iOS turned into a plain foreground, with no notificationclick
     // and no reload, leaves its only trace in the stash. Every way back into the

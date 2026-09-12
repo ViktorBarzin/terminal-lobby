@@ -5,9 +5,15 @@
  * ApiError carrying the HTTP status so callers can branch (409 taken, 404 gone).
  */
 import { noteNetworkId } from "../diagnostics/network";
+// keyOf, for the one thing this file needs a session IDENTITY for: deciding
+// which member a contested session belongs to. It is the key keepalive mounts a
+// live view under, so two members that would mount one slot are one member here
+// — which is the exclusivity rule stated in the terms that make it true.
+import { keyOf } from "../store/keepalive";
 import { NET_HEADER, apiUrl } from "./config";
 import {
   emptyLayout,
+  emptyWorkspaces,
   type Layout,
   type LayoutProject,
   type RestoreSelection,
@@ -15,6 +21,10 @@ import {
   type SnapshotList,
   type SnapshotRow,
   type Whoami,
+  type Workspace,
+  type WorkspaceMember,
+  type Workspaces,
+  MIN_WORKSPACE_MEMBERS,
   NAME_RE,
 } from "../types/lobby";
 
@@ -453,3 +463,185 @@ export const lobbyApi: LobbyApi = {
   prewarm,
   releasePrewarm,
 };
+
+// --- workspaces (which sessions sit on screen together) -----------------------
+//
+// A Workspace is several sessions shown at once as Tiles, arranged as a tree of
+// rows and columns. ADR-0027 splits that object across two stores and only the
+// server half travels here: the workspace's id and its ordered members. The tree
+// and the tile sizes stay in this browser under `tl:workspaces:v1`
+// (store/workspaces.ts), because a four-column arrangement describes a 32-inch
+// monitor and is meaningless on a laptop.
+//
+// Both calls follow the layout pair above rather than inventing manners of their
+// own: same `req`, same whole-document GET/PUT, same last-writer-wins, same
+// ApiError carrying the status. A store that behaves differently from the one
+// next to it is a store whose behaviour has to be rediscovered.
+//
+// Deliberately NOT part of the injectable `LobbyApi` surface, for the same
+// reason `listUsers` and `availableCommands` are not: adding them to the
+// interface would mean a stub in every existing store fake for a call none of
+// them make. Callers import the two functions from here, and a caller that
+// needs to substitute them takes them as its own dependencies — the way
+// `createWorkspacesStore` already takes `parseTree` and `sessionsOf`.
+
+/**
+ * GET /api/workspaces → which of this user's sessions belong on screen
+ * together, normalized (see `normalizeWorkspaces`).
+ *
+ * THROWS on anything but a 2xx, and that is the point of not writing it like
+ * `listUsers`, which degrades to an empty list. An empty document is a real
+ * answer — it is where every user sits until their first split, and where
+ * closing back to one tile returns them — and it means "unmark every member in
+ * the sidebar, and this device may forget the arrangements it holds for them".
+ * A tmux-api that is restarting means nothing of the sort. Handing back an empty
+ * document for a request that failed would make those two indistinguishable, so
+ * the caller is told and keeps what it already had on screen.
+ */
+export async function getWorkspaces(): Promise<Workspaces> {
+  const w = await json<Partial<Workspaces>>("/workspaces", { cache: "no-store" });
+  return normalizeWorkspaces(w);
+}
+
+/**
+ * Rebuild a workspaces document FROM NAMED FIELDS ONLY. Exported for testing.
+ *
+ * WHY THE UNKNOWN FIELDS GO. tmux-api unmarshals this document into a struct, so
+ * a field it has never heard of is silently dropped on the way in and absent on
+ * the way out — no error, nothing in a log. That is how the Ctrl+J dock used to
+ * vanish four seconds after it was opened, before `DockState` became a real
+ * field in layout.go. This function is the client agreeing to the same terms:
+ * what is not declared on both sides does not exist, and a shape the server will
+ * throw away cannot be read back here either, where it would look durable for
+ * exactly as long as the tab stays open.
+ *
+ * The field this concretely covers is the tree. Geometry is per-device by
+ * ADR-0027 and the server deliberately never grows a field for it, so a client
+ * that tucked a `tree` into a workspace entry would watch it disappear on the
+ * next read and have no way to tell that from a device that had never seen the
+ * workspace. Dropping it here makes depending on it impossible rather than
+ * merely unwise.
+ *
+ * THE REPAIRS MIRROR THE SERVER'S OWN `healWorkspaces`, first mention winning
+ * each time: a session listed in two workspaces (or twice in one) stays with the
+ * first, a repeated id keeps its first entry, and a workspace left below
+ * `MIN_WORKSPACE_MEMBERS` is dropped. A GET from a current server arrives
+ * already healed, so the copy earns its keep only in front of a server older
+ * than that heal. Mirroring rather than inventing is the part that matters: a
+ * client that resolved a contested session differently from the server would
+ * show a grouping the server overwrites on its next read, and the person would
+ * see a click open the wrong workspace with nothing on screen to explain it.
+ *
+ * Names, owners and ids are checked against `NAME_RE`, the client's copy of the
+ * server's `sessionNameRe`, the way `normalizeLayout` already checks
+ * `dock.session`. The `typeof` test in front of it is load-bearing rather than
+ * belt and braces: `RegExp.test` coerces, so a member whose name arrived as `7`
+ * or `null` would pass the pattern as "7" or "null" and become a tile pointing
+ * at nothing.
+ *
+ * A SESSION IS THE PAIR, so exclusivity is decided on `keyOf`, the same key
+ * keepalive mounts one live view under. One NAME under two owners is two
+ * members and both survive — emo's `auth` and yours are different terminals and
+ * may sit side by side — while the same owner and name twice is the repeat the
+ * rule is about. An owner of `""` is read as absent, matching the `omitempty`
+ * the server writes it back with.
+ *
+ * What this does NOT mirror: the server resolves an omitted owner to the caller
+ * before comparing, so it catches a document naming your own session bare in one
+ * place and in full in the next. This file does not know who the caller is, so
+ * it would keep both. Nothing in the app mints that shape (members are built
+ * from tile keys, which carry no owner for your own sessions) and a server that
+ * has one refuses the write and heals it on read, so the divergence is
+ * unreachable rather than merely unlikely.
+ *
+ * `version` comes out as the one this client speaks, like `normalizeLayout`'s.
+ * A document from a future server is therefore read as v1 and written back as
+ * v1, where `validateWorkspaces` refuses it out loud — better than this client
+ * quietly PUTting a shape it does not understand.
+ */
+export function normalizeWorkspaces(raw: Partial<Workspaces> | null | undefined): Workspaces {
+  const base = emptyWorkspaces();
+  if (!raw || typeof raw !== "object") return base;
+  if (!Array.isArray(raw.workspaces)) return base;
+
+  const ids = new Set<string>();
+  /** Sessions already spoken for, by `keyOf`, so exclusivity is decided in one
+   *  pass. */
+  const claimed = new Set<string>();
+  const workspaces: Workspace[] = [];
+
+  for (const w of raw.workspaces) {
+    if (!w || typeof w !== "object") continue;
+    if (typeof w.id !== "string" || !NAME_RE.test(w.id) || ids.has(w.id)) continue;
+
+    const members: WorkspaceMember[] = [];
+    const mine = new Set<string>();
+    for (const entry of Array.isArray(w.members) ? w.members : []) {
+      const member = memberFrom(entry);
+      if (!member) continue;
+      const key = keyOf(member);
+      if (claimed.has(key) || mine.has(key)) continue;
+      mine.add(key);
+      members.push(member);
+    }
+
+    // Claim the members only once the workspace is known to survive. A group
+    // being dropped for having too few must not take its sessions with it, or it
+    // would strip them from the real workspace further down the list.
+    if (members.length < MIN_WORKSPACE_MEMBERS) continue;
+    for (const member of members) claimed.add(keyOf(member));
+    ids.add(w.id);
+    workspaces.push({ id: w.id, members });
+  }
+
+  return { version: base.version, workspaces };
+}
+
+/**
+ * One member rebuilt from its two named fields, or `null` for anything the
+ * server would not store: a member that is not an object (the shape before the
+ * owner existed sent bare strings), a name outside the session charset, an
+ * owner that is not a string or not an OS user name.
+ *
+ * The rebuild is what drops the unknown fields, one level deeper than the
+ * workspace entry: tmux-api unmarshals a member into a two-field struct, so a
+ * `title` tucked into one is gone on the way in and absent on the way out, and
+ * keeping it here would show state that survives in this tab and nowhere else.
+ *
+ * An owner of `""` becomes an absent owner rather than a dropped member, which
+ * is how the server reads it too — `omitempty` writes the same document back
+ * either way, and a member is not worth losing over a spelling of "mine".
+ */
+function memberFrom(entry: WorkspaceMember): WorkspaceMember | null {
+  if (!entry || typeof entry !== "object") return null;
+  if (typeof entry.name !== "string" || !NAME_RE.test(entry.name)) return null;
+  if (entry.owner === undefined || entry.owner === "") return { name: entry.name };
+  if (typeof entry.owner !== "string" || !NAME_RE.test(entry.owner)) return null;
+  return { name: entry.name, owner: entry.owner };
+}
+
+/**
+ * PUT /api/workspaces — whole-document, last-writer-wins. Throws on non-204.
+ *
+ * ONE WRITE CARRIES EVERY CHANGE, because the document is whole and the server
+ * refuses one where two workspaces claim the same session. Dragging a session
+ * from workspace A into workspace B is therefore not two calls: A reflowing and
+ * B gaining a tile ride in the same body, and there is no intermediate state to
+ * send. Splitting it would put a document the server rejects on the wire.
+ *
+ * A refusal throws with its status, unlike `setSessionGrid`'s hint, because the
+ * caller has an optimistic arrangement on screen that the server has just
+ * declined to remember. 400 is the interesting one: the document broke
+ * exclusivity, left a group below two members, or carried a name outside the
+ * session charset. The tiles are still on screen and still attached either way —
+ * what was lost is the promise that the other tab, and the next device, will see
+ * the same grouping.
+ */
+export async function putWorkspaces(workspaces: Workspaces): Promise<void> {
+  const res = await req("/workspaces", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(workspaces),
+  });
+  if (!res.ok) throw new ApiError(res.status, `workspaces PUT HTTP ${res.status}`);
+}

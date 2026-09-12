@@ -23,7 +23,34 @@ import { track } from "../telemetry/track";
  * module's, text is the terminal's. Until 2026-09-05 the terminal was a
  * separate document, and a paste inside it was handled entirely by that page's
  * own listeners, out of this module's reach.
+ *
+ * THE TWO INTAKES ARE ROUTED DIFFERENTLY AND THAT IS THE POINT. Both listen on
+ * shared nodes, so both are delivered to every mounted install, and both have
+ * to pick one. A paste carries a clipboard and nothing else, so it goes to the
+ * install whose pty the keystrokes are already going to (`active`). A drop
+ * carries a POINT, so it goes to the tile under it (`tileBox`, and the election
+ * below). Gating the drop on focus as well is what put a file dropped on tile B
+ * into tile A's session on 2026-09-12.
  */
+
+/**
+ * One tile's box in VIEWPORT coordinates — the space `left`/`top`/`right`/
+ * `bottom` are measured in by a `DragEvent`'s `clientX`/`clientY`, so a
+ * `DOMRect` straight off `getBoundingClientRect()` already is one.
+ *
+ * Deliberately NOT `store/workspace-tree.ts`'s `Rect`, which is the same four
+ * numbers in the workspace CONTAINER's coordinates and carries the session key
+ * with it. Sharing that type here would make the two coordinate spaces look
+ * interchangeable in the one place where mixing them puts every drop in the
+ * wrong tile by the width of the sidebar.
+ */
+export interface TileBox {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 export interface ImageClipboardDeps {
   /** the attached session name (the upload's per-session store bucket). */
   session: () => string;
@@ -72,6 +99,48 @@ export interface ImageClipboardDeps {
    * looked at.
    */
   active?: () => boolean;
+  /**
+   * This view's TILE, in viewport coordinates, or null when it is not one — it
+   * is off screen, it is a hidden preload, or there is no workspace at all.
+   *
+   * A DROP HAS COORDINATES AND A PASTE DOES NOT, and that is the whole reason
+   * this exists beside {@link active}. `active` is the right gate for a paste:
+   * a paste arrives with nothing but a clipboard, so the only sane destination
+   * is the pty the keystrokes are already going to. A drop arrives with a
+   * point, and the tile under that point is what a person dropping a screenshot
+   * on it means. Measured on 2026-09-12 in a four-tile workspace: dragging a
+   * file onto tile B while tile A held focus uploaded into A's session
+   * directory and typed A's path at A's pty, because the window listener that
+   * took it was A's. No `pointerdown` ever reaches B — a file drag from the
+   * desktop sends none — so nothing moved focus first, and there is no gesture
+   * a person could have made to fix it.
+   *
+   * NULL IS AN ANSWER AND NOT AN OMISSION. A hidden preload (`.tl-offstage`) is
+   * laid out at full size behind whatever is on screen, so a box measured
+   * without checking would cover every tile and take every drop. Return null
+   * for a view that is not on screen, and return a real box for the ordinary
+   * lobby's single visible session too — a box that covers the whole view takes
+   * every drop in it, which is exactly what one session on screen does today.
+   *
+   * When NO mounted view reports a box, the drop path falls back to {@link
+   * active} unchanged, byte for byte. That is the path the lobby without a
+   * workspace, `NewSessionComposer` and every existing test take.
+   */
+  tileBox?: () => TileBox | null;
+  /**
+   * Move focus to THIS view, called when a drop lands in its tile and focus is
+   * somewhere else.
+   *
+   * Part of the fix, not decoration. The uploaded path is typed through
+   * {@link sendToPty}, which resolves `window.__tlSendToTerminal` — a handle
+   * `lib/ownwhile.ts` gives to the FOCUSED tile and to no other. So routing the
+   * upload to tile B without moving focus swaps one wrong outcome for another:
+   * the image lands in B's gallery and B's path is typed into A's pty. Focus is
+   * moved BEFORE the upload starts, so the handle has been re-bound by the time
+   * the path is sent, and it also settles what happens next — the prompt you
+   * type after dropping a screenshot goes to the session you dropped it on.
+   */
+  focusTile?: () => void;
   /** Hand dropped files to the text view's composer (used when composerOwns). */
   onComposerFiles?: (files: File[]) => Promise<unknown>;
   /** seams for tests (default to the live document/window/uploader/toaster). */
@@ -113,9 +182,86 @@ function ptyPathBytes(paths: string[]): string {
   return paths.join(" ") + " ";
 }
 
-export function installImageClipboard(
-  deps: ImageClipboardDeps,
-): ImageClipboard {
+/** One mounted install, as the drop election sees it. Identity is the object. */
+interface DropClient {
+  /** This install's tile, or null when it is not one. See `tileBox`. */
+  box: () => TileBox | null;
+  /** TRUE for the install whose pty the keystrokes are going to. */
+  focused: () => boolean;
+}
+
+/**
+ * Every mounted install, in mount order.
+ *
+ * A module-level registry rather than per-instance reasoning, because electing
+ * a winner is the one decision an instance CANNOT make alone. The listeners are
+ * on the shared window and every mounted `SessionView` installs a set, so a
+ * drop is delivered to all of them; four instances each answering "is this
+ * point in my box?" independently is fine until the point sits on a seam, where
+ * `toRects` gives adjacent tiles a shared boundary and both would answer yes.
+ * One election, one winner, and every instance compares it to itself.
+ *
+ * A `Set` for O(1) removal on dispose, and its insertion order is what breaks a
+ * seam tie: the first install to have registered takes it. Every instance sees
+ * the same answer for the same event whatever order the browser calls them in,
+ * because the election is computed once and cached on the event itself.
+ */
+const clients = new Set<DropClient>();
+
+/**
+ * The election, cached per `DragEvent`.
+ *
+ * N instances each ask, so the boxes would otherwise be measured N² times per
+ * drop — 16 `getBoundingClientRect()` calls in a four-tile workspace, which is
+ * affordable but pointless. The stronger reason is determinism: one answer per
+ * gesture means no instance can disagree with another because a layout changed
+ * between two listener invocations on the same event.
+ */
+const elections = new WeakMap<Event, DropClient | null>();
+
+/** Closed on all four sides, matching `dnd/tiles.ts`'s own `contains`. Two hit
+ *  tests answering the same question at the same pixel should answer it the
+ *  same way; a point on a seam is inside both tiles and the election's
+ *  registration order decides. */
+function inBox(box: TileBox, x: number, y: number): boolean {
+  return x >= box.left && x <= box.right && y >= box.top && y <= box.bottom;
+}
+
+/**
+ * Which install owns a drop at this point, or null when the page has no tiles
+ * and the old `active` gate is still the whole rule.
+ *
+ * `undefined` is never returned: the two answers are "no tiles anywhere, carry
+ * on as before" (null) and "the tiles elected someone" (a client). A workspace
+ * where the point misses every tile — the gap beside a divider, the sidebar —
+ * falls back to the FOCUSED tile, which is where the drop went before this
+ * existed. Losing the file because the pointer was three pixels off a boundary
+ * would be a worse bug than the one being fixed.
+ *
+ * A zero-area box is not a tile. A `display: none` slot measures 0x0 in every
+ * browser, so without this every hidden kept session would claim the point
+ * (0, 0) and a drop in the top-left corner would go to whichever was mounted
+ * first.
+ */
+function electDropClient(event: DragEvent): DropClient | null {
+  const cached = elections.get(event);
+  if (cached !== undefined) return cached; // a stored `null` is an answer too
+  let winner: DropClient | null = null;
+  let focused: DropClient | null = null;
+  let tiled = false;
+  for (const client of clients) {
+    const box = client.box();
+    if (!box || box.right <= box.left || box.bottom <= box.top) continue;
+    tiled = true;
+    if (winner === null && inBox(box, event.clientX, event.clientY)) winner = client;
+    if (focused === null && client.focused()) focused = client;
+  }
+  const elected = tiled ? (winner ?? focused) : null;
+  elections.set(event, elected);
+  return elected;
+}
+
+export function installImageClipboard(deps: ImageClipboardDeps): ImageClipboard {
   const doc = deps.doc ?? document;
   const win = deps.win ?? window;
   const upload = deps.upload ?? uploadBlob;
@@ -129,6 +275,15 @@ export function installImageClipboard(
    *  a hidden session's listener that bailed later would still have consumed
    *  the gesture, leaving the visible session (or the composer) a dead event. */
   const onScreen = (): boolean => deps.active?.() !== false;
+
+  /** This install's entry in the drop election. Its OBJECT IDENTITY is the
+   *  whole of what a winner is compared by, so it is minted once here and
+   *  never rebuilt — a fresh object per drop would never equal the elected
+   *  one and every drop would be declined by everybody. */
+  const self: DropClient = {
+    box: () => deps.tileBox?.() ?? null,
+    focused: onScreen,
+  };
 
   /** TRUE when this client only watches — both intakes stop here and say so,
    *  rather than uploading into a session nothing can be typed into. */
@@ -189,10 +344,7 @@ export function installImageClipboard(
   };
 
   // ---- drop: many files, images to the gallery, rest to /tmp --------------
-  async function uploadDropped(
-    files: File[],
-    via: "drop" | "picker" = "drop",
-  ): Promise<void> {
+  async function uploadDropped(files: File[], via: "drop" | "picker" = "drop"): Promise<void> {
     if (refused()) return;
     // Up front, and counting the files the GESTURE carried rather than the ones
     // that uploaded: the event records the gesture (ADR-0006 attributes
@@ -225,11 +377,7 @@ export function installImageClipboard(
       // Stored names are sanitized (no spaces/shell specials), so paths are
       // safe to insert verbatim, space-separated — same as the vanilla flow.
       deps.sendToPty(ptyPathBytes(paths));
-      toast(
-        `Added ${paths.length} path${paths.length > 1 ? "s" : ""}`,
-        "success",
-        4000,
-      );
+      toast(`Added ${paths.length} path${paths.length > 1 ? "s" : ""}`, "success", 4000);
     }
   }
 
@@ -283,7 +431,24 @@ export function installImageClipboard(
     // session's listener sees this drop. Gated AFTER the preventDefault above,
     // which is a safety behaviour and costs nothing when several instances do
     // it, and before the upload, which is the part that must happen once.
-    if (!onScreen()) return;
+    //
+    // WHICH ONE takes it is the difference between a drop and a paste. A paste
+    // has no coordinates, so it goes to the session the keystrokes are going to
+    // (`onScreen`, which since 2026-09-12 means the focused TILE). A drop has a
+    // point, and the tile under that point is what a person aiming at it meant
+    // — see `tileBox`, which carries the measured four-tile case. With no tiles
+    // on the page the election declines and this is the line it always was.
+    const elected = electDropClient(e);
+    if (elected === null) {
+      if (!onScreen()) return;
+    } else if (elected !== self) {
+      return; // the pointer is over another tile; that install has it
+    } else if (!onScreen()) {
+      // Ours, and we are not the focused tile. Focus moves first so the
+      // `window.__tlSendToTerminal` handle this install's `sendToPty` resolves
+      // is re-bound to it before the upload finishes and the path is typed.
+      deps.focusTile?.();
+    }
     // Text view: hand the files to the composer instead of typing paths at the
     // pty. The overlay still raised, because a drop target is the right
     // affordance either way — only the destination differs.
@@ -295,6 +460,7 @@ export function installImageClipboard(
     void uploadDropped(files);
   };
 
+  clients.add(self);
   doc.addEventListener("paste", onPaste, true);
   win.addEventListener("dragenter", onDragEnter);
   win.addEventListener("dragover", onDragOver);
@@ -305,6 +471,11 @@ export function installImageClipboard(
     dropActive,
     uploadFiles: uploadDropped,
     dispose(): void {
+      // Out of the election in the same breath as the listeners. An install
+      // that kept its entry would keep reporting a box for a slot that has
+      // gone, and a drop over where it used to be would elect a winner whose
+      // listener is no longer there to take it — the file silently lost.
+      clients.delete(self);
       doc.removeEventListener("paste", onPaste, true);
       win.removeEventListener("dragenter", onDragEnter);
       win.removeEventListener("dragover", onDragOver);

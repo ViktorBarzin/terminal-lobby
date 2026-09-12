@@ -298,3 +298,113 @@ export interface RestoreSelection {
   snapshot: string;
   sessions: string[];
 }
+
+// --- workspaces (which sessions sit on screen together) -----------------------
+// A Workspace is several sessions shown at once as Tiles, arranged as a tree of
+// rows and columns (CONTEXT.md "Workspace"). ADR-0027 splits that object across
+// two stores, and ONLY THE SERVER HALF IS ON THIS WIRE: the workspace's id and
+// its ordered members, one document per OS user beside layout/<user>.json.
+//
+// The tree and the tile sizes are deliberately not here and never reach
+// tmux-api. They are per device, under the browser's own `tl:workspaces:v1` key
+// (store/workspaces.ts), because a four-column arrangement describes a 32-inch
+// monitor, is meaningless on a laptop and is unrenderable on a phone, which sees
+// no workspaces at all. Membership roams instead, because it changes what the
+// sidebar does, because two tabs on one machine have to agree about the
+// exclusivity rule below, and because a kill must not silently drop it.
+
+/**
+ * One workspace: an id the client mints, and the sessions in it (tmux-api
+ * `Workspace`). Unnamed by design — a workspace is created implicitly by the
+ * first split and is identified by its members, so there is no name field and
+ * nothing to prompt anyone for.
+ */
+export interface Workspace {
+  /** Minted by the client, in the session-name charset (`NAME_RE`) because
+   *  that is what the server validates it against. */
+  id: string;
+  /**
+   * The sessions in it, in the order the user arranged them.
+   *
+   * The order is load-bearing rather than decorative: a device that has never
+   * seen this workspace has no geometry for it and auto-arranges evenly in THIS
+   * order, so a fresh laptop and a fresh phone lay the same workspace out the
+   * same way, and the first drag makes the arrangement that device's own.
+   *
+   * A member may name a session that is not alive. A KILL KEEPS MEMBERSHIP —
+   * only a deliberate close or a drag-out removes a session from a workspace —
+   * so a restored session finds its tile again, the way
+   * `assignments/<user>.json` already gives back project placement. The
+   * frontend renders live sessions only.
+   *
+   * At least two of them (`MIN_WORKSPACE_MEMBERS`), and a session may appear in
+   * at most one workspace across the whole document — where a session is the
+   * pair below, not the name.
+   */
+  members: WorkspaceMember[];
+}
+
+/**
+ * One session in a workspace: its name, and the OS user who owns it when that
+ * is not you (tmux-api `WorkspaceMember`).
+ *
+ * THE OWNER IS WHAT MAKES A FOREIGN SESSION TILEABLE. Any session you can open
+ * belongs in a workspace, shared and foreign included — one emo shared with you
+ * sitting beside two of your own — and a bare name cannot say whose session it
+ * is: a tmux name is unique only inside one user's server, which is why the
+ * global project store identifies a session by `(owner, name)` (tmux-api
+ * `SessionRef`) and why keepalive mounts one live view per owner AND name.
+ *
+ * This is deliberately the same shape as keepalive's `Selected` and the tree's
+ * `SessionParts`, so the conversions are the ones that already exist rather
+ * than a third vocabulary: `keyOf(member)` gives the key a tile and a mounted
+ * slot are keyed by, and `sessionOf(key)` gives the member back. Nothing splits
+ * the key by hand.
+ */
+export interface WorkspaceMember {
+  name: string;
+  /**
+   * The session's OS user. ABSENT — never `""` — for a session of your own.
+   *
+   * Absent means the caller, which keeps the ordinary document short: a
+   * workspace of your own sessions would otherwise carry your own name on every
+   * entry. It matters that it is absent rather than empty because both sides
+   * compare members for equality: `{name}` and `{name, owner: ""}` would be two
+   * spellings of one session, and the arrangement built from one would stop
+   * matching the membership written as the other. `normalizeWorkspaces` reads an
+   * explicit `""` as absent for that reason, as tmux-api's `omitempty` does.
+   */
+  owner?: string;
+}
+
+/**
+ * The whole per-user membership document (GET/PUT /api/sessions/workspaces).
+ *
+ * Plural because the Go struct is (tmux-api `Workspaces`): this is the
+ * document, not a list. Whole-document PUT, last-writer-wins, exactly like
+ * Layout — moving a session from one workspace to another is one write carrying
+ * both halves, because the server refuses a document where two workspaces claim
+ * the same session.
+ */
+export interface Workspaces {
+  version: number;
+  workspaces: Workspace[];
+}
+
+/** The document version this client speaks (tmux-api `workspacesVersion`). The
+ *  server refuses any other. */
+export const WORKSPACES_VERSION = 1;
+
+/**
+ * One tile is not a workspace (tmux-api `minWorkspaceMembers`).
+ *
+ * Closing a workspace down to a single tile ends it and shows that session on
+ * its own, so a stored group of one describes a state the UI cannot be in: it
+ * is a client that failed to finish a removal. The server rejects such a
+ * document on write and drops the entry on read.
+ */
+export const MIN_WORKSPACE_MEMBERS = 2;
+
+export function emptyWorkspaces(): Workspaces {
+  return { version: WORKSPACES_VERSION, workspaces: [] };
+}
