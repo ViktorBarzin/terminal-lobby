@@ -193,7 +193,26 @@ const MachineReadout: Component<{
 
       <Show when={note()}>{(n) => <p class="tl-rightnow-machine-note">{n()}</p>}</Show>
 
-      <Sparkline series={series()} threshold={1} label={chartLabel()} />
+      {/* The caption carries the y axis, the axis row under the chart carries
+          the x. Height here is each reading over its OWN resource's limit,
+          which is not a unit anyone can infer from a shape, and the resource
+          being drawn changes from point to point — so the caption has to say
+          "the busiest of the three" rather than name one.
+          It deliberately does NOT say "over the last hour": the axis ends
+          already say that, and an earlier draft that read "hour by hour" made
+          it sound like several hours of buckets rather than one continuous
+          one. */}
+      <p class="tl-rightnow-machine-chart-what">
+        How close the busiest of the three is to its limit
+      </p>
+      <Sparkline
+        series={series()}
+        threshold={1}
+        label={chartLabel()}
+        thresholdLabel="busy line"
+        startLabel="1h ago"
+        endLabel="now"
+      />
     </div>
   );
 };

@@ -170,3 +170,80 @@ describe("Sparkline — the threshold", () => {
     expect(line(container, "tl-spark-threshold")).toBeNull();
   });
 });
+
+describe("the words around the chart", () => {
+  /**
+   * The chart's y axis is each reading over its OWN resource's limit, which is
+   * not a unit anyone can infer from the shape, and the dotted rule at 1.0 is
+   * the only line on it whose meaning cannot be worked out by looking. Before
+   * these labels the sole explanation was the svg's aria-label, which is
+   * invisible to everyone who can see the chart.
+   */
+  it("says which end of the axis is now", () => {
+    const el = render(() => (
+      <Sparkline series={[0.2, 0.4]} threshold={1} label="x" startLabel="1h ago" endLabel="now" />
+    ));
+    const axis = el.container.querySelector(".tl-spark-axis");
+    expect(axis).not.toBeNull();
+    expect(axis?.querySelector(".tl-spark-axis-start")?.textContent).toBe("1h ago");
+    expect(axis?.querySelector(".tl-spark-axis-end")?.textContent).toBe("now");
+  });
+
+  it("says what the dotted rule is", () => {
+    const el = render(() => (
+      <Sparkline series={[0.2]} threshold={1} label="x" thresholdLabel="busy line" />
+    ));
+    expect(el.container.querySelector(".tl-spark-axis-rule")?.textContent).toBe("busy line");
+  });
+
+  /** No labels, no furniture: the component is still a bare sparkline for any
+   *  caller that wants one. */
+  it("draws no axis row when given no labels", () => {
+    const el = render(() => <Sparkline series={[0.2, 0.4]} threshold={1} label="x" />);
+    expect(el.container.querySelector(".tl-spark-axis")).toBeNull();
+  });
+
+  /**
+   * The labels go with the chart, and the empty state has no chart.
+   *
+   * The first cut kept them, reasoning that a reader who sees "No readings yet"
+   * still wants to know what would have been drawn. Driving it showed what that
+   * actually looks like: the words "No readings yet" beside a dashed swatch
+   * labelled "busy line", naming a rule that is not on screen, above an axis
+   * with no time on it. Labelling something absent is worse than not labelling
+   * it. The caption above the chart still says what the chart is.
+   */
+  it("drops the labels when there is nothing to draw", () => {
+    const el = render(() => (
+      <Sparkline
+        series={[]}
+        threshold={1}
+        label="x"
+        startLabel="1h ago"
+        endLabel="now"
+        thresholdLabel="busy line"
+      />
+    ));
+    expect(el.container.querySelector(".tl-spark-empty")).not.toBeNull();
+    expect(el.container.querySelector(".tl-spark-axis")).toBeNull();
+  });
+
+  /** And the rule's label never outlives the rule itself. */
+  it("names no rule when no threshold was given", () => {
+    const el = render(() => (
+      <Sparkline series={[0.2, 0.4]} label="x" startLabel="1h ago" endLabel="now" thresholdLabel="busy line" />
+    ));
+    expect(el.container.querySelector(".tl-spark-axis")).not.toBeNull();
+    expect(el.container.querySelector(".tl-spark-axis-rule")).toBeNull();
+  });
+
+  /** HTML, never svg <text>: the chart stretches with preserveAspectRatio none,
+   *  so anything inside the viewBox would be smeared sideways on a wide panel. */
+  it("puts the words outside the svg", () => {
+    const el = render(() => (
+      <Sparkline series={[0.2, 0.4]} threshold={1} label="x" startLabel="1h ago" endLabel="now" />
+    ));
+    expect(el.container.querySelector("svg text")).toBeNull();
+    expect(el.container.querySelector("svg .tl-spark-axis")).toBeNull();
+  });
+});

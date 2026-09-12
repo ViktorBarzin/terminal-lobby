@@ -62,6 +62,19 @@ export const Sparkline: Component<{
   threshold?: number;
   /** What the graphic is, in words, for a reader who cannot see it. */
   label: string;
+  /**
+   * What the dotted rule means, printed beside the chart.
+   *
+   * The threshold is the only line on here whose meaning a reader cannot work
+   * out by looking: a rule at an unexplained height could be an average, a
+   * target or a maximum. Absent, the rule still draws and still goes
+   * unexplained, which is the state this prop exists to end.
+   */
+  thresholdLabel?: string;
+  /** The two ends of the time axis, oldest then newest. A line has no arrow on
+   *  it, so which end is "now" is a guess without them. */
+  startLabel?: string;
+  endLabel?: string;
 }> = (props) => {
   // A single non-finite sample makes the browser discard the whole polyline, so
   // one bad reading would blank an hour of good ones. Dropping it costs the
@@ -106,6 +119,10 @@ export const Sparkline: Component<{
 
   return (
     <div class="tl-spark">
+      {/* EVERY LABEL IS HTML, NEVER SVG <text>. The chart is drawn with
+          preserveAspectRatio="none" so that a wider panel gets a longer hour
+          rather than a fatter line, and that same stretch would smear any text
+          inside the viewBox horizontally. Outside it, the type is the page's. */}
       <Show
         when={readings().length > 0}
         // A chart of nothing draws a flat line along the floor, which is a
@@ -154,6 +171,26 @@ export const Sparkline: Component<{
             y2={lastY() + PAD}
           />
         </svg>
+      </Show>
+
+      {/* The axis ends, and what the rule means. Drawn under the chart rather
+          than over it, because the line reaches the top of the box whenever the
+          machine is at its worst — which is exactly when a reader most needs
+          the caption and least wants it sitting on the data.
+          ONLY WHEN THERE IS A CHART. The first cut printed these over the
+          empty state too, reasoning that a reader still wants to know what
+          would have been drawn. On screen it read as "No readings yet" beside
+          a dashed swatch labelled "busy line", pointing at a rule that is not
+          drawn, on an axis with no time on it. A label for something absent is
+          worse than no label. */}
+      <Show when={readings().length > 0 && (props.startLabel || props.endLabel || props.thresholdLabel)}>
+        <div class="tl-spark-axis">
+          <span class="tl-spark-axis-start">{props.startLabel}</span>
+          <Show when={props.thresholdLabel && thresholdY() !== null}>
+            <span class="tl-spark-axis-rule">{props.thresholdLabel}</span>
+          </Show>
+          <span class="tl-spark-axis-end">{props.endLabel}</span>
+        </div>
       </Show>
     </div>
   );

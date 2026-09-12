@@ -436,3 +436,17 @@ describe("This machine — while the panel is open", () => {
     expect(runCheck).not.toHaveBeenCalled();
   });
 });
+
+describe("This machine — the chart says what it is", () => {
+  /** Asked twice in a row what the chart showed, the honest answer was that
+   *  nothing on screen said. The caption is that answer, rendered. */
+  it("captions the line, names the rule, and marks both ends of the hour", () => {
+    const row = machineRow(reading({ state: "degraded", tier: "busy", worst: "io" }));
+    expect(text(row.querySelector(".tl-rightnow-machine-chart-what"))).toBe(
+      "How close the busiest of the three is to its limit",
+    );
+    expect(text(row.querySelector(".tl-spark-axis-start"))).toBe("1h ago");
+    expect(text(row.querySelector(".tl-spark-axis-end"))).toBe("now");
+    expect(text(row.querySelector(".tl-spark-axis-rule"))).toBe("busy line");
+  });
+});
