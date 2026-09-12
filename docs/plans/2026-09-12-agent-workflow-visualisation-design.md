@@ -196,16 +196,22 @@ could not see the others, each carrying a scripted session that plays so the
 motion can be judged rather than imagined. Each was given the same facts and a
 different design thesis:
 
-| # | thesis | the bet |
-|---|---|---|
-| 1 | Ambient | A monitoring surface that demands attention has failed. Encode state in position, weight and hue so a glance costs nothing. |
-| 2 | Instrument | The person running sixteen agents is an operator. Aligned columns, every number visible, density read as order. |
-| 3 | Narrative | A separate panel is an admission of defeat. Delegation happened in the conversation and belongs in the timeline. |
-| 4 | Spatial | A list throws away the shape of the work. Sixteen agents across three phases is a shape, and shapes read faster than rows. |
-| 5 | Focus | Sixteen rows of equal weight is sixteen things nobody read. Surface the one that matters, keep the rest as a thin index. |
+| # | name | thesis | where it put the panel |
+|---|---|---|---|
+| 1 | [Marginalia](agent-panel/p1-ambient.html) | Ambient. A monitoring surface that demands attention has failed. Encode state in position, weight and hue so a glance costs nothing. | A narrow rail down the right margin, beside the transcript. |
+| 2 | [Console](agent-panel/p2-instrument.html) | Instrument. The person running sixteen agents is an operator. Aligned columns, every number visible, density read as order. | A full-width table between the timeline and the composer. |
+| 3 | [Strand](agent-panel/p3-narrative.html) | Narrative. Delegation happened in the conversation, so it belongs in the timeline rather than in a panel beside it. | Inline, in the 860px column, at the moment the spawn happened. |
+| 4 | [Runway](agent-panel/p4-spatial.html) | Spatial. A list throws away the shape of the work. Sixteen agents across three phases is a shape, and shapes read faster than rows. | A resizable dock under the timeline. |
+| 5 | [Foreground](agent-panel/p5-focus.html) | Focus. Sixteen rows of equal weight is sixteen things nobody read. Surface the one that matters, keep the rest as a thin index. | A band above the timeline, pinned while work is live. |
 
 Each prototype chose its own placement, since where this lives is one of the
-things being judged.
+things being judged. Each page carries its own state buttons (`3 agents`,
+`16 agents`, `workflow`, `one failed`, `all done`, `idle`) so the same moment
+can be compared across all five, and a replay control for watching the motion.
+
+The states worth comparing, in order: `16 agents` for whether the design
+survives a fan-out, `idle` for whether it leaves cleanly, and a replay from the
+start for whether the motion is informative or distracting.
 
 ## What this costs to build
 

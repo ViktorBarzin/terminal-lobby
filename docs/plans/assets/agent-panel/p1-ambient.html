@@ -1,0 +1,1305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Marginalia — Terminal Lobby agent panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Terminal Lobby shell tokens. body.theme-slate is the default.
+   Every colour below comes from this block or color-mix of it,
+   except the agent identity hues, which Claude Code assigns.
+   ============================================================ */
+body.theme-slate{
+  --font-mono: "JetBrains Mono", "Fira Code", Menlo, Monaco, "Courier New", monospace;
+  --font-ui:   "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont,
+               "Segoe UI", system-ui, sans-serif;
+  --radius: 10px;
+
+  --bg-page: #0d1117;
+  --bg-sidebar: #11151c;
+  --bg-card: #161b22;
+  --bg-card-hover: #1c2128;
+  --text-primary: #e6e8eb;
+  --text-muted: #7d8590;
+  --border: #1f242d;
+  --border-strong: #30363d;
+  --accent: #4493f8;
+  --danger: #f47067;
+  --success: #56d364;
+  --state-running: #4493f8;
+  --state-awaiting: #a371f7;
+  --state-done: #56d364;
+  --surface-shadow: 0 4px 6px -1px rgba(0,0,0,.05), inset 0 1px rgba(255,255,255,.06);
+  --hover-tint: rgba(255,255,255,.04);
+  --scrollbar-thumb: rgba(255,255,255,.1);
+
+  /* Agent identity hues. Claude Code hands us a colour name per agent;
+     these are the fixed mapping, chosen to stay legible on every theme. */
+  --agent-blue:#4493f8; --agent-green:#56d364; --agent-yellow:#e3b341;
+  --agent-purple:#a371f7; --agent-orange:#e8833a; --agent-pink:#f778ba;
+  --agent-cyan:#39c5cf;
+}
+
+*{box-sizing:border-box}
+html{background:#080b0f}
+body{
+  margin:0; background:#080b0f; color:var(--text-primary);
+  font-family:var(--font-ui); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+
+/* ===================== prototype chrome (not the product) ==== */
+.proto-bar{
+  position:sticky; top:0; z-index:40;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:9px 16px; background:#06080b;
+  border-bottom:1px solid var(--border);
+  font-size:12px; color:var(--text-muted);
+}
+.proto-bar b{
+  font-weight:600;color:var(--text-primary);font-size:12px;
+  letter-spacing:.04em;text-transform:uppercase;margin-right:4px
+}
+.proto-btn{
+  padding:4px 10px;border:1px solid var(--border-strong);border-radius:6px;
+  color:var(--text-muted);font-size:12px;background:var(--bg-card);
+}
+.proto-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.proto-btn[data-on="1"]{color:var(--text-primary);border-color:var(--accent)}
+.proto-sep{width:1px;height:18px;background:var(--border-strong);margin:0 4px}
+.proto-scrub{
+  flex:1 1 200px;min-width:140px;height:16px;position:relative;cursor:pointer;
+}
+.proto-scrub::before{
+  content:"";position:absolute;left:0;right:0;top:7px;height:2px;
+  background:var(--border-strong);border-radius:2px;
+}
+.proto-scrub i{
+  position:absolute;left:0;top:7px;height:2px;background:var(--accent);
+  border-radius:2px;display:block;
+}
+.proto-clock{font-family:var(--font-mono);font-size:11.5px;font-variant-numeric:tabular-nums}
+
+.proto-frame{
+  height:min(82vh,860px); min-height:600px;
+  margin:18px; border:1px solid var(--border-strong); border-radius:12px;
+  overflow:hidden; background:var(--bg-page);
+  box-shadow:0 20px 50px -20px rgba(0,0,0,.8);
+}
+
+/* ===================== the shell ============================= */
+.tl-shell{display:grid;grid-template-columns:260px 1fr;height:100%}
+.tl-shell[data-sidebar="0"]{grid-template-columns:0 1fr}
+.tl-shell[data-sidebar="0"] .tl-shell-sidebar{display:none}
+
+.tl-shell-sidebar{
+  background:var(--bg-sidebar);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;min-width:0;overflow:hidden;
+}
+.tl-shellbar{
+  display:flex;align-items:center;gap:10px;padding:8px 12px;
+  background:var(--bg-sidebar);border-bottom:1px solid var(--border);min-height:41px;
+}
+.tl-brand{font-weight:600;font-size:13px}
+.tl-shellbar .sp{flex:1}
+.tl-shellbar .lnk{font-size:12px;color:var(--text-muted)}
+.tl-shellbar .lnk:hover{color:var(--text-primary)}
+.tl-icon{color:var(--text-muted);font-size:14px;line-height:1}
+
+.tl-sessions{padding:8px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:2px}
+.tl-sess{
+  display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;
+  width:100%;text-align:left;color:var(--text-muted);font-size:12.5px;
+}
+.tl-sess:hover{background:var(--hover-tint)}
+.tl-sess[aria-current="true"]{background:var(--bg-card);color:var(--text-primary)}
+.tl-sess .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:var(--font-mono);font-size:12px}
+.tl-sess .dot{width:7px;height:7px;border-radius:50%;flex:none}
+.tl-sess .ago{font-size:10.5px;font-family:var(--font-mono);opacity:.6}
+
+.tl-main{
+  display:flex;flex-direction:column;min-width:0;min-height:0;overflow:hidden;
+  background:var(--bg-page);
+  container-type:inline-size; container-name:main;
+  --tl-text-scale:1;
+}
+
+.tl-session-bar{
+  display:flex;align-items:center;gap:8px;padding:6px 12px;min-height:40px;
+  border-bottom:1px solid var(--border);
+}
+.tl-chip{
+  font-family:var(--font-mono);font-size:12px;color:var(--text-muted);
+  padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.tl-conn{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
+.tl-session-bar .sp{flex:1}
+.tl-switch{
+  display:inline-flex;background:var(--bg-card);border:1px solid var(--border);
+  border-radius:var(--radius);padding:2px;gap:2px;
+}
+.tl-switch button{
+  padding:5px 12px;font-size:13px;border-radius:calc(var(--radius) - 4px);
+  color:var(--text-muted);
+}
+.tl-switch button[aria-pressed="true"]{
+  background:var(--bg-card-hover);color:var(--text-primary);box-shadow:var(--surface-shadow);
+}
+.tl-barlink{font-size:12.5px;color:var(--text-muted);padding:4px 6px;border-radius:6px}
+.tl-barlink:hover{color:var(--text-primary);background:var(--hover-tint)}
+
+.tl-body{flex:1;display:flex;min-height:0}
+
+.tl-timeline{
+  flex:1;min-width:0;overflow-y:auto;
+  padding:16px clamp(12px,6vw,80px);
+  display:flex;flex-direction:column;gap:14px;
+}
+.tl-row{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
+.tl-user{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  padding:10px 12px;font-size:calc(14px * var(--tl-text-scale));
+  color:var(--text-primary);
+}
+.tl-user .who{
+  display:block;font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-muted);margin-bottom:5px;
+}
+.tl-assist{font-size:calc(14px * var(--tl-text-scale));color:var(--text-primary)}
+.tl-assist p{margin:0 0 9px}
+.tl-assist p:last-child{margin-bottom:0}
+.tl-tool{
+  display:flex;align-items:center;gap:10px;
+  font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-muted);
+}
+.tl-tool .g{color:var(--text-muted);width:14px;text-align:center;flex:none}
+.tl-tool .noun{
+  font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.04em;color:var(--text-muted);width:58px;flex:none;
+}
+.tl-tool .lab{
+  font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale));
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.tl-tool .mk{color:var(--success);flex:none}
+
+.tl-composer{
+  background:var(--bg-sidebar);border-top:1px solid var(--border);
+  padding:10px clamp(12px,6vw,80px);
+}
+.tl-composer-box{
+  max-width:860px;margin:0 auto;padding:8px 10px;border:1px solid var(--border-strong);
+  border-radius:var(--radius);background:var(--bg-card);
+}
+.tl-composer-box .field{color:var(--text-muted);font-size:13.5px;min-height:20px}
+.tl-composer-row{display:flex;align-items:center;gap:8px;margin-top:9px}
+.tl-mchip{
+  font-size:11px;color:var(--text-muted);border:1px solid var(--border);
+  border-radius:6px;padding:2px 7px;
+}
+.tl-meter{flex:1;display:flex;align-items:center;gap:7px;color:var(--text-muted);font-size:11px}
+.tl-meter .bar{flex:0 1 90px;height:3px;background:var(--border-strong);border-radius:2px;overflow:hidden}
+.tl-meter .bar i{display:block;height:100%;width:38%;background:var(--text-muted)}
+.tl-send{
+  font-size:12px;padding:4px 12px;border-radius:6px;background:var(--bg-card-hover);
+  border:1px solid var(--border-strong);color:var(--text-primary);
+}
+.tl-stop{font-size:12px;padding:4px 10px;border-radius:6px;color:var(--text-muted);border:1px solid var(--border)}
+
+/* ===================== MARGINALIA =============================
+   The panel. No card, no background, no badges. Text on the page,
+   one hairline to make it a field, colour spines carrying both
+   identity and the tree.
+   ============================================================= */
+.tl-margin{
+  flex:none;width:260px;min-width:0;
+  border-left:1px solid var(--border);
+  overflow-y:auto;overscroll-behavior:contain;
+  padding:0 14px 22px 11px;
+  scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) transparent;
+}
+.tl-margin[hidden]{display:none}
+.tl-margin::-webkit-scrollbar{width:8px}
+.tl-margin::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:4px}
+
+/* the tally: one tick per agent. the whole glance, in 100px. */
+.mg-tally{
+  position:sticky;top:0;z-index:2;background:var(--bg-page);
+  padding:13px 0 9px 14px;
+}
+.mg-ticks{display:flex;flex-wrap:wrap;gap:3px;align-items:flex-end;min-height:11px;margin-bottom:7px}
+.mg-tick{width:3px;height:11px;border-radius:1px;background:var(--text-muted);flex:none}
+.mg-tick[data-s="quiet"]{opacity:.34}
+.mg-tick[data-s="error"]{background:var(--danger)}
+.mg-tick[data-s="done"]{height:4px;opacity:.26}
+.mg-more{
+  font-family:var(--font-mono);font-size:calc(9.5px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.55;align-self:center;margin-left:1px;
+}
+.mg-head{display:flex;align-items:baseline;gap:8px}
+.mg-head .n{
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-muted);flex:1;min-width:0;
+}
+.mg-head .tok{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.65;font-variant-numeric:tabular-nums;
+}
+
+.mg-list{display:flex;flex-direction:column}
+
+/* an entry. the spine is the identity colour and the tree, in 2px. */
+.mg-entry{
+  display:block;width:100%;text-align:left;position:relative;
+  padding:6px 2px 7px 16px;border-radius:0 5px 5px 0;
+}
+.mg-entry::before{
+  content:"";position:absolute;left:var(--x,0);top:0;bottom:0;width:2px;
+  background:var(--spine,var(--border-strong));border-radius:1px;
+}
+.mg-entry:hover{background:var(--hover-tint)}
+.mg-entry[data-open="1"]{background:var(--hover-tint)}
+.mg-entry[data-done="1"]::before{background:var(--border-strong)}
+.mg-l1{display:flex;align-items:flex-start;gap:6px}
+.mg-desc{
+  flex:1;min-width:0;
+  font-size:calc(12px * var(--tl-text-scale));line-height:1.33;font-weight:500;
+  color:color-mix(in srgb, var(--text-primary) 80%, transparent);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.mg-entry[data-done="1"] .mg-desc{color:color-mix(in srgb, var(--text-primary) 46%, transparent)}
+.mg-go{
+  flex:none;font-size:calc(11px * var(--tl-text-scale));line-height:1.4;
+  color:var(--text-muted);opacity:.22;
+}
+.mg-entry:hover .mg-go,.mg-entry:focus-visible .mg-go{opacity:.9}
+.mg-l2{
+  display:flex;align-items:baseline;gap:8px;margin-top:2px;
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));
+  color:var(--text-muted);
+}
+.mg-act{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+/* silence is encoded, never named: the activity line fades as it ages.
+   the opacity is written inline from time since the last record. */
+.mg-entry[data-err="1"] .mg-act{color:color-mix(in srgb, var(--danger) 82%, transparent)}
+.mg-num{
+  flex:none;font-variant-numeric:tabular-nums;opacity:.72;text-align:right;
+  white-space:nowrap;
+}
+
+/* workflow: a grey spine for the run, one line per agent inside it. */
+.mg-wf{margin-top:2px}
+.mg-wfhead{padding:17px 2px 4px 16px;position:relative}
+.mg-wfhead::before{
+  content:"";position:absolute;left:0;top:17px;bottom:0;width:2px;
+  background:var(--border-strong);
+}
+.mg-wfhead .k{
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-muted);display:flex;gap:7px;align-items:baseline;
+}
+.mg-wfhead .k .id{font-family:var(--font-mono);text-transform:none;letter-spacing:0;opacity:.6}
+.mg-wfhead .t{
+  font-size:calc(12px * var(--tl-text-scale));font-weight:500;margin-top:3px;
+  color:color-mix(in srgb, var(--text-primary) 88%, transparent);line-height:1.33;
+}
+.mg-phase{padding:8px 2px 2px 16px;position:relative}
+.mg-phase::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--border-strong)}
+.mg-phase .r{
+  display:flex;align-items:baseline;gap:8px;
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-muted);
+}
+.mg-phase .r .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mg-phase[data-state="done"] .r{opacity:.45}
+.mg-phase[data-state="waiting"] .r{opacity:.3}
+.mg-phase .r .st{
+  font-family:var(--font-mono);text-transform:none;letter-spacing:0;
+  font-variant-numeric:tabular-nums;opacity:.8;
+}
+.mg-wfrow{
+  display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;
+  padding:2px 2px 2px 14px;position:relative;border-radius:0 5px 5px 0;
+}
+.mg-wfrow::before{
+  content:"";position:absolute;left:0;top:1px;bottom:1px;width:2px;
+  background:var(--spine,var(--border-strong));border-radius:1px;
+}
+.mg-wfrow:hover{background:var(--hover-tint)}
+.mg-wfrow .lb{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:calc(11.5px * var(--tl-text-scale));
+  color:color-mix(in srgb, var(--text-primary) 80%, transparent);
+}
+.mg-wfrow .tl{
+  flex:none;font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.8;
+}
+.mg-wfrow[data-err="1"] .tl{color:var(--danger);opacity:1}
+.mg-fold{
+  padding:3px 2px 3px 16px;position:relative;width:100%;text-align:left;
+  font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.62;
+}
+.mg-fold::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--border-strong)}
+
+/* the done group at the foot */
+.mg-donebar{
+  display:flex;align-items:baseline;gap:8px;width:100%;text-align:left;
+  padding:11px 2px 6px 16px;margin-top:6px;
+  border-top:1px solid var(--border);
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;
+  letter-spacing:.07em;color:var(--text-muted);
+}
+.mg-donebar .c{flex:1}
+.mg-donebar .car{font-family:var(--font-mono);opacity:.6;text-transform:none}
+.mg-empty{
+  padding:10px 2px 6px 16px;font-size:calc(11px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.55;
+}
+
+/* ===================== narrow form: a footnote strip ========== */
+.tl-strip{display:none}
+@container main (max-width: 900px){
+  .tl-margin{display:none}
+  .tl-strip{
+    display:flex;flex-direction:column;border-bottom:1px solid var(--border);
+  }
+  .tl-strip[hidden]{display:none}
+}
+.tl-strip-bar{
+  display:flex;align-items:center;gap:10px;width:100%;text-align:left;
+  padding:6px clamp(12px,6vw,80px);min-height:30px;
+}
+.tl-strip-bar:hover{background:var(--hover-tint)}
+.tl-strip-bar .mg-ticks{margin-bottom:0;flex:none}
+.tl-strip-bar .lbl{
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+}
+.tl-strip-bar .car{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);opacity:.7}
+.tl-strip-open{
+  max-height:min(46vh,320px);overflow-y:auto;
+  padding:0 clamp(12px,6vw,80px) 10px;
+  border-top:1px solid var(--border);
+  scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) transparent;
+}
+.tl-strip-open[hidden]{display:none}
+
+/* ===================== the drill-in reader ==================== */
+.tl-reader{
+  flex:1;min-width:0;overflow-y:auto;padding:16px clamp(12px,6vw,80px) 30px;
+  display:none;flex-direction:column;gap:13px;
+  scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) transparent;
+}
+.tl-reader[data-on="1"]{display:flex}
+.rd-head{max-width:860px;width:100%;margin-inline:auto;position:relative;padding-left:16px}
+.rd-head::before{content:"";position:absolute;left:0;top:2px;bottom:2px;width:2px;background:var(--spine);border-radius:1px}
+.rd-kind{
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.07em;
+  color:var(--text-muted);display:flex;gap:8px;align-items:baseline;
+}
+.rd-kind .id{font-family:var(--font-mono);text-transform:none;letter-spacing:0;opacity:.6}
+.rd-title{
+  font-size:calc(17px * var(--tl-text-scale));font-weight:500;margin-top:4px;line-height:1.3;
+}
+.rd-meta{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));
+  color:var(--text-muted);margin-top:5px;font-variant-numeric:tabular-nums;
+}
+.rd-back{
+  display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--text-muted);
+  padding:4px 8px;border-radius:6px;border:1px solid var(--border);
+}
+.rd-back:hover{color:var(--text-primary);background:var(--hover-tint)}
+.rd-back[hidden]{display:none}
+.rd-rule{max-width:860px;width:100%;margin-inline:auto;height:1px;background:var(--border)}
+.rd-msg{max-width:860px;width:100%;margin-inline:auto;font-size:calc(13.5px * var(--tl-text-scale))}
+.rd-msg .who{
+  font-size:calc(10.5px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.07em;
+  color:var(--text-muted);margin-bottom:4px;display:block;
+}
+.rd-msg p{margin:0 0 8px}
+.rd-msg p:last-child{margin-bottom:0}
+.rd-think{
+  color:var(--text-muted);font-style:italic;
+  border-left:2px solid var(--border-strong);padding-left:10px;
+}
+.rd-tool{
+  max-width:860px;width:100%;margin-inline:auto;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);
+  padding:8px 10px;
+}
+.rd-tool .hd{display:flex;align-items:baseline;gap:9px}
+.rd-tool .nm{
+  font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.04em;
+  color:var(--text-muted);
+}
+.rd-tool .ar{
+  flex:1;min-width:0;font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale));
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  color:color-mix(in srgb, var(--text-primary) 80%, transparent);
+}
+.rd-tool .mk{color:var(--success);font-size:12px}
+.rd-tool .out{
+  margin-top:6px;font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));
+  color:var(--text-muted);white-space:pre-wrap;line-height:1.45;
+}
+.rd-live{
+  max-width:860px;width:100%;margin-inline:auto;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));
+  color:var(--text-muted);opacity:.7;
+}
+
+/* ===================== design note ============================ */
+.proto-note{
+  max-width:760px;margin:0 auto;padding:14px 18px 70px;
+  color:var(--text-muted);font-size:14px;line-height:1.62;
+}
+.proto-note h2{
+  color:var(--text-primary);font-size:19px;font-weight:600;margin:16px 0 4px;letter-spacing:-.01em;
+}
+.proto-note .sub{font-family:var(--font-mono);font-size:11.5px;opacity:.7;margin-bottom:14px}
+.proto-note p{margin:0 0 11px}
+.proto-note strong{color:var(--text-primary);font-weight:500}
+
+@media (prefers-reduced-motion: reduce){
+  *{transition:none !important;animation:none !important}
+}
+@media (max-width:700px){
+  .proto-frame{margin:8px;height:80vh}
+  .tl-shell{grid-template-columns:0 1fr}
+  .tl-shell .tl-shell-sidebar{display:none}
+}
+</style>
+</head>
+<body class="theme-slate">
+
+<!-- prototype controls. not part of the product. -->
+<div class="proto-bar">
+  <b>states</b>
+  <button class="proto-btn" data-seek="30">3 agents</button>
+  <button class="proto-btn" data-seek="236">16 agents</button>
+  <button class="proto-btn" data-seek="172">workflow</button>
+  <button class="proto-btn" data-seek="100">one failed</button>
+  <button class="proto-btn" data-seek="205">3 minutes quiet</button>
+  <button class="proto-btn" data-seek="362">all done</button>
+  <button class="proto-btn" data-seek="378">idle</button>
+  <span class="proto-sep"></span>
+  <button class="proto-btn" id="btnPlay" data-on="1">pause</button>
+  <button class="proto-btn" id="btnReplay">replay</button>
+  <span class="proto-sep"></span>
+  <div class="proto-scrub" id="scrub" title="seek"><i id="scrubFill"></i></div>
+  <span class="proto-clock" id="clock">0:00</span>
+  <span style="opacity:.55">session clock, 6x</span>
+</div>
+
+<div class="proto-frame">
+<div class="tl-shell" id="shell" data-sidebar="1">
+
+  <aside class="tl-shell-sidebar">
+    <div class="tl-shellbar">
+      <button class="tl-icon" id="sbToggle" title="Hide sidebar" aria-label="Hide sidebar">☰</button>
+      <span class="tl-brand">terminal-lobby</span>
+      <span class="sp"></span>
+      <button class="lnk">Skills</button>
+      <button class="lnk">Settings</button>
+    </div>
+    <div class="tl-sessions">
+      <button class="tl-sess" aria-current="true">
+        <span class="dot" style="background:var(--state-running)"></span>
+        <span class="nm">agent-panel</span><span class="ago">now</span>
+      </button>
+      <button class="tl-sess">
+        <span class="dot" style="background:var(--state-awaiting)"></span>
+        <span class="nm">pages-render</span><span class="ago">4m</span>
+      </button>
+      <button class="tl-sess">
+        <span class="dot" style="background:var(--state-done)"></span>
+        <span class="nm">preload-hover</span><span class="ago">1h</span>
+      </button>
+      <button class="tl-sess">
+        <span class="dot" style="background:var(--border-strong)"></span>
+        <span class="nm">qa-harness</span><span class="ago">2h</span>
+      </button>
+      <button class="tl-sess">
+        <span class="dot" style="background:var(--border-strong)"></span>
+        <span class="nm">cpu-parking</span><span class="ago">yday</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="tl-main">
+
+    <div class="tl-session-bar">
+      <span class="tl-chip">agent-panel <span style="opacity:.6">▾</span></span>
+      <span class="tl-conn" title="connected"></span>
+      <span class="sp"></span>
+      <button class="rd-back" id="rdBack" hidden>← back to session</button>
+      <div class="tl-switch">
+        <button aria-pressed="true">Text</button>
+        <button aria-pressed="false">Terminal</button>
+      </div>
+      <button class="tl-barlink">Files</button>
+      <button class="tl-barlink">Watch</button>
+      <button class="tl-barlink">⋯</button>
+    </div>
+
+    <!-- narrow form of the panel: a footnote strip under the session bar -->
+    <div class="tl-strip" id="strip" hidden>
+      <button class="tl-strip-bar" id="stripBar">
+        <span class="mg-ticks" id="stripTicks"></span>
+        <span class="lbl" id="stripLbl"></span>
+        <span class="car" id="stripCar">⌄</span>
+      </button>
+      <div class="tl-strip-open" id="stripOpen" hidden><div class="mg-list" id="stripList"></div></div>
+    </div>
+
+    <div class="tl-body">
+
+      <div class="tl-timeline" id="timeline">
+        <div class="tl-row tl-user">
+          <span class="who">You</span>
+          when I spawn a team the text view gives me a tick and a count. I cannot
+          see what any of them are doing.
+        </div>
+
+        <div class="tl-row tl-assist">
+          <p>Right. A subagent renders as one collapsed tool row that resolves about two
+          seconds after launch, while the agent itself runs for minutes. The strip under
+          the timeline only counts them.</p>
+          <p>Let me look at what the transcript files actually carry while an agent is live.</p>
+        </div>
+
+        <div class="tl-row tl-tool">
+          <span class="g">⌘</span><span class="noun">Bash</span>
+          <span class="lab">ls ~/.claude/projects/*/subagents | head -40</span><span class="mk">✓</span>
+        </div>
+        <div class="tl-row tl-tool">
+          <span class="g">◇</span><span class="noun">Read</span>
+          <span class="lab">subagents/agent-priorart-recon-a41c.meta.json</span><span class="mk">✓</span>
+        </div>
+
+        <div class="tl-row tl-assist">
+          <p>Each agent writes its own JSONL as it works, with a meta file beside it carrying
+          the description, the model and the colour Claude Code assigned. The last tool_use
+          block is the agent's current activity, about 450 ms behind. That is enough for a
+          live panel.</p>
+          <p>Everything needed is already on disk. Nothing new has to be collected.</p>
+        </div>
+
+        <div class="tl-row tl-user">
+          <span class="who">You</span>
+          good. spawn the team and let me watch it from the margin.
+        </div>
+
+        <div class="tl-row tl-assist">
+          <p>Spawning the recon team now, then the deletion workflow behind it.</p>
+        </div>
+
+        <div class="tl-row tl-tool">
+          <span class="g">◈</span><span class="noun">Agent</span>
+          <span class="lab">priorart-recon, transcript-recon, textview-recon</span><span class="mk">✓</span>
+        </div>
+
+        <div class="tl-row tl-assist" style="color:var(--text-muted)">
+          <p>Three agents are reading in parallel. I will hold here until they report.</p>
+        </div>
+      </div>
+
+      <!-- THE PANEL -->
+      <aside class="tl-margin" id="margin" aria-label="Agents running in this session" hidden>
+        <div class="mg-tally">
+          <div class="mg-ticks" id="ticks"></div>
+          <div class="mg-head"><span class="n" id="headN"></span><span class="tok" id="headTok"></span></div>
+        </div>
+        <div class="mg-list" id="mlist"></div>
+      </aside>
+
+      <!-- drill-in, in the reading column itself -->
+      <div class="tl-reader" id="reader"></div>
+
+    </div>
+
+    <div class="tl-composer">
+      <div class="tl-composer-box">
+        <div class="field">Reply to this session</div>
+        <div class="tl-composer-row">
+          <span class="tl-mchip">bypass</span>
+          <span class="tl-mchip">opus</span>
+          <span class="tl-meter"><span class="bar"><i></i></span>38%</span>
+          <button class="tl-stop">Stop</button>
+          <button class="tl-send">Send</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+</div>
+
+<section class="proto-note">
+  <h2>Marginalia</h2>
+  <div class="sub">prototype 1 of 5 · agent panel for the text view</div>
+  <p>The panel lives in the right margin of the reading column, 260px wide to match
+  the sidebar, with no card, no background and no badges. A monitoring surface that
+  demands attention has already failed, so this one is built from typeset text on the
+  page background and one hairline. It is marginalia: you absorb it while reading
+  something else, and you read it properly only when you decide to.</p>
+  <p>The idea I want judged is <strong>the spine</strong>. Each entry's 2px left rule is
+  the agent's Claude Code colour, and indenting that same rule is how nesting is drawn,
+  so identity and the tree cost one stroke between them. Workflow runs get a grey spine
+  instead of a coloured one, which is the whole distinction between a run and an ad-hoc
+  agent. Above it sits the tally, one tick per agent, where a dim tick is one that has
+  not written in a while and a short one is finished. Six running with one quiet is
+  legible from that row alone, without reading a word.</p>
+  <p>There is no spinner anywhere. Peripheral vision is most sensitive to movement, so
+  the only things that change are the elapsed digits and the tool name, and both of
+  those are information. Silence is shown by letting the activity line fade as it ages,
+  which puts the fact on screen without the panel ever judging it.</p>
+  <p>The risk I took is discoverability. With no chrome there is no button to press, so
+  clicking an agent is carried by a faint chevron, a hover tint and keyboard focus.
+  With more time I would test whether that chevron is enough, tune the fade curve for
+  silence against real sessions rather than my guess at it, and give the narrow strip
+  the same drill-in the wide margin has instead of an expand-in-place list.</p>
+</section>
+
+<script>
+"use strict";
+/* =====================================================================
+   The whole demo state is a pure function of session time, so the state
+   buttons seek by setting one number. One shared clock, 500 ms, running
+   only while something is live.
+   ===================================================================== */
+const S = 1000;
+const SPEED = 6;              // session ms per real ms
+const TICK_MS = 500;          // one shared clock
+const END = 384 * S;
+const QUIET_AT = 45 * S;      // a tick dims past this. it is a number, not a verdict.
+const QUIET_FLOOR = 195 * S;  // where the fade bottoms out
+
+/* how faded an activity line is, from time since the agent last wrote.
+   this is the whole of what the panel says about silence. */
+function fade(sinceAct){
+  if (sinceAct <= 25*S) return 1;
+  const k = Math.min(1, (sinceAct - 25*S) / (QUIET_FLOOR - 25*S));
+  return 1 - k*0.62;
+}
+
+const HUE = {blue:'var(--agent-blue)',green:'var(--agent-green)',yellow:'var(--agent-yellow)',
+             purple:'var(--agent-purple)',orange:'var(--agent-orange)',pink:'var(--agent-pink)',
+             cyan:'var(--agent-cyan)'};
+
+const AGENTS = [
+  {id:'a1', desc:'Find prior art for agent visualization', name:'priorart-recon',
+   color:'yellow', type:'general-purpose', depth:0, start:4*S, end:126*S, outcome:'done',
+   result:'6 systems compared, notes written',
+   tools:['Grep','Read','WebFetch','Read','Grep','Write'], hold:14*S, tpc:4200, tok:74},
+
+  {id:'a2', desc:'Map transcript data for subagents', name:'transcript-recon',
+   color:'cyan', type:'general-purpose', depth:0, start:6*S, end:70*S, outcome:'done',
+   result:'meta.json + 11 fields readable live',
+   tools:['Bash','Read','Bash','Read','Write'], hold:12*S, tpc:3600, tok:88},
+
+  {id:'a2b', desc:'Sample 40 agent JSONL files for shape', parent:'a2',
+   color:'blue', type:'Explore', depth:1, start:22*S, end:64*S, outcome:'done',
+   result:'187 Agent calls, 78 carry a name',
+   tools:['Bash','Grep','Read'], hold:11*S, tpc:3900, tok:52},
+
+  {id:'a3', desc:'Read the text view render path', name:'textview-recon',
+   color:'green', type:'general-purpose', depth:0, start:8*S, end:292*S, outcome:'done',
+   result:'bg strip is the only surface today',
+   tools:['Read','Grep','Read','Read','Grep','Write'], hold:15*S, tpc:5200, tok:61,
+   quiet:[52*S, 250*S]},
+
+  {id:'a4', desc:'Probe the tmux shell for pty limits', name:'shell-probe',
+   color:'orange', type:'general-purpose', depth:0, start:12*S, end:98*S, outcome:'error',
+   result:'Bash: exit 127, ttyd not on PATH',
+   tools:['Bash','Bash','Read','Bash'], hold:10*S, tpc:3400, tok:40}
+];
+
+const BG = [
+  {id:'b1', desc:'npm run build -- --watch', kind:'bash', start:20*S, end:334*S,
+   outcome:'done', result:'exit 0, 3 rebuilds', lines:[18,412], tok:0}
+];
+
+const SCHED = [
+  {id:'s1', desc:'/loop check pipeline', kind:'sched', start:60*S, fireAt:300*S}
+];
+
+const WF_PHASES = [
+  {i:1, title:'Survey', start:150*S, end:204*S},
+  {i:2, title:'Delete', start:206*S, end:302*S},
+  {i:3, title:'Refute', start:304*S, end:350*S}
+];
+const WF_LABELS = {
+  1:['frontend source and service worker','build config and bundler graph',
+     'route table and lazy chunks','css and design tokens',
+     'test fixtures naming removed paths'],
+  2:['legacy settings screen','old composer draft store','v1 session card markup',
+     'unused theme presets','dead websocket fallbacks','prefetch worker shim',
+     'unused icon sprite sheet','deprecated keyboard map','old file tree component',
+     'duplicate markdown renderer','unused toast queue','orphaned scroll restore',
+     'legacy mobile drawer','retired context meter v1','stale skill picker',
+     'old transcript paginator'],
+  3:['check every deleted export','rerun the type build','diff the bundle graph',
+     'hunt dynamic imports by string']
+};
+const WF_TOOLS = ['Read','Grep','Bash','Edit','Write','Glob','Read','Bash'];
+const WF_HUES = ['blue','green','yellow','purple','orange','pink','cyan'];
+
+/* build the workflow agent list once, deterministically */
+const WF_AGENTS = [];
+WF_PHASES.forEach(ph=>{
+  const labs = WF_LABELS[ph.i];
+  const span = ph.end - ph.start;
+  labs.forEach((lab,k)=>{
+    const start = ph.start + 2*S + k*(ph.i===2 ? 0.8*S : 1.4*S);
+    // completions staggered across the back half of the phase
+    const frac = 0.52 + 0.44 * ((k*7)%labs.length)/labs.length;
+    let end = ph.start + Math.round(span*frac);
+    if (end <= start + 18*S) end = start + 18*S;
+    if (end > ph.end - 2*S) end = ph.end - 2*S;
+    const err = (ph.i===2 && k===9);
+    WF_AGENTS.push({
+      id:'w'+ph.i+'_'+k, desc:lab, phase:ph.i, color:WF_HUES[(k*3+ph.i)%WF_HUES.length],
+      type:'general-purpose', depth:0, start, end, outcome: err?'error':'done',
+      result: err ? 'Edit: file changed on disk, retry exhausted'
+                  : (2+((k*5)%9))+' files touched',
+      tools:WF_TOOLS, hold:(9+(k%5))*S, tpc:3000+((k*370)%2600), tok:55+((k*17)%90),
+      quiet: (ph.i===2 && k===4) ? [ph.start+40*S, ph.start+78*S] : null
+    });
+  });
+});
+const WF = {id:'wf_7d31', desc:'Cut the dead frontend paths',
+            start:150*S, end:352*S, phases:WF_PHASES};
+
+/* ---------------- derivation ---------------- */
+function quietOverlap(a, from, to){
+  if (!a.quiet) return 0;
+  const lo = Math.max(from, a.quiet[0]), hi = Math.min(to, a.quiet[1]);
+  return hi > lo ? hi - lo : 0;
+}
+function derive(a, t){
+  if (t < a.start) return null;
+  const finished = t >= a.end;
+  const now = finished ? a.end : t;
+  const elapsed = now - a.start;
+  const active = elapsed - quietOverlap(a, a.start, now);
+  const inQuiet = !finished && a.quiet && t >= a.quiet[0] && t < a.quiet[1];
+  const hold = a.hold || 12*S;
+  // time since the agent last wrote a record. the panel knows nothing else
+  // about whether it is alive, and never claims to.
+  const sinceAct = inQuiet ? (t - a.quiet[0]) : (active % hold);
+  const tool = a.tools ? a.tools[Math.floor(active / hold) % a.tools.length] : null;
+  return {
+    ref:a, id:a.id, desc:a.desc, name:a.name, color:a.color, depth:a.depth||0,
+    state: finished ? a.outcome : 'running',
+    tool,
+    elapsed, active, sinceAct, quiet: !finished && sinceAct >= QUIET_AT,
+    calls: a.tpc ? 1 + Math.floor(active / a.tpc) : 0,
+    tokens: a.tok ? Math.floor(active/1000) * a.tok : 0,
+    result: a.result, kind: a.kind || 'agent'
+  };
+}
+function phaseState(ph, t){
+  const mine = WF_AGENTS.filter(a=>a.phase===ph.i);
+  if (t < ph.start) return {state:'waiting', running:0, done:0, failed:0, total:mine.length};
+  let running=0, done=0, failed=0;
+  mine.forEach(a=>{
+    if (t < a.start) running += 0;
+    else if (t < a.end) running++;
+    else if (a.outcome==='error') failed++;
+    else done++;
+  });
+  const started = mine.filter(a=>t>=a.start).length;
+  const state = (t >= ph.end) ? 'done' : (started===0 ? 'waiting' : 'running');
+  return {state, running, done, failed, total:mine.length, started};
+}
+
+function snapshot(t){
+  const live=[], done=[];
+  AGENTS.forEach(a=>{ const d=derive(a,t); if(!d) return; (d.state==='running'?live:done).push(d); });
+  BG.forEach(a=>{ const d=derive(a,t); if(!d) return; d.kind='bash'; (d.state==='running'?live:done).push(d); });
+  SCHED.forEach(a=>{
+    if (t < a.start || t >= a.fireAt) return;
+    live.push({ref:a,id:a.id,desc:a.desc,kind:'sched',state:'pending',depth:0,
+               color:null, tool:null, elapsed:t-a.start, due:a.fireAt-t});
+  });
+  let wf=null;
+  if (t >= WF.start){
+    const finished = t >= WF.end;
+    wf = {finished, elapsed:(finished?WF.end:t)-WF.start,
+          phases:WF.phases.map(p=>({p, s:phaseState(p,t)})), agents:{}};
+    WF_AGENTS.forEach(a=>{
+      const d=derive(a,t); if(!d) return;
+      (wf.agents[a.phase] ||= []).push(d);
+    });
+  }
+  return {t, live, done, wf};
+}
+
+/* ---------------- formatting ---------------- */
+function fmtEl(ms){
+  const s=Math.max(0,Math.floor(ms/1000));
+  if (s<60) return s+'s';
+  const m=Math.floor(s/60);
+  if (m<60) return m+'m '+String(s%60).padStart(2,'0');
+  return Math.floor(m/60)+'h '+String(m%60).padStart(2,'0');
+}
+function fmtTok(n){
+  if (n>=1000) return (n/1000).toFixed(n>=10000?0:1)+'k';
+  return String(n);
+}
+
+/* ---------------- keyed list reconciler ----------------
+   Rows never reorder and never rebuild, so timers write straight
+   into a cached text node and hover and focus survive a tick.     */
+function sync(container, descs, make){
+  const have=new Map();
+  for (const el of Array.from(container.children)) have.set(el.dataset.k, el);
+  let prev=null;
+  for (const d of descs){
+    let el=have.get(d.k);
+    if (el && el.dataset.t!==d.t){ el.remove(); have.delete(d.k); el=null; }
+    if (!el){ el=make(d); el.dataset.k=d.k; el.dataset.t=d.t; }
+    else have.delete(d.k);
+    const target = prev ? prev.nextSibling : container.firstChild;
+    if (el!==target) container.insertBefore(el, target);
+    el._upd(d);
+    prev=el;
+  }
+  for (const el of have.values()) el.remove();
+}
+
+/* ---------------- node builders ---------------- */
+function mkEntry(){
+  const b=document.createElement('button');
+  b.className='mg-entry'; b.type='button';
+  b.innerHTML='<span class="mg-l1"><span class="mg-desc"></span><span class="mg-go">›</span></span>'+
+              '<span class="mg-l2"><span class="mg-act"></span><span class="mg-num"></span></span>';
+  const desc=b.querySelector('.mg-desc'), act=b.querySelector('.mg-act'),
+        num=b.querySelector('.mg-num'), go=b.querySelector('.mg-go');
+  b._upd=(d)=>{
+    b.style.setProperty('--spine', d.spine);
+    b.style.setProperty('--x', (d.depth*11)+'px');
+    b.style.paddingLeft = (16 + d.depth*11)+'px';
+    if (desc.textContent!==d.desc) desc.textContent=d.desc;
+    if (act.textContent!==d.act) act.textContent=d.act;
+    if (num.textContent!==d.num) num.textContent=d.num;
+    const o = d.fade==null ? '' : String(d.fade);
+    if (act.style.opacity!==o) act.style.opacity=o;
+    b.dataset.done = d.done ? '1':'0';
+    b.dataset.err  = d.err ? '1':'0';
+    b.dataset.open = d.open ? '1':'0';
+    go.style.display = d.clickable ? '' : 'none';
+    b.onclick = d.clickable ? ()=>openReader(d.agentId) : null;
+    b.disabled = !d.clickable;
+  };
+  return b;
+}
+function mkWfHead(){
+  const div=document.createElement('div');
+  div.className='mg-wfhead';
+  div.innerHTML='<div class="k">Workflow <span class="id"></span></div><div class="t"></div>';
+  const id=div.querySelector('.id'), t=div.querySelector('.t');
+  div._upd=(d)=>{ if(id.textContent!==d.wfid) id.textContent=d.wfid;
+                  if(t.textContent!==d.desc) t.textContent=d.desc; };
+  return div;
+}
+function mkPhase(){
+  const div=document.createElement('div');
+  div.className='mg-phase';
+  div.innerHTML='<div class="r"><span class="nm"></span><span class="st"></span></div>';
+  const nm=div.querySelector('.nm'), st=div.querySelector('.st');
+  div._upd=(d)=>{ if(nm.textContent!==d.nm) nm.textContent=d.nm;
+                  if(st.textContent!==d.st) st.textContent=d.st;
+                  div.dataset.state=d.state; };
+  return div;
+}
+function mkWfRow(){
+  const b=document.createElement('button');
+  b.className='mg-wfrow'; b.type='button';
+  b.innerHTML='<span class="lb"></span><span class="tl"></span>';
+  const lb=b.querySelector('.lb'), tl=b.querySelector('.tl');
+  b._upd=(d)=>{
+    b.style.setProperty('--spine', d.spine);
+    if (lb.textContent!==d.desc) lb.textContent=d.desc;
+    if (tl.textContent!==d.act) tl.textContent=d.act;
+    const o = d.fade==null ? '' : String(d.fade);
+    if (tl.style.opacity!==o) tl.style.opacity=o;
+    b.dataset.err=d.err?'1':'0';
+    b.dataset.open=d.open?'1':'0';
+    b.onclick=()=>openReader(d.agentId);
+  };
+  return b;
+}
+function mkFold(){
+  const div=document.createElement('div');
+  div.className='mg-fold';
+  div._upd=(d)=>{ if(div.textContent!==d.text) div.textContent=d.text; };
+  return div;
+}
+function mkDoneBar(){
+  const b=document.createElement('button');
+  b.className='mg-donebar'; b.type='button';
+  b.innerHTML='<span class="c"></span><span class="car"></span>';
+  const c=b.querySelector('.c'), car=b.querySelector('.car');
+  b._upd=(d)=>{ if(c.textContent!==d.text) c.textContent=d.text;
+                car.textContent = d.expanded?'⌃':'⌄';
+                b.onclick=d.onToggle; };
+  return b;
+}
+function mkNode(d){
+  if (d.t==='entry')  return mkEntry();
+  if (d.t==='wfhead') return mkWfHead();
+  if (d.t==='phase')  return mkPhase();
+  if (d.t==='wfrow')  return mkWfRow();
+  if (d.t==='fold')   return mkFold();
+  if (d.t==='done')   return mkDoneBar();
+  const s=document.createElement('div'); s._upd=()=>{}; return s;
+}
+
+/* ---------------- descriptor building ---------------- */
+let doneOpen=false;
+
+function spineOf(d){
+  if (d.kind==='bash' || d.kind==='sched') return 'var(--border-strong)';
+  if (d.state==='error') return 'var(--danger)';
+  return HUE[d.color] || 'var(--border-strong)';
+}
+/* Inside a run you watch a population, not sixteen individuals, so the
+   identity hue stays but drops most of its chroma against the page. */
+function mute(c){ return 'color-mix(in srgb, '+c+' 52%, var(--bg-page))'; }
+function entryDesc(d, opts){
+  opts=opts||{};
+  const done = d.state==='done' || d.state==='error';
+  let act, num;
+  if (d.kind==='sched'){
+    act='◷ scheduled'; num='in '+fmtEl(d.due);
+  } else if (d.kind==='bash'){
+    act = done ? ('$ '+d.result) : ('$ running');
+    num = fmtEl(d.elapsed);
+  } else if (done){
+    act = (d.state==='error' ? '× ' : '✓ ') + d.result;
+    num = fmtEl(d.elapsed)+' · '+d.calls+' · '+fmtTok(d.tokens);
+  } else {
+    act = '▸ ' + d.tool;
+    num = fmtEl(d.elapsed)+' · '+d.calls+' · '+fmtTok(d.tokens);
+  }
+  return {
+    t:'entry', k:d.id, agentId:d.id, desc:d.desc, act, num,
+    spine: spineOf(d), depth:d.depth||0,
+    fade: (done || d.kind==='sched') ? null : fade(d.sinceAct).toFixed(2),
+    err: d.state==='error', done,
+    open: openAgent===d.id,
+    clickable: d.kind!=='sched'
+  };
+}
+
+function buildMargin(snap){
+  const out=[];
+  const live = snap.live.slice().sort((a,b)=>a.ref.start-b.ref.start);
+  // nest children directly under their parent, spawn order preserved
+  const ordered=[];
+  live.filter(d=>!(d.ref.parent)).forEach(d=>{
+    ordered.push(d);
+    live.filter(c=>c.ref.parent===d.id).forEach(c=>ordered.push(c));
+  });
+  live.filter(d=>d.ref.parent && !ordered.includes(d)).forEach(d=>ordered.push(d));
+  ordered.forEach(d=>out.push(entryDesc(d)));
+
+  // a failure never folds away. it sits with the loose agents, above the
+  // workflow, so it never reads as belonging to a run it was not part of.
+  const failed = snap.done.filter(d=>d.state==='error').sort((a,b)=>a.ref.end-b.ref.end);
+  failed.forEach(d=>out.push(entryDesc(d)));
+
+  if (snap.wf && !snap.wf.finished){
+    out.push({t:'wfhead', k:'wfh', wfid:WF.id, desc:WF.desc});
+    snap.wf.phases.forEach(({p,s})=>{
+      let st;
+      if (s.state==='waiting') st='';
+      else if (s.state==='done') st = s.failed ? ('✓ '+s.done+' · '+s.failed+' failed') : ('✓ '+s.done+' done');
+      else st = s.running+' running';
+      out.push({t:'phase', k:'ph'+p.i, nm:p.i+' · '+p.title, st, state:s.state});
+      if (s.state==='running'){
+        const mine=(snap.wf.agents[p.i]||[]);
+        // the CLI's best idea: only live and failed agents get a row
+        mine.filter(a=>a.state==='running'||a.state==='error').forEach(a=>{
+          out.push({t:'wfrow', k:a.id, agentId:a.id, desc:a.desc,
+                    act: a.state==='error' ? '× failed' : ('▸ '+a.tool),
+                    spine: a.state==='error' ? 'var(--danger)' : mute(spineOf(a)),
+                    err:a.state==='error',
+                    fade: a.state==='error' ? null : fade(a.sinceAct).toFixed(2),
+                    open: openAgent===a.id});
+        });
+        const fin = mine.filter(a=>a.state==='done').length;
+        if (fin) out.push({t:'fold', k:'fold'+p.i, text:'✓ '+fin+' done'});
+      }
+    });
+  }
+
+  const doneList = snap.done.filter(d=>d.state!=='error').sort((a,b)=>b.ref.end-a.ref.end);
+  const wfDone = (snap.wf && snap.wf.finished)
+    ? WF_AGENTS.filter(a=>snap.t>=a.end && a.outcome!=='error').length : 0;
+  const wfFailed = (snap.wf && snap.wf.finished)
+    ? WF_AGENTS.filter(a=>snap.t>=a.end && a.outcome==='error') : [];
+  wfFailed.forEach(a=>out.push(entryDesc(derive(a,snap.t))));
+  const nDone = doneList.length + wfDone;
+  if (nDone){
+    out.push({t:'done', k:'donebar',
+      text: nDone+' done'+(wfDone?' · workflow '+WF.id:''),
+      expanded:doneOpen, onToggle:()=>{ doneOpen=!doneOpen; render(); }});
+    if (doneOpen){
+      doneList.forEach(d=>out.push(entryDesc(d)));
+      if (wfDone){
+        WF_AGENTS.filter(a=>snap.t>=a.end && a.outcome!=='error').slice(0,6).forEach(a=>{
+          const d=derive(a,snap.t); out.push(entryDesc(d));
+        });
+        if (wfDone>6) out.push({t:'fold', k:'wfmore', text:'+ '+(wfDone-6)+' more in '+WF.id});
+      }
+    }
+  }
+  return out;
+}
+
+function tallyOf(snap){
+  const ticks=[];
+  snap.live.forEach(d=>{
+    if (d.kind==='sched') return;
+    ticks.push({s: d.quiet ? 'quiet':'run', c: spineOf(d)});
+  });
+  if (snap.wf && !snap.wf.finished){
+    WF_PHASES.forEach(p=>{
+      (snap.wf.agents[p.i]||[]).forEach(a=>{
+        if (a.state==='running') ticks.push({s:a.quiet?'quiet':'run', c:mute(spineOf(a))});
+        else if (a.state==='error') ticks.push({s:'error', c:'var(--danger)'});
+      });
+    });
+  }
+  const running=ticks.length;
+  let doneCount=snap.done.length;
+  if (snap.wf) doneCount += WF_AGENTS.filter(a=>snap.t>=a.end).length;
+  for (let i=0;i<Math.min(doneCount,12);i++) ticks.push({s:'done', c:'var(--text-muted)'});
+  let tokens=0;
+  snap.live.forEach(d=>tokens+=d.tokens||0);
+  snap.done.forEach(d=>tokens+=d.tokens||0);
+  if (snap.wf) WF_AGENTS.forEach(a=>{ const d=derive(a,snap.t); if(d) tokens+=d.tokens; });
+  return {ticks, running, doneCount, tokens};
+}
+
+function paintTicks(el, ticks){
+  const cap=44;
+  const show=ticks.slice(0,cap);
+  while (el.children.length > show.length + (ticks.length>cap?1:0)) el.lastChild.remove();
+  show.forEach((tk,i)=>{
+    let n=el.children[i];
+    if (!n || !n.classList.contains('mg-tick')){
+      n=document.createElement('i'); n.className='mg-tick'; el.insertBefore(n, el.children[i]||null);
+    }
+    if (n.dataset.s!==tk.s) n.dataset.s=tk.s;
+    if (n.style.background!==tk.c) n.style.background=tk.c;
+  });
+  if (ticks.length>cap){
+    let m=el.querySelector('.mg-more');
+    if (!m){ m=document.createElement('span'); m.className='mg-more'; el.appendChild(m); }
+    m.textContent='+'+(ticks.length-cap);
+  } else { const m=el.querySelector('.mg-more'); if (m) m.remove(); }
+}
+
+/* ---------------- the drill-in reader ---------------- */
+let openAgent=null;
+const READER=document.getElementById('reader');
+const TIMELINE=document.getElementById('timeline');
+const RDBACK=document.getElementById('rdBack');
+
+function findSpec(id){
+  return AGENTS.find(a=>a.id===id) || BG.find(a=>a.id===id) || WF_AGENTS.find(a=>a.id===id);
+}
+const READS = {
+  Bash:['rg -n "tl-bg-strip" src/ --glob "*.tsx"','ls -la ~/.claude/projects/*/subagents | tail -20',
+        'wc -l src/text-view/*.tsx','git log --oneline -12 -- src/text-view'],
+  Read:['src/text-view/Timeline.tsx','src/text-view/BackgroundStrip.tsx',
+        'src/session/useTranscript.ts','docs/architecture/text-view.md'],
+  Grep:['pattern "Still working in the background" in src/','pattern "spawnDepth" in src/',
+        'pattern "subagents/" in src/session/'],
+  WebFetch:['https://docs.claude.com/en/docs/claude-code/sub-agents',
+            'https://github.com/t3-oss/t3code/blob/main/src/AgentsPanel.tsx'],
+  Write:['notes/prior-art.md','notes/transcript-shape.md'],
+  Edit:['src/text-view/BackgroundStrip.tsx','src/routes/settings/legacy.tsx'],
+  Glob:['src/**/*.legacy.tsx'],
+  ListAgents:['session-408579e1']
+};
+const OUTPUTS = {
+  Bash:'src/text-view/BackgroundStrip.tsx:14\nsrc/text-view/Timeline.tsx:221\n2 files, 3 matches',
+  Read:'218 lines read. The strip renders a count only. It reads\nbgCommands.length and nothing else from the record.',
+  Grep:'6 matches across 4 files. All of them read the count.\nNone of them read the per agent record.',
+  WebFetch:'Fetched 41 kB. The panel keeps rows in spawn order and\nnever reorders them, which is what stops the list churning.',
+  Write:'Wrote 84 lines.',
+  Edit:'Applied 1 edit. 3 lines removed.',
+  Glob:'11 files matched.',
+  ListAgents:'6 agents in this team.'
+};
+function esc(s){ return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+
+function renderReader(){
+  if (!openAgent){ READER.dataset.on='0'; TIMELINE.style.display=''; RDBACK.hidden=true; return; }
+  const spec=findSpec(openAgent);
+  if (!spec){ openAgent=null; return renderReader(); }
+  const d=derive(spec, clock);
+  READER.dataset.on='1'; TIMELINE.style.display='none'; RDBACK.hidden=false;
+
+  const live = d && d.state==='running';
+  const nTools = d ? Math.min(d.calls, 7) : 4;
+  const parts=[];
+  parts.push(
+    '<div class="rd-head" style="--spine:'+spineOf(d||{color:spec.color,state:'done',kind:spec.kind})+'">'+
+      '<div class="rd-kind">'+(spec.phase?'Workflow agent':'Agent')+
+        '<span class="id">'+esc(spec.name || spec.id)+'</span>'+
+        (spec.type?'<span class="id">'+esc(spec.type)+'</span>':'')+
+      '</div>'+
+      '<div class="rd-title">'+esc(spec.desc)+'</div>'+
+      '<div class="rd-meta">opus · '+(d?d.calls:0)+' tools · '+fmtTok(d?d.tokens:0)+
+        ' · '+fmtEl(d?d.elapsed:0)+(live?'':' · '+(spec.outcome==='error'?'failed':'finished'))+
+      '</div>'+
+    '</div>'+
+    '<div class="rd-rule"></div>');
+
+  parts.push('<div class="rd-msg"><span class="who">Prompt</span><p>'+esc(spec.desc)+
+    '. Report back with what you found and the files that carry it. Run quiet.</p></div>');
+  parts.push('<div class="rd-msg rd-think"><span class="who">Thinking</span><p>Starting with the '+
+    'files that already render this. If the record is on disk the panel can read it '+
+    'directly, so the first thing to settle is what the record carries.</p></div>');
+
+  for (let i=0;i<nTools;i++){
+    const tn=spec.tools ? spec.tools[i % spec.tools.length] : 'Bash';
+    const args=(READS[tn]||['...'])[i % (READS[tn]||['...']).length];
+    const last = (i===nTools-1) && live;
+    parts.push('<div class="rd-tool"><div class="hd"><span class="nm">'+esc(tn)+'</span>'+
+      '<span class="ar">'+esc(args)+'</span>'+
+      (last?'':'<span class="mk">✓</span>')+'</div>'+
+      (last?'':'<div class="out">'+esc(OUTPUTS[tn]||'done')+'</div>')+'</div>');
+    if (i===1){
+      parts.push('<div class="rd-msg"><p>The strip under the timeline reads one number off '+
+        'the session record. Everything else an agent writes is already on disk beside it, '+
+        'one file per agent, appended as it works.</p></div>');
+    }
+  }
+
+  if (live){
+    parts.push('<div class="rd-live">reading, '+fmtEl(d.sinceAct)+' since the last record</div>');
+  } else if (d){
+    parts.push('<div class="rd-msg"><span class="who">Result</span><p>'+esc(d.result)+'</p></div>');
+  }
+  READER.innerHTML=parts.join('');
+}
+function openReader(id){ openAgent=id; renderReader(); render(); }
+function closeReader(){ openAgent=null; renderReader(); render(); }
+RDBACK.onclick=closeReader;
+document.addEventListener('keydown', e=>{ if (e.key==='Escape' && openAgent) closeReader(); });
+
+/* ---------------- render ---------------- */
+const MARGIN=document.getElementById('margin');
+const MLIST=document.getElementById('mlist');
+const TICKS=document.getElementById('ticks');
+const HEADN=document.getElementById('headN');
+const HEADTOK=document.getElementById('headTok');
+const STRIP=document.getElementById('strip');
+const STRIPTICKS=document.getElementById('stripTicks');
+const STRIPLBL=document.getElementById('stripLbl');
+const STRIPOPEN=document.getElementById('stripOpen');
+const STRIPLIST=document.getElementById('stripList');
+const STRIPCAR=document.getElementById('stripCar');
+let stripOpen=false;
+document.getElementById('stripBar').onclick=()=>{ stripOpen=!stripOpen; render(); };
+
+/* the session moves on at 372 s and the last batch clears */
+function panelVisible(snap){
+  if (snap.t >= 372*S) return false;
+  const tal=tallyOf(snap);
+  return tal.running>0 || tal.doneCount>0;
+}
+
+function render(){
+  const snap=snapshot(clock);
+  const show=panelVisible(snap);
+  MARGIN.hidden=!show; STRIP.hidden=!show;
+  if (!show){ if (openAgent) closeReader(); return; }
+
+  const tal=tallyOf(snap);
+  paintTicks(TICKS, tal.ticks);
+  const n = tal.running ? (tal.running+' running') : 'nothing running';
+  if (HEADN.textContent!==n) HEADN.textContent=n;
+  const tk = fmtTok(tal.tokens);
+  if (HEADTOK.textContent!==tk) HEADTOK.textContent=tk;
+
+  const descs=buildMargin(snap);
+  sync(MLIST, descs, mkNode);
+
+  // narrow form
+  paintTicks(STRIPTICKS, tal.ticks.slice(0,20));
+  const tools=[...new Set(snap.live.filter(d=>d.tool).map(d=>d.tool))].slice(0,3).join(', ');
+  const lbl = tal.running ? (tal.running+' running'+(tools?' · '+tools:'')) : (tal.doneCount+' done');
+  if (STRIPLBL.textContent!==lbl) STRIPLBL.textContent=lbl;
+  STRIPCAR.textContent = stripOpen ? '⌃' : '⌄';
+  STRIPOPEN.hidden=!stripOpen;
+  if (stripOpen) sync(STRIPLIST, descs, mkNode);
+
+  if (openAgent) renderReader();
+}
+
+/* ---------------- the one shared clock ---------------- */
+let clock=0, playing=true, timer=null;
+const CLOCKEL=document.getElementById('clock');
+const FILL=document.getElementById('scrubFill');
+const BTNPLAY=document.getElementById('btnPlay');
+
+function paintClock(){
+  const s=Math.floor(clock/1000);
+  CLOCKEL.textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');
+  FILL.style.width=Math.min(100, clock/END*100)+'%';
+}
+function tick(){
+  clock += TICK_MS*SPEED;
+  if (clock>=END){ clock=END; setPlaying(false); }
+  paintClock(); render();
+}
+function setPlaying(p){
+  playing=p; BTNPLAY.textContent=p?'pause':'play'; BTNPLAY.dataset.on=p?'1':'0';
+  if (timer){ clearInterval(timer); timer=null; }
+  if (p) timer=setInterval(tick, TICK_MS);
+}
+function seek(sec){
+  clock=sec*S; setPlaying(false); paintClock(); render();
+}
+BTNPLAY.onclick=()=>setPlaying(!playing);
+document.getElementById('btnReplay').onclick=()=>{
+  clock=0; doneOpen=false; stripOpen=false; openAgent=null;
+  renderReader(); paintClock(); render(); setPlaying(true);
+};
+document.querySelectorAll('[data-seek]').forEach(b=>{
+  b.onclick=()=>seek(parseInt(b.dataset.seek,10));
+});
+document.getElementById('scrub').onclick=(e)=>{
+  const r=e.currentTarget.getBoundingClientRect();
+  seek(Math.round((e.clientX-r.left)/r.width*END/1000));
+};
+document.getElementById('sbToggle').onclick=()=>{
+  const sh=document.getElementById('shell');
+  sh.dataset.sidebar = sh.dataset.sidebar==='1' ? '0' : '1';
+};
+
+renderReader(); paintClock(); render(); setPlaying(true);
+</script>
+</body>
+</html>

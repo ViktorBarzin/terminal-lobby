@@ -1,0 +1,1436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Foreground, a Terminal Lobby agent panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ───────────────────────────── tokens ───────────────────────────── */
+:root{
+  --font-mono: "JetBrains Mono", "Fira Code", Menlo, Monaco, "Courier New", monospace;
+  --font-ui:   "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --radius: 10px;
+  --tl-text-scale: 1;
+}
+body.theme-slate{
+  --bg-page:#0d1117; --bg-sidebar:#11151c; --bg-card:#161b22; --bg-card-hover:#1c2128;
+  --text-primary:#e6e8eb; --text-muted:#7d8590;
+  --border:#1f242d; --border-strong:#30363d;
+  --accent:#4493f8; --danger:#f47067; --success:#56d364;
+  --state-running:#4493f8; --state-awaiting:#a371f7; --state-done:#56d364;
+  --surface-shadow:0 4px 6px -1px rgba(0,0,0,.05), inset 0 1px rgba(255,255,255,.06);
+  --hover-tint:rgba(255,255,255,.04);
+  --scrollbar-thumb:rgba(255,255,255,.1);
+}
+/* agent identity hues: the one fixed-colour exception the brief allows */
+[data-color=blue]   { --ag:#4493f8; }
+[data-color=green]  { --ag:#56d364; }
+[data-color=yellow] { --ag:#d6a548; }
+[data-color=purple] { --ag:#a371f7; }
+[data-color=cyan]   { --ag:#39c5cf; }
+[data-color=orange] { --ag:#e3823a; }
+[data-color=pink]   { --ag:#db61a2; }
+[data-color=red]    { --ag:#f47067; }
+
+*{box-sizing:border-box}
+html,body{padding:0}
+body{
+  margin-block:0; margin-inline:0;
+  background:var(--bg-page); color:var(--text-primary);
+  font-family:var(--font-ui); font-size:14px; line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ──────────────────── prototype controls (not the app) ──────────────────── */
+.pt-bar{
+  position:sticky; top:0; z-index:60;
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding-block:7px; padding-inline:12px;
+  background:#05070a; border-bottom:1px solid var(--border-strong);
+}
+.pt-tag{
+  font-family:var(--font-mono); font-size:10px; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--text-muted); padding-inline-end:4px;
+}
+.pt-btn{
+  font-size:12px; padding-block:4px; padding-inline:9px;
+  border:1px solid var(--border-strong); border-radius:calc(var(--radius) - 4px);
+  color:var(--text-muted); background:var(--bg-card);
+}
+.pt-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.pt-btn[data-on=true]{color:var(--text-primary);border-color:var(--accent)}
+.pt-sep{width:1px;align-self:stretch;background:var(--border-strong);margin-inline:2px}
+.pt-clock{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);margin-inline-start:auto}
+
+/* ───────────────────────────── shell ───────────────────────────── */
+.tl-shell{
+  display:grid; grid-template-columns:260px 1fr;
+  height:calc(100vh - 44px); min-height:560px; overflow:hidden;
+}
+.tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0}
+.tl-shellbar{
+  height:41px;flex:none;display:flex;align-items:center;gap:10px;
+  padding-block:8px;padding-inline:12px;background:var(--bg-sidebar);border-bottom:1px solid var(--border);
+}
+.tl-brand{font-weight:600;font-size:13px;letter-spacing:-.01em}
+.tl-icon{color:var(--text-muted);font-size:13px}
+.tl-icon:hover{color:var(--text-primary)}
+.tl-spacer{margin-inline-start:auto}
+.tl-sessions{overflow-y:auto;padding-block:8px;padding-inline:8px;display:flex;flex-direction:column;gap:2px}
+.tl-sess{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  padding-block:7px;padding-inline:9px;border-radius:calc(var(--radius) - 2px);color:var(--text-muted);
+}
+.tl-sess:hover{background:var(--hover-tint)}
+.tl-sess[aria-current=true]{background:var(--bg-card);color:var(--text-primary)}
+.tl-sess-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--text-muted)}
+.tl-sess-dot.run{background:var(--state-running)}
+.tl-sess-dot.done{background:var(--state-done)}
+.tl-sess-dot.wait{background:var(--state-awaiting)}
+.tl-sess-name{font-family:var(--font-mono);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-sess-n{margin-inline-start:auto;font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+.tl-sidehead{
+  font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);
+  padding-block:10px 4px;padding-inline:9px;
+}
+
+.tl-main{display:flex;flex-direction:column;min-width:0;position:relative}
+.tl-session-bar{
+  height:40px;flex:none;display:flex;align-items:center;gap:8px;
+  padding-block:6px;padding-inline:12px;border-bottom:1px solid var(--border);background:var(--bg-page);
+}
+.tl-chip{
+  font-family:var(--font-mono);font-size:12px;color:var(--text-muted);
+  padding-block:2px;padding-inline:8px;border:1px solid var(--border);border-radius:var(--radius);
+  display:inline-flex;align-items:center;gap:6px;
+}
+.tl-conn{width:8px;height:8px;border-radius:50%;background:var(--success);flex:none}
+.tl-switch{display:inline-flex;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:2px;gap:2px}
+.tl-switch button{
+  padding-block:5px;padding-inline:12px;font-size:13px;
+  border-radius:calc(var(--radius) - 4px);color:var(--text-muted);
+}
+.tl-switch button[aria-pressed=true]{background:var(--bg-card-hover);color:var(--text-primary);box-shadow:var(--surface-shadow)}
+.tl-barbtn{font-size:13px;color:var(--text-muted);padding-block:4px;padding-inline:8px;border-radius:calc(var(--radius) - 4px)}
+.tl-barbtn:hover{background:var(--hover-tint);color:var(--text-primary)}
+
+/* ─────────────────────────── timeline ─────────────────────────── */
+.tl-timeline{
+  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:14px;
+  padding-block:16px;padding-inline:clamp(12px,6vw,80px);
+}
+.tl-row{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
+.tl-user{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  padding-block:10px;padding-inline:12px;font-size:calc(14px * var(--tl-text-scale));
+}
+.tl-who{
+  font-size:calc(11px * var(--tl-text-scale));letter-spacing:.04em;text-transform:uppercase;
+  color:var(--text-muted);margin-block:0 6px;
+}
+.tl-assistant{font-size:calc(14px * var(--tl-text-scale));color:var(--text-primary)}
+.tl-assistant p{margin-block:0 9px}
+.tl-assistant p:last-child{margin-block-end:0}
+.tl-tool{
+  display:flex;align-items:center;gap:10px;
+  font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-muted);
+  padding-block:5px;padding-inline:10px;
+  border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);
+}
+.tl-tool .g{color:var(--text-muted);font-size:calc(12px * var(--tl-text-scale))}
+.tl-tool .noun{
+  font-size:calc(11px * var(--tl-text-scale));letter-spacing:.04em;text-transform:uppercase;
+  color:var(--text-muted);min-width:52px;
+}
+.tl-tool .lbl{font-family:var(--font-mono);color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl-tool .mark{margin-inline-start:auto;color:var(--success)}
+
+/* ─────────────────────────── composer ─────────────────────────── */
+.tl-composer{
+  flex:none;background:var(--bg-sidebar);border-top:1px solid var(--border);
+  padding-block:10px;padding-inline:clamp(12px,6vw,80px);
+}
+.tl-composer-box{
+  max-width:860px;margin-block:0;margin-inline:auto;
+  padding-block:8px;padding-inline:10px;border:1px solid var(--border-strong);
+  border-radius:var(--radius);background:var(--bg-card);
+}
+.tl-composer-field{color:var(--text-muted);font-size:calc(14px * var(--tl-text-scale));min-height:22px}
+.tl-composer-foot{display:flex;align-items:center;gap:8px;margin-block:9px 0}
+.tl-mini{
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);
+  border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);
+  padding-block:2px;padding-inline:7px;
+}
+.tl-meter{width:74px;height:4px;border-radius:3px;background:var(--border);overflow:hidden}
+.tl-meter i{display:block;height:100%;width:38%;background:var(--text-muted)}
+.tl-send{
+  margin-inline-start:auto;font-size:calc(12px * var(--tl-text-scale));
+  border:1px solid var(--border-strong);border-radius:calc(var(--radius) - 4px);
+  padding-block:3px;padding-inline:11px;color:var(--text-primary);background:var(--bg-card-hover);
+}
+.tl-stop{font-size:calc(12px * var(--tl-text-scale));color:var(--text-muted);padding-block:3px;padding-inline:8px}
+
+/* ══════════════════════ FOREGROUND: the agent band ══════════════════════ */
+.fg{
+  flex:none;background:var(--bg-page);border-bottom:1px solid var(--border);
+  display:flex;flex-direction:column;max-height:min(56vh,560px);min-height:0;
+}
+.fg[hidden]{display:none}
+.fg-inner{
+  max-width:860px;width:100%;margin-block:0;margin-inline:auto;
+  display:flex;flex-direction:column;min-height:0;
+}
+.fg-wrap{
+  padding-inline:clamp(12px,6vw,80px);
+  display:flex;flex-direction:column;min-height:0;flex:1 1 auto;
+}
+
+/* head */
+.fg-head{display:flex;align-items:center;gap:10px;padding-block:9px 7px;flex:none}
+.fg-glyph{color:var(--text-muted);font-size:calc(12px * var(--tl-text-scale))}
+.fg-noun{
+  font-size:calc(11px * var(--tl-text-scale));letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);
+}
+.fg-count{
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-primary);
+}
+.fg-count b{font-weight:500}
+.fg-count .dim{color:var(--text-muted)}
+.fg-head-right{margin-inline-start:auto;display:flex;align-items:center;gap:6px}
+.fg-chev{
+  color:var(--text-muted);font-size:12px;width:24px;height:22px;border-radius:calc(var(--radius) - 4px);
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.fg-chev:hover{background:var(--hover-tint);color:var(--text-primary)}
+
+/* collapsed one-liner */
+.fg-collapsed{
+  display:flex;align-items:center;gap:10px;min-width:0;flex:1;
+  font-size:calc(12px * var(--tl-text-scale));color:var(--text-muted);
+}
+.fg-collapsed .lead{
+  font-family:var(--font-mono);color:var(--text-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+
+/* ── the lead card: the hero ── */
+.fg-lead{
+  flex:none;border:1px solid var(--border-strong);border-radius:var(--radius);
+  background:var(--bg-card);box-shadow:var(--surface-shadow);
+  padding-block:10px 9px;padding-inline:13px;position:relative;overflow:hidden;
+}
+.fg-lead::before{
+  content:"";position:absolute;inset-block:0;inset-inline-start:0;width:2px;
+  background:var(--ag,var(--accent));
+}
+.fg-lead[data-state=error]::before{background:var(--danger)}
+.fg-lead-top{display:flex;align-items:center;gap:8px;min-width:0}
+.fg-dot{width:7px;height:7px;border-radius:50%;background:var(--ag,var(--accent));flex:none}
+.fg-lead-name{
+  font-family:var(--font-mono);font-size:calc(13px * var(--tl-text-scale));font-weight:500;
+  color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.fg-lead-kind{
+  font-size:calc(11px * var(--tl-text-scale));letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted);flex:none;
+}
+.fg-why{
+  margin-inline-start:auto;flex:none;display:inline-flex;align-items:center;gap:5px;
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);
+  border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);
+  padding-block:2px;padding-inline:7px;background:var(--bg-page);
+}
+.fg-why:hover{border-color:var(--border-strong);color:var(--text-primary)}
+.fg-why[data-tier="4"]{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,var(--border))}
+.fg-why[data-pin=true]{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 45%,var(--border))}
+.fg-lead-desc{
+  margin-block:4px 0;font-size:calc(14px * var(--tl-text-scale));color:var(--text-primary);line-height:1.3;
+}
+.fg-rule{
+  margin-block:7px 0;font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  border-inline-start:2px solid var(--border-strong);padding-inline-start:8px;
+}
+.fg-rule b{color:var(--text-primary);font-weight:500}
+
+/* the current tool call: the single loudest thing on the page */
+.fg-now{
+  margin-block:8px 0;display:flex;align-items:baseline;gap:9px;min-width:0;
+  padding-block:6px;padding-inline:9px;border-radius:calc(var(--radius) - 3px);
+  background:color-mix(in srgb,var(--ag,var(--accent)) 9%,var(--bg-page));
+  border:1px solid color-mix(in srgb,var(--ag,var(--accent)) 20%,var(--border));
+}
+.fg-lead[data-state=error] .fg-now{
+  background:color-mix(in srgb,var(--danger) 10%,var(--bg-page));
+  border-color:color-mix(in srgb,var(--danger) 32%,var(--border));
+}
+.fg-now.flash{background:color-mix(in srgb,var(--ag,var(--accent)) 24%,var(--bg-page))}
+.fg-spin{font-family:var(--font-mono);color:var(--ag,var(--accent));font-size:calc(12px * var(--tl-text-scale));flex:none}
+.fg-now-name{
+  font-family:var(--font-mono);font-size:calc(14px * var(--tl-text-scale));font-weight:600;
+  color:var(--text-primary);flex:none;
+}
+.fg-now-args{
+  font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-muted);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.fg-lead[data-state=error] .fg-now-args{color:var(--danger)}
+
+
+/* metric row */
+.fg-metrics{
+  display:flex;gap:16px;margin-block:8px 0;flex-wrap:wrap;align-items:center;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+}
+.fg-metric{display:inline-flex;align-items:baseline;gap:5px}
+.fg-metric b{
+  font-size:calc(13px * var(--tl-text-scale));font-weight:500;
+  color:var(--text-primary);font-variant-numeric:tabular-nums;
+}
+.fg-metric i{font-style:normal}
+.fg-metrics .fg-quietinline{color:var(--text-muted)}
+.fg-metrics .fg-open{margin-inline-start:auto}
+.fg-metrics .fg-why{margin-inline-start:0}
+.fg-metrics .fg-quietinline:empty{display:none}
+.fg-lead-foot{display:none}
+.fg-open{
+  font-size:calc(12px * var(--tl-text-scale));color:var(--text-primary);
+  border:1px solid var(--border-strong);border-radius:calc(var(--radius) - 4px);
+  padding-block:4px;padding-inline:10px;background:var(--bg-card-hover);
+}
+.fg-open:hover{border-color:var(--accent)}
+.fg-open kbd{font-family:var(--font-mono);font-size:10px;color:var(--text-muted);margin-inline-start:6px}
+
+/* the trail: last four calls, newest first */
+.fg-trail{
+  margin-block:7px 0;display:flex;align-items:baseline;gap:8px;min-width:0;
+  font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));
+}
+.fg-trail-head{
+  font-size:calc(10px * var(--tl-text-scale));letter-spacing:.06em;text-transform:uppercase;
+  color:var(--text-muted);flex:none;margin-block:0;
+}
+.fg-trail-line{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;color:var(--text-muted);
+}
+.fg-trail-line b{color:var(--text-primary);font-weight:500}
+.fg-trail-line span[data-age="1"]{opacity:.7}
+.fg-trail-line span[data-age="2"]{opacity:.45}
+
+/* ── the bench: stable-order index ── */
+.fg-benchwrap{position:relative;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.fg-benchwrap::after{
+  content:"";position:absolute;inset-inline:0;inset-block-end:0;height:18px;pointer-events:none;
+  background:linear-gradient(to bottom,transparent,var(--bg-page));opacity:0;
+}
+.fg-benchwrap[data-more=true]::after{opacity:1}
+.fg-bench{overflow-y:auto;min-height:132px;margin-block:9px 0;padding-block:0 2px;scrollbar-gutter:stable}
+.fg-colhead{
+  display:grid;align-items:center;gap:10px;
+  grid-template-columns:var(--cols);
+  font-size:calc(10px * var(--tl-text-scale));letter-spacing:.06em;text-transform:uppercase;color:var(--text-muted);
+  padding-block:0 4px;padding-inline:7px;
+  position:sticky;top:0;background:var(--bg-page);z-index:2;
+}
+.fg-colhead .r{text-align:right}
+.fg-hint{font-size:calc(10px * var(--tl-text-scale));letter-spacing:.04em;text-transform:none;color:var(--text-muted)}
+
+.fg-row{
+  display:grid;align-items:center;gap:10px;width:100%;text-align:left;
+  grid-template-columns:var(--cols);
+  padding-block:5px;padding-inline:7px;border-radius:calc(var(--radius) - 4px);
+  padding-inline-start:calc(7px + var(--d,0) * 15px);
+  border:1px solid transparent;
+}
+.fg-bench.dense .fg-row{padding-block:3px}
+.fg-bench.list .fg-row{padding-block:9px;border-block-end:1px solid var(--border);border-radius:0}
+.fg-bench.list .fg-row-desc{font-size:calc(13.5px * var(--tl-text-scale))}
+.fg-bench.list .fg-row-tool{font-size:calc(12px * var(--tl-text-scale))}
+.fg-bench.list .fg-row[data-lead=true]{border-color:transparent;border-block-end-color:var(--border);background:none}
+.fg-bench.list .fg-wf{margin-block:10px}
+.fg-row:hover{background:var(--hover-tint)}
+.fg-row[data-lead=true]{border-color:color-mix(in srgb,var(--ag,var(--accent)) 45%,var(--border));background:var(--hover-tint)}
+.fg-row[data-lead=true] .fg-row-tool{opacity:.5}
+.fg-up{color:var(--ag,var(--accent));font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale));flex:none}
+.fg-row-id{display:flex;align-items:center;gap:6px;min-width:0}
+.fg-tick{color:var(--text-muted);font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));flex:none}
+.fg-row-desc{
+  font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.fg-row[data-state=done] .fg-row-desc{color:var(--text-muted)}
+.fg-row-tool{
+  display:flex;align-items:baseline;gap:6px;min-width:0;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));
+}
+.fg-row-tool .n{color:var(--text-primary);flex:none}
+.fg-row-tool .a{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fg-row[data-quiet=true] .fg-row-tool{opacity:.58}
+.fg-row[data-state=error] .fg-row-tool .n,
+.fg-row[data-state=error] .fg-row-tool .a{color:var(--danger)}
+.fg-row[data-state=done] .fg-row-tool .n{color:var(--success)}
+.fg-c{
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;
+}
+.fg-c.on{color:var(--text-primary)}
+.fg-arrow{color:var(--text-muted);font-size:11px;opacity:0;text-align:right}
+.fg-row:hover .fg-arrow,.fg-row:focus-visible .fg-arrow{opacity:1}
+.fg-qtag{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted);
+  border:1px solid var(--border);border-radius:3px;padding-inline:4px;flex:none;
+}
+
+/* ── workflow block ── */
+.fg-wf{
+  border:1px solid var(--border);border-radius:calc(var(--radius) - 2px);
+  margin-block:6px;background:color-mix(in srgb,var(--bg-card) 55%,var(--bg-page));
+}
+.fg-wf-head{display:flex;align-items:center;gap:8px;padding-block:6px;padding-inline:9px;min-width:0}
+.fg-wf-glyph{color:var(--state-awaiting);font-size:calc(11px * var(--tl-text-scale));flex:none}
+.fg-wf-noun{
+  font-size:calc(10px * var(--tl-text-scale));letter-spacing:.06em;text-transform:uppercase;
+  color:var(--state-awaiting);flex:none;
+}
+.fg-wf-title{
+  font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-primary);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;
+}
+.fg-wf-stat{
+  margin-inline-start:auto;font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));
+  color:var(--text-muted);flex:none;font-variant-numeric:tabular-nums;
+}
+.fg-phases{display:flex;gap:14px;padding-block:0 7px;padding-inline:9px;flex-wrap:wrap}
+.fg-ph{
+  display:flex;align-items:center;gap:5px;flex:1 1 0;min-width:96px;
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted);
+  border-block-start:2px solid var(--border);padding-block:5px 0;
+}
+.fg-ph[data-s=done]{border-block-start-color:var(--success);color:var(--text-muted)}
+.fg-ph[data-s=now]{border-block-start-color:var(--state-awaiting);color:var(--text-primary)}
+.fg-ph .num{opacity:.6}
+.fg-ph .ct{margin-inline-start:auto;font-variant-numeric:tabular-nums;padding-inline-start:10px}
+.fg-ph .ttl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fg-wf-body{border-block-start:1px solid var(--border);padding-block:3px;padding-inline:2px}
+.fg-wf-body .fg-row{padding-block:3px}
+.fg-fold{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  padding-block:5px;padding-inline:9px;border-radius:calc(var(--radius) - 4px);
+}
+.fg-fold:hover{background:var(--hover-tint);color:var(--text-primary)}
+.fg-fold .cn{color:var(--success)}
+.fg-fold .more{margin-inline-start:auto}
+
+/* ── aux: background commands and schedules ── */
+.fg-aux{flex:none;border-block-start:1px solid var(--border);padding-block:5px 7px;margin-block:2px 0}
+.fg-aux-row{
+  display:flex;align-items:center;gap:9px;min-width:0;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  padding-block:2.5px;padding-inline:7px;
+}
+.fg-aux-row .k{
+  font-size:calc(10px * var(--tl-text-scale));letter-spacing:.06em;text-transform:uppercase;
+  min-width:74px;flex:none;
+}
+.fg-aux-row .v{color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fg-aux-row .t{margin-inline-start:auto;flex:none;font-variant-numeric:tabular-nums}
+
+/* ─────────────────────── reading view (drill-in) ─────────────────────── */
+.fg-read{
+  position:absolute;inset-block-start:40px;inset-block-end:0;inset-inline:0;z-index:30;
+  background:var(--bg-page);display:flex;flex-direction:column;
+}
+.fg-read[hidden]{display:none}
+.fg-read-bar{
+  flex:none;border-block-end:1px solid var(--border);
+  padding-block:9px;padding-inline:clamp(12px,6vw,80px);
+}
+.fg-read-inner{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
+.fg-read-top{display:flex;align-items:center;gap:9px;min-width:0}
+.fg-back{
+  font-size:calc(12px * var(--tl-text-scale));color:var(--text-muted);
+  border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);
+  padding-block:3px;padding-inline:9px;flex:none;
+}
+.fg-back:hover{color:var(--text-primary);border-color:var(--border-strong)}
+.fg-read-name{
+  font-family:var(--font-mono);font-size:calc(13px * var(--tl-text-scale));font-weight:500;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+}
+.fg-step{margin-inline-start:auto;display:flex;align-items:center;gap:4px;flex:none}
+.fg-step button{
+  color:var(--text-muted);border:1px solid var(--border);border-radius:calc(var(--radius) - 4px);
+  padding-block:2px;padding-inline:8px;font-family:var(--font-mono);font-size:12px;
+}
+.fg-step button:hover{color:var(--text-primary);border-color:var(--border-strong)}
+.fg-step .pos{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);padding-inline:4px}
+.fg-read-sub{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-block:7px 0;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+}
+.fg-read-sub .d{font-family:var(--font-ui);font-size:calc(13px * var(--tl-text-scale));color:var(--text-primary)}
+.fg-read-body{
+  flex:1;overflow-y:auto;display:flex;flex-direction:column;gap:12px;
+  padding-block:16px 28px;padding-inline:clamp(12px,6vw,80px);
+}
+.fg-blk{max-width:860px;width:100%;margin-block:0;margin-inline:auto}
+.fg-blk-who{
+  font-size:calc(11px * var(--tl-text-scale));letter-spacing:.04em;text-transform:uppercase;
+  color:var(--text-muted);margin-block:0 5px;
+}
+.fg-blk-prompt{
+  background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+  padding-block:10px;padding-inline:12px;font-size:calc(13.5px * var(--tl-text-scale));
+}
+.fg-blk-text{font-size:calc(14px * var(--tl-text-scale))}
+.fg-blk-text p{margin-block:0 8px}
+.fg-blk-text p:last-child{margin-block-end:0}
+.fg-blk-think{
+  border-inline-start:2px solid var(--border-strong);padding-inline-start:11px;
+  color:var(--text-muted);font-size:calc(13px * var(--tl-text-scale));font-style:italic;
+}
+.fg-blk-tool{border:1px solid var(--border);border-radius:var(--radius);background:var(--bg-card);overflow:hidden}
+.fg-blk-tool-h{
+  display:flex;align-items:baseline;gap:9px;padding-block:6px;padding-inline:11px;min-width:0;
+  font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale));
+}
+.fg-blk-tool-h .n{color:var(--text-primary);font-weight:500;flex:none}
+.fg-blk-tool-h .a{color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.fg-blk-tool-h .w{margin-inline-start:auto;color:var(--text-muted);font-size:calc(11px * var(--tl-text-scale));flex:none}
+.fg-blk-tool-r{
+  border-block-start:1px solid var(--border);padding-block:7px;padding-inline:11px;
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  white-space:pre-wrap;overflow-x:auto;
+}
+.fg-live{
+  font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);
+  display:flex;align-items:center;gap:8px;
+}
+
+/* ───────────────────────── design note ───────────────────────── */
+.note{
+  border-block-start:1px solid var(--border);background:var(--bg-sidebar);
+  padding-block:26px 40px;padding-inline:clamp(16px,6vw,80px);
+}
+.note-in{max-width:760px;margin-block:0;margin-inline:auto}
+.note h2{font-size:17px;font-weight:600;margin-block:0 4px;letter-spacing:-.01em}
+.note .kicker{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--text-muted);margin-block:0 10px}
+.note p{margin-block:0 11px;color:var(--text-muted);font-size:13.5px;max-width:68ch}
+.note p b{color:var(--text-primary);font-weight:500}
+
+/* ───────────────────────── responsive ───────────────────────── */
+@media (max-width:900px){
+  .tl-shell{grid-template-columns:0 1fr}
+  .tl-shell-sidebar{display:none}
+}
+@media (max-width:720px){
+  .fg{max-height:64vh}
+  .fg-metrics{gap:16px}
+  .fg-lead-desc{font-size:calc(13.5px * var(--tl-text-scale))}
+  .fg-trail{display:none}
+  .fg-colhead .h-tools,.fg-colhead .h-tok,.fg-row .fg-tools,.fg-row .fg-tok{display:none}
+  .fg-read{inset-block-start:40px}
+}
+@media (prefers-reduced-motion:reduce){
+  .fg-now.flash{background:color-mix(in srgb,var(--ag,var(--accent)) 9%,var(--bg-page))}
+  *{transition:none !important;animation:none !important}
+}
+</style>
+</head>
+<body class="theme-slate">
+
+<!-- ══════════ prototype controls ══════════ -->
+<div class="pt-bar">
+  <span class="pt-tag">prototype controls</span>
+  <button class="pt-btn" id="pt-play" data-on="true">pause</button>
+  <button class="pt-btn" id="pt-replay">replay</button>
+  <div class="pt-sep"></div>
+  <button class="pt-btn" data-jump="30">3 agents</button>
+  <button class="pt-btn" data-jump="240">16 agents</button>
+  <button class="pt-btn" data-jump="160">workflow</button>
+  <button class="pt-btn" data-jump="76">one failed</button>
+  <button class="pt-btn" data-jump="292">long silence</button>
+  <button class="pt-btn" data-jump="362">all done</button>
+  <button class="pt-btn" data-jump="392">idle</button>
+  <div class="pt-sep"></div>
+  <button class="pt-btn" data-speed="1">1x</button>
+  <button class="pt-btn" data-speed="4">4x</button>
+  <button class="pt-btn" data-speed="8" data-on="true">8x</button>
+  <span class="pt-clock" id="pt-clock">session 00:00</span>
+</div>
+
+<!-- ══════════ terminal lobby ══════════ -->
+<div class="tl-shell">
+
+  <aside class="tl-shell-sidebar">
+    <div class="tl-shellbar">
+      <button class="tl-icon" title="Toggle sidebar" aria-label="Toggle sidebar">&#9776;</button>
+      <span class="tl-brand">terminal-lobby</span>
+      <span class="tl-spacer"></span>
+      <button class="tl-icon" title="Skills">Skills</button>
+      <button class="tl-icon" title="Settings">&#9881;</button>
+    </div>
+    <div class="tl-sessions">
+      <div class="tl-sidehead">sessions</div>
+      <button class="tl-sess" aria-current="true"><span class="tl-sess-dot run"></span><span class="tl-sess-name">agent-panel</span><span class="tl-sess-n" id="side-n">6</span></button>
+      <button class="tl-sess"><span class="tl-sess-dot wait"></span><span class="tl-sess-name">preload-on-hover</span><span class="tl-sess-n">1</span></button>
+      <button class="tl-sess"><span class="tl-sess-dot done"></span><span class="tl-sess-name">qa-harness</span></button>
+      <button class="tl-sess"><span class="tl-sess-dot"></span><span class="tl-sess-name">cpu-parking</span></button>
+      <button class="tl-sess"><span class="tl-sess-dot"></span><span class="tl-sess-name">infra-registry</span></button>
+      <div class="tl-sidehead">hosts</div>
+      <button class="tl-sess"><span class="tl-sess-dot done"></span><span class="tl-sess-name">devvm</span></button>
+      <button class="tl-sess"><span class="tl-sess-dot done"></span><span class="tl-sess-name">rpi-sofia</span></button>
+    </div>
+  </aside>
+
+  <div class="tl-main">
+    <div class="tl-session-bar">
+      <span class="tl-chip">agent-panel <span style="opacity:.6">&#9662;</span></span>
+      <span class="tl-conn" title="connected"></span>
+      <span class="tl-spacer"></span>
+      <div class="tl-switch">
+        <button aria-pressed="true">Text</button>
+        <button aria-pressed="false">Terminal</button>
+      </div>
+      <button class="tl-barbtn">Files</button>
+      <button class="tl-barbtn">Watch</button>
+      <button class="tl-barbtn" aria-label="More">&#8943;</button>
+    </div>
+
+    <!-- ══════════ FOREGROUND band ══════════ -->
+    <section class="fg" id="fg" aria-label="Agents running in this session" hidden>
+      <div class="fg-wrap">
+        <div class="fg-inner" id="fg-inner"></div>
+      </div>
+    </section>
+
+    <div class="tl-timeline" id="timeline">
+      <div class="tl-row">
+        <p class="tl-who">you</p>
+        <div class="tl-user">Look at how the text view shows subagents. When I spawn five of them I get one tick and a line saying two commands. Work out what we could show instead and sketch it.</div>
+      </div>
+      <div class="tl-row tl-assistant">
+        <p>I will read the transcript format first, then check what the CLI and t3code already draw, then sketch against real numbers rather than invented ones.</p>
+        <p>Spawning three agents to gather that in parallel.</p>
+      </div>
+      <div class="tl-row tl-tool">
+        <span class="g">&#9670;</span><span class="noun">agent</span>
+        <span class="lbl">Find prior art for agent visualization</span>
+        <span class="mark">&#10003;</span>
+      </div>
+      <div class="tl-row tl-tool">
+        <span class="g">&#9670;</span><span class="noun">agent</span>
+        <span class="lbl">Map transcript data for subagents</span>
+        <span class="mark">&#10003;</span>
+      </div>
+      <div class="tl-row tl-tool">
+        <span class="g">&#9670;</span><span class="noun">bash</span>
+        <span class="lbl">pnpm test --watch</span>
+        <span class="mark" style="color:var(--text-muted)">&#8599;</span>
+      </div>
+      <div class="tl-row tl-assistant">
+        <p>Those ticks are the whole problem. Each one went green about two seconds after launch and the agents behind them are still running.</p>
+      </div>
+    </div>
+
+    <div class="tl-composer">
+      <div class="tl-composer-box">
+        <div class="tl-composer-field">Ask anything, or press / for commands</div>
+        <div class="tl-composer-foot">
+          <span class="tl-mini">bypass</span>
+          <span class="tl-mini">opus 5</span>
+          <span class="tl-meter" title="context used"><i></i></span>
+          <span class="tl-mini" style="border:0;padding-inline:0">38%</span>
+          <button class="tl-send">Send</button>
+          <button class="tl-stop">Stop</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- reading view -->
+    <div class="fg-read" id="read" hidden>
+      <div class="fg-read-bar">
+        <div class="fg-read-inner">
+          <div class="fg-read-top">
+            <button class="fg-back" id="read-back">&#8592; back</button>
+            <span class="fg-dot" id="read-dot"></span>
+            <span class="fg-read-name" id="read-name"></span>
+            <div class="fg-step">
+              <button id="read-prev" aria-label="Previous agent">&#8249;</button>
+              <span class="pos" id="read-pos"></span>
+              <button id="read-next" aria-label="Next agent">&#8250;</button>
+            </div>
+          </div>
+          <div class="fg-read-sub" id="read-sub"></div>
+        </div>
+      </div>
+      <div class="fg-read-body" id="read-body"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ design note ══════════ -->
+<section class="note">
+  <div class="note-in">
+    <p class="kicker">prototype 5</p>
+    <h2>Foreground</h2>
+    <p><b>Where it lives.</b> A sticky band at the top of the main column, under the session bar, on the
+      timeline's own 860px measure. The question it answers, is anything wrong, gets asked before you read
+      the conversation, so it sits where you look first and it does not scroll away. It also stays clear of
+      the composer and the phone keyboard. The old bottom strip is gone rather than duplicated; being at the
+      bottom is part of why nobody read it.</p>
+    <p><b>The idea I want judged.</b> One agent is promoted to a lead card that spells out its current tool
+      call with arguments, its numbers, and a trail of its last four calls. The other agents stay a one line
+      index in spawn order, which never re-sorts under your cursor. The lead is chosen by stated facts in a
+      fixed order, error first, then longest quiet, then most tokens, and the card says which one applied.
+      If the rule picks wrong you click any row to pin your own choice, and Focus / List switches to an
+      even list in one move. So the panel commits to a choice, shows its reasoning, and is cheap to overrule.</p>
+    <p><b>What it refuses to say.</b> Silence is only ever a number, quiet 3m 12s and last record 3m 12s ago.
+      There is no progress bar, no health, no judgement. Everything drawn here exists in the measured data.</p>
+    <p><b>What I would fix with more time.</b> Token burn is a weak proxy for which running agent matters when
+      sixteen are healthy and none is quiet, so the lead drifts to whichever model happened to write more.
+      I would rank on first error inside a phase, let you lock focus to one workflow phase, and let the lead
+      card keep its own small scroll of the agent's last messages rather than only tool names.</p>
+  </div>
+</section>
+
+<script>
+(function(){
+"use strict";
+
+/* ───────────────── util ───────────────── */
+var $=function(s,r){return (r||document).querySelector(s)};
+var el=function(t,c,x){var n=document.createElement(t);if(c)n.className=c;if(x!=null)n.textContent=x;return n};
+function rng(s){return function(){s|=0;s=s+0x6D2B79F5|0;var t=Math.imul(s^s>>>15,1|s);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function fmtDur(ms){
+  var s=Math.max(0,Math.floor(ms/1000));
+  if(s<60)return s+"s";
+  var m=Math.floor(s/60),r=s%60;
+  if(m<60)return m+"m "+(r<10?"0":"")+r+"s";
+  return Math.floor(m/60)+"h "+((m%60)<10?"0":"")+(m%60)+"m";
+}
+function fmtShort(ms){var s=Math.max(0,Math.floor(ms/1000));if(s<60)return s+"s";var m=Math.floor(s/60);return m+"m "+((s%60)<10?"0":"")+(s%60)+"s"}
+function fmtTok(n){ if(n<1000)return String(n); if(n<10000)return (n/1000).toFixed(1)+"k"; return Math.round(n/1000)+"k"; }
+
+/* ───────────────── the script: a world that is a pure function of session time ───────────────── */
+var TOOLS={
+  Bash:["rg -n \"workflow_agent\" ~/.claude/projects -l","git log --oneline -30 -- src/text-view","ls ~/.claude/projects/*/subagents | head -40","jq -s 'length' wf_run.json","pnpm vitest run text-view"],
+  Read:["src/text-view/Timeline.tsx:1-240","src/text-view/BgStrip.tsx","src/hooks/useTranscript.ts:88-310","docs/adr/0025-claude-session-telemetry.md","src/text-view/ToolRow.tsx:1-96"],
+  Grep:["pattern \"AgentsPanel\", path src/","pattern \"spawnDepth\", glob **/*.ts","pattern \"workflow_phase\", path ~/.claude","pattern \"tl-bg-strip\", path src/"],
+  WebFetch:["docs.anthropic.com/en/docs/claude-code/sub-agents","docs.anthropic.com/en/docs/claude-code/hooks","github.com/t3-oss/code/blob/main/AgentsPanel.tsx"],
+  Write:["docs/plans/assets/agent-panel/notes.md","docs/plans/2026-09-12-agent-panel.md","/tmp/scratch/transcript-shape.json"],
+  Glob:["**/subagents/*.jsonl","**/workflows/wf_*.json"],
+  Edit:["src/text-view/BgStrip.tsx","src/text-view/Timeline.tsx"],
+  ListAgents:["running agents in team session-408579e1"]
+};
+var TOOLNAMES=Object.keys(TOOLS);
+
+function steps(spec){
+  // spec: {from,to,seed,every:[lo,hi],tokens:[lo,hi],tools:[names]}
+  var r=rng(spec.seed),out=[],t=spec.from,i=0;
+  var names=spec.tools||TOOLNAMES;
+  while(t<=spec.to){
+    var n=names[Math.floor(r()*names.length)];
+    var args=TOOLS[n][Math.floor(r()*TOOLS[n].length)];
+    out.push({at:t*1000,tool:n,args:args,tok:Math.round(spec.tokLo+r()*(spec.tokHi-spec.tokLo))});
+    t+=Math.round(spec.evLo+r()*(spec.evHi-spec.evLo));
+    i++;
+    if(i>400)break;
+  }
+  return out;
+}
+
+var A=[]; // agent specs
+A.push({
+  id:"a1",name:"priorart-recon",desc:"Find prior art for agent visualization",color:"blue",depth:0,model:"opus",
+  start:0,
+  steps:steps({from:0,to:92,seed:11,evLo:6,evHi:11,tokLo:900,tokHi:5200})
+        .concat(steps({from:300,to:318,seed:12,evLo:6,evHi:9,tokLo:2200,tokHi:6400,tools:["Write","Read","Write"]})),
+  end:326,
+  result:"CLI draws a tree with no per-agent activity string. t3code keeps row order stable and truncates the volatile line. Both gaps are the same one."
+});
+A.push({
+  id:"a2",name:"transcript-recon",desc:"Map transcript data for subagents",color:"green",depth:0,model:"opus",
+  start:2,steps:steps({from:2,to:48,seed:23,evLo:4,evHi:8,tokLo:800,tokHi:4200}),end:52,
+  result:"153 subagent transcripts in the busiest session. meta.json lands about 2s before the first record; the agent file lags 450ms."
+});
+A.push({
+  id:"a3",name:"jsonl-shape",desc:"Sample 40 subagent files for field coverage",color:"cyan",depth:1,parent:"a2",model:"haiku",
+  start:20,steps:steps({from:20,to:42,seed:31,evLo:3,evHi:6,tokLo:400,tokHi:1800}),end:44,
+  result:"name present in 78 of 187 calls. description present in all of them."
+});
+A.push({
+  id:"a4",name:"textview-recon",desc:"Audit text view render path",color:"yellow",depth:0,model:"opus",
+  start:4,steps:steps({from:4,to:68,seed:47,evLo:5,evHi:10,tokLo:700,tokHi:3900}),
+  err:70,error:"Grep exited 2: no such file or directory: src/text-view/agents"
+});
+
+/* workflow */
+var WF={
+  id:"wf_7c31",title:"Remove duplicated frontend source and the stale service worker",
+  start:140,end:356,
+  phases:[{i:1,title:"Survey",from:142,to:186},{i:2,title:"Delete",from:190,to:302},{i:3,title:"Refute",from:306,to:352}]
+};
+var WF_LABELS_1=["inventory of duplicated modules","service worker registration sites","build outputs that still ship","import graph for the old entry"];
+var WF_LABELS_2=["frontend source + SW","legacy vite config","service worker cache names","duplicated Timeline component","old composer styles","stale route table","unused icon sprite sheet","dead theme switcher","second transcript parser","orphaned test fixtures","duplicate token file","obsolete build script","abandoned worker pool","leftover polyfills","copy of the session bar","old settings modal"];
+var WF_LABELS_3=["confirm no route regressions","confirm the worker unregisters","confirm bundle shrank"];
+var WF_COLORS=["blue","green","yellow","purple","cyan","orange","pink"];
+
+(function buildWF(){
+  var k=0;
+  function add(labels,ph,from,spread,dur,errIdx){
+    var r=rng(900+ph);
+    for(var i=0;i<labels.length;i++){
+      var st=from+Math.round(i*spread/labels.length);
+      var en=st+dur+Math.round(r()*dur*0.9);
+      var id="w"+(++k);
+      var isErr=errIdx&&errIdx.indexOf(i)>=0;
+      A.push({
+        id:id,name:"wf-"+id,desc:labels[i],color:WF_COLORS[(k+ph)%WF_COLORS.length],depth:0,model:(i%4===0?"haiku":"opus"),
+        wf:WF.id,phase:ph,start:st,
+        steps:steps({from:st,to:en-3,seed:500+k*7,evLo:5,evHi:11,tokLo:1200,tokHi:9000}),
+        end:isErr?null:en,
+        err:isErr?en:null,
+        error:isErr?(i===2?"Write refused: src/sw/cache.ts is outside the allowed paths":"Bash exited 1: 3 imports still reference the deleted module"):null,
+        result:"Removed "+(2+(k%5))+" files. No references left in the import graph."
+      });
+    }
+  }
+  add(WF_LABELS_1,1,142,12,20,null);
+  add(WF_LABELS_2,2,190,7,55,[2,9]);
+  add(WF_LABELS_3,3,306,8,22,null);
+})();
+
+var BG=[{id:"bg1",cmd:"pnpm test --watch",start:6,end:342}];
+var SCHED=[
+  {id:"s1",kind:"loop",label:"/loop check the deploy",at:920},
+  {id:"s2",kind:"cron",label:"homelab reflect run",at:null,when:"daily 05:30"}
+];
+var PANEL_END=388; // after this, nothing is left and the band goes away
+
+/* derive one agent's live state at session time S (ms) */
+function stateOf(a,S){
+  if(S < a.start*1000) return null;
+  var st="running", endAt=null;
+  if(a.err!=null && S>=a.err*1000){ st="error"; endAt=a.err*1000; }
+  else if(a.end!=null && S>=a.end*1000){ st="done"; endAt=a.end*1000; }
+  var calls=0,tok=0,cur=null,trail=[];
+  for(var i=0;i<a.steps.length;i++){
+    var s=a.steps[i];
+    if(s.at>S)break;
+    if(endAt!=null && s.at>endAt)break;
+    calls++;tok+=s.tok;trail.push(s);
+  }
+  cur=trail.length?trail[trail.length-1]:null;
+  var last=cur?cur.at:a.start*1000;
+  var quiet=(st==="running")?(S-last):0;
+  return {
+    a:a,state:st,calls:calls,tokens:tok,cur:cur,
+    trail:trail.slice(Math.max(0,trail.length-4),trail.length-1).reverse(),
+    elapsed:(endAt!=null?endAt:S)-a.start*1000,
+    quiet:quiet,lastAt:last,endAt:endAt
+  };
+}
+
+function world(S){
+  var list=[],byId={};
+  for(var i=0;i<A.length;i++){
+    var v=stateOf(A[i],S);
+    if(v){list.push(v);byId[A[i].id]=v}
+  }
+  var bg=[];
+  for(var j=0;j<BG.length;j++){
+    var b=BG[j];
+    if(S>=b.start*1000) bg.push({b:b,running:S<b.end*1000,elapsed:Math.min(S,b.end*1000)-b.start*1000});
+  }
+  var wfOn = S>=WF.start*1000 && S < PANEL_END*1000;
+  return {S:S,list:list,byId:byId,bg:bg,wfOn:wfOn};
+}
+
+/* ───────────────── the selection rule: facts, in a fixed order ───────────────── */
+var QUIET_MS=90000;
+var leadId=null, pinnedId=null;
+var ERR_FRESH=75000; // an error leads while it is recent, then stops holding the slot
+function tierOf(v){
+  if(v.state==="error")return (S-(v.endAt||0))<ERR_FRESH?4:1;
+  if(v.state==="running"&&v.quiet>=QUIET_MS)return 3;
+  if(v.state==="running")return 2;
+  return 0;
+}
+function scoreOf(v,t){
+  if(t===3)return v.quiet;
+  if(t===2)return v.tokens;
+  return v.endAt||0;
+}
+function pickLead(w){
+  if(pinnedId&&w.byId[pinnedId])return w.byId[pinnedId];
+  if(!w.list.length)return null;
+  var best=null,bt=-1,bs=-1;
+  for(var i=0;i<w.list.length;i++){
+    var v=w.list[i],t=tierOf(v),s=scoreOf(v,t);
+    if(t>bt||(t===bt&&s>bs)){best=v;bt=t;bs=s}
+  }
+  // hysteresis: keep the incumbent unless the challenger clears a margin in the same tier
+  var inc=leadId?w.byId[leadId]:null;
+  if(inc&&best&&inc!==best){
+    var it=tierOf(inc);
+    if(it===bt){
+      var is=scoreOf(inc,it);
+      var margin = bt===2 ? is*1.2 : (bt===3 ? is+15000 : is);
+      if(bs<=margin) best=inc;
+    }
+  }
+  leadId=best?best.a.id:null;
+  return best;
+}
+function whyText(v){
+  if(pinnedId===v.a.id)return{txt:"pinned by you",tier:"p"};
+  var t=tierOf(v);
+  if(t===4)return{txt:"leading: error "+fmtShort(S-(v.endAt||0))+" ago",tier:"4"};
+  if(t===3)return{txt:"leading: quiet "+fmtShort(v.quiet),tier:"3"};
+  if(t===2)return{txt:"leading: most tokens",tier:"2"};
+  if(t===1)return{txt:"leading: last error",tier:"4"};
+  return{txt:"leading: last to finish",tier:"0"};
+}
+
+/* ───────────────── clock ───────────────── */
+var S=0, playing=true, speed=8, TICK=100;
+var SPIN="⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+var spinFrame=0;
+var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ───────────────── render ───────────────── */
+var root=$("#fg-inner"), band=$("#fg");
+var collapsed = window.innerWidth<720;
+var showRule=false, finOpen=false, wfDoneOpen={}, mode="focus";
+var sig="", nodes={};
+
+function agentColor(a){return a.color||"blue"}
+
+function metric(val,label){
+  var d=el("span","fg-metric");
+  var b=el("b","",val); var i=el("i","",label);
+  d.appendChild(b);d.appendChild(i);
+  return {node:d,val:b};
+}
+
+function structureSig(w,lead){
+  var p=[collapsed?"c":"o",mode,showRule?"r":"-",finOpen?"f":"-",lead?lead.a.id:"none",pinnedId||"-"];
+  for(var i=0;i<w.list.length;i++)p.push(w.list[i].a.id+w.list[i].state);
+  for(var k in wfDoneOpen)if(wfDoneOpen[k])p.push("wo"+k);
+  p.push("bg"+w.bg.map(function(x){return x.b.id+(x.running?1:0)}).join(""));
+  return p.join("|");
+}
+
+function render(){
+  var w=world(S);
+  var lead=pickLead(w);
+  var live=w.list.filter(function(v){return v.state==="running"});
+  var anything = w.list.length>0 || w.bg.length>0;
+  var visible = anything && S < PANEL_END*1000;
+
+  band.hidden=!visible;
+  $("#side-n").textContent = live.length?String(live.length):"";
+  if(!visible){ sig=""; root.textContent=""; return; }
+
+  var ns=structureSig(w,lead);
+  if(ns!==sig){ sig=ns; build(w,lead); }
+  tickValues(w,lead);
+}
+
+function build(w,lead){
+  root.textContent="";nodes={};
+  var live=w.list.filter(function(v){return v.state==="running"});
+  var done=w.list.filter(function(v){return v.state==="done"});
+
+  /* head */
+  var head=el("div","fg-head");
+  head.appendChild(el("span","fg-glyph","◈"));
+  head.appendChild(el("span","fg-noun","agents"));
+  if(collapsed){
+    var cw=el("div","fg-collapsed");
+    var c1=el("span","fg-count");
+    c1.innerHTML='<b>'+live.length+'</b> running <span class="dim">· '+done.length+' done</span>';
+    cw.appendChild(c1);
+    if(lead){
+      var lc=el("span","lead");
+      lc.textContent=lead.a.name+(lead.cur?"  ▸ "+lead.cur.tool:"");
+      cw.appendChild(lc);
+    }
+    head.appendChild(cw);
+  }else{
+    var c=el("span","fg-count");
+    c.innerHTML='<b>'+live.length+'</b> running <span class="dim">· '+done.length+' done</span>';
+    head.appendChild(c);
+  }
+  var hr=el("div","fg-head-right");
+  if(!collapsed){
+    var sw=el("div","tl-switch");
+    ["Focus","List"].forEach(function(m){
+      var b=el("button","",m);
+      b.setAttribute("aria-pressed",String(mode===m.toLowerCase()));
+      b.onclick=function(){mode=m.toLowerCase();sig="";render()};
+      sw.appendChild(b);
+    });
+    hr.appendChild(sw);
+  }
+  var chev=el("button","fg-chev",collapsed?"▾":"▴");
+  chev.setAttribute("aria-label",collapsed?"Expand agent panel":"Collapse agent panel");
+  chev.onclick=function(){collapsed=!collapsed;sig="";render()};
+  hr.appendChild(chev);
+  head.appendChild(hr);
+  root.appendChild(head);
+  if(collapsed)return;
+
+  /* lead card */
+  if(mode==="focus"&&lead) root.appendChild(buildLead(lead));
+
+  /* bench */
+  var bench=el("div","fg-bench"+(live.length>6&&mode==="focus"?" dense":"")+(mode==="list"?" list":""));
+  bench.style.setProperty("--cols","minmax(0,1.05fr) minmax(0,1.35fr) 60px 38px 52px 12px");
+  var ch=el("div","fg-colhead");
+  ch.style.setProperty("--cols","minmax(0,1.05fr) minmax(0,1.35fr) 60px 38px 52px 12px");
+  var chA=el("span","","agent");
+  var chB=el("span","");
+  chB.innerHTML='current · <span class="fg-hint">click a row to read it</span>';
+  ch.appendChild(chA);ch.appendChild(chB);
+  ch.appendChild(el("span","r h-el","elapsed"));
+  ch.appendChild(el("span","r h-tools","tools"));
+  ch.appendChild(el("span","r h-tok","tokens"));
+  ch.appendChild(el("span",""));
+  bench.appendChild(ch);
+
+  var adhocLive=live.filter(function(v){return !v.a.wf});
+  var adhocErr=w.list.filter(function(v){return !v.a.wf&&v.state==="error"});
+  var adhocDone=done.filter(function(v){return !v.a.wf});
+
+  // ad-hoc agents keep spawn order, errors stay visible as rows
+  var shown=adhocLive.concat(adhocErr).sort(function(a,b){return a.a.start-b.a.start});
+  shown.forEach(function(v){ bench.appendChild(row(v,lead)); });
+
+  // workflow block
+  if(w.wfOn){
+    var wfAgents=w.list.filter(function(v){return v.a.wf===WF.id});
+    if(wfAgents.length) bench.appendChild(buildWorkflow(w,wfAgents,lead));
+  }
+
+  // finished group
+  var allDone=w.list.filter(function(v){return v.state==="done"&&!v.a.wf});
+  if(allDone.length){
+    var f=el("button","fg-fold");
+    f.innerHTML='<span class="cn">✓</span> <span>'+allDone.length+' done</span>';
+    var mo=el("span","more",finOpen?"hide":"show");
+    f.appendChild(mo);
+    f.onclick=function(){finOpen=!finOpen;sig="";render()};
+    bench.appendChild(f);
+    if(finOpen) allDone.sort(function(a,b){return b.endAt-a.endAt}).forEach(function(v){bench.appendChild(row(v,lead))});
+  }
+  var bw=el("div","fg-benchwrap");
+  bw.appendChild(bench);
+  root.appendChild(bw);
+  nodes.benchwrap=bw;nodes.bench=bench;
+
+  /* aux: background commands and schedules */
+  var aux=el("div","fg-aux");
+  w.bg.forEach(function(x){
+    var r=el("div","fg-aux-row");
+    r.appendChild(el("span","k","bash"));
+    r.appendChild(el("span","v",x.b.cmd));
+    var t=el("span","t",fmtDur(x.elapsed)+(x.running?"":" · exit 0"));
+    nodes["bg-"+x.b.id]={t:t,x:x};
+    r.appendChild(t);
+    aux.appendChild(r);
+  });
+  var sr=el("div","fg-aux-row");
+  sr.appendChild(el("span","k","scheduled"));
+  var sv=el("span","v");
+  SCHED.forEach(function(s,i){
+    if(i)sv.appendChild(el("span","",  "  \u00b7  "));
+    sv.appendChild(el("span","",s.label+" "));
+    var t=el("span","",s.at?"in "+fmtDur(s.at*1000-S):s.when);
+    t.style.color="var(--text-muted)";
+    if(s.at)nodes["sc-"+s.id]={t:t,s:s};
+    sv.appendChild(t);
+  });
+  sr.appendChild(sv);
+  aux.appendChild(sr);
+  root.appendChild(aux);
+}
+
+function buildLead(v){
+  var card=el("article","fg-lead");
+  card.setAttribute("data-color",agentColor(v.a));
+  card.setAttribute("data-state",v.state);
+
+  var top=el("div","fg-lead-top");
+  top.appendChild(el("span","fg-dot"));
+  top.appendChild(el("span","fg-lead-name",v.a.name));
+  top.appendChild(el("span","fg-lead-kind",(v.a.wf?"workflow · phase "+v.a.phase:"agent")+" · "+v.a.model));
+  var why=whyText(v);
+  var wb=el("button","fg-why",why.txt);
+  wb.setAttribute("data-tier",why.tier);
+  wb.setAttribute("data-pin",String(pinnedId===v.a.id));
+  wb.title="How this agent was chosen";
+  wb.onclick=function(){ if(pinnedId===v.a.id){pinnedId=null}else{showRule=!showRule} sig="";render(); };
+  top.appendChild(wb);
+  card.appendChild(top);
+
+  card.appendChild(el("p","fg-lead-desc",v.a.desc));
+
+  if(showRule&&!pinnedId){
+    var r=el("div","fg-rule");
+    r.innerHTML="Chosen by: <b>error</b>, then <b>longest quiet</b>, then <b>most tokens</b>. Click any row below to pin your own.";
+    card.appendChild(r);
+  }
+
+  var now=el("div","fg-now");
+  var sp=el("span","fg-spin",reduce?"⟳":SPIN[0]);
+  if(v.state!=="running"){sp.textContent=v.state==="error"?"✘":"✓";sp.style.color=v.state==="error"?"var(--danger)":"var(--success)"}
+  now.appendChild(sp);
+  var nn=el("span","fg-now-name",v.state==="error"?"Error":(v.cur?v.cur.tool:"starting"));
+  var na=el("span","fg-now-args",v.state==="error"?v.a.error:(v.state==="done"?(v.a.result||"done"):(v.cur?v.cur.args:"…")));
+  now.appendChild(nn);now.appendChild(na);
+  card.appendChild(now);
+  nodes.leadNow={box:now,spin:(v.state==="running"?sp:null),name:nn,args:na,last:v.cur?v.cur.at:-1};
+
+  var m=el("div","fg-metrics");
+  var m1=metric(fmtDur(v.elapsed),"elapsed");
+  var m2=metric(String(v.calls),"tool calls");
+  var m3=metric(fmtTok(v.tokens),"tokens out");
+  var q=el("span","fg-quietinline","");
+  m.appendChild(m1.node);m.appendChild(m2.node);m.appendChild(m3.node);m.appendChild(q);
+  var open=el("button","fg-open");
+  open.innerHTML='open transcript <kbd>\u21b5</kbd>';
+  open.onclick=function(e){e.stopPropagation();openRead(v.a.id)};
+  m.appendChild(open);
+  var pin=el("button","fg-why",pinnedId===v.a.id?"unpin":"pin");
+  pin.title="Keep this agent in front regardless of the rule";
+  pin.onclick=function(e){e.stopPropagation();pinnedId=(pinnedId===v.a.id)?null:v.a.id;sig="";render()};
+  m.appendChild(pin);
+  card.appendChild(m);
+  nodes.leadM={e:m1.val,c:m2.val,t:m3.val};
+  nodes.leadQuiet=q;
+
+  if(v.trail.length){
+    var tr=el("div","fg-trail");
+    tr.appendChild(el("span","fg-trail-head","before that"));
+    var ln=el("div","fg-trail-line");
+    v.trail.forEach(function(s,i){
+      var sp=el("span");
+      sp.setAttribute("data-age",String(i));
+      sp.innerHTML=(i?'<span style="opacity:.5"> &nbsp;·&nbsp; </span>':'')+
+        "<b>"+s.tool+"</b> "+s.args.replace(/[<>&]/g,"")+" <span style=\"opacity:.6\">+"+fmtTok(s.tok)+"</span>";
+      ln.appendChild(sp);
+    });
+    tr.appendChild(ln);
+    card.appendChild(tr);
+  }
+  return card;
+}
+
+function row(v,lead){
+  var b=el("button","fg-row");
+  b.setAttribute("data-color",agentColor(v.a));
+  b.setAttribute("data-state",v.state);
+  b.style.setProperty("--d",String(v.a.depth||0));
+  if(lead&&lead.a.id===v.a.id)b.setAttribute("data-lead","true");
+  b.setAttribute("data-quiet",String(v.state==="running"&&v.quiet>=QUIET_MS));
+
+  var idc=el("span","fg-row-id");
+  if(v.a.depth) idc.appendChild(el("span","fg-tick","└"));
+  if(lead&&lead.a.id===v.a.id) idc.appendChild(el("span","fg-up","▲"));
+  idc.appendChild(el("span","fg-dot"));
+  idc.appendChild(el("span","fg-row-desc",v.a.desc));
+  b.appendChild(idc);
+
+  var tc=el("span","fg-row-tool");
+  var sp=el("i","fg-spin",reduce?"⟳":SPIN[0]);
+  if(v.state!=="running"){sp.textContent=v.state==="error"?"✘":"✓";sp.style.color=v.state==="error"?"var(--danger)":"var(--success)"}
+  tc.appendChild(sp);
+  var tn=el("span","n",v.state==="error"?"Error":(v.cur?v.cur.tool:"start"));
+  var ta=el("span","a",v.state==="error"?v.a.error:(v.state==="done"?(v.a.result||"done"):(v.cur?v.cur.args:"")));
+  tc.appendChild(tn);tc.appendChild(ta);
+  if(v.state==="running"&&v.quiet>=QUIET_MS){ var qt=el("span","fg-qtag","quiet "+fmtShort(v.quiet)); tc.appendChild(qt); }
+  b.appendChild(tc);
+
+  var ce=el("span","fg-c fg-elapsed on",fmtDur(v.elapsed));
+  var cc=el("span","fg-c fg-tools",String(v.calls));
+  var ct=el("span","fg-c fg-tok",fmtTok(v.tokens));
+  b.appendChild(ce);b.appendChild(cc);b.appendChild(ct);
+  b.appendChild(el("span","fg-arrow","→"));
+
+  nodes["row-"+v.a.id]={e:ce,c:cc,t:ct,n:tn,a:ta,spin:(v.state==="running"?sp:null),q:(v.state==="running"?tc.querySelector(".fg-qtag"):null),id:v.a.id};
+  b.onclick=function(ev){
+    if(ev.shiftKey){pinnedId=(pinnedId===v.a.id)?null:v.a.id;sig="";render();return}
+    openRead(v.a.id);
+  };
+  b.oncontextmenu=function(ev){ev.preventDefault();pinnedId=(pinnedId===v.a.id)?null:v.a.id;sig="";render()};
+  b.title="Click to read this agent. Shift-click to pin it as the lead.";
+  return b;
+}
+
+function buildWorkflow(w,agents,lead){
+  var box=el("div","fg-wf");
+  var h=el("div","fg-wf-head");
+  h.appendChild(el("span","fg-wf-glyph","▦"));
+  h.appendChild(el("span","fg-wf-noun","workflow"));
+  h.appendChild(el("span","fg-wf-title",WF.title));
+  var liveN=agents.filter(function(v){return v.state==="running"}).length;
+  var errN=agents.filter(function(v){return v.state==="error"}).length;
+  var okN=agents.filter(function(v){return v.state==="done"}).length;
+  var st=el("span","fg-wf-stat",(liveN?"⟳ "+liveN+" running · ":"")+okN+" of "+agents.length+" done"+(errN?" · "+errN+" error":""));
+  h.appendChild(st);
+  box.appendChild(h);
+
+  var ph=el("div","fg-phases");
+  WF.phases.forEach(function(p){
+    var inPh=agents.filter(function(v){return v.a.phase===p.i});
+    var runN=inPh.filter(function(v){return v.state==="running"}).length;
+    var okN=inPh.filter(function(v){return v.state==="done"}).length;
+    var s= runN>0 ? "now" : (inPh.length&&okN+inPh.filter(function(v){return v.state==="error"}).length===inPh.length ? "done":"todo");
+    var d=el("div","fg-ph");
+    d.setAttribute("data-s",s);
+    d.appendChild(el("span","num",p.i));
+    d.appendChild(el("span","ttl",p.title));
+    d.appendChild(el("span","ct", s==="now"?runN+" running":(s==="done"?"✓ "+inPh.length:"queued")));
+    ph.appendChild(d);
+  });
+  box.appendChild(ph);
+
+  var body=el("div","fg-wf-body");
+  WF.phases.forEach(function(p){
+    var inPh=agents.filter(function(v){return v.a.phase===p.i});
+    if(!inPh.length)return;
+    var liveP=inPh.filter(function(v){return v.state==="running"}).sort(function(a,b){return a.a.start-b.a.start});
+    var errP=inPh.filter(function(v){return v.state==="error"});
+    var okP=inPh.filter(function(v){return v.state==="done"});
+    errP.forEach(function(v){body.appendChild(row(v,lead))});
+    liveP.forEach(function(v){body.appendChild(row(v,lead))});
+    if(okP.length){
+      var f=el("button","fg-fold");
+      f.innerHTML='<span class="cn">✓</span> <span>'+okP.length+' done in '+p.title+'</span>';
+      f.appendChild(el("span","more",wfDoneOpen[p.i]?"hide":"show"));
+      f.onclick=function(){wfDoneOpen[p.i]=!wfDoneOpen[p.i];sig="";render()};
+      body.appendChild(f);
+      if(wfDoneOpen[p.i]) okP.forEach(function(v){body.appendChild(row(v,lead))});
+    }
+  });
+  box.appendChild(body);
+  return box;
+}
+
+/* per-tick value writes: no re-render, no per-row timer */
+function tickValues(w,lead){
+  if(collapsed||!lead)return;
+  var frame=reduce?null:SPIN[spinFrame%SPIN.length];
+
+  if(nodes.leadNow&&lead){
+    var n=nodes.leadNow;
+    if(n.spin&&frame)n.spin.textContent=frame;
+    if(lead.cur&&lead.cur.at!==n.last){
+      n.last=lead.cur.at;
+      n.name.textContent=lead.state==="error"?"Error":lead.cur.tool;
+      n.args.textContent=lead.state==="error"?lead.a.error:lead.cur.args;
+      if(!reduce){ n.box.classList.add("flash"); setTimeout(function(){n.box.classList.remove("flash")},180); }
+    }
+  }
+  if(nodes.leadM&&lead){
+    nodes.leadM.e.textContent=fmtDur(lead.elapsed);
+    nodes.leadM.c.textContent=String(lead.calls);
+    nodes.leadM.t.textContent=fmtTok(lead.tokens);
+  }
+  if(nodes.leadQuiet&&lead){
+    nodes.leadQuiet.textContent = (lead.state==="running"&&lead.quiet>=45000) ? ("last record "+fmtShort(lead.quiet)+" ago") : "";
+  }
+  for(var i=0;i<w.list.length;i++){
+    var v=w.list[i], nd=nodes["row-"+v.a.id];
+    if(!nd)continue;
+    nd.e.textContent=fmtDur(v.elapsed);
+    nd.c.textContent=String(v.calls);
+    nd.t.textContent=fmtTok(v.tokens);
+    if(nd.spin&&frame)nd.spin.textContent=frame;
+    if(v.state==="running"&&v.cur){ if(nd.n.textContent!==v.cur.tool)nd.n.textContent=v.cur.tool; if(nd.a.textContent!==v.cur.args)nd.a.textContent=v.cur.args; }
+    if(nd.q)nd.q.textContent="quiet "+fmtShort(v.quiet);
+  }
+  if(nodes.bench&&nodes.benchwrap){
+    var b=nodes.bench;
+    nodes.benchwrap.setAttribute("data-more",String(b.scrollHeight-b.clientHeight-b.scrollTop>4));
+  }
+  w.bg.forEach(function(x){var nd=nodes["bg-"+x.b.id];if(nd)nd.t.textContent=fmtDur(x.elapsed)+(x.running?"":" · exit 0")});
+  SCHED.forEach(function(s){var nd=nodes["sc-"+s.id];if(nd&&s.at)nd.t.textContent="in "+fmtDur(s.at*1000-S)});
+}
+
+/* ───────────────── reading view ───────────────── */
+var readId=null;
+function readList(){
+  var w=world(S);
+  return w.list.map(function(v){return v.a.id});
+}
+function openRead(id){
+  readId=id;
+  $("#read").hidden=false;
+  buildRead();
+  $("#read-back").focus();
+}
+function closeRead(){ readId=null; $("#read").hidden=true; }
+function stepRead(d){
+  var ids=readList(); if(!ids.length)return;
+  var i=ids.indexOf(readId);
+  i=(i+d+ids.length)%ids.length;
+  readId=ids[i];buildRead();
+}
+var RESULTS={
+  Bash:"exit 0\n  src/text-view/Timeline.tsx\n  src/text-view/BgStrip.tsx\n  src/hooks/useTranscript.ts",
+  Read:"240 lines. Renders every transcript entry through ToolRow; a tool_use with\nname \"Agent\" gets the same collapsed row as Bash and turns to a tick on the\nfirst tool_result, which is why a five minute agent looks finished in two seconds.",
+  Grep:"4 matches\n  src/text-view/BgStrip.tsx:12\n  src/text-view/BgStrip.tsx:31\n  src/text-view/Timeline.tsx:188\n  src/styles/text-view.css:402",
+  WebFetch:"The Agent tool spawns a subagent with its own context window. Its transcript is\nwritten to a separate file under subagents/ and is not merged into the parent.",
+  Write:"wrote 84 lines",
+  Glob:"153 files",
+  Edit:"applied 1 edit",
+  ListAgents:"6 running, 4 done"
+};
+function buildRead(){
+  var w=world(S), v=w.byId[readId];
+  if(!v){closeRead();return}
+  var ids=readList();
+  $("#read-name").textContent=v.a.name;
+  var dot=$("#read-dot");
+  dot.parentNode.parentNode.setAttribute("data-color",agentColor(v.a));
+  $("#read-pos").textContent=(ids.indexOf(readId)+1)+" of "+ids.length;
+
+  var sub=$("#read-sub");sub.textContent="";
+  sub.appendChild(el("span","d",v.a.desc));
+  var bits=[
+    (v.state==="error"?"error":v.state),
+    fmtDur(v.elapsed),
+    v.calls+" tool calls",
+    fmtTok(v.tokens)+" tokens out",
+    v.a.model,
+    "depth "+(v.a.depth||0)
+  ];
+  bits.forEach(function(b){sub.appendChild(el("span","",b))});
+
+  var body=$("#read-body");body.textContent="";
+  function blk(cls,who,make){
+    var d=el("div","fg-blk");
+    if(who)d.appendChild(el("p","fg-blk-who",who));
+    var inner=el("div",cls);make(inner);d.appendChild(inner);
+    body.appendChild(d);
+  }
+  blk("fg-blk-prompt","prompt from the session",function(n){
+    n.textContent=v.a.desc+". Report back the shape of the answer, not prose. Use the "+
+      "measured data on this box rather than what the docs claim. Budget 80k tokens, run quiet.";
+  });
+  blk("fg-blk-text","assistant",function(n){
+    n.innerHTML="<p>Starting from the transcript files themselves, then the render path, then the two "+
+      "shipped implementations. I will not trust the docs where I can measure.</p>";
+  });
+  var shown=v.trail.slice().reverse().concat(v.cur?[v.cur]:[]);
+  var full=[];
+  for(var i=0;i<v.a.steps.length;i++){ var s=v.a.steps[i]; if(v.cur&&s.at>v.cur.at)break; full.push(s); }
+  full=full.slice(-9);
+  full.forEach(function(s,i){
+    if(i===3) blk("fg-blk-think","thinking",function(n){
+      n.textContent="The collapsed row is not the bug on its own. The bug is that the row's "+
+        "completion mark is written from the parent transcript, which sees a tool_result the moment "+
+        "the Agent tool returns its handle, not when the agent stops.";
+    });
+    blk("fg-blk-tool",null,function(n){
+      var h=el("div","fg-blk-tool-h");
+      h.appendChild(el("span","n",s.tool));
+      h.appendChild(el("span","a",s.args));
+      h.appendChild(el("span","w","+"+fmtTok(s.tok)+" · "+fmtDur(s.at-v.a.start*1000)));
+      n.appendChild(h);
+      n.appendChild(el("div","fg-blk-tool-r",RESULTS[s.tool]||"ok"));
+    });
+  });
+  if(v.state==="error"){
+    blk("fg-blk-tool",null,function(n){
+      var h=el("div","fg-blk-tool-h");
+      h.appendChild(el("span","n","Error"));
+      var a=el("span","a",v.a.error);a.style.color="var(--danger)";
+      h.appendChild(a);
+      n.appendChild(h);
+      n.style.borderColor="color-mix(in srgb,var(--danger) 35%,var(--border))";
+    });
+  }else if(v.state==="done"){
+    blk("fg-blk-text","result",function(n){n.innerHTML="<p>"+v.a.result+"</p>"});
+  }else{
+    var d=el("div","fg-blk");
+    var lv=el("div","fg-live");
+    lv.innerHTML='<span class="fg-spin">'+(reduce?"⟳":SPIN[0])+'</span><span>live. the agent writes its own file and this view is about 450ms behind it.</span>';
+    d.appendChild(lv);body.appendChild(d);
+    nodes.readSpin=lv.querySelector(".fg-spin");
+  }
+}
+
+/* ───────────────── loop ───────────────── */
+function tick(){
+  if(playing){ S+=TICK*speed; if(S>(PANEL_END+16)*1000) S=(PANEL_END+16)*1000; }
+  spinFrame++;
+  render();
+  if(readId&&!$("#read").hidden){
+    var w=world(S),v=w.byId[readId];
+    if(v){
+      var sub=$("#read-sub");
+      if(sub.children[2])sub.children[2].textContent=fmtDur(v.elapsed);
+      if(sub.children[3])sub.children[3].textContent=v.calls+" tool calls";
+      if(sub.children[4])sub.children[4].textContent=fmtTok(v.tokens)+" tokens out";
+    }
+    if(nodes.readSpin&&!reduce)nodes.readSpin.textContent=SPIN[spinFrame%SPIN.length];
+  }
+  var t=Math.floor(S/1000);
+  $("#pt-clock").textContent="session "+(t<600?"0":"")+Math.floor(t/60)+":"+((t%60)<10?"0":"")+(t%60);
+}
+setInterval(tick,TICK);
+
+/* ───────────────── controls ───────────────── */
+$("#pt-play").onclick=function(){playing=!playing;this.textContent=playing?"pause":"play";this.setAttribute("data-on",String(playing))};
+$("#pt-replay").onclick=function(){S=0;leadId=null;pinnedId=null;finOpen=false;wfDoneOpen={};closeRead();playing=true;$("#pt-play").textContent="pause";$("#pt-play").setAttribute("data-on","true");sig="";render()};
+Array.prototype.forEach.call(document.querySelectorAll("[data-jump]"),function(b){
+  b.onclick=function(){S=parseInt(b.getAttribute("data-jump"),10)*1000;leadId=null;pinnedId=null;closeRead();sig="";render()};
+});
+Array.prototype.forEach.call(document.querySelectorAll("[data-speed]"),function(b){
+  b.onclick=function(){
+    speed=parseInt(b.getAttribute("data-speed"),10);
+    Array.prototype.forEach.call(document.querySelectorAll("[data-speed]"),function(o){o.setAttribute("data-on",String(o===b))});
+  };
+});
+/* deep link to a state: ?at=<session seconds>&play=0&mode=list&read=<agent id> */
+(function(){
+  var q={};location.search.replace(/^\?/,"").split("&").forEach(function(kv){
+    if(!kv)return;var a=kv.split("=");q[decodeURIComponent(a[0])]=decodeURIComponent(a[1]||"");
+  });
+  if(q.at!=null&&q.at!=="")S=parseFloat(q.at)*1000;
+  if(q.mode==="list")mode="list";
+  if(q.open==="1")collapsed=false;
+  if(q.collapsed==="1")collapsed=true;
+  if(q.play==="0"){playing=false;$("#pt-play").textContent="play";$("#pt-play").setAttribute("data-on","false")}
+  if(q.speed)speed=parseInt(q.speed,10)||speed;
+  sig="";render();
+  if(q.read)openRead(q.read);
+})();
+
+$("#read-back").onclick=closeRead;
+$("#read-prev").onclick=function(){stepRead(-1)};
+$("#read-next").onclick=function(){stepRead(1)};
+document.addEventListener("keydown",function(e){
+  if(e.key==="Escape"&&readId){closeRead();e.preventDefault();return}
+  if(readId&&(e.key==="ArrowRight"||e.key==="j")){stepRead(1);e.preventDefault()}
+  if(readId&&(e.key==="ArrowLeft"||e.key==="k")){stepRead(-1);e.preventDefault()}
+  if(!readId&&e.key==="Enter"&&leadId&&document.activeElement===document.body){openRead(leadId);e.preventDefault()}
+  if(e.key==="f"&&!readId){mode=(mode==="focus"?"list":"focus");sig="";render()}
+});
+render();
+})();
+</script>
+</body>
+</html>
