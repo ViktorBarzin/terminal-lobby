@@ -17,6 +17,7 @@ import {
   type NotifyKind,
 } from "../store/session";
 import type { SseStatus } from "../sse/client";
+import { rememberPaneGrid } from "../store/pane-grid";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
@@ -495,6 +496,14 @@ export const SessionView: Component<{
     if (grid === claimedGrid && now - claimedAt < GRID_CLAIM_QUIET_MS) return;
     claimedGrid = grid;
     claimedAt = now;
+    // The same size, said to this device as well as to the server, so the NEXT
+    // terminal to boot hidden can attach at it instead of at xterm's 80x24
+    // (store/pane-grid.ts carries the measurement that made this necessary).
+    // Here rather than beside the three refusals above, because every one of
+    // them is also a reason not to teach the pane a grid: a watching device, a
+    // session belonging to someone else, and a speculative hover all report a
+    // size that is not this pane's to state.
+    rememberPaneGrid(cols, rows);
     void setSessionGrid(session, cols, rows);
   };
 

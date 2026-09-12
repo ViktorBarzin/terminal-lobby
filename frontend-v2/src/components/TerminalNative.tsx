@@ -7,6 +7,7 @@ import {
   type Component,
 } from "solid-js";
 import { ownWhile } from "../lib/ownwhile";
+import { readPaneGrid } from "../store/pane-grid";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
 // glyphs. It looks like a sizing bug and it is a missing import. Vite folds it
@@ -1420,6 +1421,25 @@ export const TerminalNative: Component<{
       // A host with no box yet owes one, and the ResizeObserver below or the
       // view coming back on screen settles it.
       const bootFitted = safeFit("fit-wanted");
+
+      // A TERMINAL THAT BOOTED HIDDEN STILL HAS TO ATTACH AT A SIZE, and until
+      // 2026-09-12 that size was xterm's own 80x24. `bootFitted` false IS the
+      // hidden case: the host is `display: none`, it measures 0x0, and fit.ts
+      // rightly refuses. What the handshake then carried shrank the session's
+      // tmux window to 80 columns on a HOVER and rewrapped its content, because
+      // `-f ignore-size` protects a session only while an unflagged client is
+      // attached, and a session nobody is reading has none. store/pane-grid.ts
+      // carries the measurement, and why a better local measurement is not
+      // available: a hidden xterm cannot measure its character cell either.
+      //
+      // Not a fit and not a claim. This says nothing to the server and asks
+      // nothing of tmux; it stops the handshake volunteering a number that is
+      // wrong in the one direction that costs. The real fit still runs when the
+      // terminal is shown, and corrects a stale grid then.
+      if (!bootFitted) {
+        const remembered = readPaneGrid();
+        if (remembered) term.resize(remembered.cols, remembered.rows);
+      }
 
       // THE BOOT FOCUS. term.html takes it here, immediately after the same
       // fit, and says why at :5615-5616: nothing else focuses the terminal on
