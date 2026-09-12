@@ -215,6 +215,66 @@ Settings → Network → Right now gains a sixth row, `This machine`, below `Bui
 - a 60-minute sparkline of the deciding pressure — the worst of the three at
   each sample, so the line and the colour never disagree.
 
+### The chart says what it is
+
+The first cut of the chart carried no visible words at all. Its only
+explanation was the `aria-label` on the `<svg>`, which is exactly the reader who
+does not need it: anyone looking at the chart saw a line, a dotted line, and no
+way to tell what either meant. Asked twice in a row what it showed, the honest
+answer was that nothing on screen said.
+
+Three labels, each answering a question the shape cannot:
+
+| element | what it settles |
+|---|---|
+| caption above | "Stall time, worst of processor, disk and memory" — the metric |
+| axis ends below | `1h ago` … `now · Disk` — the x axis, and the resource the line draws at its newest point |
+| dashed swatch | `busy line` — what the rule at 1.0 is |
+
+The caption names the **metric** before anything else. A draft that read "How
+close the busiest of the three is to its limit" explained the height and never
+said close to a limit in what: stall, use, heat, queue depth all fit that
+sentence. Stall time is the answer, and it is not a usage figure.
+
+The `now` end names the resource from the **last point's** `res` rather than
+from the verdict's `worst`. Those two legitimately differ, because `worst`
+follows the tier while each point carries whichever resource led at that
+sample, and labelling the end of a line with a resource the end of the line is
+not drawing would repeat the error this pass exists to fix. The short names
+match the figures above the chart exactly, so `Disk` on the axis and `Disk 26%`
+in the row are one vocabulary.
+
+Measured at 390px: the three labels occupy 51-80, 148-211 and 279-355 on a
+single 15px row, with no overlap and no wrap.
+
+The y axis needs saying because height is each reading over its **own**
+resource's limit rather than a percentage: 20% stall is over the line for CPU
+and nowhere near it for IO, so on a raw-percent axis those two points would sit
+at the same height and mean opposite things. The resource being drawn also
+changes from point to point, which is why the caption names "the busiest of the
+three" rather than one of them.
+
+Every label is HTML outside the `<svg>`, never SVG `<text>`. The chart is drawn
+with `preserveAspectRatio="none"` so a wider panel gets a longer hour instead of
+a fatter line, and that same stretch would smear text inside the viewBox
+sideways.
+
+Four things needed correcting after the first version, none of which a test
+caught and all of which a screenshot made obvious:
+
+- the empty state ran `No readings yet` straight into the axis row, because
+  `.tl-spark` was a flex row at a fixed 40px and the labels sat beside the chart
+  rather than under it;
+- that same empty state captioned a `busy line` when no chart and no rule were
+  drawn, which is a label for something absent. The axis row now renders only
+  when a chart does;
+- the swatch was grey while the rule it names is `--state-running`. It is the
+  only thing tying a fixed label row to a rule whose height moves with the data,
+  so it has to look like the rule rather than sit near it;
+- the caption read "hour by hour", which suggests several hours of buckets
+  rather than one continuous hour. The axis ends already carry the timespan, so
+  the caption gave that job up and took the y axis instead.
+
 The sentence is on the row **only when the top of the panel has stopped saying
 it**. The first build printed it in both places and a screenshot at 355px showed
 the cost: `verdict()` already prints it whenever the machine is the only channel
