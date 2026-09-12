@@ -52,10 +52,20 @@ const DEV_AUTH = process.env.TL_DEV_AUTH || "";
 // against nothing on a box configured for any other proxy, and the default here
 // keeps every existing invocation working.
 const DEV_AUTH_HEADER = process.env.TL_AUTH_HEADER || "X-Authentik-Username";
+// The shared secret the backends require alongside the identity header when the
+// box sets one (`TL_PROXY_SECRET` in /etc/terminal-lobby.local.conf,
+// authuser/resolve.go checks it BEFORE it reads the identity). Without it every
+// call answers 401 however good the username is, so `npm run dev` on a box with
+// a secret set reaches an empty sidebar and a terminal that cannot attach. Read
+// from the environment only: the conf file is root-readable, and a dev server is
+// not the thing to teach how to read it. Same shape as the identity above, and
+// unset stays unset, which is what a box with no secret wants.
+const DEV_PROXY_SECRET = process.env.TL_PROXY_SECRET || "";
 const injectAuth: ProxyOptions["configure"] = (proxy) => {
   if (!DEV_AUTH) return;
   const setHeader = (proxyReq: ClientRequest) => {
     proxyReq.setHeader(DEV_AUTH_HEADER, DEV_AUTH);
+    if (DEV_PROXY_SECRET) proxyReq.setHeader("X-TL-Proxy-Secret", DEV_PROXY_SECRET);
   };
   proxy.on("proxyReq", setHeader);
   // WebSocket upgrades (the ttyd /ws attach) fire proxyReqWs, NOT proxyReq — the

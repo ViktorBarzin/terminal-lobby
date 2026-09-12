@@ -114,7 +114,14 @@ without CORS (`vite.config.ts`):
 Every backend resolves the OS user from the `X-Authentik-Username` header the
 ingress injects in prod; set `TL_DEV_AUTH=<authentik-name>` and the proxy stands
 in for the ingress so the dev server authenticates (injected on `proxyReq` *and*
-`proxyReqWs` — the ttyd WebSocket upgrade fires only the latter).
+`proxyReqWs` — the ttyd WebSocket upgrade fires only the latter). `TL_AUTH_HEADER`
+names that header, which the box configures (`/etc/terminal-lobby.conf`).
+
+A box that also sets `TL_PROXY_SECRET` checks the secret **before** it reads the
+identity (`authuser/resolve.go`), so pass the same value through
+`TL_PROXY_SECRET=…` when you start the dev server. Without it every call answers
+401 whatever the username is: the sidebar reads "Access denied (HTTP 401)" and
+the terminal cannot attach.
 
 ## Build output
 
