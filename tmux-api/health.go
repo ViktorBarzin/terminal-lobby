@@ -145,6 +145,28 @@ const (
 	// over 0 seconds" is worse than saying nothing yet.
 	healthMinWindow = time.Second
 
+	// healthColourMinWindow is the narrowest window that may produce a COLOUR,
+	// as opposed to a set of figures. The thresholds are ten-minute rates, so a
+	// narrower window measured against them is a noisier measurement wearing
+	// the same number and crosses a line more often than the calibration says.
+	//
+	// Four minutes rather than the full ten, and the difference is measured
+	// rather than picked. Against 30 days of this box in Prometheus, moving the
+	// window from ten minutes to four moves the hours over each line from
+	// 7.17 to 9.33 (CPU), 7.33 to 8.17 (IO) and 4.83 to 4.17 (memory) — noise
+	// cuts both ways — which puts the union near 2.9% of the month against the
+	// 2.44% the ten-minute lines were calibrated to. Still inside the 1-3% this
+	// was designed for.
+	//
+	// The full ten was the first cut and it was too strict in the one direction
+	// that matters. Driving a real sampler on a box at 2.59 runnable tasks per
+	// core, with IO stalled 82% and memory 24%, it reported `unknown` because
+	// the process had only been up 5.7 minutes: every number said the box was
+	// grinding and the dot stayed grey. Ten minutes of silence after a restart
+	// suppresses exactly the case this channel exists for, since a deploy is
+	// often what preceded the grinding.
+	healthColourMinWindow = 4 * time.Minute
+
 	// The amber lines, from 696 hours of this devvm measured in Prometheus: each
 	// one lands near 1% of the month on its own, 2.44% for the union. They are
 	// overridable because the package installs on machines other than this one
@@ -832,18 +854,14 @@ func healthVerdictFrom(r *healthRing, limits healthThresholds) healthVerdict {
 	// top of it: a rate averaged over ten minutes cannot be a momentary blip,
 	// and asking for the same thing twice would only delay the sentence.
 	//
-	// A SHORT WINDOW REPORTS FIGURES BUT NO COLOUR. The thresholds ARE
-	// ten-minute rates, so measuring a ten-SECOND rate against them is a
-	// different measurement wearing the same number: sixty times narrower, so
-	// far more variable, and it would cross a line at a rate nobody calibrated.
-	// The first ten minutes after a restart is also the worst possible moment
-	// to cry wolf, because it is exactly when someone has just deployed and is
-	// watching. So while PartialWindow is set the state stays `unknown`, which
-	// this model already defines as "has not reported" and which every rule
-	// skips rather than counting as health or as fault. The percentages, the
-	// load, the memory and the window itself are all still filled in above, so
-	// the panel shows live figures throughout and only the dot waits.
-	if v.PartialWindow {
+	// TOO SHORT A WINDOW REPORTS FIGURES BUT NO COLOUR. Below
+	// healthColourMinWindow the state stays `unknown`, which this model already
+	// defines as "has not reported" and which every rule skips rather than
+	// counting as health or as fault. The percentages, the load, the memory and
+	// the window itself are all filled in above regardless, so the panel shows
+	// live figures throughout and only the dot waits. See the constant for why
+	// the bar is four minutes and not ten.
+	if elapsed < healthColourMinWindow {
 		v.State, v.Tier = healthUnknown, healthTierFine
 		return v
 	}

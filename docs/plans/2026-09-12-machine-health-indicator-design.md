@@ -244,12 +244,24 @@ as broken.
 row that reports the machine, that claims something narrower than the panel now
 checks, so it becomes **"Everything is working."**
 
-### The attach screen speaks only when amber
+### There is no attach screen, and the session bar already answers
 
-Clicking a session on a healthy box looks exactly as it does today. When the
-machine is amber at that moment, the opening screen carries one extra line
-saying so. A fast attach should not grow statistics; a slow one should explain
-itself.
+The design asked for one extra line on the opening screen when the machine is
+amber at the moment someone clicks a session. Building it found that there is no
+opening screen to put a line on: the terminal was de-iframed (`term.html` was
+deleted in `2c64552`), `TerminalNative` simply paints when it is ready, and there
+is no loading overlay, spinner or placeholder anywhere between the click and the
+first frame.
+
+Adding one would be a far larger change than this design authorises, and it
+would make every fast attach worse to excuse the rare slow one.
+
+The requirement turns out to be met without new code. `machine` is in
+`SESSION_CHANNELS`, so the session bar's own `StatusDot` already carries it: open
+a session on a stalling box and the dot beside the session name is amber, and
+tapping it opens the panel that explains why. That is the same indicator, on the
+same surface, at the same moment — reached by the channel being scoped correctly
+rather than by a second surface saying the same thing.
 
 ## Where the numbers come from
 
@@ -278,20 +290,40 @@ would give a coarser graph, not a better one, and would tie Terminal Lobby to
 this homelab's monitoring stack and hand every other install a blank panel. The
 ring buffer empties on service restart, which is honest and infrequent.
 
-**A short window reports figures but no colour.** The thresholds *are*
-ten-minute rates, so measuring a ten-second rate against them is a different
-measurement wearing the same number: sixty times narrower, so far more variable,
-and it would cross a line at a rate nobody calibrated. While the window is under
-ten minutes the state stays `unknown` — which this model already defines as "has
-not reported", and which every rule skips rather than counting as health or as
-fault. Every figure is still filled in, so the panel shows live numbers
-throughout and only the dot waits.
+**Too short a window reports figures but no colour.** The thresholds *are*
+ten-minute rates, so a narrower window measured against them is a noisier
+measurement wearing the same number. Below four minutes the state stays
+`unknown` — which this model already defines as "has not reported", and which
+every rule skips rather than counting as health or as fault. Every figure is
+still filled in, so the panel shows live numbers throughout and only the dot
+waits.
 
-Caught by driving a real `tmux-api`. Ten seconds after start the endpoint
-reported `ioPct 53.68` against a 50% amber line, which under the first
-implementation painted the dot amber off a single sample interval. The first ten
-minutes after a restart is also the worst moment to raise a false alarm, because
-it is exactly when someone has deployed and is watching.
+Both ends of that bar came from driving a real `tmux-api`, and each moved it.
+
+Ten seconds after start it reported `ioPct 53.68` against a 50% amber line,
+which in the first implementation painted the dot amber off a single sample
+interval. So the colour had to wait for something.
+
+Waiting for the full ten minutes was the second try, and it was too strict in
+the direction that matters. On a box at 2.59 runnable tasks per core, with IO
+stalled 82.12% and memory 24.72% — both past their very-busy lines — the
+endpoint reported `unknown`, because the process had been up 5.7 minutes. Every
+number said the box was grinding and the dot stayed grey. A deploy is often what
+preceded the grinding, so ten minutes of silence suppresses the case the channel
+exists for.
+
+Four minutes is the shortest bar the data supports. Moving the window from ten
+minutes to four moves the hours over each line, measured over 30 days:
+
+| resource | 10-minute window | 4-minute window |
+|---|---|---|
+| CPU `some` > 10% | 7.17 h | 9.33 h |
+| IO `full` > 50% | 7.33 h | 8.17 h |
+| memory `full` > 10% | 4.83 h | 4.17 h |
+
+Noise cuts both ways, and the union lands near 2.9% of the month against the
+2.44% the ten-minute lines were calibrated to. Still inside the 1-3% this was
+designed for, and it buys back six of the ten blind minutes after a restart.
 
 **When PSI is missing** — older kernels, some container runtimes, the Docker
 dev environment — the row falls back to load average and memory headroom and
@@ -350,9 +382,15 @@ both.
   disagree, the threshold moves, and the mismatch is itself worth understanding.
 - The sentence wording has not been read by anyone but its author. "The machine
   is busy" may land as an excuse rather than as information.
-- A restart empties the ring buffer, so the sparkline is short exactly after a
-  deploy. Whether that is annoying enough to warrant persisting it is a question
-  for after it ships.
+- A restart empties the ring buffer, and the effect is sharper than "short".
+  Each sparkline point is a ten-minute rate, so it needs a pair of samples ten
+  minutes apart: for the first ten minutes after a restart the series is empty,
+  not short. The dot colours at four minutes, so between four and ten minutes
+  the row can be amber above a chart that says "no readings yet". That is
+  accepted rather than fixed, because making the early points four-minute rates
+  would put values on the axis that are not comparable to the later ones. Whether
+  the gap is worth closing by persisting the buffer is a question for after it
+  ships.
 - The memory input may be watching the wrong level. Over the last 30 days
   `earlyoom` killed nothing and the host never approached OOM (minimum available
   memory 1.06 GiB across 13 weeks), while 73 processes were killed by the
