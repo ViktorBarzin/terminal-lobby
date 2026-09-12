@@ -25,6 +25,7 @@ import type { TerminalReport } from "../src/diagnostics/status";
 /** The props the last (and only) mounted terminal was handed. */
 interface TerminalProps {
   args?: string;
+  fitWhileHidden?: boolean;
   onGrid?: (cols: number, rows: number) => void;
   onConn?: (report: TerminalReport) => void;
 }
@@ -94,6 +95,24 @@ describe("<SessionView> — a preloading mount", () => {
     // Position 5 is the attach mode, and the empty arg4 in front of it is the
     // owner slot: tmux-attach.sh reads a blank owner as "mine".
     expect(argsOf(container)).toBe("arg=main&arg=default&arg=default&arg=&arg=pre");
+  });
+
+  // The reflow this was supposed to remove, happening on the click instead.
+  // A preload mounts `display: none`, so its host measures 0x0; fit.ts refuses
+  // to fit against that and records the fit as owed, which left the terminal at
+  // xterm's constructed 80x24. The handshake carried 80x24, tmux sized the
+  // window to 80x23, and the owed fit settled only when the click revealed it:
+  // measured 2026-09-11, a preloaded open went 80x23 and then 128x35 on reveal.
+  // Every slot fills the same area, so the preload measures against the box the
+  // visible terminal is already using (terminal/lastbox.ts).
+  it("measures against the visible terminal's box, having none of its own", () => {
+    render(() => <SessionView session="main" preloading={() => true} visible={false} />);
+    expect(terminals.at(-1)?.fitWhileHidden).toBe(true);
+  });
+
+  it("leaves an ordinary terminal to measure its own host", () => {
+    render(() => <SessionView session="main" />);
+    expect(terminals.at(-1)?.fitWhileHidden).toBe(false);
   });
 
   it("leaves an ordinary attach exactly as it was", () => {
