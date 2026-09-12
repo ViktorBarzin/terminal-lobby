@@ -412,38 +412,50 @@ One release, both halves together.
   into `sessions`.
 - Geometry in a new `store/workspaces.ts` over one `tl:workspaces:v1` key.
 
-**The tree contract**, settled 2026-09-12 because the device store, the canvas
-and the wiring all depend on it:
+**The tree contract**, as built. Four files depend on it, so it is written down
+rather than inferred:
 
 ```ts
-export interface TileNode { kind: "tile"; name: string; owner?: string }
-export interface SplitNode {
-  kind: "split";
-  direction: "row" | "column";
-  children: WorkspaceNode[];   // two or more; a row of three is ONE node
-  fractions: number[];         // one per child, summing to 1
+export type SessionKey = string;              // keepalive's keyOf: `owner\0name`
+export type Direction = "row" | "column";
+export type Edge = "left" | "right" | "top" | "bottom";
+
+export interface Leaf  { readonly kind: "leaf"; readonly key: SessionKey }
+export interface Split {
+  readonly kind: "split";
+  readonly dir: Direction;
+  readonly children: readonly TreeNode[];     // two or more
+  readonly fractions: readonly number[];      // one per child, summing to 1
 }
-export type WorkspaceNode = TileNode | SplitNode;
-export type WorkspaceTree = WorkspaceNode;   // a workspace of one is a bare TileNode
+export type TreeNode = Leaf | Split;          // a workspace of one is a bare Leaf
 
 export const MIN_TILE_PX = 240;
-export function tileKey(t: TileNode): string;                     // delegates to keepalive's keyOf
-export function tilesOf(node: WorkspaceNode): TileNode[];
-export function sessionKeysOf(node: WorkspaceNode): string[];
-export function isWorkspaceTree(v: unknown): v is WorkspaceTree;
-export function toRects(tree: WorkspaceTree, box: { width: number; height: number }): TileRect[];
+export function leafKeys(node: TreeNode): SessionKey[];
+export function parseTreeNode(v: unknown): TreeNode | null;   // validates untrusted storage
+export function toRects(tree: TreeNode, container: Size): Rect[];
 ```
 
-A tile identifies its session the way `KeptSession` and `Selected` already do,
-`{name, owner?}`, because the owner is part of the identity and a workspace may
-hold a foreign session. The NUL-joined keepalive key is composed on the way out
-by `tileKey` and never written to storage, where it would be hostile to anyone
-reading the document. `fractions` **is** corvu's controlled `sizes` expressed as
-fractions, so the sizes exist in exactly one place.
+A tile is keyed by the **same** string the slot layer is keyed by, keepalive's
+`keyOf`, so a tile and its mounted session match without a second identity
+concept. That key reaches storage with its NUL escaped as `\u0000`, which round
+-trips; the tree exports the inverse of `keyOf` so a consumer that needs the
+name and owner separately, such as the tile header or the tmux-api member list,
+can take them apart.
 
-`store/workspaces.ts` takes `isWorkspaceTree` and `sessionKeysOf` by injection
-rather than importing them as values, matching how `createVisitStore` takes
-`now` and `visible`. That keeps its suite runnable independently of the tree.
+`fractions` **is** corvu's controlled `sizes` expressed as fractions, so the
+sizes exist in exactly one place.
+
+`store/workspaces.ts` takes `parseTreeNode` and `leafKeys` by injection rather
+than importing them as values, matching how `createVisitStore` takes `now` and
+`visible`:
+
+```ts
+createWorkspacesStore({ parseTree: parseTreeNode, sessionsOf: leafKeys })
+```
+
+`parseTreeNode` is what keeps the node shape in one file. Without it the store
+would carry its own recursive validator, which is a second copy of the tree's
+shape in a file that must not know it.
 
 **tmux-api**
 
