@@ -13,6 +13,7 @@ import { ownWhile } from "../lib/ownwhile";
 // into the bundle's CSS, so it costs no extra request.
 import "@xterm/xterm/css/xterm.css";
 import { attach, type Attachment } from "../terminal/attach";
+import { lastHostBox, rememberHostBox } from "../terminal/lastbox";
 import { toXtermTheme, THEME_LIVE_GLOBAL } from "../terminal/theme";
 import type { LadderState } from "../terminal/reconnect";
 import {
@@ -661,6 +662,17 @@ export const TerminalNative: Component<{
    */
   active?: boolean;
   /**
+   * This terminal will be SHOWN at the size another terminal is already using,
+   * so it may measure against that one rather than its own hidden 0x0 host.
+   *
+   * True only for a preload (ADR-0026), which mounts `display: none` and is
+   * revealed by a click into the slot the visible session occupies now. Any
+   * other hidden terminal keeps fit.ts's refusal, because a hidden session
+   * fitting against a box it does not have is what drags a live tmux window
+   * down to 13 columns. See `terminal/lastbox.ts`.
+   */
+  fitWhileHidden?: boolean;
+  /**
    * This session wants the lobby's notice: the pty rang the bell, or output
    * arrived while nobody could see the terminal. Which of those is which, and
    * the one-shot that keeps ten frames behind a hidden view down to one piece
@@ -1197,9 +1209,27 @@ export const TerminalNative: Component<{
         typeof navigator !== "undefined" &&
         ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(navigator.platform);
 
-      /** The host's box, measured NOW, which is what fit.ts asks for. */
-      const measure = (): HostBox | null =>
-        host ? { width: host.clientWidth, height: host.clientHeight } : null;
+      /**
+       * The host's box, measured NOW, which is what fit.ts asks for.
+       *
+       * A real box is also REMEMBERED, because a terminal that mounts hidden has
+       * none of its own and every slot fills the same area (terminal/lastbox.ts).
+       * `fitWhileHidden` is the one caller allowed to borrow it: a preload is
+       * mounted `display: none`, so without this it opens at xterm's 80x24
+       * default and re-fits when the click reveals it, which is the reflow the
+       * preload exists to remove. Borrowing is deliberately not the default — a
+       * hidden session fitting against someone else's box is exactly what
+       * fit.ts's guard is there to stop, and only a preload knows it is about to
+       * be shown at that size.
+       */
+      const measure = (): HostBox | null => {
+        const box = host ? { width: host.clientWidth, height: host.clientHeight } : null;
+        if (box && box.width > 0 && box.height > 0) {
+          rememberHostBox(box);
+          return box;
+        }
+        return props.fitWhileHidden ? lastHostBox() : box;
+      };
 
       /**
        * Ask the guard, then carry out its verdict. The two side effects a

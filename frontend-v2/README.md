@@ -417,6 +417,10 @@ src/
                          generation check on each socket handler is what stops an
                          abandoned attempt's close from knocking its replacement
                          off the ladder
+    lastbox.ts           The last box a terminal really measured. A preload
+                         mounts display:none and has none of its own, so it
+                         borrows this rather than opening at xterm's 80x24 and
+                         reflowing when the click reveals it
     theme.ts             The app's CSS custom properties mapped to an xterm
                          ITheme, plus the two re-read triggers a component owes
                          it (an explicit pick, and an OS light/dark flip while the
