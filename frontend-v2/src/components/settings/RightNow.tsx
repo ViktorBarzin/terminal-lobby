@@ -128,7 +128,7 @@ const MachineReadout: Component<{
 }> = (props) => {
   /**
    * Anything true about the reading that the figures cannot say for themselves.
-   * Both exist on ADR-0016's reasoning, carried into ADR-0027: a row that
+   * Both exist on ADR-0016's reasoning, carried into ADR-0028: a row that
    * explains itself can be asked about, while one that quietly presents a
    * different number as the same one cannot.
    *
@@ -288,7 +288,7 @@ export const RightNow: Component<{ conn: ConnectionControl }> = (props) => {
    * things need attention" and the sentence disappears from the panel entirely.
    * That is the case it exists for: the dot is amber for a brush past a
    * threshold and for a sustained grind alike, and the sentence is the only
-   * thing that separates them (ADR-0027). So the row picks it up exactly where
+   * thing that separates them (ADR-0028). So the row picks it up exactly where
    * the headline drops it.
    */
   const rowSentence = (): string | null => {
@@ -301,7 +301,7 @@ export const RightNow: Component<{ conn: ConnectionControl }> = (props) => {
   };
 
   /**
-   * A busy machine is the one row with nothing to press (ADR-0027). There is no
+   * A busy machine is the one row with nothing to press (ADR-0028). There is no
    * action a person can take about it, so it grows no button — held here rather
    * than left to whichever caller wires the control up, because a button that
    * cannot work is worse on this row than on any other: it would imply the

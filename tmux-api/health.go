@@ -8,7 +8,7 @@ the transcript stream, the session list poll, notifications, and a stale build �
 and every one of them is about the client. This file supplies the sixth: the
 machine itself is stalling and all five channels are healthy. Design and the
 measurements behind every number here:
-docs/adr/0027-stall-time-says-the-box-is-busy.md.
+docs/adr/0028-stall-time-says-the-box-is-busy.md.
 
 WHY PRESSURE AND NOT LOAD. Linux PSI measures the question directly — wall-clock
 time lost waiting for a resource — so "the box feels slow" and "tasks are

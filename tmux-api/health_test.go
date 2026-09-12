@@ -18,7 +18,7 @@ What a person asks when a terminal goes quiet is "is it me or is it the box",
 and this file pins the half of the answer the box gives about itself.
 
 The numbers under test are not arbitrary. The three thresholds come from 696
-hours of this devvm's own history (docs/adr/0027-stall-time-says-the-box-is-busy.md),
+hours of this devvm's own history (docs/adr/0028-stall-time-says-the-box-is-busy.md),
 calibrated against 10-MINUTE RATES, so the tests state them the way the design
 states them and check the arithmetic that turns two cumulative counters into the
 rate they were calibrated against.

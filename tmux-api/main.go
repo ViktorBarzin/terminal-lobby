@@ -358,7 +358,7 @@ func main() {
 	go runPrewarmReaper(make(chan struct{}))
 
 	// Whether the BOX is stalling, so a person can tell "the box is slow" from
-	// "my connection is slow" (health.go, ADR-0027). Started unconditionally
+	// "my connection is slow" (health.go, ADR-0028). Started unconditionally
 	// and for the life of the process, like the reaper: five world-readable
 	// /proc files every ten seconds, no privilege, no helper, and a few
 	// kilobytes for the hour of history the panel draws. Whether anyone ever

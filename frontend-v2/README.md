@@ -296,7 +296,7 @@ src/
     usage.ts             What the lobby cost this device, in wire bytes: three
                          buckets measured from Navigation/Resource Timing, two
                          (ttyd WS, SSE) modelled by diag.js and labelled as such
-    status.ts            Connection status, PURE (ADR-0016, ADR-0027): six
+    status.ts            Connection status, PURE (ADR-0016, ADR-0028): six
                          channels (terminal, transcript, session list,
                          notifications, build, this machine) in three states,
                          plus `unknown` — which every rule skips rather than
@@ -764,7 +764,7 @@ src/
     Sparkline.tsx        One polyline over a series of numbers, drawn as inline
                          SVG because this project carries no charting library.
                          Draws the hour of machine stall under Settings →
-                         Network → Right now (ADR-0027), and survives the short
+                         Network → Right now (ADR-0028), and survives the short
                          series a service restart leaves behind
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
                          clipboard, file-text, rotate-cw) — never emoji
