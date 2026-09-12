@@ -98,12 +98,28 @@ Two consequences follow, and both are visible to a person:
 Reading the code for this design turned up exactly where "one visible session"
 is encoded. Each is small, and each has to move.
 
-| where | what it says today | what several tiles need |
-|---|---|---|
-| `app.css:1218` | `.tl-session-slot { display: contents }`, so a slot is not a box and `.tl-session-view` stays a direct flex child of the shell column | the slot becomes a real box. Two un-hidden slots today stack down the column rather than tiling |
-| `App.tsx:691` | `selectedKey()` is one `string` or `null`, and `shown()` compares against it | a visible set. `SessionView` itself needs no change, because `visible` is already a per-slot boolean prop |
-| `terminal/lastbox.ts:41` | a module-level `let last: Grid`, whose docblock reasons "Every session slot fills the same area of the shell ... so the grid a visible terminal fitted to IS the grid a hidden one would get if it were shown" | per-slot, or keyed by the measured box. Tiles of different sizes falsify that sentence, and a preload revealed into a narrow tile would open at the wide tile's grid and then claim it |
-| `lib/ownwhile.ts` | twelve `window.__tl*` globals claimed while `onScreen`, among them `__tlFocusTerminal`, `__tlSendToTerminal`, `__tlOpenFind` and `__tlDoPaste`. Its own docblock says the claim "was exact while exactly one SessionView existed at a time" | they follow the **focused** tile rather than any visible one. This is the concrete meaning of "one session bar following focus" |
+**`app.css:1218`** sets `.tl-session-slot { display: contents }`, so a slot is
+not a box and `.tl-session-view` stays a direct flex child of the shell column.
+It becomes a real box, and the tree assigns its area. Two un-hidden slots today
+stack down the column rather than tiling.
+
+**`App.tsx:691`** makes `selectedKey()` one `string` or `null`, which `shown()`
+compares against. It becomes a visible set. `SessionView` itself needs no change,
+because `visible` is already a per-slot boolean prop.
+
+**`terminal/lastbox.ts:41`** holds a module-level last-fitted grid, and its
+docblock gives the reason in words: *"Every session slot fills the same area of
+the shell ... so the grid a visible terminal fitted to IS the grid a hidden one
+would get if it were shown."* Tiles of different sizes make that false, and a
+preload revealed into a narrow tile would open at the wide tile's grid and then
+claim it. The module goes per-slot, or keyed by the measured box.
+
+**`lib/ownwhile.ts`** guards twelve `window.__tl*` globals, claimed while a view
+is `onScreen` and among them `__tlFocusTerminal`, `__tlSendToTerminal`,
+`__tlOpenFind` and `__tlDoPaste`. Its own docblock says the claim *"was exact
+while exactly one SessionView existed at a time"*. They move to following the
+**focused** tile rather than any visible one, which is the concrete meaning of
+"one session bar following focus".
 
 The cheapest evidence that several live terminals work at all is already
 shipped: `Dock.tsx:127-145` mounts a second `TerminalNative` with
