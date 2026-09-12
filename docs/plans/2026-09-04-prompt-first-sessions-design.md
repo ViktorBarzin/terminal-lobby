@@ -260,6 +260,18 @@ prompt. You typed it seconds earlier, so it is likely the most recognisable
 thing available, and Claude's summary replaces it when it lands. A session started with
 an empty box and no prompt reads `New session` until a summary appears.
 
+> [!IMPORTANT]
+> **Amendment, 2026-09-12.** The composer no longer creates from an empty box,
+> so the last sentence above describes a case that can no longer arise here.
+> Viktor's reason: an empty Enter made a session with no prompt to summarise,
+> which sat in the sidebar reading `New session` with nothing in it.
+> `PromptField` refuses an empty send for every caller now, and draws Send
+> unavailable while the box holds nothing. The shell's name box holds the same
+> line. A held file still counts as what was typed, since it leaves as the path
+> it uploaded to. Everything else on this page stands. Naming is still optional,
+> and `New session` is still what an untitled session reads as when it arrives
+> by another route.
+
 **Telemetry.** One new event, `session.autonamed`, carrying `tl.session`,
 `tl.delay_ms` and `tl.outcome` (`titled` | `gave_up`). The existing
 `session.retitled` with a user client tag, arriving within about ten minutes of

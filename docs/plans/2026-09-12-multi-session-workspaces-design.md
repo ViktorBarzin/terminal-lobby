@@ -174,7 +174,7 @@ flowchart TD
 | drag a session already in the workspace | moves its tile; never duplicates it |
 | drag a tile anywhere outside the split area | removes it from the workspace |
 | the tile header's close control | the same removal, without the drag |
-| drag a divider | resizes the two tiles either side |
+| drag a divider | resizes the two tiles either side. At a junction where two dividers meet, the drag moves both axes at once |
 
 Removing a tile leaves the session running and in the sidebar where it was.
 Removing down to one tile ends the workspace: you are looking at a session
@@ -193,6 +193,64 @@ split that would take any tile below it is refused, and its drop preview shows
 as invalid. If the browser window itself shrinks below what the tree needs, the
 workspace shows only the focused tile and restores the full tree when the window
 grows back, so a dragged-narrow window never loses an arrangement.
+
+### Resizing: a skeleton drives the slot layer
+
+Dividers are draggable, and that drag comes from `@corvu/resizable` rather than
+from us. Using it needs one turn, because the constraint above rules out how
+every split-pane library expects to be used.
+
+**No library may own the tiles.** `keepalive` requires every `SessionView` to be
+a sibling in one stable list, which is exactly what makes tiling cost nothing.
+Corvu, `solid-resizable-panels`, `allotment`, `react-resizable-panels` and
+`dockview` all want the panes as their own children, and a nested tree of their
+components reparents a pane whenever the structure changes. So the library gets
+a tree with no terminals in it.
+
+Two layers, stacked:
+
+- **The skeleton.** Nested `<Resizable>` nodes mirroring the tree, with
+  transparent panels at `pointer-events: none` and visible handles at
+  `pointer-events: auto`. It holds no session content, so corvu may reparent it
+  as freely as it likes. Sitting above the terminals, its handles take the drag
+  while everything else falls through to the terminal underneath.
+- **The slot layer.** The flat, never-reordered list of session slots,
+  positioned from rects computed off the tree.
+
+What connects them is corvu's controlled `sizes`, an array of percentages per
+node with an `onSizesChange` callback. **Those percentages are the tree's own
+stored fractions**, so there is no second source of truth and no measurement
+round-trip: a drag updates `sizes`, the tree recomputes rects, the slots move.
+Nothing waits a frame on a `ResizeObserver`.
+
+```mermaid
+flowchart TD
+  DRAG["you drag a handle"]
+  DRAG --> SKEL["<b>skeleton</b><br/>nested Resizable<br/>transparent"]
+  SKEL -->|onSizesChange| TREE["<b>tree</b><br/>stored fractions<br/>one array per node"]
+  TREE -->|rects| SLOTS["<b>slot layer</b><br/>flat, never reordered"]
+  SLOTS --> FIT["debounced fit,<br/>then claimGrid"]
+```
+
+What this buys, none of which we then write: touch dragging, the min and max
+clamps that enforce the 240px floor, collapse behaviour, keyboard resizing if
+shortcuts ever come back, and the intersecting-handle drag that moves both axes
+at a junction, which is the fiddly part of a tmux-shaped grid.
+
+During a drag the terminals follow continuously, but the tmux grid claim does
+not: the fit is already debounced, so `claimGrid` lands once the drag settles
+rather than on every pointer move.
+
+Why this one, from what is actually published:
+
+| library | latest | deps | why not |
+|---|---|---|---|
+| `@corvu/resizable` 0.2.5 | 2025-05-04 | 1 | chosen, as the skeleton |
+| `split-grid` 1.0.11 | 2021-04-05 | 0 | the best DOM manners of any of them, "Only modifies `grid-template-*` rules", but one flat grid with no nesting, no documented touch, and unpublished since 2021 |
+| `dockview-core` 8.3.1 | 2026-09-10 | 0 | the most actively maintained and framework-agnostic, and a docking manager that reparents panel DOM |
+| `solid-resizable-panels` 0.5.4 | 2024-04-03 | 0 | panels own their children, pre-1.0, stale |
+| `allotment`, `react-resizable-panels` | | | React |
+| `supersplit-js` | 2026-08-05 | 0 | exactly this shape on paper, and a three-star hobby project |
 
 ### Focus
 
@@ -346,6 +404,8 @@ One release, both halves together.
 - Tile chrome, and the drop-shadow drag reusing `src/dnd/`'s live-order,
   `hold()` and write-once-on-dragend pattern. The edge hit test is new: the
   library has no positional API (see below).
+- `@corvu/resizable` added as a dependency, rendering the skeleton and owning
+  the divider drag. Its controlled `sizes` are the tree's stored fractions.
 - Grid re-claim on every visible-set change, declining while watching.
 - Undo handlers beside the existing ones in `store/undo.*`, with names flattened
   into `sessions`.
@@ -388,6 +448,12 @@ ours.
   thing.
 - Whether the auto-arrange should prefer columns or rows past four members. The
   even 2x2 is obvious; six is not.
+- `@corvu/resizable` is at 0.2.5, last published 2025-05-04, and we would use it
+  in a way its documentation does not describe: panels with no content, as a
+  skeleton. If it stops being maintained, the exit is to keep the tree and the
+  rect math, which are ours either way, and replace the drag with Pointer
+  Events. Worth writing the tree-to-rects function so it does not know corvu
+  exists, which keeps that exit cheap.
 - Attaching every member at once on a cold tab is the chosen behaviour and has
   not been measured at six members on a slow connection. If the first paint
   suffers, staggering the non-focused tiles is the fix and changes nothing else

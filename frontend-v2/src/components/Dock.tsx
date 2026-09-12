@@ -96,7 +96,7 @@ export const Dock: Component<{
   };
 
   return (
-    <Show when={d.allowed() && d.session() && d.visible()}>
+    <Show when={d.mounted()}>
       <div
         ref={wrapEl}
         class="tl-dock"

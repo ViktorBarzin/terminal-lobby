@@ -19,7 +19,7 @@
 import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
 import { createMemo, createSignal, For } from "solid-js";
-import { createMountList } from "../src/components/App";
+import { createMountList, slotClasses } from "../src/components/App";
 import type { KeptSession } from "../src/store/keepalive";
 import type { PreloadSlot } from "../src/store/preload";
 
@@ -98,7 +98,7 @@ describe("the shell's session slots", () => {
             return (
               <div
                 class="tl-session-slot"
-                classList={{ "tl-hidden": !shown() }}
+                classList={slotClasses(shown(), slot()?.key === k.key)}
                 data-name={k.name}
                 data-preload={slot()?.key === k.key ? "" : undefined}
               />
@@ -111,7 +111,7 @@ describe("the shell's session slots", () => {
     return { container, mounts, row, setKept, setSlot, setSelected };
   }
 
-  it("renders a preloaded session hidden, and does not select it", () => {
+  it("renders a preloaded session offstage, and does not select it", () => {
     const h = harness();
     h.setKept([kept("alpha")]);
     h.setSelected(kept("alpha").key);
@@ -119,10 +119,15 @@ describe("the shell's session slots", () => {
 
     const preloaded = h.row("beta")!;
     expect(preloaded).toBeTruthy();
-    expect(preloaded.classList.contains("tl-hidden")).toBe(true);
+    // Offstage, NOT `display: none`: a terminal built inside one cannot
+    // measure its own font, and the click pays for that in a double-width
+    // first frame. `slotClasses` carries the measurement.
+    expect(preloaded.classList.contains("tl-offstage")).toBe(true);
+    expect(preloaded.classList.contains("tl-hidden")).toBe(false);
     expect(preloaded.hasAttribute("data-preload")).toBe(true);
     // The session on screen is unchanged: a hover selects nothing.
     expect(h.row("alpha")!.classList.contains("tl-hidden")).toBe(false);
+    expect(h.row("alpha")!.classList.contains("tl-offstage")).toBe(false);
   });
 
   it("reveals the preloaded terminal on a click instead of building one", () => {
@@ -140,6 +145,7 @@ describe("the shell's session slots", () => {
     expect(h.mounts).toEqual(["beta"]); // nothing was mounted a second time
     expect(h.row("beta")).toBe(node); // and it is the very same element
     expect(h.row("beta")!.classList.contains("tl-hidden")).toBe(false);
+    expect(h.row("beta")!.classList.contains("tl-offstage")).toBe(false);
     expect(h.row("beta")!.hasAttribute("data-preload")).toBe(false);
   });
 
@@ -152,7 +158,8 @@ describe("the shell's session slots", () => {
     h.setSelected(kept("alpha").key);
 
     expect(h.row("beta")).toBe(node);
-    expect(h.row("beta")!.classList.contains("tl-hidden")).toBe(true);
+    // Still the pointer's, so still offstage rather than hidden.
+    expect(h.row("beta")!.classList.contains("tl-offstage")).toBe(true);
     expect(h.mounts).toEqual(["beta", "alpha"]);
   });
 

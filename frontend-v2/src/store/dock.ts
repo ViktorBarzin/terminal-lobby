@@ -2,12 +2,7 @@ import { createSignal, type Accessor } from "solid-js";
 import { createCoarsePointer } from "../mobile/pointer";
 import type { LobbyStore } from "./lobby";
 import type { DockState } from "../types/lobby";
-import {
-  clampRatio,
-  DOCK_RATIO_DEFAULT,
-  DOCK_RATIO_KEY,
-  nextDockAction,
-} from "./dock.logic";
+import { clampRatio, DOCK_RATIO_DEFAULT, DOCK_RATIO_KEY, nextDockAction } from "./dock.logic";
 
 /**
  * The Ctrl/Cmd+J scratch-shell dock.
@@ -41,6 +36,18 @@ export interface DockStore {
   /** true the first time this dock is shown — the attach is what creates the
    *  tmux session, so the terminal must not wait to be asked. */
   creating: Accessor<boolean>;
+  /**
+   * Is the panel on screen right now, taking `ratio`% off the bottom of
+   * `.tl-shell-body`?
+   *
+   * Two callers need the same answer and used to compute it separately:
+   * `Dock.tsx`, which mounts on it, and `App.tsx`, which reserves the room it
+   * takes so an offstage preload is measured against the box a session really
+   * gets (`slotClasses`). A second copy of the three-term test is a second
+   * thing to keep in step, and the one that drifted would be the one nobody is
+   * looking at.
+   */
+  mounted: Accessor<boolean>;
   /** dock height as a % of the content area. */
   ratio: Accessor<number>;
   setRatio: (pct: number) => void;
@@ -114,14 +121,17 @@ export function createDockStore(opts: DockStoreOptions): DockStore {
     // that command would take without passing App's early return. A gate on one
     // caller is not a gate.
     if (!allowed()) return;
-    const action = nextDockAction(store.layout(), store.sessions.map((s) => s.name));
+    const action = nextDockAction(
+      store.layout(),
+      store.sessions.map((s) => s.name),
+    );
     if (action.kind === "create") {
       setCreating(true);
       // The dock's dir follows the session you are working in, so a shell opened
       // under a project starts in that project (vanilla parity).
-      const dir = store.layout().projects.find((p) =>
-        p.sessions.includes(store.selected()?.name ?? ""),
-      )?.dir;
+      const dir = store
+        .layout()
+        .projects.find((p) => p.sessions.includes(store.selected()?.name ?? ""))?.dir;
       await store.setDock({ session: action.name, visible: true, ...(dir ? { dir } : {}) });
       return;
     }
@@ -142,5 +152,7 @@ export function createDockStore(opts: DockStoreOptions): DockStore {
     await store.setDock(undefined);
   }
 
-  return { session, visible, allowed, creating, ratio, setRatio, toggle, undock };
+  const mounted = () => allowed() && session() !== null && visible();
+
+  return { session, visible, allowed, creating, mounted, ratio, setRatio, toggle, undock };
 }

@@ -87,7 +87,8 @@ const HELD_PATH_PREFIX = "held:";
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
- * likely wanted to name the thing.
+ * likely wanted to name the thing. It holds the same line either way — nothing
+ * typed, nothing created.
  */
 /** The real catalogue read: what a session started in `dir` would offer. */
 function fetchCatalogue(dir: string): Promise<Catalogue> {
@@ -204,9 +205,7 @@ export const NewSessionComposer: Component<{
   const registerFocus = (fn: () => void): void => void (focusField = fn);
   let focusField: () => void = () => nameEl?.focus();
   window.addEventListener("tl:focus-new-session", onFocusReq);
-  onCleanup(() =>
-    window.removeEventListener("tl:focus-new-session", onFocusReq),
-  );
+  onCleanup(() => window.removeEventListener("tl:focus-new-session", onFocusReq));
 
   // ---- files with nowhere to go yet ---------------------------------------
   // Held, not uploaded. There is no session to upload INTO until Enter is
@@ -267,10 +266,14 @@ export const NewSessionComposer: Component<{
   /**
    * Create the session and give it what was typed.
    *
-   * Nothing is refused, including an empty box: `store.create` mints the id and
-   * the attach brings the session into being, so there is no name to collide
-   * and no reason left to say no. An empty box makes a bare session and sends
-   * nothing, which is a real instruction. The slot warmed above is deliberately
+   * Something has to be typed first. An empty box used to create a bare session
+   * and send it nothing, on the reading that "just give me a session" is a real
+   * instruction — but it is also what a stray Enter looks like, and what it
+   * left behind was a session with no prompt to summarise, so it sat in the
+   * sidebar as `New session` with nothing in it (Viktor, 2026-09-12). The field
+   * refuses that send and draws Send unavailable while it would (PromptField,
+   * `sendNeedsInput`), so by the time this runs there is prose or a held file
+   * behind it. The slot warmed above is deliberately
    * NOT released — create only STARTS the attach, and handing it back now would
    * reliably win that race and cost the create its head start. `handedOff` is
    * what makes that stick: without it the create's own layout write re-arms the
@@ -281,10 +284,7 @@ export const NewSessionComposer: Component<{
    * it: everything it needs is read out of props first, and it reports through
    * the toaster rather than back into a field that is no longer on screen.
    */
-  const submit = async (
-    text: string,
-    tray: readonly DraftAttachment[],
-  ): Promise<boolean> => {
+  const submit = async (text: string, tray: readonly DraftAttachment[]): Promise<boolean> => {
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
@@ -297,9 +297,7 @@ export const NewSessionComposer: Component<{
     // look for it. What that replaced was a POST that drove the CLI's own
     // picker after the session was up, which cost about four seconds and put a
     // `/model` line in a conversation that had not started.
-    const files = tray
-      .map((a) => held.get(a.path))
-      .filter((f): f is File => f !== undefined);
+    const files = tray.map((a) => held.get(a.path)).filter((f): f is File => f !== undefined);
     held.clear();
     // Everything the delivery needs, read while this component is still on
     // screen. It runs after the create has selected the session and unmounted
@@ -328,8 +326,12 @@ export const NewSessionComposer: Component<{
     return true;
   };
 
+  /** A shell is created from its NAME, so an unnamed one is not created. Its
+   *  Send is drawn unavailable for the same reason the prompt box's is. */
+  const namable = (): boolean => name().trim() !== "";
   const submitName = (): void => {
-    const n = name();
+    const n = name().trim();
+    if (!n) return;
     setName("");
     void submit(n, []);
   };
@@ -369,7 +371,7 @@ export const NewSessionComposer: Component<{
               <div class="tl-composer-bar">
                 <div class="tl-bar-left">{controls()}</div>
                 <div class="tl-bar-right">
-                  <button type="button" class="tl-send" onClick={submitName}>
+                  <button type="button" class="tl-send" disabled={!namable()} onClick={submitName}>
                     Send
                   </button>
                 </div>
@@ -382,12 +384,12 @@ export const NewSessionComposer: Component<{
             onAttach={holdFiles}
             pendingAttachments
             label="Prompt for a new session"
-            allowEmpty
+            sendNeedsInput
             placeholder="What do you want to do?"
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
-          commands={commands()}
-          commandsOk={commandsOk()}
+            commands={commands()}
+            commandsOk={commandsOk()}
             // A desktop lands here ready to type. A coarse pointer deliberately
             // does not: this is the phone's LANDING view, and focusing it would
             // throw a keyboard over the screen before anyone asked for one.
@@ -430,9 +432,7 @@ export const NewSessionComposer: Component<{
               the model beside it. Ungrouped is already a noun and needs no
               preposition. */}
           <option value="">Ungrouped</option>
-          <For each={projects()}>
-            {(p) => <option value={p.name}>in {p.name}</option>}
-          </For>
+          <For each={projects()}>{(p) => <option value={p.name}>in {p.name}</option>}</For>
         </select>
         <select
           class="tl-new-cmd"
@@ -476,9 +476,7 @@ export const NewSessionComposer: Component<{
         class="tl-new-cmd"
         aria-label={label}
         value={choice(h)[field]}
-        onChange={(e) =>
-          props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))
-        }
+        onChange={(e) => props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))}
       >
         <For each={optionsFor(h, field)}>
           {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
@@ -534,9 +532,5 @@ async function sendFirstPrompt(o: {
   // parkDraft, not saveDraft: that composer is already mounted and has already
   // read storage, so it has to be TOLD (store/drafts.ts).
   parkDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
-  showToast(
-    "Couldn't send the first prompt — it is waiting in the composer",
-    "error",
-    8000,
-  );
+  showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
 }
