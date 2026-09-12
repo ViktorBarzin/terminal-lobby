@@ -43,6 +43,11 @@ where it already sits. Splitting, moving, closing and resizing change
 assignments. No operation reorders `mounted()`, and no operation reparents a
 slot.
 
+One CSS line has to change for that to be possible. `app.css:1218` sets
+`.tl-session-slot { display: contents }`, which keeps `.tl-session-view` a
+direct flex child of the shell column. A slot that is not a box cannot be
+positioned, so a slot becomes a real box, and the tree assigns its area.
+
 ### What this costs
 
 Tiles cannot slide under the cursor during a drag. The design uses a translucent
@@ -63,6 +68,15 @@ a live `<canvas>`-backed xterm across documents or containers re-triggers layout
 and the fit path. It also reintroduces exactly the class of bug ADR-0020 closed
 by putting one terminal in one document.
 
+### The invariant this makes explicit elsewhere
+
+`terminal/lastbox.ts:41` holds a module-level last-fitted grid, and its docblock
+gives the reason in words: "Every session slot fills the same area of the shell
+... so the grid a visible terminal fitted to IS the grid a hidden one would get
+if it were shown." Tiles of different sizes make that false. The module goes
+per-slot as part of this work. Recorded here because the sentence reads as a
+general truth about the app and stops being one the day tiles ship.
+
 ## 2. Workspace membership is server-side; geometry is not
 
 A **Workspace** is an unnamed, implicit grouping: the set of sessions in a split
@@ -72,7 +86,7 @@ places.
 | state | store | scope |
 |---|---|---|
 | workspace id, ordered members | tmux-api, beside `layout/<user>.json` | per user, all devices |
-| the split tree and tile sizes | the browser, beside `store/device-prefs.ts` | per device |
+| the split tree and tile sizes | the browser, one `tl:workspaces:v1` document | per device |
 
 ### Why membership roams
 
@@ -110,6 +124,14 @@ own.
 Two stores for one object, and an update path that writes to both. A workspace
 is also not fully portable: your laptop knows which four sessions belong
 together but not how you had them arranged.
+
+The device half carries one cost worth naming now. Versioning in this codebase
+is the localStorage key suffix rather than a field in the document, a rule
+`store/undo.ts:55` states as "Bump the suffix if the entry shape ever changes".
+No store here has ever had a migration, and `store/device-prefs.ts:23` says so
+outright. So a later change to the tree's shape discards everyone's
+arrangements, unless that change also carries the first migration this codebase
+has written. Membership is unaffected, because it is on the server.
 
 ### Alternatives considered
 
