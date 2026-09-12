@@ -87,7 +87,8 @@ const HELD_PATH_PREFIX = "held:";
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
- * likely wanted to name the thing.
+ * likely wanted to name the thing. It holds the same line either way — nothing
+ * typed, nothing created.
  */
 /** The real catalogue read: what a session started in `dir` would offer. */
 function fetchCatalogue(dir: string): Promise<Catalogue> {
@@ -267,10 +268,14 @@ export const NewSessionComposer: Component<{
   /**
    * Create the session and give it what was typed.
    *
-   * Nothing is refused, including an empty box: `store.create` mints the id and
-   * the attach brings the session into being, so there is no name to collide
-   * and no reason left to say no. An empty box makes a bare session and sends
-   * nothing, which is a real instruction. The slot warmed above is deliberately
+   * Something has to be typed first. An empty box used to create a bare session
+   * and send it nothing, on the reading that "just give me a session" is a real
+   * instruction — but it is also what a stray Enter looks like, and what it
+   * left behind was a session with no prompt to summarise, so it sat in the
+   * sidebar as `New session` with nothing in it (Viktor, 2026-09-12). The field
+   * refuses that send and draws Send unavailable while it would (PromptField,
+   * `sendNeedsInput`), so by the time this runs there is prose or a held file
+   * behind it. The slot warmed above is deliberately
    * NOT released — create only STARTS the attach, and handing it back now would
    * reliably win that race and cost the create its head start. `handedOff` is
    * what makes that stick: without it the create's own layout write re-arms the
@@ -328,8 +333,12 @@ export const NewSessionComposer: Component<{
     return true;
   };
 
+  /** A shell is created from its NAME, so an unnamed one is not created. Its
+   *  Send is drawn unavailable for the same reason the prompt box's is. */
+  const namable = (): boolean => name().trim() !== "";
   const submitName = (): void => {
-    const n = name();
+    const n = name().trim();
+    if (!n) return;
     setName("");
     void submit(n, []);
   };
@@ -369,7 +378,12 @@ export const NewSessionComposer: Component<{
               <div class="tl-composer-bar">
                 <div class="tl-bar-left">{controls()}</div>
                 <div class="tl-bar-right">
-                  <button type="button" class="tl-send" onClick={submitName}>
+                  <button
+                    type="button"
+                    class="tl-send"
+                    disabled={!namable()}
+                    onClick={submitName}
+                  >
                     Send
                   </button>
                 </div>
@@ -382,7 +396,7 @@ export const NewSessionComposer: Component<{
             onAttach={holdFiles}
             pendingAttachments
             label="Prompt for a new session"
-            allowEmpty
+            sendNeedsInput
             placeholder="What do you want to do?"
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}

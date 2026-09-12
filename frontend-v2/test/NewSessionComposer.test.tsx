@@ -224,16 +224,36 @@ describe("<NewSessionComposer> — creating from a prompt", () => {
     m.store.dispose();
   });
 
-  it("creates from an EMPTY box, which is the whole point of the change", async () => {
+  // An empty box used to create a bare session and send it nothing, on the
+  // reading that "just give me a session" is a real instruction. It is also
+  // what a stray Enter looks like, and the session it left behind had no
+  // prompt to summarise, so it sat in the sidebar reading `New session` with
+  // nothing in it (Viktor, 2026-09-12).
+  it("refuses an EMPTY box, so nothing is created", async () => {
     const api = new FakeApi();
     const m = mount(api);
     await m.store.refresh();
 
     enter(field(m.container)!);
+    // Whitespace is nothing typed with the shift key down.
+    type(field(m.container)!, "   ");
+    enter(field(m.container)!);
+    await Promise.resolve();
 
-    await waitFor(() => expect(api.puts.length).toBe(1));
-    expect(m.store.toast()).toBeNull();
-    expect(labelOf(m.store, api.puts[0]!.ungrouped[0]!)).toBe("New session");
+    expect(api.puts).toEqual([]);
+    expect(m.store.selected()).toBeNull();
+    m.store.dispose();
+  });
+
+  it("says so on Send, rather than swallowing the keystroke", async () => {
+    const api = new FakeApi();
+    const m = mount(api);
+    await m.store.refresh();
+    const send = () => m.container.querySelector<HTMLButtonElement>(".tl-send")!;
+
+    expect(send().disabled).toBe(true);
+    type(field(m.container)!, "Fix the deploy");
+    expect(send().disabled).toBe(false);
     m.store.dispose();
   });
 
@@ -590,6 +610,31 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
     expect(labelOf(m.store, id)).toBe("scratch");
     m.store.dispose();
   });
+
+  // The box asks for a name rather than a prompt, but it is the same Enter
+  // starting the same session, so it holds the same line: nothing typed,
+  // nothing created.
+  it("refuses an unnamed shell", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
+    const api = new FakeApi();
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    const send = () => m.container.querySelector<HTMLButtonElement>(".tl-send")!;
+
+    expect(send().disabled).toBe(true);
+    enter(nameBox(m.container)!);
+    type(nameBox(m.container)!, "  ");
+    enter(nameBox(m.container)!);
+    await Promise.resolve();
+    expect(api.puts).toEqual([]);
+
+    type(nameBox(m.container)!, "scratch");
+    expect(send().disabled).toBe(false);
+    fireEvent.click(send());
+    await waitFor(() => expect(api.puts.length).toBe(1));
+    m.store.dispose();
+  });
 });
 
 describe("<NewSessionComposer> — the model and the effort it starts on", () => {
@@ -753,22 +798,6 @@ describe("<NewSessionComposer> — the first prompt", () => {
     m.store.dispose();
   });
 
-  it("sends nothing at all for an empty box", async () => {
-    const api = new FakeApi();
-    const w = emptyWire();
-    const m = mount(api, {}, w);
-    await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "claude-opus-5" },
-    });
-
-    enter(field(m.container)!);
-
-    await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.delivered[0]!.lines).toEqual([]);
-    m.store.dispose();
-  });
-
   it("sends nothing to a shell, which has no conversation to prompt", async () => {
     const api = new FakeApi();
     const w = emptyWire();
@@ -828,6 +857,33 @@ describe("<NewSessionComposer> — attachments", () => {
     pickFile(m.container, aFile("shot.png"));
     await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
     expect(w.uploads).toEqual([]);
+    m.store.dispose();
+  });
+
+  // The box may not be empty, and a held file is not empty: a screenshot on
+  // its own says what it is about, and it leaves as the path it uploaded to.
+  it("takes a held file as the whole of it", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.chips = [
+      [
+        {
+          path: "/var/lib/clipboard-store/wizard/s/shot-a1.png",
+          name: "shot-a1.png",
+          kind: "image",
+        },
+      ],
+    ];
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    expect(m.container.querySelector<HTMLButtonElement>(".tl-send")!.disabled).toBe(false);
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.lines).toEqual(["/var/lib/clipboard-store/wizard/s/shot-a1.png"]);
     m.store.dispose();
   });
 
