@@ -15,6 +15,20 @@ package main
 // it does not replace the event stream: Loki answers what happened in a
 // session, Prometheus answers whether the service is up and how slow it is.
 //
+// WHAT THIS EXPOSES, AND WHERE. No auth, deliberately, and the accurate
+// version of that claim rather than the comfortable one: this service listens
+// on 0.0.0.0:7684 in production (TL_BIND in /etc/terminal-lobby.local.conf),
+// so /metrics answers anyone who can reach the box on the internal VLAN. The
+// API routes beside it are gated by TL_PROXY_SECRET; this one is not.
+//
+// That is judged acceptable because of what is in it: request counts, request
+// latencies, an uptime, a build id, and per-OS-user session COUNTS. No session
+// names, no project names, no paths, no content. The one identifier it leaks
+// is the set of OS usernames, which node_exporter on the same host and port
+// range already exposes far more about. If the sensitivity bar ever moves,
+// gate it on the same X-TL-Proxy-Secret the other routes use and have the
+// scrape send the header.
+//
 // A SUCCESSFUL SCRAPE IS THE LIVENESS SIGNAL, which is the one design
 // constraint worth stating. Every gauge below can be unknown without the
 // endpoint failing: tmux may be unreachable, a user may have no server
