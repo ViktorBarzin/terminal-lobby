@@ -78,8 +78,16 @@ and `preview`, so the whole ingress is reproduced, WS identity header included:
 ```sh
 cd frontend-v2 && npm run build
 TL_DEV_AUTH=<authentik-user> TL_AUTH_HEADER=X-Authentik-Username \
+  TL_PROXY_SECRET=<the box's TL_PROXY_SECRET> \
   npx vite preview --host 127.0.0.1 --port 7912
 ```
+
+`TL_PROXY_SECRET` only matters on a box that sets one, and there it is not
+optional: `authuser` checks the shared secret before it reads the identity
+header, so without it every call is a 401 — the sidebar reads "Access denied
+(HTTP 401)" and the terminal cannot attach. The dev proxy forwards it as
+`X-TL-Proxy-Secret` on both the request and the WebSocket upgrade. The value
+lives in `/etc/terminal-lobby.local.conf`, which is root-readable.
 
 Reaching it from the Android emulator wants `adb reverse tcp:7912 tcp:7912`,
 which also keeps the origin on `127.0.0.1` so `isSecureContext` stays true and

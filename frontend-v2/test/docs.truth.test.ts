@@ -919,9 +919,11 @@ describe("docs/interface.md — the undo it documents is the undo that ships", (
 
   it("no kill path asks a question, so the doc does not say one does", () => {
     // The confirm went with the grace window (store/lobby.ts GRACE_MS), and it
-    // went from every entry point: the ⋯ menu and the swipe (SessionCard), the
-    // sidebar's Backspace/Delete, and the chord/palette command. A doc sentence
-    // saying otherwise sends somebody looking for a dialog that cannot appear.
+    // went from every entry point: the ⋯ menu and the swipe (SessionCard), and
+    // the chord/palette command. A doc sentence saying otherwise sends somebody
+    // looking for a dialog that cannot appear. (A bare Backspace/Delete kill
+    // from the sidebar was the vanilla lobby's; this app binds no bare key to a
+    // kill, which is why docs/interface.md no longer offers one.)
     // ProjectGroup.tsx is deliberately not on this list: deleting a PROJECT
     // still asks, and that question is about a different action.
     const killPaths = [
