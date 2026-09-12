@@ -82,8 +82,7 @@ resulting state itself — see "Interrupts have no hook" below.
   task re-enters as a `UserPromptSubmit` carrying `<task-notification>`,
   which retires that id; `Stop` stamps `done` only when the set is empty;
   and any event carrying `agent_id` is ignored. There is deliberately no
-  expiry on an id — a human prompt clears the set, which is what makes
-  typing into a session re-derive it, as it already was for `@claude_state`.
+  expiry on an id; the prune below is what clears one nobody retired.
 
   That drain alone was not enough, and `Stop` now PRUNES the set against
   the harness's own registry (2026-09-04). A `<task-notification>` reaches
@@ -100,10 +99,33 @@ resulting state itself — see "Interrupts have no hook" below.
   task and a `TaskStop`ped one both leave it at once. It is the only event
   that carries the field, and the only one that has to decide.
 
-  A workflow id is not pruned: the kinds seen in a real payload are
-  `shell` and `subagent`, and whether a running Workflow is listed at all
-  is unmeasured, so pruning one could report `done` mid-run. Workflows stay
-  on the notification drain until that is measured.
+  A workflow id was exempt from that prune until 2026-09-12, because the
+  kinds seen in a real payload were `shell` and `subagent` and nobody had
+  checked whether a running Workflow is listed at all. It is: a `Stop`
+  taken two seconds into a live run carries
+  `{"id":"w7t7pnsug","type":"workflow","status":"running"}`. Every kind
+  prunes the same way now.
+
+  The same measurement removed the two clears that reported `done` over a
+  live run (2026-09-12, Viktor: "Claude starts a workflow, then the status
+  for that session becomes green"). A human prompt used to empty the set,
+  which cost a wrong reading on 43 of the 105 workflow runs recorded on
+  this box — the case the design predicted and accepted. `SessionStart`
+  emptied it too, and `compact` is a `SessionStart`, so a long run went
+  green with nobody typing. Neither clear is needed once `Stop` re-derives
+  the set from the harness's list: a human prompt now leaves it alone, and
+  `SessionStart` clears only for `startup` and `resume`, the two sources
+  that are a new process. `compact` and `clear` are the same process, whose
+  background work is untouched, and stamp from the set as `Stop` does.
+
+  `Injector.Cancel` stopped clearing it on the same day and the same
+  evidence. An interrupt ends the TURN, not the work: a live workflow kept
+  counting through a C-c, and a background command's output file went from
+  line 39 to line 55 across one. Cancel still owns the `@claude_state`
+  transition, since an interrupt fires no `Stop` hook — it now stamps
+  `running` while the set is non-empty and `done` when it is not, which is
+  the rule `Stop` uses.
+
   `SubagentStart` and `SubagentStop` do fire and are accurate, and are
   deliberately unused: wiring them means an infra change reaching every
   headless Claude on the box. `TaskCreated` and `TaskCompleted` exist as

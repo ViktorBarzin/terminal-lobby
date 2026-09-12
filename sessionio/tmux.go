@@ -239,11 +239,18 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // best-effort: the interrupt already landed, so a failure here must not fail
 // the cancel, but it silently re-creates the latch, so it is logged.
 //
-// OptionBackground goes with it, for the same reason and by the same right: an
-// interrupt ends the turn, and a task the interrupted turn launched will never
-// report back into it. Left behind, the id holds the session at StateRunning
-// with no hook able to retire it, which is the one way a set with no expiry can
-// latch (docs/plans/2026-09-04-background-work-session-state-design.md).
+// OptionBackground is left alone, and it decides which state is stamped. An
+// interrupt ends the TURN; it does not end the work the session already
+// started. Measured 2026-09-12 by interrupting a session that had both kinds
+// live: the workflow kept counting ("0/1 agents done · 25s" at the interrupt,
+// still climbing after) and the background command's output file went from line
+// 39 to line 55 across it. Emptying the set there reported a finished session
+// over work that was still going, which is the same defect the hook script's
+// own clears had (docs/plans/2026-09-04-background-work-session-state-design.md).
+//
+// So an outstanding id keeps the session at StateRunning, exactly as it does at
+// Stop. It is still retired by the ordinary drains: the task-notification that
+// arrives as a prompt, or the prune at the end of the next turn.
 func (in *Injector) Cancel(osUser, session string) error {
 	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-c").Run(); err != nil {
 		return err
@@ -251,11 +258,12 @@ func (in *Injector) Cancel(osUser, session string) error {
 	if in.State(osUser, session) == "" {
 		return nil
 	}
-	if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), OptionBackground).Run(); err != nil {
-		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionBackground, err)
+	state := StateDone
+	if bg, _ := in.Option(osUser, session, OptionBackground); strings.TrimSpace(bg) != "" {
+		state = StateRunning
 	}
-	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, StateDone).Run(); err != nil {
-		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionState, err)
+	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, state).Run(); err != nil {
+		log.Printf("cancel %s/%s: stamping %s failed: %v", osUser, session, OptionState, err)
 	}
 	return nil
 }
