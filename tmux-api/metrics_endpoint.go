@@ -84,5 +84,5 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "# HELP tl_uptime_seconds Seconds since this process started.\n")
 	fmt.Fprintf(w, "# HELP tl_sessions Live tmux sessions per OS user.\n")
 	fmt.Fprintf(w, "# HELP tl_sessions_total Live tmux sessions across every mapped user.\n")
-	metrics.WriteTo(w)
+	metrics.Render(w)
 }
