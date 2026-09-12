@@ -1,0 +1,1324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Runway · Terminal Lobby text view</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   Terminal Lobby shell tokens (from the brief, theme-slate)
+   ============================================================ */
+:root{
+  --font-mono:"JetBrains Mono","Fira Code",Menlo,Monaco,"Courier New",monospace;
+  --font-ui:"DM Sans Variable","DM Sans",-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --radius:10px;
+  --bg-page:#0d1117;
+  --bg-sidebar:#11151c;
+  --bg-card:#161b22;
+  --bg-card-hover:#1c2128;
+  --text-primary:#e6e8eb;
+  --text-muted:#7d8590;
+  --border:#1f242d;
+  --border-strong:#30363d;
+  --accent:#4493f8;
+  --danger:#f47067;
+  --success:#56d364;
+  --state-running:#4493f8;
+  --state-awaiting:#a371f7;
+  --state-done:#56d364;
+  --surface-shadow:0 4px 6px -1px rgba(0,0,0,.05),inset 0 1px rgba(255,255,255,.06);
+  --hover-tint:rgba(255,255,255,.04);
+  --scrollbar-thumb:rgba(255,255,255,.1);
+  --tl-text-scale:1;
+  /* runway geometry */
+  --rw-head:252px;
+  --rw-num:124px;
+  --rw-act:250px;
+  --rw-lane-h:24px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg-page);color:var(--text-primary);
+  font-family:var(--font-ui);font-size:calc(14px * var(--tl-text-scale));line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:-2px;border-radius:4px}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb);border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ============================================================
+   Prototype harness (not part of the product)
+   ============================================================ */
+.ph-bar{
+  position:sticky;top:0;z-index:60;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+  padding:7px 14px;background:#07090d;border-bottom:1px solid var(--border-strong);
+}
+.ph-tag{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:.04em;text-transform:uppercase}
+.ph-btn{
+  font-size:12px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:7px;
+  color:var(--text-muted);background:var(--bg-card);
+}
+.ph-btn:hover{background:var(--bg-card-hover);color:var(--text-primary)}
+.ph-btn[data-on="1"]{color:var(--text-primary);border-color:var(--accent)}
+.ph-sep{width:1px;height:18px;background:var(--border-strong)}
+.ph-scrub{flex:1 1 180px;min-width:120px;accent-color:var(--accent)}
+.ph-clock{font-family:var(--font-mono);font-size:11px;color:var(--text-muted);min-width:104px;font-variant-numeric:tabular-nums}
+
+/* ============================================================
+   Shell
+   ============================================================ */
+.tl-shell{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 42px);min-height:620px;overflow:hidden}
+.tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;min-height:0}
+.tl-shellbar{height:41px;flex:0 0 41px;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-sidebar);border-bottom:1px solid var(--border)}
+.tl-brand{font-weight:600;font-size:calc(13px * var(--tl-text-scale))}
+.tl-icon{color:var(--text-muted);font-size:calc(13px * var(--tl-text-scale))}
+.tl-icon:hover{color:var(--text-primary)}
+.tl-spacer{flex:1}
+.tl-sessions{overflow-y:auto;padding:8px}
+.tl-sess{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:8px;width:100%;text-align:left}
+.tl-sess:hover{background:var(--hover-tint)}
+.tl-sess[aria-current="true"]{background:var(--bg-card);box-shadow:var(--surface-shadow)}
+.tl-dot{width:8px;height:8px;border-radius:50%;flex:0 0 8px;background:var(--text-muted)}
+.tl-dot.is-run{background:var(--state-running)}
+.tl-dot.is-wait{background:var(--state-awaiting)}
+.tl-dot.is-done{background:var(--state-done)}
+.tl-sess-name{font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-sess-sub{font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-sess-txt{min-width:0}
+
+.tl-main{display:flex;flex-direction:column;min-width:0;min-height:0;position:relative}
+.tl-session-bar{height:40px;flex:0 0 40px;display:flex;align-items:center;gap:9px;padding:6px 12px;border-bottom:1px solid var(--border)}
+.tl-chip{font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale));color:var(--text-muted);padding:2px 8px;border:1px solid var(--border);border-radius:var(--radius)}
+.tl-conn{width:8px;height:8px;border-radius:50%;background:var(--success)}
+.tl-switch{display:inline-flex;background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:2px;gap:2px}
+.tl-switch button{padding:5px 12px;font-size:calc(13px * var(--tl-text-scale));border-radius:calc(var(--radius) - 4px);color:var(--text-muted)}
+.tl-switch button[aria-pressed="true"]{background:var(--bg-card-hover);color:var(--text-primary);box-shadow:var(--surface-shadow)}
+.tl-bar-btn{font-size:calc(13px * var(--tl-text-scale));color:var(--text-muted);padding:4px 8px;border-radius:7px}
+.tl-bar-btn:hover{background:var(--hover-tint);color:var(--text-primary)}
+
+.tl-timeline{flex:1;overflow-y:auto;padding:16px clamp(12px,6vw,80px);display:flex;flex-direction:column;gap:14px;min-height:0}
+.tl-row{max-width:860px;width:100%;margin-inline:auto;margin-block:0}
+.tl-user{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:9px 12px;font-size:calc(13.5px * var(--tl-text-scale))}
+.tl-user .tl-kicker{font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);margin-block:0 4px}
+.tl-assistant{font-size:calc(13.5px * var(--tl-text-scale))}
+.tl-assistant p{margin-block:0 8px}
+.tl-assistant code{font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale));background:var(--bg-card);padding:1px 4px;border-radius:4px}
+.tl-tool{display:flex;align-items:center;gap:10px;padding:5px 0}
+.tl-tool .g{color:var(--text-muted);font-size:calc(12px * var(--tl-text-scale));width:14px;text-align:center}
+.tl-tool .n{font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.04em;color:var(--text-muted);width:72px;flex:0 0 72px}
+.tl-tool .l{font-family:var(--font-mono);font-size:calc(12.5px * var(--tl-text-scale));color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tl-tool .m{margin-left:auto;font-family:var(--font-mono);font-size:calc(12px * var(--tl-text-scale));color:var(--text-muted)}
+.tl-tool.is-link{width:100%;text-align:left;border-radius:7px}
+.tl-tool.is-link:hover{background:var(--hover-tint)}
+.tl-tool.is-sel{background:var(--hover-tint)}
+.tl-tool .m.run{color:var(--state-running)}
+.tl-tool .m.err{color:var(--danger)}
+.tl-tool .m.ok{color:var(--success)}
+
+.tl-composer{background:var(--bg-sidebar);border-top:1px solid var(--border);padding:10px clamp(12px,6vw,80px);flex:0 0 auto}
+.tl-composer-box{max-width:860px;margin-inline:auto;padding:8px 10px;border:1px solid var(--border-strong);border-radius:var(--radius);background:var(--bg-card)}
+.tl-composer-field{color:var(--text-muted);font-size:calc(13.5px * var(--tl-text-scale));min-height:20px}
+.tl-composer-foot{display:flex;align-items:center;gap:8px;margin-block:9px 0}
+.tl-mini{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);border:1px solid var(--border);border-radius:6px;padding:2px 7px}
+.tl-meter{width:74px;height:4px;border-radius:3px;background:var(--border);overflow:hidden}
+.tl-meter i{display:block;height:100%;width:38%;background:var(--text-muted)}
+.tl-send{font-size:calc(12.5px * var(--tl-text-scale));padding:4px 12px;border-radius:7px;background:var(--accent);color:#06121f;font-weight:500}
+.tl-stop{font-size:calc(12.5px * var(--tl-text-scale));padding:4px 10px;border-radius:7px;border:1px solid var(--border-strong);color:var(--text-muted)}
+
+/* ============================================================
+   RUNWAY  ·  the dock
+   ============================================================ */
+.rw{
+  flex:0 0 auto;background:var(--bg-page);border-top:1px solid var(--border-strong);
+  display:flex;flex-direction:column;min-height:0;position:relative;
+  font-variant-numeric:tabular-nums;
+}
+.rw[hidden]{display:none}
+.rw-grip{height:6px;flex:0 0 6px;cursor:ns-resize;display:flex;align-items:center;justify-content:center}
+.rw-grip::after{content:"";width:34px;height:2px;border-radius:2px;background:var(--border-strong)}
+.rw-grip:hover::after{background:var(--text-muted)}
+
+/* header */
+.rw-head{
+  display:grid;grid-template-columns:var(--rw-head) 1fr calc(var(--rw-act) + var(--rw-num));
+  align-items:stretch;gap:0;padding:0 12px 0 clamp(12px,3vw,18px);
+  border-bottom:1px solid var(--border);flex:0 0 32px;height:32px;overflow:hidden;
+}
+.rw-head-l{display:flex;align-items:center;gap:9px;min-width:0}
+.rw-title{font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
+.rw-counts{font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rw-counts b{font-weight:500;color:var(--state-running)}
+.rw-counts s{text-decoration:none;color:var(--danger)}
+.rw-head-c{position:relative;min-width:0}
+.rw-silo{position:absolute;left:0;right:0;top:4px;bottom:4px;display:block;width:100%;height:calc(100% - 8px)}
+.rw-head-r{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+.rw-legend{font-family:var(--font-mono);font-size:calc(9.5px * var(--tl-text-scale));color:var(--text-muted);white-space:nowrap}
+.rw-chev{color:var(--text-muted);padding:2px 5px;border-radius:5px;font-size:calc(12px * var(--tl-text-scale))}
+.rw-chev:hover{background:var(--hover-tint);color:var(--text-primary)}
+.rw-hint{font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted)}
+
+/* body: chart | reader */
+.rw-body{display:flex;min-height:0;flex:1}
+.rw-main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
+.rw-chart{flex:1 1 auto;min-width:0;overflow-y:auto;overflow-x:hidden;position:relative;padding:5px 12px 7px clamp(12px,3vw,18px)}
+.rw-rows{position:relative}
+.rw-canvas{position:absolute;top:0;left:0;pointer-events:none}
+.rw-hit{position:absolute;top:0;left:0;cursor:crosshair}
+
+.rw-row{
+  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-act) var(--rw-num);
+  align-items:center;height:var(--rw-lane-h);position:relative;width:100%;text-align:left;
+}
+button.rw-row:hover{background:var(--hover-tint)}
+.rw-row.is-sel{background:var(--hover-tint);box-shadow:inset 2px 0 0 var(--accent)}
+.rw-name{display:flex;align-items:center;gap:7px;min-width:0;padding-right:14px;position:relative;z-index:2}
+.rw-glyph{width:11px;flex:0 0 11px;text-align:center;font-size:calc(10px * var(--tl-text-scale));line-height:1}
+.rw-desc{font-size:calc(12.5px * var(--tl-text-scale));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.rw-row.is-settled .rw-desc{color:var(--text-muted)}
+.rw-more{position:absolute;right:2px;top:50%;transform:translateY(-50%);color:var(--text-muted);opacity:0;font-size:calc(11px * var(--tl-text-scale))}
+button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
+.rw-lane{position:relative;height:100%;min-width:0}
+.rw-row.in-wf .rw-name{box-shadow:inset 1px 0 0 var(--border-strong);padding-left:7px}
+.rw-tool{
+  white-space:nowrap;font-family:var(--font-mono);
+  font-size:calc(10.5px * var(--tl-text-scale));line-height:1;
+  overflow:hidden;text-overflow:ellipsis;min-width:0;
+  padding:0 10px 0 12px;pointer-events:none;position:relative;z-index:2;
+}
+.rw-tool .tn{color:var(--text-primary)}
+.rw-tool .ta{color:var(--text-muted)}
+.rw-tool .tq{color:var(--text-muted);opacity:.85}
+.rw-row.is-dense .rw-tool{font-size:calc(10px * var(--tl-text-scale))}
+.rw-num{
+  font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted);
+  text-align:right;white-space:nowrap;overflow:hidden;position:relative;z-index:2;
+}
+.rw-num em{font-style:normal;color:var(--text-primary)}
+
+/* workflow block */
+.rw-wf{display:flex;align-items:center;gap:9px;height:21px;width:100%;padding-right:4px}
+.rw-wf .br{color:var(--accent);font-size:calc(11px * var(--tl-text-scale))}
+.rw-wf .kd{font-size:calc(10px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted)}
+.rw-wf .lb{font-size:calc(12.5px * var(--tl-text-scale));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.rw-wf .st{font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted);margin-left:auto;white-space:nowrap}
+.rw-wf .st b{font-weight:500;color:var(--state-running)}
+.rw-wf .st s{text-decoration:none;color:var(--danger)}
+.rw-phase{height:15px;position:relative}
+.rw-phase span{
+  position:absolute;top:0;font-size:calc(9.5px * var(--tl-text-scale));letter-spacing:.05em;
+  text-transform:uppercase;color:var(--text-muted);white-space:nowrap;padding-left:4px;
+}
+.rw-phase span.on{color:var(--text-primary)}
+
+/* sediment + schedule rows */
+.rw-sed .rw-name{color:var(--text-muted)}
+.rw-sed .rw-desc{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted)}
+
+/* reader */
+.rw-reader{
+  flex:0 0 clamp(340px,38%,470px);min-width:0;border-left:1px solid var(--border);
+  background:var(--bg-card);display:flex;flex-direction:column;
+}
+.rw-reader[hidden]{display:none}
+.rw-rhead{padding:9px 12px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:9px}
+.rw-rtitle{min-width:0;flex:1}
+.rw-rname{font-size:calc(12.5px * var(--tl-text-scale));white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rw-rmeta{font-family:var(--font-mono);font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted);margin-block:3px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rw-close{color:var(--text-muted);padding:2px 6px;border-radius:5px;font-size:calc(13px * var(--tl-text-scale))}
+.rw-close:hover{background:var(--hover-tint);color:var(--text-primary)}
+.rw-rbody{overflow-y:auto;padding:10px 12px 16px;flex:1;min-height:0}
+.rw-e{margin-block:0 10px}
+.rw-e .eh{font-family:var(--font-mono);font-size:calc(10px * var(--tl-text-scale));color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em;margin-block:0 3px}
+.rw-e.tool .eh{text-transform:none;letter-spacing:0}
+.rw-e .et{font-size:calc(12.5px * var(--tl-text-scale))}
+.rw-e.think .et{color:var(--text-muted);font-style:italic}
+.rw-e.tool{border-left:2px solid var(--border-strong);padding-left:9px;scroll-margin-top:12px}
+.rw-e.tool.on{border-left-color:var(--accent);background:var(--hover-tint);border-radius:0 6px 6px 0}
+.rw-e.tool .tt{font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale))}
+.rw-e.tool .ta{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);word-break:break-all}
+.rw-e.tool .tr{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted);white-space:pre-wrap;margin-block:4px 0;padding-left:10px;border-left:1px dashed var(--border-strong)}
+.rw-e.res{border:1px solid var(--border-strong);border-radius:8px;padding:8px 10px}
+.rw-e.res.bad{border-color:color-mix(in srgb,var(--danger) 55%,var(--border-strong))}
+.rw-prompt{background:var(--bg-page);border:1px solid var(--border);border-radius:8px;padding:8px 10px;margin-block:0 12px}
+
+/* collapsed strip (phone default, and desktop collapse) */
+.rw-strip{display:none;align-items:center;gap:10px;height:26px;padding:0 12px;width:100%;text-align:left}
+.rw-strip .sc{font-family:var(--font-mono);font-size:calc(11px * var(--tl-text-scale));color:var(--text-primary);white-space:nowrap}
+.rw-strip .sc b{font-weight:500;color:var(--state-running)}
+.rw-strip canvas{flex:1;min-width:40px;height:16px}
+.rw-strip .sx{font-size:calc(11px * var(--tl-text-scale));color:var(--text-muted)}
+.rw.is-collapsed .rw-head,.rw.is-collapsed .rw-body,.rw.is-collapsed .rw-grip{display:none}
+.rw.is-collapsed .rw-strip{display:flex}
+
+.rw-pulse{animation:rwp 1.15s steps(2,end) infinite}
+@keyframes rwp{0%,50%{opacity:1}51%,100%{opacity:.28}}
+
+/* ============================================================
+   Design note
+   ============================================================ */
+.note{max-width:860px;margin-inline:auto;padding:30px 20px 64px}
+.note h2{font-size:calc(17px * var(--tl-text-scale));font-weight:600;margin-block:0 4px}
+.note h3{font-size:calc(11px * var(--tl-text-scale));text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);font-weight:500;margin-block:18px 5px}
+.note p{margin-block:0 9px;color:var(--text-primary);font-size:calc(13.5px * var(--tl-text-scale))}
+.note .sub{color:var(--text-muted);font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale))}
+
+/* ============================================================
+   Narrow
+   ============================================================ */
+@media (max-width:860px){
+  .ph-bar{padding:5px 8px;gap:6px}
+  .ph-btn{font-size:11px;padding:3px 7px}
+  .ph-tag{display:none}
+  .tl-shell{grid-template-columns:1fr}
+  .tl-shell-sidebar{display:none}
+  :root{--rw-head:132px;--rw-num:0px}
+  .rw-head,.rw-row{grid-template-columns:var(--rw-head) 0px 1fr 0px}
+  .rw-head{grid-template-columns:var(--rw-head) 0px 1fr}
+  .rw-num,.rw-legend{display:none}
+  .rw{position:absolute;left:0;right:0;bottom:0;z-index:40;border-top:1px solid var(--border-strong)}
+  .rw:not(.is-collapsed){top:0;background:var(--bg-page)}
+  .rw-reader{position:absolute;inset:0;flex-basis:auto;border-left:0}
+}
+@media (prefers-reduced-motion:reduce){
+  .rw-pulse{animation:none}
+  *{transition:none !important}
+}
+</style>
+</head>
+<body class="theme-slate">
+
+<!-- ============ prototype harness ============ -->
+<div class="ph-bar">
+  <span class="ph-tag">prototype controls</span>
+  <button class="ph-btn" id="ph-play" data-on="1">Pause</button>
+  <button class="ph-btn" id="ph-replay">Replay</button>
+  <span class="ph-sep"></span>
+  <button class="ph-btn" data-jump="30">3 agents</button>
+  <button class="ph-btn" data-jump="200">workflow</button>
+  <button class="ph-btn" data-jump="330">16 agents</button>
+  <button class="ph-btn" data-jump="158">one failed</button>
+  <button class="ph-btn" data-jump="624">all done</button>
+  <button class="ph-btn" data-jump="662">idle</button>
+  <span class="ph-sep"></span>
+  <input class="ph-scrub" id="ph-scrub" type="range" min="0" max="680" step="1" value="0" aria-label="session time">
+  <span class="ph-clock" id="ph-clock">00:00 · 8x</span>
+  <button class="ph-btn" id="ph-speed">8x</button>
+</div>
+
+<!-- ============ Terminal Lobby ============ -->
+<div class="tl-shell">
+  <aside class="tl-shell-sidebar">
+    <div class="tl-shellbar">
+      <button class="tl-icon" aria-label="Toggle sidebar">☰</button>
+      <span class="tl-brand">terminal-lobby</span>
+      <span class="tl-spacer"></span>
+      <button class="tl-icon" aria-label="Skills">Skills</button>
+      <button class="tl-icon" aria-label="Settings">⚙</button>
+    </div>
+    <div class="tl-sessions">
+      <button class="tl-sess" aria-current="true"><span class="tl-dot is-run" id="side-dot"></span><span class="tl-sess-txt"><div class="tl-sess-name">agent-panel</div><div class="tl-sess-sub" id="side-sub">3 agents running</div></span></button>
+      <button class="tl-sess"><span class="tl-dot is-wait"></span><span class="tl-sess-txt"><div class="tl-sess-name">preload-on-hover</div><div class="tl-sess-sub">waiting on input</div></span></button>
+      <button class="tl-sess"><span class="tl-dot is-done"></span><span class="tl-sess-txt"><div class="tl-sess-name">cpu-parking</div><div class="tl-sess-sub">idle 42m</div></span></button>
+      <button class="tl-sess"><span class="tl-dot"></span><span class="tl-sess-txt"><div class="tl-sess-name">qa-harness</div><div class="tl-sess-sub">exited</div></span></button>
+    </div>
+  </aside>
+
+  <div class="tl-main">
+    <div class="tl-session-bar">
+      <span class="tl-chip">agent-panel ⌄</span>
+      <span class="tl-conn" title="connected"></span>
+      <span class="tl-spacer"></span>
+      <div class="tl-switch" role="group" aria-label="View">
+        <button aria-pressed="true">Text</button>
+        <button aria-pressed="false">Terminal</button>
+      </div>
+      <button class="tl-bar-btn">Files</button>
+      <button class="tl-bar-btn">Watch</button>
+      <button class="tl-bar-btn" aria-label="More">⋯</button>
+    </div>
+
+    <div class="tl-timeline" id="timeline">
+      <div class="tl-row tl-user">
+        <p class="tl-kicker">You</p>
+        Look at how the text view shows subagent work today, then prune whatever the frontend no longer uses. Fan the pruning out, I do not want to wait on it.
+      </div>
+      <div class="tl-row tl-assistant">
+        <p>I will start three readers on the current behaviour while the prune runs. The transcript reader maps what <code>subagents/*.jsonl</code> actually carries, the prior art pass covers the CLI and t3code, and the third reads the text view components themselves.</p>
+      </div>
+      <button class="tl-tool is-link tl-row" data-agent="a1"><span class="g">◈</span><span class="n">Agent</span><span class="l">Map transcript data for subagents</span><span class="m" data-mark="a1">·</span></button>
+      <button class="tl-tool is-link tl-row" data-agent="a2"><span class="g">◈</span><span class="n">Agent</span><span class="l">Find prior art for agent visualization</span><span class="m" data-mark="a2">·</span></button>
+      <button class="tl-tool is-link tl-row" data-agent="a3"><span class="g">◈</span><span class="n">Agent</span><span class="l">Read text view components</span><span class="m" data-mark="a3">·</span></button>
+      <div class="tl-row tl-tool"><span class="g">▸</span><span class="n">Bash</span><span class="l">pnpm vitest run --coverage</span><span class="m" data-mark="bash">·</span></div>
+      <div class="tl-row tl-assistant">
+        <p>The prune is a workflow so the three phases stay ordered. Survey reads, Delete removes, Refute puts the tree back through typecheck and the unit suite before I call it done.</p>
+      </div>
+      <button class="tl-tool is-link tl-row" data-agent="w-d1"><span class="g">◈</span><span class="n">Workflow</span><span class="l">Prune dead frontend code</span><span class="m" data-mark="wf">·</span></button>
+    </div>
+
+    <!-- ================= RUNWAY ================= -->
+    <section class="rw" id="rw" hidden aria-label="Live agent work">
+      <button class="rw-strip" id="rw-strip">
+        <span class="sc" id="strip-counts"></span>
+        <canvas id="strip-silo"></canvas>
+        <span class="sx">open</span>
+      </button>
+      <div class="rw-grip" id="rw-grip" role="separator" aria-label="Resize panel" tabindex="0"></div>
+      <div class="rw-body">
+        <div class="rw-main">
+      <div class="rw-head">
+        <div class="rw-head-l">
+          <span class="rw-title">Runway</span>
+          <span class="rw-counts" id="rw-counts"></span>
+        </div>
+        <div class="rw-head-c"><canvas class="rw-silo" id="rw-silo"></canvas></div>
+        <div class="rw-head-r">
+          <span class="rw-legend">time · calls · tok</span>
+          <button class="rw-chev" id="rw-collapse" aria-label="Collapse panel">⌄</button>
+        </div>
+      </div>
+        <div class="rw-chart" id="rw-chart">
+          <div class="rw-rows" id="rw-rows">
+            <canvas class="rw-canvas" id="rw-canvas"></canvas>
+            <div class="rw-hit" id="rw-hit"></div>
+          </div>
+        </div>
+        </div>
+        <aside class="rw-reader" id="rw-reader" hidden>
+          <div class="rw-rhead">
+            <div class="rw-rtitle">
+              <div class="rw-rname" id="rd-name"></div>
+              <div class="rw-rmeta" id="rd-meta"></div>
+            </div>
+            <button class="rw-close" id="rd-close" aria-label="Close transcript">✕</button>
+          </div>
+          <div class="rw-rbody" id="rd-body"></div>
+        </aside>
+      </div>
+    </section>
+
+    <div class="tl-composer">
+      <div class="tl-composer-box">
+        <div class="tl-composer-field">Ask a follow up</div>
+        <div class="tl-composer-foot">
+          <span class="tl-mini">bypass</span>
+          <span class="tl-mini">opus 5</span>
+          <span class="tl-meter"><i></i></span>
+          <span class="tl-mini">38%</span>
+          <span class="tl-spacer"></span>
+          <button class="tl-stop">Stop</button>
+          <button class="tl-send">Send</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ design note ============ -->
+<div class="note">
+  <h2>Runway</h2>
+  <p class="sub">prototype 4 · spatial</p>
+  <h3>Where the panel lives</h3>
+  <p>It grows out of the background strip at the bottom of the main column, above the composer. That is where the strip already sits, it is the full width a time axis needs, and it is next to where your eye already is. On a phone it stays the one line the strip occupies today and opens upward over the timeline, so nothing new claims the bottom of the screen.</p>
+  <h3>The idea I want judged</h3>
+  <p>Every agent gets a lane on one shared time axis, and every tool call is a tick on that lane. Start times, fan-out, nesting and the straggler everyone is waiting on are all read as shape rather than compared as numbers, and a long silence is a visible gap the panel never has to name. The ticks are also the index into the agent's transcript, so clicking one opens the reader at that call. Finished agents fold into a sediment band that keeps their bars and drops their text, so the run's shape survives the collapse.</p>
+  <h3>What I would fix next</h3>
+  <p>The axis refits as the run grows, so old ticks drift leftward and an hour-long session would compress its early history into mush. It wants a zoom, or a window that holds the last few minutes at a fixed scale. Workflow agents share one colour on purpose, which keeps sixteen lanes calm but means you cannot tell two of them apart without reading the label.</p>
+</div>
+
+<script>
+"use strict";
+/* ===========================================================
+   0. helpers
+   =========================================================== */
+const $ = (s,r)=> (r||document).querySelector(s);
+const CSSV = {};
+function readTokens(){
+  const cs = getComputedStyle(document.body);
+  ["--bg-page","--bg-card","--text-primary","--text-muted","--border","--border-strong",
+   "--accent","--danger","--success","--state-running","--state-awaiting","--state-done"]
+   .forEach(k=>CSSV[k]=cs.getPropertyValue(k).trim());
+}
+function mix(hex,a){ // hex -> rgba string
+  const h=hex.replace("#","");
+  const n=parseInt(h.length===3?h.split("").map(c=>c+c).join(""):h,16);
+  return "rgba("+((n>>16)&255)+","+((n>>8)&255)+","+(n&255)+","+a+")";
+}
+function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
+function rngFor(s){let a=hash(s);return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function fmtDur(s){s=Math.max(0,Math.floor(s));const h=Math.floor(s/3600),m=Math.floor(s/60);
+  if(h) return h+"h"+String(m%60).padStart(2,"0")+"m";
+  return m ? m+"m"+String(s%60).padStart(2,"0")+"s" : s+"s";}
+function fmtTok(n){return n>=1e6 ? (n/1e6).toFixed(2)+"M" : n>=1000 ? (n/1000).toFixed(1)+"k" : String(n|0);}
+function clamp(v,a,b){return v<a?a:v>b?b:v}
+
+/* Claude Code agent identity colours. Mid-tone so they hold up on every theme. */
+const HUE = {blue:"#4493f8",cyan:"#39b7c4",green:"#3fb950",yellow:"#d29922",
+             orange:"#db6d28",red:"#e5534b",magenta:"#c96fd0",purple:"#8b76e0"};
+
+/* ===========================================================
+   1. the scripted session  (all times in session seconds)
+   =========================================================== */
+const POOLS = {
+  recon:[["Bash",'rg -n "workflow_agent" ~/.claude/projects'],
+         ["Read","~/.claude/projects/-home-wizard/4f2a.jsonl"],
+         ["Grep",'"tool_use".*"name":"Agent"'],
+         ["Glob","subagents/agent-*.jsonl"],
+         ["Read","subagents/agent-priorart-recon-9f31.meta.json"],
+         ["Bash","jq -r .usage.output_tokens 4f2a.jsonl | head"],
+         ["Write","notes/transcript-shape.md"]],
+  priorart:[["WebFetch","docs.anthropic.com/en/docs/claude-code/sdk"],
+         ["Read","t3code/src/components/AgentsPanel.tsx"],
+         ["Grep","lastToolName|lastProgressAt"],
+         ["Read","node_modules/@anthropic-ai/claude-code/cli.js"],
+         ["Bash","rg -c '├─' cli.js"],
+         ["Write","notes/prior-art.md"]],
+  textview:[["Glob","src/text/**/*.tsx"],
+         ["Read","src/text/Timeline.tsx"],
+         ["Read","src/text/TimelineRow.tsx"],
+         ["Grep","Still working in the background"],
+         ["Read","src/text/BackgroundStrip.tsx"]],
+  probe:[["Read","subagents/agent-textview-recon-2b7c.meta.json"],
+         ["Bash","jq -s 'map(keys)|flatten|unique' *.meta.json"],
+         ["Grep","spawnDepth"],
+         ["Write","notes/meta-fields.md"]],
+  prune:[["Read","src/routes/index.tsx"],
+         ["Grep",'from "\\./legacy/'],
+         ["Bash","pnpm exec knip --reporter json"],
+         ["Edit","src/sw/register.ts"],
+         ["ListAgents",""],
+         ["Bash","git rm -r --cached src/legacy"],
+         ["Write","prune/phase2-delete.txt"],
+         ["Read","src/styles/tokens.module.css"]],
+  survey:[["Glob","src/**/*.{ts,tsx,css}"],
+         ["Bash","pnpm exec depcheck --json"],
+         ["Grep","export default"],
+         ["Read","vite.config.ts"],
+         ["Write","prune/survey.json"]],
+  verify:[["Bash","pnpm exec tsc --noEmit"],
+         ["Bash","pnpm vitest run --reporter dot"],
+         ["Read","dist/stats.json"],
+         ["Bash","pnpm build"],
+         ["Grep","Cannot find module"]],
+  loop:[["Bash","homelab deploy wait web/terminal-lobby"],
+        ["Bash","homelab ci watch"],
+        ["Read","/tmp/deploy.log"]]
+};
+const RESULTS = {
+  Read:"read 412 lines",
+  Bash:"exit 0 · 1.8s",
+  Grep:"31 matches in 9 files",
+  Glob:"17 paths",
+  WebFetch:"fetched 24.1 kB",
+  Write:"wrote 88 lines",
+  Edit:"1 edit applied",
+  ListAgents:"4 agents, 3 running"
+};
+
+const AGENTS = [];
+function A(o){
+  o.events = [];
+  o.prompt = o.prompt || o.label;
+  AGENTS.push(o);
+  return o;
+}
+/* ad-hoc subagents */
+A({id:"a1",kind:"agent",group:"adhoc",label:"Map transcript data for subagents",name:"transcript-recon",
+   type:"general-purpose",color:"cyan",depth:0,t0:6,t1:372,end:"done",pool:"recon",quiet:[120,320],
+   result:"subagents/*.jsonl carries tool_use, usage and timestamps. No heartbeat and no exit record anywhere.",
+   prompt:"Map exactly what a subagent transcript file carries while the agent is still running. Field names, write lag, what is missing."});
+A({id:"a2",kind:"agent",group:"adhoc",label:"Find prior art for agent visualization",name:"priorart-recon",
+   type:"general-purpose",color:"yellow",depth:0,t0:8,t1:150,end:"error",pool:"priorart",
+   error:"tool use limit reached after 31 calls",
+   prompt:"Find every existing implementation that renders concurrent agent work and report the mechanics worth keeping."});
+A({id:"a3",kind:"agent",group:"adhoc",label:"Read text view components",name:"textview-recon",
+   type:"Explore",color:"green",depth:0,t0:10,t1:96,end:"done",pool:"textview",
+   result:"17 files. TimelineRow owns tool rows, BackgroundStrip renders the counts line.",
+   prompt:"Read the text view components and report which file owns the tool rows and the background strip."});
+A({id:"a4",kind:"agent",group:"adhoc",label:"Probe meta.json field coverage",name:"schema-probe",
+   type:"Explore",color:"magenta",depth:1,parent:"a1",t0:40,t1:110,end:"done",pool:"probe",
+   result:"color present on 187 of 187. name present on 78.",
+   prompt:"Across every meta.json on the box, which fields are always present and which are optional."});
+A({id:"bash",kind:"bash",group:"adhoc",label:"pnpm vitest run --coverage",color:"blue",depth:0,
+   t0:40,t1:232,end:"done",pool:null,result:"exit 0 · 412 passed · coverage 81.2%"});
+
+/* schedules this session set for itself */
+const SCHEDULES = [
+  {id:"s1",at:590,label:"loop: watch the deploy",kind:"/loop wakeup"},
+  {id:"s2",at:25200,label:"cron: nightly reflect 05:30",kind:"cron"}
+];
+
+/* workflow */
+const WF = {
+  id:"wf_7c21",label:"Prune dead frontend code",t0:170,t1:536,
+  phases:[{i:1,title:"Survey",a:172,b:250},{i:2,title:"Delete",a:252,b:430},{i:3,title:"Refute",a:432,b:528}]
+};
+const WF_SURVEY = ["route table and lazy imports","css modules nothing imports","public assets","i18n keys with no reference"];
+const WF_DELETE = ["frontend source + SW","service worker registration","legacy polyfill bundle","dead css modules",
+  "unused icon sprites","old chart library","storybook stories","orphaned test fixtures","vendor chunk config",
+  "i18n stragglers","retired feature flags","analytics shims","dev only routes","sourcemap config",
+  "eslint overrides for deleted files","dependencies nothing imports"];
+const WF_REFUTE = ["typecheck the pruned tree","run the unit suite","boot the dev server","diff the bundle","check the service worker"];
+
+WF_SURVEY.forEach((lb,i)=>A({id:"w-s"+i,kind:"wf",group:"wf",label:lb,name:"prune-survey",type:"general-purpose",
+  color:null,depth:0,t0:174+i,t1:236+i*4,end:"done",pool:"survey",phase:1,
+  result:[ "44 candidates, 12 of them certain",
+           "9 modules imported by nothing",
+           "2.1 MB of assets with no reference",
+           "61 keys unused since March" ][i],
+  prompt:"Survey the tree for "+lb+" and list what nothing references."}));
+WF_DELETE.forEach((lb,i)=>{
+  const t1 = (i===6) ? 428 : 356 + (i*2.2) + (i%4)*7;
+  A({id:"w-d"+i,kind:"wf",group:"wf",label:lb,name:"prune-delete",type:"general-purpose",color:null,depth:0,
+    t0:254+i*1.5,t1:t1,end:"done",pool:"prune",phase:2,
+    result:"removed "+(3+i%9)+" files, "+(0.4+i*0.17).toFixed(1)+"k lines",
+    prompt:"Delete "+lb+" and leave the imports consistent."});
+});
+WF_REFUTE.forEach((lb,i)=>{
+  const err = (i===3);
+  A({id:"w-r"+i,kind:"wf",group:"wf",label:lb,name:"prune-refute",type:"general-purpose",color:null,depth:0,
+    t0:434+i,t1:err?505:(i===1?528:486+i*5),end:err?"error":"done",pool:"verify",phase:3,
+    attempt:(i===1?2:1),
+    error:"build failed on a removed export in src/sw/register.ts",
+    result:["no type errors","412 passed","dev server booted in 1.9s","","service worker registers clean"][i],
+    prompt:"Refute the prune by running "+lb+"."});
+});
+/* the scheduled wakeup turns into work */
+A({id:"lp",kind:"agent",group:"adhoc",label:"Check deploy status",name:"loop-check",type:"general-purpose",
+  color:"purple",depth:0,t0:590,t1:618,end:"done",pool:"loop",
+  result:"rollout complete, sha 4f21b0c live",
+  prompt:"Check whether the deploy finished and report the live sha."});
+
+const SCRIPT_END = 680, DOCK_LINGER = 14;
+
+/* deterministic tool-call events */
+AGENTS.forEach(a=>{
+  if(!a.pool) return;
+  const r = rngFor(a.id), pool = POOLS[a.pool];
+  let t = a.t0 + 1.4 + r()*1.8, i = Math.floor(r()*pool.length);
+  let guard = 0;
+  while(t < a.t1 - 0.4 && guard++ < 400){
+    if(a.quiet && t > a.quiet[0] && t < a.quiet[1]){
+      if(a.quiet[1] >= a.t1 - 0.4) break;
+      t = a.quiet[1] + r()*2.5; continue;
+    }
+    const p = pool[i % pool.length]; i += 1 + Math.floor(r()*2);
+    a.events.push({t:t, tool:p[0], arg:p[1], tok:Math.round(900 + r()*6200)});
+    t += 3.2 + r()*7.4;
+  }
+});
+
+/* ===========================================================
+   2. derive state at a session time
+   =========================================================== */
+function derive(t){
+  const st = {t:t, live:[], settledOk:[], all:new Map(), wfLive:[], adhocLive:[], any:false, lastAct:0};
+  for(const a of AGENTS){
+    if(t < a.t0) continue;
+    const settled = t >= a.t1;
+    const cut = settled ? a.t1 : t;
+    let n=0, tok=0, last=null;
+    for(const e of a.events){ if(e.t <= cut){ n++; tok += e.tok; last = e; } else break; }
+    const s = {a:a, n:n, tok:tok, last:last, settled:settled, elapsed:cut - a.t0,
+               state: settled ? a.end : "running"};
+    st.all.set(a.id, s);
+    st.lastAct = Math.max(st.lastAct, cut);
+    if(settled && a.end === "done") st.settledOk.push(s);
+    else { st.live.push(s); (a.group === "wf" ? st.wfLive : st.adhocLive).push(s); }
+  }
+  st.running = st.live.filter(s=>s.state==="running").length;
+  st.failed  = st.live.filter(s=>s.state==="error").length;
+  st.done    = st.settledOk.length;
+  st.pending = SCHEDULES.filter(s=>s.at > t);
+  st.wfOn = (t >= WF.t0 && t < WF.t1 + 4) || st.wfLive.length > 0;
+  st.wfPhase = WF.phases.find(p=> t >= p.a && t < p.b) || null;
+  /* the dock is up while something is actually running, then lingers briefly on the
+     finished shape. A failed agent does not hold it open, and neither does a schedule. */
+  const anyRunning = st.live.some(s=>s.state === "running");
+  st.visible = anyRunning || (st.lastAct > 0 && t <= st.lastAct + DOCK_LINGER);
+  return st;
+}
+
+/* time axis: now sits at 88% of the lane width, with a minimum span */
+function axis(t){ return Math.max(60, t / 0.88); }
+
+/* ===========================================================
+   3. dock DOM
+   =========================================================== */
+const rw = $("#rw"), rows = $("#rw-rows"), chart = $("#rw-chart"),
+      cv = $("#rw-canvas"), hit = $("#rw-hit"), silo = $("#rw-silo"),
+      stripSilo = $("#strip-silo"), reader = $("#rw-reader");
+let SEL = null, SEDIMENT_OPEN = false, DOCK_H = 246, COLLAPSED = false, USER_H = null;
+let rowEls = new Map(), rowSig = "", geo = [], laneRect = {x:0,w:0};
+
+function rowPlan(st){
+  const plan = [];
+  st.adhocLive.forEach(s=>plan.push({k:"a:"+s.a.id, type:"agent", s:s}));
+  if(st.wfOn){
+    plan.push({k:"wfhead", type:"wfhead"});
+    plan.push({k:"wfphase", type:"wfphase"});
+    st.wfLive.forEach(s=>plan.push({k:"a:"+s.a.id, type:"agent", s:s}));
+  }
+  if(st.pending.length) plan.push({k:"sched", type:"sched"});
+  if(st.settledOk.length){
+    plan.push({k:"sed", type:"sed"});
+    if(SEDIMENT_OPEN) st.settledOk.forEach(s=>plan.push({k:"a:"+s.a.id, type:"agent", s:s, fin:true}));
+  }
+  return plan;
+}
+
+function el(tag, cls, html){const e=document.createElement(tag); if(cls)e.className=cls; if(html!=null)e.innerHTML=html; return e;}
+
+function buildRow(p){
+  if(p.type === "agent"){
+    const a = p.s.a;
+    const b = el("button","rw-row");
+    b.type = "button";
+    b.dataset.id = a.id;
+    b.setAttribute("aria-label","Open transcript for "+a.label);
+    const name = el("div","rw-name");
+    const ind = el("span","", "");
+    ind.style.cssText = "flex:0 0 "+(a.depth*13)+"px";
+    name.appendChild(ind);
+    name.appendChild(el("span","rw-glyph"));
+    const d = el("span","rw-desc", a.label);
+    d.title = a.label;
+    name.appendChild(d);
+    name.appendChild(el("span","rw-more","›"));
+    b.appendChild(name);
+    const lane = el("div","rw-lane");
+    b.appendChild(lane);
+    b.appendChild(el("div","rw-tool"));
+    b.appendChild(el("div","rw-num"));
+    if(a.group === "wf") b.classList.add("in-wf");
+    b.addEventListener("click", ()=>select(a.id));
+    return b;
+  }
+  if(p.type === "wfhead"){
+    const d = el("div","rw-row");
+    const w = el("div","rw-wf");
+    w.style.gridColumn = "1 / -1";
+    w.innerHTML = '<span class="br">┌</span><span class="kd">Workflow</span>'+
+      '<span class="lb">'+WF.label+'</span><span class="st"></span>';
+    d.appendChild(w);
+    return d;
+  }
+  if(p.type === "wfphase"){
+    const d = el("div","rw-row");
+    d.style.height = "15px";
+    d.appendChild(el("div",""));
+    d.appendChild(el("div","rw-phase"));
+    d.appendChild(el("div",""));
+    return d;
+  }
+  if(p.type === "sched"){
+    const d = el("div","rw-row rw-sed");
+    const n = el("div","rw-name");
+    n.innerHTML = '<span class="rw-glyph" style="color:var(--state-awaiting)">◇</span><span class="rw-desc"></span>';
+    d.appendChild(n);
+    d.appendChild(el("div","rw-lane"));
+    d.appendChild(el("div","rw-tool"));
+    d.appendChild(el("div","rw-num"));
+    return d;
+  }
+  /* sediment */
+  const b = el("button","rw-row rw-sed");
+  b.type = "button";
+  const n = el("div","rw-name");
+  n.innerHTML = '<span class="rw-glyph" style="color:var(--success)">✓</span><span class="rw-desc"></span><span class="rw-more">›</span>';
+  b.appendChild(n);
+  b.appendChild(el("div","rw-lane"));
+  b.appendChild(el("div","rw-tool"));
+  b.appendChild(el("div","rw-num"));
+  b.addEventListener("click", ()=>{ SEDIMENT_OPEN = !SEDIMENT_OPEN; rowSig = ""; frame(true); });
+  return b;
+}
+
+function syncRows(st){
+  const plan = rowPlan(st);
+  const sig = plan.map(p=>p.k + (p.fin?"f":"")).join("|") + "#" + (st.live.length>9?"d":"n");
+  if(sig === rowSig){ return plan; }
+  rowSig = sig;
+  fitSoon = true;
+  /* remove everything but the canvas + hit layer, rebuild */
+  [...rows.children].forEach(c=>{ if(c!==cv && c!==hit) c.remove(); });
+  rowEls = new Map();
+  const dense = st.live.length > 9;
+  rows.style.setProperty("--rw-lane-h", dense ? "21px" : "24px");
+  plan.forEach(p=>{
+    const e = buildRow(p);
+    if(dense) e.classList.add("is-dense");
+    rows.appendChild(e);
+    rowEls.set(p.k, e);
+  });
+  measure();
+  return plan;
+}
+
+let fitSoon = false;
+function fitHeight(){
+  if(USER_H != null) return;
+  let want = 6 /*grip*/ + 32 /*header*/ + 12 /*chart padding*/ + rows.scrollHeight;
+  if(SEL) want = Math.max(want, 400);
+  const h = Math.round(clamp(want, 92, window.innerHeight * 0.52));
+  if(Math.abs(h - DOCK_H) > 1){ DOCK_H = h; rw.style.height = DOCK_H + "px"; return true; }
+  return false;
+}
+function measure(){
+  const first = rows.querySelector(".rw-lane");
+  if(first){
+    const rr = rows.getBoundingClientRect(), lr = first.getBoundingClientRect();
+    laneRect = {x: Math.round(lr.left - rr.left), w: Math.max(40, Math.round(lr.width))};
+  }
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const h = Math.max(1, rows.scrollHeight || rows.offsetHeight);
+  cv.style.cssText = "position:absolute;top:0;left:"+laneRect.x+"px;width:"+laneRect.w+"px;height:"+h+"px";
+  cv.width = laneRect.w * dpr; cv.height = h * dpr;
+  cv.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
+  hit.style.cssText = "position:absolute;top:0;left:"+laneRect.x+"px;width:"+laneRect.w+"px;height:"+h+"px";
+  /* per-row geometry */
+  geo = [];
+  [...rows.children].forEach(c=>{
+    if(c===cv||c===hit) return;
+    geo.push({el:c, id:c.dataset.id||null, y:c.offsetTop, h:c.offsetHeight});
+  });
+  sizeSilo(silo);
+  sizeSilo(stripSilo);
+}
+function sizeSilo(c){
+  if(!c) return;
+  const r = c.getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  c.width = Math.max(1, r.width*dpr); c.height = Math.max(1, r.height*dpr);
+  c.getContext("2d").setTransform(dpr,0,0,dpr,0,0);
+}
+
+/* ---------- per-frame DOM writes ---------- */
+function laneColor(a){
+  if(a.kind === "bash") return CSSV["--text-muted"];
+  if(a.group === "wf")  return CSSV["--accent"];
+  return HUE[a.color] || CSSV["--accent"];
+}
+function toolLabelFor(s, t){
+  const a = s.a;
+  if(a.kind === "bash") return {tn:"", ta:"", tq:""};
+  if(s.settled){
+    if(a.end === "error") return {tn:"", ta:a.error, tq:"", bad:true};
+    return {tn:"", ta:a.result, tq:""};
+  }
+  if(!s.last) return {tn:"starting", ta:"", tq:""};
+  const age = t - s.last.t;
+  return {tn:s.last.tool, ta:s.last.arg, tq: age > 40 ? fmtDur(age) : ""};
+}
+function truncLeft(str, px){
+  const chars = Math.floor(px / 6.2);
+  if(chars <= 2) return "";
+  if(str.length <= chars) return str;
+  return "…" + str.slice(str.length - chars + 1);
+}
+
+function updateRows(st, plan){
+  const span = axis(st.t), W = laneRect.w;
+  const x = v => clamp((v/span)*W, 0, W);
+  const nowX = x(st.t);
+  plan.forEach(p=>{
+    const e = rowEls.get(p.k); if(!e) return;
+    if(p.type === "agent"){
+      const s = p.s, a = s.a;
+      const glyph = e.querySelector(".rw-glyph");
+      const tool  = e.querySelector(".rw-tool");
+      const num   = e.querySelector(".rw-num");
+      const col   = laneColor(a);
+      let g = "▪", gc = col, pulse = false;
+      if(a.kind === "bash") g = "$";
+      if(s.settled) { g = a.end === "error" ? "✕" : "✓"; gc = a.end === "error" ? CSSV["--danger"] : CSSV["--success"]; }
+      else pulse = true;
+      glyph.textContent = g;
+      glyph.style.color = gc;
+      glyph.classList.toggle("rw-pulse", pulse && a.kind !== "bash");
+      e.classList.toggle("is-settled", s.settled);
+      e.classList.toggle("is-sel", SEL === a.id);
+
+      const endX = s.settled ? x(a.t1) : nowX;
+      const lab = toolLabelFor(s, st.t);
+      if(!lab.tn && !lab.ta){ tool.textContent = ""; }
+      else if(s.settled){
+        /* settled: label sits to the right of where the agent stopped */
+        tool.innerHTML = '<span class="'+(lab.bad?"tn":"ta")+'" style="'+(lab.bad?"color:var(--danger)":"")+'">'+
+                         (lab.ta||"") + '</span>';
+      } else {
+        /* running: label ends at the live edge */
+        const rest = Math.max(0, 230 - lab.tn.length*6.4 - (lab.tq?lab.tq.length*6.4+6:0) - 6);
+        tool.innerHTML = '<span class="tn">'+lab.tn+'</span>'+
+          (lab.ta ? ' <span class="ta">'+truncLeft(lab.ta, rest)+'</span>' : "")+
+          (lab.tq ? ' <span class="tq">'+lab.tq+'</span>' : "");
+      }
+      num.innerHTML = a.kind === "bash"
+        ? '<em>'+fmtDur(s.elapsed)+'</em>'
+        : '<em>'+fmtDur(s.elapsed)+'</em> · '+s.n+' · '+fmtTok(s.tok);
+      if(a.attempt > 1) num.innerHTML = 'try '+a.attempt+' · ' + num.innerHTML;
+    }
+    else if(p.type === "wfhead"){
+      const stEl = e.querySelector(".st");
+      const run = st.wfLive.filter(s=>s.state==="running").length;
+      const fail = st.wfLive.filter(s=>s.state==="error").length;
+      const done = st.settledOk.filter(s=>s.a.group==="wf").length;
+      const ph = st.wfPhase ? "phase "+st.wfPhase.i+" of 3" : (st.t>=WF.t1?"complete":"starting");
+      stEl.innerHTML = ph + ' · <b>'+run+' running</b> · '+done+' done' + (fail?' · <s>'+fail+' failed</s>':"");
+    }
+    else if(p.type === "wfphase"){
+      const box = e.querySelector(".rw-phase");
+      const started = WF.phases.filter(p2=>st.t >= p2.a);
+      const ahead = WF.phases.filter(p2=>st.t < p2.a);
+      box.innerHTML = started.map(p2=>{
+        const on = st.wfPhase && st.wfPhase.i === p2.i;
+        return '<span class="'+(on?"on":"")+'" style="left:'+Math.min(x(p2.a), W-46)+'px">'+p2.title+'</span>';
+      }).join("");
+      const lastX = started.length ? Math.min(x(started[started.length-1].a), W-46) : 0;
+      if(ahead.length && W - lastX > 130){
+        box.innerHTML += '<span style="left:auto;right:2px;opacity:.55">then '+ahead.map(p2=>p2.title).join(", ")+'</span>';
+      }
+    }
+    else if(p.type === "sched"){
+      const nx = st.pending[0];
+      e.querySelector(".rw-desc").textContent = st.pending.length>1
+        ? nx.label + "  +"+(st.pending.length-1)+" more"
+        : nx.label;
+      e.querySelector(".rw-num").innerHTML = 'in <em>'+fmtDur(nx.at - st.t)+'</em>';
+    }
+    else if(p.type === "sed"){
+      const tok = st.settledOk.reduce((m,s)=>m+s.tok,0);
+      const calls = st.settledOk.reduce((m,s)=>m+s.n,0);
+      e.querySelector(".rw-desc").textContent = st.settledOk.length + " done";
+      e.querySelector(".rw-more").textContent = SEDIMENT_OPEN ? "▾" : "▸";
+      e.querySelector(".rw-more").style.opacity = 1;
+      e.querySelector(".rw-num").innerHTML = calls + ' · ' + fmtTok(tok);
+    }
+  });
+
+  /* header */
+  $("#rw-counts").innerHTML = '<b>'+st.running+' running</b>'
+    + (st.failed ? ' · <s>'+st.failed+' failed</s>' : "");
+  $("#strip-counts").innerHTML = '<b>'+st.running+' running</b>'+(st.failed?' · '+st.failed+' failed':"");
+  $("#side-sub").textContent = st.running ? st.running+" agents running" : "idle";
+  $("#side-dot").className = "tl-dot " + (st.running ? "is-run" : "is-done");
+}
+function truncRight(str, px){
+  const chars = Math.floor(px/6.2);
+  if(chars <= 2) return "";
+  return str.length <= chars ? str : str.slice(0, chars-1) + "…";
+}
+
+/* ===========================================================
+   4. canvas
+   =========================================================== */
+function draw(st, plan){
+  const ctx = cv.getContext("2d");
+  const W = laneRect.w, H = cv.height / Math.min(2,window.devicePixelRatio||1);
+  ctx.clearRect(0,0,W,H);
+  if(!W) return;
+  const span = axis(st.t);
+  const x = v => clamp((v/span)*W, 0, W);
+  const nowX = x(st.t);
+
+  /* future strip */
+  ctx.fillStyle = mix(CSSV["--bg-card"], .55);
+  ctx.fillRect(nowX, 0, W - nowX, H);
+
+  /* gridlines */
+  const steps = [15,30,60,120,300,600,1200];
+  const step = steps.find(s=> span/s <= 7) || 1200;
+  ctx.fillStyle = mix(CSSV["--border"], .9);
+  for(let g=step; g<span; g+=step) ctx.fillRect(Math.round(x(g)), 0, 1, H);
+
+  /* workflow phase bands, behind that group's rows only */
+  const wfRows = geo.filter(g=>g.id && (AGENTS.find(a=>a.id===g.id)||{}).group === "wf");
+  const wfHead = rowEls.get("wfhead"), wfPh = rowEls.get("wfphase");
+  if(wfHead){
+    const top = wfPh ? wfPh.offsetTop : wfHead.offsetTop + wfHead.offsetHeight;
+    const bot = wfRows.length ? wfRows[wfRows.length-1].y + wfRows[wfRows.length-1].h : top + 2;
+    WF.phases.forEach((p,i)=>{
+      const a = x(p.a), b = x(Math.min(p.b, st.t));
+      if(b <= a) return;
+      const on = st.wfPhase && st.wfPhase.i === p.i;
+      ctx.fillStyle = on ? mix(CSSV["--accent"], .07) : mix(CSSV["--border-strong"], .30);
+      ctx.fillRect(a, top, b - a, bot - top);
+      ctx.fillStyle = mix(CSSV["--border-strong"], .9);
+      ctx.fillRect(Math.round(a), top, 1, bot - top);
+    });
+  }
+
+  /* rows */
+  plan.forEach(p=>{
+    if(p.type !== "agent") return;
+    const g = geo.find(q=>q.id === p.s.a.id); if(!g) return;
+    const s = p.s, a = s.a, col = laneColor(a);
+    const LAB = 11;
+    const cy = g.y + LAB + (g.h - LAB) / 2;
+    const x0 = x(a.t0), x1 = s.settled ? x(a.t1) : nowX;
+
+    /* the run itself: only the past, never a track that implies a finish line */
+    ctx.fillStyle = s.settled && a.end === "error" ? mix(CSSV["--danger"], .30) : mix(col, s.settled ? .22 : .30);
+    ctx.fillRect(x0, cy - 1.5, Math.max(2, x1 - x0), 3);
+
+    /* silence: a hairline from the last tool call to the live edge */
+    if(!s.settled && s.last && (st.t - s.last.t) > 40){
+      ctx.fillStyle = mix(CSSV["--text-muted"], .32);
+      const lx = x(s.last.t);
+      for(let d = lx; d < x1; d += 4) ctx.fillRect(d, cy - 0.5, 2, 1);
+    }
+
+    /* one tick per tool call */
+    const th = Math.min(9, g.h - LAB - 3);
+    ctx.fillStyle = s.settled ? mix(col, .5) : (g.h < 23 ? mix(col, .85) : col);
+    for(const e of a.events){
+      if(e.t > (s.settled ? a.t1 : st.t)) break;
+      ctx.fillRect(Math.round(x(e.t)), cy - th/2, 1.6, th);
+    }
+    /* live edge cap */
+    if(!s.settled){
+      ctx.fillStyle = col;
+      ctx.fillRect(Math.round(x1) - 1, cy - th/2 - 2, 2, th + 4);
+    } else if(a.end === "error"){
+      ctx.fillStyle = CSSV["--danger"];
+      ctx.fillRect(Math.round(x1) - 1, cy - th/2 - 2, 2, th + 4);
+    }
+
+    /* spawn connector for nested agents */
+    if(a.depth > 0 && a.parent){
+      const pg = geo.find(q=>q.id === a.parent);
+      if(pg){
+        const py = pg.y + 11 + (pg.h - 11) / 2;
+        ctx.fillStyle = mix(col, .28);
+        ctx.fillRect(Math.round(x0), Math.min(py,cy), 1, Math.abs(cy - py));
+      }
+    }
+    if(SEL === a.id){
+      ctx.fillStyle = mix(CSSV["--accent"], .07);
+      ctx.fillRect(0, g.y, W, g.h);
+    }
+  });
+
+  /* sediment band: finished runs keep their shape, lose their text */
+  const sedEl = rowEls.get("sed");
+  if(sedEl && !SEDIMENT_OPEN){
+    const y = sedEl.offsetTop, h = sedEl.offsetHeight;
+    st.settledOk.forEach((s,i)=>{
+      const col = laneColor(s.a);
+      ctx.fillStyle = mix(col, .45);
+      const yy = y + 4 + (i % 5) * 2.6;
+      ctx.fillRect(x(s.a.t0), yy, Math.max(2, x(s.a.t1) - x(s.a.t0)), 1.4);
+    });
+  }
+
+  /* scheduled work, out in front of now */
+  const schedEl = rowEls.get("sched");
+  if(schedEl){
+    const y = schedEl.offsetTop + schedEl.offsetHeight/2;
+    ctx.strokeStyle = mix(CSSV["--state-awaiting"], .5);
+    ctx.fillStyle = mix(CSSV["--state-awaiting"], .5);
+    st.pending.forEach((sc,si)=>{
+      const beyond = sc.at > span;
+      const sx = beyond ? W - 7 - si*11 : x(sc.at);
+      for(let d = nowX + 3; d < sx - 5; d += 5) ctx.fillRect(d, y - 0.5, 2, 1);
+      ctx.save(); ctx.translate(sx, y); ctx.rotate(Math.PI/4);
+      ctx.lineWidth = 1.2; ctx.strokeRect(-3.2,-3.2,6.4,6.4); ctx.restore();
+      if(beyond){ ctx.font = "9px monospace"; ctx.fillText("»", sx - 14, y + 3); }
+    });
+  }
+
+  /* now */
+  ctx.fillStyle = mix(CSSV["--text-primary"], .22);
+  ctx.fillRect(Math.round(nowX), 0, 1, H);
+}
+
+/* concurrency silhouette: the shape of the whole run */
+function drawSilo(c, st, compact){
+  if(!c || !c.width) return;
+  const ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const W = c.width/dpr, H = c.height/dpr;
+  ctx.clearRect(0,0,W,H);
+  const span = axis(st.t);
+  const N = Math.max(2, Math.floor(W));
+  let peak = 1;
+  const vals = new Array(N).fill(0);
+  for(let i=0;i<N;i++){
+    const t = (i/N)*span;
+    if(t > st.t) break;
+    let c2 = 0;
+    for(const a of AGENTS){ if(t >= a.t0 && t < a.t1) c2++; }
+    vals[i] = c2; if(c2 > peak) peak = c2;
+  }
+  /* phase bands behind */
+  if(st.wfOn || st.t >= WF.t0){
+    WF.phases.forEach(p=>{
+      const a = (p.a/span)*W, b = (Math.min(p.b, st.t)/span)*W;
+      if(b<=a) return;
+      ctx.fillStyle = mix(CSSV["--border-strong"], .35);
+      ctx.fillRect(a, 0, b-a, H);
+    });
+  }
+  ctx.beginPath(); ctx.moveTo(0, H);
+  for(let i=0;i<N;i++) ctx.lineTo(i, H - (vals[i]/peak)*(H-2));
+  ctx.lineTo(N, H); ctx.closePath();
+  ctx.fillStyle = mix(CSSV["--accent"], compact ? .42 : .30);
+  ctx.fill();
+  ctx.strokeStyle = mix(CSSV["--accent"], .75); ctx.lineWidth = 1;
+  ctx.beginPath();
+  for(let i=0;i<N;i++){ const yy = H - (vals[i]/peak)*(H-2); i? ctx.lineTo(i,yy) : ctx.moveTo(i,yy); }
+  ctx.stroke();
+  const nx = (st.t/span)*W;
+  ctx.fillStyle = mix(CSSV["--text-primary"], .25);
+  ctx.fillRect(Math.round(nx), 0, 1, H);
+}
+
+/* ===========================================================
+   5. drill-in reader
+   =========================================================== */
+function select(id){
+  SEL = (SEL === id) ? null : id;
+  reader.hidden = !SEL;
+  fitSoon = true;
+  document.querySelectorAll("[data-agent]").forEach(b=>b.classList.toggle("is-sel", b.dataset.agent === SEL));
+  if(SEL) renderReader(true);
+  frame(true);
+}
+$("#rd-close").addEventListener("click", ()=>select(SEL));
+document.addEventListener("keydown", e=>{ if(e.key === "Escape" && SEL) select(SEL); });
+
+let readerSig = "";
+function renderReader(force){
+  if(!SEL) return;
+  const a = AGENTS.find(q=>q.id === SEL); if(!a) return;
+  const st = LAST, s = st.all.get(SEL);
+  const cut = s ? (s.settled ? a.t1 : st.t) : a.t0;
+  const shown = a.events.filter(e=>e.t <= cut).length;
+  const sig = SEL + ":" + shown + ":" + (s && s.settled ? "S" : "L");
+  if(!force && sig === readerSig) return;
+  readerSig = sig;
+
+  $("#rd-name").textContent = a.label;
+  const bits = [];
+  if(a.name) bits.push(a.name);
+  bits.push(a.type || (a.kind === "bash" ? "background bash" : "agent"));
+  if(a.kind !== "bash") bits.push("opus 5");
+  if(a.depth) bits.push("depth "+a.depth);
+  if(s) bits.push(fmtDur(s.elapsed), s.n+" tools", fmtTok(s.tok)+" tok");
+  $("#rd-meta").textContent = bits.join(" · ");
+
+  const body = $("#rd-body");
+  let h = '<div class="rw-prompt"><div class="eh">prompt</div><div class="et">'+a.prompt+'</div></div>';
+  if(a.kind === "bash"){
+    h += '<div class="rw-e"><div class="eh">stdout</div><div class="et" style="font-family:var(--font-mono);font-size:calc(11.5px * var(--tl-text-scale));color:var(--text-muted);white-space:pre-wrap">'+
+      "RUN  v2.1.4  /home/wizard/code/terminal-lobby\n\n ✓ src/text/Timeline.test.tsx (24)\n ✓ src/text/TimelineRow.test.tsx (31)\n ✓ src/session/store.test.ts (18)\n"+
+      (s && s.settled ? " ✓ src/ws/reconnect.test.ts (9)\n\n Test Files  41 passed (41)\n      Tests  412 passed (412)\n   Coverage  81.2%" : " · src/ws/reconnect.test.ts (running)")+
+      '</div></div>';
+  } else {
+    const r = rngFor(a.id + "-tx");
+    const thoughts = [
+      "The meta file lands about two seconds before the first record, so the name is known before any output.",
+      "Nothing in here is a heartbeat. The only evidence an agent is alive is that it wrote something.",
+      "Both implementations keep row order stable and update in place. Worth keeping.",
+      "This file is the one that renders the counts line, so the strip is the slot to grow out of.",
+      "The imports still resolve after the delete, so the barrel file was the only reference."
+    ];
+    a.events.forEach((e,i)=>{
+      if(e.t > cut) return;
+      if(i === 0 || r() < 0.3){
+        h += '<div class="rw-e think"><div class="et">'+thoughts[Math.floor(r()*thoughts.length)]+'</div></div>';
+      }
+      h += '<div class="rw-e tool" id="tx-'+i+'"><div class="eh">'+fmtDur(e.t - a.t0)+'</div>'+
+        '<div class="tt" style="color:'+laneColor(a)+'">'+e.tool+'</div>'+
+        (e.arg ? '<div class="ta">'+e.arg.replace(/</g,"&lt;")+'</div>' : "")+
+        '<div class="tr">'+(RESULTS[e.tool] || "ok")+'</div></div>';
+    });
+    if(s && s.settled){
+      h += a.end === "error"
+        ? '<div class="rw-e res bad"><div class="eh" style="color:var(--danger)">error</div><div class="et">'+a.error+'</div></div>'
+        : '<div class="rw-e res"><div class="eh" style="color:var(--success)">result</div><div class="et">'+a.result+'</div></div>';
+    }
+  }
+  const atEnd = body.scrollHeight - body.scrollTop - body.clientHeight < 48;
+  body.innerHTML = h;
+  if(force || atEnd) body.scrollTop = body.scrollHeight;
+}
+
+/* ticks scrub the transcript */
+hit.addEventListener("click", ev=>{
+  const r = hit.getBoundingClientRect();
+  const px = ev.clientX - r.left, py = ev.clientY - r.top + chart.scrollTop;
+  const g = geo.find(q=>q.id && py >= q.y && py < q.y + q.h);
+  if(!g) return;
+  const a = AGENTS.find(q=>q.id === g.id); if(!a) return;
+  const span = axis(LAST.t), W = laneRect.w;
+  let best = -1, bd = 9;
+  a.events.forEach((e,i)=>{
+    const ex = (e.t/span)*W, d = Math.abs(ex - px);
+    if(d < bd && e.t <= LAST.t){ bd = d; best = i; }
+  });
+  if(SEL !== a.id) select(a.id); else renderReader(true);
+  if(best >= 0){
+    requestAnimationFrame(()=>{
+      const t = document.getElementById("tx-"+best);
+      if(t){
+        $("#rd-body").querySelectorAll(".rw-e.tool.on").forEach(x=>x.classList.remove("on"));
+        t.classList.add("on");
+        t.scrollIntoView({block:"center"});
+      }
+    });
+  }
+});
+hit.addEventListener("mousemove", ev=>{
+  const r = hit.getBoundingClientRect();
+  const py = ev.clientY - r.top + chart.scrollTop;
+  const g = geo.find(q=>q.id && py >= q.y && py < q.y + q.h);
+  hit.style.cursor = g ? "pointer" : "default";
+});
+
+/* timeline rows select the same agent */
+document.querySelectorAll("[data-agent]").forEach(b=>{
+  b.addEventListener("click", ()=>{
+    if(COLLAPSED){ COLLAPSED = false; rw.classList.remove("is-collapsed"); }
+    select(b.dataset.agent);
+  });
+});
+
+/* ===========================================================
+   6. clock + transport
+   =========================================================== */
+let T = 0, SPEED = 8, PLAYING = true, LAST = derive(0), prev = performance.now();
+const SPEEDS = [1,8,25];
+
+function frame(forceDom){
+  const st = derive(T); LAST = st;
+  if(!st.visible){
+    if(!rw.hidden){ rw.hidden = true; rowSig = ""; SEL = null; reader.hidden = true;
+      document.querySelectorAll("[data-agent]").forEach(b=>b.classList.remove("is-sel")); }
+  } else {
+    if(rw.hidden){ rw.hidden = false; rowSig = ""; applyHeight(); }
+    if(!COLLAPSED){
+      const plan = syncRows(st);
+      if(fitSoon){ fitSoon = false; if(fitHeight()) measure(); }
+      if(rows.scrollHeight !== (cv.height / Math.min(2,window.devicePixelRatio||1))) measure();
+      updateRows(st, plan);
+      draw(st, plan);
+      drawSilo(silo, st, false);
+    } else {
+      drawSilo(stripSilo, st, true);
+      $("#strip-counts").innerHTML = '<b>'+st.running+' running</b>'+(st.failed?' · '+st.failed+' failed':"");
+    }
+    if(SEL) renderReader(false);
+  }
+  /* timeline marks */
+  setMark("a1", st); setMark("a2", st); setMark("a3", st); setMark("bash", st);
+  const wfm = $('[data-mark="wf"]');
+  if(wfm){
+    if(T < WF.t0){ wfm.textContent = "·"; wfm.className = "m"; }
+    else if(T < WF.t1){ wfm.textContent = "running"; wfm.className = "m run"; }
+    else { wfm.textContent = "✓"; wfm.className = "m ok"; }
+  }
+  $("#ph-clock").textContent = String(Math.floor(T/60)).padStart(2,"0")+":"+String(Math.floor(T%60)).padStart(2,"0")+" · "+SPEED+"x";
+  const sc = $("#ph-scrub");
+  if(document.activeElement !== sc) sc.value = Math.round(T);
+}
+function setMark(id, st){
+  const m = document.querySelector('[data-mark="'+id+'"]'); if(!m) return;
+  const s = st.all.get(id);
+  if(!s){ m.textContent = "·"; m.className = "m"; return; }
+  if(!s.settled){ m.textContent = "running"; m.className = "m run"; }
+  else if(s.a.end === "error"){ m.textContent = "✘"; m.className = "m err"; }
+  else { m.textContent = "✓"; m.className = "m ok"; }
+}
+
+function tick(now){
+  const dt = Math.min(0.25, (now - prev)/1000); prev = now;
+  if(PLAYING){
+    T += dt * SPEED;
+    if(T > SCRIPT_END){ T = SCRIPT_END; PLAYING = false; $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on = "0"; }
+  }
+  frame();
+  requestAnimationFrame(tick);
+}
+
+function jump(t){ T = t; readerSig = ""; frame(true); }
+$("#ph-play").addEventListener("click", e=>{
+  PLAYING = !PLAYING;
+  e.currentTarget.textContent = PLAYING ? "Pause" : "Play";
+  e.currentTarget.dataset.on = PLAYING ? "1" : "0";
+});
+$("#ph-replay").addEventListener("click", ()=>{
+  SEL = null; reader.hidden = true; SEDIMENT_OPEN = false; jump(0);
+  PLAYING = true; $("#ph-play").textContent = "Pause"; $("#ph-play").dataset.on = "1";
+});
+$("#ph-speed").addEventListener("click", e=>{
+  SPEED = SPEEDS[(SPEEDS.indexOf(SPEED)+1) % SPEEDS.length];
+  e.currentTarget.textContent = SPEED + "x";
+});
+document.querySelectorAll("[data-jump]").forEach(b=>b.addEventListener("click", ()=>{
+  PLAYING = false; $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on = "0";
+  jump(+b.dataset.jump);
+}));
+$("#ph-scrub").addEventListener("input", e=>{ PLAYING = false; $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on="0"; jump(+e.target.value); });
+
+/* collapse + resize */
+function applyHeight(){
+  rw.style.height = COLLAPSED ? "26px" : DOCK_H + "px";
+  requestAnimationFrame(()=>{ measure(); frame(true); });
+}
+$("#rw-collapse").addEventListener("click", ()=>{
+  COLLAPSED = true; rw.classList.add("is-collapsed"); applyHeight();
+});
+$("#rw-strip").addEventListener("click", ()=>{
+  COLLAPSED = false; rw.classList.remove("is-collapsed"); rowSig = ""; applyHeight();
+});
+(function(){
+  const grip = $("#rw-grip");
+  let dragging = false, y0 = 0, h0 = 0;
+  grip.addEventListener("pointerdown", e=>{ dragging = true; y0 = e.clientY; h0 = DOCK_H; grip.setPointerCapture(e.pointerId); });
+  grip.addEventListener("pointermove", e=>{
+    if(!dragging) return;
+    USER_H = DOCK_H = clamp(h0 - (e.clientY - y0), 96, Math.round(window.innerHeight * 0.62));
+    applyHeight();
+  });
+  grip.addEventListener("pointerup", ()=>{ dragging = false; });
+  grip.addEventListener("keydown", e=>{
+    if(e.key === "ArrowUp"){ USER_H = DOCK_H = clamp(DOCK_H + 24, 96, window.innerHeight*0.62); applyHeight(); e.preventDefault(); }
+    if(e.key === "ArrowDown"){ USER_H = DOCK_H = clamp(DOCK_H - 24, 96, window.innerHeight*0.62); applyHeight(); e.preventDefault(); }
+  });
+})();
+
+/* narrow screens start collapsed */
+function applyNarrow(){
+  const narrow = window.matchMedia("(max-width:860px)").matches;
+  if(narrow && !rw.dataset.init){ COLLAPSED = true; rw.classList.add("is-collapsed"); }
+  rw.dataset.init = "1";
+}
+
+/* deep link: ?t=<session seconds> opens paused at that state */
+(function(){
+  const q = new URLSearchParams(location.search);
+  if(q.has("t")){
+    T = +q.get("t") || 0;
+    PLAYING = false;
+    $("#ph-play").textContent = "Play"; $("#ph-play").dataset.on = "0";
+  }
+  if(q.get("sel")) SEL = q.get("sel");
+  if(q.get("sediment") === "1") SEDIMENT_OPEN = true;
+})();
+
+readTokens();
+applyNarrow();
+applyHeight();
+if(SEL){ reader.hidden = false; }
+window.addEventListener("resize", ()=>{ rowSig = ""; applyHeight(); });
+frame(true);
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
