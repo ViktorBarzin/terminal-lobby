@@ -202,9 +202,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
    * still declared on the component, and nothing reads it.
    */
   it("does not toggle the view on Ctrl+J while an overlay owns the keyboard", () => {
-    const { container } = render(() => (
-      <SessionView session="qa-vs" overlayOpen={() => true} />
-    ));
+    const { container } = render(() => <SessionView session="qa-vs" overlayOpen={() => true} />);
     expect(mode(container)).toBe("terminal");
 
     const e = new KeyboardEvent("keydown", {
@@ -225,9 +223,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     // rewrite had quietly repurposed it for the view toggle. The toggle keeps
     // the [Text|Terminal] control and window.__tlToggleView; only the chord
     // moved.
-    const { container } = render(() => (
-      <SessionView session="qa-vs" overlayOpen={() => false} />
-    ));
+    const { container } = render(() => <SessionView session="qa-vs" overlayOpen={() => false} />);
     const before = mode(container);
     const e = new KeyboardEvent("keydown", {
       key: "j",
@@ -348,9 +344,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
 
   it("still forwards the attention signal to the lobby (tab badge)", () => {
     const seen: string[] = [];
-    render(() => (
-      <SessionView session="qa-vs" onTerminalAttention={(kind) => seen.push(kind)} />
-    ));
+    render(() => <SessionView session="qa-vs" onTerminalAttention={(kind) => seen.push(kind)} />);
     fromTerminal("output");
     expect(seen).toEqual(["output"]);
   });
@@ -442,7 +436,12 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     // The buttons DO carry a text label — what must never come back is a
     // pictographic glyph standing in for the icon.
     const { container } = render(() => <SessionView session="qa-tools" />);
-    for (const label of ["Session images", "Upload image", "Paste from clipboard", "File preview"]) {
+    for (const label of [
+      "Session images",
+      "Upload image",
+      "Paste from clipboard",
+      "File preview",
+    ]) {
       const btn = container.querySelector(`.tl-session-bar [aria-label="${label}"]`)!;
       expect(btn.querySelector("svg"), `${label} should draw an svg`).toBeTruthy();
       expect(btn.textContent ?? "", `${label} should carry no emoji`).not.toMatch(

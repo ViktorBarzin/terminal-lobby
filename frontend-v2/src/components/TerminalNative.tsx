@@ -1,11 +1,4 @@
-import {
-  createEffect,
-  createSignal,
-  onCleanup,
-  onMount,
-  Show,
-  type Component,
-} from "solid-js";
+import { createEffect, createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
 import { ownWhile } from "../lib/ownwhile";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
@@ -211,12 +204,7 @@ function stored(key: string): string | null {
  * change the range.
  */
 function validFontSize(v: unknown): v is number {
-  return (
-    typeof v === "number" &&
-    Number.isInteger(v) &&
-    v >= FONT_SIZE_MIN &&
-    v <= FONT_SIZE_MAX
-  );
+  return typeof v === "number" && Number.isInteger(v) && v >= FONT_SIZE_MIN && v <= FONT_SIZE_MAX;
 }
 
 /**
@@ -478,9 +466,7 @@ function typingElsewhere(): boolean {
   if (typeof document === "undefined") return false;
   const active = document.activeElement as HTMLElement | null;
   if (!active) return false;
-  return (
-    active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable
-  );
+  return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable;
 }
 
 /** No cast: `FitEvent` is a discriminated union, so the two arms are built apart. */
@@ -628,11 +614,7 @@ export const TerminalNative: Component<{
    * siblings, so the caller can hold a function instead of a name every
    * mounted terminal would fight over.
    */
-  onReady?: (control: {
-    reconnect: () => void;
-    ask: () => void;
-    copy: () => void;
-  }) => void;
+  onReady?: (control: { reconnect: () => void; ask: () => void; copy: () => void }) => void;
   /**
    * FALSE for a secondary terminal. The window-level bridges below are named
    * globals, so two mounted terminals would fight over them and the soft keys,
@@ -1443,8 +1425,7 @@ export const TerminalNative: Component<{
        * offsetHeight, because a zero-size field can fail to summon the iOS
        * keyboard, so the read has to be about the posture, not the pixels.
        */
-      const barReservePx = (): number =>
-        barGhost || !composeBar ? 0 : composeBar.offsetHeight;
+      const barReservePx = (): number => (barGhost || !composeBar ? 0 : composeBar.offsetHeight);
 
       /** The cbH term currently ON the host, so a bar-height change is visible. */
       let appliedBarPx = 0;
@@ -1473,10 +1454,7 @@ export const TerminalNative: Component<{
        * well would put a second fit, and so a second tmux resize, 120ms into
        * every mount.
        */
-      const feedViewport = (
-        event: ViewportEvent,
-        opts: { fit?: boolean } = {},
-      ): boolean => {
+      const feedViewport = (event: ViewportEvent, opts: { fit?: boolean } = {}): boolean => {
         const r = reduceViewport(viewportState, event);
         viewportState = r.state;
         if (r.action.kind === "ignored") return false;
@@ -1510,7 +1488,6 @@ export const TerminalNative: Component<{
       // A host with no box yet owes one, and the ResizeObserver below or the
       // view coming back on screen settles it.
       const bootFitted = safeFit("fit-wanted");
-
 
       // THE BOOT FOCUS. term.html takes it here, immediately after the same
       // fit, and says why at :5615-5616: nothing else focuses the terminal on
@@ -2830,8 +2807,7 @@ export const TerminalNative: Component<{
        * own '● ' title prefix (:5777-5780), is the branch for a page with no
        * lobby to tell, and there is no native terminal outside the lobby.
        */
-      const onVisibility = (): void =>
-        feedAttention({ type: "tab", tabHidden: document.hidden });
+      const onVisibility = (): void => feedAttention({ type: "tab", tabHidden: document.hidden });
       document.addEventListener("visibilitychange", onVisibility);
 
       // MOUSE REPORTS, and anything else xterm hands over as bytes-in-a-string:
@@ -3021,9 +2997,7 @@ export const TerminalNative: Component<{
               // this function is idempotent and the rest of this loop still
               // runs. That is term.html's order as well: clone, then focus
               // (:6012-6013).
-              target.dispatchEvent(
-                new MouseEvent("mousedown", { ...action.clone, view: window }),
-              );
+              target.dispatchEvent(new MouseEvent("mousedown", { ...action.clone, view: window }));
               break;
             }
             case "finalize-drag": {
@@ -3797,8 +3771,7 @@ export const TerminalNative: Component<{
             position: "fixed",
             left: "0",
             right: "0",
-            bottom:
-              "calc(var(--kb-offset, 0px) + var(--safe-b, 0px) + var(--sk-h, 0px))",
+            bottom: "calc(var(--kb-offset, 0px) + var(--safe-b, 0px) + var(--sk-h, 0px))",
             // Under the soft-key row (40), which it never overlaps: --sk-h is
             // that row's live height and this sits on top of it.
             "z-index": "39",

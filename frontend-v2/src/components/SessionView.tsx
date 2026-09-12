@@ -334,8 +334,7 @@ export const SessionView: Component<{
    * behind an editor costs the terminal bell, and that file carries the whole
    * reckoning.
    */
-  const readWindowAway = (): boolean =>
-    typeof document !== "undefined" && document.hidden;
+  const readWindowAway = (): boolean => typeof document !== "undefined" && document.hidden;
   const [windowAway, setWindowAway] = createSignal(readWindowAway());
   const noteWindow = (): void => {
     setWindowAway(readWindowAway());
