@@ -9,6 +9,32 @@
 # without a mapping are denied — no fallback to a shared account.
 set -euo pipefail
 
+# Nothing this pty receives before tmux owns it should be painted back.
+#
+# ttyd creates the pty in the line discipline's default state — canonical mode,
+# ECHO on — and it stays there until tmux attaches and asks for raw. Measured on
+# this box 2026-09-12, that window is ~500 ms of forking, sudo and attach, and
+# every byte the browser sends inside it is echoed straight onto the screen:
+# keystrokes typed the instant a session opens, and (until the terminal learned
+# to drop a dead program's modes, frontend-v2/src/terminal/modes.ts) a pointer
+# report per mouse movement. tmux's first redraw wipes the lot, so it reads as
+# garbage that flashes and vanishes.
+#
+# Turning the echo off does not eat the bytes: they stay in the input queue and
+# tmux reads them when it starts, so typing into a session that is still opening
+# still lands. It only stops the kernel from drawing them in the meantime.
+#
+# This loses a race it cannot win, and that is fine. bash takes ~30 ms to reach
+# this line, so a byte that arrives in the first 30 ms is echoed regardless —
+# measured, same day: markers at 50/100/200/350 ms were all silent, the one at
+# 0 ms was not. The terminal-side fix is what closes that head, by never
+# generating the reports; this covers everything else that might reach a pty
+# nobody is reading yet.
+#
+# `|| true` because of `set -e`: a stdin that is not a tty (a test harness
+# piping the script) must not kill the attach over cosmetics.
+stty -echo 2>/dev/null || true
+
 MAP=/etc/ttyd-user-map
 NAME_RE='^[a-zA-Z0-9_-]{1,32}$'
 
