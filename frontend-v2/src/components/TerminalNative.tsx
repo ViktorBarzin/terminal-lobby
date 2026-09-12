@@ -120,6 +120,34 @@ import {
 } from "../store/prefs";
 import { gesturesEnabled } from "../store/device-prefs";
 import { showToast } from "../store/toast";
+import { track } from "../telemetry/track";
+import { TypingLatency } from "../diagnostics/typing";
+
+/**
+ * ONE instance for the page, not one per pane, and deliberately so. The
+ * question this answers is "is typing slow for this person right now", and a
+ * person types into whichever pane has focus. Splitting it per pane would
+ * divide the same experience into several thin distributions and make every
+ * one of them a worse estimate.
+ *
+ * The rollup goes out every 60s and only when there is something in it, so an
+ * idle tab costs nothing. Attribution to a user happens server-side at the
+ * /telemetry intake, which is why the browser never says who it is.
+ */
+const typingLatency = new TypingLatency();
+
+if (typeof window !== "undefined") {
+  window.setInterval(() => {
+    const r = typingLatency.takeRollup();
+    if (!r) return;
+    track("term.typing_latency", {
+      "tl.n": r.n,
+      "tl.p50": r.p50,
+      "tl.p95": r.p95,
+      "tl.max": r.max,
+    });
+  }, 60_000);
+}
 import { apiUrl } from "../lib/config";
 
 /**
@@ -2376,6 +2404,11 @@ export const TerminalNative: Component<{
           // frame reaches `onBell` after the output signal and the two arrive
           // in that order.
           feedAttention({ type: "output", tabHidden: document.hidden });
+          // Timed here rather than in a write callback: this is when the frame
+          // arrived, which is the half of the round trip we can actually see.
+          // Attributed only if a keystroke is waiting on it; a Claude session
+          // emits far more output than the person causes.
+          typingLatency.onOutput();
           term.write(bytes);
         },
         size: () => ({ cols: term.cols, rows: term.rows }),
@@ -2694,6 +2727,8 @@ export const TerminalNative: Component<{
        * for arrived.
        */
       term.onData((data) => {
+        // The keystroke leaving. Only the first of a burst starts the clock.
+        typingLatency.onInput();
         const r = reduceData(keyState, data, {
           // TRUE only for the length of the mirror's own `term.input` call,
           // which is where term.html reads this too (:8342 against the flag it
