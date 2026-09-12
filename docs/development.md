@@ -39,9 +39,34 @@ injection, prefix-stripped API routes, WS passthrough, the split bundle's
 `/assets/` chunks) in front of the DEPLOYED page and the REAL backends, with a
 mutation guard that confines writes to `qa-*` sessions.
 
-The header name is `TL_AUTH_HEADER`, which defaults to `X-Forwarded-User`.
-A box configured for a different proxy sets it in `/etc/terminal-lobby.conf`,
-so use whatever that file names when running against a deployed service.
+That guard has a trap on the other side of it. `qa-` is also the prefix
+`tmux-api` stamps `@tl_origin=test` on, and the lobby HIDES test-origin
+sessions, so a scratch session created under that name is attachable and never
+appears in the sidebar to be clicked. The harness stamps its own sessions
+test-origin regardless of name, so a scratch session cannot be driven through
+the UI at all. To drive a real one, name it explicitly with `--allow-session`.
+
+The harness reads `TL_AUTH_HEADER` itself, from `/etc/terminal-lobby.conf` and
+the `/etc/terminal-lobby.local.conf` that wins over it, so the header name is no
+longer yours to pass. `--auth-header` overrides it where you need to.
+
+Two things about running it against a deployed box cost an hour on 2026-09-12
+and are worth knowing before you start.
+
+**The proxy secret is not optional.** With `TL_PROXY_SECRET` set,
+`authuser/resolve.go` checks it BEFORE it reads identity at all, so without it
+every proxied call is 401 whatever header you send, and the lobby renders
+"Access denied (HTTP 401)" with an empty sidebar. It lives in
+`/etc/terminal-lobby.local.conf`, which is root-owned, so pass it in:
+
+```sh
+TL_PROXY_SECRET="$(sudo grep -h ^TL_PROXY_SECRET= /etc/terminal-lobby.local.conf | cut -d= -f2-)" \
+  python3 scripts/qa-harness.py --user <authentik-user>
+```
+
+**`--user` is the Authentik name, not the OS user.** `/etc/ttyd-user-map` maps
+one to the other, and passing the OS user gets a 403 reading "no terminal
+account for that identity".
 
 The harness has no lever for pointing it at a LOCAL build: its catch-all goes
 to ttyd, which serves the installed bundle, and `/assets/*` goes to

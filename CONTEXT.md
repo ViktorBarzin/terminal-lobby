@@ -157,8 +157,10 @@ _Avoid_: read-only mode (ambiguous against a share's `ro`), observer mode
 **Preload attach**:
 A client's own choice to attach a Session the user has not opened yet, so the
 terminal is already drawn when they commit. Read-**write**, unlike Watch mode,
-but carrying tmux's ignore-size flag, so until it is **promoted** it does not
-move the **Grid** and does not count as driving (**Last driven** stays put). A
+but carrying tmux's ignore-size flag, so it does not take the **Grid** from
+another client reading the same Session, and does not count as driving (**Last
+driven** stays put). Alone on a Session it sizes the window like any other
+client, which is what opening it would have done anyway. A
 promotion clears the flag on the same client, so the socket the hover opened is
 the one the user then types into; there is no second attach. The third value of
 the client's attach request, beside watch and drive, and resolved by the server
@@ -242,6 +244,24 @@ only fire on a client attaching, detaching or resizing, so a device that is
 merely READING a session claims the Grid explicitly
 (`POST /sessions/{name}/grid`).
 _Avoid_: window size (means the browser's), canvas, viewport
+
+**Parked** (a session):
+A Session the tab keeps MOUNTED but whose ttyd socket and transcript stream are
+deliberately down, because nobody is reading it. A tab holds every Session it has
+opened for a day (so switching back shows what is already there rather than
+rebuilding it), and before this each one held a live xterm, a socket, a tmux
+client and a stream for that whole day — a cost that grew with how many Sessions
+you visited rather than with the one in front of you. Away is the OR of two
+questions, each with its own grace: this Session is not the one on screen (30 s),
+or the tab is hidden (60 s). Lossless by construction: tmux repaints the live
+screen on reattach and the stream resumes from its cursor, so returning shows the
+old screen and catches up. A parked Session still reports its **Session state**
+through the poll, so bells and badges are unaffected; what stops is anything
+reading the live byte stream, the terminal bell among them. `document.hasFocus()`
+was briefly a third away question and was removed the same day: it parked the
+Session being READ, which is the one whose bell matters.
+_Avoid_: suspended (the connection ladder's own word for a socket it is holding
+down), sleeping, unloaded (nothing is unmounted)
 
 **Co-ownership**:
 POSIX-ACL grant giving all a project's members rwX on its directory, applied
