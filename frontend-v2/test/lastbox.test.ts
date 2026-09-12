@@ -1,49 +1,49 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { forgetHostBox, lastHostBox, rememberHostBox } from "../src/terminal/lastbox";
+import { forgetGrid, lastGrid, rememberGrid } from "../src/terminal/lastbox";
 
 /**
- * The box a hidden preload borrows. `fit.ts` refuses to fit a 0x0 host and
+ * The grid a hidden preload borrows. `fit.ts` refuses to fit a 0x0 host and
  * records the fit as owed, which is right for a kept session and wrong for a
  * preload: it opened at xterm's 80x24 default and re-fitted on the click that
  * revealed it, moving the reflow rather than removing it (ADR-0026).
  */
-describe("the last host box", () => {
-  beforeEach(forgetHostBox);
+describe("the last fitted grid", () => {
+  beforeEach(forgetGrid);
 
-  it("is null until a terminal has measured one", () => {
-    expect(lastHostBox()).toBeNull();
+  it("is null until a terminal has fitted", () => {
+    expect(lastGrid()).toBeNull();
   });
 
-  it("hands back the last real box", () => {
-    rememberHostBox({ width: 1280, height: 720 });
-    expect(lastHostBox()).toEqual({ width: 1280, height: 720 });
+  it("hands back the last real grid", () => {
+    rememberGrid({ cols: 157, rows: 46 });
+    expect(lastGrid()).toEqual({ cols: 157, rows: 46 });
   });
 
   it("keeps the newest, because the window may have been resized since", () => {
-    rememberHostBox({ width: 1280, height: 720 });
-    rememberHostBox({ width: 800, height: 600 });
-    expect(lastHostBox()).toEqual({ width: 800, height: 600 });
+    rememberGrid({ cols: 157, rows: 46 });
+    rememberGrid({ cols: 80, rows: 24 });
+    expect(lastGrid()).toEqual({ cols: 80, rows: 24 });
   });
 
   // The whole point of the guard this borrows past. A hidden host measures 0x0,
-  // and fitting xterm against that computes a ~13x7 grid which tmux then
-  // applies to the real window, squeezing every other client on the session.
+  // and fitting xterm against that proposes a floor grid — measured 11x5 on
+  // 2026-09-12 — which tmux would then apply to the real window.
   it.each([
-    ["a hidden host", { width: 0, height: 0 }],
-    ["zero width alone", { width: 0, height: 720 }],
-    ["zero height alone", { width: 1280, height: 0 }],
-    ["a negative box", { width: -1, height: -1 }],
+    ["a hidden host's grid", { cols: 0, rows: 0 }],
+    ["zero columns alone", { cols: 0, rows: 46 }],
+    ["zero rows alone", { cols: 157, rows: 0 }],
+    ["a negative box", { cols: -1, rows: -1 }],
     ["nothing to measure", null],
   ])("never records %s", (_label, box) => {
-    rememberHostBox({ width: 1280, height: 720 });
-    rememberHostBox(box);
-    expect(lastHostBox()).toEqual({ width: 1280, height: 720 });
+    rememberGrid({ cols: 157, rows: 46 });
+    rememberGrid(box);
+    expect(lastGrid()).toEqual({ cols: 157, rows: 46 });
   });
 
-  it("copies the box, so a caller mutating its own object cannot rewrite history", () => {
-    const live = { width: 1280, height: 720 };
-    rememberHostBox(live);
-    live.width = 13;
-    expect(lastHostBox()).toEqual({ width: 1280, height: 720 });
+  it("copies the grid, so a caller mutating its own object cannot rewrite history", () => {
+    const live = { cols: 157, rows: 46 };
+    rememberGrid(live);
+    live.cols = 11;
+    expect(lastGrid()).toEqual({ cols: 157, rows: 46 });
   });
 });

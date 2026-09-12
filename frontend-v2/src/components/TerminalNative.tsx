@@ -13,7 +13,7 @@ import { ownWhile } from "../lib/ownwhile";
 // into the bundle's CSS, so it costs no extra request.
 import "@xterm/xterm/css/xterm.css";
 import { attach, type Attachment } from "../terminal/attach";
-import { lastHostBox, rememberHostBox } from "../terminal/lastbox";
+import { lastGrid, rememberGrid } from "../terminal/lastbox";
 import { toXtermTheme, THEME_LIVE_GLOBAL } from "../terminal/theme";
 import type { LadderState } from "../terminal/reconnect";
 import {
@@ -1209,27 +1209,9 @@ export const TerminalNative: Component<{
         typeof navigator !== "undefined" &&
         ["Macintosh", "MacIntel", "MacPPC", "Mac68K"].includes(navigator.platform);
 
-      /**
-       * The host's box, measured NOW, which is what fit.ts asks for.
-       *
-       * A real box is also REMEMBERED, because a terminal that mounts hidden has
-       * none of its own and every slot fills the same area (terminal/lastbox.ts).
-       * `fitWhileHidden` is the one caller allowed to borrow it: a preload is
-       * mounted `display: none`, so without this it opens at xterm's 80x24
-       * default and re-fits when the click reveals it, which is the reflow the
-       * preload exists to remove. Borrowing is deliberately not the default — a
-       * hidden session fitting against someone else's box is exactly what
-       * fit.ts's guard is there to stop, and only a preload knows it is about to
-       * be shown at that size.
-       */
-      const measure = (): HostBox | null => {
-        const box = host ? { width: host.clientWidth, height: host.clientHeight } : null;
-        if (box && box.width > 0 && box.height > 0) {
-          rememberHostBox(box);
-          return box;
-        }
-        return props.fitWhileHidden ? lastHostBox() : box;
-      };
+      /** The host's box, measured NOW, which is what fit.ts asks for. */
+      const measure = (): HostBox | null =>
+        host ? { width: host.clientWidth, height: host.clientHeight } : null;
 
       /**
        * Ask the guard, then carry out its verdict. The two side effects a
@@ -1239,7 +1221,28 @@ export const TerminalNative: Component<{
        * reads as "this host has a real box".
        */
       const safeFit = (type: FitEvent["type"]): boolean => {
-        const verdict = reduceFit(fitState, fitEvent(type, measure()));
+        const box = measure();
+        /**
+         * A PRELOAD HAS NO BOX AND CANNOT GET ONE, so it is handed the answer.
+         *
+         * It is mounted `display: none` (ADR-0026), and fit.ts is right to
+         * refuse a 0x0 host — but refusing leaves xterm at its constructed
+         * 80x24, which is what the handshake then carries, so the click that
+         * reveals it pays the reflow the preload was supposed to remove.
+         * Borrowing the last BOX does not help: the fit is the FitAddon, and it
+         * measures the parent element itself, so it proposed 11x5 from the same
+         * hidden host. The grid a visible terminal already fitted to is the
+         * answer, applied directly (terminal/lastbox.ts).
+         */
+        if (props.fitWhileHidden && !(box && box.width > 0 && box.height > 0)) {
+          const grid = lastGrid();
+          if (grid && (grid.cols !== term.cols || grid.rows !== term.rows)) {
+            term.resize(grid.cols, grid.rows);
+            attachment?.resize();
+            return true;
+          }
+        }
+        const verdict = reduceFit(fitState, fitEvent(type, box));
         fitState = verdict.state;
         if (verdict.action !== "fit") {
           // A `shown` that needed no fit still has to CLAIM the grid, and this
@@ -1254,6 +1257,9 @@ export const TerminalNative: Component<{
         }
         try {
           fit.fit();
+          // What a hidden terminal will borrow. Recorded after the fit, so it is
+          // the grid that was actually reached rather than the one proposed.
+          rememberGrid({ cols: term.cols, rows: term.rows });
         } catch (e) {
           // The debt is already cleared, so a throw is not handed back. The
           // next resize or view switch settles it. term.html has five

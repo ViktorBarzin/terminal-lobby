@@ -175,30 +175,50 @@ describe("<SessionView> — a preloading mount", () => {
     expect(resolvedWatchFor("main")).toBe(false);
   });
 
-  // THE BLOCKER. `createWatchMode` latches `driven` once and reads it
-  // untracked, so a preload decided at dwell time and held that answer for the
-  // 60 s the slot survives. A session the desktop started driving in between
-  // would come up read-WRITE on the click, `claimGrid` would no longer refuse,
-  // and POST /sessions/main/grid would clear ignore-size and resize the other
-  // device's window. Promotion re-takes the decision, exactly as a fresh open
-  // would have.
-  it("re-takes the join decision when the click promotes it", () => {
+  // THE REGRESSION THIS EXISTS TO STOP. Promotion used to re-take the join
+  // decision, so it read `driven` at click time instead of at dwell time.
+  // `driven` is true for any session holding an attached client, and the lobby
+  // keeps every session you visit mounted for a day, so once the lobby has been
+  // open a while that is most of them. Clicking a preloaded card therefore
+  // resolved to WATCH as a matter of course, and sessions drifted into watch
+  // mode on their own (Viktor, 2026-09-12: "i want sessions to not switch modes
+  // when inactive"). store/watchmode.ts's header says why this reading must be
+  // sampled once and never tracked; an earlier version of the same mistake cost
+  // a revert.
+  it("does not change its mode when something else attaches before the click", () => {
     const [pre, setPre] = createSignal(true);
     const [vis, setVis] = createSignal(false);
     const [driven, setDriven] = createSignal(false);
     render(() => <SessionView session="main" preloading={pre} visible={vis()} driven={driven} />);
     expect(terminals).toHaveLength(1);
 
-    // The desktop attaches while the slot sits there.
+    // Something attaches while the slot sits there — another tab, the phone, or
+    // simply this session having been visited before and still being kept.
     setDriven(true);
     setPre(false);
     setVis(true);
-    terminals[0]?.onGrid?.(200, 50);
 
-    expect(setSessionGrid).not.toHaveBeenCalled();
-    expect(resolvedWatchFor("main")).toBe(true);
+    // The decision was taken at dwell time, when nothing was driving, and a
+    // click is not a reason to re-take it.
+    expect(resolvedWatchFor("main")).toBe(false);
     // ...and the promotion still costs no second attach.
     expect(terminals).toHaveLength(1);
+  });
+
+  // The other direction, so this is pinned from both sides: a session that WAS
+  // already driven when the pointer arrived stays a watch, and the click does
+  // not quietly promote it to driving either.
+  it("keeps a watch decision taken at dwell time", () => {
+    const [pre, setPre] = createSignal(true);
+    const [vis, setVis] = createSignal(false);
+    const [driven, setDriven] = createSignal(true);
+    render(() => <SessionView session="main" preloading={pre} visible={vis()} driven={driven} />);
+
+    setDriven(false);
+    setPre(false);
+    setVis(true);
+
+    expect(resolvedWatchFor("main")).toBe(true);
   });
 
   // A hidden view WITHDRAWS its terminal from the shared model, which is right
