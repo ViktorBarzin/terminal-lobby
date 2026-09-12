@@ -68,6 +68,26 @@ a live `<canvas>`-backed xterm across documents or containers re-triggers layout
 and the fit path. It also reintroduces exactly the class of bug ADR-0020 closed
 by putting one terminal in one document.
 
+### It also decides which resize library we can use
+
+Every split-pane library for the web takes the panes as its own children:
+`@corvu/resizable`, `solid-resizable-panels`, `allotment`,
+`react-resizable-panels`, `dockview`. A nested tree of those components
+reparents a pane whenever the structure changes, which this decision forbids and
+which `keepalive`'s one stable sibling list makes impossible anyway.
+
+So the chosen library renders a **skeleton**: nested resizable nodes holding no
+session content, transparent, with visible handles, stacked above the slot
+layer. Its controlled `sizes` percentages are the tree's own stored fractions,
+so the two layers share one source of truth rather than being synchronised.
+`split-grid` is the only library with DOM manners that would have allowed the
+direct approach, since it touches nothing but `grid-template-*` rules, and it
+cannot express a nested tree and has not been published since 2021.
+
+The cost is a dependency used off-label, and the exit is cheap by construction:
+the tree and the rect math are ours, so replacing the drag means replacing the
+drag.
+
 ### The invariant this makes explicit elsewhere
 
 `terminal/lastbox.ts:41` holds a module-level last-fitted grid, and its docblock
