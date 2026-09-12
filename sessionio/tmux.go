@@ -30,11 +30,18 @@ const (
 	// OptionState holds running/awaiting/done (ADR-0001).
 	OptionState = "@claude_state"
 	// OptionBackground holds the session's OUTSTANDING WORK: space-separated
-	// `<kind>:<id>` tokens for background tasks the main thread launched and
-	// that have not reported back, kind being `a` (agent), `b` (background
-	// command) or `w` (workflow). Written by the same hook script as
-	// OptionState, which adds a token when a launch returns `async_launched`
-	// and removes it when that id's task-notification arrives.
+	// `<kind>:<id>` tokens for work the session started that has not finished,
+	// kind being `a` (background subagent), `b` (background command), `w`
+	// (workflow) or `t` (teammate). Written by the same hook script as
+	// OptionState.
+	//
+	// The first three are keyed by the harness's own task id, and the script
+	// re-derives them at every Stop from `background_tasks`, the list the
+	// harness puts in that payload. A teammate is keyed by its NAME instead,
+	// because that list reports a teammate as running for as long as it
+	// exists, idle or not (measured 2026-09-12); SubagentStart and
+	// TeammateIdle are the two events that do say, and the name is what they
+	// carry.
 	//
 	// It exists because Stop is not the end of a turn's work: it fires the
 	// moment the main thread stops talking, while a background agent it
