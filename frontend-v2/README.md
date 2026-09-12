@@ -765,7 +765,11 @@ src/
                          SVG because this project carries no charting library.
                          Draws the hour of machine stall under Settings →
                          Network → Right now (ADR-0028), and survives the short
-                         series a service restart leaves behind
+                         series a service restart leaves behind. Also carries
+                         the words around the chart — the two ends of the time
+                         axis and a swatch naming the threshold rule — as HTML
+                         rather than svg text, because preserveAspectRatio
+                         "none" would smear anything inside the viewBox
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
                          clipboard, file-text, rotate-cw) — never emoji
     Toaster.tsx          Top-right toast stack
