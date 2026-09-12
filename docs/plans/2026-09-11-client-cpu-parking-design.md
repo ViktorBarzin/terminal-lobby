@@ -56,11 +56,11 @@ nothing parks.
 
 **Each open transcript re-derives itself in full on every animation frame.**
 `SessionView.tsx:330` is `createMemo(() => deriveRows(store.events))`, and
-`store/session.ts:321` records the cost from a previous measurement: 10 ms per
+`store/session.ts:489` records the cost from a previous measurement: 10 ms per
 derivation, 2,644 ms when run per event. Events flush on `requestAnimationFrame`,
 so a live turn can run that 10 ms sixty times a second. The open is already
 bounded, but not the way this doc first said, and the difference matters. The
-browser always sends `rev=1`, and `session-events/sse.go:250` answers that with
+browser always sends `rev=1`, and `session-events/sse.go:257` answers that with
 `src.Backfill(0, OpenBackfillBytes)`, which is 100 KB (`sse.go:95`). `turns=` is
 read only in the `!reverseOpen` branch at `sse.go:215`, the fallback for a server
 that predates the reverse open, and `lib/config.ts:123` omits it entirely at the
@@ -297,7 +297,8 @@ it.
 
 ## Verification
 
-Landed on master as `be20e62`, released `v0.51.1`, installed on the devvm 20
+Landed on master as `be20e62`, carried by the merge `1b0b3be` that `v0.51.1`
+tags, installed on the devvm 20
 seconds after the pipeline went green.
 
 **Unit.** 5,147 tests pass, `tsc --noEmit` and `biome lint` clean, production
