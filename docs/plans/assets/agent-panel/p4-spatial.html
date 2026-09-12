@@ -73,7 +73,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 /* ============================================================
    Shell
    ============================================================ */
-.tl-shell{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - 42px);min-height:620px;overflow:hidden}
+.tl-shell{display:grid;grid-template-columns:260px 1fr;height:calc(100vh - var(--ph-h,42px));min-height:560px;overflow:hidden}
 .tl-shell-sidebar{background:var(--bg-sidebar);border-right:1px solid var(--border);display:flex;flex-direction:column;min-width:0;min-height:0}
 .tl-shellbar{height:41px;flex:0 0 41px;display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg-sidebar);border-bottom:1px solid var(--border)}
 .tl-brand{font-weight:600;font-size:calc(13px * var(--tl-text-scale))}
@@ -164,7 +164,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .rw-hint{font-size:calc(10.5px * var(--tl-text-scale));color:var(--text-muted)}
 
 /* body: chart | reader */
-.rw-body{display:flex;min-height:0;flex:1}
+.rw-body{display:flex;min-height:0;flex:1;position:relative}
 .rw-main{display:flex;flex-direction:column;min-width:0;min-height:0;flex:1}
 .rw-chart{flex:1 1 auto;min-width:0;overflow-y:auto;overflow-x:hidden;position:relative;padding:5px 12px 7px clamp(12px,3vw,18px)}
 .rw-rows{position:relative}
@@ -281,9 +281,8 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   .rw-head,.rw-row{grid-template-columns:var(--rw-head) 0px 1fr 0px}
   .rw-head{grid-template-columns:var(--rw-head) 0px 1fr}
   .rw-num,.rw-legend{display:none}
-  .rw{position:absolute;left:0;right:0;bottom:0;z-index:40;border-top:1px solid var(--border-strong)}
-  .rw:not(.is-collapsed){top:0;background:var(--bg-page)}
-  .rw-reader{position:absolute;inset:0;flex-basis:auto;border-left:0}
+  .rw-reader{position:absolute;inset:0;flex-basis:auto;border-left:0;z-index:5}
+  .rw-strip{height:28px}
 }
 @media (prefers-reduced-motion:reduce){
   .rw-pulse{animation:none}
@@ -653,7 +652,7 @@ function axis(t){ return Math.max(60, t / 0.88); }
 const rw = $("#rw"), rows = $("#rw-rows"), chart = $("#rw-chart"),
       cv = $("#rw-canvas"), hit = $("#rw-hit"), silo = $("#rw-silo"),
       stripSilo = $("#strip-silo"), reader = $("#rw-reader");
-let SEL = null, SEDIMENT_OPEN = false, DOCK_H = 246, COLLAPSED = false, USER_H = null;
+let SEL = null, SEDIMENT_OPEN = false, DOCK_H = 246, COLLAPSED = false, USER_H = null, FORCE_OPEN = false;
 let rowEls = new Map(), rowSig = "", geo = [], laneRect = {x:0,w:0};
 
 function rowPlan(st){
@@ -765,7 +764,8 @@ function fitHeight(){
   if(USER_H != null) return;
   let want = 6 /*grip*/ + 32 /*header*/ + 12 /*chart padding*/ + rows.scrollHeight;
   if(SEL) want = Math.max(want, 400);
-  const h = Math.round(clamp(want, 92, window.innerHeight * 0.52));
+  const cap = window.matchMedia("(max-width:860px)").matches ? 0.62 : 0.52;
+  const h = Math.round(clamp(want, 92, window.innerHeight * cap));
   if(Math.abs(h - DOCK_H) > 1){ DOCK_H = h; rw.style.height = DOCK_H + "px"; return true; }
   return false;
 }
@@ -1296,7 +1296,7 @@ $("#rw-strip").addEventListener("click", ()=>{
 /* narrow screens start collapsed */
 function applyNarrow(){
   const narrow = window.matchMedia("(max-width:860px)").matches;
-  if(narrow && !rw.dataset.init){ COLLAPSED = true; rw.classList.add("is-collapsed"); }
+  if(narrow && !rw.dataset.init && !FORCE_OPEN){ COLLAPSED = true; rw.classList.add("is-collapsed"); }
   rw.dataset.init = "1";
 }
 
@@ -1310,9 +1310,14 @@ function applyNarrow(){
   }
   if(q.get("sel")) SEL = q.get("sel");
   if(q.get("sediment") === "1") SEDIMENT_OPEN = true;
+  if(q.get("open") === "1") FORCE_OPEN = true;
 })();
 
 readTokens();
+(function(){
+  const set = ()=>document.documentElement.style.setProperty("--ph-h", $(".ph-bar").offsetHeight + "px");
+  set(); window.addEventListener("resize", set);
+})();
 applyNarrow();
 applyHeight();
 if(SEL){ reader.hidden = false; }
