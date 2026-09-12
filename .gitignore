@@ -31,3 +31,5 @@ __pycache__/
 scripts/qa-repro-*
 /tmp-qa-*
 .playwright-mcp/
+
+.worktrees/
