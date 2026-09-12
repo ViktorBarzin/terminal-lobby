@@ -230,10 +230,15 @@ bg_del() {
 # stopped with TaskStop, both left the list at once. Stop is the only event that
 # carries the field, which is also the only event that has to decide.
 #
-# Two deliberate limits. A WORKFLOW is never pruned: the two kinds seen in a real
-# payload are "shell" and "subagent", and whether a running Workflow appears at
-# all is unmeasured, so pruning one would risk reporting done in the middle of a
-# half-hour run. And a payload with no `background_tasks` field prunes nothing,
+# A running WORKFLOW is listed too, measured on 2.1.269 on 2026-09-12 by taking a
+# Stop two seconds into a live run: `{"id":"w7t7pnsug","type":"workflow",
+# "status":"running","name":"probe-slow"}`. Until that measurement existed a `w:`
+# token was exempt from the prune, since pruning one on a guess would have
+# reported done in the middle of a half-hour run. It is no longer a guess, so
+# every kind prunes the same way, and a workflow whose completion was absorbed
+# into the running turn finally drains.
+#
+# One limit remains: a payload with no `background_tasks` field prunes nothing,
 # so an older harness keeps the behaviour this script had before.
 #
 # The match is biased on purpose. `"id":"<id>"` can in principle hit something
@@ -251,13 +256,8 @@ bg_prune() {
     kept=""
     for t in $bg; do
         keep=0
-        case "$t" in
-        w:*) keep=1 ;;
-        *)
-            id="${t#*:}"
-            case "$payload" in *"\"id\":\"$id\""*) keep=1 ;; esac
-            ;;
-        esac
+        id="${t#*:}"
+        case "$payload" in *"\"id\":\"$id\""*) keep=1 ;; esac
         if [ "$keep" = 1 ]; then
             if [ -z "$kept" ]; then kept="$t"; else kept="$kept $t"; fi
         fi
@@ -333,18 +333,22 @@ agent="$jv"
 case "$event" in
 UserPromptSubmit)
     # A completing background task re-enters the session as a synthetic prompt
-    # carrying its own markup. That retires one id. Anything else is a person
-    # typing, which re-derives the set from nothing: with no expiry on an id,
-    # interacting with a session is what unsticks one whose set went stale
-    # (decided 2026-09-04). The accepted cost is that a prompt sent while a
-    # long workflow is genuinely running reports done early.
+    # carrying its own markup. That retires one id, promptly, before the turn it
+    # starts ever reaches Stop.
+    #
+    # A person typing retires nothing. Until 2026-09-12 it wiped the whole set,
+    # because with no expiry on an id, interacting with the session was the only
+    # way to unstick one that had gone stale. That crutch cost more than it
+    # saved: across the 105 workflow runs recorded on this box, 43 had a human
+    # prompt land mid-run, and each one reported the session done with the run
+    # still going — the bug Viktor reported ("the status for that session
+    # becomes green"). Talking to a session does not end the work it is doing,
+    # and bg_prune at the next Stop re-derives the set from the harness's own
+    # list, which is what the wipe was standing in for.
     case "$payload" in
     *'"prompt":"<task-notification>'*)
         json_tag task-id
         id_ok "$jv" && bg_del "$jv"
-        ;;
-    *)
-        bg_write ""
         ;;
     esac
     stamp running
@@ -364,17 +368,32 @@ PostToolUse)
     ;;
 Stop)
     # Stop is the main thread stopping talking, not the end of the turn's work.
-    # What the harness still lists decides; the accumulated set only carries the
-    # KIND of each id, which the payload does not give us for a workflow.
+    # What the harness still lists decides, for every kind: the ids match by id
+    # alone, so the kind stored in the token is only ever read by the sidebar.
     bg_prune
     bg_read
     if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
 SessionStart)
-    # A fresh claude owes nothing, whatever the option survived from the
-    # process that died in this session.
-    bg_write ""
-    stamp "done"
+    # A fresh claude owes nothing, whatever the option survived from the process
+    # that died in this session — but only two of the four sources are a fresh
+    # claude. All four confirmed on 2.1.269 (2026-09-12): `startup` and `resume`
+    # are a new process, whose predecessor's tasks died with it; `compact` and
+    # `clear` are the SAME process carrying on, with its background work
+    # untouched, so wiping there reported done over a live run. A long workflow
+    # all but guarantees a compaction — the longest real run on this box was
+    # 2h22m — and unlike a human prompt it needs nobody to type anything.
+    #
+    # An absent source reads as a new process, which is what this did before.
+    json_field source
+    case "$jv" in
+    compact | clear) ;;
+    *) bg_write "" ;;
+    esac
+    # Whatever survived decides the state, the same way Stop decides it: keeping
+    # the ids and then stamping done would paint the session green anyway.
+    bg_read
+    if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
 Notification)
     handle_notify
