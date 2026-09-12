@@ -279,12 +279,14 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   .rw-head-c,.rw-legend{display:none}
   .rw-row{
     grid-template-columns:1fr 124px;
-    grid-template-areas:"name num" "lane lane";
-    height:auto;align-items:center;padding-block:3px 4px;
+    grid-template-areas:"name num" "act act" "lane lane";
+    height:auto;align-items:center;padding-block:3px 5px;
   }
   .rw-name{grid-area:name}
   .rw-num{grid-area:num}
-  .rw-lane,.rw-phase{grid-area:lane;height:21px}
+  .rw-tool{grid-area:act;padding:0 4px 0 19px}
+  .rw-tool:empty{display:none}
+  .rw-lane,.rw-phase{grid-area:lane;height:14px}
   .rw-num{font-size:calc(10px * var(--tl-text-scale))}
   .rw-row .rw-desc{font-size:calc(13px * var(--tl-text-scale))}
   .rw-wf{height:auto;padding-block:3px;flex-wrap:wrap}
@@ -862,20 +864,16 @@ function updateRows(st, plan){
 
       const endX = s.settled ? x(a.t1) : nowX;
       const lab = toolLabelFor(s, st.t);
-      const pct = v => (100 * clamp(v, 0, W) / W) + "%";
       if(!lab.tn && !lab.ta){ tool.textContent = ""; }
       else if(s.settled){
-        /* settled: the label hangs off the point where the agent stopped, on
-           whichever side of that point has more room */
-        const roomR = Math.max(0, W - endX - 8), roomL = Math.max(0, endX - 6);
-        const right = roomR >= 170 || roomR >= roomL;
-        const room = Math.min(300, right ? roomR : roomL);
+        /* settled: the same column now carries the result, so the row keeps its shape */
         tool.innerHTML = '<span class="'+(lab.bad?"tn":"ta")+'"'+(lab.bad?' style="color:var(--danger)"':"")+'>'+
-                         truncRight(lab.ta||"", room) + '</span>';
+                         (lab.ta || "") + '</span>';
       } else {
-        /* running: the label ends at the live edge, where the work is happening */
-        const room = Math.min(290, Math.max(0, endX - 6));
-        const rest = Math.max(0, room - lab.tn.length*6.4 - (lab.tq ? lab.tq.length*6.4 + 6 : 0) - 8);
+        /* running: tool name, its argument, and how long that call has been the
+           current one once it passes 40s. The argument keeps its tail, which is
+           the half of a path that identifies it. CSS clips whatever still spills. */
+        const rest = Math.max(0, 228 - lab.tn.length*6.4 - (lab.tq ? lab.tq.length*6.4 + 6 : 0) - 14);
         tool.innerHTML = '<span class="tn">'+lab.tn+'</span>'+
           (lab.ta ? ' <span class="ta">'+truncLeft(lab.ta, rest)+'</span>' : "")+
           (lab.tq ? ' <span class="tq">'+lab.tq+'</span>' : "");
@@ -927,8 +925,6 @@ function updateRows(st, plan){
   $("#rw-counts").innerHTML = '<b>'+st.running+' running</b>'
     + (st.failed ? ' · <s>'+st.failed+' failed</s>' : "");
   $("#strip-counts").innerHTML = '<b>'+st.running+' running</b>'+(st.failed?' · '+st.failed+' failed':"");
-  $("#side-sub").textContent = st.running ? st.running+" agents running" : "idle";
-  $("#side-dot").className = "tl-dot " + (st.running ? "is-run" : "is-done");
 }
 function truncRight(str, px){
   const chars = Math.floor(px/6.2);
@@ -980,9 +976,8 @@ function draw(st, plan){
     if(p.type !== "agent") return;
     const g = geo.find(q=>q.id === p.s.a.id); if(!g) return;
     const s = p.s, a = s.a, col = laneColor(a);
-    const LAB = 11;
-    const th = clamp(Math.min(9, g.lh - LAB - 3), 5, 9);
-    const cy = g.ly + g.lh - th / 2 - 2;
+    const th = clamp(g.lh - 9, 6, 12);
+    const cy = g.ly + g.lh / 2;
     const x0 = x(a.t0), x1 = s.settled ? x(a.t1) : nowX;
 
     /* the run itself: only the past, never a track that implies a finish line */
@@ -1015,7 +1010,7 @@ function draw(st, plan){
     if(a.depth > 0 && a.parent){
       const pg = geo.find(q=>q.id === a.parent);
       if(pg){
-        const py = pg.ly + pg.lh - 6;
+        const py = pg.ly + pg.lh / 2;
         ctx.fillStyle = mix(col, .28);
         ctx.fillRect(Math.round(x0), Math.min(py,cy), 1, Math.abs(cy - py));
       }
@@ -1059,7 +1054,55 @@ function draw(st, plan){
   ctx.fillRect(Math.round(nowX), 0, 1, H);
 }
 
-/* concurrency silhouette: the shape of the whole run */
+/* the header strip is the time axis every lane below is read against */
+function drawRuler(c, st){
+  if(!c || !c.width) return;
+  const ctx = c.getContext("2d");
+  const dpr = Math.min(2, window.devicePixelRatio||1);
+  const W = c.width/dpr, H = c.height/dpr;
+  ctx.clearRect(0,0,W,H);
+  const span = axis(st.t), x = v => clamp((v/span)*W, 0, W);
+  const nowX = x(st.t);
+
+  ctx.fillStyle = mix(CSSV["--bg-card"], .55);
+  ctx.fillRect(nowX, 0, W - nowX, H);
+
+  /* phases keep their width here too, so the header shows which one is the wide one */
+  if(st.t >= WF.t0){
+    WF.phases.forEach(ph=>{
+      const a = x(ph.a), b = x(Math.min(ph.b, st.t));
+      if(b <= a) return;
+      const on = st.wfPhase && st.wfPhase.i === ph.i;
+      ctx.fillStyle = on ? mix(CSSV["--accent"], .10) : mix(CSSV["--border-strong"], .34);
+      ctx.fillRect(a, 0, b - a, H);
+    });
+  }
+
+  const steps = [15,30,60,120,300,600,1200];
+  const step = steps.find(v => span/v <= 7) || 1200;
+  ctx.font = '9px ' + '"JetBrains Mono", monospace';
+  ctx.textBaseline = "alphabetic";
+  for(let g = step; g < span; g += step){
+    const gx = Math.round(x(g));
+    ctx.fillStyle = mix(CSSV["--border-strong"], .95);
+    ctx.fillRect(gx, H - 5, 1, 5);
+    ctx.fillStyle = CSSV["--text-muted"];
+    const lb = g >= 60 ? (g/60) + "m" : g + "s";
+    if(gx + 26 < nowX) ctx.fillText(lb, gx + 3, H - 8);
+  }
+  ctx.fillStyle = mix(CSSV["--border"], 1);
+  ctx.fillRect(0, H - 1, W, 1);
+
+  ctx.fillStyle = mix(CSSV["--text-primary"], .32);
+  ctx.fillRect(Math.round(nowX), 0, 1, H);
+  ctx.fillStyle = CSSV["--text-primary"];
+  ctx.textAlign = "right";
+  ctx.fillText("now", nowX - 4, 9);
+  ctx.textAlign = "left";
+}
+
+/* concurrency silhouette: kept for the collapsed strip, where one small shape
+   is all there is room for */
 function drawSilo(c, st, compact){
   if(!c || !c.width) return;
   const ctx = c.getContext("2d");
@@ -1217,13 +1260,15 @@ function frame(forceDom){
       if(rows.scrollHeight !== (cv.height / Math.min(2,window.devicePixelRatio||1))) measure();
       updateRows(st, plan);
       draw(st, plan);
-      drawSilo(silo, st, false);
+      drawRuler(silo, st);
     } else {
       drawSilo(stripSilo, st, true);
       $("#strip-counts").innerHTML = '<b>'+st.running+' running</b>'+(st.failed?' · '+st.failed+' failed':"");
     }
     if(SEL) renderReader(false);
   }
+  $("#side-sub").textContent = st.running ? st.running+" agents running" : "idle";
+  $("#side-dot").className = "tl-dot " + (st.running ? "is-run" : "is-done");
   /* timeline marks */
   setMark("a1", st); setMark("a2", st); setMark("a3", st); setMark("bash", st);
   const wfm = $('[data-mark="wf"]');
