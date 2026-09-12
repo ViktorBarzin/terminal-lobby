@@ -24,6 +24,12 @@ var (
 	// client-observed latency can be split into network and server. The client
 	// stamps X-TL-Req and the middleware echoes it back to join the two.
 	timing = telemetry.NewTiming(diagEvents, telemetry.TimingOpts{})
+
+	// metrics is the Prometheus view of the same requests timing already sees.
+	// Wired here rather than inside NewTiming so the two sinks stay
+	// independent: the event side is disabled by a nil emitter, the scrape side
+	// must keep working regardless.
+	metrics = telemetry.NewMetrics()
 )
 
 // System sessions are not recorded
@@ -311,6 +317,13 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 			attrs["tl.build"] = clip(batch.Build, 40)
 		}
 		emitter.Emit(ev.Name, osUser, attrs)
+		// perf.rollup already carries the echo latency the browser measured.
+		// Copy it into Prometheus as well as Loki: the alert threshold will be
+		// set against a couple of weeks of the real distribution, and
+		// Prometheus keeps 26 weeks where Loki keeps 30 days.
+		if ev.Name == "perf.rollup" {
+			recordPerfRollup(metrics, osUser, attrs)
+		}
 		accepted++
 	}
 	if dropped > 0 {

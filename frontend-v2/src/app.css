@@ -5010,9 +5010,20 @@ body.tl-kb-up {
    the amber the degraded dot already uses. The same colour then means the same
    thing in both places. */
 .tl-spark {
+  /* A COLUMN, because the chart now has words under it. It was a 40px-high row
+     while the svg was the only child, and leaving it that way put the axis
+     labels alongside the chart and clipped them to the chart's height. The
+     40px moved on to the two things that draw in that space. */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* The empty state keeps the chart's height so the row does not jump when the
+   first readings arrive ten minutes after a restart. */
+.tl-spark-empty {
   display: flex;
   align-items: center;
-  width: 100%;
   height: 40px;
 }
 .tl-spark-svg {
@@ -5152,4 +5163,56 @@ body.tl-kb-up {
    disconnected" and a busy machine never is (ADR-0028). */
 .tl-rightnow-row[data-channel="machine"][data-status="degraded"] .tl-spark-svg {
   color: var(--state-running);
+}
+
+/* The chart's words. Muted and small: they are furniture for reading the line,
+   not readings in their own right, and the figures above the chart are where
+   the numbers live (ADR-0028). */
+.tl-rightnow-machine-chart-what {
+  margin: 10px 0 2px;
+  /* Scaled like every other size in here: a reader who has turned the text up
+     is exactly the reader who needs the chart explained. test/textzoom.test.ts
+     holds the whole stylesheet to this. */
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+
+.tl-spark-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+
+/* The rule's own label sits centred between the two time ends, which is where
+   the dotted line it describes runs. */
+.tl-spark-axis-rule {
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+/* The swatch is the ONLY thing tying this label to the rule it names: the rule
+   is a horizontal line whose height moves with the data, and the label sits in
+   a fixed row under the chart, so the two can be an inch apart. It therefore
+   has to look like the rule rather than merely sit near it — same colour token
+   (--state-running), same 3-and-3 dash rhythm, same 0.75 opacity as
+   .tl-spark-threshold above. A grey swatch under a coloured rule is a caption
+   for something else. */
+.tl-spark-axis-rule::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-top: 1px dashed var(--state-running);
+  opacity: 0.75;
+}
+
+.tl-spark-axis-start,
+.tl-spark-axis-end {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }

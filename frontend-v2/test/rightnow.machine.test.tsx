@@ -436,3 +436,43 @@ describe("This machine — while the panel is open", () => {
     expect(runCheck).not.toHaveBeenCalled();
   });
 });
+
+describe("This machine — the chart says what it is", () => {
+  /**
+   * Asked twice in a row what the chart showed, the honest answer was that
+   * nothing on screen said. The caption has to NAME THE METRIC: an earlier
+   * draft read "How close the busiest of the three is to its limit", which
+   * explains the height and never says close to a limit in what — stall, use,
+   * heat, queue depth.
+   */
+  it("names the metric, the rule, and both ends of the hour", () => {
+    const row = machineRow(reading({ state: "degraded", tier: "busy", worst: "io" }));
+    expect(text(row.querySelector(".tl-rightnow-machine-chart-what"))).toBe(
+      "Stall time, worst of processor, disk and memory",
+    );
+    expect(text(row.querySelector(".tl-spark-axis-start"))).toBe("1h ago");
+    expect(text(row.querySelector(".tl-spark-axis-rule"))).toBe("busy line");
+  });
+
+  /**
+   * The line is the worst of three at each sample, so the resource it draws
+   * changes along the hour. The `now` end names the one it is drawing THERE,
+   * taken from the last point rather than from the verdict's `worst` — those
+   * two legitimately differ, because `worst` follows the tier while each point
+   * carries whichever resource led at that sample.
+   */
+  it("names the resource the line is drawing at the now end", () => {
+    const row = machineRow(reading({ state: "degraded", tier: "busy", worst: "cpu" }), [
+      { at: 1, res: "cpu", pct: 12, ofLimit: 1.2 },
+      { at: 2, res: "io", pct: 61, ofLimit: 1.22 },
+    ]);
+    expect(text(row.querySelector(".tl-spark-axis-end"))).toBe("now · Disk");
+  });
+
+  /** With no points there is no resource to name, and no chart either, so the
+   *  axis row does not render at all. */
+  it("says only now when there is nothing drawn", () => {
+    const row = machineRow(reading({ state: "degraded", tier: "busy", worst: "io" }), []);
+    expect(row.querySelector(".tl-spark-axis")).toBeNull();
+  });
+});
