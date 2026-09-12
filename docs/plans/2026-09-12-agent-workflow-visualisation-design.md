@@ -116,20 +116,16 @@ That file lags the agents' own transcripts by 1 to 50 seconds, median around 10,
 so it is the structural view and the per-agent files are the live one.
 
 ```mermaid
-flowchart LR
-  subgraph disk["what Claude Code writes"]
-    P[("session .jsonl<br/>parent transcript")]
-    M[("subagents/<br/>agent-*.meta.json")]
-    A[("subagents/<br/>agent-*.jsonl<br/>450ms lag")]
-    W[("workflows/<br/>wf_*.json<br/>1-50s lag")]
-  end
-  P -->|"spawn: Agent tool_use"| SE[session-events]
-  M -->|"name, type, model,<br/>colour, spawnDepth"| SE
+flowchart TD
+  M[("agent-*.meta.json")]
+  A[("agent-*.jsonl<br/>450ms behind")]
+  W[("wf_*.json<br/>1 to 50s behind")]
+  M -->|"name, type, model,<br/>colour, depth"| SE
   A -->|"current tool, elapsed,<br/>tool count, tokens"| SE
   W -->|"phases, labels,<br/>per-agent state"| SE
-  SE -->|SSE| UI["text view<br/>agent panel"]
-  UI -->|"tap an agent"| DRILL["that agent's<br/>inner transcript"]
-  A -.->|"same files, read in full"| DRILL
+  SE["session-events"] -->|SSE| UI["the agent panel"]
+  UI -->|"tap an agent"| D["that agent's<br/>inner transcript"]
+  A -.->|"the same file,<br/>read in full"| D
 ```
 
 ### Scale, from real runs on this box
