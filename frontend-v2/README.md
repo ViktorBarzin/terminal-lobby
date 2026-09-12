@@ -296,10 +296,13 @@ src/
     usage.ts             What the lobby cost this device, in wire bytes: three
                          buckets measured from Navigation/Resource Timing, two
                          (ttyd WS, SSE) modelled by diag.js and labelled as such
-    status.ts            Connection status, PURE (ADR-0016): five channels
-                         (terminal, transcript, session list, notifications,
-                         build) in three states, plus `unknown` — which every
-                         rule skips rather than counting as health or as fault.
+    status.ts            Connection status, PURE (ADR-0016, ADR-0027): six
+                         channels (terminal, transcript, session list,
+                         notifications, build, this machine) in three states,
+                         plus `unknown` — which every rule skips rather than
+                         counting as health or as fault. Five are about the
+                         client; `this machine` is the box, and it reaches
+                         `degraded` and never `down`.
                          Owns worst-of, the badge's word, the panel's verdict,
                          the per-channel mappings and `readConn`, the parser for
                          the terminal frame's `tl-conn` message
@@ -597,8 +600,8 @@ src/
     StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
                          only when something is wrong. One component in two
                          places, each SCOPED to the channels its surface can
-                         honestly report — the session bar has all five, the
-                         sidebar header the three a list screen can answer for.
+                         honestly report — the session bar has all six, the
+                         sidebar header the four a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
@@ -764,6 +767,11 @@ src/
                          no taps at all and Ctrl could not reach a letter
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
     BellIcon.tsx         Header notification-bell glyph (on/off)
+    Sparkline.tsx        One polyline over a series of numbers, drawn as inline
+                         SVG because this project carries no charting library.
+                         Draws the hour of machine stall under Settings →
+                         Network → Right now (ADR-0027), and survives the short
+                         series a service restart leaves behind
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
                          clipboard, file-text, rotate-cw) — never emoji
     Toaster.tsx          Top-right toast stack

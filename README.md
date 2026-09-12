@@ -76,6 +76,28 @@ set `X-Forwarded-User`.
 > `TL_BIND`, so keep 7681 reachable from the proxy alone: narrow `TL_BIND`, or
 > leave it wide and restrict 7681 at the firewall or the ingress.
 
+Six more variables set when the lobby calls the box busy. It reads
+`/proc/pressure` every 10 seconds and shows one `This machine` row in Settings
+under Network, which tells a slow box apart from a slow connection. Each number
+is a percentage of a ten-minute window that tasks spent stalled waiting for the
+resource; cross the first and the row turns amber, cross the `_VERY_` one and it
+says typing is slow right now rather than may feel slow. All six ship commented
+out, so leaving them alone keeps the values the binary compiles in.
+
+| variables | defaults | what they measure |
+|---|---|---|
+| `TL_HEALTH_CPU_PCT`, `TL_HEALTH_CPU_VERY_PCT` | `10`, `20` | CPU stall, time at least one task waited to run |
+| `TL_HEALTH_IO_PCT`, `TL_HEALTH_IO_VERY_PCT` | `50`, `70` | IO stall, time every non-idle task waited on disk |
+| `TL_HEALTH_MEM_PCT`, `TL_HEALTH_MEM_VERY_PCT` | `10`, `20` | memory stall, time every non-idle task waited on memory |
+
+Those defaults are one machine's, calibrated against 696 hours of the devvm this
+was built on, where the three together are crossed for 17 hours, 2.44% of the
+time. Another box's disks and cores put it somewhere else, so watch the row for
+a week against how the machine actually feels before moving anything.
+[docs/deployment.md](docs/deployment.md) has the measurements and how to check
+your own. Where the kernel has no `/proc/pressure`, the row falls back to load
+average per core and memory headroom and says on screen that it has.
+
 ## Single-user and multi-user
 
 Single-user is the default: one account, no user map, no sudo, no ACLs. The

@@ -30,6 +30,13 @@ func handleSessions(w http.ResponseWriter, r *http.Request) {
 	// shared across one user's devices, and two devices on different networks
 	// must not read each other's answer (netinfo.go).
 	setNetworkHeader(w, r)
+	// And whether THE BOX is stalling, on the same poll and for the same
+	// reason: the sixth connection channel costs no request of its own
+	// (machine.go). Set BEFORE the cache lookup for a second reason too — the
+	// body is up to a poll old by the time it is served, and a verdict that
+	// aged with it would be the one number on screen that lags the box it
+	// describes.
+	setMachineHeader(w)
 
 	if body, ok := sessionsCacheInstance.get(osUser); ok {
 		w.Write(body)

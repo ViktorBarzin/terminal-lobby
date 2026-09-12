@@ -21,7 +21,13 @@
  *    matches the cap the SSE client already puts on its own probe.
  */
 
-import { SESSION_CHANNELS, type Channel, type ChannelId, type ChannelState } from "./status";
+import {
+  SESSION_CHANNELS,
+  type Channel,
+  type ChannelId,
+  type ChannelState,
+  type MachineTier,
+} from "./status";
 
 /** Matches PROBE_TIMEOUT_MS in sse/client.ts, for the same reason. */
 export const CHECK_TIMEOUT_MS = 5000;
@@ -46,6 +52,16 @@ export interface CheckOutcome {
   detail: string;
   /** how long this probe took, in ms. */
   ms: number;
+  /**
+   * How busy the box is, carried through from the machine probe's row.
+   *
+   * It is here because the machine is the one channel whose sentence hangs on
+   * something other than its state (status.ts SENTENCE): a check that reported
+   * only `degraded` would put a very busy box back to "may feel slow" for as
+   * long as its answer stood. Absent on the other five, whose states already
+   * carry that distinction.
+   */
+  tier?: MachineTier;
 }
 
 export interface RunCheckOptions {
@@ -107,6 +123,7 @@ export async function runCheck(
         state: row.state,
         detail: row.detail,
         ms: Math.max(0, Math.round(now() - started)),
+        ...(row.tier ? { tier: row.tier } : {}),
       };
       onResult(out);
       return out;

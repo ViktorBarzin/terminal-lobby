@@ -44,6 +44,14 @@ function control(over: Partial<ConnectionControl> = {}): ConnectionControl {
     runCheck: async () => {},
     repairLabel: () => null,
     repair: () => {},
+    // The box has said nothing by default, which is what every surface sees
+    // for the first seconds of a page and for the whole life of one talking to
+    // a server too old to send the reading. What the panel does once it HAS
+    // spoken is rightnow.machine.test.tsx; this file keeps the sixth row on the
+    // quiet path so the five it is testing stay the subject.
+    machine: () => null,
+    machineSeries: () => [],
+    watchMachine: () => () => {},
     ...over,
   };
 }
@@ -100,7 +108,7 @@ describe("the badge", () => {
       <StatusDot channels={() => ALL_FINE} only={SESSION_CHANNELS} onOpen={onOpen} />
     ));
     const btn = container.querySelector<HTMLButtonElement>(".tl-status-dot")!;
-    expect(btn.getAttribute("aria-label")).toBe("Everything is connected.");
+    expect(btn.getAttribute("aria-label")).toBe("Everything is working.");
     btn.click();
     expect(onOpen).toHaveBeenCalledOnce();
     cleanup();
@@ -137,7 +145,7 @@ describe("the Right now panel", () => {
   it("leads with the verdict, not the table", () => {
     const { container } = render(() => <RightNow conn={control()} />);
     expect(container.querySelector(".tl-rightnow-verdict")?.textContent).toBe(
-      "Everything is connected.",
+      "Everything is working.",
     );
     cleanup();
   });
@@ -226,8 +234,14 @@ describe("the Right now panel", () => {
     cleanup();
   });
 
-  /** The panel is a readout with buttons, and the buttons are the only thing
-   *  that changes anything. Opening it must never reconnect a channel. */
+  /**
+   * The panel is a readout with buttons, and the buttons are the only thing
+   * that changes anything. Opening it must never reconnect a channel.
+   *
+   * Opening it DOES start the machine's faster poll, which is a read and not a
+   * repair: it asks the box how busy it is and touches nothing the reader came
+   * to look at.
+   */
   it("changes nothing by being opened", () => {
     const repair = vi.fn();
     const runCheck = vi.fn(async () => {});
