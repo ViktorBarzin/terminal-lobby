@@ -24,6 +24,12 @@ var (
 	// client-observed latency can be split into network and server. The client
 	// stamps X-TL-Req and the middleware echoes it back to join the two.
 	timing = telemetry.NewTiming(diagEvents, telemetry.TimingOpts{})
+
+	// metrics is the Prometheus view of the same requests timing already sees.
+	// Wired here rather than inside NewTiming so the two sinks stay
+	// independent: the event side is disabled by a nil emitter, the scrape side
+	// must keep working regardless.
+	metrics = telemetry.NewMetrics()
 )
 
 // System sessions are not recorded
