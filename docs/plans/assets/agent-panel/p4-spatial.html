@@ -36,7 +36,6 @@
   /* runway geometry */
   --rw-head:252px;
   --rw-num:124px;
-  --rw-act:250px;
   --rw-lane-h:24px;
 }
 *{box-sizing:border-box}
@@ -146,7 +145,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
 /* header */
 .rw-head{
-  display:grid;grid-template-columns:var(--rw-head) 1fr calc(var(--rw-act) + var(--rw-num));
+  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-num);
   align-items:stretch;gap:0;padding:0 12px 0 clamp(12px,3vw,18px);
   border-bottom:1px solid var(--border);flex:0 0 32px;height:32px;overflow:hidden;
 }
@@ -172,7 +171,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .rw-hit{position:absolute;top:0;left:0;cursor:crosshair}
 
 .rw-row{
-  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-act) var(--rw-num);
+  display:grid;grid-template-columns:var(--rw-head) 1fr var(--rw-num);
   align-items:center;height:var(--rw-lane-h);position:relative;width:100%;text-align:left;
 }
 button.rw-row:hover{background:var(--hover-tint)}
@@ -186,10 +185,11 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
 .rw-lane{position:relative;height:100%;min-width:0}
 .rw-row.in-wf .rw-name{box-shadow:inset 1px 0 0 var(--border-strong);padding-left:7px}
 .rw-tool{
-  white-space:nowrap;font-family:var(--font-mono);
-  font-size:calc(10.5px * var(--tl-text-scale));line-height:1;
-  overflow:hidden;text-overflow:ellipsis;min-width:0;
-  padding:0 10px 0 12px;pointer-events:none;position:relative;z-index:2;
+  position:absolute;top:0;left:0;right:0;white-space:nowrap;font-family:var(--font-mono);
+  font-size:calc(10.5px * var(--tl-text-scale));line-height:calc(11px * var(--tl-text-scale));
+  height:calc(11px * var(--tl-text-scale));overflow:hidden;
+  pointer-events:none;z-index:2;
+  text-shadow:0 0 3px var(--bg-page),0 0 2px var(--bg-page),0 1px 2px var(--bg-page);
 }
 .rw-tool .tn{color:var(--text-primary)}
 .rw-tool .ta{color:var(--text-muted)}
@@ -280,7 +280,7 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   .rw-head{grid-template-columns:1fr auto}
   .rw-head-c,.rw-legend{display:none}
   .rw-row{
-    grid-template-columns:1fr 92px;
+    grid-template-columns:1fr 106px;
     grid-template-areas:"name num" "lane lane";
     height:auto;align-items:center;padding-block:3px 4px;
   }
@@ -702,8 +702,8 @@ function buildRow(p){
     name.appendChild(el("span","rw-more","›"));
     b.appendChild(name);
     const lane = el("div","rw-lane");
+    lane.appendChild(el("div","rw-tool"));
     b.appendChild(lane);
-    b.appendChild(el("div","rw-tool"));
     b.appendChild(el("div","rw-num"));
     if(a.group === "wf") b.classList.add("in-wf");
     b.addEventListener("click", ()=>select(a.id));
@@ -732,7 +732,6 @@ function buildRow(p){
     n.innerHTML = '<span class="rw-glyph" style="color:var(--state-awaiting)">◇</span><span class="rw-desc"></span>';
     d.appendChild(n);
     d.appendChild(el("div","rw-lane"));
-    d.appendChild(el("div","rw-tool"));
     d.appendChild(el("div","rw-num"));
     return d;
   }
@@ -743,7 +742,6 @@ function buildRow(p){
   n.innerHTML = '<span class="rw-glyph" style="color:var(--success)">✓</span><span class="rw-desc"></span><span class="rw-more">›</span>';
   b.appendChild(n);
   b.appendChild(el("div","rw-lane"));
-  b.appendChild(el("div","rw-tool"));
   b.appendChild(el("div","rw-num"));
   b.addEventListener("click", ()=>{ SEDIMENT_OPEN = !SEDIMENT_OPEN; rowSig = ""; frame(true); });
   return b;
@@ -859,14 +857,23 @@ function updateRows(st, plan){
 
       const endX = s.settled ? x(a.t1) : nowX;
       const lab = toolLabelFor(s, st.t);
+      const pct = v => (100 * clamp(v, 0, W) / W) + "%";
       if(!lab.tn && !lab.ta){ tool.textContent = ""; }
       else if(s.settled){
-        /* settled: label sits to the right of where the agent stopped */
-        tool.innerHTML = '<span class="'+(lab.bad?"tn":"ta")+'" style="'+(lab.bad?"color:var(--danger)":"")+'">'+
-                         (lab.ta||"") + '</span>';
+        /* settled: the label sits to the right of the point where the agent stopped */
+        tool.style.textAlign = "left";
+        tool.style.paddingLeft = pct(endX + 5);
+        tool.style.paddingRight = "0";
+        const room = Math.max(0, W - endX - 8);
+        tool.innerHTML = '<span class="'+(lab.bad?"tn":"ta")+'"'+(lab.bad?' style="color:var(--danger)"':"")+'>'+
+                         truncRight(lab.ta||"", room) + '</span>';
       } else {
-        /* running: label ends at the live edge */
-        const rest = Math.max(0, 230 - lab.tn.length*6.4 - (lab.tq?lab.tq.length*6.4+6:0) - 6);
+        /* running: the label ends at the live edge, where the work is happening */
+        tool.style.textAlign = "right";
+        tool.style.paddingRight = pct(W - endX + 4);
+        tool.style.paddingLeft = "0";
+        const room = Math.min(290, Math.max(0, endX - 6));
+        const rest = Math.max(0, room - lab.tn.length*6.4 - (lab.tq ? lab.tq.length*6.4 + 6 : 0) - 8);
         tool.innerHTML = '<span class="tn">'+lab.tn+'</span>'+
           (lab.ta ? ' <span class="ta">'+truncLeft(lab.ta, rest)+'</span>' : "")+
           (lab.tq ? ' <span class="tq">'+lab.tq+'</span>' : "");
@@ -966,13 +973,17 @@ function draw(st, plan){
     });
   }
 
+  if(window.__DBG){ geo.forEach(g=>{ ctx.fillStyle="rgba(255,0,255,.9)"; ctx.fillRect(0,g.ly,70,1);
+      ctx.fillStyle="rgba(0,255,0,.9)"; ctx.fillRect(0,g.ly+g.lh-1,70,1);
+      ctx.fillStyle="rgba(255,255,0,.9)"; ctx.fillRect(70,g.y,40,1); }); }
   /* rows */
   plan.forEach(p=>{
     if(p.type !== "agent") return;
     const g = geo.find(q=>q.id === p.s.a.id); if(!g) return;
     const s = p.s, a = s.a, col = laneColor(a);
     const LAB = 11;
-    const cy = g.ly + LAB + (g.lh - LAB) / 2;
+    const th = clamp(Math.min(9, g.lh - LAB - 3), 5, 9);
+    const cy = g.ly + g.lh - th / 2 - 2;
     const x0 = x(a.t0), x1 = s.settled ? x(a.t1) : nowX;
 
     /* the run itself: only the past, never a track that implies a finish line */
@@ -987,7 +998,6 @@ function draw(st, plan){
     }
 
     /* one tick per tool call */
-    const th = Math.min(9, g.lh - LAB - 3);
     ctx.fillStyle = s.settled ? mix(col, .5) : (g.lh < 23 ? mix(col, .85) : col);
     for(const e of a.events){
       if(e.t > (s.settled ? a.t1 : st.t)) break;
@@ -1006,7 +1016,7 @@ function draw(st, plan){
     if(a.depth > 0 && a.parent){
       const pg = geo.find(q=>q.id === a.parent);
       if(pg){
-        const py = pg.ly + 11 + (pg.lh - 11) / 2;
+        const py = pg.ly + pg.lh - 6;
         ctx.fillStyle = mix(col, .28);
         ctx.fillRect(Math.round(x0), Math.min(py,cy), 1, Math.abs(cy - py));
       }
@@ -1324,6 +1334,7 @@ function applyNarrow(){
   if(q.get("sel")) SEL = q.get("sel");
   if(q.get("sediment") === "1") SEDIMENT_OPEN = true;
   if(q.get("open") === "1") FORCE_OPEN = true;
+  if(q.get("dbg") === "1") window.__DBG = true;
 })();
 
 readTokens();

@@ -354,7 +354,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 }
 .ag-el{color:color-mix(in srgb,var(--text-primary) 62%,transparent)}
 .ag-go{
-  color:var(--text-muted);opacity:.28;text-align:center;
+  color:var(--text-muted);opacity:.45;text-align:center;
   font-size:calc(12px * var(--tl-text-scale,1));
 }
 .tl-ag:hover .ag-go,.tl-ag:focus-visible .ag-go{opacity:1;color:var(--text-primary)}
@@ -367,6 +367,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
   color:var(--text-muted);border-radius:5px;
 }
 .tl-fold:hover{background:var(--hover-tint);color:var(--text-primary)}
+.tl-fold .tick,.tl-fold .cnt{flex:0 0 auto;white-space:nowrap}
 .tl-fold .tick{color:var(--success)}
 .tl-fold .names{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;opacity:.72}
 .tl-fold .car{margin-inline-start:auto;flex:0 0 auto;opacity:.5}
@@ -413,8 +414,12 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 /* --------------------------- drill-in inset ----------------------- */
 .tl-drill{
   border:1px solid var(--border-strong); border-radius:calc(var(--radius) - 2px);
-  background:var(--bg-page); overflow:hidden;
+  background:var(--bg-page); overflow:hidden; position:relative;
   margin-block:5px 7px; margin-inline:0;
+}
+.tl-drill::after{
+  content:"";position:absolute;inset-inline:1px;inset-block-end:1px;height:22px;
+  background:linear-gradient(to top,var(--bg-page),transparent);pointer-events:none;
 }
 .tl-drill-head{
   display:flex;align-items:center;gap:9px;
@@ -906,7 +911,7 @@ var ARGS={
   ListAgents:['team session-408579e1']
 };
 var OUT={
-  Bash:"web/src/text-view/Timeline.tsx:212:  const depth = rec.spawnDepth ?? 0\nweb/src/text-view/ToolRow.tsx:88:   if (depth > 0) pad = depth * 16\n2 matches",
+  Bash:"web/src/text-view/Timeline.tsx\nweb/src/text-view/ToolRow.tsx\nweb/src/text-view/index.ts\n3 files",
   Read:"  1  import { For, Show, createMemo } from \"solid-js\";\n  2  import { ToolRow } from \"./ToolRow\";\n  3\n  4  export function Timeline(props: TimelineProps) {\n  5    const rows = createMemo(() => group(props.records));\n ...  612 lines total",
   Grep:"3 files, 7 matches. The strip is built in Timeline.tsx:441 and\nonly ever counts, it never reads the subagent files.",
   WebFetch:"Subagents write to subagents/agent-<name>-<id>.jsonl beside the\nparent transcript. A .meta.json lands first and carries agentType,\ndescription, spawnDepth, model and color.",
@@ -1078,7 +1083,7 @@ function foldLine(ok,key,near){
   var open=isOpen(key,false);
   var names=ok.map(function(a){return a.s.desc;}).join(", ");
   return '<button class="tl-fold" type="button" data-fold="'+key+'" aria-expanded="'+open+'">'+
-    '<span class="tick">&#10003;</span><span>'+ok.length+" done</span>"+
+    '<span class="tick">&#10003;</span><span class="cnt">'+ok.length+" done</span>"+
     '<span class="names">'+esc(names)+"</span>"+
     '<span class="car">'+(open?"&#9662;":"&#9656;")+"</span></button>"+
     (open?ok.map(function(a){return agentRow(a,near&&drillOpen!==a.s.id);}).join(""):"");
@@ -1315,7 +1320,7 @@ function updateRunhead(){
   rh._target=target;
 }
 function topOf(el){
-  return el.getBoundingClientRect().top-tl.getBoundingClientRect().top+tl.scrollTop-10;
+  return el.getBoundingClientRect().top-tl.getBoundingClientRect().top+tl.scrollTop-16;
 }
 function goToBlock(el,smooth){
   if(!el)return;
