@@ -201,9 +201,7 @@ export const PromptField: Component<{
     const item = menu.children[i] as HTMLElement | undefined;
     if (!item) return;
     const top =
-      item.getBoundingClientRect().top -
-      menu.getBoundingClientRect().top +
-      menu.scrollTop;
+      item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
   /** Where ↑ has walked to in history; -1 is "not browsing". */
@@ -386,9 +384,7 @@ export const PromptField: Component<{
     ta.focus();
   };
 
-  onMount(() =>
-    props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }),
-  );
+  onMount(() => props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }));
 
   const removeAt = (path: string): void => {
     setTray((current) => current.filter((a) => a.path !== path));
@@ -464,7 +460,10 @@ export const PromptField: Component<{
     // old `if (!t) return` would have swallowed a photo sent on its own.
     const message = props.pendingAttachments
       ? raw.trim()
-      : composeMessage(raw, held.map((a) => a.path));
+      : composeMessage(
+          raw,
+          held.map((a) => a.path),
+        );
     if (!message && held.length === 0) return;
     clear();
     void props.onSend(message, held).then((ok) => {

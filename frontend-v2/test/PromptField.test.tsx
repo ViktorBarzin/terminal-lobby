@@ -166,7 +166,13 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
     ));
     parkDraft("k7m2q9x4tp0v", {
       text: "look at this",
-      attachments: [{ path: "/var/lib/clipboard-store/wizard/k7m2q9x4tp0v/a.png", name: "a.png", kind: "image" }],
+      attachments: [
+        {
+          path: "/var/lib/clipboard-store/wizard/k7m2q9x4tp0v/a.png",
+          name: "a.png",
+          kind: "image",
+        },
+      ],
       at: 2,
     });
     expect(field(container).value).toBe("look at this");

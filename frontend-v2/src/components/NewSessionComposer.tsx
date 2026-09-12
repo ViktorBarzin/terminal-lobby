@@ -205,9 +205,7 @@ export const NewSessionComposer: Component<{
   const registerFocus = (fn: () => void): void => void (focusField = fn);
   let focusField: () => void = () => nameEl?.focus();
   window.addEventListener("tl:focus-new-session", onFocusReq);
-  onCleanup(() =>
-    window.removeEventListener("tl:focus-new-session", onFocusReq),
-  );
+  onCleanup(() => window.removeEventListener("tl:focus-new-session", onFocusReq));
 
   // ---- files with nowhere to go yet ---------------------------------------
   // Held, not uploaded. There is no session to upload INTO until Enter is
@@ -286,10 +284,7 @@ export const NewSessionComposer: Component<{
    * it: everything it needs is read out of props first, and it reports through
    * the toaster rather than back into a field that is no longer on screen.
    */
-  const submit = async (
-    text: string,
-    tray: readonly DraftAttachment[],
-  ): Promise<boolean> => {
+  const submit = async (text: string, tray: readonly DraftAttachment[]): Promise<boolean> => {
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
@@ -302,9 +297,7 @@ export const NewSessionComposer: Component<{
     // look for it. What that replaced was a POST that drove the CLI's own
     // picker after the session was up, which cost about four seconds and put a
     // `/model` line in a conversation that had not started.
-    const files = tray
-      .map((a) => held.get(a.path))
-      .filter((f): f is File => f !== undefined);
+    const files = tray.map((a) => held.get(a.path)).filter((f): f is File => f !== undefined);
     held.clear();
     // Everything the delivery needs, read while this component is still on
     // screen. It runs after the create has selected the session and unmounted
@@ -378,12 +371,7 @@ export const NewSessionComposer: Component<{
               <div class="tl-composer-bar">
                 <div class="tl-bar-left">{controls()}</div>
                 <div class="tl-bar-right">
-                  <button
-                    type="button"
-                    class="tl-send"
-                    disabled={!namable()}
-                    onClick={submitName}
-                  >
+                  <button type="button" class="tl-send" disabled={!namable()} onClick={submitName}>
                     Send
                   </button>
                 </div>
@@ -400,8 +388,8 @@ export const NewSessionComposer: Component<{
             placeholder="What do you want to do?"
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
-          commands={commands()}
-          commandsOk={commandsOk()}
+            commands={commands()}
+            commandsOk={commandsOk()}
             // A desktop lands here ready to type. A coarse pointer deliberately
             // does not: this is the phone's LANDING view, and focusing it would
             // throw a keyboard over the screen before anyone asked for one.
@@ -444,9 +432,7 @@ export const NewSessionComposer: Component<{
               the model beside it. Ungrouped is already a noun and needs no
               preposition. */}
           <option value="">Ungrouped</option>
-          <For each={projects()}>
-            {(p) => <option value={p.name}>in {p.name}</option>}
-          </For>
+          <For each={projects()}>{(p) => <option value={p.name}>in {p.name}</option>}</For>
         </select>
         <select
           class="tl-new-cmd"
@@ -490,9 +476,7 @@ export const NewSessionComposer: Component<{
         class="tl-new-cmd"
         aria-label={label}
         value={choice(h)[field]}
-        onChange={(e) =>
-          props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))
-        }
+        onChange={(e) => props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))}
       >
         <For each={optionsFor(h, field)}>
           {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
@@ -548,9 +532,5 @@ async function sendFirstPrompt(o: {
   // parkDraft, not saveDraft: that composer is already mounted and has already
   // read storage, so it has to be TOLD (store/drafts.ts).
   parkDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
-  showToast(
-    "Couldn't send the first prompt — it is waiting in the composer",
-    "error",
-    8000,
-  );
+  showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
 }
