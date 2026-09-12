@@ -79,6 +79,22 @@ no longer somewhere you have to scroll the list to reach. Scrolling the list or
 turning the phone closes the menu, the same as pressing Escape or clicking away
 from it.
 
+## How wide the session list is
+
+The list starts at 260px and a title can run to 64 characters, so the longer
+ones are cut short. Drag the line between the list and the session to make it
+as wide as you need: anywhere from 200px to 560px, with the session pane
+always keeping 360px of what is left. Double-click that line to go back to
+260px. Tab to it and the arrows move it 16px at a time, `Home` and `End` take
+it to the two ends.
+
+The width is remembered in this browser rather than on the account, since a
+27-inch monitor and a laptop do not want the same column. Open a window too
+narrow to hold both at that width and the list gives the room back until the
+window grows again. There is no line to drag when the list is collapsed, on a
+window under 720px where the two panes stack, or on a touch screen, where a
+7px target is not one.
+
 ## Undo
 
 `Ctrl+Z` (`Cmd+Z` on a Mac) takes back the last change you made to the sidebar,
