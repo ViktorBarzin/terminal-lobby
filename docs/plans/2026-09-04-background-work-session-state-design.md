@@ -243,8 +243,9 @@ with every hook event logging its stdin:
 The last cell is the load-bearing one: a teammate's answer reaches the lead over
 the team's own channel, so no `UserPromptSubmit` fires, and a `Stop` taken 3m30s
 after the teammate had answered still listed it as running while the harness's
-own bar showed it *idle*. 85 of the 136 `Agent` launches in this box's
-transcripts that week were teammates, so this was the majority path.
+own bar showed it *idle*. 97 of the 151 `Agent` launches in wizard's own
+transcripts over the three days to 2026-09-12 were teammates, so this was the
+majority path.
 
 Two events answer it, and wiring them is the `managed-settings.json` change this
 design had declined to make: `SubagentStart` fires on every activation — the

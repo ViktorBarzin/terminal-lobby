@@ -440,6 +440,17 @@ can retire.
 _Avoid_: pending tasks, background jobs (both read as shell job control),
 and any wording that makes it a fourth **Session state**
 
+**Teammate**:
+A named agent the session's Claude spawned that stays alive between
+tasks, so the same one can be given more work. It is the Agent tool
+called with a `name`, and the harness draws the team in a bar of its own.
+A teammate is **Outstanding work** only while it is working: `SubagentStart`
+says it started, which happens at the spawn and again every time it is
+messaged, and `TeammateIdle` says it stopped. The sidebar counts one as an
+agent, since that is the word a person reading the card wants.
+_Avoid_: subagent (the background kind, which reports once and ends),
+team member (a **Member** belongs to a **Project**)
+
 **Session images**:
 The per-(user, session) store of images the session visually touched —
 pasted, uploaded, drag-dropped, or rendered via `show-image` — owned by

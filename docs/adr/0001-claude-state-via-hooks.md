@@ -137,8 +137,8 @@ resulting state itself — see "Interrupts have no hook" below.
   channel and fires no `UserPromptSubmit` at all; and the registry lists
   a teammate as `running` for as long as it EXISTS, measured three times
   and last 3m30s after it had answered, with the harness's own bar
-  showing it idle. 85 of the 136 `Agent` launches in this box's
-  transcripts that week were that shape.
+  showing it idle. 97 of the 151 `Agent` launches in wizard's own
+  transcripts over the three days to 2026-09-12 were that shape.
 
   So two events are now wired, which is the infra change the 2026-09-04
   design had declined to make: `SubagentStart`, which fires on every
