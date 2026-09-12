@@ -224,3 +224,47 @@ func TestTimingKeepsTheResponseWriterFlushable(t *testing.T) {
 		t.Fatal("Flush did not reach the underlying ResponseWriter")
 	}
 }
+
+// Most handlers in this service answer in well under a millisecond, and
+// Duration.Milliseconds() truncates toward zero, so recording it made every
+// fast request a 0 and the latency histogram flat for exactly the fast path
+// it exists to measure. Caught by scraping a real binary, not by a test: the
+// existing tests all used whole-millisecond inputs.
+//
+// Driven off the injectable clock rather than a real sleep. A first version of
+// this test used time.Sleep(300us) and passed against the BUGGY code, because
+// the handler overhead pushed the total past 1 ms and truncation returned 1
+// instead of 0. A test whose outcome depends on how fast the machine is does
+// not test anything.
+func TestSubMillisecondRequestsAreNotRecordedAsZero(t *testing.T) {
+	now := time.Unix(0, 0)
+	m := NewMetrics()
+	tm := NewTiming(nil, TimingOpts{Now: func() time.Time { return now }})
+	tm.Metrics = m
+
+	h := tm.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		now = now.Add(300 * time.Microsecond) // 0.3 ms, truncates to 0
+	}))
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/whoami", nil))
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	body := rec.Body.String()
+	// Whole-line match. A Contains check for "... 0" also matches "... 0.3",
+	// which is how the first version of this assertion passed against the fix
+	// it was written to prove.
+	const zero = `tl_http_request_duration_ms_sum{endpoint="/whoami"} 0`
+	const want = `tl_http_request_duration_ms_sum{endpoint="/whoami"} 0.3`
+	var sum string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, `tl_http_request_duration_ms_sum{endpoint="/whoami"}`) {
+			sum = line
+		}
+	}
+	if sum == zero {
+		t.Fatalf("a 0.3 ms request was recorded as 0 ms:\n%s", body)
+	}
+	if sum != want {
+		t.Errorf("want %q, got %q", want, sum)
+	}
+}

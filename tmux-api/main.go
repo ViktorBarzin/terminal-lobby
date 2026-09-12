@@ -314,6 +314,10 @@ func main() {
 		log.Printf("internal token init failed (shared-attach kick recording disabled): %v", err)
 	}
 
+	// /metrics is registered before the rest so it is obvious it is not one of
+	// the lobby's API routes. It carries no auth: it exposes counts and timings,
+	// never session names or content, and the listener is not public.
+	http.HandleFunc("/metrics", handleMetrics)
 	http.HandleFunc("/sessions", handleSessions)
 	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
 	// prefers the longer pattern, but stating the order makes the intent plain.
@@ -399,6 +403,7 @@ func main() {
 		addr = a
 	}
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
+	timing.Metrics = metrics
 	go timing.Run(nil)
 	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
 }
