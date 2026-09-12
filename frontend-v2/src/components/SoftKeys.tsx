@@ -61,6 +61,41 @@ const TAP_COMMIT_MAX_TRAVEL_PX = 10;
 const REPEAT_DELAY_MS = 500;
 const REPEAT_INTERVAL_MS = 60;
 
+/**
+ * The toolbar element that currently owns `--sk-h`, or null while no row is
+ * publishing one.
+ *
+ * MODULE-LEVEL BECAUSE THE THING BEING OWNED IS. `--sk-h` is one CSS custom
+ * property on `documentElement`, and every row that mounts writes it. The
+ * property is a STRING and carries no identity of its own, so `lib/ownwhile.ts`'s
+ * trick — "restore the previous value only if the handle is still MY value" —
+ * cannot be played on it: two rows 44px tall write the same eight characters and
+ * neither can tell its own write from the other's. So the identity lives beside
+ * the property instead, and it is the element of whichever row claimed it last.
+ *
+ * WHY A ROW CAN LOSE A RACE IT DOES NOT KNOW IT IS IN. A coarse pointer wider
+ * than 720px — a landscape tablet at 1024x768 — sits inside `coarse()` and
+ * outside `flip()` (mobile/pointer.ts), so it gets the split view AND this row.
+ * `SessionView` mounts the row for the FOCUSED tile only, so moving focus from
+ * tile A to tile B unmounts A's row and mounts B's in one update. Which of the
+ * two runs first is the order of `App.tsx`'s append-only `<For each={mounted()}>`
+ * slot list, not the order focus moved: when B's slot was created EARLIER than
+ * A's, B's mount runs first and A's cleanup runs last. A cleanup that wrote
+ * "0px" unconditionally then left the page believing there is no soft-key row
+ * while B's is on screen — the views above gave the keyboard's room back and
+ * their bottom rows slid under a toolbar that is still there.
+ *
+ * Gating the row on focus (2026-09-12) moved that bug rather than closing it:
+ * before, three visible tiles meant three rows and closing any one of them
+ * zeroed the property for the other two; after, one row at a time, and every
+ * focus change is the same unconditional zero landing last.
+ *
+ * `mobile/viewport.ts:278` is the other writer and needs no part in this. It
+ * measures `document.getElementById("soft-keys")` on every viewport event, so it
+ * reads whatever row is actually in the document and converges on its own.
+ */
+let publisher: Element | null = null;
+
 export interface SoftKeysProps {
   /** Byte sink — receives the pre-baked bytes. */
   send: (bytes: string) => void;
@@ -197,18 +232,45 @@ export const SoftKeys: Component<SoftKeysProps> = (props) => {
    * mounts and zeroes it after; both read the same element, so they agree. On
    * cleanup the toolbar is gone, so the space it was reserving goes back to the
    * views.
+   *
+   * EVERY WRITE AFTER THE FIRST ONE IS GATED ON STILL BEING {@link publisher},
+   * which is what makes two rows overlapping for a tick harmless whichever way
+   * round they run. Read the docblock on that variable for the measured case.
+   * Three rules, and they are not the same rule:
+   *
+   *   - the CLAIM is unconditional. The newest row on screen is the one the
+   *     keyboard is typing under, so it takes the property from whatever held
+   *     it. A claim that deferred to the incumbent would leave the incoming
+   *     tile's row unpublished for as long as the outgoing one lingers.
+   *   - a RESIZE only lands while we still hold it. A superseded row keeps its
+   *     observer until the disposal it is racing reaches it, and a re-wrap in
+   *     that window would push a dead row's height over the live one's.
+   *   - the RELEASE only lands while we still hold it. This is the bug: the
+   *     unconditional "0px" was the loser's, and it arrived last.
+   *
+   * The cleanup is also registered BEFORE the ResizeObserver branch rather than
+   * inside it, which fixes a second thing in the same four lines: the early
+   * return for a browser without ResizeObserver used to skip the cleanup
+   * entirely, so on a pre-2020 Safari an unmounted row left its height reserved
+   * with nothing on screen holding it.
    */
   const measure = (el: HTMLDivElement): void => {
-    const write = () =>
-      document.documentElement.style.setProperty("--sk-h", el.offsetHeight + "px");
+    const root = document.documentElement.style;
+    const write = (): void => {
+      if (publisher !== el) return; // superseded: the live row owns the value
+      root.setProperty("--sk-h", el.offsetHeight + "px");
+    };
+    publisher = el;
     write();
+    onCleanup(() => {
+      if (publisher !== el) return; // a newer row has it — leave it alone
+      publisher = null;
+      root.setProperty("--sk-h", "0px");
+    });
     if (typeof ResizeObserver !== "function") return; // older Safari: seed only
     const ro = new ResizeObserver(write);
     ro.observe(el);
-    onCleanup(() => {
-      ro.disconnect();
-      document.documentElement.style.setProperty("--sk-h", "0px");
-    });
+    onCleanup(() => ro.disconnect());
   };
 
   return (

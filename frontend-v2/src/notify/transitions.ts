@@ -58,8 +58,21 @@ export interface Transition {
 export interface TransitionGate {
   /** document.hidden || !document.hasFocus() at fire time. */
   away: boolean;
-  /** the session currently on screen (quiet while focused), or null. */
-  activeSession: string | null;
+  /**
+   * The sessions currently ON SCREEN (quiet while the window is focused) — one
+   * name, several, or null for none.
+   *
+   * SEVERAL, because a workspace shows several at once and every visible tile
+   * counts as open (design, "Everything else, and what changes"). One name here
+   * meant a banner fired for a session whose output was on screen in the tile
+   * beside the one being typed into. A bare string is still the ordinary
+   * answer: a workspace of one is a bare leaf, and that is what the lobby and
+   * every phone always show.
+   *
+   * The same one-or-many shape `store/visits.ts` takes (`OnScreen`), spelled
+   * out again rather than imported, so this module keeps depending on nothing.
+   */
+  activeSession: string | readonly string[] | null;
   /** roamed notify.onAwaiting (default true). */
   onAwaiting: boolean;
   /** roamed notify.onDone (default true). */
@@ -70,6 +83,13 @@ export interface TransitionGate {
    * add a second alert. See the double-alert note below.
    */
   pushDelivers: boolean;
+}
+
+/** Is this session one of the ones on screen? `null` and `""` are "nothing is",
+ *  which notifies about everything — the honest answer for a lobby list. */
+function onScreen(active: TransitionGate["activeSession"], name: string): boolean {
+  if (active === null) return false;
+  return typeof active === "string" ? active !== "" && active === name : active.includes(name);
 }
 
 /** Snapshot the current poll's states — the map to carry into the next call. */
@@ -96,12 +116,10 @@ export function computeTransitions(
   for (const s of sessions) {
     const was = prev.get(s.name);
     const cur = s.state || "";
-    // Focused + this is the session on screen → the user is watching it happen;
-    // no OS notification. Everything else (hidden, unfocused, or a background
-    // session while focused) notifies.
-    if (!gate.away && gate.activeSession !== null && s.name === gate.activeSession) {
-      continue;
-    }
+    // Focused + this session is on screen → the user is watching it happen; no
+    // OS notification. Everything else (hidden, unfocused, or a session behind
+    // the ones on screen while focused) notifies.
+    if (!gate.away && onScreen(gate.activeSession, s.name)) continue;
     if (cur === "awaiting" && was !== "awaiting") {
       if (gate.onAwaiting) out.push({ session: s.name, kind: "awaiting" });
     } else if (cur === "done" && was === "running") {

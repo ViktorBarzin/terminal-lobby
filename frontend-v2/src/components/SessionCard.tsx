@@ -52,6 +52,50 @@ export interface PreloadHover {
 export const PreloadHoverContext = createContext<PreloadHover>();
 
 /**
+ * The sidebar's half of a Workspace, as little of it as a card needs.
+ *
+ * A card has two things to do about workspaces and both of them are questions
+ * it cannot answer from where it sits. Membership is server-side, held beside
+ * `layout/<user>.json`; the arrangement on screen is `store/workspaces.ts`'s,
+ * per device; and entering one means revealing several tiles at once, which is
+ * the shell's job and nothing a row in a list can do. So the card asks, and the
+ * shell answers.
+ *
+ * A CONTEXT rather than a prop, for the reason {@link PreloadHover} gives above
+ * and one more that is specific to this: a project's rows reach the sidebar
+ * through `ProjectGroup`, which has no opinion about workspaces and would have
+ * carried three of them in its signature to pass them on. It is PROVIDED BY
+ * `Sidebar`, not by App, because the phone gate belongs with the one component
+ * that can read the media query once for a whole list — see `Sidebar`'s
+ * `workspaces` prop.
+ *
+ * Absent is a legitimate answer, and it is what the app itself gets before the
+ * first split: no marks, no callback, every card behaving exactly as it did
+ * before tiles existed.
+ */
+export interface SidebarWorkspaces {
+  /** The workspace on screen, or null while a single session is. */
+  current(): string | null;
+  /** Which workspace holds this session, or null when none does. The shell's
+   *  `workspaceOf(keyOf(sel))` — a session belongs to at most one. */
+  workspaceOf(sel: Selected): string | null;
+  /**
+   * This card was activated, by click, by Enter or Space, or by a leftward
+   * swipe. `workspace` is the one the clicked session belongs to, or null when
+   * it belongs to none — which is the signal to LEAVE whatever is on screen and
+   * show this session alone, as the app behaved before tiles existed.
+   *
+   * Called after `store.select`, never instead of it: the selection is what the
+   * session bar, the URL and keepalive all follow, and stays the shell's single
+   * answer to which tile has focus. This only says which group that tile is
+   * being shown in.
+   */
+  onOpen(sel: Selected, workspace: string | null): void;
+}
+
+export const SidebarWorkspacesContext = createContext<SidebarWorkspaces>();
+
+/**
  * Does this pointer HOVER at all?
  *
  * A finger fires `pointerenter` on the way to a tap, and a phone that preloaded
@@ -101,6 +145,21 @@ export const SessionCard: Component<{
   const unseen = (): boolean => props.isUnseen?.(s()) ?? false;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
 
+  /**
+   * This card's session, as everything outside the sidebar names it.
+   *
+   * The owner is carried only for somebody ELSE's session, which is the shape
+   * `store.select` has always taken and the shape `keyOf` turns into a key. The
+   * preload, the workspace lookup and the selection all get this same pair, and
+   * they have to: `keyOf` puts the owner in the key, so a card that named itself
+   * differently to two of them would preload one session, mark a second and
+   * open a third.
+   */
+  const identity = (): Selected => ({
+    name: s().name,
+    owner: foreign() ? s().owner : undefined,
+  });
+
   // --- Watch mode ---------------------------------------------------------
   // What this device would do on opening this session. For a session a view is
   // already OPEN on, that view's resolved decision wins: `driven` counts our own
@@ -136,6 +195,33 @@ export const SessionCard: Component<{
   const isActive = () =>
     props.store.selected()?.name === s().name &&
     (props.store.selected()?.owner ?? "") === (foreign() ? (s().owner ?? "") : "");
+
+  // --- Workspace ------------------------------------------------------------
+  /** The shell's answers, or nothing at all where no workspace can exist — a
+   *  phone, and any sidebar mounted without the provider. */
+  const workspaces = useContext(SidebarWorkspacesContext);
+  /** Which workspace holds this session, of all of them, or null for none. Also
+   *  what a click hands the shell, so the two cannot disagree about where this
+   *  card belongs. */
+  const workspace = (): string | null => workspaces?.workspaceOf(identity()) ?? null;
+  /**
+   * The QUIETER of the two levels the sidebar draws: this session is one of the
+   * tiles on screen, and is not the one taking the keystrokes.
+   *
+   * Deliberately false for the focused card, which keeps the full active
+   * treatment it has always had. The two marks are mutually exclusive here
+   * rather than layered in CSS, because a row carrying both would be asking the
+   * stylesheet to settle which wins on every theme, and the answer has to be
+   * the same everywhere: the sidebar's first job is still to say where the
+   * typing goes.
+   *
+   * Members sit in whichever projects they sit in, so this is the only mark
+   * they get — there is no bracket that could join rows that are not adjacent.
+   */
+  const isMember = (): boolean => {
+    const open = workspaces?.current() ?? null;
+    return open !== null && !isActive() && workspace() === open;
+  };
 
   // --- On its way out ------------------------------------------------------
   /**
@@ -256,6 +342,30 @@ export const SessionCard: Component<{
   };
 
   // ---- activation ----
+  /**
+   * Open this session — the one thing all three ways in do.
+   *
+   * Two calls, in this order and never one without the other. `store.select` is
+   * what it has always been: the session bar, the URL hash and keepalive all
+   * follow it, and it names the tile that takes the keystrokes. The workspace
+   * call is the second half of the same sentence — "and show it among these" —
+   * and it carries null for a session in no workspace, which is the shell's cue
+   * to leave the one on screen and show this session by itself, exactly as the
+   * app behaved before tiles existed.
+   *
+   * The select goes FIRST so the shell reads a selection that already names
+   * this card when it arranges the tiles around it.
+   *
+   * Factored because the three ways in have to agree. A click, Enter or Space,
+   * and a leftward swipe are the same act — and `alt+1`…`alt+0` mean "behave as
+   * clicking that card does", which they only do while the card has one answer
+   * to give.
+   */
+  const open = () => {
+    props.store.select(s().name, foreign() ? s().owner : undefined);
+    workspaces?.onOpen(identity(), workspace());
+  };
+
   const activate = (e: Event) => {
     // A long press has already opened the actions menu; the click that ends it
     // must not also open the session.
@@ -271,13 +381,13 @@ export const SessionCard: Component<{
     // click before it reaches here.
     if (killing()) return;
     if ((e as MouseEvent).detail > 1) return; // dblclick → rename, not activate
-    props.store.select(s().name, foreign() ? s().owner : undefined);
+    open();
   };
   const onKey = (e: KeyboardEvent) => {
     if (editing() || killing()) return;
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      props.store.select(s().name, foreign() ? s().owner : undefined);
+      open();
     }
   };
 
@@ -496,7 +606,7 @@ export const SessionCard: Component<{
     if (Math.abs(dx) < SWIPE_MIN_PX) return;
     if (dx < 0) {
       menu.close();
-      props.store.select(s().name, foreign() ? s().owner : undefined);
+      open();
     } else if (!foreign()) {
       void kill(); // the same window the menu's Kill opens
     }
@@ -525,15 +635,11 @@ export const SessionCard: Component<{
    *     That is the outcome ADR-0026 exists to avoid, and it is also why
    *     `terminal-url.ts` throws when asked for both: they share arg5.
    *
-   * The owner travels exactly as it does into `store.select` below, so the
-   * hover and the click name the same session — `keyOf` puts the owner in the
-   * key, and a mismatch would read as a different session and attach twice.
+   * The session it names is `identity()`, the same pair the click and the
+   * workspace lookup are handed, so none of the three can mean a different
+   * session from the others.
    */
   const hover = useContext(PreloadHoverContext);
-  const hoverTarget = (): Selected => ({
-    name: s().name,
-    owner: foreign() ? s().owner : undefined,
-  });
   /** Has this card asked for a preload it has not taken back yet? Read by the
    *  retraction below, which must not speak for a card the pointer never
    *  reached. `onPointerLeave` needs no such guard: it fires for a pointer that
@@ -543,7 +649,7 @@ export const SessionCard: Component<{
     if (!hover || !hovers(e)) return;
     if (killing() || editing() || willWatch()) return;
     asked = true;
-    hover.hoverEnter(hoverTarget());
+    hover.hoverEnter(identity());
   };
   /**
    * Both jobs on the way out, and the swipe's comes first.
@@ -556,7 +662,7 @@ export const SessionCard: Component<{
   const onPointerLeave = () => {
     cancelSwipe();
     asked = false;
-    hover?.hoverLeave(hoverTarget());
+    hover?.hoverLeave(identity());
   };
   /**
    * Take the hover back if the answer changes under it.
@@ -582,7 +688,7 @@ export const SessionCard: Component<{
   createEffect(() => {
     if (!willWatch() || !asked) return;
     asked = false;
-    hover?.hoverLeave(hoverTarget());
+    hover?.hoverLeave(identity());
   });
 
   return (
@@ -625,6 +731,12 @@ export const SessionCard: Component<{
       classList={{
         "tl-card-swiping": swipeDx() !== 0,
         "tl-card-active": isActive(),
+        // The quieter of the two workspace levels, and never on the same row as
+        // the active mark above (see isMember). dnd/sidebar.ts reads this row's
+        // classes to decide what may be lifted, so a mark added here has to be
+        // one it ignores — `.tl-card` present and `.tl-card-foreign` absent is
+        // the whole of its test, and this changes neither.
+        "tl-card-member": isMember(),
         "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
       }}

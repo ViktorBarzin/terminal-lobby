@@ -57,7 +57,13 @@ import {
   type Watch,
 } from "./liveness";
 import { decide as decideBattery, isAway, type BatteryEvent, type BatteryState } from "./battery";
-import { EMPTY_HELD, flush as flushHeld, offer as offerHeld, type HeldState, type HeldVerdict } from "./held";
+import {
+  EMPTY_HELD,
+  flush as flushHeld,
+  offer as offerHeld,
+  type HeldState,
+  type HeldVerdict,
+} from "./held";
 
 export interface AttachDeps {
   /**
@@ -536,10 +542,13 @@ export function attach(deps: AttachDeps): Attachment {
     if (probeTimer !== null) clearTimer(probeTimer);
     probeTimer = null;
     if (!Number.isFinite(dueInMs)) return; // nothing is being watched
-    probeTimer = setTimer(() => {
-      probeTimer = null;
-      void tickLiveness();
-    }, Math.max(0, dueInMs));
+    probeTimer = setTimer(
+      () => {
+        probeTimer = null;
+        void tickLiveness();
+      },
+      Math.max(0, dueInMs),
+    );
   };
 
   async function tickLiveness(): Promise<void> {
@@ -548,10 +557,7 @@ export function attach(deps: AttachDeps): Attachment {
     const decision = decideLiveness({
       now: clock(),
       lastInboundAt,
-      socketState:
-        !s || s.readyState !== WebSocket.OPEN
-          ? "closed"
-          : "open",
+      socketState: !s || s.readyState !== WebSocket.OPEN ? "closed" : "open",
       visible: typeof document === "undefined" ? true : !document.hidden,
       batterySuspended: state.phase === "suspended",
       watch,

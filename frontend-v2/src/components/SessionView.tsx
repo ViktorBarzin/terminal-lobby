@@ -6,9 +6,12 @@ import {
   onCleanup,
   Show,
   untrack,
+  useContext,
+  type Accessor,
   type Component,
   type JSX,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import {
   createSessionStore,
   JUMP_STEP_BYTES,
@@ -31,9 +34,9 @@ import { SoftKeys } from "./SoftKeys";
 import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { dismissOnPress } from "./overlay";
-import { installImageClipboard } from "../clipboard/attach";
+import { installImageClipboard, type TileBox } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
-import { ownWhile } from "../lib/ownwhile";
+import { ownWhile, TileFocusContext } from "../lib/ownwhile";
 import { CameraIcon, ClipboardIcon, EyeIcon, FileTextIcon, ImageIcon } from "./Icons";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
@@ -73,6 +76,22 @@ export const SessionView: Component<{
    *  that session would be dragged down with it. Defaults to visible. */
   visible?: boolean;
   /**
+   * WHICH SESSIONS ARE ON SCREEN, as one value that changes when that set does
+   * and at no other time. The shell's own stamp over the visible set
+   * (App.tsx) — its content is never read here, only the fact that it moved.
+   *
+   * It is what makes every visible tile re-claim its Grid after a change to the
+   * visible set: leaving a workspace, closing a tile, the window shrinking past
+   * what the tree needs. A tile whose box also changed refits and claims on its
+   * own; this is for the ones whose box did not, which a pinned tmux window
+   * would otherwise never hear from again. See the effect beside `claimGrid`.
+   *
+   * Absent outside a workspace, where the session on screen is the only one
+   * there is and nothing can change the set without changing this view's own
+   * box.
+   */
+  visibleSet?: Accessor<unknown>;
+  /**
    * TRUE while this mount is only a PRELOAD: a hover attached it, and nobody
    * has asked to see it yet (ADR-0026). It changes two things and nothing else
    * — the attach carries `pre` at arg5, and the transcript stream stays shut —
@@ -102,6 +121,37 @@ export const SessionView: Component<{
    *  session name. Clicking anything in there closes the menu. */
   leading?: JSX.Element;
   menuExtra?: JSX.Element;
+  /**
+   * WHERE THE SESSION BAR IS DRAWN: the shell's own strip, outside every slot.
+   *
+   * THE BAR IS NOT PART OF A TILE, and cannot be. It is `flex: 0 0 auto` at
+   * 41px of arithmetic (sidebar.css: 28px of controls, 6px of padding each
+   * side, a 1px border) and 49px measured, so a bar drawn INSIDE the focused
+   * slot is that height this tile's terminal does not get — and a tile IS the
+   * size of its tmux window (`claimGrid`). Measured on 2026-09-12 in Chrome at
+   * 1440x900, two tiles side by side: clicking from A to B grew A's terminal
+   * host from 785px to 833px and shrank B's by the same 48px. Both
+   * ResizeObservers fire, both debounced fits land, and one click sent three
+   * grid POSTs across two sessions, moving one of them from 49 rows to 46 for
+   * every device attached to it. Clicking a tile is not a resize, so it must
+   * not be one.
+   *
+   * The design says where it goes instead: "session bar | one bar, showing the
+   * focused tile's session. Its contents change as focus moves" — one bar, in
+   * the SHELL. This is that shell strip, handed down as the element to portal
+   * into, so the bar's markup stays here (it reads this view's mode, watch
+   * state, picker, font controls and menus, none of which the shell holds)
+   * while its BOX belongs to the shell column. A tile then has no bar at all
+   * and its rectangle never changes with focus.
+   *
+   * ABSENT MEANS DRAW IT IN PLACE, which is this component standing alone: the
+   * bar sits at the top of `.tl-session-view`, exactly where it has always sat.
+   * That is what a `SessionView` rendered outside the shell gets, and it is
+   * also the reason a lone session looks unchanged either way — with one slot
+   * on screen, "the top of the view" and "the shell strip above the body" are
+   * the same 41px in the same column.
+   */
+  barHost?: HTMLElement;
   /** real OS-user owner when this is a shared/foreign attach (else undefined). */
   owner?: string;
   /** The EFFECTIVE OS user (whoami.osUser — the act-as target in a lens). What
@@ -285,6 +335,30 @@ export const SessionView: Component<{
    * mount, or a hidden session would answer for the visible one.
    */
   const onScreen = () => props.visible !== false;
+  /**
+   * This view is the one the KEYSTROKES are going to.
+   *
+   * A Workspace puts several sessions on screen at once (ADR-0027), so
+   * `onScreen` stopped picking out one view: four tiles all answer yes to it.
+   * Exactly one answers yes to this — `App.tsx` provides the context around
+   * each slot as `() => k.key === selectedKey()`, so the focused tile IS the
+   * selected session, and the URL, the session bar and the window handles
+   * cannot disagree about where a paste is about to land.
+   *
+   * Read from the component body, where Solid has an owner: `useContext`
+   * cannot answer anywhere else (lib/ownwhile.ts states the same rule for the
+   * handles it gates). `onScreen` is kept in the conjunction rather than
+   * assumed: a view that is not on screen is not the focused tile whatever the
+   * context says, and hidden preload mounts are exactly that case.
+   *
+   * OUTSIDE a workspace this is `onScreen()`. The default context value is
+   * `true` — a lone session, the phone, and every test that renders one view on
+   * its own sit outside any provider — and inside the shell only the selected
+   * session is visible when no workspace is on screen, so the two questions
+   * have one answer, as they did before tiles existed.
+   */
+  const tileFocused = useContext(TileFocusContext);
+  const focused = () => onScreen() && tileFocused();
 
   /* ---- the preload (ADR-0026) -------------------------------------------
    *
@@ -474,6 +548,10 @@ export const SessionView: Component<{
   let claimedAt = 0;
   /** How long the same grid stays claimed before it is worth saying again. */
   const GRID_CLAIM_QUIET_MS = 1500;
+  /** The size the terminal last reported, whether or not the claim went out.
+   *  What {@link reclaimGrid} says again when the visible set moves under a
+   *  terminal whose own box did not change. */
+  let lastGrid: { cols: number; rows: number } | null = null;
   /**
    * Point this session's tmux window at the device reading it.
    *
@@ -494,6 +572,11 @@ export const SessionView: Component<{
    * anything to report.
    */
   const claimGrid = (cols: number, rows: number): void => {
+    // Recorded BEFORE the refusals, because the refusals are about whether this
+    // device may speak and this is a note of what the terminal measured. A tile
+    // that starts watching and later drives has the right number to say without
+    // waiting for its next fit.
+    lastGrid = { cols, rows };
     if (watch()) return;
     if (props.owner && props.owner !== props.me?.()) return;
     // A THIRD REFUSAL, and it is the preload's whole promise. This endpoint
@@ -510,6 +593,61 @@ export const SessionView: Component<{
     claimedAt = now;
     void setSessionGrid(session, cols, rows);
   };
+
+  /**
+   * How long after the visible set moves this view says its size again.
+   *
+   * Longer than the terminal's own refit debounce (TerminalNative
+   * REFIT_DEBOUNCE_MS, 120 ms), on purpose and by a margin. A tile whose BOX
+   * changed refits inside that window and claims the grid it arrived at, and
+   * the quiet window above then swallows this one as the same numbers said
+   * twice. A tile whose box did not change never refits, so nothing else would
+   * ever speak for it — and that is the case this exists for. Waiting is what
+   * keeps a stale size off the wire: claiming immediately would pin the window
+   * to the grid the tile had BEFORE it grew, and Claude Code would re-wrap its
+   * output to a width that was already gone.
+   */
+  const GRID_RECLAIM_MS = 250;
+  let reclaimTimer: ReturnType<typeof setTimeout> | undefined;
+  onCleanup(() => clearTimeout(reclaimTimer));
+
+  /**
+   * EVERY VISIBLE TILE SAYS ITS SIZE AGAIN WHEN THE VISIBLE SET MOVES, which is
+   * the whole of the design's "a tile is the size the session is" outside the
+   * one case a resize already covers.
+   *
+   * A pinned tmux window re-reads its clients on an attach, a detach or a
+   * resize, and on nothing else (CONTEXT.md "Grid", tmux-api/grid_size.go).
+   * Revealing a slot, hiding its neighbour, closing a tile or leaving a
+   * workspace is none of those three, so a window narrowed to fit a tile stays
+   * narrow after the tile that narrowed it is gone. Measured on 2026-09-06,
+   * before tiles existed and by the same mechanism: a desktop reading at 231x62
+   * sat inside a 60-column window, and a page reload was the only way out.
+   *
+   * WHAT DRIVES IT, and what deliberately does not. `props.visibleSet` changes
+   * when the set of sessions on screen changes and at no other time — not when
+   * a divider moves, not when the window is resized, not forty times a second
+   * while a handle is under a finger. Those two ARE resizes: the slot's box
+   * changes, the terminal's ResizeObserver fires, the debounced fit lands and
+   * claims on its way out, and the design's "the claim lands once the drag
+   * settles, not per pointer move" is that debounce rather than anything here.
+   *
+   * BOTH REFUSALS STAND, because this goes back through `claimGrid` rather than
+   * around it: a watching tile never claims, and neither does a preload or
+   * somebody else's session. A view with no measurement yet says nothing at all
+   * — its boot fit is about to claim for the first time, and inventing a size
+   * to beat it there would pin the window to a guess.
+   */
+  createEffect(() => {
+    props.visibleSet?.();
+    const shown = untrack(onScreen);
+    clearTimeout(reclaimTimer);
+    if (!shown) return;
+    reclaimTimer = setTimeout(() => {
+      const last = lastGrid;
+      if (last) claimGrid(last.cols, last.rows);
+    }, GRID_RECLAIM_MS);
+  });
 
   /**
    * The preload's attach, in the vocabulary `store/preload.ts` speaks.
@@ -855,8 +993,47 @@ export const SessionView: Component<{
   // only (text mode, gallery), because a paste that landed inside the frame
   // belonged to the ttyd page's listeners, in a document this one could not
   // see.
+  /**
+   * THIS view's own box, so a DROP can be routed to the tile it landed on.
+   *
+   * A paste has no coordinates and belongs to whoever owns the pty, which is
+   * why `active` below is `focused`. A DROP has coordinates, and measuring
+   * 2026-09-12 showed what gating it on focus costs: a screenshot dragged onto
+   * tile B while tile A was focused uploaded into A's directory and typed A's
+   * path, with no pointerdown ever reaching B, because a file drag does not
+   * send one.
+   *
+   * Measured from the live element rather than from the tree's rect: the rect
+   * is in the canvas's coordinate space and a drop event carries viewport
+   * coordinates, so the two differ by the sidebar's width. `getBoundingClientRect`
+   * is already viewport-relative, which is the space the election compares in.
+   *
+   * Null while this view is off screen, so a hidden slot cannot take a drop.
+   * A lone session returns its whole view, which is a box covering everything
+   * droppable, so the single-session path lands in it exactly as it does today.
+   */
+  let viewRoot: HTMLDivElement | undefined;
+  const tileBox = (): TileBox | null => {
+    if (!onScreen() || !viewRoot) return null;
+    const r = viewRoot.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return null;
+    return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+  };
+
   const image = installImageClipboard({
     session: () => session,
+    tileBox,
+    /**
+     * Take focus when a drop lands in this tile and focus is elsewhere.
+     *
+     * The uploaded path is typed through `sendToPty`, which resolves
+     * `window.__tlSendToTerminal` — a handle `lib/ownwhile.ts` gives to the
+     * FOCUSED tile and to no other. Routing the upload to tile B without
+     * moving focus would swap one wrong outcome for another: the image in B's
+     * gallery, B's path typed into A's pty. Selecting the session IS focusing
+     * its tile, since the focused tile is the selected one.
+     */
+    focusTile: () => props.onSwitchSession?.(session, props.owner),
     sendToPty: (t) => window.__tlSendToTerminal?.(t) ?? false,
     enabled: () => !watch(),
     // The one subsystem in this file that had no `onScreen` in it, and the one
@@ -864,7 +1041,14 @@ export const SessionView: Component<{
     // session this tab has opened is still mounted behind a CSS class. Without
     // this each of them handled the same paste, uploading a copy into its own
     // bucket and typing its own path into the one visible terminal.
-    active: onScreen,
+    //
+    // FOCUSED rather than on screen since 2026-09-12, because a workspace put
+    // the count back up: four visible tiles are four document listeners, and
+    // one paste uploaded four byte-identical copies into four session
+    // directories again — the 2026-08-29 report, reopened by the visible set.
+    // The paste has one destination (the pty of the tile you are typing into),
+    // so it has one handler, and the handler is the one that owns that pty.
+    active: focused,
     // Route on the ACTIVE VIEW (design 2026-08-17 decision 5). In the text view a
     // paste or a drop belongs to the composer — which is the bug this fixes: the
     // capture-phase paste listener swallowed every image and typed its path at a
@@ -954,6 +1138,33 @@ export const SessionView: Component<{
   // path uses — one upload flow, so the toasts, the gallery routing and the
   // path typed at the prompt cannot drift apart.
   let fileInput: HTMLInputElement | undefined;
+  /**
+   * Where the session bar's DOM goes: the shell's strip when there is one, and
+   * where it is written otherwise.
+   *
+   * A PORTAL RATHER THAN A LIFTED COMPONENT, and the reason is the bar's own
+   * contents. It reads eleven things that live in this file and nowhere else —
+   * the view mode and its two activity dots, the watch resolution and its
+   * tooltips, the font stepper, the paste and upload paths, the file preview,
+   * the session picker and the overflow menu, each with its own dismiss
+   * controller. Moving the markup to `App.tsx` would mean hoisting all of that
+   * into the shell for every mounted session, which is a far larger change than
+   * the defect, and it would put four tiles' worth of state where one bar's
+   * belongs. The portal moves the BOX and leaves the wiring where it is.
+   *
+   * `props.barHost` is read ONCE, here, rather than tracked: the shell's strip
+   * is created before any slot mounts and never replaced, and a host that
+   * changed under a live bar would tear down its menus mid-press.
+   *
+   * The container Solid appends is a plain `<div>`, which `.tl-bar-host > div`
+   * makes `display: contents` (sidebar.css) — so the bar lands as a direct flex
+   * child of the shell column, with exactly the geometry it had as a direct
+   * flex child of `.tl-session-view`.
+   */
+  const host = props.barHost;
+  const BarSlot: Component<{ children: JSX.Element }> = (p) =>
+    host ? <Portal mount={host}>{p.children}</Portal> : <>{p.children}</>;
+
   const onFilesPicked = (e: Event): void => {
     const el = e.currentTarget as HTMLInputElement;
     const files = [...(el.files ?? [])];
@@ -962,275 +1173,316 @@ export const SessionView: Component<{
   };
 
   return (
-    <div class="tl-session-view" data-mode={mode()}>
-      <div class="tl-session-bar">
-        {props.leading}
-        {/* The session name doubles as the switcher on a phone: tapping it
-            lists the others, so changing session does not mean going back to
-            the list, finding it and tapping again. On a desktop it stays a
-            label — the sidebar is right there. Either way it shows the
-            session's TITLE when it has one, like every other surface. */}
-        <Show
-          when={props.onSwitchSession && coarse()}
-          fallback={
-            <span class="tl-session" title={session}>
-              {props.label ?? session}
-            </span>
-          }
-        >
-          <span class="tl-session-picker" ref={picker.anchor}>
-            <button
-              type="button"
-              class="tl-session tl-session-switch"
-              aria-haspopup="menu"
-              aria-expanded={picker.open()}
-              title={session}
-              onClick={() => picker.toggle()}
+    <div class="tl-session-view" data-mode={mode()} ref={viewRoot}>
+      {/* ONE BAR, IN THE SHELL, SHOWING THE FOCUSED TILE. The design's surface
+          table: "session bar | one bar, showing the focused tile's session. Its
+          contents change as focus moves" — and `TileHeader` justifies its own
+          four-item restraint on that promise, keeping the context meter and the
+          spend figure off the tile and on the bar, "written once there rather
+          than four times across a workspace".
+
+          TWO THINGS HAD TO CHANGE FOR THAT, and only the first one landed at
+          first. Unconditional, a four-tile workspace drew four bars: four Watch
+          toggles live at once, four StatusDots reporting four different
+          sessions into the one shared connection channel, and ~41px of chrome
+          per tile. `focused()` fixed the count. It did not fix the BOX — a bar
+          inside the focused slot is that height the slot's terminal does not
+          get, so clicking from tile A to tile B grew A's terminal host by 48px
+          and shrank B's by 48px (measured 2026-09-12, Chrome at 1440x900: 785px
+          against 833px). Both hosts' ResizeObservers fire, both debounced fits
+          land, both reach `claimGrid`, and a tile IS the size of its tmux
+          window — so that one click sent three grid POSTs across two sessions
+          and moved one of them from 49 rows to 46, for every device attached to
+          either. `BarSlot` is the second half: the bar's box belongs to the
+          shell strip, so a tile has no bar at all and its rectangle does not
+          move when focus does.
+
+          Gating on `focused` rather than on a "this slot is tiled" flag is the
+          same statement with one fewer prop: outside a workspace the visible
+          session IS the selected one, so `focused()` is `onScreen()` there and
+          the lone session keeps the bar it has always had, in the same place,
+          at the same size — the shell strip sits directly above the shell body,
+          which is where the top of a lone session's view is. */}
+      <Show when={focused()}>
+        <BarSlot>
+          <div class="tl-session-bar">
+            {props.leading}
+            {/* The session name doubles as the switcher on a phone: tapping it
+              lists the others, so changing session does not mean going back to
+              the list, finding it and tapping again. On a desktop it stays a
+              label — the sidebar is right there. Either way it shows the
+              session's TITLE when it has one, like every other surface. */}
+            <Show
+              when={props.onSwitchSession && coarse()}
+              fallback={
+                <span class="tl-session" title={session}>
+                  {props.label ?? session}
+                </span>
+              }
             >
-              {props.label ?? session}
-              <span class="tl-session-caret">▾</span>
-            </button>
-            <Show when={picker.open()}>
-              <div
-                class="tl-menu tl-session-menu"
-                role="menu"
-                onClick={stopMenuClick}
-                onKeyDown={stopMenuActivationKey}
+              <span class="tl-session-picker" ref={picker.anchor}>
+                <button
+                  type="button"
+                  class="tl-session tl-session-switch"
+                  aria-haspopup="menu"
+                  aria-expanded={picker.open()}
+                  title={session}
+                  onClick={() => picker.toggle()}
+                >
+                  {props.label ?? session}
+                  <span class="tl-session-caret">▾</span>
+                </button>
+                <Show when={picker.open()}>
+                  <div
+                    class="tl-menu tl-session-menu"
+                    role="menu"
+                    onClick={stopMenuClick}
+                    onKeyDown={stopMenuActivationKey}
+                  >
+                    <For each={props.otherSessions?.() ?? []}>
+                      {(other) => (
+                        <button
+                          type="button"
+                          class="tl-menu-item"
+                          role="menuitem"
+                          title={other.name}
+                          onClick={() => {
+                            picker.close();
+                            props.onSwitchSession?.(other.name, other.owner);
+                          }}
+                        >
+                          {other.label ?? other.name}
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </span>
+            </Show>
+            {/* THE badge, on both views (ADR-0016). It used to be the text view's
+              SSE status and only that, hidden on the Terminal view because a
+              status for a surface you are not looking at reads as the terminal's
+              — which left the terminal, the one thing in front of you, reporting
+              nothing at all. It now shows the worst of every channel this surface
+              can honestly report, and opens the panel that says which. */}
+            <Show when={props.status}>
+              {(s) => (
+                <StatusDot
+                  class="tl-conn-badge"
+                  channels={s().channels}
+                  only={SESSION_CHANNELS}
+                  onOpen={s().onOpen}
+                />
+              )}
+            </Show>
+            <span class="tl-session-bar-spacer" />
+            {/* Terminal controls, in the order the vanilla page's floating cluster
+              uses them: size, then the three things you put INTO the session.
+              Hidden on a coarse pointer, where a two-finger pinch sets the font and
+              the composer's own 📎 attaches — the same split vanilla makes.
+              Also hidden in the TEXT view (design 2026-08-17 decision 6): A−/A+
+              size a terminal you are not looking at, and Upload/Paste would type a
+              path into it, which is the behaviour this change exists to stop. The
+              gallery is not in here — it is view-agnostic and stays. */}
+            {/* The gallery is view-agnostic: every image the session touched, whether
+              you are reading the transcript or driving the pty. So it sits OUTSIDE
+              the terminal tools, which the text view hides. */}
+            <Show when={!coarse()}>
+              <button
+                class="tl-icon-btn tl-gallery-btn"
+                aria-label="Session images"
+                title="Session images"
+                onClick={() => props.onOpenGallery?.()}
               >
-                <For each={props.otherSessions?.() ?? []}>
-                  {(other) => (
+                <ImageIcon />
+                <span class="tl-btn-label">Images</span>
+              </button>
+            </Show>
+            <Show when={!coarse() && mode() === "terminal"}>
+              <span class="tl-term-tools">
+                <button
+                  class="tl-icon-btn tl-font-btn"
+                  aria-label="Smaller terminal font"
+                  title="Smaller terminal font"
+                  onClick={() => stepFont(-1)}
+                >
+                  A&#8722;
+                </button>
+                <button
+                  class="tl-icon-btn tl-font-btn"
+                  aria-label="Larger terminal font"
+                  title="Larger terminal font"
+                  onClick={() => stepFont(1)}
+                >
+                  A+
+                </button>
+                {/* Upload and Paste both end by TYPING a path or the clipboard into
+                  the pty, so a read-only client cannot complete either — and an
+                  upload is the worse half: it files the image in the session's
+                  gallery first, so leaving it enabled while watching means a
+                  half-done action (the image lands, the path never arrives).
+                  Disabled rather than hidden, so the bar keeps its shape and the
+                  tooltip says why. */}
+                <button
+                  class="tl-icon-btn tl-upload-btn"
+                  aria-label="Upload image"
+                  disabled={watch()}
+                  title={inertReason() || "Upload image"}
+                  onClick={() => fileInput?.click()}
+                >
+                  <CameraIcon />
+                  <span class="tl-btn-label">Upload</span>
+                </button>
+                <button
+                  class="tl-icon-btn tl-paste-btn"
+                  aria-label="Paste from clipboard"
+                  disabled={watch()}
+                  title={inertReason() || "Paste from clipboard"}
+                  onClick={() => doPaste()}
+                >
+                  <ClipboardIcon />
+                  <span class="tl-btn-label">Paste</span>
+                </button>
+              </span>
+            </Show>
+            {/* Files and Watch are buttons wherever the bar has room. On a phone
+              they move into the ⋯ below: the bar also has to carry a back control
+              and the view switch, and measured at 390px the six of them together
+              left 29px for the session name. */}
+            <Show when={!flip()}>
+              <button
+                class="tl-icon-btn tl-preview-btn"
+                aria-label="File preview"
+                title="Preview files"
+                onClick={() => preview.show()}
+              >
+                <FileTextIcon />
+                <span class="tl-btn-label">Files</span>
+              </button>
+              {/* Watch mode. Deliberately OUTSIDE the coarse-pointer guard and next
+                to the view switch, because the phone is where it matters most and
+                it has to be reachable from the TEXT view — the Terminal view's
+                first show is what triggers the attach, and an attach that has
+                already happened read-write has already claimed the grid. The ⋯
+                below keeps that property: the bar is shared by both views. */}
+              <button
+                class="tl-icon-btn tl-watch-btn"
+                classList={{
+                  "tl-watch-on": watch(),
+                  // Driving in a LENS: the one control that says "what you type
+                  // lands in someone else's session". The tinted frame says whose.
+                  "tl-watch-lens-drive": !!lens() && !watch(),
+                }}
+                aria-label={
+                  watch()
+                    ? lens()
+                      ? `Watching ${lens()} — tap to type in their session`
+                      : "Watching — tap to take control"
+                    : lens()
+                      ? `Typing in ${lens()}'s session — tap to watch only`
+                      : "Watch only"
+                }
+                aria-pressed={watch()}
+                title={
+                  watch()
+                    ? lens()
+                      ? inertReason()
+                      : "Watching: this device can't type and never resizes the session"
+                    : lens()
+                      ? `Typing in ${lens()}'s session, as them. Their grid follows this window while you drive it.`
+                      : "Watch only: observe without typing or resizing the session"
+                }
+                onClick={() => toggleWatch()}
+              >
+                <EyeIcon />
+                <span class="tl-btn-label">{watch() ? "Watching" : "Watch"}</span>
+              </button>
+            </Show>
+            <Show when={flip()}>
+              <span class="tl-bar-menu" ref={barMenu.anchor}>
+                <button
+                  class="tl-icon-btn tl-bar-menu-btn"
+                  aria-label="Session actions"
+                  aria-haspopup="menu"
+                  aria-expanded={barMenu.open()}
+                  onClick={barMenu.toggle}
+                >
+                  ⋯
+                </button>
+                <Show when={barMenu.open()}>
+                  <div
+                    class="tl-menu"
+                    role="menu"
+                    onClick={stopMenuClick}
+                    onKeyDown={stopMenuActivationKey}
+                  >
                     <button
-                      type="button"
                       class="tl-menu-item"
                       role="menuitem"
-                      title={other.name}
                       onClick={() => {
-                        picker.close();
-                        props.onSwitchSession?.(other.name, other.owner);
+                        barMenu.close();
+                        preview.show();
                       }}
                     >
-                      {other.label ?? other.name}
+                      Files
                     </button>
-                  )}
-                </For>
-              </div>
-            </Show>
-          </span>
-        </Show>
-        {/* THE badge, on both views (ADR-0016). It used to be the text view's
-            SSE status and only that, hidden on the Terminal view because a
-            status for a surface you are not looking at reads as the terminal's
-            — which left the terminal, the one thing in front of you, reporting
-            nothing at all. It now shows the worst of every channel this surface
-            can honestly report, and opens the panel that says which. */}
-        <Show when={props.status}>
-          {(s) => (
-            <StatusDot
-              class="tl-conn-badge"
-              channels={s().channels}
-              only={SESSION_CHANNELS}
-              onOpen={s().onOpen}
-            />
-          )}
-        </Show>
-        <span class="tl-session-bar-spacer" />
-        {/* Terminal controls, in the order the vanilla page's floating cluster
-            uses them: size, then the three things you put INTO the session.
-            Hidden on a coarse pointer, where a two-finger pinch sets the font and
-            the composer's own 📎 attaches — the same split vanilla makes.
-            Also hidden in the TEXT view (design 2026-08-17 decision 6): A−/A+
-            size a terminal you are not looking at, and Upload/Paste would type a
-            path into it, which is the behaviour this change exists to stop. The
-            gallery is not in here — it is view-agnostic and stays. */}
-        {/* The gallery is view-agnostic: every image the session touched, whether
-            you are reading the transcript or driving the pty. So it sits OUTSIDE
-            the terminal tools, which the text view hides. */}
-        <Show when={!coarse()}>
-          <button
-            class="tl-icon-btn tl-gallery-btn"
-            aria-label="Session images"
-            title="Session images"
-            onClick={() => props.onOpenGallery?.()}
-          >
-            <ImageIcon />
-            <span class="tl-btn-label">Images</span>
-          </button>
-        </Show>
-        <Show when={!coarse() && mode() === "terminal"}>
-          <span class="tl-term-tools">
-            <button
-              class="tl-icon-btn tl-font-btn"
-              aria-label="Smaller terminal font"
-              title="Smaller terminal font"
-              onClick={() => stepFont(-1)}
-            >
-              A&#8722;
-            </button>
-            <button
-              class="tl-icon-btn tl-font-btn"
-              aria-label="Larger terminal font"
-              title="Larger terminal font"
-              onClick={() => stepFont(1)}
-            >
-              A+
-            </button>
-            {/* Upload and Paste both end by TYPING a path or the clipboard into
-                the pty, so a read-only client cannot complete either — and an
-                upload is the worse half: it files the image in the session's
-                gallery first, so leaving it enabled while watching means a
-                half-done action (the image lands, the path never arrives).
-                Disabled rather than hidden, so the bar keeps its shape and the
-                tooltip says why. */}
-            <button
-              class="tl-icon-btn tl-upload-btn"
-              aria-label="Upload image"
-              disabled={watch()}
-              title={inertReason() || "Upload image"}
-              onClick={() => fileInput?.click()}
-            >
-              <CameraIcon />
-              <span class="tl-btn-label">Upload</span>
-            </button>
-            <button
-              class="tl-icon-btn tl-paste-btn"
-              aria-label="Paste from clipboard"
-              disabled={watch()}
-              title={inertReason() || "Paste from clipboard"}
-              onClick={() => doPaste()}
-            >
-              <ClipboardIcon />
-              <span class="tl-btn-label">Paste</span>
-            </button>
-          </span>
-        </Show>
-        {/* Files and Watch are buttons wherever the bar has room. On a phone
-            they move into the ⋯ below: the bar also has to carry a back control
-            and the view switch, and measured at 390px the six of them together
-            left 29px for the session name. */}
-        <Show when={!flip()}>
-          <button
-            class="tl-icon-btn tl-preview-btn"
-            aria-label="File preview"
-            title="Preview files"
-            onClick={() => preview.show()}
-          >
-            <FileTextIcon />
-            <span class="tl-btn-label">Files</span>
-          </button>
-          {/* Watch mode. Deliberately OUTSIDE the coarse-pointer guard and next
-              to the view switch, because the phone is where it matters most and
-              it has to be reachable from the TEXT view — the Terminal view's
-              first show is what triggers the attach, and an attach that has
-              already happened read-write has already claimed the grid. The ⋯
-              below keeps that property: the bar is shared by both views. */}
-          <button
-            class="tl-icon-btn tl-watch-btn"
-            classList={{
-              "tl-watch-on": watch(),
-              // Driving in a LENS: the one control that says "what you type
-              // lands in someone else's session". The tinted frame says whose.
-              "tl-watch-lens-drive": !!lens() && !watch(),
-            }}
-            aria-label={
-              watch()
-                ? lens()
-                  ? `Watching ${lens()} — tap to type in their session`
-                  : "Watching — tap to take control"
-                : lens()
-                  ? `Typing in ${lens()}'s session — tap to watch only`
-                  : "Watch only"
-            }
-            aria-pressed={watch()}
-            title={
-              watch()
-                ? lens()
-                  ? inertReason()
-                  : "Watching: this device can't type and never resizes the session"
-                : lens()
-                  ? `Typing in ${lens()}'s session, as them. Their grid follows this window while you drive it.`
-                  : "Watch only: observe without typing or resizing the session"
-            }
-            onClick={() => toggleWatch()}
-          >
-            <EyeIcon />
-            <span class="tl-btn-label">{watch() ? "Watching" : "Watch"}</span>
-          </button>
-        </Show>
-        <Show when={flip()}>
-          <span class="tl-bar-menu" ref={barMenu.anchor}>
-            <button
-              class="tl-icon-btn tl-bar-menu-btn"
-              aria-label="Session actions"
-              aria-haspopup="menu"
-              aria-expanded={barMenu.open()}
-              onClick={barMenu.toggle}
-            >
-              ⋯
-            </button>
-            <Show when={barMenu.open()}>
-              <div
-                class="tl-menu"
-                role="menu"
-                onClick={stopMenuClick}
-                onKeyDown={stopMenuActivationKey}
-              >
-                <button
-                  class="tl-menu-item"
-                  role="menuitem"
-                  onClick={() => {
-                    barMenu.close();
-                    preview.show();
-                  }}
-                >
-                  Files
-                </button>
-                {/* On a phone there is no chord to press, and the header has no
-                    room for another control — it measured 25px past its own
-                    edge at 390px. The menu is where this reaches a thumb. */}
-                <Show when={mode() === "text"}>
-                  <button
-                    class="tl-menu-item"
-                    role="menuitem"
-                    onClick={() => {
-                      barMenu.close();
-                      openFind();
-                    }}
-                  >
-                    Find in session
-                  </button>
-                </Show>
-                <button
-                  class="tl-menu-item"
-                  role="menuitemcheckbox"
-                  aria-checked={watch()}
-                  onClick={() => {
-                    barMenu.close();
-                    toggleWatch();
-                  }}
-                >
-                  {watch() ? "✓ Watching" : "Watch only"}
-                </button>
-                {/* The shell's own items (Settings). display:contents keeps the
-                    menu's layout while giving their clicks somewhere to bubble
-                    to — the shell has no handle on this menu to close it.
+                    {/* On a phone there is no chord to press, and the header has no
+                      room for another control — it measured 25px past its own
+                      edge at 390px. The menu is where this reaches a thumb. */}
+                    <Show when={mode() === "text"}>
+                      <button
+                        class="tl-menu-item"
+                        role="menuitem"
+                        onClick={() => {
+                          barMenu.close();
+                          openFind();
+                        }}
+                      >
+                        Find in session
+                      </button>
+                    </Show>
+                    <button
+                      class="tl-menu-item"
+                      role="menuitemcheckbox"
+                      aria-checked={watch()}
+                      onClick={() => {
+                        barMenu.close();
+                        toggleWatch();
+                      }}
+                    >
+                      {watch() ? "✓ Watching" : "Watch only"}
+                    </button>
+                    {/* The shell's own items (Settings). display:contents keeps the
+                      menu's layout while giving their clicks somewhere to bubble
+                      to — the shell has no handle on this menu to close it.
 
-                    Every row in there is a real <button>, so Enter and Space
-                    both produce a click and the click is the only thing that
-                    needs to close the menu. A key handler here would be worse
-                    than redundant: Space activates a button on its KEYUP, and
-                    the click is that keyup's default action, so closing on the
-                    keyup would unmount the row before its own click existed.
-                    The listener goes on through a ref for the same reason the
-                    overlay backdrops do — the wrapper is not a control. */}
-                <span style={{ display: "contents" }} ref={dismissOnPress(() => barMenu.close())}>
-                  {props.menuExtra}
-                </span>
-              </div>
+                      Every row in there is a real <button>, so Enter and Space
+                      both produce a click and the click is the only thing that
+                      needs to close the menu. A key handler here would be worse
+                      than redundant: Space activates a button on its KEYUP, and
+                      the click is that keyup's default action, so closing on the
+                      keyup would unmount the row before its own click existed.
+                      The listener goes on through a ref for the same reason the
+                      overlay backdrops do — the wrapper is not a control. */}
+                    <span
+                      style={{ display: "contents" }}
+                      ref={dismissOnPress(() => barMenu.close())}
+                    >
+                      {props.menuExtra}
+                    </span>
+                  </div>
+                </Show>
+              </span>
             </Show>
-          </span>
-        </Show>
-        <ViewSwitch mode={mode()} onSet={setMode} textDot={textDot()} terminalDot={terminalDot()} />
-      </div>
+            <ViewSwitch
+              mode={mode()}
+              onSet={setMode}
+              textDot={textDot()}
+              terminalDot={terminalDot()}
+            />
+          </div>
+        </BarSlot>
+      </Show>
 
       {/* tl-kb-inline: while the TERMINAL view shows, this container does NOT
           reserve room for the soft keyboard. TerminalNative takes it off its own
@@ -1327,6 +1579,17 @@ export const SessionView: Component<{
               // session on screen even while it shows its TEXT view, because
               // that is the pty the composer's "send to terminal" means.
               ownsBridges={onScreen()}
+              // WHICH of the visible views is the one being typed into, which
+              // `onScreen()` above cannot say in a workspace: four tiles are on
+              // screen and one holds the keyboard. The terminal needs it for
+              // two things it used to decide from visibility alone — taking DOM
+              // focus at boot, and claiming its six `window.__tl*` handles,
+              // which it installs from inside an async mount where
+              // `lib/ownwhile.ts`'s context gate cannot reach them. Everything
+              // else about this terminal still follows `onScreen`: an unfocused
+              // tile is attached, fitted, sized and read, exactly like the
+              // focused one.
+              focused={focused()}
               // A DIFFERENT question from ownsBridges, which is `onScreen()`
               // alone: this one is also false while the TEXT view shows over a
               // terminal that stays mounted and stays attached.
@@ -1377,8 +1640,19 @@ export const SessionView: Component<{
           keeping sessions mounted: every mounted toolbar carries `id="soft-keys"`
           and publishes `--sk-h` from its own height, so a hidden one — measuring
           0 inside display:none — would take the reservation away from the
-          toolbar you are actually looking at. */}
-      <Show when={coarse() && mode() === "terminal" && onScreen()}>
+          toolbar you are actually looking at.
+
+          THE FOCUSED tile, not every visible one, since workspaces landed. A
+          landscape tablet is inside `coarse()` and outside `flip()`
+          (mobile/pointer.ts: the flip query wants 720px or narrower), so 1024x768
+          gets the full split view AND this row — three tiles meant three
+          toolbars sharing one id and three writers of `--sk-h`, and closing any
+          one of them ran its cleanup, which sets the variable to "0px" while the
+          other two are still on screen. The remaining views then give the
+          keyboard's room back and their bottom rows sit under the toolbar. One
+          keyboard, one row, and it belongs to the tile the keyboard is typing
+          into. */}
+      <Show when={coarse() && mode() === "terminal" && focused()}>
         <SoftKeys
           send={sendBytesToPty}
           onCopy={() => terminalCopy()}

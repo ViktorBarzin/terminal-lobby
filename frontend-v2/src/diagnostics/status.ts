@@ -376,7 +376,11 @@ export function channelPhrase(id: ChannelId, state: ChannelState): string {
     case "transcript":
       return state === "working" ? "streaming" : state === "degraded" ? "reconnecting" : "offline";
     case "sessions":
-      return state === "working" ? "up to date" : state === "degraded" ? "retrying" : "not refreshing";
+      return state === "working"
+        ? "up to date"
+        : state === "degraded"
+          ? "retrying"
+          : "not refreshing";
     case "notifications":
       return state === "working" ? "on" : state === "degraded" ? "may not arrive" : "off";
     case "build":

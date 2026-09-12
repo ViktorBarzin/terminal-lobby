@@ -1,0 +1,395 @@
+/* Workspace tiles: the divider skeleton, and the header a tile wears.
+
+   Two layers are stacked over the same box, and only one of them is in this
+   file. The SLOT LAYER is the flat, never-reordered list of session slots
+   App.tsx has always rendered, positioned from the rects WorkspaceCanvas emits.
+   The SKELETON is the tree of empty @corvu/resizable nodes drawn on top of it,
+   which is what these rules dress. It holds no session content, which is the
+   whole reason a library that reparents its own nodes is safe here (ADR-0027,
+   and the docblock in WorkspaceCanvas.tsx).
+
+   Colors come from the theme token layer (theme.css) like everything else, so
+   all 9 themes style a divider.
+
+   POINTER-EVENTS ARE NOT IN THIS FILE. They are the invariant rather than the
+   decoration — a transparent sheet over four live terminals that swallowed
+   clicks would break every one of them — so WorkspaceCanvas sets them inline,
+   where a stylesheet that failed to load cannot take them away. */
+
+/* ---- The canvas -------------------------------------------------------- */
+
+/* Exactly the box `.tl-offstage` uses (app.css), for the same reason: the tile
+   area is the shell body minus whatever the dock is taking. `--tl-dock-h` is
+   written onto `.tl-shell-body` by App.tsx and is 0 whenever no panel is up.
+
+   The `container` WorkspaceCanvas is given has to be THIS box measured. Its
+   rects and these dividers are computed from the same numbers, so a container
+   measured anywhere else puts every divider a few pixels off its tile. */
+.tl-tiles {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: var(--tl-dock-h, 0px);
+  /* Above the slots it covers. It reaches nothing underneath by pointer, so
+     this only decides what paints over what. */
+  z-index: 2;
+}
+
+/* ---- The skeleton ------------------------------------------------------ */
+
+/* One per split. corvu sets `display: flex` and the `flex-direction` matching
+   its orientation on this element itself, so neither is repeated here. */
+.tl-tiles-split {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* One per child of a split, holding either a nested split or nothing at all.
+   corvu sets its `flex-basis` from the tree's fractions; `min-*: 0` is what
+   lets that basis win, since a flex item's automatic minimum would otherwise
+   floor it at its content. */
+.tl-tiles-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- The dividers ------------------------------------------------------ */
+
+/* A handle is a flex ITEM sitting between two panels, so any main-axis size it
+   takes is size the panels do not get, and every panel boundary would then sit
+   half a divider away from the rect the same boundary was computed as. Negative
+   margins of half the hit area on each side make its OUTER size zero: the
+   panels divide the box exactly as `toRects` divided it, and the hit area
+   straddles the boundary rather than displacing it.
+
+   6px matches `.tl-dock-gutter`, which is the other divider in this app.
+
+   No `cursor` here. corvu writes a global cursor style while a handle is
+   hovered or dragged (col-resize, row-resize, and the diagonal ones at a
+   junction where two dividers meet) and sets `cursor: inherit` inline on the
+   handle to stay out of its own way. */
+.tl-tiles-handle {
+  --tl-tile-divider-hit: 6px;
+  align-self: stretch;
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+/* The POSITIVE margin on the other axis is what makes a junction work, and it
+   is not symmetry.
+
+   corvu decides two dividers meet by comparing their rects: a junction is one
+   handle's end sitting within 1px of another handle's edge (its
+   INTERSECTION_TOLERANCE). Its own examples get that for free, because a handle
+   there eats its width out of the flex line and the next panel starts after it.
+   Ours does not, so measured in Chrome at 1200x800 the two rects OVERLAPPED by
+   3px instead of touching — 900 against 903 — and neither junction in a 2x2
+   registered. Stepping each handle back half the hit area at both ends puts its
+   edge exactly on the perpendicular handle's, and corvu then offers the
+   diagonal drag that moves both axes at once. The drawn line below overhangs
+   by the same amount, so nothing looks shorter for it. */
+.tl-tiles-handle[data-orientation="horizontal"] {
+  width: var(--tl-tile-divider-hit);
+  margin-inline: calc(var(--tl-tile-divider-hit) / -2);
+  margin-block: calc(var(--tl-tile-divider-hit) / 2);
+}
+.tl-tiles-handle[data-orientation="vertical"] {
+  height: var(--tl-tile-divider-hit);
+  margin-block: calc(var(--tl-tile-divider-hit) / -2);
+  margin-inline: calc(var(--tl-tile-divider-hit) / 2);
+}
+
+/* The line itself is drawn INSIDE the hit area and is 1px of it, so the thing
+   you can grab is six times what you can see and nothing moves when it
+   thickens. It runs past both ends by exactly what the rule above stepped the
+   hit area back, so the drawn divider still spans its whole boundary and meets
+   the one it crosses. corvu sets `position: relative` on the handle inline, so
+   this anchors to it. */
+.tl-tiles-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--border);
+}
+.tl-tiles-handle[data-orientation="horizontal"]::after {
+  top: calc(var(--tl-tile-divider-hit) / -2);
+  bottom: calc(var(--tl-tile-divider-hit) / -2);
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+.tl-tiles-handle[data-orientation="vertical"]::after {
+  left: calc(var(--tl-tile-divider-hit) / -2);
+  right: calc(var(--tl-tile-divider-hit) / -2);
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+/* `data-active` covers the hover AND the handle on the other side of a
+   junction, which corvu activates together so a diagonal drag reads as one
+   control rather than two. */
+.tl-tiles-handle:hover::after,
+.tl-tiles-handle[data-active]::after,
+.tl-tiles-handle[data-dragging]::after {
+  background: var(--accent);
+}
+.tl-tiles-handle[data-orientation="horizontal"]:hover::after,
+.tl-tiles-handle[data-orientation="horizontal"][data-active]::after,
+.tl-tiles-handle[data-orientation="horizontal"][data-dragging]::after {
+  width: 2px;
+}
+.tl-tiles-handle[data-orientation="vertical"]:hover::after,
+.tl-tiles-handle[data-orientation="vertical"][data-active]::after,
+.tl-tiles-handle[data-orientation="vertical"][data-dragging]::after {
+  height: 2px;
+}
+
+/* A handle is a real button and takes arrow keys, which is where corvu's
+   keyboard resizing comes from. The ring goes on the hit area rather than on
+   the drawn line so it is findable. */
+.tl-tiles-handle:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+/* ---- The tile header --------------------------------------------------- */
+
+/* Rendered by the slot layer, not by the canvas: a header belongs to the
+   session it names, and the canvas has no sessions in it.
+
+   The title, the state dot, a watch marker when the tile is read-only, and a
+   close control. Nothing else — the context meter and the spend figure stay on
+   the session bar, which shows the FOCUSED tile and follows focus around
+   (design, "Everything else, and what changes"). */
+.tl-tile-header {
+  --tl-tile-header-h: 24px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: var(--tl-tile-header-h);
+  padding: 0 6px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-page);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  user-select: none;
+}
+
+/* Where the keystrokes are going, and MEASURED 2026-09-12 to be the mark that
+   actually carries it: the accent underline is 5.11:1 against the focused wash
+   in dark and 5.38:1 in light. The sidebar says the same thing at the same
+   moment in its own quieter way, so this is one of several marks rather than
+   the only one.
+
+   A SECOND [data-focused] RULE adds the wash further down this file, under
+   "Focus, said louder than a line". Both compose, neither overrides. An edit to
+   the focus treatment has to find both. */
+.tl-tile-header[data-focused] {
+  border-bottom-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.tl-tile-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Removing a tile leaves the session running and in the sidebar where it was,
+   so this is a quiet control rather than a destructive-looking one. */
+.tl-tile-close {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tl-tile-close:hover {
+  background: var(--hover-tint);
+  color: var(--text-primary);
+}
+.tl-tile-close:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+/* ---- The watch marker -------------------------------------------------- */
+
+/* The same eye a sidebar card wears (`.tl-card-watch`, app.css), at the same
+   size and with the same restraint. It marks a tile that cannot type and does
+   not size its session, which is worth saying once and quietly rather than in
+   a colour that competes with the state dot beside it.
+
+   Sized off `--tl-text-scale` like the rest of this strip, so turning the text
+   up turns the marker up with it. */
+.tl-tile-watch {
+  flex: 0 0 auto;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  line-height: 1;
+  opacity: 0.75;
+}
+
+/* ---- Focus, said louder than a line ------------------------------------ */
+
+/* An ADDITION to the focused rule above rather than a rewrite of it: the accent
+   border and the brighter text still do their half of this.
+
+   "Where do my keystrokes go" is the question a workspace makes hard to answer
+   — four live terminals, all of them drawing output, and one of them listening
+   — and in a terminal a keystroke sent to the wrong session RUNS. So the
+   focused header takes the accent as a wash across its whole width and its
+   title takes the weight the sidebar's active row already uses, which is the
+   same vocabulary read in two places.
+
+   WHAT THE WASH IS AND IS NOT, measured 2026-09-12 by sampling the rendered
+   pixels against the real theme tokens. The focused wash is #152336 in dark and
+   #dfe6fa in light, which is a 1.19:1 step from a plain header. That is under
+   the 3:1 WCAG asks of a standalone non-text indicator, so the wash does not
+   carry this signal on its own — the accent underline at ~5:1 and the
+   600-weight title do, and the wash widens the target rather than making it.
+   Do not remove the underline on the strength of the wash being visible; it is
+   the underline that survives a glance from across the room.
+
+   Both properties paint inside the box the header already occupies, so moving
+   focus changes no geometry: the tile's rect is what it was, no terminal
+   refits, and nothing re-claims a Grid for a colour.
+
+   14% is where the sidebar's own drop target sits (sidebar.css), mixed into the
+   header's background rather than into transparency — the slot layer sits under
+   this strip, and a translucent header would let a terminal draw through its
+   own chrome. Note that 14% is pinned to that drop target for a shared
+   vocabulary, not to a contrast target; the numbers above are what it measures
+   out at. */
+.tl-tile-header[data-focused] {
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-page));
+}
+.tl-tile-header[data-focused] .tl-tile-title {
+  font-weight: 600;
+}
+
+/* ---- On its way out ---------------------------------------------------- */
+
+/* A member inside its kill window: the DELETE has not gone out and will not for
+   eight seconds (store/lobby.ts GRACE_MS). The tile keeps its whole rectangle
+   for all eight of them — the siblings reflow when the window CLOSES, not when
+   it opens — so the undo has a tile to point at and the terminal underneath
+   goes on drawing until the session actually stops.
+
+   Every rule in this section is the sidebar card's (`.tl-card[data-killing]`,
+   sidebar.css) re-keyed onto this strip, down to the 10% tint and the 0.45
+   fade. The same kill is on screen twice while a workspace is up, once on the
+   row and once on the tile, and two treatments for one event read as two
+   events.
+
+   Nothing here animates, for the reason the card gives: the app's one animation
+   owes a `prefers-reduced-motion` answer (app.css), and a fade says "leaving"
+   without moving.
+
+   WHAT THIS DOES TO A FOCUSED TILE, deliberately. The rule sits after the two
+   `[data-focused]` rules above and carries the same specificity, so on a tile
+   that is both focused and dying the danger tint replaces the accent wash. The
+   underline is what actually carries focus — ~5:1 measured above, against the
+   wash's 1.19:1, which widens the target rather than making the signal — and
+   nothing here touches it, so the strip still says where the keystrokes are
+   going while its background says the session is going. This is the case that
+   breaks first if the underline is ever dropped on the strength of the wash
+   being visible. */
+.tl-tile-header[data-killing] {
+  background: color-mix(in srgb, var(--danger) 10%, var(--bg-page));
+}
+
+/* Everything fades EXCEPT the arrow and the seconds beside it. `opacity` on the
+   header itself would take the way out down with it: opacity makes a group, and
+   no child climbs back out of one.
+
+   The countdown is exempt for the same reason the arrow is. It is the half of
+   the pair that says how long there is, and one small number on a 24px strip is
+   the first thing to become unreadable at 0.45, which is the one moment it
+   matters. */
+.tl-tile-header[data-killing] > *:not(.tl-tile-undo, .tl-tile-countdown) {
+  opacity: 0.45;
+}
+
+/* Struck through as well as faded, because faded alone is what a DISABLED strip
+   looks like, and a tile that is merely disabled is not saying that the session
+   drawn under it is about to be deleted. */
+.tl-tile-header[data-killing] .tl-tile-title {
+  text-decoration: line-through;
+}
+
+/* The seconds left, immediately left of the arrow. Tabular figures so the strip
+   does not jog sideways as 8 becomes 7 — the digits are different widths in a
+   proportional face, and a number that shifts every second reads as the layout
+   settling rather than as a clock running down. `--danger` because this is the
+   half that says the tile is going, while the arrow keeps the ordinary text
+   colour as the half that says it need not.
+
+   11px rather than the strip's 12px is the watch marker's size: those are the
+   two small glyphs on this header, and both scale with `--tl-text-scale`, so
+   turning the text up turns them up together. */
+.tl-tile-countdown {
+  flex: 0 0 auto;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--danger);
+  /* Eight seconds never needs two digits; the width is reserved anyway so the
+     arrow sits in exactly one place for the whole window. */
+  min-width: calc(8px * var(--tl-text-scale, 1));
+  text-align: right;
+}
+
+/* The way back, standing in the slot the close control just gave up so the
+   strip does not reflow. A button rather than a tappable glyph, because tab
+   order, Enter and Space all come free from the element and every one of them
+   is how this gets pressed without a mouse.
+
+   THE SAME 18px BOX AS `.tl-tile-close`, and that is a constraint rather than a
+   coincidence: the two are one slot at two moments, and an arrow a pixel larger
+   than the ✕ would shift the title beside it every time a kill started. It
+   stays 18px even though 18px is smaller than a finger wants, because growing
+   it grows the 24px strip, and this strip's height is rows taken out of four
+   live tmux windows (`claimGrid`). The 44px version of this same undo is the
+   sidebar's `.tl-card-undo`, which is where a coarse pointer already reaches
+   for it.
+
+   Never hover-revealed, unlike the `⋯` button on a card: that one can afford to
+   appear on hover because a long press opens the same menu, and this is the
+   only way back from a kill. A target that appears on hover is a target a
+   finger cannot find. */
+.tl-tile-undo {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.tl-tile-undo:hover {
+  background: var(--hover-tint);
+}
+.tl-tile-undo:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}

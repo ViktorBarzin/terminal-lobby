@@ -629,6 +629,30 @@ export const TerminalNative: Component<{
    */
   ownsBridges?: boolean;
   /**
+   * THE KEYSTROKES ARE COMING HERE: this terminal is the FOCUSED tile.
+   *
+   * A NARROWER question than `ownsBridges`, which is `onScreen()` and answers
+   * yes for every VISIBLE view. That was the same question while one session
+   * was on screen at a time; a Workspace puts four on screen at once
+   * (ADR-0027) and four terminals then answer yes to the two questions that
+   * can only have one answer — who takes DOM focus, and who holds the six
+   * `window.__tl*` handles below.
+   *
+   * WHY A PROP AND NOT THE CONTEXT. `lib/ownwhile.ts` gates the handles
+   * `SessionView` claims from its own body on `TileFocusContext`. The six
+   * claimed here cannot use it: they are installed from inside the async mount,
+   * after two dynamic imports, where Solid has no owner and `useContext` can
+   * only hand back the context default (`true`). So the focused tile reaches
+   * them through this prop instead, which is the narrowing ownwhile.ts's
+   * docblock points at. The same prop is the DOM-focus gate, for the reason
+   * `mayFocus` gives below.
+   *
+   * Absent = true, which is every call site outside a workspace: a lone
+   * session, every test that renders one view on its own, and the dock, whose
+   * terminal declines the bridges through `ownsBridges` anyway.
+   */
+  focused?: boolean;
+  /**
    * TRUE while this terminal is the thing ON SCREEN: the terminal view showing,
    * in a session slot that is not itself CSS-hidden behind another session.
    *
@@ -975,8 +999,39 @@ export const TerminalNative: Component<{
     return became;
   };
 
+  /** Did `focused` just go from false to true? Read once per effect run. */
+  let wasFocused = props.focused !== false;
+  const becameFocused = (): boolean => {
+    const focused = props.focused !== false;
+    const became = focused && !wasFocused;
+    wasFocused = focused;
+    return became;
+  };
+
   /**
-   * THE TERMINAL BECAME THE THING ON SCREEN, so it takes the keyboard.
+   * MAY THIS TERMINAL TAKE THE KEYBOARD? Only the FOCUSED tile ever may.
+   *
+   * Every focus site below was gated on some flavour of "am I on screen", and
+   * that was an exact answer for as long as one session was on screen at a
+   * time. In a four-tile workspace all four slots are visible, all four boot
+   * with a real box, and all four used to ask for the keyboard: the header
+   * carried `auth`, the accent wash carried `auth`, and the keystrokes reached
+   * `logs` — where, in a terminal, they RUN. Which tile won was decided by
+   * module-load and attach timing rather than by anything the user did.
+   *
+   * Click-to-focus was chosen in the design over focus-follows-mouse precisely
+   * so that a misdirected keystroke takes a deliberate press to arrange. A
+   * terminal that focuses itself for being visible gives that back.
+   *
+   * NOT the same gate as `bootFitted`, which asks whether there is a box to
+   * focus at all, and not the same as `active`, which asks whether the terminal
+   * view is the one showing in this slot. All three have to hold.
+   */
+  const mayFocus = (): boolean => props.focused !== false;
+
+  /**
+   * THE TERMINAL BECAME THE THING ON SCREEN, or THE TILE THE KEYSTROKES GO TO,
+   * so it takes the keyboard.
    *
    * TerminalView's effect on `props.active` (TerminalView.tsx:307-311), which
    * the boot focus above recorded as the one focus site that did not survive
@@ -987,20 +1042,38 @@ export const TerminalNative: Component<{
    * the click had just focused), and the [Text | Terminal] switch, where the
    * host regains its box with nothing to focus it.
    *
+   * THE THIRD MOVE IS A WORKSPACE'S, and it arrives on `focused` rather than on
+   * `active`: every tile in a workspace is already active, so focus moving from
+   * one to another changes neither slot's `active`. Without this arm, pressing
+   * a tile's HEADER — which is also its drag handle, so the press never reaches
+   * xterm — would move the accent wash and leave the keyboard in the terminal
+   * it was in, which is the misdirected keystroke by another route. A press
+   * INTO a terminal focuses it natively and arrives here as a second, harmless
+   * `focus()` on the element that already has it.
+   *
    * ONLY ON THE TRANSITION, never on the first run: the mount is the boot
    * focus's, gated on a fit that found a box, and a second opinion here would
-   * focus terminals that deliberately booted without one.
+   * focus terminals that deliberately booted without one. Both latches are
+   * read every run and neither short-circuits the other, or a run that returned
+   * early would leave the unread one reporting a transition that happened two
+   * updates ago.
    *
    * A FRAME LATE, as TerminalView's was. The class flip that gives this host
    * its box lands in the same update, and `focus()` on an element still inside
    * `display: none` does nothing at all. The lobby-text-field check is read in
    * the callback rather than before it, so a rename box opened by the same
    * double-click keeps the keyboard it has just taken — the steal
-   * TerminalView.tsx:280-305 recorded, from the one component left.
+   * TerminalView.tsx:280-305 recorded, from the one component left. `active`
+   * and `focused` are read there too, and for the same reason: focus can land
+   * on a third tile inside that frame, and the keyboard belongs to wherever it
+   * ended up rather than to whoever asked first.
    */
   createEffect(() => {
-    if (!becameActive()) return;
+    const shown = becameActive();
+    const took = becameFocused();
+    if (!shown && !took) return;
     const focus = (): void => {
+      if (props.active !== true || !mayFocus()) return;
       if (!typingElsewhere()) focusTerm?.();
     };
     if (typeof requestAnimationFrame !== "function") {
@@ -1479,6 +1552,14 @@ export const TerminalNative: Component<{
       // the default view on a coarse pointer. Focusing on it would take the
       // soft keyboard off the composer.
       //
+      // NEITHER IS IT ENOUGH ON ITS OWN any more, which is what `mayFocus`
+      // above is for. "The boot fit found a box" stopped meaning "this is the
+      // terminal in front of the user" the moment a workspace could put four
+      // boxes on screen: all four fit, so all four used to run this line, and
+      // the keyboard went to whichever tile resolved its two dynamic imports
+      // first. A tile may boot visible; only the focused one may boot with the
+      // keyboard.
+      //
       // The second gate is inherited: TerminalView declined its auto-focus
       // while a lobby text field held the keyboard (TerminalView.tsx:280-305),
       // for a reason it recorded at the site. This is the same check, kept
@@ -1492,7 +1573,7 @@ export const TerminalNative: Component<{
       // landed, re-selecting a session this tab already had open focused
       // nothing, because a kept session runs no mount to reach this line.
       focusTerm = () => term.focus();
-      if (bootFitted && !typingElsewhere()) term.focus();
+      if (bootFitted && mayFocus() && !typingElsewhere()) term.focus();
 
       /**
        * THIS terminal's screen node. Never a document query: see `worldAt` and
@@ -3531,7 +3612,19 @@ export const TerminalNative: Component<{
       // these globals, so the native path inherits all of it without any caller
       // knowing which terminal it is talking to. Each returns a boolean because
       // the callers treat false as "no terminal took this".
-      const owns = (): boolean => props.ownsBridges !== false;
+      //
+      // FOCUSED, NOT MERELY VISIBLE, which is the second half of that gate and
+      // the half a workspace added. `ownsBridges` answers for every visible
+      // view, so four tiles claimed all six of these and the last one to finish
+      // its async mount held them: `__tlDoPaste` ran in the tile you were
+      // typing into (SessionView gates it on focus through `ownWhile`), read
+      // the clipboard, and handed the text to `__tlPasteToTerminal` in a
+      // neighbour's pty. `lib/ownwhile.ts` cannot close that from the inside —
+      // these six are claimed after an `await`, where `useContext` has no owner
+      // and answers with the context default — so the gate is this prop, read
+      // here. Both halves are needed: the dock passes `ownsBridges={false}` and
+      // no `focused` at all, and must keep claiming nothing.
+      const owns = (): boolean => props.ownsBridges !== false && props.focused !== false;
       // Through the choke point, so the soft keys, the composer's send and a
       // dropped file's path all cancel a flick coast the way term.html's
       // `sendInput` does for every one of them (:8269).

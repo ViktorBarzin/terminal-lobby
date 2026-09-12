@@ -62,15 +62,41 @@ interface StateStamp {
   at: number;
 }
 
+/**
+ * The sessions ON SCREEN, as every caller here may say it: one name, several,
+ * or none at all.
+ *
+ * EVERY VISIBLE TILE COUNTS AS OPEN (design, "Everything else, and what
+ * changes"). A workspace puts several live sessions in front of the same pair
+ * of eyes, and "have I looked at this yet" is answered for all of them at once
+ * — a session whose output you are reading in the tile beside the one you are
+ * typing in has been looked at, whatever the URL says. Until 2026-09-12 this
+ * was one name, which left every other visible tile carrying an unseen mark and
+ * counting towards the app-icon badge for work already on screen.
+ *
+ * One name stays accepted because a workspace of one is a bare leaf and the
+ * lobby is mostly that: `"a"`, `["a"]` and a visible set of exactly `a` are the
+ * same statement, so the single-session callers and their tests read unchanged.
+ */
+export type OnScreen = string | readonly string[] | null;
+
+/** The names in an {@link OnScreen}, in order, with the empty answers folded
+ *  together — `null`, `""` and `[]` all mean "nothing is being looked at". */
+function onScreenNames(on: OnScreen): readonly string[] {
+  if (on === null) return [];
+  return typeof on === "string" ? (on ? [on] : []) : on;
+}
+
 export interface VisitStore {
   /**
    * Fold one poll into the store: prune dead sessions, stamp state changes, and
-   * mark the attached session seen (while the tab is visible). Safe to call
+   * mark the sessions ON SCREEN seen (while the tab is visible). Safe to call
    * from inside the paint effect — see `revision`.
    */
-  observe(sessions: readonly VisitSession[], active: string | null): void;
-  /** Stamp a visit right now (visibility/focus return). No-op for null. */
-  stamp(name: string | null): void;
+  observe(sessions: readonly VisitSession[], active: OnScreen): void;
+  /** Stamp a visit right now (visibility/focus return), for everything on
+   *  screen. No-op for an empty answer. */
+  stamp(on: OnScreen): void;
   /** true when this session finished AFTER the user last looked at it. */
   isUnseen(s: VisitSession): boolean;
   /**
@@ -230,10 +256,7 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     setRevision((r) => r + 1);
   };
 
-  const observe = (
-    sessions: readonly VisitSession[],
-    active: string | null,
-  ): void => {
+  const observe = (sessions: readonly VisitSession[], active: OnScreen): void => {
     // An EMPTY list is "I do not know yet", never "you have no sessions". The
     // prunes below key off `live`, so folding in the pre-poll empty list deleted
     // every visit and every state stamp — and the first real poll then re-stamped
@@ -281,28 +304,53 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
       const rec = states[key];
       if (!rec || rec.state !== cur) states[key] = { state: cur, at };
     }
-    // The session on screen counts as seen — including the completion that just
-    // landed while you were watching it (stamped with the same `at`, and the
-    // unseen test is a STRICT >).
-    const activeKey = active
-      ? visitKeyFor(sessions.find((s) => s.name === active) ?? { name: active })
-      : null;
-    if (activeKey && live.has(activeKey) && visible()) {
-      visits[activeKey] = at;
-      dirty = true;
+    // EVERY session on screen counts as seen — including the completion that
+    // just landed while you were watching it (stamped with the same `at`, and
+    // the unseen test is a STRICT >).
+    //
+    // All of them rather than the selected one, because a workspace shows
+    // several at once and the badge answers "how many need me". A tile whose
+    // output is in front of you does not need you.
+    if (visible()) {
+      for (const name of onScreenNames(active)) {
+        const key = visitKeyFor(sessions.find((s) => s.name === name) ?? { name });
+        if (!live.has(key)) continue;
+        visits[key] = at;
+        dirty = true;
+      }
     }
     known = sessions;
     if (dirty) persistVisits(visits);
     sync();
   };
 
-  const stamp = (name: string | null): void => {
-    if (!name) return;
-    visits[name] = now();
+  /**
+   * Mark everything on screen seen, right now — the visibility/focus return,
+   * which the 5-second poll would otherwise lag by up to a badge's worth.
+   *
+   * THROUGH `visitKeyFor`, LIKE EVERY OTHER WRITE HERE. A record is filed under
+   * tmux's session id when there is one, because a rename made anywhere else
+   * must not read as a session vanishing and a stranger arriving; `observe`
+   * migrates the name-keyed records across the first time it sees an id, and
+   * `isUnseen` has looked them up by id ever since. This wrote `visits[name]`
+   * instead, so for a real session — every one of which carries an id — the
+   * stamp landed under a key nothing reads and the immediate "I am looking at
+   * it" had no effect at all. The poll's own fold was covering for it a few
+   * seconds later. The last observed list is what resolves a name to its key,
+   * and a name that list has never carried keeps its own name as the key, which
+   * is both the pre-id shape and the honest answer for a session this store has
+   * not seen yet.
+   */
+  const stamp = (on: OnScreen): void => {
+    const names = onScreenNames(on);
+    if (names.length === 0) return;
+    const at = now();
+    for (const name of names) {
+      visits[visitKeyFor(known.find((s) => s.name === name) ?? { name })] = at;
+    }
     persistVisits(visits);
     sync();
   };
-
 
   return { observe, stamp, isUnseen, revision };
 }

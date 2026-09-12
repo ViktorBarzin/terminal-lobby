@@ -124,7 +124,13 @@ function harness(over: Partial<AttachDeps> = {}): Harness {
     phases,
     written,
     runTimer: (id) => {
-      const t = id === undefined ? timers.shift() : timers.splice(timers.findIndex((x) => x.id === id), 1)[0];
+      const t =
+        id === undefined
+          ? timers.shift()
+          : timers.splice(
+              timers.findIndex((x) => x.id === id),
+              1,
+            )[0];
       t?.fn();
     },
   };

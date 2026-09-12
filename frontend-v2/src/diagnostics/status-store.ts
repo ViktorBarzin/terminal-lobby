@@ -123,7 +123,11 @@ export function createStatusStore(opts: StatusStoreOptions = {}): StatusStore {
     // Seeded with each channel's own phrase rather than an empty string: a row
     // with a label and no text beside it reads as a rendering bug, where "not
     // reporting" reads as an answer.
-    SESSION_CHANNELS.map((id) => ({ id, state: "unknown" as const, detail: channelPhrase(id, "unknown") })),
+    SESSION_CHANNELS.map((id) => ({
+      id,
+      state: "unknown" as const,
+      detail: channelPhrase(id, "unknown"),
+    })),
   );
   const [log, setLog] = createSignal<readonly StatusEvent[]>([]);
   const [lastCheck, setLastCheck] = createSignal<Partial<Record<ChannelId, CheckOutcome>>>({});

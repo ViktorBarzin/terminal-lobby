@@ -1200,11 +1200,24 @@ label.tl-set-row-label {
 .tl-hidden {
   display: none !important;
 }
-/* One slot per session the lobby keeps mounted. `display: contents` keeps the
-   wrapper out of the layout, so the session view is still a flex child of the
-   shell body exactly as it was when only one could exist; `.tl-hidden` on the
-   slot takes the whole session off screen without unmounting it, which is what
-   makes switching back free.
+/* One slot per session the lobby keeps mounted. `.tl-hidden` on the slot takes
+   the whole session off screen without unmounting it, which is what makes
+   switching back free.
+
+   IT IS A BOX, AND IT HAS TO BE. This was `display: contents` until tiles
+   landed, which kept the wrapper out of the layout entirely so that
+   `.tl-session-view` stayed a direct flex child of the shell body exactly as it
+   was when only one slot could be visible. A Workspace positions each visible
+   session from a rect (`.tl-tiled` below), and a slot with no box of its own
+   cannot be positioned — ADR-0027 names this one line as the CSS half of its
+   first decision, because positioning the slot is what lets the split tree
+   arrange tiles WITHOUT moving a live terminal in the DOM.
+
+   The box it becomes is the one `display: contents` was standing in for: a
+   column flex container that takes the free height of `.tl-shell-body`, which
+   is what `.tl-session-view` (`flex: 1 1 auto; width: 100%`) was getting from
+   the shell body directly. So a lobby with no workspace in it lays out
+   identically, one wrapper deeper.
 
    MEASURING one of these terminals means scoping the query to a slot. Several
    are mounted at once, the hidden ones keep their whole DOM, and the slot you
@@ -1216,7 +1229,60 @@ label.tl-set-row-label {
    TerminalNative.tsx scopes its own `.xterm-screen` lookup for the same reason
    (`screenOf`, and the `insideScreen` docblock beside it). */
 .tl-session-slot {
-  display: contents;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+/* A slot the split tree has given a rectangle to (`toRects`, emitted by
+   WorkspaceCanvas and written onto the slot by App.tsx as four inline pixel
+   values).
+
+   Absolute against `.tl-shell-body`, which is the positioned ancestor and the
+   element the tile area is measured from, so `x`/`y` are the same numbers the
+   dividers are drawn at. Nothing here reorders or reparents anything: the
+   `<For>` over the mounted sessions is append-only, and a tile moving across
+   the screen is four numbers changing on a node that never moves.
+
+   The dock is left out the same way `.tl-offstage` leaves it out, and by the
+   same arithmetic rather than by the same rule: App.tsx subtracts
+   `--tl-dock-h` from the height it lays the tree out in, so every rect is
+   already inside the area above the panel. */
+.tl-session-slot.tl-tiled {
+  position: absolute;
+  flex: 0 0 auto;
+}
+/* THE DOCK STAYS AT THE FOOT, whatever is or is not in flow above it.
+
+   The rule above is what makes this one necessary, which is why it sits beside
+   it rather than with the dock's own rules in sidebar.css. A workspace takes
+   every visible child of `.tl-shell-body` OUT of that flex column's flow: the
+   tiled slots are absolute, the hidden ones are `display: none`, the canvas and
+   the drop shadow are absolute, and the composer is not rendered while a
+   session is open. That leaves `<Dock>` as the only in-flow child of a
+   `justify-content: flex-start` column, so it laid out at the TOP — over the
+   first row of tiles and their headers, while App.tsx's `tileArea()` had
+   already taken the same pixels off the BOTTOM of the tree.
+
+   Measured in Chrome at 1440x900 with the dock at its 30% default: the shell
+   body 1180x776 at y=37, the dock 1180x233 at y=37 covering all but 38px of a
+   271px tile row, and a 233px empty strip along the bottom where the tiles
+   stopped. With this rule the dock is 1180x233 at y=580, which is exactly where
+   the tiles end.
+
+   `margin-top: auto` on the panel rather than a positioned wrapper around the
+   slots, and that was measured too: a wrapper re-homes `.tl-tiles` (tiles.css)
+   and `.tl-offstage` above, both of which pin their bottom edge to the dock's
+   height against the shell body, so the dock comes off twice — the divider
+   skeleton came out 1180x380 inside a 1180x543 tile area, up to 163px between
+   a divider and the tile edge it is supposed to be on. It would also put a container between a
+   live terminal's slot and the element it is positioned against, which ADR-0027
+   spends its first decision avoiding. This rule moves no DOM at all, and
+   outside a workspace it changes nothing: the selected slot is in flow and
+   grows, so there is no free space for `auto` to take. */
+.tl-shell-body > .tl-dock {
+  margin-top: auto;
 }
 /* A preloaded session waiting for the click that shows it (ADR-0026).
    `App.tsx`'s `slotClasses` carries the reasoning; the geometry is here.
