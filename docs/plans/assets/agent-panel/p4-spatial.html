@@ -277,10 +277,21 @@ button.rw-row:hover .rw-more,.rw-row.is-sel .rw-more{opacity:1}
   .ph-tag{display:none}
   .tl-shell{grid-template-columns:1fr}
   .tl-shell-sidebar{display:none}
-  :root{--rw-head:132px;--rw-num:0px}
-  .rw-head,.rw-row{grid-template-columns:var(--rw-head) 0px 1fr 0px}
-  .rw-head{grid-template-columns:var(--rw-head) 0px 1fr}
-  .rw-num,.rw-legend{display:none}
+  .rw-head{grid-template-columns:1fr auto}
+  .rw-head-c,.rw-legend{display:none}
+  .rw-row{
+    grid-template-columns:1fr 92px;
+    grid-template-areas:"name num" "lane lane";
+    height:auto;align-items:center;padding-block:3px 4px;
+  }
+  .rw-name{grid-area:name}
+  .rw-num{grid-area:num}
+  .rw-lane,.rw-phase{grid-area:lane;height:21px}
+  .rw-row .rw-desc{font-size:calc(13px * var(--tl-text-scale))}
+  .rw-wf{height:auto;padding-block:3px;flex-wrap:wrap}
+  .rw-wf .st{margin-left:0;width:100%}
+  .rw-row.in-wf .rw-name{box-shadow:none;padding-left:0}
+  .rw-row.in-wf{box-shadow:inset 1px 0 0 var(--border-strong);padding-left:8px}
   .rw-reader{position:absolute;inset:0;flex-basis:auto;border-left:0;z-index:5}
   .rw-strip{height:28px}
 }
@@ -785,7 +796,9 @@ function measure(){
   geo = [];
   [...rows.children].forEach(c=>{
     if(c===cv||c===hit) return;
-    geo.push({el:c, id:c.dataset.id||null, y:c.offsetTop, h:c.offsetHeight});
+    const ln = c.querySelector(".rw-lane") || c.querySelector(".rw-phase");
+    geo.push({el:c, id:c.dataset.id||null, y:c.offsetTop, h:c.offsetHeight,
+              ly: c.offsetTop + (ln ? ln.offsetTop : 0), lh: ln ? ln.offsetHeight : c.offsetHeight});
   });
   sizeSilo(silo);
   sizeSilo(stripSilo);
@@ -959,7 +972,7 @@ function draw(st, plan){
     const g = geo.find(q=>q.id === p.s.a.id); if(!g) return;
     const s = p.s, a = s.a, col = laneColor(a);
     const LAB = 11;
-    const cy = g.y + LAB + (g.h - LAB) / 2;
+    const cy = g.ly + LAB + (g.lh - LAB) / 2;
     const x0 = x(a.t0), x1 = s.settled ? x(a.t1) : nowX;
 
     /* the run itself: only the past, never a track that implies a finish line */
@@ -974,8 +987,8 @@ function draw(st, plan){
     }
 
     /* one tick per tool call */
-    const th = Math.min(9, g.h - LAB - 3);
-    ctx.fillStyle = s.settled ? mix(col, .5) : (g.h < 23 ? mix(col, .85) : col);
+    const th = Math.min(9, g.lh - LAB - 3);
+    ctx.fillStyle = s.settled ? mix(col, .5) : (g.lh < 23 ? mix(col, .85) : col);
     for(const e of a.events){
       if(e.t > (s.settled ? a.t1 : st.t)) break;
       ctx.fillRect(Math.round(x(e.t)), cy - th/2, 1.6, th);
@@ -993,7 +1006,7 @@ function draw(st, plan){
     if(a.depth > 0 && a.parent){
       const pg = geo.find(q=>q.id === a.parent);
       if(pg){
-        const py = pg.y + 11 + (pg.h - 11) / 2;
+        const py = pg.ly + 11 + (pg.lh - 11) / 2;
         ctx.fillStyle = mix(col, .28);
         ctx.fillRect(Math.round(x0), Math.min(py,cy), 1, Math.abs(cy - py));
       }

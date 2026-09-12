@@ -200,6 +200,9 @@ button{font:inherit;color:inherit;background:none;border:0;padding-block:0;paddi
 }
 .tl-timeline > *{max-width:860px;width:100%;margin-inline:auto;margin-block:0;flex:0 0 auto}
 .tl-timeline > .is-hidden{display:none}
+/* the running head reserves its own strip, and the scroll position is
+   compensated in the same frame, so showing it never covers a line or jumps */
+.tl-timeline.has-head{padding-block-start:calc(16px + 26px * var(--tl-text-scale,1))}
 
 .tl-user{
   background:var(--bg-card); border:1px solid var(--border);
@@ -1070,7 +1073,7 @@ function agentRow(a,dim){
   '</div>';
 }
 
-function foldLine(ok,key){
+function foldLine(ok,key,near){
   if(!ok.length)return "";
   var open=isOpen(key,false);
   var names=ok.map(function(a){return a.s.desc;}).join(", ");
@@ -1078,20 +1081,24 @@ function foldLine(ok,key){
     '<span class="tick">&#10003;</span><span>'+ok.length+" done</span>"+
     '<span class="names">'+esc(names)+"</span>"+
     '<span class="car">'+(open?"&#9662;":"&#9656;")+"</span></button>"+
-    (open?ok.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join(""):"");
+    (open?ok.map(function(a){return agentRow(a,near&&drillOpen!==a.s.id);}).join(""):"");
 }
 
-function group(rows,key,cap){
-  var g=split(rows),out="",shown=g.run;
-  if(cap&&shown.length>cap){
-    out+=shown.slice(0,cap).map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
-    out+='<div class="tl-more">&#183; &#183; &#183; +'+(shown.length-cap)+" more running</div>";
-  }else{
-    out+=shown.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
-  }
-  out+=g.bad.map(function(a){return agentRow(a,drillOpen&&drillOpen!==a.s.id);}).join("");
-  out+=foldLine(g.ok,key);
+function group(rows,key,cap,near){
+  var g=split(rows),out="";
+  function row(a){return agentRow(a,near&&drillOpen!==a.s.id);}
+  if(cap&&g.run.length>cap){
+    out+=g.run.slice(0,cap).map(row).join("");
+    out+='<div class="tl-more">&#183; &#183; &#183; +'+(g.run.length-cap)+" more running</div>";
+  }else out+=g.run.map(row).join("");
+  out+=g.bad.map(row).join("");
+  out+=foldLine(g.ok,key,near);
   return out;
+}
+function holds(specs){
+  if(!drillOpen)return false;
+  for(var i=0;i<specs.length;i++)if(specs[i].id===drillOpen)return true;
+  return false;
 }
 
 /* ------------------------- the agent block ------------------------ */
@@ -1118,7 +1125,7 @@ function blockA(T){
       '<span class="tl-row-mark '+(live?"":(g.bad.length?"mark-err":"mark-done"))+'">'+
         (live?(open?"&#9662;":"&#9656;"):(g.bad.length?"&#10007;":"&#10003;"))+"</span>"+
     "</button>"+
-    (open?'<div class="tl-row-body"><div class="tl-strands">'+group(rows,"A.done",20)+"</div></div>":"")+
+    (open?'<div class="tl-row-body"><div class="tl-strands">'+group(rows,"A.done",20,holds(blockAgents))+"</div></div>":"")+
   "</div>";
 }
 
@@ -1146,7 +1153,7 @@ function wfBlock(T){
         '<span class="tl-ph-tally">'+tally+"</span>"+
         '<span class="tl-ph-el" data-tick="ph:'+p.i+'"></span>'+
       "</button>"+
-      (started&&open?'<div class="tl-ph-body">'+group(rows,"ph"+p.i+".done",20)+"</div>":"")+
+      (started&&open?'<div class="tl-ph-body">'+group(rows,"ph"+p.i+".done",20,holds(p.agents))+"</div>":"")+
     "</div>";
   });
   var open=isOpen("wf",live);
@@ -1273,9 +1280,18 @@ function tick(){
 function liveRows(){
   return listAt(blockAgents,T).concat(listAt(wfAll(),T)).filter(function(a){return !a.settled;});
 }
+var headOn=false;
+function setHead(on){
+  if(on===headOn)return;
+  headOn=on;
+  var h=rh.offsetHeight||26;
+  rh.classList.toggle("is-on",on);
+  tl.classList.toggle("has-head",on);
+  tl.scrollTop+=on?h:-h;
+}
 function updateRunhead(){
   var live=tl.querySelectorAll('[data-live="1"]');
-  if(!live.length){rh.classList.remove("is-on");return;}
+  if(!live.length){setHead(false);return;}
   var box=tl.getBoundingClientRect(),seen=false;
   var target=live[live.length-1],tr=target.getBoundingClientRect();
   for(var i=0;i<live.length;i++){
@@ -1283,8 +1299,8 @@ function updateRunhead(){
     var vis=Math.min(r.bottom,box.bottom)-Math.max(r.top,box.top);
     if(vis>=Math.min(44,r.height)){seen=true;break;}
   }
-  if(seen){rh.classList.remove("is-on");return;}
-  rh.classList.add("is-on");
+  if(seen){setHead(false);return;}
+  setHead(true);
   var run=liveRows(),best=null;
   run.forEach(function(a){if(!best||a.age<best.age)best=a;});
   var earliest=T;
@@ -1351,13 +1367,18 @@ tl.addEventListener("scroll",function(){
 });
 window.addEventListener("resize",updateRunhead);
 
-function frame(ts){
+/* the one clock. requestAnimationFrame sets the cadence so nothing runs in a
+   hidden tab, and the wall clock supplies the delta. Rows are rebuilt at most
+   ten times a second, and the two ticking numbers are written straight to the
+   DOM below, so a running row costs no re-render per second. */
+function frame(){
+  var now=Date.now();
   if(playing){
-    if(lastReal)T=Math.min(END,T+(ts-lastReal)*RATE);
-    lastReal=ts;
+    if(lastReal)T=Math.min(END,T+(now-lastReal)*RATE);
+    lastReal=now;
     if(T>=END){T=END;playing=false;setPlay();}
   }else lastReal=0;
-  if(ts-lastRender>=100){lastRender=ts;render();}
+  if(now-lastRender>=100){lastRender=now;render();}
   requestAnimationFrame(frame);
 }
 
