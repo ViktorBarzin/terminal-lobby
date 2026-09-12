@@ -4,8 +4,10 @@ import {
   createMemo,
   createSignal,
   For,
+  getOwner,
   onCleanup,
   onMount,
+  runWithOwner,
   Show,
   untrack,
   type Component,
@@ -1532,6 +1534,10 @@ export const App: Component = () => {
    * an undo — pushing there would clear the redo half the press is about to
    * fill, which is `store/undo.local.ts`'s "an inverse is quiet" rule.
    */
+  /** The shell's own reactive owner, so a write that destroys the node it was
+   *  dispatched from still has somewhere to live. See `landWorkspace`. */
+  const shellOwner = getOwner();
+
   const writeWorkspace = async (
     id: string,
     raw: TreeNode | null,
@@ -1615,8 +1621,32 @@ export const App: Component = () => {
    * `dnd/tiles.ts` calls `apply` as `void Promise.resolve(...).finally(done)`,
    * where a rejection has nowhere to go and surfaces as an unhandled one.
    */
-  const landWorkspace = (id: string, raw: TreeNode | null, from: TreeNode | null): Promise<void> =>
-    writeWorkspace(id, raw, { from }).catch(() => {});
+  const landWorkspace = (
+    id: string,
+    raw: TreeNode | null,
+    from: TreeNode | null,
+  ): Promise<void> => {
+    // RUN UNDER THE SHELL'S OWNER, not the caller's.
+    //
+    // Every gesture that lands a workspace is dispatched from inside the thing
+    // it is about to destroy: the ✕ lives in a `<Show when={rect()}>` whose
+    // tile that very write removes, and a drop runs inside the slot it
+    // re-tiles. `writeWorkspace` keeps reading after its `batch` — the
+    // membership comparison, the PUT, the rollback — and by then the owner it
+    // was called under has been disposed, so Solid answers a stale accessor
+    // with "Attempting to access a stale value from <Show>" and the promise
+    // rejects.
+    //
+    // Measured against the real app on 2026-09-12: pressing ✕ on a tile
+    // focused it, closed nothing, sent no request and logged nothing, because
+    // the rejection landed in the `.catch` below. The suite could not see it —
+    // a test calls the handler directly, so it never runs under a doomed
+    // owner.
+    runWithOwner(shellOwner, () => {
+      void writeWorkspace(id, raw, { from }).catch(() => {});
+    });
+    return Promise.resolve();
+  };
 
   /**
    * Teach the undo stack how to take a workspace edit back.
@@ -2445,15 +2475,32 @@ export const App: Component = () => {
                   ref={(el) => {
                     const press = (e: PointerEvent): void => {
                       if (!rect()) return;
+                      const on = e.target instanceof Element ? e.target : null;
+                      // A BUTTON IN THE HEADER TAKES THE WHOLE PRESS, and this
+                      // has to come BEFORE the select, which is where it sat
+                      // until it was measured in a browser on 2026-09-12.
+                      //
+                      // A click is a pointerdown and a pointerup on the SAME
+                      // element. Selecting here re-runs the `Show` that holds
+                      // the header, which builds a new button, so the pointerup
+                      // lands on a node that was not there for the pointerdown
+                      // and no click is ever dispatched. Pressing ✕ on an
+                      // unfocused tile therefore FOCUSED it and closed nothing,
+                      // with no error and no request to explain it — measured
+                      // against the real app, where the suite could not see it
+                      // because a test clicks the button directly.
+                      //
+                      // Nothing is lost by returning: a control in the strip
+                      // acts on the tile it is drawn on, so it does not need
+                      // that tile focused first, and the drag below already
+                      // declined a press on a button for its own reason.
+                      if (on?.closest(".tl-tile-header") && on.closest("button")) return;
                       if (!focused()) store.select(k.name, k.owner);
                       // A TILE IS DRAGGED BY ITS HEADER, which is also the strip
                       // that names it, so the press that focuses a tile and the
                       // press that lifts it are one press until the pointer
-                      // moves. The close control is inside the strip and is not
-                      // a handle: a press on it that wobbled would otherwise
-                      // lift the tile instead of closing it.
-                      const on = e.target instanceof Element ? e.target : null;
-                      if (!on?.closest(".tl-tile-header") || on.closest("button")) return;
+                      // moves.
+                      if (!on?.closest(".tl-tile-header")) return;
                       watchTileDrag(e, () => beginTileDrag(k.key));
                     };
                     el.addEventListener("pointerdown", press, true);
