@@ -5757,4 +5757,39 @@ describe("claiming the grid for a pinned tmux window", () => {
     expect(m.fit.fits).toBe(1); // the boot fit ran
     expect(m.grids).toEqual([]); // and said nothing
   });
+
+  /**
+   * THE FOURTH MOMENT, and the one the other three cannot cover: the socket
+   * itself coming back. A session parked off screen has no tmux client at all
+   * (terminal/battery.ts drops it after 30 s), so the claim the `shown` fit
+   * makes on the way back arrives before this device has a client — tmux-api
+   * finds nothing of ours to promote and, for a pinned session, nobody driving
+   * either, which is a 409 nothing retries. Measured 2026-09-12 on
+   * `ny-reibursment`: the window stayed at the 60 columns a phone had left it
+   * at while the desktop drew 144, and Text-and-back was the only way out.
+   */
+  it("claims the grid when the socket comes back, after the fit's claim raced it", async () => {
+    const m = await mount();
+    expect(m.grids).toEqual([]); // the boot fit had nothing to speak for
+
+    m.socket().accept();
+    await settle();
+
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /**
+   * ...but only for the session in front of you. A hidden mount reconnecting
+   * is someone else's window to lose: the phone reading this same session would
+   * have its grid pulled to this desktop's size by a socket nobody here is
+   * looking at.
+   */
+  it("claims nothing when a hidden session's socket comes back", async () => {
+    const m = await mount({ onScreen: false, active: false });
+
+    m.socket().accept();
+    await settle();
+
+    expect(m.grids).toEqual([]);
+  });
 });

@@ -199,6 +199,52 @@ describe("attaching a terminal", () => {
     a.dispose();
   });
 
+  /**
+   * THE ARGS ARE READ AT EVERY CONNECT, and the one that moves is the attach
+   * mode. A hover attaches with `pre`, tmux's ignore-size, so the speculative
+   * client cannot take the window; the click promotes it server-side and drops
+   * the mode. Until 2026-09-12 this file captured the string once, so every
+   * later reconnect re-attached as a preload — and a preload client can never
+   * size the session's window. A parked session came back inside whatever
+   * window the last device to attach had left.
+   */
+  it("reads the args again on a reconnect, so a promoted preload stops being one", async () => {
+    FakeSocket.made = [];
+    const seen: string[] = [];
+    let args = "arg=demo&arg=default&arg=default&arg=&arg=pre";
+    const h = harness({
+      fetch: (async (u: string) => {
+        seen.push(String(u));
+        return { json: async () => ({ token: "tok" }) };
+      }) as unknown as typeof fetch,
+    });
+    // Defined on the finished deps rather than passed in: `harness` spreads its
+    // overrides, and a spread reads a getter once and copies the value — which
+    // is the very freeze this test exists to catch.
+    Object.defineProperty(h.deps, "args", { get: () => args });
+    const a = attach(h.deps);
+    await flush();
+    expect(FakeSocket.made[0]!.url).toContain("arg=pre");
+
+    // The click lands: the slot stops being a preload, and the socket in
+    // flight keeps the args it was opened with.
+    args = "arg=demo";
+    expect(FakeSocket.made[0]!.url).toContain("arg=pre");
+
+    FakeSocket.made[0]!.open();
+    FakeSocket.made[0]!.drop();
+    const retry = h.timers.find((t) => t.ms > 0 && t.ms <= 2000);
+    h.runTimer(retry!.id);
+    await flush();
+
+    expect(FakeSocket.made).toHaveLength(2);
+    expect(FakeSocket.made[1]!.url).toBe("wss://lobby.example/ws?arg=demo");
+    // Token and socket agree within one attempt, which is the rule that stops a
+    // socket being opened against a credential issued for other args.
+    expect(seen[seen.length - 1]).toBe("/token?arg=demo");
+    a.dispose();
+  });
+
   it("climbs the ladder when a socket drops, and reconnects on the timer", async () => {
     FakeSocket.made = [];
     const h = harness();
