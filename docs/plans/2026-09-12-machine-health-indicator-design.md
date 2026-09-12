@@ -221,13 +221,13 @@ the cost: `verdict()` already prints it whenever the machine is the only channel
 complaining, which is the common case because a busy box breaks nobody's socket,
 so the same words appeared twice seven rows apart.
 
-Dropping it from the row entirely was the first fix and it was too blunt. The
-moment anything else is also complaining, `verdict()` becomes "2 things need
-attention" and the sentence leaves the panel altogether — and that is the case
-it exists for, because the dot is amber for a brush past a threshold and for a
-sustained grind alike, and the sentence is the only thing separating them. So
-the row picks the sentence up exactly where the headline drops it, and both
-tiers of the handoff are pinned by tests.
+Dropping it from the row entirely was the first fix, and it removed the sentence
+from a case that still needed it. The moment anything else is also complaining,
+`verdict()` becomes "2 things need attention" and the sentence leaves the panel
+altogether — and that is the case it exists for, because the dot is amber for a
+brush past a threshold and for a sustained grind alike, and the sentence is the
+only thing separating them. So the row picks the sentence up exactly where the
+headline drops it, and both tiers of the handoff are pinned by tests.
 
 An hour is long enough to tell a fading spike from something that started before
 the reader sat down. One line rather than three keeps it readable in the roughly
@@ -249,7 +249,7 @@ checks, so it becomes **"Everything is working."**
 The design asked for one extra line on the opening screen when the machine is
 amber at the moment someone clicks a session. Building it found that there is no
 opening screen to put a line on: the terminal was de-iframed (`term.html` was
-deleted in `2c64552`), `TerminalNative` simply paints when it is ready, and there
+deleted in `2c64552`), `TerminalNative` paints when it is ready, and there
 is no loading overlay, spinner or placeholder anywhere between the click and the
 first frame.
 

@@ -156,10 +156,14 @@ const MachineReadout: Component<{
   // the line" for CPU.
   const series = () => props.series.map((p) => p.ofLimit);
 
+  // One label, because there is only one path that ever draws. `series()` skips
+  // samples with no PSI behind them, so on the fallback path the series is
+  // always empty and the chart renders its "no readings yet" state instead of
+  // an svg — which means a second label for that path would describe something
+  // nobody can see. If the fallback ever grows a series of its own, drawing
+  // load per core against its line, this is where its label goes.
   const chartLabel = () =>
-    props.report.source === "load"
-      ? "Load per core over the last hour, against the line where this row turns amber."
-      : "The busiest of processor, disk and memory over the last hour, against the line where this row turns amber.";
+    "The busiest of processor, disk and memory over the last hour, against the line where this row turns amber.";
 
   return (
     <div class="tl-rightnow-machine">

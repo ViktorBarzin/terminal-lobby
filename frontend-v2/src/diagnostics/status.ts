@@ -538,8 +538,18 @@ export function machineChannel(report: MachineReport | null): Channel {
   // Not reporting is not a fault. The reading rides the session-list poll, so
   // it is absent for the first seconds of every page, and for the whole life of
   // a page talking to a server too old to send it.
-  if (!report || report.state === "unknown") {
+  if (!report || report.source === "unknown") {
     return { id: "machine", state: "unknown", detail: "not reporting" };
+  }
+  // A READING WITH TOO SHORT A WINDOW IS NOT THE SAME AS NO READING. tmux-api
+  // fills in every figure from the first sample but withholds the verdict until
+  // it has four minutes of history, because the thresholds are ten-minute rates
+  // and a narrower one crosses a line at a rate nobody calibrated. Both arrive
+  // here as `unknown`, and they must not say the same thing: the row shows the
+  // figures underneath, so "not reporting" printed above a live "Disk 84%"
+  // contradicts itself on screen.
+  if (report.state === "unknown") {
+    return { id: "machine", state: "unknown", detail: "still measuring" };
   }
   const state: ChannelState = report.state === "working" ? "working" : "degraded";
   return { id: "machine", state, detail: machineDetail(report, state), tier: report.tier };
