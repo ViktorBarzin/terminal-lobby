@@ -5,7 +5,7 @@
  * read as a fault. Five channels answer over a connection, so no answer in five
  * seconds is evidence that the connection is broken. The machine is not a
  * connection: an unanswered /machine says the reading did not arrive, and the
- * row that reports how busy the box is has no way to be red (ADR-0027). If the
+ * row that reports how busy the box is has no way to be red (ADR-0028). If the
  * API really is unreachable, the session-list row is already saying so on its
  * own line, which is the accurate statement.
  *

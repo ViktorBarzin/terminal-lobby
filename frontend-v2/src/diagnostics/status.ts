@@ -12,7 +12,7 @@
  * five ways, all of them about the browser's end, and none of them can say that
  * the box itself is stalling while every one of them is healthy. `machine`
  * reports that, from Linux pressure-stall time, and it reaches degraded and
- * stops there (docs/adr/0027-stall-time-says-the-box-is-busy.md).
+ * stops there (docs/adr/0028-stall-time-says-the-box-is-busy.md).
  *
  * The word "channel" belongs to this file, CONTEXT.md and the ADR. It is never
  * shown on screen: the rows are labelled Terminal, Transcript, Session list,
@@ -170,7 +170,7 @@ export type MachineResource = "cpu" | "io" | "memory" | "load";
  * The two lines are calibrated per resource rather than one being a multiple of
  * the other. Doubling was the first design and it was wrong: IO's amber line is
  * 50% and a stall rate cannot exceed 100%, so IO could never reach the tier at
- * all. See ADR-0027.
+ * all. See ADR-0028.
  */
 export type MachineTier = "fine" | "busy" | "very-busy";
 

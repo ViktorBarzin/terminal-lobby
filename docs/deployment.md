@@ -171,7 +171,7 @@ seconds and measures it against six numbers. All six ship commented out in
 the binary compiles in and picks up a later recalibration. Override them in
 `/etc/terminal-lobby.local.conf` and restart `tmux-api`. Why the colour comes
 from stall time and not from a load average:
-[adr/0027-stall-time-says-the-box-is-busy.md](adr/0027-stall-time-says-the-box-is-busy.md).
+[adr/0028-stall-time-says-the-box-is-busy.md](adr/0028-stall-time-says-the-box-is-busy.md).
 
 | variable | default | what it measures |
 |---|---|---|

@@ -144,7 +144,7 @@ describe("the panel's verdict", () => {
   /**
    * WORKING, not connected. The panel gained a row that reports the box itself,
    * so the old sentence claimed something narrower than the six rows check: a
-   * machine can be stalling with every connection healthy (ADR-0027).
+   * machine can be stalling with every connection healthy (ADR-0028).
    */
   it("says so plainly when nothing is wrong", () => {
     expect(verdict([ch("terminal", "working"), ch("sessions", "working")])).toBe(
@@ -479,7 +479,7 @@ describe("the machine channel", () => {
    * AMBER AT WORST, checked here rather than trusted. `degraded` means wait and
    * `down` means act: there is no action to take about a busy machine, and the
    * box is plainly not down, because this reading came from it. Red keeps its
-   * one meaning, "you are disconnected" (ADR-0027).
+   * one meaning, "you are disconnected" (ADR-0028).
    */
   it("never reports the machine as down, whatever the reading claims", () => {
     for (const state of ["working", "degraded", "down", "unknown"] as const) {

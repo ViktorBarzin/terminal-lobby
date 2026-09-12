@@ -5149,7 +5149,7 @@ body.tl-kb-up {
    that has one. The two cannot disagree: the series it draws is the pressure
    that decided the dot. --state-running is the amber the degraded dot already
    uses, and --danger stays out of this row entirely, because red means "you are
-   disconnected" and a busy machine never is (ADR-0027). */
+   disconnected" and a busy machine never is (ADR-0028). */
 .tl-rightnow-row[data-channel="machine"][data-status="degraded"] .tl-spark-svg {
   color: var(--state-running);
 }

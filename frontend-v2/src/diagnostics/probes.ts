@@ -161,7 +161,7 @@ export function buildProbes(deps: ProbeDeps): CheckProbe[] {
       // the five channels that answer over a connection, and red means "you are
       // disconnected" throughout the UI; a box that did not answer a direct
       // read is a row that is not reporting, and this channel is not allowed to
-      // be red at all (ADR-0027). If the API really is unreachable, the
+      // be red at all (ADR-0028). If the API really is unreachable, the
       // session-list row above is already saying so on its own line.
       //
       // `fetchMachine` holds up the other half of that: it answers null rather

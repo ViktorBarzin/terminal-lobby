@@ -10,7 +10,7 @@
  *
  * Design: docs/plans/2026-09-12-machine-health-indicator-design.md, "The panel
  * row". Why it is amber at worst and why the sentence carries the depth:
- * docs/adr/0027-stall-time-says-the-box-is-busy.md.
+ * docs/adr/0028-stall-time-says-the-box-is-busy.md.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -216,7 +216,7 @@ describe("This machine — the sentence, said once", () => {
 
   /**
    * The dot is amber for a brush past a threshold and for a sustained grind
-   * alike, and the sentence is the only thing that separates them (ADR-0027).
+   * alike, and the sentence is the only thing that separates them (ADR-0028).
    * With a second channel complaining the headline becomes a count, so without
    * this the distinction would vanish from the panel exactly when the panel has
    * the most to explain.
@@ -251,7 +251,7 @@ describe("This machine — the sentence, said once", () => {
     expect(row.querySelector(".tl-rightnow-machine-said")).toBeNull();
   });
 
-  /** Amber at worst (ADR-0027). Red on this row would claim the box is
+  /** Amber at worst (ADR-0028). Red on this row would claim the box is
    *  unreachable, which it plainly is not — the reading came from it. */
   it("never paints the row red, whatever the reading claims", () => {
     const row = machineRow(reading({ state: "down", tier: "very-busy", worst: "io" }));
@@ -327,7 +327,7 @@ describe("This machine — what it must not do", () => {
   /**
    * There is no action a person can take about a busy machine, so the row must
    * not grow a button offering one — even from a control that would answer for
-   * every channel (ADR-0027).
+   * every channel (ADR-0028).
    */
   it("grows no repair button", () => {
     const row = machineRow(reading({ state: "degraded", tier: "busy" }), points([0.1]), {

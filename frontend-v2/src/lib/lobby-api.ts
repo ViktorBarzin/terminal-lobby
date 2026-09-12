@@ -472,7 +472,7 @@ export const lobbyApi: LobbyApi = {
 
 /*
  * Whether the BOX is the reason a terminal feels slow — the sixth channel's
- * half of the wire (ADR-0027; tmux-api/health.go on the other side).
+ * half of the wire (ADR-0028; tmux-api/health.go on the other side).
  *
  * IT LIVES WITH THE CLIENT BECAUSE IT ARRIVES WITH THE CLIENT. The verdict is a
  * tmux-api fact riding tmux-api's responses, and `req` above is the one place
