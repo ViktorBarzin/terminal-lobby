@@ -484,6 +484,13 @@ src/
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
     dock.ts              Ctrl+J scratch-shell dock state (roamed via layout.dock)
+    sidebar-width.logic.ts
+                         PURE session-list width: the stops (200-560px), the
+                         360px the session pane keeps, and the clamp both the
+                         drag and the read go through
+    sidebar-width.ts     Per-browser session-list width (tl:sidebar-w:v1), read
+                         back capped to the window so a narrow one borrows the
+                         width and a wide one gives it back
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
@@ -760,6 +767,8 @@ src/
                          days of terminal.softkey telemetry — the glyph keys had
                          no taps at all and Ctrl could not reach a letter
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
+    SidebarGrip.tsx      The seam between the list and the session, dragged with
+                         a pointer or the arrow keys; double-click resets
     BellIcon.tsx         Header notification-bell glyph (on/off)
     Sparkline.tsx        One polyline over a series of numbers, drawn as inline
                          SVG because this project carries no charting library.

@@ -55,12 +55,14 @@ import { createStatusStore, type ConnectionControl } from "../diagnostics/status
 import { buildProbes } from "../diagnostics/probes";
 import { worst, type SseStatus, type TerminalReport } from "../diagnostics/status";
 import { createDockStore } from "../store/dock";
+import { createSidebarWidthStore } from "../store/sidebar-width";
 import { createCoarsePointer, createMobileFlip, isMobileFlip } from "../mobile/pointer";
 import { installSwipe } from "../mobile/swipe";
 import { installViewportSync } from "../mobile/viewport";
 import { installSoftKeysReserve } from "../mobile/softkeys-reserve";
 import { installFocusReveal } from "../mobile/reveal";
 import { Dock } from "./Dock";
+import { SidebarGrip } from "./SidebarGrip";
 import { track, tracker } from "../telemetry/track";
 import { isCoarsePointer } from "../mobile/pointer";
 import { actAsUrl, lensTarget } from "../lib/act-as";
@@ -561,6 +563,11 @@ export const App: Component = () => {
       /* no storage */
     }
   };
+
+  // How WIDE that sidebar is, when it is showing. Published to CSS below as
+  // `--tl-sidebar-w` and dragged by <SidebarGrip/>; per-browser, because a
+  // width in pixels is an answer about a screen (store/sidebar-width.ts).
+  const sidebarWidth = createSidebarWidthStore();
 
   const [settingsOpen, setSettingsOpen] = createSignal(false);
   // Skills is a page on the Settings rail, so both header buttons open the same
@@ -1070,8 +1077,13 @@ export const App: Component = () => {
   return (
     <div
       class="tl-shell"
+      // The column width, for the grid track, the sidebar inside it and the
+      // grip that drags it — one property, so the three cannot disagree. The
+      // stacked layouts override it rather than read it (sidebar.css).
+      style={{ "--tl-sidebar-w": `${sidebarWidth.width()}px` }}
       classList={{
         "tl-shell-collapsed": collapsed(),
+        "tl-shell-resizing": sidebarWidth.dragging(),
         "tl-flip": flip(),
         // Paints the coloured frame + tinted bars. Driven by the server's
         // answer, so a refused ?as= leaves the tab looking exactly like yours.
@@ -1125,6 +1137,10 @@ export const App: Component = () => {
           />
         </PreloadHoverContext.Provider>
       </aside>
+
+      {/* The seam, draggable. Outside the <aside> because it straddles that
+          element's border and the aside clips its own overflow. */}
+      <SidebarGrip sidebar={sidebarWidth} />
 
       <div class="tl-shell-content">
         <div class="tl-shellbar">
