@@ -157,8 +157,10 @@ _Avoid_: read-only mode (ambiguous against a share's `ro`), observer mode
 **Preload attach**:
 A client's own choice to attach a Session the user has not opened yet, so the
 terminal is already drawn when they commit. Read-**write**, unlike Watch mode,
-but carrying tmux's ignore-size flag, so until it is **promoted** it does not
-move the **Grid** and does not count as driving (**Last driven** stays put). A
+but carrying tmux's ignore-size flag, so it does not take the **Grid** from
+another client reading the same Session, and does not count as driving (**Last
+driven** stays put). Alone on a Session it sizes the window like any other
+client, which is what opening it would have done anyway. A
 promotion clears the flag on the same client, so the socket the hover opened is
 the one the user then types into; there is no second attach. The third value of
 the client's attach request, beside watch and drive, and resolved by the server
