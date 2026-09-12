@@ -441,11 +441,16 @@ func TestMachineSurfaceAnswersOverARealSocket(t *testing.T) {
 	if n, _ := verdict["nproc"].(float64); n < 1 {
 		t.Errorf("nproc = %v, so nothing was measured: %v", n, verdict)
 	}
-	if partial, _ := verdict["partialWindow"].(bool); partial && verdict["state"] != healthUnknown {
-		t.Errorf("a partial window produced a colour over the wire: %v", verdict)
+	// The bar for a COLOUR is healthColourMinWindow, not the full ten minutes,
+	// so `partialWindow` no longer implies `unknown`: a five-minute window is
+	// partial AND coloured. What must still hold is that a window too short to
+	// measure produces no colour at all.
+	win, _ := verdict["windowSeconds"].(float64)
+	if win < healthColourMinWindow.Seconds() && verdict["state"] != healthUnknown {
+		t.Errorf("a %vs window produced a colour over the wire: %v", win, verdict)
 	}
-	if partial, _ := verdict["partialWindow"].(bool); !partial && verdict["state"] == healthUnknown {
-		t.Errorf("a full window produced no verdict over the wire: %v", verdict)
+	if win >= healthColourMinWindow.Seconds() && verdict["state"] == healthUnknown {
+		t.Errorf("a %vs window produced no verdict over the wire: %v", win, verdict)
 	}
 	// Never red, on any reading this host could produce.
 	if verdict["state"] == "down" {

@@ -504,6 +504,43 @@ func TestHealthColoursOnceTheFullWindowExists(t *testing.T) {
 	}
 }
 
+// The bar for a colour is healthColourMinWindow and not healthWindow, which is
+// the whole of what moving it from ten minutes to four bought: a window between
+// the two is PARTIAL and still coloured. The two tests above pin 90 seconds and
+// ten minutes, so without this one the four-minute bar could drift anywhere
+// inside that gap — back to ten included — and both of them would still pass.
+func TestHealthColoursOnceTheColourWindowExists(t *testing.T) {
+	// 0.15 is over CPU's amber line of 10 and under its very-busy line of 20,
+	// so a reading that produces any colour at all produces this one.
+	const overAmber = 0.15
+	// The comparison is `elapsed < healthColourMinWindow`, so the bar itself
+	// counts as wide enough. n samples a step apart span (n-1) steps.
+	step := 10 * time.Second
+	atBar := int(healthColourMinWindow/step) + 1
+
+	for _, c := range []struct {
+		name    string
+		samples int
+		state   string
+	}{
+		{"one sample short of the bar", atBar - 1, healthUnknown},
+		{"exactly on the bar", atBar, healthDegraded},
+		{"past the bar and still short of the full window", atBar + 6, healthDegraded},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			v := healthVerdictFrom(stallRing(c.samples, step, overAmber, 0, 0), defaultLimits())
+			// Every case here is inside the ten minutes the thresholds were
+			// calibrated over, which is the band this test is about.
+			if !v.PartialWindow {
+				t.Fatalf("a %ds window was not marked partial", v.WindowSeconds)
+			}
+			if v.State != c.state {
+				t.Errorf("state over a %ds window: got %q, want %q", v.WindowSeconds, v.State, c.state)
+			}
+		})
+	}
+}
+
 func TestHealthUnknownBeforeAnythingHasBeenMeasured(t *testing.T) {
 	cases := []struct {
 		name string
