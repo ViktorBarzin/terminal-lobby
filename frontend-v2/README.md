@@ -473,12 +473,6 @@ src/
                          60 s TTL, desktop and own-sessions only. The attach
                          carries tmux's ignore-size flag so it cannot move the
                          window, and a click promotes it (ADR-0026)
-    pane-grid.ts         The grid a terminal ON SCREEN last reported, kept per
-                         device so one booting HIDDEN attaches at it. Without it
-                         a preload handshakes at xterm's 80x24 and tmux follows,
-                         because ignore-size holds only while an unflagged
-                         client is attached: a hover shrank the session to 80
-                         columns and the click grew it back
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so
