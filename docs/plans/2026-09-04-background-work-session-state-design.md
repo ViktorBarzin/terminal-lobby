@@ -117,6 +117,10 @@ flowchart TD
 | `PreToolUse`/`PostToolUse` | `agent_id` present | do nothing |
 | `PostToolUse` | `agent_id` absent, `tool_response` carries `agentId` / `backgroundTaskId` / `taskId` with `status:"async_launched"` | add `<kind>:<id>` to `@claude_bg`; stamp `running` |
 | `PreToolUse`/`PostToolUse` | `agent_id` absent, no async id | stamp `running` (unchanged) |
+| `SubagentStart` | `agent_id` is `a<agent_type>-<hash>`, i.e. a teammate | add `t:<name>` to `@claude_bg`; stamp `running` *(added 2026-09-12)* |
+| `SubagentStart` | anything else (a plain subagent) | do nothing: the registry retires it honestly *(added 2026-09-12)* |
+| `TeammateIdle` | — | remove `t:<teammate_name>`; stamp nothing *(added 2026-09-12)* |
+| `Stop` | — | rebuild `@claude_bg` from `background_tasks`, carrying `t:` tokens through *(revised 2026-09-12)* |
 | `Stop` | `@claude_bg` empty | stamp `done` (unchanged) |
 | `Stop` | `@claude_bg` non-empty | stamp `running` |
 | `SessionStart` | `source` is `startup` or `resume` (a new process) | clear `@claude_bg`; stamp `done` |
@@ -124,9 +128,22 @@ flowchart TD
 | `SessionEnd` | — | clear both |
 | `Notification` | — | unchanged (ADR-0001's classification) |
 
-`@claude_bg` holds space-separated `<kind>:<id>` tokens, kind being `a` (agent),
-`b` (background command) or `w` (workflow), e.g. `a:a1cbb47bebad51b9b b:bmm8ohp9u`.
-Storing the kind is what lets the card say *2 agents* rather than only a total.
+`@claude_bg` holds space-separated `<kind>:<id>` tokens, kind being `a` (a
+background subagent), `b` (a background command), `w` (a workflow) or `t` (a
+teammate), e.g. `a:a1cbb47bebad51b9b b:bmm8ohp9u`. Storing the kind is what lets
+the card say *2 agents* rather than only a total; `a` and `t` both read as
+*agent* there.
+
+The first three are keyed by the harness's own task id. A teammate is keyed by
+its NAME, because `background_tasks` reports a teammate as `running` for as long
+as it exists — measured three times on 2026-09-12, the last 3m30s after it had
+answered and while the harness's own bar showed it *idle*. The name is what
+`SubagentStart` and `TeammateIdle` carry, `Stop` carries those tokens through a
+rebuild rather than re-deriving them, and they are dropped when the list holds
+no teammate at all. For the same reason a task type the script does not
+recognise is skipped rather than counted: a session stuck at `running` refuses
+the model picker and holds a T3 attach pin open, with no expiry to fall back on,
+while a late green dot corrects itself at the next launch.
 
 `sessionio.Injector.Cancel` already re-derives `@claude_state` after an interrupt
 (ADR-0001); it reads `@claude_bg` to decide which state to stamp, and leaves the
@@ -210,6 +227,34 @@ with every hook logging its stdin (claude 2.1.269). The fixtures under
   be removed: a RUNNING workflow is listed in `Stop`'s `background_tasks`, as
   `{"id":"w7t7pnsug","type":"workflow","status":"running","name":"probe-slow"}`.
   `workflow` is a third kind beside `shell` and `subagent`.
+
+A fourth kind turned up the same evening, and it does not fit the model above.
+Viktor: "even though the agents are running, the session says it's green or
+done". An agent TEAM is the `Agent` tool given a `name`, and a teammate is
+invisible to every signal this design used. Measured on 2.1.269, 2026-09-12,
+with every hook event logging its stdin:
+
+| what | a background subagent | a teammate |
+|---|---|---|
+| the launch answers | `{"status":"async_launched","agentId":"a7a33e…"}` | `{"status":"teammate_spawned","name":"counter","teammate_id":"counter@session-337349ca"}` |
+| the id in `background_tasks` | the same `a7a33e…` | `tocihyt26`, which appears nowhere in the launch |
+| when it finishes | leaves the list; a `<task-notification>` arrives as a prompt | stays in the list as `"status":"running"`; no prompt hook fires at all |
+
+The last cell is the load-bearing one: a teammate's answer reaches the lead over
+the team's own channel, so no `UserPromptSubmit` fires, and a `Stop` taken 3m30s
+after the teammate had answered still listed it as running while the harness's
+own bar showed it *idle*. 85 of the 136 `Agent` launches in this box's
+transcripts that week were teammates, so this was the majority path.
+
+Two events answer it, and wiring them is the `managed-settings.json` change this
+design had declined to make: `SubagentStart` fires on every activation — the
+spawn, a `SendMessage`, or a person typing into the teammate's pane — and
+`TeammateIdle` fires when it stops. A teammate's `SubagentStart` is told from a
+plain subagent's by the id the harness builds: `aprobe2-9b0fe9e64c9f7bdf` with
+`agent_type` `probe2` against `a8574b6e73ce517a0` with `agent_type`
+`general-purpose`. `SubagentStop` stays unused, since `TeammateIdle` names the
+teammate directly. `TaskCreated` and `TaskCompleted` are valid event names in
+2.1.269 and fired for none of the four kinds.
 
 ## How it was verified
 

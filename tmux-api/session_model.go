@@ -111,6 +111,11 @@ type Background struct {
 // nil means nothing is outstanding, which is the overwhelmingly common case and
 // the one the wire shape is optimised for.
 //
+// `a` and `t` both count as agents. They are separate kinds to the hook because
+// it tracks them by different keys — a background subagent by the harness's task
+// id, a teammate by its name — but a person reading the sidebar wants one word
+// for both, and "2 agents" is that word.
+//
 // A token whose kind this does not know counts as nothing. The hook validates
 // every id before writing it, so an unrecognised shape came from somewhere else,
 // and treating it as work would hold the session at "running" with no event able
@@ -123,7 +128,7 @@ func parseBackground(tokens string) *Background {
 			continue
 		}
 		switch kind {
-		case "a":
+		case "a", "t":
 			b.Agents++
 		case "b":
 			b.Commands++

@@ -190,15 +190,17 @@ installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
 *Running* is not the same as "a turn is in flight". A session that
-launched a background agent, a workflow or a background command keeps
-that dot until the work reports back, because it will speak again with
-nobody prompting it, and the card names what it is waiting on ("2
-agents", "1 workflow"). The outstanding task ids live in a second
-option, `@claude_bg`, written by the same hooks. At the end of every turn
-the set is reconciled against the tasks the harness still reports live, so
-work that finished while Claude was mid-turn stops holding the dot, and
-work that is still going keeps it — through anything you type meanwhile,
-and through a compaction.
+launched a background agent, a workflow, a background command or a
+teammate keeps that dot until the work reports back, because it will
+speak again with nobody prompting it, and the card names what it is
+waiting on ("2 agents", "1 workflow"). What is outstanding lives in a
+second option, `@claude_bg`, written by the same hooks. At the end of
+every turn the set is rebuilt from the tasks the harness still reports
+live, so work that finished while Claude was mid-turn stops holding the
+dot, and work that is still going keeps it — through anything you type
+meanwhile, and through a compaction. A teammate is the exception the
+harness cannot answer for, since it stays listed while idle, so one is
+held from `SubagentStart` until `TeammateIdle` instead.
 Design: `docs/plans/2026-09-04-background-work-session-state-design.md`.
 
 ## Documentation
