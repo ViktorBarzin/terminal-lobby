@@ -16,11 +16,13 @@ import (
 // devvm artefact rather than Go, and it is tested here because this package owns
 // the option names it writes and the semantics they carry.
 //
-// Every payload under testdata/hooks/ is a REAL hook stdin captured from claude
-// 2.1.260 on 2026-09-04, except post_workflow_launch.json, whose tool_response is
-// the shape a Workflow launch recorded in a transcript on 2026-09-02. Recorded
-// rather than hand-written so a payload-shape change fails here instead of
-// reaching the box.
+// Every payload under testdata/hooks/ is a REAL hook stdin: most captured from
+// claude 2.1.260 on 2026-09-04, and the three workflow ones — post_workflow_launch,
+// stop_workflow_running and sessionstart_compact — from 2.1.269 on 2026-09-12,
+// by running a real Workflow in a tmux session and logging every hook's stdin.
+// Recorded rather than hand-written so a payload-shape change fails here instead
+// of reaching the box. The pair matters: the launch records `w7t7pnsug` and the
+// Stop taken while that same run was live lists it back.
 
 // hookScript is the script under test, resolved from this package's directory.
 func hookScript(t *testing.T) string {
@@ -213,10 +215,14 @@ func TestASubagentsOwnToolCallsDoNotTouchTheSession(t *testing.T) {
 // Each launch kind carries its id in a different field, and the kind is stored
 // so the sidebar can say "2 agents" rather than only a total.
 func TestEveryLaunchKindIsRecordedWithItsKind(t *testing.T) {
-	for _, tc := range []struct{ name, fixture, want string }{
-		{"background agent", "post_agent_launch.json", "a:a1cbb47bebad51b9b"},
-		{"background command", "post_bash_launch.json", "b:bmm8ohp9u"},
-		{"workflow", "post_workflow_launch.json", "w:wy71p4jz3"},
+	// The Stop fixture per kind is the one taken while THAT kind was live, so
+	// each subtest exercises a launch against a harness list that still carries
+	// it. stop.json lists the agent and the command; stop_workflow_running.json
+	// lists the workflow.
+	for _, tc := range []struct{ name, fixture, want, stop string }{
+		{"background agent", "post_agent_launch.json", "a:a1cbb47bebad51b9b", "stop.json"},
+		{"background command", "post_bash_launch.json", "b:bmm8ohp9u", "stop.json"},
+		{"workflow", "post_workflow_launch.json", "w:w7t7pnsug", "stop_workflow_running.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newHookEnv(t)
@@ -225,7 +231,7 @@ func TestEveryLaunchKindIsRecordedWithItsKind(t *testing.T) {
 			if got := e.opt(t, OptionBackground); got != tc.want {
 				t.Fatalf("%s = %q, want %q", OptionBackground, got, tc.want)
 			}
-			e.fire(t, "done", "stop.json")
+			e.fire(t, "done", tc.stop)
 			if got := e.opt(t, OptionState); got != StateRunning {
 				t.Fatalf("%s after Stop = %q, want %q", OptionState, got, StateRunning)
 			}
@@ -233,19 +239,46 @@ func TestEveryLaunchKindIsRecordedWithItsKind(t *testing.T) {
 	}
 }
 
-// Decided 2026-09-04: there is no expiry on an outstanding id, so a human prompt
-// is what re-derives a session whose set went stale. The accepted cost is that a
-// prompt sent DURING a live workflow reports done early.
-func TestAHumanPromptClearsTheOutstandingSet(t *testing.T) {
+// Talking to a session does not end the work it is already doing.
+//
+// This is the bug Viktor reported on 2026-09-12 ("Claude starts a workflow, then
+// the status for that session becomes green"). Until then a human prompt wiped
+// the whole outstanding set, on the reasoning that nothing else could re-derive
+// a set that had gone stale. Measured across the 105 workflow runs recorded on
+// this box, 43 of them (40%) had a human prompt land while the run was still
+// going — every one of those painted the session done with the workflow live.
+//
+// The prune at Stop is the re-derivation that wipe was standing in for, so the
+// wipe is gone and this is what replaces it.
+func TestAHumanPromptDoesNotDropLiveWork(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_workflow_launch.json")
+
+	e.fire(t, "running", "userprompt_human.json") // the person says something else
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Fatalf("%s after a human prompt = %q, want the live workflow still there", OptionBackground, got)
+	}
+
+	e.fire(t, "done", "stop_workflow_running.json")
+	if got := e.opt(t, OptionState); got != StateRunning {
+		t.Fatalf("%s = %q, want %q: the workflow is still running", OptionState, got, StateRunning)
+	}
+}
+
+// The other half of dropping that wipe: a set that HAS gone stale still drains,
+// one turn later, because the harness's own list says the ids are gone. Nothing
+// expires an id, so this is the only path left that clears one nobody retired.
+func TestAStaleSetDrainsAtTheNextStop(t *testing.T) {
 	e := newHookEnv(t)
 	e.set(t, OptionBackground, "a:stale1 b:stale2")
 
 	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "done", "stop_tasks_finished.json")
 
 	if got := e.opt(t, OptionBackground); got != "" {
-		t.Fatalf("%s after a human prompt = %q, want empty", OptionBackground, got)
+		t.Fatalf("%s = %q, want empty: the harness lists neither id", OptionBackground, got)
 	}
-	e.fire(t, "done", "stop.json")
 	if got := e.opt(t, OptionState); got != StateDone {
 		t.Fatalf("%s = %q, want %q once the stale set is gone", OptionState, got, StateDone)
 	}
@@ -266,6 +299,35 @@ func TestATaskNotificationRetiresOnlyItsOwnID(t *testing.T) {
 	e.fire(t, "done", "stop.json")
 	if got := e.opt(t, OptionState); got != StateRunning {
 		t.Fatalf("%s = %q, want %q with one task left", OptionState, got, StateRunning)
+	}
+}
+
+// A compaction is the SAME claude process carrying on, so the tasks it launched
+// are still running and their ids must survive. SessionStart fires for four
+// sources — startup, resume, clear and compact (all four confirmed on 2.1.269,
+// 2026-09-12) — and only the first two are a new process.
+//
+// A long workflow all but guarantees a compaction: the longest real run on this
+// box was 2h22m. Wiping here painted those sessions done with the run live, and
+// unlike the human-prompt path it needed nobody to type anything.
+func TestACompactionKeepsTheOutstandingSet(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_workflow_launch.json")
+
+	e.fire(t, "done", "sessionstart_compact.json")
+
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Fatalf("%s after a compaction = %q, want the live workflow still there", OptionBackground, got)
+	}
+	// Keeping the id and stamping done anyway would paint the session green all
+	// the same, so the state has to follow the set here as it does at Stop.
+	if got := e.opt(t, OptionState); got != StateRunning {
+		t.Fatalf("%s after a compaction = %q, want %q: the workflow outlived it", OptionState, got, StateRunning)
+	}
+	e.fire(t, "done", "stop_workflow_running.json")
+	if got := e.opt(t, OptionState); got != StateRunning {
+		t.Fatalf("%s = %q, want %q: the workflow is still running", OptionState, got, StateRunning)
 	}
 }
 
@@ -319,31 +381,46 @@ func TestAnIdleReminderDoesNotRepaintASessionHeldByBackgroundWork(t *testing.T) 
 	}
 }
 
-// An interrupt ends the turn, and a task the interrupted turn launched will
-// never report back into it. Cancel already owns the @claude_state transition
-// (ADR-0001); it owns this one for the same reason, and because a left-behind
-// id is the one way a set with no expiry can latch.
-func TestCancelAlsoClearsTheOutstandingSet(t *testing.T) {
-	in, osUser, sock := scratchSession(t)
-	for _, o := range [][2]string{{OptionState, StateRunning}, {OptionBackground, "a:x w:y"}} {
-		if err := exec.Command("tmux", "-L", sock, "set-option", "-t", "demo", o[0], o[1]).Run(); err != nil {
-			t.Fatalf("seed %s: %v", o[0], err)
-		}
-	}
+// An interrupt ends the TURN. It does not end the work the session already
+// started, which is a separate thing and was measured on 2026-09-12: a live
+// workflow kept counting through a C-c ("0/1 agents done · 25s" at the moment
+// of the interrupt, still climbing after), and a background command's output
+// file went from line 39 to line 55 across one. So Cancel stamps from the set
+// rather than emptying it, the same way Stop does.
+//
+// Cancel still owns the @claude_state transition (ADR-0001) — an interrupt
+// fires no Stop hook, so nothing else would move the stamp off running.
+func TestCancelStampsFromTheOutstandingSet(t *testing.T) {
+	for _, tc := range []struct{ name, seed, want string }{
+		{"work survives the interrupt", "a:x w:y", StateRunning},
+		{"nothing outstanding", "", StateDone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, osUser, sock := scratchSession(t)
+			if err := exec.Command("tmux", "-L", sock, "set-option", "-t", "demo", OptionState, StateRunning).Run(); err != nil {
+				t.Fatalf("seed %s: %v", OptionState, err)
+			}
+			if tc.seed != "" {
+				if err := exec.Command("tmux", "-L", sock, "set-option", "-t", "demo", OptionBackground, tc.seed).Run(); err != nil {
+					t.Fatalf("seed %s: %v", OptionBackground, err)
+				}
+			}
 
-	if err := in.Cancel(osUser, "demo"); err != nil {
-		t.Fatalf("Cancel: %v", err)
-	}
+			if err := in.Cancel(osUser, "demo"); err != nil {
+				t.Fatalf("Cancel: %v", err)
+			}
 
-	out, err := exec.Command("tmux", "-L", sock, "show-option", "-qv", "-t", "demo", OptionBackground).Output()
-	if err != nil {
-		t.Fatalf("show-option: %v", err)
-	}
-	if got := strings.TrimSpace(string(out)); got != "" {
-		t.Fatalf("%s after Cancel = %q, want empty", OptionBackground, got)
-	}
-	if got := in.State(osUser, "demo"); got != StateDone {
-		t.Fatalf("%s after Cancel = %q, want %q", OptionState, got, StateDone)
+			out, err := exec.Command("tmux", "-L", sock, "show-option", "-qv", "-t", "demo", OptionBackground).Output()
+			if err != nil {
+				t.Fatalf("show-option: %v", err)
+			}
+			if got := strings.TrimSpace(string(out)); got != tc.seed {
+				t.Fatalf("%s after Cancel = %q, want it untouched at %q", OptionBackground, got, tc.seed)
+			}
+			if got := in.State(osUser, "demo"); got != tc.want {
+				t.Fatalf("%s after Cancel = %q, want %q", OptionState, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -420,28 +497,48 @@ func TestStopKeepsWorkTheHarnessStillLists(t *testing.T) {
 	}
 }
 
-// A workflow id is NOT pruned. Whether a running Workflow appears in
-// background_tasks is unverified — the two kinds confirmed in a real payload are
-// "shell" and "subagent" — so pruning one would risk reporting done in the
-// middle of a half-hour run. Workflows stay on the notification drain until that
-// is measured.
-func TestStopDoesNotPruneAWorkflow(t *testing.T) {
+// A workflow prunes like everything else. Until 2026-09-12 it was exempt,
+// because whether a running Workflow appears in background_tasks at all was
+// unmeasured and pruning one would have risked reporting done mid-run. It does
+// appear: stop_workflow_running.json is a Stop taken 2 seconds into a live run,
+// and the entry reads {"id":"w7t7pnsug","type":"workflow","status":"running"}.
+// The two tests below are the two directions of that one fact.
+func TestStopKeepsARunningWorkflow(t *testing.T) {
 	e := newHookEnv(t)
 
 	e.fire(t, "running", "userprompt_human.json")
 	e.fire(t, "running", "post_workflow_launch.json")
-	before := e.opt(t, OptionBackground)
-	if before == "" {
-		t.Fatal("the workflow launch was not recorded")
+
+	e.fire(t, "done", "stop_workflow_running.json")
+
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Errorf("%s = %q, want the running workflow kept", OptionBackground, got)
+	}
+	if st := e.opt(t, OptionState); st != StateRunning {
+		t.Errorf("%s = %q, want %q", OptionState, st, StateRunning)
+	}
+}
+
+// The strand this half fixes: a workflow whose completion is absorbed into the
+// running turn fires no UserPromptSubmit, so nothing retired its id and the
+// session sat at running for good. Measured 2026-09-04 over 122 transcripts, 18
+// of 54 workflow completions arrived that way.
+func TestStopPrunesAFinishedWorkflow(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_workflow_launch.json")
+	if e.opt(t, OptionBackground) == "" {
+		t.Fatal("the workflow launch was not recorded, so there is nothing to prune")
 	}
 
 	e.fire(t, "done", "stop_tasks_finished.json")
 
-	if got := e.opt(t, OptionBackground); got != before {
-		t.Errorf("%s = %q, want it unchanged at %q", OptionBackground, got, before)
+	if got := e.opt(t, OptionBackground); got != "" {
+		t.Errorf("%s = %q, want empty: the harness no longer lists the run", OptionBackground, got)
 	}
-	if st := e.opt(t, OptionState); st != StateRunning {
-		t.Errorf("%s = %q, want %q", OptionState, st, StateRunning)
+	if st := e.opt(t, OptionState); st != StateDone {
+		t.Errorf("%s = %q, want %q", OptionState, st, StateDone)
 	}
 }
 
