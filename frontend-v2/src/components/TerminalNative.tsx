@@ -70,6 +70,7 @@ import {
   type MirrorState,
 } from "../terminal/mirror";
 import { shouldKeepFocus, takesFocus } from "../terminal/keepfocus";
+import { DETACHED_MODE_RESET } from "../terminal/modes";
 import { createLinkTracker, type LinkTracker } from "../terminal/links";
 import {
   hostHeightStyle,
@@ -2410,6 +2411,17 @@ export const TerminalNative: Component<{
         onAttach: () => {
           feedMirror({ type: "out-of-band", value: mirrorField?.value ?? "" });
           cancelCoast();
+          // AND THE DEAD PROGRAM'S MODES GO WITH THE LINE. The socket that
+          // just opened has a shell script on the far end and will not have
+          // tmux for another ~500 ms, during which the pty is still echoing —
+          // so a terminal left in the last tmux's mouse-tracking mode paints
+          // its own pointer reports across the grid until the redraw lands.
+          // modes.ts has the measurement and the reasoning.
+          //
+          // NOT through `write` above: that feeds the attention machinery,
+          // which would read a local reset as the session having produced
+          // output and light the card for it.
+          term.write(DETACHED_MODE_RESET);
           // AND SAY WHAT SIZE WE ARE, because a socket opening is the one
           // moment the fit cannot speak for. `claimGrid` rides the fit, and on
           // the way back to a parked session the fit runs ~120 ms in while the
