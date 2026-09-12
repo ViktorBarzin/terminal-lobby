@@ -207,6 +207,77 @@ except ImportError:  # pragma: no cover - operator-facing
 # terminal-dev canary) until that tier was retired on 2026-08-16 and prod became
 # the only place the SPA runs. --ttyd-port still moves it.
 TTYD_DEFAULT_PORT = 7681
+
+# The two things the services demand of a caller, both configuration rather than
+# constants, and both read from the same files the units read.
+#
+# THE HEADER NAME stopped being fixed on 2026-08-29 (CONTEXT.md: "the identity
+# header's name is configuration"). THE PROXY SECRET is the second half: with
+# TL_PROXY_SECRET set, authuser/resolve.go checks it BEFORE it reads identity at
+# all, so a harness that sends only the header gets 401 on every proxied call and
+# the lobby renders "Access denied" with no session list.
+#
+# Precedence is the units': the package conf, then the local override that wins
+# over it. The subtlety is that the local file may be unreadable by the user
+# running this harness, and on this box it is (root-owned, and it is the one that
+# names Authentik). Trusting the package file when a local override EXISTS but
+# cannot be read is how this file came to send X-Forwarded-User at a box
+# configured for X-Authentik-Username. So an unreadable override means unknown,
+# not absent, and the historical default stands.
+AUTH_CONF_PACKAGE = "/etc/terminal-lobby.conf"
+AUTH_CONF_LOCAL = "/etc/terminal-lobby.local.conf"
+# What this file sent for its whole life before the header became configuration.
+AUTH_HEADER_FALLBACK = "X-Authentik-Username"
+
+
+def _conf_value(path: str, key: str) -> Optional[str]:
+    """`key`'s value in an EnvironmentFile, None when absent or unreadable."""
+    found: Optional[str] = None
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line.startswith(f"{key}="):
+                    found = line.split("=", 1)[1].strip().strip('"\'')
+    except OSError:
+        return None
+    return found or None
+
+
+def _conf_setting(key: str, fallback: str) -> str:
+    """`key` as the units resolve it, with the unreadable-override rule above."""
+    local = _conf_value(AUTH_CONF_LOCAL, key)
+    if local:
+        return local
+    if os.path.exists(AUTH_CONF_LOCAL) and not os.access(AUTH_CONF_LOCAL, os.R_OK):
+        return fallback
+    return _conf_value(AUTH_CONF_PACKAGE, key) or fallback
+
+
+def auth_header_name() -> str:
+    """The configured TL_AUTH_HEADER, or the historical default."""
+    return _conf_setting("TL_AUTH_HEADER", AUTH_HEADER_FALLBACK)
+
+
+def proxy_secret() -> str:
+    """TL_PROXY_SECRET, from the environment first so a caller can pass it in.
+
+    Empty means the services are not checking, which is the single-user default.
+    """
+    return os.environ.get("TL_PROXY_SECRET") or _conf_setting("TL_PROXY_SECRET", "")
+
+
+AUTH_HEADER = auth_header_name()
+PROXY_SECRET = proxy_secret()
+SECRET_HEADER = "X-TL-Proxy-Secret"
+
+
+def authed_headers(args) -> dict:
+    """Identity plus, when the services are checking for it, the proxy secret."""
+    headers = {args.auth_header: args.user}
+    if args.proxy_secret:
+        headers[SECRET_HEADER] = args.proxy_secret
+    return headers
 TMUX_API = "http://127.0.0.1:7684"
 CLIPBOARD = "http://127.0.0.1:7683"
 SESSION_EVENTS = "http://127.0.0.1:7685"
@@ -771,9 +842,10 @@ def build_app(args: argparse.Namespace) -> web.Application:
         headers = {k: v for k, v in request.headers.items()
                    if k.lower() not in HOP_BY_HOP}
         if auth:
-            headers["X-Authentik-Username"] = args.user
+            headers.update(authed_headers(args))
         else:
-            headers.pop("X-Authentik-Username", None)
+            headers.pop(args.auth_header, None)
+            headers.pop(SECRET_HEADER, None)
         return headers
 
     async def forward(request: web.Request, url: str, *, auth: bool,
@@ -979,7 +1051,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
             # except this handler's failure line.
             ws_up = await request.app["client"].ws_connect(
                 url, protocols=offered or ("tty",),
-                headers={"X-Authentik-Username": args.user})
+                headers=authed_headers(args))
         except aiohttp.ClientError as exc:
             log(f"WS {request.rel_url} → upstream connect failed: {exc}")
             await ws_client.close()
@@ -1027,7 +1099,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
             try:
                 async with app["client"].get(
                     f"{TMUX_API}/{name}",
-                    headers={"X-Authentik-Username": args.user},
+                    headers=authed_headers(args),
                 ) as r:
                     if r.status == 200:
                         app["snapshots"][name] = await r.read()
@@ -1043,7 +1115,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
             try:
                 async with app["client"].put(
                     f"{TMUX_API}/{name}", data=blob,
-                    headers={"X-Authentik-Username": args.user,
+                    headers={**authed_headers(args),
                              "Content-Type": "application/json"},
                 ) as r:
                     log(f"restored /{name} → HTTP {r.status}")
@@ -1058,7 +1130,7 @@ def build_app(args: argparse.Namespace) -> web.Application:
         try:
             async with app["client"].get(
                 f"{TMUX_API}/whoami",
-                headers={"X-Authentik-Username": args.user},
+                headers=authed_headers(args),
             ) as r:
                 os_user = (await r.json()).get("osUser") if r.status == 200 else None
         except (aiohttp.ClientError, ValueError) as exc:
@@ -1159,6 +1231,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--port", type=int, default=7998, help="proxy listen port")
+    p.add_argument("--proxy-secret", dest="proxy_secret", default=PROXY_SECRET,
+                   help="value sent as X-TL-Proxy-Secret; defaults to "
+                        "TL_PROXY_SECRET from the environment or the conf "
+                        "files. Empty means the services are not checking.")
+    p.add_argument("--auth-header", dest="auth_header", default=AUTH_HEADER,
+                   help="header name carrying the username; defaults to "
+                        "TL_AUTH_HEADER as the units resolve it")
     p.add_argument("--user", default="alice",
                    help="value injected as X-Authentik-Username")
     p.add_argument("--ttyd-port", type=int, default=TTYD_DEFAULT_PORT,

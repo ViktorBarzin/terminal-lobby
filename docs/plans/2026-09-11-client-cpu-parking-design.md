@@ -297,12 +297,45 @@ it.
 
 ## Verification
 
-1. Unit tests for the widened battery decision, covering each of the three away
-   inputs and their graces.
-2. Unit tests for the sliding window, including the pinned-to-bottom rule.
-3. Drive the real lobby: open several sessions, leave the window unfocused,
-   confirm the sockets drop and that returning to a session repaints.
-4. Compare Chrome's task manager before and after over a session-hopping run.
+Landed on master as `be20e62`, released `v0.51.1`, installed on the devvm 20
+seconds after the pipeline went green.
+
+**Unit.** 5,147 tests pass, `tsc --noEmit` and `biome lint` clean, production
+build clean. New coverage: the widened battery decision and its two graces, the
+sliding window including the pinned-to-bottom rule, the park and resume of the
+transcript stream, the row-memo equality, the mouse gate, and both smaller
+repairs.
+
+**Driven against the deployed build**, three sessions opened in the real lobby
+through `scripts/qa-harness.py`, measured at the tmux server rather than in the
+page, because the page reporting its own socket count is the thing under test:
+
+| moment | `tmux list-clients` |
+|---|---|
+| three sessions open, `citadel` on screen | `citadel`, `beads-2`, `health` |
+| 14 s later | `citadel` alone |
+| returning to `beads-2` | `beads-2` reattached in under 1 s, scrollback repainted |
+
+The two off-screen sessions detached and STAYED detached. Their socket records
+show one connect attempt each, so the ladder was not retrying a drop, which is
+what a parked socket is supposed to look like from the outside.
+
+**Not measured.** Chrome's own CPU before and after, against the old build,
+over a session-hopping hour. The structural result is that a session nobody is
+reading holds no socket and no tmux client, which is the mechanism the whole
+design rests on, but the size of the CPU win on a real day is still a claim
+rather than a number.
+
+### What the harness cost to get working
+
+`scripts/qa-harness.py` could not authenticate at all, for two reasons, both
+fixed alongside this (`scripts/qa-harness.py`, separate commit). It sent the
+identity header under a name it had hardcoded, and it never sent
+`X-TL-Proxy-Secret`, which `authuser/resolve.go` checks BEFORE it reads identity
+at all. Two further traps cost time and are worth writing down: the identity is
+the Authentik name (`vbarzin`), not the OS user it maps to, and a session named
+`qa-*` is stamped `@tl_origin=test` by tmux-api and then hidden by the lobby, so
+a scratch session created under that prefix never appears in the sidebar.
 
 ## Open questions
 
