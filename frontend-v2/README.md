@@ -417,10 +417,12 @@ src/
                          generation check on each socket handler is what stops an
                          abandoned attempt's close from knocking its replacement
                          off the ladder
-    lastbox.ts           The last box a terminal really measured. A preload
-                         mounts display:none and has none of its own, so it
-                         borrows this rather than opening at xterm's 80x24 and
-                         reflowing when the click reveals it
+    lastbox.ts           The last grid a terminal fitted to. A preload mounts
+                         display:none and can never measure one, so it is handed
+                         this answer rather than opening at xterm's 80x24 and
+                         reflowing when the click reveals it. A grid, not a box:
+                         the FitAddon measures the hidden host itself, so
+                         borrowing the box only moved 80x24 to 11x5
     theme.ts             The app's CSS custom properties mapped to an xterm
                          ITheme, plus the two re-read triggers a component owes
                          it (an explicit pick, and an OS light/dark flip while the

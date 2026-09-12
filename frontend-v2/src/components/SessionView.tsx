@@ -18,7 +18,7 @@ import {
 } from "../store/session";
 import type { SseStatus } from "../sse/client";
 import { createViewMode } from "../store/viewmode";
-import { createWatchMode, clearResolvedWatch } from "../store/watchmode";
+import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
@@ -234,19 +234,26 @@ export const SessionView: Component<{
   // Watch mode is per (session, device) and lives only in this browser — the
   // desktop keeps driving the same session while the phone watches it.
   //
-  // THE JOIN DECISION IS RE-TAKEN ON PROMOTION, which is the only thing the
-  // `preloading()` read in the session accessor is for. `createWatchMode`
-  // latches `driven` once per session and reads it untracked, so a hover would
-  // otherwise decide for a session nobody had asked for and hold that answer
-  // for the 60 s the slot survives: a session the desktop started driving in
-  // the meantime would come up read-WRITE on the click, and `claimGrid` would
-  // take its window. Promotion is this mount taking the session on for the
-  // first time, so it re-latches the way moving to another session does.
+  // THE DECISION IS TAKEN ONCE AND NEVER RE-TAKEN, which is why the session
+  // accessor is the bare name and reads nothing else.
+  //
+  // Promotion used to re-latch it, so that a session something else started
+  // driving inside the slot's 60 s would not come up read-write on the click.
+  // That read `driven` at click time, and `driven` is true for every session
+  // holding an attached client — which, because the lobby keeps every session
+  // you visit mounted for a day, is most of them once the lobby has been open
+  // a while. So clicking a preloaded card resolved to WATCH as a matter of
+  // course, and sessions accumulated in watch mode on their own (Viktor,
+  // 2026-09-12: "i want sessions to not switch modes when inactive").
+  //
+  // Removing it restores what store/watchmode.ts's header already says, and
+  // what a previous version of this same bug cost a revert: a reading that
+  // counts our own client is sampled at a decision point, never tracked. The
+  // window it closed is not a new hazard — opening a session another device is
+  // driving has always attached read-write and claimed the grid, and a preload
+  // still refuses to attach at all when it resolves to watch at dwell time.
   const [watch, , toggleWatch] = createWatchMode(
-    () => {
-      preloading();
-      return session;
-    },
+    () => session,
     () => props.driven?.() ?? false,
     () => props.lens?.() ?? "",
   );
@@ -256,8 +263,15 @@ export const SessionView: Component<{
   // would freeze every hovered card's eye marker on whatever was true 250 ms
   // after the pointer arrived. Created after that publish, so it runs after it.
   createEffect(() => {
-    watch();
+    // Publishing is what the sidebar reads, and a preload must not reach it —
+    // but the publish inside `createWatchMode` now runs once, because the
+    // decision is taken once. So this effect owns both halves: withhold while
+    // the mount is speculative, and put the ALREADY-DECIDED answer back the
+    // moment it stops being. `watch()` is read, never recomputed; promotion
+    // publishes what dwell time decided.
+    const decided = watch();
     if (preloading()) clearResolvedWatch(session);
+    else publishResolvedWatch(session, decided);
   });
   /** The user this tab is acting as, "" in an ordinary tab. */
   const lens = () => props.lens?.() ?? "";
