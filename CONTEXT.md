@@ -220,17 +220,32 @@ _Avoid_: last active (that is tmux's `session_activity`, which any attach bumps 
 a read-only one included — and which nothing displays)
 
 **Channel**:
-One of the five things a client keeps alive: its **terminal** socket, its
-**transcript** stream, the **session list** poll, **notifications**, and the
-**build** it is running. Each is in one of three states — working, degraded
-(reconnecting, retrying, an update waiting: reason to wait), or down (reason to
-act) — or `unknown`, which is not a state but the absence of one, and which
-every rule skips rather than counting as either health or fault. The word is for
-this document, the ADR and the code: on screen the five are simply labelled, and
-no surface ever says "channel". A **badge** shows the worst of the channels its
-surface can honestly report; Settings → Network shows all of them.
+One of the six things whose health a client can report: its **terminal** socket,
+its **transcript** stream, the **session list** poll, **notifications**, the
+**build** it is running, and **this machine** — the box the sessions run on,
+which is the one channel that is not about the client's own end. Each is in one
+of three states — working, degraded (reconnecting, retrying, an update waiting,
+a stalling box: reason to wait), or down (reason to act) — or `unknown`, which
+is not a state but the absence of one, and which every rule skips rather than
+counting as either health or fault. The word is for this document, the ADR and
+the code: on screen the six are simply labelled, and no surface ever says
+"channel". A **badge** shows the worst of the channels its surface can honestly
+report; Settings → Network shows all of them.
 _Avoid_: connection (taken: Settings → Network calls the network link "this
 connection"), transport, service, stream (that is one channel, not the set)
+
+**Stall**:
+Wall-clock time the box lost waiting on a resource rather than doing work, read
+per resource from the kernel's own pressure accounting. It is what decides
+whether **this machine** is degraded, because it is the direct measure of the
+thing people report: the box felt slow. A stall is per resource — CPU, IO or
+memory — and the worst of the three speaks for the box. Distinct from **load**,
+which is displayed beside it and decides nothing: load counts tasks that are
+runnable or blocked without saying which, so it can sit low through a long
+stall. On a machine whose kernel cannot report stalls, load is what the row
+falls back to, and the row says that it has.
+_Avoid_: pressure (the kernel's word for the counter, not for the thing a person
+feels), utilisation, busy-ness, contention
 
 **Grid**:
 The size of a session's tmux window, in columns and rows. Owned exclusively by
