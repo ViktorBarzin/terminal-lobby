@@ -167,14 +167,43 @@ reading that counts your own client is sampled at a decision point and never
 tracked, a rule an earlier version of the same mistake had already cost a
 revert. The decision is taken once again, pinned from both directions.
 
-**The preload opened at the wrong size.** It mounts `display: none`, its host
-measures 0x0, and `fit.ts` refuses to fit against that, so it kept xterm's
-constructed 80x24 and the click paid the reflow. The first fix remembered the
-last host BOX and handed it to the guard, which made it worse: the fit is
-xterm's FitAddon, which measures the parent element itself, so it proposed 11x5
-from the same hidden host. Terminals now record the grid they actually fitted
-to, and a preload is resized to it directly. Measured after: 157x47 while
-hovered, unchanged across the click, identical to a normal open.
+**The preload opened at the wrong size**, and the size turned out to be half
+of it. It mounted `display: none`, its host measured 0x0, and `fit.ts` refuses
+to fit against that, so it kept xterm's constructed 80x24 and the click paid
+the reflow. The first fix remembered the last host BOX and handed it to the
+guard, which made it worse: the fit is xterm's FitAddon, which measures the
+parent element itself, so it proposed 11x5 from the same hidden host. The
+second remembered the GRID a visible terminal reached and resized the preload
+to it, which fixed the cell COUNT and left the cell SIZE wrong — see below.
+
+### The flicker the sizing fix left behind (2026-09-12)
+
+Handing a hidden terminal the right grid does not let it measure a character,
+and xterm needs both. Recorded on the deployed build with a CDP screencast: the
+first frame after the click carried a per-row `letter-spacing` of a whole cell
+and no colour, because the char-measure element reported 0 px inside
+`display: none`. It corrected itself 90 to 200 ms later on the first real
+measurement, and 207 ms later on the first open of a page load, where the grid
+was 80x24 as well.
+
+| open | first pixels | wrong for |
+|---|---|---|
+| preload, first of a page load | 110 ms | 207 ms |
+| preload, a later open | 250 ms | ~170 ms |
+| no preload (control) | 380 ms | empty pane ~800 ms, then correct |
+
+A preload is now mounted OFFSTAGE rather than hidden: `position: absolute`
+over the pane, `visibility: hidden`, `bottom` clear of the scratch-shell panel
+(`app.css`, `.tl-offstage`; the slot rule is `slotClasses` in `App.tsx`).
+`visibility: hidden` keeps the layout box, so the measurement is the one the
+pane will give it, and it takes the subtree out of the tab order as
+`display: none` did. Measured after, on the built branch: char measure 256 px,
+`letter-spacing` 0 px, 1320x901, 53 rows, all of it settled BEFORE the click
+and none of it changed by the click, with the panel up as well as down. Every
+frame from +27 ms is the finished terminal.
+
+`terminal/lastbox.ts` is gone with it. A laid-out host lets the FitAddon
+measure again, so there is no grid left to borrow.
 
 ## How we knew it worked
 

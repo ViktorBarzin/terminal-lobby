@@ -258,6 +258,34 @@ describe("no second terminal on a coarse pointer", () => {
     expect(dock.allowed()).toBe(false);
     expect(queryByTestId("terminal")).toBeNull();
   });
+
+  // `mounted` is what App.tsx reserves room for, so an offstage preload
+  // measures against the pane a session really gets rather than the whole
+  // column (app.css `.tl-offstage`, `--tl-dock-h`). Dock.tsx mounts on the
+  // same accessor, which is the point of it being one.
+  it("says the panel is up only when all three of its terms hold", async () => {
+    const { store, dock } = mountDock(false);
+    await loaded(store);
+    expect(dock.mounted()).toBe(true);
+
+    // Hidden keeps the shell running and takes the panel off the screen.
+    await dock.toggle();
+    expect(dock.visible()).toBe(false);
+    expect(dock.mounted()).toBe(false);
+
+    await dock.toggle();
+    expect(dock.mounted()).toBe(true);
+
+    // A tablet without a mouse builds no panel however the layout arrives.
+    repoint(true);
+    expect(dock.mounted()).toBe(false);
+    repoint(false);
+
+    // And nothing is docked at all.
+    await dock.undock();
+    expect(dock.session()).toBeNull();
+    expect(dock.mounted()).toBe(false);
+  });
 });
 
 describe("how tall the panel opens", () => {
