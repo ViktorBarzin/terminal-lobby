@@ -192,7 +192,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .fg[data-crowd=true] .fg-lead{padding-block:9px 8px}
 .fg-inner{
   max-width:860px;width:100%;margin-block:0;margin-inline:auto;
-  display:flex;flex-direction:column;min-height:0;
+  display:flex;flex-direction:column;min-height:0;flex:1 1 auto;
 }
 .fg-wrap{
   padding-inline:clamp(12px,6vw,80px);
@@ -330,13 +330,13 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .fg-trail-line span[data-age="2"]{opacity:.45}
 
 /* ── the bench: stable-order index ── */
-.fg-benchwrap{position:relative;display:flex;flex-direction:column;min-height:0;flex:1 1 auto}
+.fg-benchwrap{position:relative;display:flex;flex-direction:column;min-height:112px;flex:1 1 auto}
 .fg-benchwrap::after{
   content:"";position:absolute;inset-inline:0;inset-block-end:0;height:18px;pointer-events:none;
   background:linear-gradient(to bottom,transparent,var(--bg-page));opacity:0;
 }
 .fg-benchwrap[data-more=true]::after{opacity:1}
-.fg-bench{overflow-y:auto;min-height:132px;margin-block:9px 0;padding-block:0 2px;scrollbar-gutter:stable}
+.fg-bench{overflow-y:auto;min-height:0;flex:1 1 auto;margin-block:9px 0;padding-block:0 2px;scrollbar-gutter:stable}
 .fg-colhead{
   display:grid;align-items:center;gap:10px;
   grid-template-columns:var(--cols);
@@ -1085,6 +1085,7 @@ function buildLead(v){
   wb.setAttribute("data-tier",why.tier);
   wb.setAttribute("data-pin",String(pinnedId===v.a.id));
   wb.title="How this agent was chosen";
+  nodes.leadWhy=wb;
   wb.onclick=function(){ if(pinnedId===v.a.id){pinnedId=null}else{showRule=!showRule} sig="";render(); };
   top.appendChild(wb);
   card.appendChild(top);
@@ -1247,6 +1248,10 @@ function tickValues(w,lead){
       n.args.textContent=lead.state==="error"?lead.a.error:lead.cur.args;
       if(!reduce){ n.box.classList.add("flash"); setTimeout(function(){n.box.classList.remove("flash")},180); }
     }
+  }
+  if(nodes.leadWhy&&lead){
+    var wt=whyText(lead);
+    if(nodes.leadWhy.textContent!==wt.txt)nodes.leadWhy.textContent=wt.txt;
   }
   if(nodes.leadM&&lead){
     nodes.leadM.e.textContent=fmtDur(lead.elapsed);
