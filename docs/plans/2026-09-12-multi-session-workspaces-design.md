@@ -17,20 +17,12 @@ whatever the screen can hold rather than a number we pick.
 ## The shape in one picture
 
 ```mermaid
-flowchart TB
-  subgraph server["tmux-api, per user"]
-    WS["<b>Workspace</b><br/>id + ordered members<br/>unnamed, one per session"]
-  end
-  subgraph browser["this browser, per device"]
-    TREE["<b>Split tree</b><br/>n-ary rows and columns<br/>plus each tile's size"]
-  end
-  subgraph tab["the tab, already built"]
-    KA["<b>keepalive</b><br/>every visited session mounted:<br/>ttyd socket, tmux client, SSE, xterm"]
-  end
-  WS -->|which sessions| TILES["<b>Tiles</b> on screen"]
-  TREE -->|where, and how big| TILES
-  KA -->|reveal what is already running| TILES
-  TILES -->|each claims its own grid| TMUX["real tmux windows resize"]
+flowchart TD
+  WS["<b>Workspace</b><br/>which sessions<br/>tmux-api"]
+  TREE["<b>Split tree</b><br/>where and size<br/>this browser"]
+  WS --> TILES["<b>Tiles</b> on screen<br/>keepalive's live<br/>terminals, revealed"]
+  TREE --> TILES
+  TILES --> TMUX["tmux windows resize<br/>to match the tiles"]
 ```
 
 Three stores, each answering one question. The server says which sessions belong
@@ -224,12 +216,10 @@ no bracket can join them.
 
 ```mermaid
 stateDiagram-v2
-  [*] --> OneSession: click any session
-  OneSession --> Workspace: drag a second session onto its edge
-  Workspace --> Workspace: click a member (focus that tile)
-  Workspace --> OtherWorkspace: click a member of another workspace
-  Workspace --> OneSession: click a non-member
-  Workspace --> OneSession: close tiles down to one
+  [*] --> OneSession
+  OneSession --> Workspace: drag a second session onto an edge
+  Workspace --> OneSession: click a non-member, or close to one tile
+  Workspace --> OtherWorkspace: click a member of another one
   OtherWorkspace --> Workspace: click a member of this one
 ```
 
