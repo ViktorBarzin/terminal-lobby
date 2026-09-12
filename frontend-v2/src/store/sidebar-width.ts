@@ -81,7 +81,11 @@ export function createSidebarWidthStore(opts: SidebarWidthOptions = {}): Sidebar
 function createWindowWidth(): Accessor<number> {
   if (typeof window === "undefined") return () => 0;
   const [w, setW] = createSignal(window.innerWidth);
-  const onResize = (): void => setW(window.innerWidth);
+  // A block body, not a concise one: Solid's setter returns the new value, and
+  // a `(): void` arrow may not hand one back.
+  const onResize = (): void => {
+    setW(window.innerWidth);
+  };
   window.addEventListener("resize", onResize, { passive: true });
   onCleanup(() => window.removeEventListener("resize", onResize));
   return w;
