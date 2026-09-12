@@ -2,6 +2,7 @@ package sessionio
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"os"
 )
@@ -12,6 +13,23 @@ import (
 // (no newline yet, e.g. a transcript mid-write) is left unconsumed so a later
 // ReadFrom picks it up once completed.
 func ReadFrom(path string, off int64) (lines []string, next int64, err error) {
+	blob, next, err := ReadRawFrom(path, off)
+	if err != nil {
+		return nil, next, err
+	}
+	return SplitLines(blob), next, nil
+}
+
+// ReadRawFrom is ReadFrom without the split: the raw bytes of the complete
+// lines starting at off, newlines included, and the offset just past the last
+// of them.
+//
+// It exists for the privop child. A transcript crossing the process boundary as
+// a JSON array of per-line strings is escaped and allocated once per line in
+// the child encoding it and again in the parent decoding it, before the
+// normalizer parses each line a third time. As one value it is escaped once,
+// and the parent does the split locally.
+func ReadRawFrom(path string, off int64) (blob []byte, next int64, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, off, err
@@ -20,21 +38,35 @@ func ReadFrom(path string, off int64) (lines []string, next int64, err error) {
 	if _, err = f.Seek(off, io.SeekStart); err != nil {
 		return nil, off, err
 	}
-	r := bufio.NewReader(f)
-	next = off
-	for {
-		b, readErr := r.ReadBytes('\n')
-		if len(b) > 0 && b[len(b)-1] == '\n' {
-			lines = append(lines, string(b[:len(b)-1]))
-			next += int64(len(b))
-		}
-		if readErr == io.EOF {
-			return lines, next, nil
-		}
-		if readErr != nil {
-			return lines, next, readErr
-		}
+	data, err := io.ReadAll(bufio.NewReader(f))
+	if err != nil {
+		return nil, off, err
 	}
+	// A partial trailing line (no newline yet, e.g. a transcript mid-write) is
+	// left unconsumed, so a later read picks it up once it is complete.
+	end := bytes.LastIndexByte(data, '\n')
+	if end < 0 {
+		return nil, off, nil
+	}
+	return data[:end+1], off + int64(end+1), nil
+}
+
+// SplitLines turns a ReadRawFrom blob into the lines ReadFrom would have
+// returned: newline-terminated, the newline dropped.
+func SplitLines(blob []byte) []string {
+	if len(blob) == 0 {
+		return nil
+	}
+	var lines []string
+	for start := 0; start < len(blob); {
+		i := bytes.IndexByte(blob[start:], '\n')
+		if i < 0 {
+			break // ReadRawFrom never returns one, but a caller might
+		}
+		lines = append(lines, string(blob[start:start+i]))
+		start += i + 1
+	}
+	return lines
 }
 
 // Tail streams decoded records out of one transcript, resuming by byte offset.

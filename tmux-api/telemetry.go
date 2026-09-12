@@ -317,11 +317,12 @@ func handleTelemetry(w http.ResponseWriter, r *http.Request) {
 			attrs["tl.build"] = clip(batch.Build, 40)
 		}
 		emitter.Emit(ev.Name, osUser, attrs)
-		// Typing latency goes to Prometheus as well as Loki, because the plan
-		// is to set an alert threshold against a couple of weeks of the real
-		// distribution and Prometheus keeps 26 weeks where Loki keeps 30 days.
-		if ev.Name == "term.typing_latency" {
-			recordTypingLatency(metrics, osUser, attrs)
+		// perf.rollup already carries the echo latency the browser measured.
+		// Copy it into Prometheus as well as Loki: the alert threshold will be
+		// set against a couple of weeks of the real distribution, and
+		// Prometheus keeps 26 weeks where Loki keeps 30 days.
+		if ev.Name == "perf.rollup" {
+			recordPerfRollup(metrics, osUser, attrs)
 		}
 		accepted++
 	}

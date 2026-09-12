@@ -48,8 +48,13 @@ type privRequest struct {
 // privResponse is the child's answer. Err carries the reason on refusal; the
 // parent turns that into the same error the local reader would have returned.
 type privResponse struct {
-	OK       bool                    `json:"ok"`
-	Err      string                  `json:"err,omitempty"`
+	OK  bool   `json:"ok"`
+	Err string `json:"err,omitempty"`
+	// Blob carries a readfrom answer: the raw bytes of the complete lines, which
+	// encoding/json ships as base64 and the parent splits. Lines is the older
+	// per-line form, kept because nothing but readfrom set it and a child from a
+	// previous build may still be answering that way mid-deploy.
+	Blob     []byte                  `json:"blob,omitempty"`
 	Lines    []string                `json:"lines,omitempty"`
 	Next     int64                   `json:"next,omitempty"`
 	Body     string                  `json:"body,omitempty"`
@@ -114,11 +119,11 @@ func handlePrivop(req privRequest, home, root string) privResponse {
 		if err := transcriptWithin(root, req.Path); err != nil {
 			return fail("%v", err)
 		}
-		lines, next, err := sessionio.ReadFrom(req.Path, req.Off)
+		blob, next, err := sessionio.ReadRawFrom(req.Path, req.Off)
 		if err != nil {
 			return fail("%v", err)
 		}
-		return privResponse{OK: true, Lines: lines, Next: next}
+		return privResponse{OK: true, Blob: blob, Next: next}
 
 	case "fullresult":
 		if err := transcriptWithin(root, req.Path); err != nil {
