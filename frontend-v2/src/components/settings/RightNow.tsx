@@ -9,6 +9,7 @@ import {
   type ChannelId,
   type MachinePoint,
   type MachineReport,
+  type MachineResource,
 } from "../../diagnostics/status";
 import type { ConnectionControl } from "../../diagnostics/status-store";
 import { agoLabel } from "../lobby.logic";
@@ -87,6 +88,17 @@ interface Figure {
  * what the fallback verdict reads: load against the cores it is spread over,
  * and memory headroom.
  */
+/** The same words the figures above the chart use, so a reader joining the two
+ *  is reading one vocabulary. `load` only appears on the no-PSI path, where the
+ *  series is empty and this is never reached, but the map is exhaustive so that
+ *  a new resource is a compile error rather than an undefined in a label. */
+const RESOURCE_SHORT: Record<MachineResource, string> = {
+  cpu: "Processor",
+  io: "Disk",
+  memory: "Memory",
+  load: "Load",
+};
+
 function figuresFor(r: MachineReport): Figure[] {
   const stall: Figure[] =
     r.source === "load"
@@ -156,6 +168,22 @@ const MachineReadout: Component<{
   // the line" for CPU.
   const series = () => props.series.map((p) => p.ofLimit);
 
+  /**
+   * The right-hand end of the axis, naming the resource the line is drawing
+   * THERE rather than the verdict's own `worst`.
+   *
+   * The two can differ: `worst` follows the tier, so it names whichever
+   * resource is furthest past the highest line it has crossed, while each
+   * sparkline point independently carries the resource that was worst at that
+   * sample. Labelling the end of a line with a resource the end of the line is
+   * not drawing would be a caption for the wrong thing, which is the mistake
+   * this whole pass exists to undo.
+   */
+  const endLabel = (): string => {
+    const last = props.series[props.series.length - 1];
+    return last ? `now · ${RESOURCE_SHORT[last.res]}` : "now";
+  };
+
   // One label, because there is only one path that ever draws. `series()` skips
   // samples with no PSI behind them, so on the fallback path the series is
   // always empty and the chart renders its "no readings yet" state instead of
@@ -193,17 +221,18 @@ const MachineReadout: Component<{
 
       <Show when={note()}>{(n) => <p class="tl-rightnow-machine-note">{n()}</p>}</Show>
 
-      {/* The caption carries the y axis, the axis row under the chart carries
-          the x. Height here is each reading over its OWN resource's limit,
-          which is not a unit anyone can infer from a shape, and the resource
-          being drawn changes from point to point — so the caption has to say
-          "the busiest of the three" rather than name one.
-          It deliberately does NOT say "over the last hour": the axis ends
-          already say that, and an earlier draft that read "hour by hour" made
-          it sound like several hours of buckets rather than one continuous
-          one. */}
+      {/* NAME THE METRIC FIRST. An earlier caption read "How close the busiest
+          of the three is to its limit", which explains the height and never
+          says close to a limit in WHAT — stall, use, heat, queue depth. The
+          metric is stall time: the share of each ten minutes that work sat
+          blocked waiting for a resource, not how much of it was in use.
+          The rest of the sentence is the series, because the line is the worst
+          of three at each sample and the resource therefore changes from point
+          to point. Which one it is right now is named at the `now` end of the
+          axis, where the line actually is. The timespan is the axis ends, and
+          "against its own limit" is the `busy line` rule. */}
       <p class="tl-rightnow-machine-chart-what">
-        How close the busiest of the three is to its limit
+        Stall time, worst of processor, disk and memory
       </p>
       <Sparkline
         series={series()}
@@ -211,7 +240,7 @@ const MachineReadout: Component<{
         label={chartLabel()}
         thresholdLabel="busy line"
         startLabel="1h ago"
-        endLabel="now"
+        endLabel={endLabel()}
       />
     </div>
   );
