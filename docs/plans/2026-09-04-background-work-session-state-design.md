@@ -96,7 +96,7 @@ orphan a workflow, and t3-bridge holds its Working pin, which also keeps T3's
 
 ```mermaid
 flowchart TD
-    A["human prompt<br/>@claude_bg cleared<br/>state = running"] --> B["model launches a<br/>background agent"]
+    A["human prompt<br/>state = running"] --> B["model launches a<br/>background agent"]
     B --> C["PostToolUse carries<br/>status async_launched<br/>@claude_bg += a:a1c"]
     C --> D["main turn ends,<br/>Stop fires"]
     D --> E{"@claude_bg<br/>empty?"}
@@ -113,13 +113,14 @@ flowchart TD
 | event | condition | action |
 |---|---|---|
 | `UserPromptSubmit` | prompt opens `<task-notification>` | remove its `<task-id>` from `@claude_bg`; stamp `running` |
-| `UserPromptSubmit` | anything else (a human prompt) | **clear `@claude_bg`**; stamp `running` |
+| `UserPromptSubmit` | anything else (a human prompt) | stamp `running`; leave `@claude_bg` alone *(revised 2026-09-12; the callout below says what this row used to say)* |
 | `PreToolUse`/`PostToolUse` | `agent_id` present | do nothing |
 | `PostToolUse` | `agent_id` absent, `tool_response` carries `agentId` / `backgroundTaskId` / `taskId` with `status:"async_launched"` | add `<kind>:<id>` to `@claude_bg`; stamp `running` |
 | `PreToolUse`/`PostToolUse` | `agent_id` absent, no async id | stamp `running` (unchanged) |
 | `Stop` | `@claude_bg` empty | stamp `done` (unchanged) |
 | `Stop` | `@claude_bg` non-empty | stamp `running` |
-| `SessionStart` | — | clear `@claude_bg`; stamp `done` |
+| `SessionStart` | `source` is `startup` or `resume` (a new process) | clear `@claude_bg`; stamp `done` |
+| `SessionStart` | `source` is `compact` or `clear` (the same process) | leave `@claude_bg` alone; stamp from it, as `Stop` does *(added 2026-09-12)* |
 | `SessionEnd` | — | clear both |
 | `Notification` | — | unchanged (ADR-0001's classification) |
 
@@ -128,9 +129,11 @@ flowchart TD
 Storing the kind is what lets the card say *2 agents* rather than only a total.
 
 `sessionio.Injector.Cancel` already re-derives `@claude_state` after an interrupt
-(ADR-0001); it clears `@claude_bg` at the same instant. tmux-api's
-`clearDeadStates` liveness backstop drops both options together when no claude
-lives under the session's `pane_pid`.
+(ADR-0001); it reads `@claude_bg` to decide which state to stamp, and leaves the
+set alone — an interrupt ends the turn, not the work, confirmed 2026-09-12 by
+interrupting a session with both kinds live (*revised; as shipped it cleared the
+set at the same instant*). tmux-api's `clearDeadStates` liveness backstop drops
+both options together when no claude lives under the session's `pane_pid`.
 
 ## What changes
 
@@ -139,7 +142,7 @@ lives under the session's `pane_pid`.
 | `devvm/claude-tmux-state` | the rules table above; `@claude_bg` becomes its second output |
 | `tmux-api/main.go` | read `@claude_bg` in the existing `list-sessions -F` call; serialise a per-kind count |
 | `tmux-api/proc.go` | `clearDeadStates` clears `@claude_bg` too |
-| `sessionio/tmux.go` | `Injector.Cancel` clears `@claude_bg`; name the option beside `OptionState` |
+| `sessionio/tmux.go` | `Injector.Cancel` stamps from `@claude_bg`; name the option beside `OptionState` |
 | `frontend-v2/src/types/lobby.ts` | the new count field on `Session` |
 | `frontend-v2/src/components/SessionCard.tsx` | `Working · 2 agents` beside the dot |
 | `frontend-v2/src/components/lobby.logic.ts` | a background chip in `countStates` for collapsed group headers |
@@ -164,36 +167,49 @@ The dot, its colour and its pulse are unchanged.
 
 ## Accepted trade-offs
 
-**No expiry on an outstanding id, and a human prompt clears the set.** Decided
-2026-09-04. The set is emptied by four things: a human prompt, `SessionStart`,
-`SessionEnd`, an interrupt, and the dead-claude backstop. No timer anywhere.
+**No expiry on an outstanding id.** Decided 2026-09-04, and unchanged. The set
+is emptied by `SessionEnd`, an interrupt, the dead-claude backstop, a
+`SessionStart` that is a new process, and — since 2026-09-12 — the prune at
+`Stop`. No timer anywhere.
 
-The cost is one wrong reading, in one specific case: launch a long workflow,
-then send a second prompt while it runs, and the set is cleared, so the next
-`Stop` reports `done` with the workflow still going. That session shows today's
-behaviour until the workflow ends. The alternative — carrying ids across a human
-prompt — was rejected because it makes a stale id unclearable by anything a
-person can type, which is the failure ADR-0001 avoided by making a typed prompt
-the recovery path.
-
-If that case turns out to bite, the known upgrade is to mark ids provisional at
-a human prompt rather than dropping them, confirm any that produce subagent
-traffic during the new turn, and drop the unconfirmed ones at the next `Stop`.
-That needs per-id activity bookkeeping across turns, which is why it is not the
-starting design.
+> [!IMPORTANT]
+> **The human-prompt clear was removed on 2026-09-12.** As shipped, this section
+> also read *a human prompt clears the set*, and named the cost: "launch a long
+> workflow, then send a second prompt while it runs, and the set is cleared, so
+> the next `Stop` reports `done` with the workflow still going."
+>
+> That case bit. Viktor reported it as "Claude starts a workflow, then the status
+> for that session becomes green", and across the 105 workflow runs recorded on
+> this box, 43 (40%) had a human prompt land mid-run. A compaction did the same
+> thing without anyone typing, through the `SessionStart` clear.
+>
+> The upgrade this section predicted — provisional ids, confirmed by subagent
+> traffic — was not needed. The prune at `Stop` reads the harness's own live
+> list, which is the re-derivation the clear was standing in for, and it now
+> covers workflows too (see the next trade-off). So a stale id is still
+> clearable without a timer: it goes at the end of the next turn, rather than
+> the moment somebody types.
 
 ## Open questions
 
-- Whether a `Workflow` launch's `PostToolUse` `tool_response` carries `taskId` in
-  the same shape a completed run records in the transcript. The transcript
-  evidence is real (`{"status":"async_launched","taskId":"wy71p4jz3","taskType":"local_workflow"}`
-  from a run on 2026-09-02); the hook-payload form has still not been observed
-  directly, so the workflow fixture in the test carries the transcript shape and
-  the `w:` kind is the one path not confirmed against a live payload. Agents and
-  background commands are both confirmed live.
-- Whether agents running inside a `Workflow` fire `PostToolUse` with `agent_id`
-  in the hosting session. If they do not, nothing changes; if they do, they are
-  filtered by the same `agent_id` rule.
+Both were answered on 2026-09-12 by running a real `Workflow` in a tmux session
+with every hook logging its stdin (claude 2.1.269). The fixtures under
+`sessionio/testdata/hooks/` are that capture.
+
+- ~~Whether a `Workflow` launch's `PostToolUse` `tool_response` carries `taskId`
+  in the same shape a completed run records in the transcript.~~ It does, byte
+  for byte with the transcript shape:
+  `{"status":"async_launched","taskId":"w7t7pnsug","taskType":"local_workflow","runId":"wf_ee0ad82c-2d8",…}`.
+  `post_workflow_launch.json` is now that live payload rather than the
+  transcript's.
+- ~~Whether agents running inside a `Workflow` fire `PostToolUse` with
+  `agent_id` in the hosting session.~~ They do, and the existing `agent_id` rule
+  filters them: a workflow agent's `Bash` call arrived 1.6 s after the launch
+  carrying `agent_id` and `agent_type`, and changed nothing.
+- Answered in the same run, and the reason this design's one accepted cost could
+  be removed: a RUNNING workflow is listed in `Stop`'s `background_tasks`, as
+  `{"id":"w7t7pnsug","type":"workflow","status":"running","name":"probe-slow"}`.
+  `workflow` is a third kind beside `shell` and `subagent`.
 
 ## How it was verified
 
@@ -245,8 +261,8 @@ fixture carrying the transcript shape, not by a live payload.
 > A session with any outstanding work is *running*, not *completed*, because it
 > will produce more output without anyone prompting it. Kept as the set of task
 > ids in the session's `@claude_bg` option, added when a launch returns
-> `async_launched` and removed when that id's task-notification arrives. Cleared
-> by a human prompt, so typing into a session is what re-derives it.
+> `async_launched` and removed when that id's task-notification arrives, or at
+> the end of any turn in which the harness no longer lists it.
 > _Avoid_: pending tasks, background jobs (both read as shell job control)
 
 ADR-0001 gains a consequence recording that `Stop` alone is not the end of a

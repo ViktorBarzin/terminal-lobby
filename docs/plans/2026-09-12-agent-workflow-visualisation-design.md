@@ -49,6 +49,14 @@ polled every 5 seconds, with the task ids discarded before they reach the wire
 (shipped 2026-09-04, v0.28.3). So the view knows how many things are running, and
 nothing further about each one.
 
+What the strip said was accurate; whether it was there at all was not, until
+later the same day. Three events emptied `@claude_bg` without knowing whether
+the work had finished — a prompt a person typed, a compaction, and an interrupt
+— so the strip vanished and the dot went green with the run still going. Fixed
+2026-09-12 (ADR-0001); worth knowing here because this panel reads the same
+option, and 43 of the 105 workflow runs on this box hit one of those events
+mid-run.
+
 The nested sub-timeline that would render an agent's inner work already exists
 in code. `ToolRow.children` (`timeline.logic.ts:74-105`) renders behind a dashed
 left rail at `rows.tsx:292-298`, is unit-tested at
