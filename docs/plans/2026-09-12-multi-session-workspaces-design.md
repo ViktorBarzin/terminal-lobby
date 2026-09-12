@@ -14,6 +14,29 @@ their output — not watching a wall of agents from a distance. That decides the
 rest: tiles hold real terminals at real fidelity, and the realistic count is
 whatever the screen can hold rather than a number we pick.
 
+## What the two named products actually do
+
+Conductor (conductor.build) is three fixed panes with one workspace focused at
+a time: a workspace sidebar, a chat transcript, and a diff plus terminal. Its
+only side-by-side is "Split tabs", two chat tabs with drag between them. Tiles
+hold chat, not terminals, and attention is an ordered queue rather than a wall
+of live output. Its unit of work is a branch in its own checkout, and that is
+core to the model.
+
+cmux (github.com/manaflow-ai/cmux) is the closer relative, and is what "CMAX"
+refers to. Recursive splits, every pane a real PTY so every one is typeable,
+directional focus movement, and an experimental freeform canvas shipped
+alongside a "tidy panes into a grid" command. Attention is a ring on the pane
+plus unread badges in the sidebar, fed by OSC 9/99/777 or its own `cmux notify`
+CLI in an agent hook. A workspace there is any directory. Its stated non-goal:
+"cmux is a primitive, not a solution."
+
+What this design takes from them: live terminal tiles, all typeable, which is
+cmux's edge over Conductor's chat panes and what tmux already hands us. What it
+leaves: a separate checkout per agent as a hard model, the diff and review
+surface, and the infinite pan-and-zoom canvas, which cmux shipped as
+experimental after a year of splits and still labels in progress.
+
 ## The shape in one picture
 
 ```mermaid
@@ -69,6 +92,40 @@ Two consequences follow, and both are visible to a person:
 - The tree is realised as CSS grid areas (or computed rects) assigned to slots
   in their existing DOM order. Closing a tile changes an area assignment, not a
   DOM position.
+
+### Four places the single-slot assumption is written down
+
+Reading the code for this design turned up exactly where "one visible session"
+is encoded. Each is small, and each has to move.
+
+**`app.css:1218`** sets `.tl-session-slot { display: contents }`, so a slot is
+not a box and `.tl-session-view` stays a direct flex child of the shell column.
+It becomes a real box, and the tree assigns its area. Two un-hidden slots today
+stack down the column rather than tiling.
+
+**`App.tsx:691`** makes `selectedKey()` one `string` or `null`, which `shown()`
+compares against. It becomes a visible set. `SessionView` itself needs no change,
+because `visible` is already a per-slot boolean prop.
+
+**`terminal/lastbox.ts:41`** holds a module-level last-fitted grid, and its
+docblock gives the reason in words: *"Every session slot fills the same area of
+the shell ... so the grid a visible terminal fitted to IS the grid a hidden one
+would get if it were shown."* Tiles of different sizes make that false, and a
+preload revealed into a narrow tile would open at the wide tile's grid and then
+claim it. The module goes per-slot, or keyed by the measured box.
+
+**`lib/ownwhile.ts`** guards twelve `window.__tl*` globals, claimed while a view
+is `onScreen` and among them `__tlFocusTerminal`, `__tlSendToTerminal`,
+`__tlOpenFind` and `__tlDoPaste`. Its own docblock says the claim *"was exact
+while exactly one SessionView existed at a time"*. They move to following the
+**focused** tile rather than any visible one, which is the concrete meaning of
+"one session bar following focus".
+
+The cheapest evidence that several live terminals work at all is already
+shipped: `Dock.tsx:127-145` mounts a second `TerminalNative` with
+`ownsBridges={false}`, so one document already holds two attached terminals with
+one of them declining to own the shared bridges. That split is the pattern to
+generalise.
 
 ## Language
 
@@ -198,7 +255,19 @@ take it back.
 | what | where | why |
 |---|---|---|
 | workspace id, ordered members | tmux-api, per user, beside `layout/<user>.json` | it is durable intent about the work, it changes what the sidebar does, and two tabs on one machine must agree |
-| the split tree and tile sizes | this browser, beside `store/device-prefs.ts` | a 32-inch split is meaningless on a laptop; the same reasoning that keeps sidebar collapse state per-browser |
+| the split tree and tile sizes | the browser, one `tl:workspaces:v1` document | a 32-inch split is meaningless on a laptop; the same reasoning that keeps sidebar collapse state per-browser |
+
+`store/device-prefs.ts` is not the home despite the name: it holds the gestures
+kill switch and `clearLocalData()`, and nothing else. The fitting family is one
+JSON document under one key, read and written through `lsGet`/`lsSet` and
+validated entry by entry, the way `store/drafts.ts` and `store/visits.ts` do.
+Two things come with that family. The session-to-workspace reverse lookup, which
+is what makes clicking a sidebar member open its group, is derived from that one
+document at load rather than stored as a second key that can disagree with it.
+And versioning here is the key suffix, not a field: `store/undo.ts:55` states
+the rule as "Bump the suffix if the entry shape ever changes", so a `v2` shape
+abandons `v1` arrangements unless someone writes the first migration this
+codebase has had.
 
 ADR-0027 records this boundary. A device that has never seen a workspace has no
 geometry for it, and **auto-arranges evenly in the workspace's server-side
@@ -251,7 +320,7 @@ and for the same reason.
 | URL | still names one session. Because membership is server-side, opening a member's URL restores its workspace with that tile focused, so a shared link round-trips |
 | notifications | every visible tile counts as open. Whatever suppression the open session gets today — push, bell badge, unseen marker — applies to the whole visible set |
 | cold start | entering a workspace attaches every member at once |
-| undo | every structural change goes on the existing stack, resizes included. Resize entries coalesce, or one divider drag fills all 25 slots |
+| undo | every structural change goes on the existing stack, resizes included. Resize entries coalesce, or one divider drag fills all 25 slots. Every session name in the tree is also flattened into the entry's `sessions` array, because `carry()` rewrites names only there and a name buried in a nested node is stranded by the first rename |
 | preload on hover | unchanged. Hovering a non-member still attaches it hidden; clicking promotes it and takes over the view |
 | phones | coarse pointer at 720px or narrower sees no workspaces: clicking a member opens that session alone, as today |
 | touch above 720px | full split view, finger drag included. `@formkit/drag-and-drop` was adopted partly for touch, so edge-drop should largely come for free — worth a real device check before calling it done |
@@ -272,11 +341,15 @@ One release, both halves together.
 - A new `store/workspace.ts` for the tree: n-ary nodes, sizes, the focused tile,
   and the add/move/remove/resize operations. Pure, so it tests without a DOM.
 - A positioning layer assigning grid areas to existing slots. No slot moves.
-- Tile chrome and the drop-shadow drag, built on `src/dnd/` rather than a second
-  drag implementation.
+- `terminal/lastbox.ts` goes per-slot, and the twelve `window.__tl*` claims in
+  `lib/ownwhile.ts` move from "visible" to "focused".
+- Tile chrome, and the drop-shadow drag reusing `src/dnd/`'s live-order,
+  `hold()` and write-once-on-dragend pattern. The edge hit test is new: the
+  library has no positional API (see below).
 - Grid re-claim on every visible-set change, declining while watching.
-- Undo handlers beside the existing ones in `store/undo.*`.
-- Geometry persisted per device, beside `store/device-prefs.ts`.
+- Undo handlers beside the existing ones in `store/undo.*`, with names flattened
+  into `sessions`.
+- Geometry in a new `store/workspaces.ts` over one `tl:workspaces:v1` key.
 
 **tmux-api**
 
@@ -297,16 +370,40 @@ two of them, confirm each session's tmux window matches its tile
 screenshot it. A green test suite does not show that four terminals stayed
 attached.
 
+### The drag library gives us the pointer, not the geometry
+
+`@formkit/drag-and-drop` 0.6.1, already in the sidebar, does multi-list
+transfer, nested lists, handles and touch, all of which a drag from the sidebar
+into a tile needs. What it does not have is any positional API: a parent's whole
+state is `Array<T>` through `getValues`/`setValues`, and every operation
+resolves to an index in some parent's array. "Drop on the left third of this
+tile to split it vertically" is geometry we write. The library contributes the
+pointer handling, the long-press and the touch path; the quadrant hit test is
+ours.
+
 ## Open questions
 
 - The minimum tile of ~240px is a proposal, not a measurement. It should be set
   from what a Claude Code TUI actually needs to stay usable, checked on the real
   thing.
-- Whether `@formkit/drag-and-drop` handles edge-region drops (as opposed to list
-  reordering) without a custom drop-target layer is unconfirmed. If it does not,
-  the drop targets are ours and the library contributes the pointer handling
-  only.
+- Whether the auto-arrange should prefer columns or rows past four members. The
+  even 2x2 is obvious; six is not.
 - Attaching every member at once on a cold tab is the chosen behaviour and has
   not been measured at six members on a slow connection. If the first paint
   suffers, staggering the non-focused tiles is the fix and changes nothing else
   in this design.
+
+## Two things found along the way
+
+Neither is caused by this design and neither blocks it.
+
+- `App.tsx:1214-1215` registers `askConn` and `retryConn` from **every** mount
+  with no `shown()` guard, while both immediate siblings at `:1201` and `:1211`
+  guard with `if (!preloading())`. They assign to plain module-scope `let`s, so
+  the last mount wins and the connection badge's Reconnect can already point at
+  a hidden session, including a preload nobody opened. Worth its own fix.
+- Two comments disagree about how tmux picks a window size.
+  `store/keepalive.ts:26` says the "latest active client"; `Dock.tsx:18` says
+  the "SMALLEST attached client". `window-size manual` plus the explicit grid
+  claim reconciles the behaviour, but one of those sentences is wrong and will
+  mislead whoever reads it next.
