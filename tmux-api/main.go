@@ -334,6 +334,7 @@ func main() {
 	http.HandleFunc("/dirs", handleDirs)
 	http.HandleFunc("/prefs", handlePrefs)
 	http.HandleFunc("/netinfo", handleNetinfo)
+	http.HandleFunc("/machine", handleMachine)
 	http.HandleFunc("/agent-spend", handleAgentSpend)
 	http.HandleFunc("/telemetry", handleTelemetry)
 	http.HandleFunc("/push-subscriptions", handlePushSubscriptions)
@@ -355,6 +356,19 @@ func main() {
 	// `tmux list-sessions` per mapped user per sweep, the same call the sessions
 	// poll already makes. Runs for the life of the process, like the sender.
 	go runPrewarmReaper(make(chan struct{}))
+
+	// Whether the BOX is stalling, so a person can tell "the box is slow" from
+	// "my connection is slow" (health.go, ADR-0027). Started unconditionally
+	// and for the life of the process, like the reaper: five world-readable
+	// /proc files every ten seconds, no privilege, no helper, and a few
+	// kilobytes for the hour of history the panel draws. Whether anyone ever
+	// opens that panel is not worth a switch.
+	//
+	// It cannot take the service down. Every file it reads is optional by
+	// design — an unreadable one becomes empty text, an empty one becomes a
+	// reading of "unknown" — so there is no /proc shape that turns a sample
+	// into a panic on this goroutine.
+	go runHealthSampler(make(chan struct{}))
 
 	// TMUX_API_ADDR: scratch-build override for the dev harness
 	// (dev-harness.py --tmux-api-port documents testing a local build,

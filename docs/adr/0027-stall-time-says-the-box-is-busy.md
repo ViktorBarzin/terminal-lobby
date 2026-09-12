@@ -92,7 +92,21 @@ people are likely to stop reading.
 | any of the three | | 17.00 (2.44% of 696 h) |
 
 Each line lands near 1% on its own so that all three mean the same thing to a
-reader. The target for the union was 1-3%: about half an hour a day, rare enough
+reader. The very-busy tier that the sentence distinguishes gets its own
+calibrated line per resource for the same reason — CPU 20%, IO 70%, memory 20%,
+landing at 2.50, 1.17 and 1.33 hours a month:
+
+> An earlier draft made very-busy a fixed multiple, "over twice a line". Writing
+> the sampler showed the flaw: IO's amber line is 50%, twice it is 100%, and
+> 100% is the ceiling of a stall rate, so IO could never reach the tier even
+> during a total ten-minute stall (measured maximum here, 87.59%). A uniform
+> multiplier over non-uniform distributions is the same mistake as a uniform
+> threshold, which is what this section already rejected. Caught by the
+> implementing agent, which built it literally and pinned the consequence in a
+> test rather than quietly changing the comparison.
+
+"Sustained" is not a separate condition: a ten-minute rate has already lasted
+ten minutes, so requiring consecutive samples would charge that twice. The target for the union was 1-3%: about half an hour a day, rare enough
 to carry meaning and common enough that people meet it before the day it
 matters.
 

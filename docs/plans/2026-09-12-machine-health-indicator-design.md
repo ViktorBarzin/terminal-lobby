@@ -161,17 +161,47 @@ statement.
 Red therefore keeps its single existing meaning, "you are disconnected"
 (`app.css:118`, `badgeWord` returning "Offline" at `status.ts:154`).
 
+"Amber" is shorthand throughout this document. The degraded colour is the
+theme's `--state-running`, which is `#d4a574` in one theme, `#4493f8` in slate,
+`#e8e8e8` and `#b5482d` in two others (`theme/theme.css:136,174,212,250`). The
+machine's degraded dot therefore looks exactly like the terminal's degraded dot,
+which is the point: a reader learns one colour, not six.
+
 ### Depth is carried by the sentence
 
 With two usable states, the dot cannot separate a brush against the threshold
 from a sustained grind. The words can, and they are what someone opening the
 panel reads anyway:
 
-| condition | sentence |
+| condition | sentence, printed at the top of the panel |
 |---|---|
-| under every line | *(no sentence; the row reads "Fine")* |
-| over a line | "Typing and commands may feel slow. The machine is busy." |
-| over twice a line, sustained | "Typing and commands are slow right now. The machine is very busy." |
+| under every amber line | *(no sentence; the row reads "Fine")* |
+| over an amber line | "Typing and commands may feel slow. The machine is busy." |
+| over a very-busy line | "Typing and commands are slow right now. The machine is very busy." |
+
+The very-busy line is its own calibrated number per resource, not a multiple of
+the amber one. The first draft of this said "over twice a line", and building it
+showed why that does not work: IO's amber line is 50%, twice it is 100%, and
+100% is the ceiling of a stall rate. IO could never have reached the tier, not
+even during a total ten-minute stall. Measured maximum on this box is 87.59%.
+
+| resource | amber | hours/30 d | very busy | hours/30 d |
+|---|---|---|---|---|
+| CPU, `some` | 10% | 7.17 | 20% | 2.50 |
+| IO, `full` | 50% | 7.33 | 70% | 1.17 |
+| memory, `full` | 10% | 4.83 | 20% | 1.33 |
+
+Each very-busy line lands between 1 and 2.5 hours a month, so the tier says the
+same thing whichever resource raises it — the same reasoning that gave each
+resource its own amber line. CPU and memory happen to sit at twice their amber
+lines; only IO moves, from unreachable to reachable.
+
+Three more environment variables carry them: `TL_HEALTH_CPU_VERY_PCT`,
+`TL_HEALTH_IO_VERY_PCT`, `TL_HEALTH_MEM_VERY_PCT`.
+
+"Sustained" is not a separate condition. The rates are ten-minute windows, so a
+reading over a line has already lasted ten minutes and cannot be a blip;
+requiring consecutive samples on top would charge the same constraint twice.
 
 Effect first, cause second, because the reader arrived at the panel already
 holding the effect.
@@ -181,9 +211,23 @@ holding the effect.
 Settings → Network → Right now gains a sixth row, `This machine`, below `Build`:
 
 - the three pressure readings and the load average, as numbers;
-- the sentence above;
+- its short phrase, naming the resource, the way the other five rows do;
 - a 60-minute sparkline of the deciding pressure — the worst of the three at
   each sample, so the line and the colour never disagree.
+
+The sentence is on the row **only when the top of the panel has stopped saying
+it**. The first build printed it in both places and a screenshot at 355px showed
+the cost: `verdict()` already prints it whenever the machine is the only channel
+complaining, which is the common case because a busy box breaks nobody's socket,
+so the same words appeared twice seven rows apart.
+
+Dropping it from the row entirely was the first fix and it was too blunt. The
+moment anything else is also complaining, `verdict()` becomes "2 things need
+attention" and the sentence leaves the panel altogether — and that is the case
+it exists for, because the dot is amber for a brush past a threshold and for a
+sustained grind alike, and the sentence is the only thing separating them. So
+the row picks the sentence up exactly where the headline drops it, and both
+tiers of the handoff are pinned by tests.
 
 An hour is long enough to tell a fading spike from something that started before
 the reader sat down. One line rather than three keeps it readable in the roughly
@@ -233,6 +277,21 @@ devvm, but at a 2-minute scrape interval and roughly 13 weeks of coverage
 would give a coarser graph, not a better one, and would tie Terminal Lobby to
 this homelab's monitoring stack and hand every other install a blank panel. The
 ring buffer empties on service restart, which is honest and infrequent.
+
+**A short window reports figures but no colour.** The thresholds *are*
+ten-minute rates, so measuring a ten-second rate against them is a different
+measurement wearing the same number: sixty times narrower, so far more variable,
+and it would cross a line at a rate nobody calibrated. While the window is under
+ten minutes the state stays `unknown` — which this model already defines as "has
+not reported", and which every rule skips rather than counting as health or as
+fault. Every figure is still filled in, so the panel shows live numbers
+throughout and only the dot waits.
+
+Caught by driving a real `tmux-api`. Ten seconds after start the endpoint
+reported `ioPct 53.68` against a 50% amber line, which under the first
+implementation painted the dot amber off a single sample interval. The first ten
+minutes after a restart is also the worst moment to raise a false alarm, because
+it is exactly when someone has deployed and is watching.
 
 **When PSI is missing** — older kernels, some container runtimes, the Docker
 dev environment — the row falls back to load average and memory headroom and

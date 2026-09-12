@@ -395,6 +395,15 @@ export const App: Component = () => {
     checkedAt: status.checkedAt,
     checking: status.checking,
     bootedAt: status.bootedAt,
+    // The machine's own figures and its hour of history. They ride here rather
+    // than as props on the panel so that every row's facts arrive by the same
+    // route: a reader who finds the machine row reads it the way they read the
+    // other five. `watchMachine` is the panel-open fast poll, which returns its
+    // own teardown — the panel owns its lifetime, because "faster while the
+    // panel is open" has to stop being true when it closes.
+    machine: status.machine,
+    machineSeries: status.machineSeries,
+    watchMachine: status.watchMachine,
     worstNow: () => worst(status.channels()),
     runCheck: async () => {
       await status.check(
