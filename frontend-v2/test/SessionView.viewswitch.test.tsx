@@ -156,6 +156,40 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
   });
 
   /**
+   * THE ACTIVATION FUNNEL'S FOCUS. Every select reaches App's `onActivate`,
+   * which calls this bridge so the session somebody just asked for can take the
+   * keyboard the click gave to the sidebar card. A selection that MOVES is
+   * answered by TerminalNative focusing itself as it comes on screen; this is
+   * the re-pick of the session already showing, where nothing moves.
+   */
+  it("hands the keyboard to the terminal when the session is asked for again", () => {
+    const focus = vi.fn(() => true);
+    window.__tlFocusTerminal = focus;
+    const { container, unmount } = render(() => <SessionView session="qa-vs" />);
+    expect(mode(container)).toBe("terminal");
+
+    expect(window.__tlFocusSession?.()).toBe(true);
+    expect(focus).toHaveBeenCalledTimes(1);
+
+    unmount();
+    expect(window.__tlFocusSession).toBeUndefined();
+    delete window.__tlFocusTerminal;
+  });
+
+  /** The composer owns the keyboard in text mode, and keeps it. */
+  it("leaves the keyboard alone while the text view shows", () => {
+    const focus = vi.fn(() => true);
+    window.__tlFocusTerminal = focus;
+    const { container } = render(() => <SessionView session="qa-vs" />);
+    window.__tlToggleView?.();
+    expect(mode(container)).toBe("text");
+
+    expect(window.__tlFocusSession?.()).toBe(false);
+    expect(focus).not.toHaveBeenCalled();
+    delete window.__tlFocusTerminal;
+  });
+
+  /**
    * QA #11, as it was found: the Ctrl/Cmd+J listener here was an unconditional
    * capture-phase window keydown, so it fired with the command palette up and
    * focus in its input, flipping the view behind the overlay and leaving the

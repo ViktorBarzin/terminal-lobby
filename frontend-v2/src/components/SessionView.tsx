@@ -558,8 +558,11 @@ export const SessionView: Component<{
    * `queueMicrotask` because the bridge it calls is claimed by an effect
    * created LATER than this one (TerminalNative's `ownWhile`, inside its async
    * mount), so calling it inline would reach the terminal going off screen.
-   * Once only, and only for a mount that started as a preload: a kept session
-   * coming back on screen keeps today's behaviour.
+   * Once only, and only for a mount that started as a preload. A kept session
+   * coming back on screen is the terminal's own to answer now, from the effect
+   * on `active` that TerminalNative gained with the ported TerminalView focus
+   * (`becameActive`), which covers a revealed preload too. This stays because
+   * it is the narrower claim and costs one focus call.
    */
   let revealed = false;
   createEffect(() => {
@@ -684,6 +687,28 @@ export const SessionView: Component<{
     return true;
   };
   ownWhile(onScreen, "__tlToggleView", toggleView);
+
+  /**
+   * The session was ASKED FOR, so give its surface the keyboard.
+   *
+   * Every activation funnels through the store's `select` (a card click, its
+   * Enter, Alt+1..9, the palette, a notification tap) and the shell calls this
+   * from there. TerminalNative takes the keyboard for itself whenever it comes
+   * on screen, which is the whole of the answer while the selection MOVES; this
+   * is for the case where it does not move, and the click that lands on the
+   * card of the session already showing is the one people make: the card takes
+   * the focus a press gives it, the terminal loses it, and nothing was going to
+   * change to hand it back.
+   *
+   * WHICH SURFACE is the reason this lives here rather than in the shell: the
+   * text view's composer owns the keyboard while it shows, and the terminal
+   * must not take it back the moment someone re-picks the session they are
+   * typing a prompt into. False says "nothing here took it", which is also the
+   * answer for a session that has not finished mounting its terminal — that one
+   * focuses itself at boot.
+   */
+  const focusSession = (): boolean => (mode() === "terminal" ? refocusTerminal() : false);
+  ownWhile(onScreen, "__tlFocusSession", focusSession);
 
   // Find in session. The overlay searches the whole transcript on the server;
   // opening a hit is the part that happens here, because reaching an event from

@@ -226,8 +226,18 @@ export const App: Component = () => {
     // Opening a session on a phone IS the navigation: show the terminal. Fires
     // even when the same session is re-tapped, which is how you get back to a
     // terminal you left to browse the list.
+    //
+    // And the session that was asked for takes the keyboard, because the click
+    // that asked for it has just given it to the sidebar card. A selection that
+    // MOVES is the terminal's own to answer (TerminalNative focuses itself when
+    // it comes on screen), so what this adds is the re-pick of the session
+    // already showing, where nothing moves at all. The mounted SessionView
+    // decides what that means for the view it is showing: a text view's
+    // composer keeps the keyboard, and a terminal still mounting focuses itself
+    // when it boots.
     onActivate: () => {
       if (isMobileFlip()) setCollapsed(true);
+      window.__tlFocusSession?.();
     },
     // Manual / created / last-active, roamed. The store owns the sort so the
     // cards, the Alt+1..0 chips and a drop's anchor all read one order; a drag
