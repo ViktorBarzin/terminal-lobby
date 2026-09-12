@@ -396,8 +396,9 @@ One release, both halves together.
 **Frontend**
 
 - `App.tsx:1141` — `shown()` becomes a visible-set test.
-- A new `store/workspace.ts` for the tree: n-ary nodes, sizes, the focused tile,
-  and the add/move/remove/resize operations. Pure, so it tests without a DOM.
+- A new `store/workspace-tree.ts` for the tree: n-ary nodes, sizes, the focused
+  tile, and the add/move/remove/resize operations. Pure, so it tests without a
+  DOM. Its contract is fixed below, because three files depend on it.
 - A positioning layer assigning grid areas to existing slots. No slot moves.
 - `terminal/lastbox.ts` goes per-slot, and the twelve `window.__tl*` claims in
   `lib/ownwhile.ts` move from "visible" to "focused".
@@ -411,11 +412,49 @@ One release, both halves together.
   into `sessions`.
 - Geometry in a new `store/workspaces.ts` over one `tl:workspaces:v1` key.
 
+**The tree contract**, settled 2026-09-12 because the device store, the canvas
+and the wiring all depend on it:
+
+```ts
+export interface TileNode { kind: "tile"; name: string; owner?: string }
+export interface SplitNode {
+  kind: "split";
+  direction: "row" | "column";
+  children: WorkspaceNode[];   // two or more; a row of three is ONE node
+  fractions: number[];         // one per child, summing to 1
+}
+export type WorkspaceNode = TileNode | SplitNode;
+export type WorkspaceTree = WorkspaceNode;   // a workspace of one is a bare TileNode
+
+export const MIN_TILE_PX = 240;
+export function tileKey(t: TileNode): string;                     // delegates to keepalive's keyOf
+export function tilesOf(node: WorkspaceNode): TileNode[];
+export function sessionKeysOf(node: WorkspaceNode): string[];
+export function isWorkspaceTree(v: unknown): v is WorkspaceTree;
+export function toRects(tree: WorkspaceTree, box: { width: number; height: number }): TileRect[];
+```
+
+A tile identifies its session the way `KeptSession` and `Selected` already do,
+`{name, owner?}`, because the owner is part of the identity and a workspace may
+hold a foreign session. The NUL-joined keepalive key is composed on the way out
+by `tileKey` and never written to storage, where it would be hostile to anyone
+reading the document. `fractions` **is** corvu's controlled `sizes` expressed as
+fractions, so the sizes exist in exactly one place.
+
+`store/workspaces.ts` takes `isWorkspaceTree` and `sessionKeysOf` by injection
+rather than importing them as values, matching how `createVisitStore` takes
+`now` and `visible`. That keeps its suite runnable independently of the tree.
+
 **tmux-api**
 
 - A workspaces document per user, next to `layout/<user>.json`: id, ordered
   members, and the exclusivity rule. `GET`/`PUT`, validated the way `layout.go`
-  validates.
+  validates. A member carries the same `{name, owner?}` the tree's tiles do,
+  with the owner omitted meaning the caller, because a workspace may hold a
+  foreign session and a bare name cannot say whose it is:
+  `{"version":1,"workspaces":[{"id":"w1","members":[{"name":"auth","owner":"emo"},{"name":"deploy"}]}]}`.
+  Workspaces are unnamed, so there is no name field, and a workspace with fewer
+  than two members is rejected: one tile is not a workspace.
 - Membership survives a kill, the way `assignments/<user>.json` does.
 
 **Tests** — the tree operations are pure and get property-based tests: any
