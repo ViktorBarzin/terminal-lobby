@@ -128,7 +128,9 @@ shared box is a different feature carrying a privacy question.
 **Report your own slice.** Each user has a 24 GB cap and each pane a 6 GB scope
 cap, so "you are at your cap" is a sharper fact than "the box is busy". It is
 also a second number to explain on a surface that has none yet. Deferred, not
-rejected.
+rejected, and the collection half is already built: `tl-session-watch` attributes
+per-pane cgroup memory by {user, session} every 30 seconds and publishes
+`tl_pane_memory_bytes` (`tl-session-watch/collect.go:447-465`, `emit.go:83-118`).
 
 **CPU steal.** Measured, raised, and deliberately left out. Steal on this VM sat
 above 10% for 8.67 hours of the last 30 days and peaked at 43.8% — the
@@ -141,14 +143,15 @@ can read green through a slow hour whose cause is outside the VM.
 in use as this was written, and swapping is felt directly.
 
 **A Prometheus-backed graph.** Prometheus holds these exact counters for the
-devvm at 26 weeks. Querying it would give a better graph and would tie Terminal
-Lobby to one homelab's monitoring stack, handing every other install a blank
-panel. A 360-entry ring buffer in the Go service covers the hour the panel
-shows, in a few kilobytes, anywhere.
+devvm, but at a 2-minute scrape interval and about 13 weeks of coverage (61,343
+samples, 85.2 days), not the 26 weeks the k8s nodes get. Over a 60-minute window
+that is 30 points against the ring buffer's 360, so the query would give a
+coarser graph and would tie Terminal Lobby to one homelab's monitoring stack,
+handing every other install a blank panel. A 360-entry ring buffer in the Go
+service covers the hour the panel shows, in a few kilobytes, anywhere.
 
-**New telemetry.** Prometheus already has all of it at higher fidelity than the
-panel displays, so a second copy sent from the browser would spend the ADR-0008
-budget on data we hold.
+**New telemetry.** Prometheus already has all of it, so a second copy sent from
+the browser would spend the ADR-0008 budget on data we hold.
 
 **Alerting.** No toast and no push. Host alerting exists; a second channel
 repeating it teaches people to ignore both.
@@ -163,3 +166,11 @@ repeating it teaches people to ignore both.
   number moves.
 - The sparkline empties on service restart, so it is shortest right after a
   deploy — which is one of the moments someone is most likely to look.
+- The machine-wide memory threshold may be watching the wrong level. Over the
+  last 30 days `earlyoom` killed nothing and the host never approached OOM
+  (minimum available memory 1.06 GiB across 13 weeks), while 73 processes were
+  killed by the per-pane 6 GB cgroup cap — 51 vitest, 12 ffmpeg, 4 claude, all
+  `CONSTRAINT_MEMCG` against a `tmux-spawn-*.scope`. Memory pain on this box is
+  mostly per-pane, which a machine-wide reading will stay green through. That is
+  an argument for the deferred per-user slice above, and worth weighing before
+  the memory input is treated as carrying its share.

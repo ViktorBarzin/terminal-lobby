@@ -219,14 +219,20 @@ already runs every 5 seconds and backs off to 30 under failure
 (`store/lobby.ts:277`). `tmux-api/netinfo.go:51` established this pattern in
 this codebase: `X-TL-Net` puts a server fact on a response the client already
 asks for, "so attribution costs no request of its own." Machine health follows
-it. While the Right now panel is open the client asks a small dedicated endpoint
+it, and it has to be a header rather than a field in the body: the `/sessions`
+body is cached per OS user for 5 seconds (`tmux-api/main.go:155`), while the
+header is stamped per response before the cache lookup (`sessions.go:29-32`).
+While the Right now panel is open the client asks a small dedicated endpoint
 every few seconds, which is the one moment someone is watching the number move.
 
 **History.** A 360-entry ring buffer in the Go service, 10 seconds apart,
-covering an hour in a few kilobytes. Prometheus holds the same data at 26 weeks
-and higher fidelity, and querying it would tie Terminal Lobby to this homelab's
-monitoring stack and hand every other install a blank graph. The ring buffer
-empties on service restart, which is honest and infrequent.
+covering an hour in a few kilobytes. Prometheus holds the same counters for the
+devvm, but at a 2-minute scrape interval and roughly 13 weeks of coverage
+(61,343 samples, 85.2 days) rather than the 26 weeks the k8s nodes get. For a
+60-minute window that is 30 points against the ring buffer's 360, so querying it
+would give a coarser graph, not a better one, and would tie Terminal Lobby to
+this homelab's monitoring stack and hand every other install a blank panel. The
+ring buffer empties on service restart, which is honest and infrequent.
 
 **When PSI is missing** — older kernels, some container runtimes, the Docker
 dev environment — the row falls back to load average and memory headroom and
@@ -243,7 +249,12 @@ on a shared box is a different feature with a privacy question attached.
 **Reporting your own slice.** The devvm gives each user a 24 GB cap and each
 pane a 6 GB scope cap, so "you are at your cap" is a real and more actionable
 fact than "the box is busy". It is also a second number to explain on a surface
-that currently has none. Out of this cut, not out of the idea.
+that currently has none. Out of this cut, not out of the idea — and cheaper than
+it looks, because `tl-session-watch` already collects it: every 30 seconds, as
+root, it attributes `memory.current`, the unreclaimable part of `memory.stat`
+and `memory.max` per {user, session} and writes `tl_pane_memory_bytes` to a
+node_exporter textfile (`tl-session-watch/collect.go:447-465`,
+`emit.go:83-118`).
 
 **CPU steal.** Measured and deliberately excluded. Steal on this VM sat above
 10% for 8.67 hours of the last 30 days and peaked at 43.8%, which is the
@@ -261,9 +272,9 @@ stretching timeouts when the box is busy would give the app's slowness two
 causes that cannot be told apart from the outside. It reports; it does not
 react.
 
-**New telemetry.** Prometheus already keeps all of this for 26 weeks at higher
-fidelity than the panel displays. A second, lower-fidelity copy sent from the
-browser would spend the ADR-0008 rate budget on data we already hold.
+**New telemetry.** Prometheus already keeps all of this for the devvm at a
+2-minute interval over about 13 weeks. A second copy sent from the browser would
+spend the ADR-0008 rate budget on data we already hold.
 
 **Alerting anyone.** No toast, no push. Host-level alerting already exists, and the
 expectation is that a second channel repeating it would reduce attention to
@@ -283,3 +294,11 @@ both.
 - A restart empties the ring buffer, so the sparkline is short exactly after a
   deploy. Whether that is annoying enough to warrant persisting it is a question
   for after it ships.
+- The memory input may be watching the wrong level. Over the last 30 days
+  `earlyoom` killed nothing and the host never approached OOM (minimum available
+  memory 1.06 GiB across 13 weeks), while 73 processes were killed by the
+  per-pane 6 GB cgroup cap: 51 vitest, 12 ffmpeg, 4 claude, every one
+  `CONSTRAINT_MEMCG` against a `tmux-spawn-*.scope`. Memory pain here is mostly
+  per-pane, and a machine-wide reading stays green through it. That strengthens
+  the case for the deferred per-user slice, and it is worth settling before the
+  memory threshold is trusted to carry its share.
