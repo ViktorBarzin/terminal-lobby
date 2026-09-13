@@ -64,15 +64,34 @@
 }
 
 /* ---- Shell grid -------------------------------------------------------- */
+/* `--tl-sidebar-w` is published by App.tsx from store/sidebar-width.ts and is
+   the ONE place the column width is decided: the grid track below and
+   `.tl-sidebar` both read it, and so does the grip that drags it. The fallback
+   is the 260px the column had before it could be dragged, which is what a
+   render with no store (a test mounting the shell on its own) still gets. */
 .tl-shell {
   display: grid;
-  grid-template-columns: 260px 1fr;
+  grid-template-columns: var(--tl-sidebar-w, 260px) 1fr;
   height: 100%;
   min-height: 0;
   transition: grid-template-columns 0.18s ease;
+  /* The containing block the resize grip is placed against. Positioned, with
+     no transform/filter/contain, so the card menu's `position: fixed` escape
+     (see `.tl-menu` below) is untouched by it. */
+  position: relative;
 }
 .tl-shell-collapsed {
   grid-template-columns: 0 1fr;
+}
+/* Held for the length of a drag. The 0.18s above is there to animate a
+   collapse; during a drag it would restart on every pointermove and the seam
+   would trail the pointer. The cursor is set on the whole shell for the same
+   reason a drag listens on `window`: the pointer spends the drag over the
+   terminal, not over the 7px handle. */
+.tl-shell-resizing {
+  transition: none;
+  cursor: col-resize;
+  user-select: none;
 }
 .tl-shell-sidebar {
   min-width: 0;
@@ -85,6 +104,50 @@
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+/* ---- The resize grip --------------------------------------------------- */
+/* The seam, as a 7px target centred on the 1px border: three pixels of list,
+   the border, three of session. Three pixels is as much of the list's 6px
+   scrollbar as this may take, which is the cost of an edge handle and the
+   reason it is not wider.
+
+   z-index 4 clears the session pane (1-2) and stays under the card menu (20),
+   the group popups (30) and Settings (60). */
+.tl-sidebar-grip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--tl-sidebar-w, 260px);
+  width: 7px;
+  margin-left: -3px;
+  z-index: 4;
+  cursor: col-resize;
+  /* A pen or trackpad drag resizes rather than scrolling the page under it. */
+  touch-action: none;
+}
+/* The line is drawn by a child box so the hit area can be wider than the
+   thing you see: `inset: 0 3px` leaves one visible pixel over the border. */
+.tl-sidebar-grip::after {
+  content: "";
+  position: absolute;
+  inset: 0 3px;
+  background: var(--accent);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.tl-sidebar-grip:hover::after,
+.tl-sidebar-grip:focus-visible::after,
+.tl-shell-resizing .tl-sidebar-grip::after {
+  opacity: 0.65;
+}
+/* The accent line IS the focus ring — an outline on a 7px box would paint a
+   rectangle across the seam. */
+.tl-sidebar-grip:focus-visible {
+  outline: none;
+}
+/* Nothing to drag when the list is not on screen. */
+.tl-shell-collapsed .tl-sidebar-grip {
+  display: none;
 }
 .tl-shellbar {
   display: flex;
@@ -139,7 +202,9 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  width: 260px; /* fixed so content doesn't reflow while the grid animates */
+  /* Fixed so content doesn't reflow while the grid animates — and the same
+     custom property the grid track reads, so dragging the seam moves both. */
+  width: var(--tl-sidebar-w, 260px);
 }
 /* The lobby header — values taken from the vanilla page (.lobby-header,
    .lobby-header-row, .lobby-sub) so the two tiers read the same. The 52px row
@@ -1154,6 +1219,15 @@
   .tl-shell-collapsed .tl-shell-sidebar {
     max-height: 0;
   }
+  /* The two panes are stacked here, so a width dragged on a wide window has
+     nothing to say about this layout: the list keeps the 260px it has always
+     had, and there is no vertical seam to put a handle on. */
+  .tl-sidebar {
+    width: 260px;
+  }
+  .tl-sidebar-grip {
+    display: none;
+  }
 }
 
 /* ---- Touch ergonomics -------------------------------------------------- */
@@ -1166,6 +1240,14 @@
    floor both Apple's and Google's guidance land near, and it is what the merged
    session bar above already uses. */
 @media (pointer: coarse) {
+  /* The resize grip is a 7px target, which is the one thing on this list a
+     finger cannot be given a forgiving hit area for: widening it would put a
+     dead strip down the left edge of the terminal. A touch device loses the
+     drag rather than getting a bad version of it, and the phone gives the list
+     the whole screen anyway. */
+  .tl-sidebar-grip {
+    display: none;
+  }
   /* A session row is 40px because its action button is 40px — not 40px PLUS the
      card's own padding. The button is a flex child of an align-items:center
      row, so the card's 6px top and bottom stacked on the target and every

@@ -10,6 +10,13 @@ import { noteNetworkId } from "../diagnostics/network";
 // live view under, so two members that would mount one slot are one member here
 // — which is the exclusivity rule stated in the terms that make it true.
 import { keyOf } from "../store/keepalive";
+import type {
+  ChannelState,
+  MachinePoint,
+  MachineReport,
+  MachineResource,
+  MachineTier,
+} from "../diagnostics/status";
 import { NET_HEADER, apiUrl } from "./config";
 import {
   emptyLayout,
@@ -67,6 +74,13 @@ async function req(
   // so the freshest answer comes from whichever request happened last — in
   // practice the 5s /sessions poll. Costs nothing and adds no request.
   noteNetworkId(res.headers.get(NET_HEADER));
+  // And how busy the BOX is, on exactly the same ride (tmux-api/health.go).
+  // One more header on a response already in flight, read in the one place
+  // every lobby call passes through, which is what lets the sixth channel cost
+  // no request of its own in the common case. Nothing it does can throw: a
+  // header about how busy the box is must never become the reason a session
+  // list fails to load. See the machine-health section at the foot of this file.
+  noteMachineHeader(res.headers.get(MACHINE_HEADER));
   return res;
 }
 
@@ -644,4 +658,350 @@ export async function putWorkspaces(workspaces: Workspaces): Promise<void> {
     body: JSON.stringify(workspaces),
   });
   if (!res.ok) throw new ApiError(res.status, `workspaces PUT HTTP ${res.status}`);
+}
+
+// ---- machine health --------------------------------------------------------
+
+/*
+ * Whether the BOX is the reason a terminal feels slow — the sixth channel's
+ * half of the wire (ADR-0028; tmux-api/health.go on the other side).
+ *
+ * IT LIVES WITH THE CLIENT BECAUSE IT ARRIVES WITH THE CLIENT. The verdict is a
+ * tmux-api fact riding tmux-api's responses, and `req` above is the one place
+ * that sees every one of them. diagnostics/network.ts is the sibling to read:
+ * same shape, same reason, same module-state-and-listeners arrangement, because
+ * the consumer of a header stamped on somebody else's request cannot be a
+ * component and has nobody to be pushed from. The channel it feeds is in
+ * diagnostics/status-store.ts, which subscribes here.
+ *
+ * TWO WAYS IN, AND ONLY THE SECOND COSTS ANYTHING.
+ *  - `X-TL-Machine`, on responses the app already asks for. The lobby polls
+ *    /sessions every five seconds, so while anyone is looking at the tab the
+ *    verdict costs no request of its own. That is the hot path, and it is the
+ *    whole reason this feature adds zero requests in the common case.
+ *  - `GET /machine`, which the Right now panel switches on while it is open,
+ *    for the two things a header cannot do: carry the hour the sparkline draws,
+ *    and keep asking independently of a session poll that backs off to 30s
+ *    under failure and parks entirely when the tab is hidden.
+ *
+ * NOTHING HERE THROWS, AND NOTHING HERE BLANKS A GOOD READING. A header that
+ * did not parse, a response carrying none, a request that failed — none of
+ * those is news about the box. Throwing on any of them would fail the call the
+ * header rode on, and a header about how busy the box is must never be the
+ * reason a session list does not load.
+ */
+
+/** The header tmux-api stamps its verdict on, so the sixth channel rides the
+ *  poll the client already runs (health.go, and netinfo.go's pattern). */
+export const MACHINE_HEADER = "X-TL-Machine";
+
+/**
+ * Built through `apiUrl` like every other call. API_BASE alone is EMPTY unless
+ * a `?api=` override is present — the service prefix lives in apiUrl — so a URL
+ * built by hand asks the SITE ROOT. That shipped once already, in the /health
+ * probe, which 404ed and reported "the API is not answering" on a perfectly
+ * healthy box: a diagnostic manufacturing the fault it exists to report. The
+ * browser sees /api/sessions/machine; tmux-api serves /machine, the ingress
+ * having stripped the prefix.
+ */
+const MACHINE_PATH = "/machine";
+
+/**
+ * How often the panel's direct read asks.
+ *
+ * The same five seconds the session poll uses, which bounds how stale the
+ * figures can be at half of the server's ten-second sampling interval. Matching
+ * the sampler at ten would be cheaper and wrong: the phase between the two is
+ * arbitrary, so the panel would show numbers up to ten seconds old at the one
+ * moment somebody is watching them move.
+ */
+export const MACHINE_POLL_MS = 5000;
+
+/**
+ * The states the box can report. `down` is absent on purpose, and a verdict
+ * claiming it is refused rather than clamped: red means "you are disconnected"
+ * everywhere in this UI, a box that answered a request is not disconnected, and
+ * tmux-api never sends it. machineChannel clamps anything that reaches it by
+ * another route, so this is the outer of two guards rather than a second
+ * opinion about what red means.
+ */
+const isMachineState = (v: unknown): v is Exclude<ChannelState, "down"> =>
+  v === "working" || v === "degraded" || v === "unknown";
+
+const isMachineTier = (v: unknown): v is MachineTier =>
+  v === "fine" || v === "busy" || v === "very-busy";
+
+const isMachineResource = (v: unknown): v is MachineResource =>
+  v === "cpu" || v === "io" || v === "memory" || v === "load";
+
+/** A figure off the wire, or zero. Strict about the fields that decide a colour
+ *  and tolerant about the ones that are only printed: a renamed or null figure
+ *  should cost its own number, not the whole row. */
+function wireNum(v: unknown): number {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+
+/**
+ * Which reading this is: /proc/pressure, or the load-average fallback a kernel
+ * without it leaves. The row's own words branch on it — "Fine" against "Fine,
+ * by load average" — so it is the one string here that changes what a person
+ * reads.
+ *
+ * THE CONTRACT IS "load", and tmux-api sends it (`healthSourceLoad`,
+ * health.go). "fallback" is read as the same thing because that is what the Go
+ * constant held while both halves of this feature were being written. It is a
+ * BRIDGE, not a second spelling to keep alive: a client and a server from
+ * either side of that rename still agree about which instrument answered.
+ * Deleting it costs nothing once no deployed tmux-api predates the rename.
+ */
+function wireMachineSource(v: unknown): MachineReport["source"] {
+  if (v === "psi") return "psi";
+  if (v === "load" || v === "fallback") return "load";
+  return "unknown";
+}
+
+/**
+ * Validate-or-drop one verdict — the same bytes whether they came off the
+ * header or out of the endpoint's `verdict` field, which is what keeps those
+ * two from drifting.
+ *
+ * Null is what leaves the channel `unknown`, never healthy, which is the
+ * invariant the whole status model rests on (diagnostics/status.ts).
+ */
+export function parseMachineReport(raw: unknown): MachineReport | null {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  if (!isMachineState(o.state)) return null;
+  return {
+    state: o.state,
+    // A verdict that reached degraded without saying how busy gets the quieter
+    // of the two sentences, which is all the threshold it crossed supports —
+    // status.ts makes the same choice at the other end, for the same reason.
+    tier: isMachineTier(o.tier) ? o.tier : o.state === "working" ? "fine" : "busy",
+    // Unset on the wire exactly when the verdict is `unknown`: there is no
+    // window to name a resource over yet, and machineChannel returns before
+    // reading it there. The type has no "none" to fall back to.
+    worst: isMachineResource(o.worst) ? o.worst : "cpu",
+    cpuPct: wireNum(o.cpuPct),
+    ioPct: wireNum(o.ioPct),
+    memPct: wireNum(o.memPct),
+    load1: wireNum(o.load1),
+    // Floored at one core because the panel divides by it, and an Infinity
+    // where a number belongs is the sort of thing a reader remembers.
+    nproc: Math.max(1, Math.round(wireNum(o.nproc))),
+    memAvailableMb: wireNum(o.memAvailableMb),
+    memTotalMb: wireNum(o.memTotalMb),
+    windowSeconds: wireNum(o.windowSeconds),
+    // Only an explicit `false` claims a full ten-minute window. Anything else
+    // leaves the reading marked partial, which is the direction that cannot
+    // overstate what was actually measured.
+    partialWindow: o.partialWindow !== false,
+    source: wireMachineSource(o.source),
+  };
+}
+
+/**
+ * The hour behind the verdict, as tmux-api's `series()` marshals it.
+ *
+ * An entry with no readable RESOURCE is dropped rather than drawn, because the
+ * line is the part of the row a reader takes in without reading it and a point
+ * invented from junk says "the box was fine then" about a moment nobody
+ * measured. Its figures are tolerated at zero, like the verdict's: a point that
+ * knows which resource it is about is still a point.
+ */
+export function parseMachineSeries(raw: unknown): MachinePoint[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MachinePoint[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const o = entry as Record<string, unknown>;
+    if (!isMachineResource(o.res)) continue;
+    out.push({ at: wireNum(o.at), res: o.res, pct: wireNum(o.pct), ofLimit: wireNum(o.ofLimit) });
+  }
+  return out;
+}
+
+let machineReport: MachineReport | null = null;
+let machinePoints: readonly MachinePoint[] = [];
+const machineListeners = new Set<(r: MachineReport | null) => void>();
+
+/** The last verdict this tab was told, or null before there is one. */
+export function currentMachineReport(): MachineReport | null {
+  return machineReport;
+}
+
+/** The hour behind it. Empty until a direct read has fetched one, because no
+ *  header could carry a series. */
+export function currentMachineSeries(): readonly MachinePoint[] {
+  return machinePoints;
+}
+
+/** Hear about readings as they land; returns the unsubscribe. */
+export function onMachineReport(fn: (r: MachineReport | null) => void): () => void {
+  machineListeners.add(fn);
+  return () => void machineListeners.delete(fn);
+}
+
+/**
+ * Record a verdict that parsed, and tell everyone listening.
+ *
+ * A reading that did not parse is IGNORED rather than stored. Silence says
+ * nothing about the box, and most responses in the life of a tab carry no
+ * header at all — every call to a service that is not tmux-api, and every
+ * answer from a tmux-api too old to stamp one. Treating those as "no longer
+ * busy" would flicker the row green on whichever request happened to land last.
+ */
+function noteMachineReport(report: MachineReport | null, series?: readonly MachinePoint[]): void {
+  if (!report) return;
+  machineReport = report;
+  // The hour is published with the verdict it arrived with, so the graph and
+  // the figures beside it are never drawn from two different moments. A header
+  // passes none and leaves the hour exactly as it was.
+  if (series) machinePoints = series;
+  for (const fn of machineListeners) {
+    try {
+      fn(report);
+    } catch {
+      /* one bad subscriber must not stop the others hearing about a reading */
+    }
+  }
+}
+
+/** The header off one response, whatever it turns out to contain. */
+export function noteMachineHeader(value: string | null | undefined): void {
+  if (!value) return;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(value);
+  } catch {
+    return; // not JSON at all, and not worth failing the response it rode on
+  }
+  noteMachineReport(parseMachineReport(raw));
+}
+
+/**
+ * Ask for a reading directly — the panel's poll, and Run check's sixth probe.
+ *
+ * THE BODY IS `{verdict, series}`, nested (tmux-api/machine.go). The verdict is
+ * the same bytes the header carries, so one parser serves both paths and they
+ * cannot drift; reading the verdict's fields off the envelope instead finds no
+ * `state` there and drops every reading from a server that is answering
+ * correctly.
+ *
+ * IT NEVER REJECTS, and that is load-bearing rather than tidy. `runCheck` turns
+ * a thrown probe into a `down` row, and `down` is the one state this channel
+ * cannot have: a box that did not answer a direct read is a row that is not
+ * reporting, and if the API really is unreachable the session-list row is
+ * already saying so on its own line. So every failure becomes null, which
+ * machineChannel renders as `unknown`.
+ */
+export async function fetchMachine(
+  f: typeof fetch = fetch.bind(globalThis),
+  signal?: AbortSignal,
+): Promise<MachineReport | null> {
+  try {
+    const res = await f(apiUrl(MACHINE_PATH), {
+      credentials: "same-origin",
+      cache: "no-store",
+      signal: withDeadline(REQUEST_TIMEOUT_MS, signal),
+    });
+    if (!res.ok) return null; // a 404 is a server older than this endpoint
+    const body: unknown = await res.json();
+    if (typeof body !== "object" || body === null) return null;
+    const { verdict, series } = body as { verdict?: unknown; series?: unknown };
+    const report = parseMachineReport(verdict);
+    if (!report) return null;
+    noteMachineReport(report, parseMachineSeries(series));
+    return report;
+  } catch {
+    return null;
+  }
+}
+
+/** What the poll reads off the document. Its own shape rather than a slice of
+ *  `Document`, so a test can hand it two functions and a string. */
+interface MachinePollDoc {
+  visibilityState: DocumentVisibilityState;
+  addEventListener(type: string, fn: () => void): void;
+  removeEventListener(type: string, fn: () => void): void;
+}
+
+export interface MachinePollOptions {
+  fetch?: typeof fetch;
+  doc?: MachinePollDoc;
+}
+
+/**
+ * Read the machine directly for as long as somebody is watching it, and stop.
+ *
+ * WHY IT IS SWITCHED ON RATHER THAN LEFT RUNNING. The header already keeps the
+ * row fresh for nothing, so the only moment worth spending requests on is the
+ * one where a person has the panel open and is watching the number move. The
+ * caller owns the lifetime and gets the teardown back, the way
+ * diagnostics/network.ts's `startNetworkWatch` hands one back.
+ *
+ * IT PARKS WHILE THE TAB IS HIDDEN, for the reason store/lobby.ts parks its own
+ * poll and with less excuse than that one: nobody is reading a panel they
+ * cannot see, and a phone in a pocket would otherwise spend twelve requests a
+ * minute on a number nobody will look at. Coming back asks straight away rather
+ * than waiting out an interval, because what is on screen is as old as the time
+ * the tab spent in the pocket.
+ *
+ * ONE READ AT A TIME. The next ask is armed off the ANSWER, not on an interval,
+ * which is store/lobby.ts's reasoning about its own poll: setInterval keeps
+ * firing into a request that has not come back, so a link slow enough to
+ * overrun the period builds a queue of reads that all land together.
+ *
+ * Each call is its own poller with its own teardown. There is one panel, so
+ * there is nothing to reference-count, and two callers asking twice is a
+ * clearer failure than a shared counter that leaks.
+ */
+export function startMachineFastPoll(opts: MachinePollOptions = {}): () => void {
+  const f = opts.fetch;
+  const doc = opts.doc ?? (typeof document === "undefined" ? undefined : document);
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const hidden = (): boolean => doc?.visibilityState === "hidden";
+
+  const arm = (): void => {
+    if (stopped || timer !== undefined || hidden()) return;
+    timer = setTimeout(ask, MACHINE_POLL_MS);
+  };
+
+  const ask = (): void => {
+    timer = undefined;
+    if (stopped || hidden()) return;
+    void fetchMachine(f).then(arm, arm);
+  };
+
+  const onVisibility = (): void => {
+    if (stopped) return;
+    if (hidden()) {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      return;
+    }
+    if (timer === undefined) ask();
+  };
+
+  doc?.addEventListener("visibilitychange", onVisibility);
+  // Someone has just opened the panel. Waiting out an interval first would
+  // leave the sparkline empty for the opening seconds of every visit, which is
+  // most visits.
+  ask();
+
+  return () => {
+    stopped = true;
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    doc?.removeEventListener("visibilitychange", onVisibility);
+  };
+}
+
+/** Test seam: forget the reading, the hour behind it, and every subscriber. */
+export function resetMachineState(): void {
+  machineReport = null;
+  machinePoints = [];
+  machineListeners.clear();
 }

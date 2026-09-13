@@ -11,6 +11,15 @@ After=network.target
 # Two files, in order: the package's, then local overrides. The second wins on
 # any key it sets. Local settings belong there, not in the first, so a package
 # upgrade never prompts about a conffile you edited.
+#
+# tmux-api reads one group from them that no other service does: the six
+# machine-health thresholds, TL_HEALTH_CPU_PCT, TL_HEALTH_IO_PCT,
+# TL_HEALTH_MEM_PCT and their _VERY_ counterparts, behind the "This machine"
+# row. They belong in those files rather than in an Environment= line here.
+# This unit is not a dpkg conffile, so an upgrade replaces it and a threshold
+# pinned here would be reverted without a word, where an edit to
+# /etc/terminal-lobby.local.conf survives one. The first file explains what
+# each one measures.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
 ExecStart=/usr/local/bin/tmux-api

@@ -82,8 +82,7 @@ resulting state itself — see "Interrupts have no hook" below.
   task re-enters as a `UserPromptSubmit` carrying `<task-notification>`,
   which retires that id; `Stop` stamps `done` only when the set is empty;
   and any event carrying `agent_id` is ignored. There is deliberately no
-  expiry on an id — a human prompt clears the set, which is what makes
-  typing into a session re-derive it, as it already was for `@claude_state`.
+  expiry on an id; the prune below is what clears one nobody retired.
 
   That drain alone was not enough, and `Stop` now PRUNES the set against
   the harness's own registry (2026-09-04). A `<task-notification>` reaches
@@ -100,15 +99,66 @@ resulting state itself — see "Interrupts have no hook" below.
   task and a `TaskStop`ped one both leave it at once. It is the only event
   that carries the field, and the only one that has to decide.
 
-  A workflow id is not pruned: the kinds seen in a real payload are
-  `shell` and `subagent`, and whether a running Workflow is listed at all
-  is unmeasured, so pruning one could report `done` mid-run. Workflows stay
-  on the notification drain until that is measured.
-  `SubagentStart` and `SubagentStop` do fire and are accurate, and are
-  deliberately unused: wiring them means an infra change reaching every
-  headless Claude on the box. `TaskCreated` and `TaskCompleted` exist as
-  event names in the binary and fired for none of the three launch kinds.
-  Design and the full trace:
+  A workflow id was exempt from that prune until 2026-09-12, because the
+  kinds seen in a real payload were `shell` and `subagent` and nobody had
+  checked whether a running Workflow is listed at all. It is: a `Stop`
+  taken two seconds into a live run carries
+  `{"id":"w7t7pnsug","type":"workflow","status":"running"}`. Every kind
+  prunes the same way now.
+
+  The same measurement removed the two clears that reported `done` over a
+  live run (2026-09-12, Viktor: "Claude starts a workflow, then the status
+  for that session becomes green"). A human prompt used to empty the set,
+  which cost a wrong reading on 43 of the 105 workflow runs recorded on
+  this box — the case the design predicted and accepted. `SessionStart`
+  emptied it too, and `compact` is a `SessionStart`, so a long run went
+  green with nobody typing. Neither clear is needed once `Stop` re-derives
+  the set from the harness's list: a human prompt now leaves it alone, and
+  `SessionStart` clears only for `startup` and `resume`, the two sources
+  that are a new process. `compact` and `clear` are the same process, whose
+  background work is untouched, and stamp from the set as `Stop` does.
+
+  `Injector.Cancel` stopped clearing it on the same day and the same
+  evidence. An interrupt ends the TURN, not the work: a live workflow kept
+  counting through a C-c, and a background command's output file went from
+  line 39 to line 55 across one. Cancel still owns the `@claude_state`
+  transition, since an interrupt fires no `Stop` hook — it now stamps
+  `running` while the set is non-empty and `done` when it is not, which is
+  the rule `Stop` uses.
+
+  A TEAMMATE needed events that were not wired (2026-09-12, Viktor: "even
+  though the agents are running, the session says it's green or done").
+  An agent team is the `Agent` tool given a `name`, and none of the three
+  signals above can see one. Its launch answers `teammate_spawned` rather
+  than `async_launched`; the ids in that answer
+  (`counter@session-337349ca`) are not the id the registry uses for the
+  same agent (`tocihyt26`); no task-notification arrives when it
+  finishes, because its answer reaches the lead over the team's own
+  channel and fires no `UserPromptSubmit` at all; and the registry lists
+  a teammate as `running` for as long as it EXISTS, measured three times
+  and last 3m30s after it had answered, with the harness's own bar
+  showing it idle. 97 of the 151 `Agent` launches in wizard's own
+  transcripts over the three days to 2026-09-12 were that shape.
+
+  So two events are now wired, which is the infra change the 2026-09-04
+  design had declined to make: `SubagentStart`, which fires on every
+  activation — a spawn, a `SendMessage`, or a person typing into the
+  teammate's pane — and `TeammateIdle`, which fires when it stops. A
+  teammate is held in the set under its NAME, which both events carry;
+  `Stop` carries the name through rather than re-deriving it, and drops
+  it only when the registry lists no teammate at all. `SubagentStop` is
+  still unused: `TeammateIdle` names the teammate directly, and a plain
+  subagent is retired honestly by the registry. `TaskCreated` and
+  `TaskCompleted` exist as event names in the binary and fired for none
+  of the four launch kinds.
+
+  Adopting a teammate from the registry instead would have cost more than
+  the late green dot it fixed: a session stuck at `running` refuses the
+  model picker ("the session is working — stop it first"), holds a T3
+  attach pin open, and has no expiry to fall back on. That is also why a
+  task type this script does not recognise is skipped rather than counted
+  — a wrong green corrects itself at the next launch, a wrong blue does
+  not. Design and the full trace:
   `docs/plans/2026-09-04-background-work-session-state-design.md`.
 - A session whose Claude died without hooks firing (kill -9, OOM) is
   caught by a liveness backstop: a state only survives while a claude

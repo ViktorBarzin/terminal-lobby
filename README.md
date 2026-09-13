@@ -76,6 +76,28 @@ set `X-Forwarded-User`.
 > `TL_BIND`, so keep 7681 reachable from the proxy alone: narrow `TL_BIND`, or
 > leave it wide and restrict 7681 at the firewall or the ingress.
 
+Six more variables set when the lobby calls the box busy. It reads
+`/proc/pressure` every 10 seconds and shows one `This machine` row in Settings
+under Network, which tells a slow box apart from a slow connection. Each number
+is a percentage of a ten-minute window that tasks spent stalled waiting for the
+resource; cross the first and the row turns amber, cross the `_VERY_` one and it
+says typing is slow right now rather than may feel slow. All six ship commented
+out, so leaving them alone keeps the values the binary compiles in.
+
+| variables | defaults | what they measure |
+|---|---|---|
+| `TL_HEALTH_CPU_PCT`, `TL_HEALTH_CPU_VERY_PCT` | `10`, `20` | CPU stall, time at least one task waited to run |
+| `TL_HEALTH_IO_PCT`, `TL_HEALTH_IO_VERY_PCT` | `50`, `70` | IO stall, time every non-idle task waited on disk |
+| `TL_HEALTH_MEM_PCT`, `TL_HEALTH_MEM_VERY_PCT` | `10`, `20` | memory stall, time every non-idle task waited on memory |
+
+Those defaults are one machine's, calibrated against 696 hours of the devvm this
+was built on, where the three together are crossed for 17 hours, 2.44% of the
+time. Another box's disks and cores put it somewhere else, so watch the row for
+a week against how the machine actually feels before moving anything.
+[docs/deployment.md](docs/deployment.md) has the measurements and how to check
+your own. Where the kernel has no `/proc/pressure`, the row falls back to load
+average per core and memory headroom and says on screen that it has.
+
 ## Single-user and multi-user
 
 Single-user is the default: one account, no user map, no sudo, no ACLs. The
@@ -168,14 +190,17 @@ installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
 *Running* is not the same as "a turn is in flight". A session that
-launched a background agent, a workflow or a background command keeps
-that dot until the work reports back, because it will speak again with
-nobody prompting it, and the card names what it is waiting on ("2
-agents", "1 workflow"). The outstanding task ids live in a second
-option, `@claude_bg`, written by the same hooks. At the end of every turn
-the set is reconciled against the tasks the harness still reports live, so
-work that finished while Claude was mid-turn stops holding the dot;
-typing into a session re-derives it too.
+launched a background agent, a workflow, a background command or a
+teammate keeps that dot until the work reports back, because it will
+speak again with nobody prompting it, and the card names what it is
+waiting on ("2 agents", "1 workflow"). What is outstanding lives in a
+second option, `@claude_bg`, written by the same hooks. At the end of
+every turn the set is rebuilt from the tasks the harness still reports
+live, so work that finished while Claude was mid-turn stops holding the
+dot, and work that is still going keeps it — through anything you type
+meanwhile, and through a compaction. A teammate is the exception the
+harness cannot answer for, since it stays listed while idle, so one is
+held from `SubagentStart` until `TeammateIdle` instead.
 Design: `docs/plans/2026-09-04-background-work-session-state-design.md`.
 
 ## Documentation

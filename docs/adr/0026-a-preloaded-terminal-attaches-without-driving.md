@@ -170,3 +170,44 @@ opens an SSE stream or adds a `watchPanes` subscriber.
 The 250 ms dwell and the 60 s slot TTL are starting values, not measurements.
 We chose not to instrument preload hit rate, so the way to revisit them is to
 measure again rather than to read a dashboard.
+
+## Amendment — 2026-09-12: the promotion ends the attach MODE, not only the flag
+
+The decision above says a preload "is promoted to a driving client when the user
+commits", and what shipped promoted the live tmux client alone:
+`POST /sessions/{name}/grid` cleared `ignore-size` on the client the hover had
+attached. The browser's own attach mode stayed `pre` for the life of the mount,
+because `SessionView` froze it (`untrack`) and `terminal/attach.ts` read
+`deps.args` once. That was sound while a socket lasted as long as its mount.
+
+Parking changed the premise. A session off screen for 30 s now drops its socket
+(`frontend-v2/src/terminal/battery.ts`), so reconnects are ordinary rather than
+rare, and each one re-attached as a preload: `attach -f ignore-size`, which tmux
+skips when it sizes a window and which the pin's hook filters out. Coming back
+to a parked session therefore left the window wherever the last device to attach
+had put it. Measured on the box on 2026-09-12 against a real session, with a
+60x20 client standing in for a phone: the desktop returned as
+`attached,focused,ignore-size` and drew 144 columns around a 60-column window.
+Switching to Text and back was the only way out, because that is another fit and
+another grid claim.
+
+The grid claim could not cover the gap on its own. It rides the fit, about
+120 ms after the view is shown, while the socket is still reconnecting, so
+tmux-api finds no client of this device to promote and, for a pinned session,
+nobody driving at all: 409, and nothing retries it. 8 of the 29 grid calls on
+the box in the 24 h before the fix were that.
+
+So the amendment is one sentence long. **The attach mode is read at every
+connect, and `pre` ends at the click.** The socket already open keeps the args
+it was opened with, and its client is still promoted server-side; the next
+connect is an ordinary attach, which is what takes the window back. One reading
+of the args per attempt (`openSocket`) keeps the `/token` and `/ws` halves in
+agreement, which is the red line the positional contract already carries.
+
+A preload that is never clicked is unaffected: `preloading()` is still true, so
+its reconnects stay `pre`.
+
+Alongside it, the terminal claims the grid when its socket OPENS, if this
+session is the one being read. That is the fourth claim moment, beside a landed
+fit, a view coming back on screen and terminal focus, and it is the one a fit
+cannot speak for. Landed in v0.53.7.

@@ -30,11 +30,18 @@ const (
 	// OptionState holds running/awaiting/done (ADR-0001).
 	OptionState = "@claude_state"
 	// OptionBackground holds the session's OUTSTANDING WORK: space-separated
-	// `<kind>:<id>` tokens for background tasks the main thread launched and
-	// that have not reported back, kind being `a` (agent), `b` (background
-	// command) or `w` (workflow). Written by the same hook script as
-	// OptionState, which adds a token when a launch returns `async_launched`
-	// and removes it when that id's task-notification arrives.
+	// `<kind>:<id>` tokens for work the session started that has not finished,
+	// kind being `a` (background subagent), `b` (background command), `w`
+	// (workflow) or `t` (teammate). Written by the same hook script as
+	// OptionState.
+	//
+	// The first three are keyed by the harness's own task id, and the script
+	// re-derives them at every Stop from `background_tasks`, the list the
+	// harness puts in that payload. A teammate is keyed by its NAME instead,
+	// because that list reports a teammate as running for as long as it
+	// exists, idle or not (measured 2026-09-12); SubagentStart and
+	// TeammateIdle are the two events that do say, and the name is what they
+	// carry.
 	//
 	// It exists because Stop is not the end of a turn's work: it fires the
 	// moment the main thread stops talking, while a background agent it
@@ -239,11 +246,18 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // best-effort: the interrupt already landed, so a failure here must not fail
 // the cancel, but it silently re-creates the latch, so it is logged.
 //
-// OptionBackground goes with it, for the same reason and by the same right: an
-// interrupt ends the turn, and a task the interrupted turn launched will never
-// report back into it. Left behind, the id holds the session at StateRunning
-// with no hook able to retire it, which is the one way a set with no expiry can
-// latch (docs/plans/2026-09-04-background-work-session-state-design.md).
+// OptionBackground is left alone, and it decides which state is stamped. An
+// interrupt ends the TURN; it does not end the work the session already
+// started. Measured 2026-09-12 by interrupting a session that had both kinds
+// live: the workflow kept counting ("0/1 agents done · 25s" at the interrupt,
+// still climbing after) and the background command's output file went from line
+// 39 to line 55 across it. Emptying the set there reported a finished session
+// over work that was still going, which is the same defect the hook script's
+// own clears had (docs/plans/2026-09-04-background-work-session-state-design.md).
+//
+// So an outstanding id keeps the session at StateRunning, exactly as it does at
+// Stop. It is still retired by the ordinary drains: the task-notification that
+// arrives as a prompt, or the prune at the end of the next turn.
 func (in *Injector) Cancel(osUser, session string) error {
 	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-c").Run(); err != nil {
 		return err
@@ -251,11 +265,12 @@ func (in *Injector) Cancel(osUser, session string) error {
 	if in.State(osUser, session) == "" {
 		return nil
 	}
-	if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), OptionBackground).Run(); err != nil {
-		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionBackground, err)
+	state := StateDone
+	if bg, _ := in.Option(osUser, session, OptionBackground); strings.TrimSpace(bg) != "" {
+		state = StateRunning
 	}
-	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, StateDone).Run(); err != nil {
-		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionState, err)
+	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, state).Run(); err != nil {
+		log.Printf("cancel %s/%s: stamping %s failed: %v", osUser, session, OptionState, err)
 	}
 	return nil
 }

@@ -297,10 +297,13 @@ src/
     usage.ts             What the lobby cost this device, in wire bytes: three
                          buckets measured from Navigation/Resource Timing, two
                          (ttyd WS, SSE) modelled by diag.js and labelled as such
-    status.ts            Connection status, PURE (ADR-0016): five channels
-                         (terminal, transcript, session list, notifications,
-                         build) in three states, plus `unknown` — which every
-                         rule skips rather than counting as health or as fault.
+    status.ts            Connection status, PURE (ADR-0016, ADR-0028): six
+                         channels (terminal, transcript, session list,
+                         notifications, build, this machine) in three states,
+                         plus `unknown` — which every rule skips rather than
+                         counting as health or as fault. Five are about the
+                         client; `this machine` is the box, and it reaches
+                         `degraded` and never `down`.
                          Owns worst-of, the badge's word, the panel's verdict,
                          the per-channel mappings and `readConn`, the parser for
                          the terminal frame's `tl-conn` message
@@ -425,6 +428,14 @@ src/
                          generation check on each socket handler is what stops an
                          abandoned attempt's close from knocking its replacement
                          off the ladder
+    modes.ts             The modes a departed program leaves set, which a
+                         reattach clears: mouse tracking and focus reporting are
+                         the only two things xterm puts on the wire unprompted,
+                         and the pty spends its first ~500 ms echoing whatever
+                         reaches it, so a terminal still tracking the pointer
+                         paints its own reports across the grid until tmux
+                         redraws. Encodings and bracketed paste stay, since one
+                         sends nothing on its own and the other carries intent
     theme.ts             The app's CSS custom properties mapped to an xterm
                          ITheme, plus the two re-read triggers a component owes
                          it (an explicit pick, and an OS light/dark flip while the
@@ -494,6 +505,13 @@ src/
     dock.logic.ts        PURE Ctrl+J dock decisions (shell naming, create→hide→
                          show, sidebar hiding, split clamp)
     dock.ts              Ctrl+J scratch-shell dock state (roamed via layout.dock)
+    sidebar-width.logic.ts
+                         PURE session-list width: the stops (200-560px), the
+                         360px the session pane keeps, and the clamp both the
+                         drag and the read go through
+    sidebar-width.ts     Per-browser session-list width (tl:sidebar-w:v1), read
+                         back capped to the window so a narrow one borrows the
+                         width and a wide one gives it back
     collapse.ts          Per-browser group-collapse (tmux-collapsed-<user>)
     visits.ts            Per-browser seen/visit tracking (tl:session-visits:v1)
                          → the unseen-done predicate behind the tab-title (N✓)
@@ -612,8 +630,8 @@ src/
     StatusDot.tsx        The connection badge (ADR-0016). Dot always, a word
                          only when something is wrong. One component in two
                          places, each SCOPED to the channels its surface can
-                         honestly report — the session bar has all five, the
-                         sidebar header the three a list screen can answer for.
+                         honestly report — the session bar has all six, the
+                         sidebar header the four a list screen can answer for.
                          Tapping it opens Settings → Network
     ToolIcon.tsx         Which command the session runs (tmux-api `tool`)
     SpendFigure.tsx      What the ATTACHED session has consumed, in the sidebar
@@ -789,7 +807,18 @@ src/
                          days of terminal.softkey telemetry — the glyph keys had
                          no taps at all and Ctrl could not reach a letter
     Dock.tsx             The Ctrl+J scratch shell in a resizable bottom panel
+    SidebarGrip.tsx      The seam between the list and the session, dragged with
+                         a pointer or the arrow keys; double-click resets
     BellIcon.tsx         Header notification-bell glyph (on/off)
+    Sparkline.tsx        One polyline over a series of numbers, drawn as inline
+                         SVG because this project carries no charting library.
+                         Draws the hour of machine stall under Settings →
+                         Network → Right now (ADR-0028), and survives the short
+                         series a service restart leaves behind. Also carries
+                         the words around the chart — the two ends of the time
+                         axis and a swatch naming the threshold rule — as HTML
+                         rather than svg text, because preserveAspectRatio
+                         "none" would smear anything inside the viewBox
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
                          clipboard, file-text, rotate-cw) — never emoji
     Toaster.tsx          Top-right toast stack

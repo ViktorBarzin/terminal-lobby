@@ -1,12 +1,12 @@
 /**
- * The five probes Run check actually runs.
+ * The six probes Run check actually runs.
  *
  * EVERY ONE OF THEM READS. None opens, closes, reconnects or repairs anything,
  * so the broken state a person came to look at is still there after they press
  * the button — and a check cannot become the thing that fixed the bug it was
  * measuring.
  *
- * Two of them ask the server, both read-only:
+ * Three of them ask the server, all read-only:
  *  - `/health`, which separates "the API is down" from "this tab's poll is
  *    stuck", and is the only way to tell those apart from inside the browser.
  *  - `GET /push-subscriptions`, which answers the question no local flag can:
@@ -15,12 +15,18 @@
  *    since. Notifications deliberately SEND nothing — /push/test fans out to
  *    every device a person owns, and a diagnostic that buzzes the phone in
  *    someone's pocket is one they stop running.
+ *  - `GET /machine`, the cheapest of the six: the service reads a ring buffer
+ *    it is filling anyway. The reading arrives on the session poll's header
+ *    without anyone asking, so this probe exists for the panel rather than for
+ *    the data — a row sitting still while five others refresh reads as broken.
  */
 
+import { fetchMachine } from "../lib/lobby-api";
 import { apiUrl } from "../lib/config";
 import { PUSH_SUBS_API, deviceSubscriptionState } from "../pwa/push";
 import type { CheckProbe } from "./check";
 import {
+  machineChannel,
   notificationsChannel,
   sessionsChannel,
   terminalChannel,
@@ -149,6 +155,21 @@ export function buildProbes(deps: ProbeDeps): CheckProbe[] {
           ? { id: "build", state: "degraded", detail: "update ready" }
           : { id: "build", state: "working", detail: "up to date" };
       },
+    },
+    {
+      id: "machine",
+      // NOT `down`, which is this row's whole subtlety. Silence is a fault for
+      // the five channels that answer over a connection, and red means "you are
+      // disconnected" throughout the UI; a box that did not answer a direct
+      // read is a row that is not reporting, and this channel is not allowed to
+      // be red at all (ADR-0028). If the API really is unreachable, the
+      // session-list row above is already saying so on its own line.
+      //
+      // `fetchMachine` holds up the other half of that: it answers null rather
+      // than throwing, because runCheck turns a thrown probe into a `down` row.
+      timeoutState: "unknown",
+      timeoutDetail: "not reporting",
+      run: async (signal): Promise<Channel> => machineChannel(await fetchMachine(f, signal)),
     },
   ];
 }

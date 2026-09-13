@@ -283,24 +283,27 @@ describe("<SessionView> — a preloading mount", () => {
     expect(setSessionGrid).toHaveBeenCalledWith("main", 200, 50);
   });
 
-  it("keeps the same terminal, with the same args, across the promotion", () => {
+  it("keeps the same terminal across the promotion, and stops calling itself a preload", () => {
     const [pre, setPre] = createSignal(true);
     const [vis, setVis] = createSignal(false);
     const { container } = render(() => (
       <SessionView session="main" preloading={pre} visible={vis()} />
     ));
-    const before = argsOf(container);
     const node = container.querySelector(".tl-terminal-native");
+    expect(argsOf(container)).toContain("arg=pre");
 
     setPre(false);
     setVis(true);
 
     expect(terminals).toHaveLength(1); // never mounted a second time
     expect(container.querySelector(".tl-terminal-native")).toBe(node);
-    // The socket carries the args it was opened with, so they stay `pre` for
-    // its life: the tmux client was promoted by the grid call, not by a
-    // reattach.
-    expect(argsOf(container)).toBe(before);
+    // The socket in flight keeps the args it was opened with — nothing here
+    // reconnects it, and the grid call is what promotes its tmux client. What
+    // changes is the NEXT connect, which the battery saver makes routine: a
+    // session parked off screen for 30 s used to come back as a preload client,
+    // and tmux never sizes a window to one of those. The window then kept
+    // whatever the last device to attach had left it at.
+    expect(argsOf(container)).toBe("arg=main");
   });
 
   it("reports the attach landing and failing", () => {

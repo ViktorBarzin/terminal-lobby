@@ -61,6 +61,12 @@ type Timing struct {
 	events *Emitter
 	opts   TimingOpts
 
+	// Metrics, when set, receives every request alongside the event stream.
+	// Separate from events on purpose: NewTiming(nil, ...) disables the event
+	// side and the Prometheus side must keep working, because the two sinks
+	// answer different questions and a service may want only one.
+	Metrics *Metrics
+
 	mu    sync.Mutex
 	stats map[string]*epStats
 	since time.Time
@@ -133,18 +139,33 @@ func (t *Timing) Wrap(next http.Handler) http.Handler {
 		start := t.opts.Now()
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
-		t.record(r, sw.status, float64(t.opts.Now().Sub(start).Milliseconds()))
+		// Fractional milliseconds, not Duration.Milliseconds(): that truncates
+		// toward zero and most handlers here answer in under 1 ms, which made
+		// every fast request a 0 and the latency histogram flat. The slow-request
+		// threshold is 1000 ms, so this is strictly more precision with no change
+		// to which requests the event stream calls slow.
+		t.record(r, sw.status, float64(t.opts.Now().Sub(start).Microseconds())/1000.0)
 	})
 }
 
 func (t *Timing) record(r *http.Request, status int, ms float64) {
-	if t == nil || t.events == nil {
+	if t == nil {
 		return
 	}
 	if status == 0 {
 		status = http.StatusOK
 	}
 	ep := EndpointGroup(r.URL.Path)
+
+	// Metrics first, and gated separately: the event side below returns early
+	// without an emitter, and the Prometheus counters must not disappear with
+	// it. ep has already been through EndpointGroup, which is what bounds the
+	// label cardinality.
+	t.Metrics.Record(ep, status, ms)
+
+	if t.events == nil {
+		return
+	}
 
 	t.mu.Lock()
 	s := t.stats[ep]

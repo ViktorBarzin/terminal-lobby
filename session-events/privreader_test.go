@@ -57,7 +57,8 @@ func TestPrivReaderReadsAnotherUsersTranscript(t *testing.T) {
 		t.Fatal("offset did not advance")
 	}
 
-	// A second read on the same child: the point of holding it open.
+	// A poll resuming from the offset the bulk read left: this is the read the
+	// long-lived child exists for.
 	if _, _, err := pr.ReadFrom(p, next); err != nil {
 		t.Fatalf("second read: %v", err)
 	}
@@ -81,18 +82,22 @@ func TestPrivReaderRestartsADeadChild(t *testing.T) {
 	pr := &privReader{osUser: "bob", spawn: inProcessChild(t, home, &starts)}
 	t.Cleanup(pr.close)
 
-	if _, _, err := pr.ReadFrom(p, 0); err != nil {
-		t.Fatalf("first read: %v", err)
+	// The shared child is the one the tail polls use, and a poll resumes from
+	// an offset. A read from 0 is the bulk read, which runs on a child of its
+	// own so it cannot hold the shared pipe (see privReader.ReadFrom).
+	if _, _, err := pr.ReadFrom(p, 1); err != nil {
+		t.Fatalf("first poll: %v", err)
 	}
+	before := starts
 	pr.mu.Lock()
 	pr.child.stop()
 	pr.mu.Unlock()
 
-	if _, _, err := pr.ReadFrom(p, 0); err != nil {
+	if _, _, err := pr.ReadFrom(p, 1); err != nil {
 		t.Fatalf("read after the child died: %v", err)
 	}
-	if starts < 2 {
-		t.Fatalf("expected a replacement child, saw %d start(s)", starts)
+	if starts < before+1 {
+		t.Fatalf("expected a replacement child, saw %d start(s) after %d", starts, before)
 	}
 }
 

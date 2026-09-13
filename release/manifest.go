@@ -89,6 +89,49 @@ TL_MULTI_USER=auto
 # reachable from the network trusts TL_AUTH_HEADER from anything that reaches
 # it. Widening also opens 7681, which the secret cannot cover.
 TL_BIND=127.0.0.1
+
+# How stalled the box has to be before the lobby says so. tmux-api reads
+# /proc/pressure every 10 seconds and reports one "This machine" row on the
+# Network page in Settings; these are the lines where that row stops reading
+# "Fine". Each is a percentage of the last 10 MINUTES that tasks spent stalled
+# waiting for the resource: for CPU, time at least one task was waiting; for IO
+# and memory, time every non-idle task was.
+#
+# They ship commented out, so the values shown are the binary's own defaults and
+# a later release that recalibrates them reaches this box. Uncomment a line to
+# pin it.
+#
+# Where they came from: 696 hours of one devvm's own history. Each line lands
+# near 1% of a month on its own, and the three together would have made that row
+# amber for 17 of those 696 hours, 2.44% of the time. That is one machine's
+# distribution and probably not yours; IO stalls on that box 4.5 times more
+# often than CPU does. They are percentages of time rather than counts, so a
+# four-core laptop reads on the same scale as a 32-core box rather than sitting
+# permanently amber. If the row goes amber more often than you will read it,
+# raise the line naming the resource; if it stayed quiet through an hour that
+# felt slow, lower it. Reading /proc/pressure yourself over a week is what tells
+# you which.
+#TL_HEALTH_CPU_PCT=10
+#TL_HEALTH_IO_PCT=50
+#TL_HEALTH_MEM_PCT=10
+
+# The second line per resource. Above it the panel says the machine is very busy
+# rather than busy, which is the difference between "may feel slow" and "is slow
+# right now". These are calibrated per resource as well, at 1.17 to 2.50 hours a
+# month each, rather than as a multiple of the lines above: twice IO's 50% is
+# 100%, and 100% is the ceiling of a stall rate, so IO could never have reached
+# the tier. A value that is not ABOVE its own line above is refused, and that
+# resource then reports busy and never very busy.
+#TL_HEALTH_CPU_VERY_PCT=20
+#TL_HEALTH_IO_VERY_PCT=70
+#TL_HEALTH_MEM_VERY_PCT=20
+
+# Any of the six that is not a percentage above 0 and up to 100 is logged and
+# ignored in favour of the default; the service still starts. On a kernel with
+# no /proc/pressure, older kernels and some container runtimes, none of them is
+# read at all: the row falls back to load average per core and memory headroom,
+# says on screen that it has, and calls the box busy above one runnable task per
+# core.
 `
 }
 

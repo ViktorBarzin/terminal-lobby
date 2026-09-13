@@ -161,17 +161,47 @@ statement.
 Red therefore keeps its single existing meaning, "you are disconnected"
 (`app.css:118`, `badgeWord` returning "Offline" at `status.ts:154`).
 
+"Amber" is shorthand throughout this document. The degraded colour is the
+theme's `--state-running`, which is `#d4a574` in one theme, `#4493f8` in slate,
+`#e8e8e8` and `#b5482d` in two others (`theme/theme.css:136,174,212,250`). The
+machine's degraded dot therefore looks exactly like the terminal's degraded dot,
+which is the point: a reader learns one colour, not six.
+
 ### Depth is carried by the sentence
 
 With two usable states, the dot cannot separate a brush against the threshold
 from a sustained grind. The words can, and they are what someone opening the
 panel reads anyway:
 
-| condition | sentence |
+| condition | sentence, printed at the top of the panel |
 |---|---|
-| under every line | *(no sentence; the row reads "Fine")* |
-| over a line | "Typing and commands may feel slow. The machine is busy." |
-| over twice a line, sustained | "Typing and commands are slow right now. The machine is very busy." |
+| under every amber line | *(no sentence; the row reads "Fine")* |
+| over an amber line | "Typing and commands may feel slow. The machine is busy." |
+| over a very-busy line | "Typing and commands are slow right now. The machine is very busy." |
+
+The very-busy line is its own calibrated number per resource, not a multiple of
+the amber one. The first draft of this said "over twice a line", and building it
+showed why that does not work: IO's amber line is 50%, twice it is 100%, and
+100% is the ceiling of a stall rate. IO could never have reached the tier, not
+even during a total ten-minute stall. Measured maximum on this box is 87.59%.
+
+| resource | amber | hours/30 d | very busy | hours/30 d |
+|---|---|---|---|---|
+| CPU, `some` | 10% | 7.17 | 20% | 2.50 |
+| IO, `full` | 50% | 7.33 | 70% | 1.17 |
+| memory, `full` | 10% | 4.83 | 20% | 1.33 |
+
+Each very-busy line lands between 1 and 2.5 hours a month, so the tier says the
+same thing whichever resource raises it — the same reasoning that gave each
+resource its own amber line. CPU and memory happen to sit at twice their amber
+lines; only IO moves, from unreachable to reachable.
+
+Three more environment variables carry them: `TL_HEALTH_CPU_VERY_PCT`,
+`TL_HEALTH_IO_VERY_PCT`, `TL_HEALTH_MEM_VERY_PCT`.
+
+"Sustained" is not a separate condition. The rates are ten-minute windows, so a
+reading over a line has already lasted ten minutes and cannot be a blip;
+requiring consecutive samples on top would charge the same constraint twice.
 
 Effect first, cause second, because the reader arrived at the panel already
 holding the effect.
@@ -181,9 +211,83 @@ holding the effect.
 Settings → Network → Right now gains a sixth row, `This machine`, below `Build`:
 
 - the three pressure readings and the load average, as numbers;
-- the sentence above;
+- its short phrase, naming the resource, the way the other five rows do;
 - a 60-minute sparkline of the deciding pressure — the worst of the three at
   each sample, so the line and the colour never disagree.
+
+### The chart says what it is
+
+The first cut of the chart carried no visible words at all. Its only
+explanation was the `aria-label` on the `<svg>`, which is exactly the reader who
+does not need it: anyone looking at the chart saw a line, a dotted line, and no
+way to tell what either meant. Asked twice in a row what it showed, the honest
+answer was that nothing on screen said.
+
+Three labels, each answering a question the shape cannot:
+
+| element | what it settles |
+|---|---|
+| caption above | "Stall time, worst of processor, disk and memory" — the metric |
+| axis ends below | `1h ago` … `now · Disk` — the x axis, and the resource the line draws at its newest point |
+| dashed swatch | `busy line` — what the rule at 1.0 is |
+
+The caption names the **metric** before anything else. A draft that read "How
+close the busiest of the three is to its limit" explained the height and never
+said close to a limit in what: stall, use, heat, queue depth all fit that
+sentence. Stall time is the answer, and it is not a usage figure.
+
+The `now` end names the resource from the **last point's** `res` rather than
+from the verdict's `worst`. Those two legitimately differ, because `worst`
+follows the tier while each point carries whichever resource led at that
+sample, and labelling the end of a line with a resource the end of the line is
+not drawing would repeat the error this pass exists to fix. The short names
+match the figures above the chart exactly, so `Disk` on the axis and `Disk 26%`
+in the row are one vocabulary.
+
+Measured at 390px: the three labels occupy 51-80, 148-211 and 279-355 on a
+single 15px row, with no overlap and no wrap.
+
+The y axis needs saying because height is each reading over its **own**
+resource's limit rather than a percentage: 20% stall is over the line for CPU
+and nowhere near it for IO, so on a raw-percent axis those two points would sit
+at the same height and mean opposite things. The resource being drawn also
+changes from point to point, which is why the caption names "the busiest of the
+three" rather than one of them.
+
+Every label is HTML outside the `<svg>`, never SVG `<text>`. The chart is drawn
+with `preserveAspectRatio="none"` so a wider panel gets a longer hour instead of
+a fatter line, and that same stretch would smear text inside the viewBox
+sideways.
+
+Four things needed correcting after the first version, none of which a test
+caught and all of which a screenshot made obvious:
+
+- the empty state ran `No readings yet` straight into the axis row, because
+  `.tl-spark` was a flex row at a fixed 40px and the labels sat beside the chart
+  rather than under it;
+- that same empty state captioned a `busy line` when no chart and no rule were
+  drawn, which is a label for something absent. The axis row now renders only
+  when a chart does;
+- the swatch was grey while the rule it names is `--state-running`. It is the
+  only thing tying a fixed label row to a rule whose height moves with the data,
+  so it has to look like the rule rather than sit near it;
+- the caption read "hour by hour", which suggests several hours of buckets
+  rather than one continuous hour. The axis ends already carry the timespan, so
+  the caption gave that job up and took the y axis instead.
+
+The sentence is on the row **only when the top of the panel has stopped saying
+it**. The first build printed it in both places and a screenshot at 355px showed
+the cost: `verdict()` already prints it whenever the machine is the only channel
+complaining, which is the common case because a busy box breaks nobody's socket,
+so the same words appeared twice seven rows apart.
+
+Dropping it from the row entirely was the first fix, and it removed the sentence
+from a case that still needed it. The moment anything else is also complaining,
+`verdict()` becomes "2 things need attention" and the sentence leaves the panel
+altogether — and that is the case it exists for, because the dot is amber for a
+brush past a threshold and for a sustained grind alike, and the sentence is the
+only thing separating them. So the row picks the sentence up exactly where the
+headline drops it, and both tiers of the handoff are pinned by tests.
 
 An hour is long enough to tell a fading spike from something that started before
 the reader sat down. One line rather than three keeps it readable in the roughly
@@ -200,12 +304,24 @@ as broken.
 row that reports the machine, that claims something narrower than the panel now
 checks, so it becomes **"Everything is working."**
 
-### The attach screen speaks only when amber
+### There is no attach screen, and the session bar already answers
 
-Clicking a session on a healthy box looks exactly as it does today. When the
-machine is amber at that moment, the opening screen carries one extra line
-saying so. A fast attach should not grow statistics; a slow one should explain
-itself.
+The design asked for one extra line on the opening screen when the machine is
+amber at the moment someone clicks a session. Building it found that there is no
+opening screen to put a line on: the terminal was de-iframed (`term.html` was
+deleted in `2c64552`), `TerminalNative` paints when it is ready, and there
+is no loading overlay, spinner or placeholder anywhere between the click and the
+first frame.
+
+Adding one would be a far larger change than this design authorises, and it
+would make every fast attach worse to excuse the rare slow one.
+
+The requirement turns out to be met without new code. `machine` is in
+`SESSION_CHANNELS`, so the session bar's own `StatusDot` already carries it: open
+a session on a stalling box and the dot beside the session name is amber, and
+tapping it opens the panel that explains why. That is the same indicator, on the
+same surface, at the same moment — reached by the channel being scoped correctly
+rather than by a second surface saying the same thing.
 
 ## Where the numbers come from
 
@@ -233,6 +349,41 @@ devvm, but at a 2-minute scrape interval and roughly 13 weeks of coverage
 would give a coarser graph, not a better one, and would tie Terminal Lobby to
 this homelab's monitoring stack and hand every other install a blank panel. The
 ring buffer empties on service restart, which is honest and infrequent.
+
+**Too short a window reports figures but no colour.** The thresholds *are*
+ten-minute rates, so a narrower window measured against them is a noisier
+measurement wearing the same number. Below four minutes the state stays
+`unknown` — which this model already defines as "has not reported", and which
+every rule skips rather than counting as health or as fault. Every figure is
+still filled in, so the panel shows live numbers throughout and only the dot
+waits.
+
+Both ends of that bar came from driving a real `tmux-api`, and each moved it.
+
+Ten seconds after start it reported `ioPct 53.68` against a 50% amber line,
+which in the first implementation painted the dot amber off a single sample
+interval. So the colour had to wait for something.
+
+Waiting for the full ten minutes was the second try, and it was too strict in
+the direction that matters. On a box at 2.59 runnable tasks per core, with IO
+stalled 82.12% and memory 24.72% — both past their very-busy lines — the
+endpoint reported `unknown`, because the process had been up 5.7 minutes. Every
+number said the box was grinding and the dot stayed grey. A deploy is often what
+preceded the grinding, so ten minutes of silence suppresses the case the channel
+exists for.
+
+Four minutes is the shortest bar the data supports. Moving the window from ten
+minutes to four moves the hours over each line, measured over 30 days:
+
+| resource | 10-minute window | 4-minute window |
+|---|---|---|
+| CPU `some` > 10% | 7.17 h | 9.33 h |
+| IO `full` > 50% | 7.33 h | 8.17 h |
+| memory `full` > 10% | 4.83 h | 4.17 h |
+
+Noise cuts both ways, and the union lands near 2.9% of the month against the
+2.44% the ten-minute lines were calibrated to. Still inside the 1-3% this was
+designed for, and it buys back six of the ten blind minutes after a restart.
 
 **When PSI is missing** — older kernels, some container runtimes, the Docker
 dev environment — the row falls back to load average and memory headroom and
@@ -291,9 +442,15 @@ both.
   disagree, the threshold moves, and the mismatch is itself worth understanding.
 - The sentence wording has not been read by anyone but its author. "The machine
   is busy" may land as an excuse rather than as information.
-- A restart empties the ring buffer, so the sparkline is short exactly after a
-  deploy. Whether that is annoying enough to warrant persisting it is a question
-  for after it ships.
+- A restart empties the ring buffer, and the effect is sharper than "short".
+  Each sparkline point is a ten-minute rate, so it needs a pair of samples ten
+  minutes apart: for the first ten minutes after a restart the series is empty,
+  not short. The dot colours at four minutes, so between four and ten minutes
+  the row can be amber above a chart that says "no readings yet". That is
+  accepted rather than fixed, because making the early points four-minute rates
+  would put values on the axis that are not comparable to the later ones. Whether
+  the gap is worth closing by persisting the buffer is a question for after it
+  ships.
 - The memory input may be watching the wrong level. Over the last 30 days
   `earlyoom` killed nothing and the host never approached OOM (minimum available
   memory 1.06 GiB across 13 weeks), while 73 processes were killed by the
