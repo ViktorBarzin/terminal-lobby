@@ -16,9 +16,9 @@ import type { ModelField, ModelHarness, ModelState } from "../lib/models";
  *
  * Above the field: the permission panel, and Claude's own records of prompts it
  * has queued. On the bar: the permission-mode chip, the context meter and Stop.
- * The field itself, the attachment tray, `/` and `@` completion, drafts, ↑
- * history and the Enter/Shift+Enter contract are `PromptField`, shared with the
- * new-session composer.
+ * The field itself, the attachments written into it, `/` and `@` completion,
+ * drafts, ↑ history and the Enter/Shift+Enter contract are `PromptField`,
+ * shared with the new-session composer.
  *
  * Send is always offered; Stop joins it while a turn is in flight (Stop =
  * inject ESC/Ctrl-C into the pty). Sending mid-turn QUEUES the prompt — Claude

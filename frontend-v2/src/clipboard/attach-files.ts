@@ -3,7 +3,8 @@ import { attachmentKind } from "../lib/attachments";
 import type { DraftAttachment } from "../store/drafts";
 
 /**
- * Put files into a session's attachment store and hand back the tray chips.
+ * Put files into a session's attachment store and hand back what the message
+ * can carry.
  *
  * Shared because two composers do it at different moments. The live composer
  * uploads when a file is picked, which it can because its session already
@@ -15,7 +16,7 @@ import type { DraftAttachment } from "../store/drafts";
  *
  * Three outcomes, and the caller is told about all of them:
  *   - stored — the bytes are in the per-(user, session) store, readable back by
- *     the web surface, so the tray gets a chip and the prompt gets its path;
+ *     the web surface, so the message gets a chip and the prompt its path;
  *   - transferred — over clipboard-upload's store cap, so it stays an ephemeral
  *     /tmp file. No chip, because nothing can draw it, and the path is handed
  *     over instead: a message that looks attached and is not would be worse;

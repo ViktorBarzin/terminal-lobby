@@ -7,10 +7,11 @@ import { lsGet, lsSet } from "../lib/storage";
  *
  *   tl:session-drafts:v1   name → {text, attachments, at}
  *
- * Both halves of an unsent message persist: the typed text and the attachment
- * tray. A phone is the text view's default device and iOS evicts backgrounded
- * tabs, so losing a half-written message with a photo attached to it is exactly
- * the case this exists for.
+ * Both halves of an unsent message persist: the typed text and the files it
+ * carries, each with the token standing for it in that text. A phone is the
+ * text view's default device and iOS evicts backgrounded tabs, so losing a
+ * half-written message with a photo attached to it is exactly the case this
+ * exists for.
  *
  * Per-browser and never roamed, like store/visits.ts and for the same reason —
  * an unsent draft belongs to the device it was typed on — and pruned to the live

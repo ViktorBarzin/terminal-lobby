@@ -130,8 +130,8 @@ export function isRenderablePath(path: string): boolean {
  * The URL that serves `path`'s bytes back, or null when nothing can.
  *
  * THE one place that decides between the two backends, so the timeline, the
- * composer tray, the gallery and the file preview cannot disagree about where a
- * given path is read from.
+ * gallery and the file preview cannot disagree about where a given path is read
+ * from.
  *
  *   - a store path owned by `me` → the clipboard routes, which resolve inside
  *     the caller's own store directory
@@ -192,9 +192,10 @@ export type Segment =
 
 /**
  * Split a message into text runs and file references, replacing each renderable
- * path where it sits (decision 2). One rule serves both shapes: our own sends
- * put the paths on their own lines at the top, and every message predating the
- * tray has one welded mid-sentence because the pty typed it at the caret.
+ * path where it sits (decision 2). One rule serves every shape a message has
+ * ever had: a path where the writer pasted it (2026-09-13), the block of paths
+ * at the top that the tray sent before that, and the one the pty welded
+ * mid-sentence before either.
  */
 export function segmentMessage(text: string): Segment[] {
   if (!text) return [];
