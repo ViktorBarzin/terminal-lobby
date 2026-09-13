@@ -26,10 +26,16 @@ const all = css.join("\n");
 
 /**
  * Set from JavaScript at runtime rather than declared in a stylesheet:
- * mobile/viewport.ts publishes the first three, and index.html seeds --app-vh
- * before first paint. They are legitimately absent from the CSS.
+ * mobile/viewport.ts publishes the first three, index.html seeds --app-vh
+ * before first paint, and SessionCard writes --tl-ws-hue onto each row whose
+ * session is in a workspace (the hue comes from the workspace's id, which no
+ * stylesheet can know). They are legitimately absent from the CSS.
+ *
+ * --tl-ws-hue is read only under `.tl-card-member` and `.tl-card-grouped`, and
+ * SessionCard puts neither class on a row it has not also given the property
+ * to — so the `oklch()` that reads it is never computed without one.
  */
-const SET_BY_JS = new Set(["--kb-offset", "--sk-h", "--app-vh"]);
+const SET_BY_JS = new Set(["--kb-offset", "--sk-h", "--app-vh", "--tl-ws-hue"]);
 
 /** Every `--name:` declaration across the stylesheets. */
 function defined(): Set<string> {

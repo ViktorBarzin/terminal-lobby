@@ -673,6 +673,23 @@
    Members sit in whichever projects they sit in, which is why each row carries
    its own mark: they are not adjacent, so nothing can bracket them together.
 
+   THE GROUP'S COLOUR IS NOT ON THE BAR, and that was measured rather than
+   reasoned. Viktor asked for the sidebar to say which sessions belong together
+   (2026-09-13), which means marking workspaces he is NOT in as well, and one
+   accent cannot tell two groups apart — so the first attempt put a per-workspace
+   hue on this bar. A screenshot of the real sidebar killed it: the bar is also
+   what `.tl-card-unseen` uses, in --state-done, and on a list where most
+   sessions have finished since they were last opened nearly every row was
+   already carrying a green one. The group colour would have been hidden behind
+   it most of the time, and where both were visible the list would have had two
+   unrelated meanings on one 2px strip.
+
+   So the bar keeps saying what it always said — where the keystrokes are, what
+   finished while you were away — and the GROUP is carried by the row's BORDER
+   and BACKGROUND instead (below). Those are the channels membership already
+   spent, they run the whole way round a row rather than down 2px of its edge,
+   and nothing else in the list uses them.
+
    THE BAR IS WHAT CARRIES THIS on a dark theme, and the background barely
    registers. Rendered side by side in slate, carbon and catppuccin-latte, the
    card tint at 55% is plainly visible on the light theme, where --bg-card is
@@ -693,9 +710,43 @@
    Nothing here on a phone. The class is never applied there at all — <Sidebar>
    reads the flip query and answers every card "no workspace", because a screen
    showing one session at a time has no group to point at (ADR-0027). */
+/* THE WORKSPACE'S OWN COLOUR, drawn round the row.
+
+   `--tl-ws-hue` is written inline per row by SessionCard, from the workspace's
+   id (components/lobby.logic.ts `workspaceHue`) so a group keeps its colour
+   across reloads, across devices, and across another group being closed. A row
+   in no workspace carries neither class, so the `oklch()` below is never
+   computed without a hue to put in it. The theme says how light and how
+   saturated that hue lands (theme/theme.css `--ws-l` / `--ws-c`).
+
+   BORDER FIRST, TINT SECOND. Measured across slate, carbon and
+   catppuccin-latte: a background tint is the visible half on the light theme,
+   where --bg-card is white against a grey list, and nearly disappears on the
+   dark ones, where --bg-card and --bg-sidebar are neighbouring shades of
+   near-black. The 1px border is what carries it there. The same split the bar
+   and the card tint found for membership, and the reason both are here.
+
+   This session is in a workspace, and it is not the one on screen. Until
+   2026-09-13 it got nothing at all, so which sessions belonged together was
+   invisible on every screen but one. */
+.tl-card-grouped {
+  border-color: oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue) / 0.5);
+  background: color-mix(
+    in srgb,
+    oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue)) 7%,
+    transparent
+  );
+}
+/* The same colour, said louder: this is the group ON SCREEN. Same hue rather
+   than a different one, because these rows and the ones above are the same kind
+   of thing — the difference is whether you are looking at them. */
 .tl-card-member {
-  background: color-mix(in srgb, var(--bg-card) 55%, transparent);
-  border-color: color-mix(in srgb, var(--border-strong) 55%, transparent);
+  border-color: oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue) / 0.9);
+  background: color-mix(
+    in srgb,
+    oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue)) 12%,
+    var(--bg-card)
+  );
 }
 .tl-card-member::before {
   content: "";
@@ -720,6 +771,16 @@
   width: 2px;
   border-radius: 2px;
   background: var(--accent);
+}
+/* The focused row is in a workspace too, and its border says so.
+   AFTER `.tl-card-active`, which sets --border-strong, and narrower than it, so
+   this wins on the border alone: the background stays the brightest in the list
+   and the bar stays the flat accent. Without this the row you are typing into
+   is the one row missing its group's colour, and a set of three reads as two
+   rows and a stranger. `.tl-card-ws` is on every row that has a workspace,
+   which is what makes "in one, but neither of the two levels" expressible. */
+.tl-card-active.tl-card-ws {
+  border-color: oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue) / 0.9);
 }
 /* Finished since you last looked. Measured on the resting sidebar backdrop, the
    seen/unseen opacity step on the dot alone is 3.35:1 on slate, 2.97:1 on carbon

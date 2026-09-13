@@ -13,7 +13,13 @@ import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
 import type { Selected } from "../store/keepalive";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
-import { backgroundLabel, formatWorking, relativeTime, stateLabel } from "./lobby.logic";
+import {
+  backgroundLabel,
+  formatWorking,
+  relativeTime,
+  stateLabel,
+  workspaceHue,
+} from "./lobby.logic";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { StateDot } from "./StateDot";
 import {
@@ -221,6 +227,38 @@ export const SessionCard: Component<{
   const isMember = (): boolean => {
     const open = workspaces?.current() ?? null;
     return open !== null && !isActive() && workspace() === open;
+  };
+
+  /**
+   * The QUIETEST level: this session is in a workspace, and it is not the one
+   * on screen.
+   *
+   * Viktor, 2026-09-13: *"I'm thinking how to make it obvious on the side which
+   * sessions are part of the same session ... color code the same sessions
+   * together"*. Until now the sidebar said nothing at all about a workspace you
+   * were not in, so on most screens the grouping was invisible — and the two
+   * levels above cannot say it, because they both mean "in front of you right
+   * now" and would claim that about sessions that are not.
+   *
+   * NOT A THIRD SHADE OF THE ACCENT, which is the departure. The two levels
+   * above are one question at two strengths (does this row matter right now)
+   * and share one colour on purpose. This is a different question — WHICH group
+   * — and one accent cannot answer it for two groups at once, so the bar takes
+   * the workspace's own hue (`workspaceHue`) and strength goes on saying which
+   * level. The focused row keeps the flat accent either way: where the
+   * keystrokes go is not a question about groups.
+   */
+  const isGrouped = (): boolean => {
+    const open = workspaces?.current() ?? null;
+    return !isActive() && workspace() !== null && workspace() !== open;
+  };
+
+  /** This session's workspace colour, as a hue for `oklch` (sidebar.css), or
+   *  nothing at all for a session in no workspace — and for every session on a
+   *  phone, where <Sidebar> answers "no workspace" to all of them. */
+  const wsHue = (): string | undefined => {
+    const id = workspace();
+    return id === null ? undefined : String(workspaceHue(id));
   };
 
   // --- On its way out ------------------------------------------------------
@@ -715,7 +753,14 @@ export const SessionCard: Component<{
         });
       }}
       class="tl-card"
-      style={swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : undefined}
+      style={{
+        ...(swipeDx() ? { transform: `translateX(${swipeDx()}px)` } : {}),
+        // The workspace's hue, read by the bar rules in sidebar.css. Inline
+        // because it is per ROW and derived from an id the stylesheet has never
+        // heard of; absent on a row that is in no workspace, which is what
+        // leaves those rules with nothing to paint.
+        "--tl-ws-hue": wsHue(),
+      }}
       // What the row is offering to do while it trails, so a destructive
       // direction looks destructive before the finger comes up.
       data-swipe={swipeDx() === 0 ? undefined : swipeDx() > 0 ? "kill" : "open"}
@@ -737,6 +782,15 @@ export const SessionCard: Component<{
         // one it ignores — `.tl-card` present and `.tl-card-foreign` absent is
         // the whole of its test, and this changes neither.
         "tl-card-member": isMember(),
+        // The quietest of the three, and the only one that speaks about a
+        // workspace you are not looking at.
+        "tl-card-grouped": isGrouped(),
+        // "This row belongs to a workspace, and --tl-ws-hue says which." Wider
+        // than the two above on purpose: it is also true of the FOCUSED row,
+        // which carries neither of them. Without it the one row you are typing
+        // into would be the one row missing its group's colour, and a set of
+        // three would read as two rows plus a stranger.
+        "tl-card-ws": workspace() !== null,
         "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
       }}

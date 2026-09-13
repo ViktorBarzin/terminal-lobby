@@ -628,6 +628,51 @@ export function formatWorking(ms: number): string {
 }
 
 /**
+ * THE COLOURS A WORKSPACE CAN BE, as `oklch` hue angles.
+ *
+ * Six, far enough apart to be told apart at a glance, and the gap between the
+ * last and the first is where they are NOT: 310 back round to 35 skips the red
+ * band, because every theme spends red on --danger and a row outlined in it
+ * reads as a warning rather than as a group. Evenly spacing six around the
+ * whole circle would have put one squarely there, which is why this is a list
+ * rather than an arithmetic step.
+ *
+ * The count is a ceiling on how many groups can be told apart, not on how many
+ * can exist: a seventh workspace reuses a colour, which reads as "two groups
+ * that happen to look alike" — the same thing a person already lives with when
+ * two sessions share a first word. Realistically nobody has six. A workspace is
+ * made by the first split and ended by closing back to a single tile, and a
+ * session belongs to at most one, so the count is bounded by how many things
+ * somebody watches at once.
+ */
+export const WORKSPACE_HUE_ANGLES: readonly number[] = [45, 90, 150, 200, 260, 310];
+
+/** How many colours there are to go round. */
+export const WORKSPACE_HUES = WORKSPACE_HUE_ANGLES.length;
+
+/**
+ * The hue this workspace paints its sidebar rows with.
+ *
+ * BY ID, NOT BY POSITION. The id is minted server-side and never moves, so a
+ * workspace keeps its colour across reloads, across devices and across another
+ * workspace being closed — position in the membership document does none of
+ * that, and a group changing colour because a different group went away is
+ * exactly the kind of thing that makes a colour code untrustworthy.
+ *
+ * FNV-1a, which is here for determinism rather than for distribution: any hash
+ * would do, and this one is four lines with no dependency. `>>> 0` after each
+ * step keeps it in an unsigned 32-bit lane, because `Math.imul` returns a
+ * signed result and a negative modulo would land outside the list.
+ */
+export function workspaceHue(id: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h = Math.imul(h ^ id.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return WORKSPACE_HUE_ANGLES[h % WORKSPACE_HUES]!;
+}
+
+/**
  * Human phrase for a session's Claude state (tooltip / a11y).
  *
  * `unseen` gets its own wording rather than a second attribute, so the one
