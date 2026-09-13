@@ -1,4 +1,12 @@
-import { createEffect, createSignal, onCleanup, onMount, Show, type Component } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+  type Component,
+} from "solid-js";
 import { ownWhile } from "../lib/ownwhile";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
@@ -928,6 +936,14 @@ export const TerminalNative: Component<{
     feedAttention({ type: "view", viewHidden, tabHidden: document.hidden });
   });
 
+  /**
+   * The ladder's last phase, for the one decision that is not the status
+   * model's: whether an attach-mode change has a live attempt to replace. Kept
+   * here rather than asked for, because `attachment.ask()` reports rather than
+   * answers.
+   */
+  let phaseNow: LadderState["phase"] | null = null;
+
   /** The ladder's phase in the vocabulary the status model speaks. */
   const report = (phase: LadderState["phase"], attempt: number): TerminalReport => {
     switch (phase) {
@@ -1105,6 +1121,54 @@ export const TerminalNative: Component<{
     beingRead();
     attachment?.screenChanged();
   });
+
+  /**
+   * TAKING CONTROL MEANS A NEW SOCKET, because the old one cannot be told.
+   *
+   * The attach mode rides arg5 of the ttyd query, tmux-attach.sh turns `ro`
+   * into `attach -r`, and tmux holds that client read-only and ignore-size for
+   * as long as it lives. Nothing in the protocol changes a live client's mode,
+   * so the Watch toggle moving `props.args` describes the NEXT connection and
+   * leaves this one as it was.
+   *
+   * WHAT THAT COST, measured against the deployed build on 2026-09-13 with a
+   * 60x20 client holding a session open: the desktop joined as a viewer
+   * (`attached,ignore-size,read-only`), "take control" changed the button and
+   * nothing else, and the window sat at the phone's 60 columns while the
+   * terminal drew 149. Keystrokes went nowhere either — tmux drops a read-only
+   * client's input — and switching to Text and back was the only thing that
+   * moved the size, because the grid claim on that view switch goes over HTTP
+   * rather than down the socket. Reported as "it doesn't resize on first
+   * navigation".
+   *
+   * `pre` IS NOT IN HERE, and that is the distinction worth keeping: a hover's
+   * preload is promoted server-side by the grid claim (tmux-api/grid_size.go
+   * clears ignore-size for the client that asked to be the size), so the click
+   * keeps the warm socket the hover paid for. Only the read-only half needs a
+   * new connection.
+   *
+   * ONLY FOR THE SESSION IN FRONT OF THE PERSON, and only while there is
+   * something to replace. The toggle lives in the session bar, which renders
+   * for the focused session alone, so a hidden mount reading this would be a
+   * background session woken for a mode change nobody made — and its next
+   * connect reads the args live in any case. An `ended` session is left alone
+   * too: a reconnect from there is `tmux new-session -A`, and nobody asked for
+   * a session to come back.
+   */
+  createEffect(
+    on(
+      () => props.watch?.() === true,
+      (watching, before) => {
+        // `before` is undefined on the effect's own first run, which is the
+        // mount rather than a change. Not `defer`, because that option skips
+        // the first run WITHOUT recording its input (solid.cjs:478-481), so
+        // the first real toggle would arrive looking exactly like this one.
+        if (before === undefined || watching === before) return;
+        if (!beingRead() || phaseNow === "ended") return;
+        attachment?.reconnect();
+      },
+    ),
+  );
 
   onMount(() => {
     void (async () => {
@@ -2521,6 +2585,7 @@ export const TerminalNative: Component<{
           if (beingRead()) claimGrid();
         },
         onPhase: (phase, attempt) => {
+          phaseNow = phase;
           props.onConn?.(report(phase, attempt));
         },
         watch: () => props.watch?.() === true,
