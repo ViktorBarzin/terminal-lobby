@@ -489,6 +489,47 @@ export function tileDropTarget(): DropTarget | null {
  * and cleared after the last, so every recomputation of this sees the key its
  * target was measured with.
  */
+/**
+ * THE WHOLE ARRANGEMENT A DROP WOULD PRODUCE, not just where the dropped tile
+ * lands.
+ *
+ * Viktor, 2026-09-13: *"it must be visible. similarly to how desktop window
+ * dragging works - i need to be able what the split will look and where it will
+ * be placed"*.
+ *
+ * A lone accent rectangle answers "where does this one go" and leaves the more
+ * useful half unanswered: what happens to everything already on screen. A split
+ * moves its neighbour, a move reflows the siblings the dragged tile is leaving
+ * behind, and a replace changes a tile without moving anything. Desktop window
+ * snapping shows the shape you are about to get, so this returns every tile's
+ * post-drop rect and says which one is the session in the air.
+ *
+ * Computed from `applyDrop` — the same function the release itself calls — so
+ * the picture and the outcome cannot drift apart. An invalid drop is drawn in
+ * the shape that was refused, from the arrangement as it stands, because there
+ * is no post-drop tree to measure.
+ */
+export function tileDropPreview(): {
+  rects: readonly Rect[];
+  landing: Box | null;
+  dragged: SessionKey | null;
+  invalid: boolean;
+} | null {
+  const at = target();
+  if (!at || !canvas) return null;
+  const deps = canvas.deps;
+  const tree = deps.tree();
+  const landing = previewBox(at, landingRects(tree, dragKey, deps.rects(), deps.container()));
+  if (landing === null) return null;
+  const invalid = at.kind === "invalid";
+  if (invalid || !tree || dragKey === null) {
+    return { rects: [], landing, dragged: dragKey, invalid };
+  }
+  const next = applyDrop(tree, dragKey, at);
+  const rects = next ? toRects(next, deps.container()) : [];
+  return { rects, landing, dragged: dragKey, invalid };
+}
+
 export function tileDropShadow(): { box: Box; invalid: boolean } | null {
   const at = target();
   if (!at || !canvas) return null;
@@ -563,6 +604,7 @@ function track(event: MouseEvent): void {
 function end(commit: boolean): void {
   if (!inFlight) return;
   inFlight = false;
+  nativeDrag = false;
   listeners?.abort();
   listeners = null;
   const key = dragKey;
@@ -587,9 +629,14 @@ function end(commit: boolean): void {
  * sidebar's long press and a tile's own press overlapping, and the one already
  * being tracked is the one the person is making.
  */
-function begin(key: SessionKey): void {
+/** True while the browser is running a native drag it took over from us; see
+ *  the `pointercancel` listener in {@link begin} for why it is load-bearing. */
+let nativeDrag = false;
+
+function begin(key: SessionKey, synthetic: boolean): void {
   if (inFlight || !canvas) return;
   inFlight = true;
+  nativeDrag = !synthetic;
   dragKey = key;
   claim = null;
   setTarget(null);
@@ -616,7 +663,37 @@ function begin(key: SessionKey): void {
   document.addEventListener("pointerup", () => end(true), opts);
   document.addEventListener("dragend", () => end(true), opts);
   document.addEventListener("drop", () => end(true), opts);
-  document.addEventListener("pointercancel", () => end(false), opts);
+  // A NATIVE DRAG RAISES `pointercancel` ON ITS WAY PAST, and that is the
+  // browser handing the gesture over rather than the person letting go of it.
+  // Measured against the shipped build on 2026-09-13, with timestamps in ms:
+  //
+  //   pointerdown@3270  dragstart@3299  tl-drag-start@3300
+  //   pointercancel@3304            <- the tracker died here, 4ms after arming
+  //   dragover@3428 ... 37 more     <- every one reaching a dead tracker
+  //   drop@4560  dragend@4562
+  //
+  // So a MOUSE drag onto a tile never worked at all: no shadow was ever drawn
+  // and no drop ever landed. Only the finger path did, because
+  // `@formkit/drag-and-drop` gives a touch a SYNTHETIC drag, which the browser
+  // never takes over and so never cancels. The suite could not see it either,
+  // because a test dispatches its own DragEvents and no synthetic sequence
+  // raises a real `pointercancel`.
+  //
+  // The cancel still has to be honoured on the finger path, where it is the
+  // real thing: an incoming call or a system gesture. So the discriminator is
+  // whether a native drag is in the air, which `dragstart` says four
+  // milliseconds before the cancel arrives — but `dragstart` fires BEFORE the
+  // sidebar announces the drag, so a listener armed here would be armed too
+  // late to see it. The sidebar passes the library's own `isSynth` on the start
+  // event instead, and {@link begin} reads it.
+  document.addEventListener(
+    "pointercancel",
+    () => {
+      if (nativeDrag) return;
+      end(false);
+    },
+    opts,
+  );
   document.addEventListener(
     "keydown",
     (event: KeyboardEvent) => {
@@ -638,7 +715,11 @@ function begin(key: SessionKey): void {
  * arrives there on release.
  */
 export function beginTileDrag(key: SessionKey): void {
-  begin(key);
+  // SYNTHETIC, because this half runs on pointer events alone and the browser
+  // never takes it over: a tile is dragged by its own header press, not by the
+  // library, so no native drag starts and a `pointercancel` here really is the
+  // platform taking the gesture away.
+  begin(key, true);
 }
 
 /**
@@ -660,13 +741,14 @@ export function attachTileDrop(el: HTMLElement, deps: TileDropDeps): void {
   // the module docblock), and withdrawn below: with no canvas there is no
   // workspace, and every drag is the sidebar's own again.
   setTileDropClaim(tileDropClaimed);
-  const onDragStart = () => {
+  const onDragStart = (event: Event) => {
     // Before the session test, not after: a group being reordered is not a
     // session and must still retire the last drag's claim, or the sidebar would
     // read a stale one in its own `onDragend`.
     claim = null;
     const key = deps.dragged();
-    if (key) begin(key);
+    const detail = (event as CustomEvent<{ synthetic?: boolean }>).detail;
+    if (key) begin(key, detail?.synthetic === true);
   };
   document.addEventListener(DRAG_START_EVENT, onDragStart);
   onCleanup(() => {
