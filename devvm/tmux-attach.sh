@@ -237,6 +237,66 @@ model_arg="${6:-}"
 effort_arg="${7:-}"
 [[ "$effort_arg" =~ $EFFORT_ARG_RE ]] || effort_arg=""
 
+# ---- which tmux client this connection is --------------------------------
+# An 8th ?arg=: an id the browser mints once per terminal mount, 16 random
+# bytes as lowercase hex. tmux sizes a window from its clients, and an HTTP
+# request names no client — two devices of one person arrive with one identity
+# header, so tmux-api's grid endpoint could see THAT somebody wanted the window
+# and never WHO. This is the half that was missing. The id is recorded against
+# this connection's pty below, and tmux-api resolves it back when a device
+# claims the window size.
+#
+# The charset gate does two jobs. It is the discipline the five gates above
+# apply — a value that does not match is no request at all, and the claim then
+# falls back to promoting the single preload client — and it is what makes the
+# id safe as a FILE NAME: the class admits no '/', no '.' and no space, so
+# nothing here can build a path.
+CLIENT_ID_RE='^[0-9a-f]{32}$'
+client_id="${8:-}"
+[[ "$client_id" =~ $CLIENT_ID_RE ]] || client_id=""
+
+# The pty this connection runs on, read ONCE for the two readers that want it:
+# the client record below, and the /internal/attach body further down, which
+# names a guest's client so a revoke can kick exactly it. `tty` reads stdin,
+# which ttyd has already made the pty.
+my_tty="$(tty 2>/dev/null || true)"
+[[ "$my_tty" == /dev/* ]] || my_tty=""
+
+# ---- record this client, before anything execs ---------------------------
+# Six exec sites follow and every one is an exec, so nothing this script does
+# can run afterwards: no trap, no cleanup, no second thought. The record is
+# written once, here, ahead of all of them, and it is tmux-api's job to
+# disbelieve it — it validates against list-clients on every read and sweeps
+# this directory at start-up, so a file left by a dead connection resolves to
+# nothing rather than to somebody else's client.
+#
+# UNDER THE SERVICE ACCOUNT'S RUNTIME DIR, not the session owner's. ttyd and
+# tmux-api run as the same account (devvm/ttyd.service and
+# devvm/tmux-api.service both say User=wizard; the container runs every service
+# as `dev`), so one directory is writable by the writer and readable by the
+# reader with no sudo and no shared group. The owner's own /run/user/<uid> is
+# 0700 and this script, running as the ttyd account, cannot write into it.
+# $XDG_RUNTIME_DIR first, for the container image: no logind there, so no
+# /run/user/<uid> exists and the image sets the variable instead.
+#
+# THE PID SITS BESIDE THE TTY because `Defaults use_pty` (/etc/sudoers:12)
+# gives a sudo'd attach its OWN pty. Measured on this box 2026-09-13: from
+# /dev/pts/62, a sudo'd command reported /dev/pts/66. So for every user the
+# ttyd account is not, the tty below is not the one the tmux client will run
+# on, and the pid is what still matches — `exec sudo` keeps this shell's pid
+# and the client is two hops below it. tmux-api reads #{client_pid} and walks
+# up a few /proc hops to find this one.
+#
+# Every failure here is swallowed on purpose: `set -euo pipefail` is on, and a
+# runtime dir that cannot be written must cost a size claim, never a terminal.
+if [[ -n "$client_id" && -n "$my_tty" ]]; then
+    client_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/terminal-lobby/clients"
+    if mkdir -p "$client_dir" 2>/dev/null; then
+        chmod 700 "$client_dir" 2>/dev/null || true
+        printf '%s\t%s\n' "$my_tty" "$$" > "$client_dir/$client_id" 2>/dev/null || true
+    fi
+fi
+
 # The server is consulted for a FOREIGN attach (as before) and now also for any
 # attach that asks to watch — including your own session, which is the
 # two-device case and has no share row to authorize it.
@@ -249,8 +309,6 @@ effort_arg="${7:-}"
 if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro" ]]; then
     target_owner="${owner_arg:-$os_user}"
     guest="$os_user"
-    my_tty="$(tty 2>/dev/null || true)"
-    [[ "$my_tty" == /dev/* ]] || my_tty=""
     token=""
     [[ -r /var/lib/tmux-api/internal.token ]] && token="$(cat /var/lib/tmux-api/internal.token)"
     # The token goes in on STDIN (`-H @-`), never on the command line. /proc here
@@ -271,7 +329,7 @@ if [[ -n "$owner_arg" && "$owner_arg" != "$os_user" ]] || [[ "$watch_arg" == "ro
     # attach falls through to CREATING the session), and neither is obvious from
     # the outside. Accepting both spellings removes that silent divergence.
     mode="$(printf '%s' "$resp" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p')"
-    logger -t ttyd-attach "server-attach: guest='$guest' owner='$target_owner' name='$name' tty='${my_tty:-none}' asked='${watch_arg:-none}' code='$code' mode='${mode:-none}'"
+    logger -t ttyd-attach "server-attach: guest='$guest' owner='$target_owner' name='$name' tty='${my_tty:-none}' client='${client_id:-<none>}' asked='${watch_arg:-none}' code='$code' mode='${mode:-none}'"
     if [[ "$code" != "200" ]]; then
         # Only reachable for a foreign attach: a self attach is authorized by
         # owning the session, so the server never denies it.
@@ -331,7 +389,8 @@ fi
 # with `-f ignore-size` left it at 80x39. The client stays read-write, so the
 # click promotes it with `refresh-client -f '!ignore-size'` rather than paying
 # for a second attach, and nothing is pinned: `window-size` is untouched
-# throughout, unlike the read-only path, whose PinGrid is never reverted.
+# throughout, unlike the read-only path, whose PinGrid stands until the last
+# read-only client detaches and the hook takes it back off.
 #
 # attach-session, NEVER the `tmux new-session -A` below. -A creates a session
 # when the name is absent, and a preload must not bring one into being from a
@@ -364,7 +423,7 @@ if [[ "$watch_arg" == "pre" ]]; then
     # MODE_RE yields ONE value, and a "pre" never enters the server block that
     # builds ro_flag — a self preload skips it, a foreign one was refused.
     pre_flag=(-f ignore-size)
-    logger -t ttyd-attach "preload-attach: os_user='$os_user' name='$name' mode='$watch_arg' self='$(id -un)'"
+    logger -t ttyd-attach "preload-attach: os_user='$os_user' name='$name' mode='$watch_arg' client='${client_id:-<none>}' self='$(id -un)'"
     if [[ "$os_user" == "$(id -un)" ]]; then
         exec /usr/bin/tmux attach-session "${pre_flag[@]}" -t "=$name"
     else
@@ -377,7 +436,7 @@ fi
 fold_log "$start_dir" "$LOG_DIR_RE"
 log_dir="$lv"
 
-logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' model='${model_arg:-<none>}' effort='${effort_arg:-<none>}' self='$(id -un)'"
+logger -t ttyd-attach "spawn: os_user='$os_user' name='$name' dir='$log_dir' cmd='${cmd_key:-<none>}' model='${model_arg:-<none>}' effort='${effort_arg:-<none>}' client='${client_id:-<none>}' self='$(id -un)'"
 
 # Launch via tmux-user-attach so the tmux *server* is parented to the OS
 # user's own systemd manager (user@<uid>.service), not the ttyd.service

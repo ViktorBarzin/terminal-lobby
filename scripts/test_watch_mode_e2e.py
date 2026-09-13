@@ -59,6 +59,7 @@ import atexit
 import functools
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -280,6 +281,10 @@ def attach(tmp_path):
         env = dict(os.environ)
         env["TTYD_USER"] = auth
         env["PATH"] = f"{shim}:{env['PATH']}"
+        # The client registry (arg8) is written under $XDG_RUNTIME_DIR. Pointed
+        # at the test's own directory so the suite never touches the real
+        # /run/user, and so the assertions below can read what was written.
+        env["XDG_RUNTIME_DIR"] = str(tmp_path)
         started = time.monotonic()
         proc = subprocess.run(["bash", str(script), *args], capture_output=True,
                               text=True, env=env, timeout=30)
@@ -524,6 +529,120 @@ def test_a_near_miss_of_the_preload_token_is_no_request_at_all(attach, bad):
     r = attach(["main", "default", "default", "", bad])
     assert any("tmux-user-attach main" in line for line in r["argv"]), (bad, r["argv"])
     assert not any("ignore-size" in line for line in r["argv"]), (bad, r["argv"])
+
+
+# --------------------------------------------------------------------------
+# Leg 2c — arg8, the per-connection client id, and the record it leaves
+# --------------------------------------------------------------------------
+
+CLIENT_ID = "0123456789abcdef0123456789abcdef"
+
+
+def _record(tmp_path, client_id=CLIENT_ID):
+    """The registry file the attach script writes, or None."""
+    f = tmp_path / "terminal-lobby" / "clients" / client_id
+    return f.read_text() if f.exists() else None
+
+
+def test_a_client_id_is_recorded_against_this_connections_pty(attach, tmp_path):
+    """The whole point of arg8.
+
+    tmux sizes a window from its clients and an HTTP request names none, so
+    the browser mints an id per terminal mount and this script is what ties it
+    to a pty. The pid rides along because `Defaults use_pty` gives a sudo'd
+    attach its own pty, which the script cannot see: measured on the devvm
+    2026-09-13, an outer /dev/pts/62 became /dev/pts/66 inside sudo.
+    """
+    attach(["main", "default", "default", "", "", "", "", CLIENT_ID])
+    body = _record(tmp_path)
+    assert body is not None, "no record was written for a valid client id"
+    tty, pid = body.strip().split("\t")
+    assert tty == "/dev/pts/9", body          # what the tty shim reports
+    assert int(pid) > 1, body
+
+
+def test_the_client_record_directory_is_private(attach, tmp_path):
+    """0700. It names, for every live connection, a pty to write to."""
+    attach(["main", "default", "default", "", "", "", "", CLIENT_ID])
+    d = tmp_path / "terminal-lobby" / "clients"
+    assert oct(d.stat().st_mode & 0o777) == "0o700", oct(d.stat().st_mode)
+
+
+@pytest.mark.parametrize("branch,args", [
+    ("create", ["main", "default", "default", "", "", "", "", CLIENT_ID]),
+    ("watch", ["main", "default", "default", "", "ro", "", "", CLIENT_ID]),
+    ("foreign", ["main", "default", "default", "other", "ro", "", "", CLIENT_ID]),
+    ("preload", ["main", "default", "default", "", "pre", "", "", CLIENT_ID]),
+])
+def test_every_attach_branch_records_its_client(attach, tmp_path, branch, args):
+    """Six exec sites, one record, written ahead of all of them.
+
+    The script execs, so nothing it does can run afterwards -- no trap, no
+    cleanup. Writing per branch would be six copies free to disagree, and the
+    branch that forgot would be a device whose window silently stopped
+    following it.
+    """
+    attach(args, mode="ro")
+    assert _record(tmp_path) is not None, f"{branch} attached without recording its client"
+
+
+@pytest.mark.parametrize("bad", [
+    "", "abc", "0123456789abcdef0123456789abcde", "0123456789abcdef0123456789abcdeff",
+    "0123456789ABCDEF0123456789ABCDEF", "../../x", "a/b", "deadbeef deadbeef",
+    "0123456789abcdefg123456789abcdef", ".", "..",
+])
+def test_a_malformed_client_id_writes_nothing_and_changes_nothing(attach, tmp_path, bad):
+    """The id becomes a FILE NAME, so the gate is a path defence as much as a
+    validation. A value that fails it is no request at all: today's behaviour,
+    which is tmux-api promoting the one preload client it can find."""
+    r = attach(["main", "default", "default", "", "", "", "", bad])
+    clients = tmp_path / "terminal-lobby" / "clients"
+    assert not clients.exists() or list(clients.iterdir()) == [], (
+        bad, [p.name for p in clients.iterdir()])
+    assert any("tmux-user-attach main" in line for line in r["argv"]), (bad, r["argv"])
+
+
+def test_the_client_id_never_reaches_the_tmux_argv(attach):
+    """The exact-argv discipline, extended to the newest slot.
+
+    The id is a lookup key for a file this script writes, and nothing about it
+    belongs on a tmux command line. A value that reached one would be a
+    client-shaped value inside the security boundary the whole file is built
+    around.
+    """
+    for args in (
+        ["main", "default", "default", "", "", "", "", CLIENT_ID],
+        ["main", "default", "default", "", "ro", "", "", CLIENT_ID],
+        ["main", "default", "default", "", "pre", "", "", CLIENT_ID],
+    ):
+        r = attach(args, mode="ro")
+        for line in r["argv"]:
+            assert CLIENT_ID not in line, (args, line)
+
+
+def test_arg8_does_not_disturb_the_slots_above_it(attach):
+    """Two slots already sit below the watch flag; this makes three.
+
+    An arg dying at a boundary is why this file exists (memory #9926), and the
+    failure is always the same shape: a deeper slot pushing a shallower one out
+    of position. So the branch choice has to be identical with an id present.
+    """
+    r = attach(["main", "default", "default", "", "ro", "", "", CLIENT_ID], mode="ro")
+    assert r["argv"] == ["tmux attach-session -r -t =main"], r["argv"]
+    r = attach(["main", "claude", "/srv/p", "", "", "opus", "max", CLIENT_ID])
+    assert any("tmux-user-attach main /srv/p claude opus max" in line for line in r["argv"]), r["argv"]
+
+
+def test_the_go_reader_and_the_shell_writer_agree_on_the_class():
+    """One class, two ends. tmux-api's clientIDRe holds the same test from the
+    other side; this is the copy that runs where esbuild and node are not."""
+    src = open(ATTACH_SH, encoding="utf-8").read()
+    m = re.search(r"CLIENT_ID_RE='([^']+)'", src)
+    assert m, "tmux-attach.sh no longer declares CLIENT_ID_RE"
+    go = open(os.path.join(REPO, "tmux-api", "clientreg.go"), encoding="utf-8").read()
+    want = re.search(r"clientIDRe = regexp\.MustCompile\(`([^`]+)`\)", go)
+    assert want, "tmux-api/clientreg.go no longer declares clientIDRe"
+    assert m.group(1) == want.group(1), (m.group(1), want.group(1))
 
 
 # --------------------------------------------------------------------------

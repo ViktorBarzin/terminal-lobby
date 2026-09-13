@@ -77,6 +77,25 @@ var knownEvents = map[string]bool{
 	// unpinned session — the majority — is silent. tl.session, tl.kind = the
 	// grid asked for, tl.client.
 	"session.grid_sized": true,
+	// A device took the session's window to its own size, under last-active-
+	// wins (tmux-api/grid_size.go). Emitted whenever something moved, pinned or
+	// not, which makes it the one series that counts claims; grid_sized above
+	// stays the narrower "a PIN was resized" line.
+	//
+	// tl.conn is the per-connection client id the browser mints and
+	// devvm/tmux-attach.sh records against its pty, or "none" when the id did
+	// not resolve to a live tmux client — so "is per-client resolution working
+	// in the wild" is one query rather than an assumption. tl.from and tl.to
+	// are the window grid before and after as WxH, tl.reason is one of
+	// focus|input|socket-open|take-control|fit|visible-set, or unknown for a
+	// word this build does not know.
+	"session.grid_claimed": true,
+	// A grid pin taken back off by the start-up sweep because the session had
+	// no read-only client attached (tmux-api/repair_grid_pins.go). The pin is
+	// reverted from the client-detached hook from tl-grid-v4 on; this catches
+	// the sessions that were pinned before that shipped. tl.session,
+	// tl.client=sweep.
+	"session.grid_unpinned": true,
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)

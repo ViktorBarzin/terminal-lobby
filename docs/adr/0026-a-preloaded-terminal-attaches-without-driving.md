@@ -3,6 +3,16 @@
 Viktor, 2026-09-11: *"let's preload session data on hover - this will save time
 rendering in both terminal and text mode"*
 
+**One premise below has since changed.** This record twice cites `grid.go`'s
+"a pin is never reverted" as a reason, and that stopped being true on
+2026-09-13: `PinGrid` is now reverted from the `client-detached` hook when the
+last read-only client leaves (`docs/plans/2026-09-13-pane-ownership.md`,
+`gridHookMark` `tl-grid-v4`). The decision this record makes is unaffected —
+a hover still attaches read-write with `ignore-size` rather than read-only, and
+a preload of a session somebody is watching is still refused while that watcher
+is attached. The sentences are left as written, as the record of what was true
+when the choice was made.
+
 Opening a session the browser has not seen yet costs a serial chain: a lazily
 imported xterm chunk, a `/token` round trip, a WebSocket upgrade, a fork and a
 `tmux` attach inside `devvm/tmux-attach.sh`, and then a full-screen redraw.

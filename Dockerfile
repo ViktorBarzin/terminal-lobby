@@ -91,6 +91,17 @@ RUN useradd --create-home --shell /bin/bash dev
 # container has no systemd, which is why the image installs it here instead.
 RUN install -d -o dev -g dev -m 0755 /var/lib/tmux-api /var/lib/clipboard-store /run/clipboard-files
 
+# The runtime dir the client registry lives under (tmux-api/clientreg.go): the
+# attach script writes one file per live connection naming its pty, and
+# tmux-api reads them to tell a person's devices apart. 0700, because that is
+# what it is — a list of ptys to write to.
+#
+# On the devvm logind makes /run/user/<uid> and the services find it. A
+# container has no logind, so there is no /run/user at all and $XDG_RUNTIME_DIR
+# below is what both ends resolve instead. Without it every claim falls back to
+# promoting the single preload client, silently.
+RUN install -d -o dev -g dev -m 0700 /run/terminal-lobby
+
 COPY --from=build /out/ /usr/local/bin/
 COPY --from=web /src/frontend-v2/dist/ /usr/local/share/ttyd/
 COPY devvm/tmux-attach.sh /usr/local/bin/tmux-attach.sh
@@ -110,7 +121,8 @@ RUN chmod 0755 /usr/local/bin/entrypoint.sh /usr/local/bin/tmux-attach.sh \
 ENV TL_MULTI_USER=off \
     TL_AUTH_HEADER=X-Forwarded-User \
     TL_BIND=127.0.0.1 \
-    TL_USER=dev
+    TL_USER=dev \
+    XDG_RUNTIME_DIR=/run/terminal-lobby
 
 # A terminal needs a UTF-8 locale, and tmux needs it for a reason that is not
 # obvious: with no locale set it decides the client cannot do UTF-8 and

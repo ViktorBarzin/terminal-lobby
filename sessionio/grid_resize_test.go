@@ -238,3 +238,69 @@ func TestGridPinStaleSpotsAHookFromAnOlderBuild(t *testing.T) {
 		t.Error("the repinned hook does not carry the mark")
 	}
 }
+
+// The shape actually on this box: a pin carrying the PREVIOUS mark. Every
+// session that has ever been watched is wearing one, and a v3 detach hook
+// resizes, names the right session and never reverts — so the mark is the only
+// thing that can tell it from a v4 one, and the sweep is how the revert
+// reaches sessions that were pinned before it shipped.
+func TestGridPinStaleSpotsThePreviousMark(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+
+	// The v3 text, mark and all, on all three hooks.
+	old := strings.Replace(in.gridHook("demo"), gridHookMark, "tl-grid-v3", 1)
+	if !strings.Contains(old, "tl-grid-v3") {
+		t.Fatalf("could not build a v3 hook from %q", in.gridHook("demo"))
+	}
+	for _, name := range gridHooks {
+		run(t, sock, "set-hook", "-t", "=demo:", name, old)
+	}
+
+	stale, err := in.GridPinStale(osUser, "demo")
+	if err != nil {
+		t.Fatalf("GridPinStale: %v", err)
+	}
+	if !stale {
+		t.Fatal("stale=false: a pin carrying the previous mark read as current, " +
+			"so the revert would never reach the sessions already pinned")
+	}
+}
+
+// client-detached is the only hook that can END a pin, so it must carry a
+// different command from the other two. Asserted against what tmux actually
+// holds, because PinGrid writing the same text on all three is the shape this
+// replaced and it would read as working right up to the moment a watcher left.
+func TestPinGridLaysTheRevertOnlyOnClientDetached(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+
+	for _, name := range gridHooks {
+		out, err := exec.Command("tmux", "-L", sock, "show-hooks", "-t", "=demo:").Output()
+		if err != nil {
+			t.Fatalf("show-hooks: %v", err)
+		}
+		var line string
+		for _, l := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(l, name+"[") {
+				line = l
+			}
+		}
+		if line == "" {
+			t.Fatalf("%s carries no hook at all:\n%s", name, out)
+		}
+		reverts := strings.Contains(line, "set-option -u")
+		if want := name == hookDetached; reverts != want {
+			t.Errorf("%s reverts = %v, want %v:\n%s", name, reverts, want, line)
+		}
+		if !strings.Contains(line, "resize-window") {
+			t.Errorf("%s lost its resize:\n%s", name, line)
+		}
+	}
+}

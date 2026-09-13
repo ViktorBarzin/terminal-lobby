@@ -16,6 +16,8 @@ func TestEmittedNamesAreCatalogued(t *testing.T) {
 		{"claude.answered", "session-events/main.go POST /keys and POST /answer-text"},
 		{"file.attached", "clipboard-upload/main.go, an attachment under the size cap"},
 		{"session.grid_repinned", "tmux-api/repair_grid_pins.go, the stale-pin sweep"},
+		{"session.grid_unpinned", "tmux-api/repair_grid_pins.go, the sweep's unpin of an unwatched session"},
+		{"session.grid_claimed", "tmux-api/grid_size.go, a device taking the window to its own size"},
 		{"skill.edited", "skills-api/handlers.go, the skill editor's write"},
 		{"watch.switched", "frontend-v2/src/store/watchmode.ts saveWatch, via the browser intake"},
 		{"notify.tap", "frontend-v2/public/sw.js notificationclick, via the browser intake"},

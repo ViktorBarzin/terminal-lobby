@@ -224,7 +224,7 @@ func TestPinnedGridIsOwnedOnlyByReadWriteClients(t *testing.T) {
 // the hook picks the most recent, so before `grep -v ignore-size` it won
 // outright: measured on tmux 3.4 on 2026-09-11, a pinned session at 80x39 with
 // its owner attached jumped to 200x49 when a 200x50 preload joined, and stayed.
-// A pin is never reverted, so every session ever watched carried that.
+// A pin stood for the life of the session then, so every session ever watched carried that.
 func TestPinnedGridIgnoresAPreloadClient(t *testing.T) {
 	in, osUser, sock := gridSession(t)
 
@@ -232,6 +232,14 @@ func TestPinnedGridIgnoresAPreloadClient(t *testing.T) {
 	if err := in.PinGrid(osUser, "demo"); err != nil {
 		t.Fatalf("PinGrid: %v", err)
 	}
+	// The watcher is part of the fixture, not an extra client. A pin stands
+	// only while a read-only client is attached — the last one leaving reverts
+	// it (gridDetachHook) — so pinning with nobody watching describes a state
+	// production does not reach: PinGrid is called from the read-only attach
+	// path. Without it here, the owner's detach below ends the pin and the
+	// window goes to the preload, which is tmux's own behaviour for an
+	// unpinned session and is not what this test is about.
+	attach(t, sock, "demo", 90, 28, "-r")
 
 	preload := attach(t, sock, "demo", 80, 24, "-f", "ignore-size")
 	if got := grid(t, sock); got != "200x50" {
@@ -244,10 +252,11 @@ func TestPinnedGridIgnoresAPreloadClient(t *testing.T) {
 	}
 
 	// The owner leaving is what exposed the read-only case, so check it here
-	// too: a preload left alone must not inherit the window.
+	// too: with the watcher still reading, a preload must not inherit the
+	// window the owner left behind.
 	owner.close()
 	if got := grid(t, sock); got != "200x50" {
-		t.Errorf("owner detached, preload alone: grid = %s, want it frozen at 200x50", got)
+		t.Errorf("owner detached, preload and watcher left: grid = %s, want it frozen at 200x50", got)
 	}
 }
 
@@ -435,17 +444,30 @@ func TestBackgroundedRunShellStillPaintsOverThePane(t *testing.T) {
 // here shipped with only one of them: output, and a non-zero exit on its own.
 func TestGridHookNeitherSpeaksNorFails(t *testing.T) {
 	in, _, _ := gridSession(t)
-	hook := in.gridHook("demo")
 
-	// Both streams, and the whole pipeline rather than its last stage: a failing
-	// `tmux list-clients` writes to stderr from the FIRST stage.
-	if !strings.Contains(hook, `} >/dev/null 2>&1`) {
-		t.Errorf("gridHook does not silence its whole pipeline:\n%s", hook)
-	}
-	// Silencing is not enough — the exit status alone paints an empty overlay.
-	if !strings.HasSuffix(hook, `|| true'`) {
-		t.Errorf("gridHook can still report a failure, which paints the pane "+
-			"even with nothing to show:\n%s", hook)
+	// Both texts. client-detached runs a different one since the revert
+	// shipped, and it is the longer of the two, so the discipline has to be
+	// asserted of each rather than of the pair's shared ancestor.
+	for name, hook := range map[string]string{
+		"gridHook":       in.gridHook("demo"),
+		"gridDetachHook": in.gridDetachHook("demo"),
+	} {
+		// Both streams, and the whole pipeline rather than its last stage: a
+		// failing `tmux list-clients` writes to stderr from the FIRST stage.
+		if !strings.Contains(hook, `} >/dev/null 2>&1`) {
+			t.Errorf("%s does not silence its whole pipeline:\n%s", name, hook)
+		}
+		// Silencing is not enough — the exit status alone paints an empty overlay.
+		if !strings.HasSuffix(hook, `|| true'`) {
+			t.Errorf("%s can still report a failure, which paints the pane "+
+				"even with nothing to show:\n%s", name, hook)
+		}
+		// The tmux parser performs no expansion inside single quotes, and there
+		// is no way to escape one, so a single quote anywhere in the body would
+		// end the command early.
+		if strings.Count(hook, "'") != 2 {
+			t.Errorf("%s carries a single quote in its body:\n%s", name, hook)
+		}
 	}
 }
 
@@ -455,22 +477,28 @@ func TestGridHookNeitherSpeaksNorFails(t *testing.T) {
 // it fail — the cheapest way to make the whole pipeline go wrong at once.
 func TestGridHookStaysQuietWhenEverythingInItFails(t *testing.T) {
 	in, _, sock := gridSession(t)
-	hook := in.gridHook("demo")
-
-	// Take the shell command back out of the tmux command that wraps it.
-	cmd := strings.TrimSuffix(strings.TrimPrefix(hook, "run-shell -b '"), "'")
-	if cmd == hook {
-		t.Fatalf("could not unwrap the shell command from %q", hook)
-	}
 	run(t, sock, "new-session", "-d", "-s", "survivor", "sh")
 	run(t, sock, "kill-session", "-t", "=demo")
 
-	out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
-	if err != nil {
-		t.Errorf("the hook reported failure (%v), which paints the pane", err)
-	}
-	if len(out) > 0 {
-		t.Errorf("the hook wrote %q, which paints the pane", out)
+	for name, hook := range map[string]string{
+		"gridHook":       in.gridHook("demo"),
+		"gridDetachHook": in.gridDetachHook("demo"),
+	} {
+		// Take the shell command back out of the tmux command that wraps it.
+		cmd := strings.TrimSuffix(strings.TrimPrefix(hook, "run-shell -b '"), "'")
+		if cmd == hook {
+			t.Fatalf("could not unwrap the shell command from %q", hook)
+		}
+		// Run under plain sh, where `#{hook_client}` is an ordinary string: the
+		// detach hook's client exclusion then excludes nothing, which is the
+		// direction that keeps the pin.
+		out, err := exec.Command("sh", "-c", cmd).CombinedOutput()
+		if err != nil {
+			t.Errorf("%s reported failure (%v), which paints the pane", name, err)
+		}
+		if len(out) > 0 {
+			t.Errorf("%s wrote %q, which paints the pane", name, out)
+		}
 	}
 }
 
@@ -616,5 +644,176 @@ func TestGridPinStaleDoesNotPrefixMatch(t *testing.T) {
 	}
 	if !stale {
 		t.Fatal("stale=false: hooks naming `demo` read as fresh for `demo2`")
+	}
+}
+
+// --- the pin comes off when the last watcher goes (decision 9) --------------
+
+// windowSizeOpt reads the session-scoped window-size option, "" when unset.
+func windowSizeOpt(t *testing.T, sock, session string) string {
+	t.Helper()
+	out, err := exec.Command("tmux", "-L", sock, "show-options", "-qv", "-t",
+		exactPane(session), "window-size").Output()
+	if err != nil {
+		t.Fatalf("show-options: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// The revert, end to end and against a real tmux.
+//
+// A pin only earns its place while a read-only client is attached: tmux ignores
+// a read-only client's size on its own whenever a read-write client is there,
+// and that skip lapses only when the last read-write client leaves. With the
+// watcher gone there is nothing left to protect, and a session that keeps
+// `window-size manual` for life stops following tmux's own last-active rule.
+//
+// This one test settles the two facts the design rested on: whether
+// `#{hook_client}` resolves at hook time, and whether tmux lets a hook unset
+// the hooks it is running from.
+func TestTheLastWatcherLeavingRevertsThePin(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	owner := attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	viewer := attach(t, sock, "demo", 80, 24, "-r")
+	if got := windowSizeOpt(t, sock, "demo"); got != "manual" {
+		t.Fatalf("with a watcher attached: window-size = %q, want manual", got)
+	}
+
+	viewer.close()
+
+	if got := windowSizeOpt(t, sock, "demo"); got == "manual" {
+		t.Error("the last watcher left and window-size is still manual")
+	}
+	if hooks := showHooks(t, sock, exactPane("demo")); hooks != "" {
+		t.Errorf("the last watcher left and the hooks are still laid: %s", hooks)
+	}
+	// And tmux is sizing the window again, which is the whole point of taking
+	// the pin off rather than leaving a harmless-looking option behind.
+	owner.resize(t, 150, 40)
+	if got := grid(t, sock); got != "150x40" {
+		t.Errorf("after the revert the owner resized to 150x40: grid = %s", got)
+	}
+}
+
+// A watcher leaving while another watcher is still reading must NOT revert:
+// the pin is what stops that second watcher taking the window when the owner
+// pockets their phone.
+func TestASecondWatcherHoldsThePin(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	owner := attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	first := attach(t, sock, "demo", 80, 24, "-r")
+	attach(t, sock, "demo", 100, 30, "-r")
+
+	first.close()
+	if got := windowSizeOpt(t, sock, "demo"); got != "manual" {
+		t.Fatalf("one of two watchers left: window-size = %q, want it still manual", got)
+	}
+
+	// The case the pin exists for, with the pin still in place.
+	owner.close()
+	if got := grid(t, sock); got != "200x50" {
+		t.Errorf("owner gone, one watcher left: grid = %s, want it held at 200x50", got)
+	}
+}
+
+// The watcher alone, with nobody driving. Its detach is still the last one, so
+// the pin still comes off — and the session is left the way tmux would have it.
+func TestAWatcherLeavingAloneRevertsThePin(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	owner := attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	viewer := attach(t, sock, "demo", 80, 24, "-r")
+	owner.close()
+
+	viewer.close()
+	if got := windowSizeOpt(t, sock, "demo"); got == "manual" {
+		t.Error("the lone watcher left and window-size is still manual")
+	}
+	if hooks := showHooks(t, sock, exactPane("demo")); hooks != "" {
+		t.Errorf("the lone watcher left and the hooks are still laid: %s", hooks)
+	}
+}
+
+// A read-WRITE client detaching changes nothing while a watcher is reading.
+// This is the ordinary case — a second device closing its tab — and the detach
+// hook has to keep doing what it always did there: resize to whoever is left.
+func TestADriverLeavingKeepsThePinAndResizes(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+
+	attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+	attach(t, sock, "demo", 80, 24, "-r")
+	second := attach(t, sock, "demo", 150, 40)
+
+	second.close()
+	if got := windowSizeOpt(t, sock, "demo"); got != "manual" {
+		t.Errorf("a driver left while a watcher reads: window-size = %q, want manual", got)
+	}
+	if got := grid(t, sock); got != "200x50" {
+		t.Errorf("a driver left: grid = %s, want the remaining driver's 200x50", got)
+	}
+}
+
+// UnpinGrid on its own: both halves cleared, and the two refusals.
+func TestUnpinGridClearsTheOptionAndTheHooks(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+	if err := in.PinGrid(osUser, "demo"); err != nil {
+		t.Fatalf("PinGrid: %v", err)
+	}
+
+	unpinned, err := in.UnpinGrid(osUser, "demo")
+	if err != nil {
+		t.Fatalf("UnpinGrid: %v", err)
+	}
+	if !unpinned {
+		t.Error("UnpinGrid reported nothing to do for a pinned session")
+	}
+	if got := windowSizeOpt(t, sock, "demo"); got == "manual" {
+		t.Error("window-size is still manual after UnpinGrid")
+	}
+	if hooks := showHooks(t, sock, exactPane("demo")); hooks != "" {
+		t.Errorf("hooks = %q, want none after UnpinGrid", hooks)
+	}
+}
+
+// A session that was never pinned must come back false and be left exactly as
+// it is, the way RepinGrid already does.
+func TestUnpinGridLeavesAnUnpinnedSessionAlone(t *testing.T) {
+	in, osUser, sock := gridSession(t)
+	attach(t, sock, "demo", 200, 50)
+	run(t, sock, "set-hook", "-t", exactPane("demo"), "client-attached", "run-shell -b 'true'")
+
+	unpinned, err := in.UnpinGrid(osUser, "demo")
+	if err != nil {
+		t.Fatalf("UnpinGrid: %v", err)
+	}
+	if unpinned {
+		t.Error("UnpinGrid reported it unpinned a session that was never pinned")
+	}
+	if hooks := showHooks(t, sock, exactPane("demo")); !strings.Contains(hooks, "run-shell") {
+		t.Errorf("hooks = %q: UnpinGrid cleared a hook it did not lay", hooks)
+	}
+}
+
+func TestUnpinGridRefusesANameItCannotSafelyEmbed(t *testing.T) {
+	in, osUser, _ := gridSession(t)
+	for _, bad := range []string{"", "demo;id", "demo x", "demo$(id)", strings.Repeat("a", 33)} {
+		if _, err := in.UnpinGrid(osUser, bad); err == nil {
+			t.Errorf("UnpinGrid(%q) = nil, want a refusal", bad)
+		}
 	}
 }

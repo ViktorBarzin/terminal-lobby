@@ -325,6 +325,15 @@ func main() {
 	go func() {
 		migrateSessionNamesToIDs(mappedOSUsers(), userSessions)
 		repairStaleGridPins(mappedOSUsers(), userSessions)
+		// The client registry has no owner at the writing end: the attach
+		// script execs, so no trap of its own can delete a record
+		// (clientreg.go). Swept here rather than on a timer because a stale
+		// record is harmless — every read validates it against list-clients —
+		// so the only thing at stake is a directory that would otherwise grow
+		// for the life of the box.
+		if n := sweepClientRegistry(mappedOSUsers()); n > 0 {
+			log.Printf("client registry: swept %d record(s) whose client had gone", n)
+		}
 		grandfatherSessionOrigins(mappedOSUsers(), userSessions)
 	}()
 

@@ -17,14 +17,20 @@ import (
 // client_activity when the client is created and moves it only on real input,
 // so the two being equal means "attached, never typed into". See latestActivity.
 //
-// client_name is last, and is what `refresh-client -t` takes: promoting a
-// preload client needs to name one, and reading it here keeps that to the same
-// fork rather than a second list-clients (grid_size.go).
+// client_name is what `refresh-client -t` and `switch-client -c` take:
+// promoting a preload client needs to name one, and reading it here keeps that
+// to the same fork rather than a second list-clients (grid_size.go).
+//
+// client_pid is last, and is the half of the client registry that survives a
+// sudo. `Defaults use_pty` gives a sudo'd attach its own pty, so the tty
+// devvm/tmux-attach.sh records for a foreign user is not the one its tmux
+// client runs on — the pid it records is still an ancestor of this one
+// (clientreg.go).
 //
 // Tab-delimited because a session name may contain spaces (possible outside the
 // API's NAME_RE) while neither a name nor a flag list can contain a tab, so no
 // odd name can smear its client onto the wrong session.
-const clientsListFmt = "#{client_session}\t#{client_flags}\t#{client_activity}\t#{client_created}\t#{client_name}"
+const clientsListFmt = "#{client_session}\t#{client_flags}\t#{client_activity}\t#{client_created}\t#{client_name}\t#{client_pid}"
 
 // client is one row of clientsListFmt.
 type client struct {
@@ -33,13 +39,15 @@ type client struct {
 	Activity int64  // unix seconds; 0 when tmux did not report one
 	Created  int64  // unix seconds the client attached; 0 when not reported
 	Name     string // tmux's own name for the client (a pty path); "" when not reported
+	PID      int    // the client process's pid; 0 when tmux did not report one
 }
 
 // parseClients reads the output of `list-clients -F clientsListFmt`. A row
 // missing its flags column is a tmux hiccup rather than a client, and is
 // dropped; a row whose activity or created stamp will not parse keeps the
 // client and loses only that timestamp, which is the direction that fails open.
-// A row with no name column keeps the client too, and loses only the name.
+// A row with no name column keeps the client too, and loses only the name; the
+// same goes for the pid, which an older tmux may not report at all.
 func parseClients(out []byte) []client {
 	var cs []client
 	for _, line := range strings.Split(string(out), "\n") {
@@ -50,8 +58,12 @@ func parseClients(out []byte) []client {
 		}
 		flags, rest, _ := strings.Cut(rest, "\t")
 		act, rest, _ := strings.Cut(rest, "\t")
-		created, name, _ := strings.Cut(rest, "\t")
+		created, rest, _ := strings.Cut(rest, "\t")
+		name, pid, _ := strings.Cut(rest, "\t")
 		c := client{Session: session, Flags: flags, Name: name}
+		if v, err := strconv.Atoi(strings.TrimSpace(pid)); err == nil && v > 0 {
+			c.PID = v
+		}
 		if v, err := strconv.ParseInt(act, 10, 64); err == nil {
 			c.Activity = v
 		}

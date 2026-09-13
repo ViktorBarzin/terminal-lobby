@@ -14,23 +14,33 @@ import (
 // space, a newline or a shell metacharacter.
 var gridNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,32}$`)
 
+// hookDetached is the one event that can also END a pin, so the branch that
+// lays a different command on it reads from the same name as the list.
+const hookDetached = "client-detached"
+
 // gridHooks are the events that should move a grid: someone starts driving,
 // someone's terminal changes shape, or someone stops driving.
 //
 // tmux has no hook for a client being USED, which is the fourth thing that
 // moves an unpinned window and the gap SizeGrid fills from the browser side.
-var gridHooks = []string{"client-attached", "client-resized", "client-detached"}
+var gridHooks = []string{"client-attached", "client-resized", hookDetached}
 
 // gridHookMark is a version stamp carried inside the hook, as an inert `:`
 // argument the shell discards.
 //
 // A pin laid down by an older build names the right session and still resizes,
-// so nothing about it reads as stale — and it would keep an old hook for the
-// life of the session, since a pin is never reverted. Marking the text lets
-// GridPinStale tell "pinned by a build that thought differently" from "pinned
-// correctly", which turns repairStaleGridPins into the deploy path for a hook
-// change. Bump it whenever gridHook's behaviour changes.
-const gridHookMark = "tl-grid-v3"
+// so nothing about it reads as stale — and it would keep that old hook for as
+// long as its session lives, which for a watched session is a long time.
+// Marking the text lets GridPinStale tell "pinned by a build that thought
+// differently" from "pinned correctly", which turns repairStaleGridPins into
+// the deploy path for a hook change. Bump it whenever either hook's behaviour
+// changes.
+//
+// v3 -> v4 on 2026-09-13: client-detached learned to REVERT the pin when the
+// last read-only client leaves. A v3 detach hook resizes and never reverts, and
+// nothing else about it reads as stale, so the mark is the only thing that
+// re-lays it.
+const gridHookMark = "tl-grid-v4"
 
 // gridSizeMax bounds a grid a client may ask for. tmux's own limit is far
 // higher; this is only here so a browser reporting nonsense mid-layout cannot
@@ -55,10 +65,14 @@ const gridSizeMax = 10000
 // to read-write clients explicitly, via hooks that resize the window to the
 // last read-write client each time the client set changes.
 //
-// Idempotent, because every read-only attach calls it. Never reverted: a
-// session that has been watched keeps its pin for life, since unpinning would
-// mean tracking watcher liveness to decide when it is safe, and the pinned
-// behaviour differs from tmux's default only in the cases this exists to change.
+// Idempotent, because every read-only attach calls it.
+//
+// REVERTED WHEN THE LAST READ-ONLY CLIENT LEAVES, from the client-detached hook
+// (gridDetachHook). A pin only earns its place while somebody is watching, and
+// a session that kept one for life stopped following tmux's own last-active
+// rule long after the watcher had gone. Nothing has to track watcher liveness
+// for that: the detach hook is already running at the only moment the answer
+// can change, and the client list is the answer.
 func (in *Injector) PinGrid(osUser, session string) error {
 	if !gridNameRe.MatchString(session) {
 		return fmt.Errorf("pin grid: unsafe session name %q", session)
@@ -99,10 +113,14 @@ func (in *Injector) PinGrid(osUser, session string) error {
 		return fmt.Errorf("pin grid %s: restore %dx%d: %v: %s",
 			session, w, h, err, strings.TrimSpace(string(out)))
 	}
-	hook := in.gridHook(session)
+	hook, detach := in.gridHook(session), in.gridDetachHook(session)
 	for _, name := range gridHooks {
+		cmd := hook
+		if name == hookDetached {
+			cmd = detach
+		}
 		if out, err := in.Command(osUser, "set-hook", "-t", target,
-			name, hook).CombinedOutput(); err != nil {
+			name, cmd).CombinedOutput(); err != nil {
 			return fmt.Errorf("pin grid %s: %s: %v: %s",
 				session, name, err, strings.TrimSpace(string(out)))
 		}
@@ -149,6 +167,42 @@ func (in *Injector) RepinGrid(osUser, session string) error {
 	return in.PinGrid(osUser, session)
 }
 
+// UnpinGrid gives a session's size back to tmux, and answers whether it took
+// anything away. A session that was never pinned comes back false and is left
+// exactly as it was — the same rule RepinGrid follows, and for the same reason:
+// this must not become a way to reconfigure an ordinary session.
+//
+// THE ORDER IS LOAD-BEARING. The hooks come off first, because `resize-window`
+// sets `window-size manual` as a side effect, so a hook that fires between the
+// two steps puts the pin straight back and the revert would not stick.
+//
+// Two callers: the client-detached hook's revert reaches the same two tmux
+// commands in shell (gridDetachHook), and the start-up sweep calls this for the
+// sessions that were pinned before the revert shipped.
+func (in *Injector) UnpinGrid(osUser, session string) (bool, error) {
+	if !gridNameRe.MatchString(session) {
+		return false, fmt.Errorf("unpin grid: unsafe session name %q", session)
+	}
+	pinned, err := in.gridPinned(osUser, session)
+	if err != nil || !pinned {
+		return false, err
+	}
+	target := exactPane(session)
+	for _, name := range gridHooks {
+		if out, err := in.Command(osUser, "set-hook", "-u", "-t", target,
+			name).CombinedOutput(); err != nil {
+			return false, fmt.Errorf("unpin grid %s: %s: %v: %s",
+				session, name, err, strings.TrimSpace(string(out)))
+		}
+	}
+	if out, err := in.Command(osUser, "set-option", "-u", "-t", target,
+		"window-size").CombinedOutput(); err != nil {
+		return false, fmt.Errorf("unpin grid %s: window-size: %v: %s",
+			session, err, strings.TrimSpace(string(out)))
+	}
+	return true, nil
+}
+
 // GridPinStale reports a pin that is not the pin this build would lay down.
 //
 // Three ways that happens, and the sweep in tmux-api/repair_grid_pins.go repairs
@@ -159,9 +213,10 @@ func (in *Injector) RepinGrid(osUser, session string) error {
 //     window can never resize again.
 //   - The hooks carry no resizer at all: the same freeze by a shorter route.
 //   - The hooks predate gridHookMark's current value, so they are a working pin
-//     from a build that decided differently. Nothing about one is broken, but a
-//     pin is never reverted, so without this it would keep an old hook for the
-//     life of the session.
+//     from a build that decided differently. Nothing about one is broken, and
+//     nothing else here can see the difference — a v3 detach hook resizes and
+//     names the right session, it just never reverts — so without the mark it
+//     would keep that hook for as long as the session lives.
 //
 // `window-size manual` is required for all three: it alone is just a pin, and
 // none of the hook states above can happen without it.
@@ -354,11 +409,6 @@ func (in *Injector) gridPinned(osUser, session string) (bool, error) {
 //     paint. A hook firing on every attach, detach and resize has no business
 //     reporting anything to the person driving, so it reports nothing.
 func (in *Injector) gridHook(session string) string {
-	sock := ""
-	if in.socket != "" {
-		sock = "-L " + in.socket + " "
-	}
-	target := exactPane(session)
 	// TWO CLIENT KINDS ARE FILTERED OUT, for the same reason by different routes.
 	//
 	// `read-only` is the watcher this pin exists to ignore.
@@ -371,8 +421,9 @@ func (in *Injector) gridHook(session string) string {
 	// newest client, and the sort below picks the most recent, so without this
 	// filter it wins outright. Measured on tmux 3.4 on 2026-09-11: a pinned
 	// session sitting at 80x39 with its owner attached went to 200x49 the moment
-	// a 200x50 preload joined, and stayed there. A pin is never reverted, so
-	// every session that has ever been watched carried that exposure.
+	// a 200x50 preload joined, and stayed there. A pin stood for the life of the
+	// session then, so every session that had ever been watched carried that
+	// exposure.
 	//
 	// The status line is NOT part of the window. tmux sizes a window to the
 	// client's height MINUS its status lines, so resizing to the raw
@@ -384,14 +435,79 @@ func (in *Injector) gridHook(session string) string {
 	// #{status_lines}; #{status} yields the option's word — off, on, or a count
 	// 2..5. An unrecognised value falls back to 1, matching tmux's default,
 	// rather than reaching the arithmetic and breaking the resize entirely.
+	return fmt.Sprintf(`run-shell -b '{ : %s; %s; } >/dev/null 2>&1 || true'`,
+		gridHookMark, in.gridResizePipeline(session))
+}
+
+// gridResizePipeline is the resize itself, without the hook wrapper: it is what
+// gridHook's comment above describes, and both hooks run it. Extracted when
+// client-detached stopped being the same command as the other two, so the
+// status-line arithmetic and the two greps exist once rather than in two texts
+// free to drift.
+func (in *Injector) gridResizePipeline(session string) string {
+	sock := in.hookSocket()
+	target := exactPane(session)
 	return fmt.Sprintf(
-		`run-shell -b '{ : %s; tmux %slist-clients -t %s `+
+		`tmux %slist-clients -t %s `+
 			`-F "##{client_activity} ##{client_flags} ##{client_width} ##{client_height}" `+
 			`| grep -v read-only | grep -v ignore-size | tac | sort -s -k1,1rn | head -1 `+
 			`| while read a f w h; do `+
 			`s=$(tmux %sdisplay -p -t %s "##{status}"); `+
 			`case $s in off) n=0;; [0-9]) n=$s;; *) n=1;; esac; `+
-			`tmux %sresize-window -t %s -x $w -y $((h-n)); done; `+
+			`tmux %sresize-window -t %s -x $w -y $((h-n)); done`,
+		sock, target, sock, target, sock, target)
+}
+
+// gridDetachHook is what client-detached runs: the same resize while a watcher
+// is still here, and otherwise the revert.
+//
+// A pin earns its place only while a read-only client is attached. tmux already
+// ignores a read-only client's size on its own whenever a read-write client is
+// attached, and that skip lapses only when the last read-write client leaves —
+// which is the single case PinGrid exists for. With the last watcher gone there
+// is nothing left to protect, so the hooks come off and window-size goes back
+// to the global default.
+//
+// `#{hook_client}` is SINGLE-hashed on purpose, unlike every other format in
+// here. run-shell expands formats in its command string before running it, and
+// this is the one value that has to be resolved by that OUTER expansion: it
+// names the client the detach happened to, which is the only client in the list
+// that is on its way out. Measured on tmux 3.4 on this box 2026-09-13: the
+// format does resolve at hook time (it printed /dev/pts/66), and the detaching
+// client is ALREADY GONE from list-clients by then, so the exclusion is
+// belt-and-braces for the other ordering rather than the thing that makes today
+// correct. It costs one grep and it makes the count right either way.
+//
+// The hooks are unset BEFORE window-size, because resize-window sets
+// window-size to manual as a side effect: leaving the hooks behind would let
+// the very next attach re-pin the session, and the revert would not stick.
+// UnpinGrid does the same two steps in the same order from Go.
+//
+// Every failure lands on the safe side. A list-clients that cannot run makes
+// the substitution empty, `[ "" = 0 ]` is false, and the else branch keeps the
+// pin. An empty `#{hook_client}` excludes nothing, which keeps the pin too.
+func (in *Injector) gridDetachHook(session string) string {
+	sock := in.hookSocket()
+	target := exactPane(session)
+	return fmt.Sprintf(
+		`run-shell -b '{ : %s; c="#{hook_client}"; `+
+			`if [ "$(tmux %slist-clients -t %s -F "##{client_name} ##{client_flags}" `+
+			`| grep read-only | grep -vc "^$c ")" = 0 ]; then `+
+			`for k in %s; do tmux %sset-hook -u -t %s $k; done; `+
+			`tmux %sset-option -u -t %s window-size; `+
+			`else %s; fi; `+
 			`} >/dev/null 2>&1 || true'`,
-		gridHookMark, sock, target, sock, target, sock, target)
+		gridHookMark, sock, target, strings.Join(gridHooks, " "),
+		sock, target, sock, target, in.gridResizePipeline(session))
+}
+
+// hookSocket is the `-L <socket> ` a hook's own tmux calls need, empty for the
+// production server. A hook's shell cannot know which server invoked it, so
+// without this a test on an isolated socket would reach across to the user's
+// real one.
+func (in *Injector) hookSocket() string {
+	if in.socket == "" {
+		return ""
+	}
+	return "-L " + in.socket + " "
 }
