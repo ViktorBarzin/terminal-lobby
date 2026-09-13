@@ -610,7 +610,7 @@ unchanged until a health question comes up.
 - Analysis stays within a rolling 30 days. Long-term drift ("is the terminal
   slower than it was in spring") and alerting both remain unbuilt. The host side
   of that path already works — the devvm runs node_exporter with an active
-  textfile collector at `/var/lib/prometheus/node-exporter/` — and the cluster
+  textfile collector at `/var/lib/node_exporter/textfile` — and the cluster
   side would need a scrape target; none for the devvm appears in
   `infra/stacks/monitoring/` today.
 - Retiring the JSONL channel removes on-host raw traces. The ring buffer
@@ -633,3 +633,38 @@ unchanged until a health question comes up.
 - Rollup memory under a very long-lived tab (many days) has not been measured.
   The buffers are bounded by construction, but the bound has not been observed
   in practice.
+
+## Amendment, 2026-09-13: echo latency now reaches Prometheus and alerts
+
+Two lines above are no longer accurate, recorded here rather than edited into
+the original decision.
+
+**The Retention row said "Loki only, 30 days. No Prometheus, no alerting".**
+`perf.rollup`'s echo and input percentiles are now copied into Prometheus as
+well, by `tmux-api/perf_metrics.go`, and `DevvmSlowKeystrokes` alerts on them.
+The reason for the change is the one the Consequences section anticipated:
+picking a threshold wants the real distribution over months, and Prometheus
+keeps 26 weeks where Loki keeps 30. Nothing about the measurement itself moved.
+The quiet gate, the unmatched count and the ambiguity discard are unchanged and
+remain the reason the number is worth alerting on at all. The user label comes
+from `resolveOSUser` at the intake, never from the browser.
+
+**Gauges here are never cleared, which shapes anything built on them.**
+`telemetry.Metrics.SetGauge` has no expiry and no delete, and a browser stops
+posting the moment its tab is hidden, so the last value a user sent stays in
+`/metrics` until the process restarts. Measured 2026-09-13: one user's
+`tl_echo_latency_p95_ms` read 527 ms, identical to the millisecond, across 29
+consecutive scrapes covering 145 minutes. Every rollup carrying at least one
+usable value therefore also writes
+`tl_echo_latency_updated_timestamp_seconds`, and any alert on these gauges has
+to gate on it being recent. A second gate is worth knowing about for the same
+reason: `tl_echo_latency_samples` has a median of 1 for an active user, so a
+p95 is often a single sample.
+
+**The textfile directory named in Consequences was wrong** and is corrected
+above. node_exporter on the devvm reads `/var/lib/node_exporter/textfile`, per
+`ARGS` in `/etc/default/prometheus-node-exporter`. The path the ADR named,
+`/var/lib/prometheus/node-exporter/`, is a stale package default that still
+exists and still holds old `.prom` files, so writing there looks like it works:
+the files appear, and `node_textfile_scrape_error` stays 0 because the
+collector never reads them.
