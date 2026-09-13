@@ -50,6 +50,22 @@ const (
 	// what every consumer of OptionState already reads correctly. Design:
 	// docs/plans/2026-09-04-background-work-session-state-design.md.
 	OptionBackground = "@claude_bg"
+	// OptionAsk holds the tool_use_id of a BLOCKING DIALOG that is on screen —
+	// an AskUserQuestion's question menu, or an ExitPlanMode's plan approval —
+	// and is unset when none is. Written by the same hook script as
+	// OptionState, on the PreToolUse that opens the dialog and the PostToolUse
+	// that closes it.
+	//
+	// While it is set the script resolves every stamp to StateAwaiting, which
+	// is what keeps the reading true for as long as the dialog stands. The
+	// Notification that used to be the only signal is an EDGE, and a session
+	// measured on 2026-09-12 went awaiting at 23:09:49 and back to running at
+	// 23:51:48 with the dialog still drawn, where it stayed for eleven hours.
+	// It is also six seconds late, which the PreToolUse is not.
+	//
+	// Nothing outside the hook script and Cancel needs to read it: the state
+	// it produces is already OptionState.
+	OptionAsk = "@claude_ask"
 	// OptionOrigin says what created the session: "user" when a person asked
 	// for it, absent when nothing said. terminal-lobby's tmux-api reads it to
 	// decide whether a session belongs in somebody's list or in the System
@@ -264,6 +280,14 @@ func (in *Injector) Cancel(osUser, session string) error {
 	}
 	if in.State(osUser, session) == "" {
 		return nil
+	}
+	// A C-c takes a blocking dialog down, and the hook script holds the
+	// session at StateAwaiting for as long as OptionAsk says one is up
+	// (ADR-0001). Left standing, it would turn the next stamp of a session
+	// that is working again back into awaiting. Unset before the state is
+	// written, so the two cannot be read in a contradictory order.
+	if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), OptionAsk).Run(); err != nil {
+		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionAsk, err)
 	}
 	state := StateDone
 	if bg, _ := in.Option(osUser, session, OptionBackground); strings.TrimSpace(bg) != "" {

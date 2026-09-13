@@ -23,6 +23,12 @@ import (
 // Recorded rather than hand-written so a payload-shape change fails here instead
 // of reaching the box. The pair matters: the launch records `w7t7pnsug` and the
 // Stop taken while that same run was live lists it back.
+//
+// The five dialog ones — pre_/post_askuserquestion, pre_/post_exitplanmode and
+// notification_permission — were captured the same way on 2.1.269, 2026-09-13,
+// by putting each dialog up in a real tmux session and answering it. Each Pre
+// and Post pair carries one tool_use_id, which is what the marker they drive
+// records.
 
 // hookScript is the script under test, resolved from this package's directory.
 func hookScript(t *testing.T) string {
@@ -707,5 +713,198 @@ func TestStopAdoptsWorkNoLaunchRecorded(t *testing.T) {
 				t.Errorf("%s = %q, want %q", OptionState, got, StateRunning)
 			}
 		})
+	}
+}
+
+// The defect the ask marker exists to fix, measured on a real session.
+//
+// `server-io-bottleneck-solutions` put an AskUserQuestion up at 23:09:42 on
+// 2026-09-12 and its Notification promoted the session to awaiting at 23:09:49.
+// At 23:51:48 a hook stamped it back to running, and there it stayed for eleven
+// hours with the dialog still drawn on the pane and nobody working. The
+// Notification is an EDGE: any later stamp overwrites it, and nothing until the
+// next human prompt corrects the reading.
+//
+// So a drawn dialog is a LEVEL now. Every event that would otherwise say
+// running or done says awaiting while one stands, which is what this pins.
+func TestABlockingDialogOutranksEveryOtherStamp(t *testing.T) {
+	for _, tc := range []struct{ name, pre, mode, fixture string }{
+		{"ask then stop", "pre_askuserquestion.json", "done", "stop_tasks_finished.json"},
+		{"ask then busy stop", "pre_askuserquestion.json", "done", "stop.json"},
+		{"ask then teammate", "pre_askuserquestion.json", "running", "subagentstart_teammate.json"},
+		{"plan then stop", "pre_exitplanmode.json", "done", "stop_tasks_finished.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+
+			e.fire(t, "running", tc.pre)
+			if got := e.opt(t, OptionState); got != StateAwaiting {
+				t.Fatalf("%s with the dialog drawn = %q, want %q", OptionState, got, StateAwaiting)
+			}
+
+			e.fire(t, tc.mode, tc.fixture)
+
+			if got := e.opt(t, OptionState); got != StateAwaiting {
+				t.Errorf("%s after %s = %q, want %q — the dialog is still on screen",
+					OptionState, tc.fixture, got, StateAwaiting)
+			}
+		})
+	}
+}
+
+// The PreToolUse is what stamps, six seconds before the Notification would.
+// Measured on 2.1.269, 2026-09-13: PreToolUse 10:31:54, dialog drawn 10:31:55,
+// Notification 10:32:00. Through that window the sidebar read Working over a
+// terminal that was already blocked on a person.
+func TestAQuestionIsAwaitingWithoutWaitingForTheNotification(t *testing.T) {
+	for _, tc := range []struct{ name, fixture, id string }{
+		{"ask", "pre_askuserquestion.json", "toolu_01UYQNYV2A3s5ASah1mhZtPu"},
+		{"plan", "pre_exitplanmode.json", "toolu_01Kt1rrjS5QojfBshS1WD6n4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+
+			e.fire(t, "running", tc.fixture)
+
+			if got := e.opt(t, OptionState); got != StateAwaiting {
+				t.Errorf("%s = %q, want %q", OptionState, got, StateAwaiting)
+			}
+			if got := e.opt(t, OptionAsk); got != tc.id {
+				t.Errorf("%s = %q, want the drawn call's id %q", OptionAsk, got, tc.id)
+			}
+		})
+	}
+}
+
+// Answering closes the dialog and the turn carries on. The PostToolUse that
+// reports it carries the same tool_use_id as the PreToolUse — measured on
+// 2.1.269, 2026-09-13, for both tools.
+func TestAnsweringReleasesTheSession(t *testing.T) {
+	for _, tc := range []struct{ name, pre, post string }{
+		{"ask", "pre_askuserquestion.json", "post_askuserquestion.json"},
+		{"plan", "pre_exitplanmode.json", "post_exitplanmode.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+			e.fire(t, "running", tc.pre)
+
+			e.fire(t, "running", tc.post)
+
+			if got := e.opt(t, OptionAsk); got != "" {
+				t.Errorf("%s after the answer = %q, want unset", OptionAsk, got)
+			}
+			if got := e.opt(t, OptionState); got != StateRunning {
+				t.Errorf("%s after the answer = %q, want %q", OptionState, got, StateRunning)
+			}
+		})
+	}
+}
+
+// Claude Code takes a live dialog DOWN when something else claims the turn, and
+// re-asks: the first call never gets a tool_result, so its PostToolUse never
+// arrives. Nothing reports the takedown, so the marker is cleared by whatever
+// caused it — a prompt, or the next tool call, both of which mean no dialog is
+// on screen. A marker nothing could clear would hold a working session amber.
+func TestAnAbandonedDialogIsNotHeldForever(t *testing.T) {
+	for _, tc := range []struct{ name, mode, fixture, want string }{
+		{"prompt", "running", "userprompt_human.json", StateRunning},
+		{"next tool", "running", "pre_main.json", StateRunning},
+		{"task note", "running", "userprompt_notification_bash.json", StateRunning},
+		{"restart", "done", "sessionstart.json", StateDone},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+			e.fire(t, "running", "pre_askuserquestion.json")
+
+			e.fire(t, tc.mode, tc.fixture)
+
+			if got := e.opt(t, OptionAsk); got != "" {
+				t.Errorf("%s = %q, want unset", OptionAsk, got)
+			}
+			if got := e.opt(t, OptionState); got != tc.want {
+				t.Errorf("%s = %q, want %q", OptionState, got, tc.want)
+			}
+		})
+	}
+}
+
+// SessionEnd unsets the marker with the rest, so a name reused by a later
+// session never inherits a dialog that died with the old one.
+func TestSessionEndClearsTheAskMarker(t *testing.T) {
+	e := newHookEnv(t)
+	e.set(t, OptionAsk, "toolu_x")
+
+	e.fire(t, "clear", "stop.json")
+
+	if got := e.opt(t, OptionAsk); got != "" {
+		t.Fatalf("%s after SessionEnd = %q, want unset", OptionAsk, got)
+	}
+}
+
+// A subagent cannot draw a dialog on the session's pane, and its tool calls
+// reach these same hooks (measured 2026-09-04). One must not be able to clear
+// the marker the main thread's question set.
+func TestASubagentsToolCallsLeaveTheDialogAlone(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "pre_askuserquestion.json")
+
+	e.fire(t, "running", "pre_subagent.json")
+	e.fire(t, "running", "post_bash_launch_by_subagent.json")
+
+	if got := e.opt(t, OptionAsk); got == "" {
+		t.Errorf("%s = unset, want the dialog still recorded", OptionAsk)
+	}
+	if got := e.opt(t, OptionState); got != StateAwaiting {
+		t.Errorf("%s = %q, want %q", OptionState, got, StateAwaiting)
+	}
+}
+
+// A dialog's own Notification is a `permission_prompt` for both tools — the
+// question says "Claude needs your permission", the plan says "Claude Code
+// needs your approval for the plan" — so it promotes whatever the session was
+// doing, background work included. That is the branch the marker now makes
+// redundant rather than replaces: a box whose managed-settings wires
+// Notification and not PreToolUse keeps the old behaviour.
+func TestADialogsNotificationPromotesPastBackgroundWork(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "post_agent_launch.json")
+
+	e.fire(t, "notify", "notification_permission.json")
+
+	if got := e.opt(t, OptionState); got != StateAwaiting {
+		t.Fatalf("%s after a permission notification = %q, want %q", OptionState, got, StateAwaiting)
+	}
+}
+
+// An interrupt takes the dialog down, and Cancel owns the transition an
+// interrupt implies (ADR-0001). Left standing, the marker would turn the next
+// stamp of a session that is working again back into awaiting.
+func TestCancelClearsTheAskMarker(t *testing.T) {
+	in, osUser, sock := scratchSession(t)
+	for _, o := range [][2]string{{OptionState, StateAwaiting}, {OptionAsk, "toolu_x"}} {
+		if err := exec.Command("tmux", "-L", sock, "set-option", "-t", "demo", o[0], o[1]).Run(); err != nil {
+			t.Fatalf("seed %s: %v", o[0], err)
+		}
+	}
+
+	if err := in.Cancel(osUser, "demo"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+
+	out, err := exec.Command("tmux", "-L", sock, "show-option", "-qv", "-t", "demo", OptionAsk).Output()
+	if err != nil {
+		t.Fatalf("show-option: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != "" {
+		t.Fatalf("%s after Cancel = %q, want unset", OptionAsk, got)
+	}
+	if got := in.State(osUser, "demo"); got != StateDone {
+		t.Fatalf("%s after Cancel = %q, want %q", OptionState, got, StateDone)
 	}
 }
