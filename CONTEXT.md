@@ -648,6 +648,10 @@ report while it is pending — a permission prompt, or an `AskUserQuestion`
 menu. The text view mirrors it as a card; `session-events` answers it by
 injecting keys into the pty (ADR-0010). Distinct from **Session state**
 *awaiting input*, which is the sidebar's coarser signal that some prompt exists.
+The two kinds the hooks can see as they are drawn — an `AskUserQuestion` and an
+`ExitPlanMode` — hold the session at *awaiting input* for as long as the menu
+stands, rather than for the instant the notification about it arrives
+(ADR-0001).
 
 **Drawn question**:
 The one question of an `AskUserQuestion` call that the pane is showing. A
