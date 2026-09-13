@@ -489,7 +489,11 @@ src/
     watchmode.ts         Per-session/per-device Watch mode (attach read-only).
                          A lens (acting as another user) defaults to watching
                          and keeps its choices under the target's own keys, so
-                         driving THEIR `code` decides nothing about yours
+                         driving THEIR `code` decides nothing about yours.
+                         Toggling it RECONNECTS the terminal, because the mode
+                         is the socket's: tmux holds a client read-only for as
+                         long as it lives (TerminalNative.tsx, "taking control
+                         means a new socket")
     workspace-tree.ts    PURE geometry for a Workspace: the n-ary tree of rows
                          and columns, and toRects(), which turns it into one
                          rectangle per tile. Splitting, moving, closing and
