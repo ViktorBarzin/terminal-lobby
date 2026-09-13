@@ -54,6 +54,7 @@ import { createSignal } from "solid-js";
 import { FONT_SIZE_KEY, PREFS_DIRTY_KEY, PREFS_KEY } from "../src/store/prefs";
 import { FONT_READOUT_HIDE_MS } from "../src/terminal/font";
 import { toasts, type PushToast } from "../src/store/toast";
+import { buildTerminalArgs } from "../src/lib/terminal-url";
 import type { TerminalReport } from "../src/diagnostics/status";
 import { HELD_ENTER_MESSAGE, MIRROR_FIELD_ATTRIBUTES } from "../src/terminal/mirror";
 
@@ -5883,5 +5884,164 @@ describe("a reattach drops the last program's modes", () => {
     await settle();
 
     expect(writes(m)).toEqual([DETACHED_MODE_RESET, "hi"]);
+  });
+});
+
+/**
+ * TAKING CONTROL OF A SESSION YOU JOINED AS A VIEWER.
+ *
+ * The attach mode is baked into the socket: it rides arg5 of the ttyd query,
+ * `tmux-attach.sh` turns `ro` into `attach -r`, and tmux holds that client
+ * read-only and ignore-size for as long as it lives. So the Watch toggle
+ * changing `props.args` describes the NEXT connection, and on its own leaves
+ * the live one exactly as it was.
+ *
+ * WHAT THAT COST, measured against the deployed build (8d772c0) on 2026-09-13,
+ * on a session a 60x20 client was holding open:
+ *
+ *   opened the session      149x47 attached,ignore-size,read-only   win 60x19
+ *   tapped "take control"   unchanged                               win 60x19
+ *   Text view and back      unchanged                               win 149x46
+ *
+ * The person is told they are driving and tmux has never heard of it:
+ * keystrokes are dropped server-side, and the window keeps the phone's 60
+ * columns, because a read-only ignore-size client is what `PinGrid`'s hook
+ * filters out and what tmux skips when it sizes a window. Only the grid claim
+ * on the view switch moved anything, and that one goes over HTTP rather than
+ * down the socket — which is why Text-and-back was the workaround.
+ *
+ * So a mode change reconnects, and the new client carries the mode the person
+ * asked for. The claim then rides `onAttach` like any other reconnect.
+ */
+describe("the attach mode changing under a live socket", () => {
+  interface Toggling {
+    setWatch: (v: boolean) => void;
+    setPreload: (v: boolean) => void;
+    socketCount: () => number;
+    lastUrl: () => string;
+    accept: () => Promise<void>;
+    grids: string[];
+  }
+
+  /** A mount whose attach mode moves under it, the way SessionView's does. */
+  async function mountToggling(
+    opts: { watch?: boolean; preload?: boolean; onScreen?: boolean; active?: boolean } = {},
+  ): Promise<Toggling> {
+    const [watch, setWatch] = createSignal(opts.watch === true);
+    const [preload, setPreload] = createSignal(opts.preload === true);
+    const grids: string[] = [];
+    render(() => (
+      <TerminalNative
+        args={buildTerminalArgs("qa-native", { watch: watch(), preload: preload() })}
+        watch={watch}
+        ownsBridges={opts.onScreen !== false}
+        active={opts.active !== false}
+        onGrid={(cols, rows) => void grids.push(`${cols}x${rows}`)}
+      />
+    ));
+    await settle();
+    const accept = async (): Promise<void> => {
+      const s = sockets[sockets.length - 1];
+      if (!s) throw new Error("no socket was opened");
+      s.accept();
+      await settle();
+    };
+    return {
+      setWatch,
+      setPreload,
+      socketCount: () => sockets.length,
+      lastUrl: () => sockets[sockets.length - 1]?.url ?? "",
+      accept,
+      grids,
+    };
+  }
+
+  /** arg5, the attach mode, as it reached ttyd. */
+  const mode = (url: string): string => new URL(url, "ws://x").searchParams.getAll("arg")[4] ?? "";
+
+  it("re-attaches read-write when a viewer takes control", async () => {
+    const m = await mountToggling({ watch: true });
+    await m.accept();
+    expect(mode(m.lastUrl())).toBe("ro");
+    expect(m.socketCount()).toBe(1);
+
+    m.setWatch(false);
+    await settle();
+
+    expect(m.socketCount(), "taking control opens a new socket").toBe(2);
+    expect(mode(m.lastUrl()), "and it attaches read-write").toBe("");
+  });
+
+  /**
+   * AND SAYS WHAT SIZE IT IS, which is the half Viktor reported. The new
+   * client is the first one this device has that tmux will let move the
+   * window, so the claim on its `onAttach` is what puts the session back at
+   * this desktop's width instead of the phone's.
+   */
+  it("claims the grid once the read-write client is attached", async () => {
+    const m = await mountToggling({ watch: true });
+    await m.accept();
+    m.grids.length = 0; // a watching mount claims nothing: SessionView refuses it
+
+    m.setWatch(false);
+    await settle();
+    expect(m.socketCount(), "the claim has to ride a NEW socket").toBe(2);
+    await m.accept();
+
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /**
+   * THE OTHER DIRECTION MATTERS AS MUCH. A device that switches to watching
+   * keeps its read-write client until it reconnects, and a pinned window
+   * follows the most recently used read-write client — so the "viewer" would
+   * go on owning the window it is only supposed to be looking at.
+   */
+  it("re-attaches read-only when a driver switches to watching", async () => {
+    const m = await mountToggling();
+    await m.accept();
+    expect(mode(m.lastUrl())).toBe("");
+
+    m.setWatch(true);
+    await settle();
+
+    expect(m.socketCount()).toBe(2);
+    expect(mode(m.lastUrl())).toBe("ro");
+  });
+
+  /**
+   * A PROMOTED PRELOAD KEEPS ITS SOCKET, and that is the whole point of the
+   * hover: the click is fast because the connection is already up (39 ms
+   * against a 779 ms cold open). `pre` is cleared server-side instead, by the
+   * grid claim — `tmux-api/grid_size.go` turns ignore-size off for the client
+   * that asked to be the size. Reconnecting here would spend the preload to
+   * buy nothing.
+   */
+  it("keeps the socket when a preload is promoted", async () => {
+    const m = await mountToggling({ preload: true, onScreen: false, active: false });
+    await m.accept();
+    expect(mode(m.lastUrl())).toBe("pre");
+
+    m.setPreload(false);
+    await settle();
+
+    expect(m.socketCount(), "the warm socket is the point of the preload").toBe(1);
+  });
+
+  /**
+   * A HIDDEN MOUNT IS LEFT ALONE. Every session the lobby has opened stays
+   * mounted, and one 30 s off screen has parked its socket to spare the radio
+   * (terminal/battery.ts). Reconnecting one of those would wake it for a mode
+   * nobody is looking at, and the next connect reads the args live anyway, so
+   * the mode is right by the time it comes back.
+   */
+  it("leaves a hidden mount's socket alone", async () => {
+    const m = await mountToggling({ watch: true, onScreen: false, active: false });
+    await m.accept();
+
+    m.setWatch(false);
+    await settle();
+
+    expect(m.socketCount()).toBe(1);
   });
 });
