@@ -151,10 +151,18 @@ let inFlight = false;
  */
 let tileClaim: (() => boolean) | null = null;
 
-/** Hand over the tiles' answer, or withdraw it with null. `dnd/tiles.ts` is the
- *  only caller; nothing else in the app knows what a tile is. */
-export function setTileDropClaim(claimed: (() => boolean) | null): void {
+/** Whether this drag ever reached the workspace, which tells a CANCELLED tile
+ *  drag from an ordinary reorder. Travels the same way, for the same reason. */
+let tileVisited: (() => boolean) | null = null;
+
+/** Hand over the tiles' answers, or withdraw them with null. `dnd/tiles.ts` is
+ *  the only caller; nothing else in the app knows what a tile is. */
+export function setTileDropClaim(
+  claimed: (() => boolean) | null,
+  visited: (() => boolean) | null = null,
+): void {
   tileClaim = claimed;
+  tileVisited = visited;
 }
 
 /**
@@ -279,6 +287,14 @@ export function attachSessionList(el: HTMLElement, deps: SessionListDeps): void 
             // tiles write their claim on every pointer move, so it already holds by
             // the time either end runs — `dnd/tiles.ts` sets that out at length.
             if (tileClaim?.()) return done();
+            // A DRAG THAT REACHED THE WORKSPACE AND CAME BACK IS A CANCEL, not
+            // a reorder. `done()` clears the live order, so the list falls
+            // straight back to the store's own, which this never wrote to —
+            // the card returns to the row it started in and no PUT goes out.
+            // Without this the library's live reordering became the outcome:
+            // carrying a card out to a pane and back moved it in the sidebar,
+            // which is the opposite of changing your mind.
+            if (tileVisited?.()) return done();
             const name = String(draggedNode.data.value);
             void landSession(name, parent.el, values as string[], deps).finally(done);
           },
