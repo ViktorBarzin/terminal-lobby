@@ -144,9 +144,13 @@ without moving the Grid, and without moving **Last driven**. Three states — wa
 the session bar or a sidebar card's `Attach as` menu. Unset resolves
 automatically, joining as a viewer when the session already has a read-write
 client (**driven**); that decision is taken once, when a view takes the session
-on. Per (session, device), remembered in the browser and never sent to the
-server as state — the desktop keeps driving while the phone
-watches the same session. Applies to your own sessions as well as shared ones;
+on. Changing it RECONNECTS the terminal, unlike a **Preload attach** promotion:
+the mode is the socket's, since tmux holds a client read-only for as long as it
+lives, so a live connection cannot be told about the change and has to be
+replaced (2026-09-13; between 2026-09-05 and then it was not, and taking
+control moved the button alone). Per (session, device), remembered in the
+browser and never sent to the server as state — the desktop keeps driving while
+the phone watches the same session. Applies to your own sessions as well as shared ones;
 owning a session is what authorizes watching it. A client may only ever request
 **at or below** its Attach mode, so asking to watch can never grant access. In a
 **Lens** it is **locked** on: the choice is gone, the controls that type are
