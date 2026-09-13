@@ -51,13 +51,11 @@ export const NEW_SESSION_DRAFT_KEY = ":new";
 /**
  * The stand-in path a held file wears until it has been uploaded.
  *
- * The tray is keyed by path — it is what de-duplicates a chip, what the × on a
- * chip removes, and what a thumbnail is fetched from — so a file waiting for a
- * session still needs one. It deliberately cannot be mistaken for a real path:
- * every path the store or a /tmp transfer produces is absolute, so nothing that
- * resolves one will resolve this, and `contentUrlFor` answers null for it,
- * which is what draws the chip as an icon and a name rather than a broken
- * image.
+ * An attachment is keyed by path — it is what de-duplicates one, and what the
+ * send looks up — so a file waiting for a session still needs one. It
+ * deliberately cannot be mistaken for a real path: every path the store or a
+ * /tmp transfer produces is absolute, so nothing that resolves one will
+ * resolve this.
  */
 const HELD_PATH_PREFIX = "held:";
 
@@ -212,7 +210,8 @@ export const NewSessionComposer: Component<{
   // pressed, and writing into a bucket for a session that may never be created
   // would leave a file behind every abandoned draft. They are memory-only: the
   // typed text persists through the draft store, a File cannot, so a reloaded
-  // tab shows an empty tray with the prose still in it.
+  // tab keeps the prose and loses the chips — `anchorRestored` cuts the tokens
+  // they left behind out of the restored text.
   const held = new Map<string, File>();
   let heldSeq = 0;
   const holdFiles = (files: File[]): Promise<DraftAttachment[]> => {
@@ -245,20 +244,20 @@ export const NewSessionComposer: Component<{
   //
   // `composerOwns` is unconditionally true: there is no pty on this screen and
   // no session bucket to upload into, so both intakes route to `holdFiles` —
-  // the memory-only tray the Attach button fills. `session` and `sendToPty`
+  // the memory-only hold the Attach button fills. `session` and `sendToPty`
   // satisfy the interface and are never reached.
-  let tray: PromptFieldSinks | undefined;
+  let sinks: PromptFieldSinks | undefined;
   const image = installImageClipboard({
     session: () => "",
     sendToPty: () => false,
-    // A shell is named, not prompted, so the box has no tray to put a file in.
-    // Declining leaves the paste to the browser, which is what a name box
+    // A shell is named, not prompted, so the box has no message to put a file
+    // in. Declining leaves the paste to the browser, which is what a name box
     // wants; swallowing it would make the gesture look handled and lose it.
     active: () => !naming(),
     composerOwns: () => true,
     onComposerFiles: async (files) => {
       const chips = await holdFiles(files);
-      if (chips.length) tray?.add(chips);
+      if (chips.length) sinks?.add(chips);
     },
   });
   onCleanup(image.dispose);
@@ -284,7 +283,7 @@ export const NewSessionComposer: Component<{
    * it: everything it needs is read out of props first, and it reports through
    * the toaster rather than back into a field that is no longer on screen.
    */
-  const submit = async (text: string, tray: readonly DraftAttachment[]): Promise<boolean> => {
+  const submit = async (text: string, attached: readonly DraftAttachment[]): Promise<boolean> => {
     handedOff = true; // and never warmed again: the create's own layout write re-runs the effect
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
@@ -300,7 +299,7 @@ export const NewSessionComposer: Component<{
     // Paired, not two independent lists: the token is how the send knows where
     // in the text this file's path goes, and a chip whose File has gone missing
     // must not shift the rest of them onto the wrong tokens.
-    const picked = tray
+    const picked = attached
       .map((a) => ({ file: held.get(a.path), token: a.token }))
       .filter((p): p is { file: File; token: string | undefined } => p.file !== undefined);
     held.clear();
@@ -403,9 +402,9 @@ export const NewSessionComposer: Component<{
             register={(api) => {
               registerFocus(api.focus);
               // Where a paste or a drop puts its chips: both land outside this
-              // component, so the tray has to be handed over rather than
+              // component, so the message has to be handed over rather than
               // reached into.
-              tray = api;
+              sinks = api;
             }}
             leftExtra={controls()}
           />

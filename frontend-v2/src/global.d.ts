@@ -87,9 +87,9 @@ interface Window {
   // posture and the gestures switch are still read at mount, each for its own
   // reason, both recorded where they are read.
   __tlPrefsLive?: (prefs: { fontSize: number }) => boolean;
-  // Set by the mounted SessionView — attach stored files to the TEXT view's
-  // composer tray from outside it (design 2026-08-17 decision 14). The 🖼 gallery
-  // is a lobby overlay and the tray belongs to the composer, so the two have no
+  // Set by the mounted SessionView — put stored files into the TEXT view's
+  // message from outside it (design 2026-08-17 decision 14). The 🖼 gallery is a
+  // lobby overlay and the message belongs to the composer, so the two have no
   // handle on each other; same bridge pattern as __tlDoPaste. Returns false when
   // no text-view composer is mounted to receive them.
   __tlAttachToComposer?: (

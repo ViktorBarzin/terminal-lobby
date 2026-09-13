@@ -1120,8 +1120,8 @@ export const SessionView: Component<{
   };
   ownWhile(onScreen, "__tlDoPaste", doPaste);
 
-  // The 🖼 gallery is a lobby overlay and the tray belongs to the composer, so
-  // neither has a handle on the other. Same bridge the paste routine uses.
+  // The 🖼 gallery is a lobby overlay and the message belongs to the composer,
+  // so neither has a handle on the other. Same bridge the paste routine uses.
   const attachToComposer = (items: DraftAttachment[]): boolean => {
     if (!composer || watch()) return false;
     if (mode() !== "text") setMode("text");

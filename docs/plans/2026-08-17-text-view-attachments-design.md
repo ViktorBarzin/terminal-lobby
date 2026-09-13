@@ -301,6 +301,32 @@ would put the divider back; the events still flow, so the chip is unaffected.
 (That row belongs to the text-view design of 2026-08-16, not to attachments —
 recorded here because this is where the feedback landed.)
 
+## Revised 2026-09-13: the file goes where you put it
+
+Decisions 1 and 9 have been replaced. The tray above the field is gone, and a
+path is no longer written at the front of the message.
+
+Viktor, on using it: "i want the image icon to be inline, where my message is.
+it should also be pasted in the prompt exactly where i paste it. today i think
+we put it in the front." Both halves are the same complaint. A screenshot
+pasted half-way through a sentence is about that half of the sentence, and the
+tray had no way to say so — it held the file beside the message and the send
+put every path above the prose.
+
+What replaced it: an attachment is written into the text as a token where the
+caret is — `[img]`, `[img 2]`, `[img: chart.png]`, `[file: report.pdf]` — and
+`composeMessage` swaps each token for its absolute path in place. Deleting the
+token deletes the attachment, and Backspace or Delete beside one takes the
+whole token in a single press. A `.tl-composer-mirror` layer behind the
+textarea paints a pill behind each token: a textarea holds characters and
+nothing else, so the chip cannot be an element inside it, and the token is
+written to read correctly on its own if that layer is ever wrong.
+
+Decision 2 is untouched and is what makes this coherent end to end — the
+timeline already rendered a path wherever it sat, so a screenshot sent
+mid-sentence appears mid-sentence in the bubble. An attachment with no token
+still takes decision 9's shape, which is how a draft written before this lands.
+
 ## Open questions
 
 - Whether a doc large enough to be refused from the store should still be
