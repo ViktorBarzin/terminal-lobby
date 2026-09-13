@@ -124,9 +124,10 @@ export interface PreloadStore {
    * UNLIKE `hoverLeave`, THIS DROPS A LANDED PRELOAD TOO, and both callers
    * need that. A socket reports `closed` after it reported `open` whenever it
    * drops later, and the read-only check is a reactive effect whose answer can
-   * change after the terminal has drawn — a read-only attach calls PinGrid and
-   * `grid.go` never reverts a pin, so "give the slot back" has to work at any
-   * point in its life, not only while the attach is in flight.
+   * change after the terminal has drawn — a read-only attach calls PinGrid,
+   * and the pin stands for as long as that client stays attached, so "give
+   * the slot back" has to work at any point in its life, not only while the
+   * attach is in flight.
    */
   markFailed(sel: Selected): void;
   /**

@@ -352,8 +352,9 @@ describe("buildTerminalArgs — arg5 is drive | watch | preload", () => {
   // Watch and preload are the same slot answering the same question, so asking
   // for both is a bug in the caller. It throws rather than picking a winner:
   // silently demoting a preload to a watch would attach read-only, which calls
-  // PinGrid, and grid.go never reverts a pin — so every card the pointer
-  // crossed would keep a grid pin for life (ADR-0026). A loud error on the
+  // PinGrid, and grid.go holds that pin for as long as the client stays
+  // attached — so every card the pointer crossed would keep a grid pin for
+  // as long as its hidden mount lived (ADR-0026). A loud error on the
   // first hover is cheaper than that, and it cannot be mistaken for working.
   it.each([
     { label: "on its own", opts: { watch: true, preload: true } },

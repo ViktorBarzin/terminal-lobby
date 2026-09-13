@@ -629,9 +629,10 @@ export const SessionCard: Component<{
    * cannot see from where it sits.
    *
    *   - THE POINTER TYPE, above. A tap is not a hover.
-   *   - WATCH MODE. A read-only attach calls `PinGrid`, and `grid.go` never
-   *     reverts a pin, so a hover that resolved to a watch would change the
-   *     sizing of every card the pointer crossed, for the life of the session.
+   *   - WATCH MODE. A read-only attach calls `PinGrid`, and the pin stands
+   *     for as long as that client stays attached, so a hover that resolved
+   *     to a watch would change the sizing of every card the pointer
+   *     crossed, for as long as its hidden mount lived.
    *     That is the outcome ADR-0026 exists to avoid, and it is also why
    *     `terminal-url.ts` throws when asked for both: they share arg5.
    *
@@ -672,9 +673,9 @@ export const SessionCard: Component<{
    * store re-checks only what it can see from where it sits — pointer type,
    * ownership, already open — so without this the dwell fires on a session
    * this device would now join as a viewer, and a read-only attach calls
-   * PinGrid: `grid.go` never reverts a pin, so a row the pointer merely
-   * crossed would keep one device's window size for the life of the session
-   * (ADR-0026).
+   * PinGrid: the pin stands for as long as that client stays attached, so a
+   * row the pointer merely crossed would keep one device's window size for
+   * as long as its hidden mount lived (ADR-0026).
    *
    * `hoverLeave` is the whole retraction: it cancels this card's dwell and
    * drops its slot while the attach is still in flight. A LANDED preload stays,

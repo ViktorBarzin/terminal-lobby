@@ -267,10 +267,10 @@ describe("hovering a session card", () => {
     expect(rec.calls).toEqual(["leave /alpha"]);
   });
 
-  // A read-only attach calls PinGrid, and tmux-api/grid.go never reverts a pin
-  // — so preloading a session this device would join as a viewer would fix its
-  // window size for the life of the session, which is the outcome ADR-0026
-  // exists to avoid. The card is the first of the two refusals; SessionView's
+  // A read-only attach calls PinGrid, and tmux-api/grid.go holds that pin for
+  // as long as the client stays attached — so preloading a session this device
+  // would join as a viewer would fix its window size for as long as the hidden
+  // mount lived, which is the outcome ADR-0026 exists to avoid. The card is the first of the two refusals; SessionView's
   // is the second (test/preload.attach.test.tsx).
   it("does not preload a session it would open watching", async () => {
     const rec = recorder();

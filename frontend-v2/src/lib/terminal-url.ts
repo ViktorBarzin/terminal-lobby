@@ -92,8 +92,9 @@ export function buildTerminalArgs(name: string, opts: TerminalUrlOpts = {}): str
   if (opts.watch && opts.preload) {
     // One slot, one answer. Picking a winner here would be worse than failing:
     // a preload demoted to a watch attaches read-only, which calls PinGrid, and
-    // grid.go never reverts a pin — so every card the pointer crossed would
-    // keep a grid pin for life, which is the outcome ADR-0026 exists to avoid.
+    // grid.go holds that pin for as long as the client stays attached — so
+    // every card the pointer crossed would keep a grid pin for as long as its
+    // hidden mount lived, which is the outcome ADR-0026 exists to avoid.
     // A promoted watch would be the same mistake pointing the other way, at a
     // client that asked for less access than it got. So neither: the caller
     // hears about it on the first hover, in development, out loud.

@@ -1433,8 +1433,13 @@ export const TerminalNative: Component<{
        * A different statement from `attachment.resize()`, which sets this ttyd
        * client's pty and stops there. tmux sizes a window from its clients, and
        * a session the lobby has pinned (sessionio.PinGrid, laid down by any
-       * read-only attach and never reverted) only re-reads them on a client
-       * attaching, detaching or resizing. None of those happens when a phone
+       * read-only attach and held for the life of the watch) only re-reads them
+       * on a client attaching, detaching or resizing. A pinned session
+       * therefore means a watcher is attached RIGHT NOW — since 2026-09-13 the
+       * client-detached hook reverts the pin when the last read-only client
+       * leaves — and that is what decides which way tmux-api claims the window:
+       * resize-window while pinned, switch-client while not
+       * (tmux-api/grid_size.go). None of those happens when a phone
        * joins a session a desktop is reading, or when the lobby switches back to
        * a session it kept mounted — so the window can be a size no visible
        * client has, and stay there. This is the sentence that fixes it.

@@ -396,13 +396,15 @@ export const SessionView: Component<{
    *
    * A WATCH IS NOT A PRELOAD AND CANNOT BE MADE INTO ONE. Both ride arg5,
    * `terminalFrameArgs` throws on the pair, and a read-only attach calls
-   * PinGrid, which `grid.go` never reverts. The card declines to preload a
-   * session it would open watching, and `driven` can still flip inside the
-   * 250 ms dwell — so a preload whose join resolves read-only attaches NOTHING
-   * and reports itself failed, which drops the slot. Clicking the card then
-   * opens it the ordinary read-only way, one mount later. Sending `ro` from
-   * the hidden mount instead would pin the window of a session the pointer
-   * merely crossed, for the life of that session.
+   * PinGrid, which `grid.go` holds for as long as that read-only client stays
+   * attached. The card declines to preload a session it would open watching,
+   * and `driven` can still flip inside the 250 ms dwell — so a preload whose
+   * join resolves read-only attaches NOTHING and reports itself failed, which
+   * drops the slot. Clicking the card then opens it the ordinary read-only
+   * way, one mount later. Sending `ro` from the hidden mount instead would pin
+   * the window of a session the pointer merely crossed, and a LANDED preload
+   * holds its client until the tab drops it, so that pin outlives the hover by
+   * as long as the mount does.
    */
   const preloadAttach = untrack(() => preloading());
 
@@ -684,8 +686,9 @@ export const SessionView: Component<{
    * preload store re-checks only what it can see from where it sits — pointer
    * type, ownership, already open. Neither closes the 250 ms in between, and
    * the lobby poll lands `driven: true` inside it often enough to matter. A
-   * read-only attach calls PinGrid and `grid.go` never reverts a pin, so the
-   * one thing this must not do is send `ro` anyway.
+   * read-only attach calls PinGrid, and the pin stands for as long as that
+   * client stays attached — which for a landed preload is until the tab drops
+   * the mount — so the one thing this must not do is send `ro` anyway.
    *
    * `failed` is the store's word for "this attach will not happen", and it
    * drops the slot rather than leaving a mount waiting out the 60 s TTL. The

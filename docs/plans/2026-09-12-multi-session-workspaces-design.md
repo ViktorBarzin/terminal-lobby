@@ -317,12 +317,22 @@ a tile is a mode to get stuck in.
 
 ### Watching tiles
 
-A tile attached read-only carries the existing watch indicator in its header,
-never calls `claimGrid`, and renders the session at whatever size its drivers
-gave it, centred with dead space around it where the tile does not match. A
-read-only client taking the size is the one thing the pinning exists to stop,
-and the server cannot tell two devices of one person apart — the caller
-declining is what keeps that promise.
+A tile attached read-only carries the existing watch indicator in its header
+and never calls `claimGrid`. A read-only client taking the size is the one
+thing the pinning exists to stop, and the caller declining is what keeps that
+promise.
+
+Two clauses of this paragraph were superseded on 2026-09-13, and the rest
+stands. It also said the tile renders the session at whatever size its
+drivers gave it, centred with dead space around it, which shipped in 8e92832
+and came back out the next day. A watching tile now fits its own box like
+every other one, and tmux draws its own presentation into the difference,
+which is the window in the top-left, a border beside it and its fill
+character over the leftover, or a crop where the tile is the smaller of the
+two. It also said the server cannot tell two devices of one person apart,
+which a per-connection client id now answers: the browser mints one per
+terminal mount and sends it as ttyd arg 8 and in the claim body. The refusal
+to claim is unchanged.
 
 ## Workspaces
 

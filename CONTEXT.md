@@ -259,15 +259,20 @@ its **read-write** clients: a Watch-mode client consumes the Grid and never
 changes it, including when no read-write client is attached at all. Enforced by
 pinning (`window-size manual` plus hooks that re-derive the size from the live
 client list, newest activity first), applied on the first read-only attach and
-never reverted. Among several read-write clients the Grid belongs to the one
-being used, which is what tmux's own `window-size latest` does — but the hooks
-only fire on a client attaching, detaching or resizing, so a device that is
-merely READING a session claims the Grid explicitly
-(`POST /sessions/{name}/grid`). It is also READABLE, as `cols` and `rows` on
-every session in the list: a client that declines to claim it has no other way
-to know how big the session it is showing is, and a Watch-mode tile draws itself
-at exactly that size (see **Tile**). Both are absent when tmux would not say,
-which means no opinion rather than a size of zero.
+held for the life of the watch: the `client-detached` hook reverts the pin when
+the last read-only client leaves, and a start-up sweep clears the pins left by
+builds that never reverted. Among the read-write clients the Grid belongs to
+the device most recently ACTIVE on it (focus, a keystroke, or the pointer
+moving over the terminal), which nobody holds and every device takes back by
+touching it. That is what tmux's own `window-size latest` does, but the hooks
+only fire on a client attaching, detaching or resizing, so a device claims the
+Grid explicitly (`POST /sessions/{name}/grid`) rather than waiting for one.
+The losing device is not demoted and shows no banner: tmux crops it. It is also
+READABLE, as `cols` and `rows` on every session in the list. Nothing draws at
+that size. Every terminal fits its own box, a watcher included, and tmux fills
+or crops the difference (see **Tile**). The number is there so a device can
+tell a claim that would change the window from one that would not. Both are absent
+when tmux would not say, which means no opinion rather than a size of zero.
 _Avoid_: window size (means the browser's), canvas, viewport
 
 **Parked** (a session):
@@ -326,11 +331,12 @@ One rectangle showing one **Session**, in a **Workspace**. Holds whatever
 view that session is set to on this device — the terminal by default, the
 **Text view** where that was chosen — plus a thin header carrying the
 **title**, the **Session state**, a watch marker when the tile is read-only,
-and a close control. A tile claims its session's **Grid**, so the session's
-tmux window is the size of the tile, for every device attached to it; a
-tile that is watching never claims, and draws the session at the **Grid**
-its drivers gave it instead, centred in the rectangle with dead space
-around it. One session can occupy at most one
+and a close control. A tile claims its session's **Grid** whenever it is
+touched, so the session's tmux window is the size of the tile, for every
+device attached to it; a tile that is watching never claims, and tmux draws
+its own presentation into the difference: the window in the top-left, a
+border beside it, its fill character over the leftover, or a crop where the
+tile is the smaller of the two. One session can occupy at most one
 tile: keepalive mounts a single live view per session, and two tiles of one
 session would contend for its Grid. _Avoid_: pane (tmux's word for the
 splits inside a session, which `PaneKeypad` drives), cell, window, slot
