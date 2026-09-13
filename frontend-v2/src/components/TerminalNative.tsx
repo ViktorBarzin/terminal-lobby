@@ -18,10 +18,13 @@ import {
 import type { TerminalReport } from "../diagnostics/status";
 import {
   NO_FIT_OWED,
+  fitTarget,
   reduce as reduceFit,
+  targetKey,
   type FitEvent,
   type FitState,
   type HostBox,
+  type SessionGrid,
 } from "../terminal/fit";
 import { EMPTY_HELD, isHolding, type HeldState, type HeldVerdict } from "../terminal/held";
 import {
@@ -699,6 +702,22 @@ export const TerminalNative: Component<{
    * question this component cannot answer.
    */
   onGrid?: (cols: number, rows: number) => void;
+  /**
+   * The size of the SESSION's tmux window, as the lobby last polled it. Null
+   * when nobody could say.
+   *
+   * Read only while this client is WATCHING, and then it is the size this
+   * terminal draws at instead of filling its host: a watcher declines to claim
+   * the Grid, so the window stays where its drivers put it, and a terminal
+   * fitted to the tile leaves tmux drawing that smaller window into a corner
+   * with a border and a field of its own dots around it. `fitTarget` in
+   * terminal/fit.ts is the rule and carries the measurement behind it; the CSS
+   * that centres the result is `.tl-letterboxed` in app.css.
+   *
+   * An accessor, and read live: the drivers can resize at any moment, and the
+   * watcher follows within a poll.
+   */
+  grid?: () => SessionGrid | null;
 }> = (props) => {
   let host: HTMLDivElement | undefined;
   let attachment: Attachment | null = null;
@@ -707,6 +726,23 @@ export const TerminalNative: Component<{
   let fitState: FitState = NO_FIT_OWED;
   /** Installed once xterm is up; before that a view switch has nothing to fit. */
   let viewShown: (() => void) | null = null;
+  /**
+   * Installed with xterm, for the effect below that follows a watched session's
+   * window. A `fit-wanted` rather than `viewShown`'s `shown`, and the
+   * difference is the whole point: `shown` is refused when no fit is owed
+   * (fit.ts), which is exactly the state a terminal drawing the right size for
+   * the previous window is in.
+   */
+  let sizeWanted: (() => void) | null = null;
+  /**
+   * WHAT SIZE THIS TERMINAL SHOULD BE, in one place both readers agree on: the
+   * fit funnel, which acts on it, and the host's class, which centres what it
+   * draws. `props.grid` is rebuilt by every poll, so the two compare
+   * `targetKey` rather than objects.
+   */
+  const sizeTarget = () => fitTarget(props.watch?.() === true, props.grid?.());
+  /** Is this terminal drawing a size of its own inside a bigger host? */
+  const letterboxed = () => sizeTarget().kind === "grid";
   /**
    * Installed with xterm, for the effect below that hands this terminal the
    * keyboard when its view comes on screen.
@@ -989,6 +1025,32 @@ export const TerminalNative: Component<{
     const onScreen = props.ownsBridges !== false;
     if (!onScreen) return;
     viewShown?.();
+  });
+
+  /**
+   * FOLLOW THE DRIVERS. A watching terminal draws the session's own window, and
+   * that window moves whenever somebody driving it resizes: the number arrives
+   * on the next session poll, and this is what acts on it.
+   *
+   * Seeded from the first read rather than starting empty, so a mount does not
+   * pay for a refit it already did — the boot fit lands on the same target this
+   * would ask for. Both DIRECTIONS matter: leaving Watch mode, or a grid going
+   * unknown, moves the target back to `host` and has to refit just as much as a
+   * resize does, which is why this compares the key rather than watching for a
+   * grid to appear.
+   *
+   * A `fit-wanted` (through `sizeWanted`), never `viewShown`'s `shown`: a
+   * `shown` with no fit owed is refused by the guard, and a terminal already
+   * drawing the previous window's size owes nothing. It rides the same 120ms
+   * debounce as every other trigger, so a poll landing beside a divider drag
+   * costs one fit between them.
+   */
+  let sizedFor = targetKey(sizeTarget());
+  createEffect(() => {
+    const key = targetKey(sizeTarget());
+    if (key === sizedFor) return;
+    sizedFor = key;
+    sizeWanted?.();
   });
 
   /** Did `active` just go from false to true? Read once per effect run. */
@@ -1334,7 +1396,14 @@ export const TerminalNative: Component<{
           return false;
         }
         try {
-          fit.fit();
+          // A WATCHER DRAWS THE SESSION, NOT ITS OWN RECTANGLE. `fitTarget`
+          // carries why, and the CSS half is `.tl-letterboxed`. Everything
+          // below this line is unchanged for either answer: the pty is told
+          // the size that was taken, and the grid claim goes through
+          // SessionView, which is where the watcher's refusal lives.
+          const target = sizeTarget();
+          if (target.kind === "grid") term.resize(target.cols, target.rows);
+          else fit.fit();
         } catch (e) {
           // The debt is already cleared, so a throw is not handed back. The
           // next resize or view switch settles it. term.html has five
@@ -1410,6 +1479,7 @@ export const TerminalNative: Component<{
         }, REFIT_DEBOUNCE_MS);
       };
       viewShown = () => refit("shown");
+      sizeWanted = () => refit("fit-wanted");
 
       /* ---------------------------------------------------------------- *
        * THE SOFT KEYBOARD'S RESERVE, decided by viewport.ts.
@@ -3761,6 +3831,7 @@ export const TerminalNative: Component<{
       teardown = () => {
         if (fitTimer !== undefined) clearTimeout(fitTimer);
         viewShown = null;
+        sizeWanted = null;
         focusTerm = null;
         ro.disconnect();
         // The two outstanding frames, given up through the modules that asked
@@ -3821,7 +3892,13 @@ export const TerminalNative: Component<{
 
   return (
     <>
-      <div class="tl-terminal-native" ref={host} />
+      {/* THE LETTERBOX, and it is the host that carries it rather than the
+          terminal: xterm sizes its own screen element to the grid it was given,
+          so centring that element inside a host which keeps the tile's full
+          rectangle is the whole of the dead space the design asks for. Nothing
+          here moves a live terminal — one class on the element it already hangs
+          off (ADR-0027). */}
+      <div class="tl-terminal-native" classList={{ "tl-letterboxed": letterboxed() }} ref={host} />
       {/* WHAT SIZE THE PINCH HAS REACHED, which is term.html's `#font-pill`
           (:1041-1053). `.tl-size-pill` is this app's own pill and the TEXT
           view's pinch already draws the same sentence with it (TextView's own

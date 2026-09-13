@@ -20,6 +20,7 @@ import {
   type NotifyKind,
 } from "../store/session";
 import type { SseStatus } from "../sse/client";
+import type { SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
@@ -177,6 +178,16 @@ export const SessionView: Component<{
    *  transcript closes the turn when the main thread stops talking and cannot
    *  see them. */
   background?: () => BackgroundWork | undefined;
+  /** The size of the session's tmux window — its Grid — from the session list,
+   *  or null when nobody could say.
+   *
+   *  Only a WATCHING view reads it, and then it is the size its terminal draws
+   *  at: a watcher declines to claim the Grid (see `claimGrid` below), so the
+   *  window keeps whatever its drivers gave it, and a terminal fitted to the
+   *  tile instead leaves tmux drawing that smaller window into a corner with a
+   *  border and a field of dots around it. Handed on to TerminalNative, where
+   *  `fitTarget` (terminal/fit.ts) is the rule. */
+  grid?: () => SessionGrid | null;
   /** The user this tab is acting as ("" = an ordinary tab). A lens comes up
    *  WATCHING every session it opens, and the controls that type into the pty
    *  are inert with it — until you take control, which re-attaches read-write
@@ -1589,6 +1600,13 @@ export const SessionView: Component<{
                 preload: preloading() && !watch(),
               })}
               watch={watch}
+              // THE SIZE OF THE SESSION'S OWN WINDOW, which this terminal draws
+              // at while it is watching instead of filling its tile. Handed
+              // straight through: the lobby polls it, `fitTarget` decides what
+              // to do with it, and this view's only part is that the two
+              // questions it answers — whether this client watches, and how big
+              // the session is — arrive at the terminal together.
+              grid={props.grid ?? (() => null)}
               // The bridges are named globals, so a hidden session owning them
               // would take the soft keys and paste with it. They follow the
               // session on screen even while it shows its TEXT view, because

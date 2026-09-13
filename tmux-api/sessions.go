@@ -240,6 +240,17 @@ func parseSessions(out []byte) []Session {
 			state = ""
 		}
 		panePID, _ := strconv.Atoi(parts[8])
+		// The grid is parsed LENIENTLY and reported as 0 when tmux says
+		// anything this cannot read. A session whose window size is unknown is
+		// one a watching tile renders the way it always did — full box, tmux's
+		// own fill around the window — and that is a worse picture rather than
+		// a broken one. Dropping the row for it would empty the sidebar on any
+		// tmux that stops answering these two.
+		cols, errCols := strconv.Atoi(parts[gridColsColumn])
+		rows, errRows := strconv.Atoi(parts[gridRowsColumn])
+		if errCols != nil || errRows != nil || cols <= 0 || rows <= 0 {
+			cols, rows = 0, 0
+		}
 		sessions = append(sessions, Session{
 			ID:           parts[0],
 			Name:         parts[1],
@@ -262,8 +273,13 @@ func parseSessions(out []byte) []Session {
 			// nothing in this repo writes reaches it intact rather than being
 			// quietly normalised to "" here and read as a different kind of
 			// unknown.
-			Origin:    parts[13],
-			PaneTitle: parts[14],
+			Origin: parts[originColumn],
+			Cols:   cols,
+			Rows:   rows,
+			// Last, and addressed as last: SplitN hands the final field every
+			// separator the row had left over, which is the whole of what
+			// protects the columns above from a pane that prints one.
+			PaneTitle: parts[listFields-1],
 		})
 	}
 	return sessions

@@ -6,6 +6,8 @@ import {
   hasBox,
   isFitOwed,
   reduce,
+  fitTarget,
+  targetKey,
   type FitAction,
   type FitEvent,
   type FitState,
@@ -278,5 +280,82 @@ describe("the contract handed to the component", () => {
   it("touches nothing outside its arguments", () => {
     const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/document\.|window\.|Date\.now|performance\.now|requestAnimation/);
+  });
+});
+
+/**
+ * WHICH SIZE, once the guard above has said a size may be taken at all.
+ *
+ * The design's "Watching tiles" paragraph in one function: a tile attached
+ * read-only renders the session at whatever size its drivers gave it, centred,
+ * with dead space where the tile does not match. Everything else fills its host.
+ *
+ * WHAT IT IS WORTH, measured on 2026-09-12. A session pinned 50x14 was made the
+ * right-hand tile of a two-tile workspace and set to Watch only. The tile was
+ * 670x601, its terminal fitted to 82x33, and tmux — which never letterboxes for
+ * a client bigger than the window — drew the 50x14 window into the TOP-LEFT
+ * corner, put a window border beside it and filled the rest with its own dots.
+ * The eye in the header was right, the declined Grid claim was right, and the
+ * picture was a bordered box in a corner of a field of dots.
+ */
+describe("what size a terminal takes", () => {
+  const grid = { cols: 50, rows: 14 };
+
+  it("fills the host for a tile that is driving", () => {
+    expect(fitTarget(false, grid)).toEqual({ kind: "host" });
+  });
+
+  /**
+   * The one that matters, and the one that was missing. Nothing in the slot
+   * layer read `watching` for anything but the eye in the tile header.
+   */
+  it("draws the session's own grid for a tile that is watching", () => {
+    expect(fitTarget(true, grid)).toEqual({ kind: "grid", cols: 50, rows: 14 });
+  });
+
+  /**
+   * A driving tile OWNS the grid and claims it from its own box. Taking the
+   * session's current size here would freeze the window wherever the last
+   * device to speak left it — which is the bug `claimGrid` exists to fix.
+   */
+  it("ignores a known grid while driving, however big", () => {
+    expect(fitTarget(false, { cols: 231, rows: 62 })).toEqual({ kind: "host" });
+  });
+
+  /**
+   * tmux-api omits both fields when it cannot read a size, and a server that
+   * predates them sends neither. The old picture — tmux's own fill — is worse
+   * to look at and correct in every other way, so it is what a watcher without
+   * a number falls back to.
+   */
+  it("falls back to the host when the grid is unknown", () => {
+    expect(fitTarget(true, null)).toEqual({ kind: "host" });
+    expect(fitTarget(true, undefined)).toEqual({ kind: "host" });
+  });
+
+  /**
+   * `term.resize` throws below 1x1, and a terminal is whole cells or it is
+   * nothing. A size that is not a size must not reach it.
+   */
+  it.each([
+    ["no columns", { cols: 0, rows: 24 }],
+    ["no rows", { cols: 80, rows: 0 }],
+    ["a negative width", { cols: -80, rows: 24 }],
+    ["half a column", { cols: 80.5, rows: 24 }],
+    ["a width that is not a number", { cols: Number.NaN, rows: 24 }],
+  ])("refuses %s and fills the host", (_why, bad) => {
+    expect(fitTarget(true, bad)).toEqual({ kind: "host" });
+  });
+
+  /**
+   * The component compares keys rather than objects: the grid arrives from a
+   * reactive read that rebuilds it on every poll, so two equal sizes have to
+   * compare equal or a watcher would re-resize its terminal every few seconds.
+   */
+  it("keys a target by the size it means", () => {
+    expect(targetKey(fitTarget(true, grid))).toBe("50x14");
+    expect(targetKey(fitTarget(true, { cols: 50, rows: 14 }))).toBe("50x14");
+    expect(targetKey(fitTarget(true, { cols: 82, rows: 33 }))).toBe("82x33");
+    expect(targetKey(fitTarget(false, grid))).toBe("host");
   });
 });

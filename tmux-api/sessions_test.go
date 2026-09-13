@@ -40,6 +40,16 @@ func rowCreated(bg, born, created string, fields ...string) string {
 // every session that predates the stamp reports, and what the parser has to
 // keep listing.
 func rowOrigin(bg, born, created, origin string, fields ...string) string {
+	return rowGrid(bg, born, created, origin, "", "", fields...)
+}
+
+// rowGrid is the same line with the session's GRID filled in too — the tmux
+// window's #{window_width} and #{window_height}, which a watching tile renders
+// at. The two columns sit together at gridColsColumn, after @tl_origin and
+// before pane_title, so they are spliced the way every column before them is
+// rather than appended. EMPTY is what a tmux that answers neither reports, and
+// what every fixture written before the columns existed keeps saying.
+func rowGrid(bg, born, created, origin, cols, rows string, fields ...string) string {
 	if len(fields) < bgColumn {
 		return strings.Join(fields, listSep)
 	}
@@ -68,7 +78,14 @@ func rowOrigin(bg, born, created, origin string, fields ...string) string {
 	withOrigin = append(withOrigin, withCreated[:originColumn]...)
 	withOrigin = append(withOrigin, origin)
 	withOrigin = append(withOrigin, withCreated[originColumn:]...)
-	return strings.Join(withOrigin, listSep)
+	if len(withOrigin) < gridColsColumn {
+		return strings.Join(withOrigin, listSep)
+	}
+	withGrid := make([]string, 0, len(withOrigin)+2)
+	withGrid = append(withGrid, withOrigin[:gridColsColumn]...)
+	withGrid = append(withGrid, cols, rows)
+	withGrid = append(withGrid, withOrigin[gridColsColumn:]...)
+	return strings.Join(withGrid, listSep)
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which
@@ -340,6 +357,84 @@ func TestListFormatCarriesTheOriginStamp(t *testing.T) {
 	if strings.Index(tmuxListFmt, originOption) > strings.Index(tmuxListFmt, "pane_title") {
 		t.Errorf("%s moved behind pane_title, where a tab in a pane title would eat it: %q",
 			originOption, tmuxListFmt)
+	}
+}
+
+// THE SESSION'S GRID, which only a WATCHING tile has no other way to learn:
+// it declines to claim the grid, so its own terminal's size says nothing about
+// the window it is showing, and rendering at that size leaves tmux drawing the
+// smaller window into a corner with its own dots around it. The design has the
+// watcher render at the size the drivers gave it, centred, and these two
+// columns are where that size arrives.
+func TestParseSessionsReadsTheGrid(t *testing.T) {
+	cases := []struct {
+		name, cols, rows string
+		wantCols         int
+		wantRows         int
+	}{
+		{"a pinned window", "50", "14", 50, 14},
+		{"a driven window", "231", "62", 231, 62},
+		// Every fixture written before the columns existed, and any tmux that
+		// stops answering them. No opinion beats a wrong opinion here: zero
+		// leaves the watcher rendering the way it always did rather than
+		// sizing a terminal to nothing.
+		{"a tmux that answered neither", "", "", 0, 0},
+		{"a size that does not parse", "wide", "tall", 0, 0},
+		// Both halves have to be real, since the pair is what a size is.
+		{"only the width", "80", "", 0, 0},
+		{"a zero width", "0", "24", 0, 0},
+		{"a negative height", "80", "-1", 0, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseSessions([]byte(rowGrid("", "", "", "", tc.cols, tc.rows,
+				"$1", "watched", "1", "10", "20", "", "running", "42", "claude", "", "") + "\n"))
+			if len(got) != 1 {
+				t.Fatalf("parseSessions gave %d rows, want 1 — an unreadable grid must not drop the session", len(got))
+			}
+			if got[0].Cols != tc.wantCols || got[0].Rows != tc.wantRows {
+				t.Errorf("grid = %dx%d, want %dx%d", got[0].Cols, got[0].Rows, tc.wantCols, tc.wantRows)
+			}
+		})
+	}
+}
+
+// A grid nobody could read travels as an absent key rather than as 0x0, so a
+// consumer that predates the fields sees the wire shape it always did and one
+// that reads them cannot mistake "unknown" for a one-by-one terminal.
+func TestGridJSONShape(t *testing.T) {
+	sized, err := json.Marshal(parseSessions([]byte(rowGrid("", "", "", "", "50", "14",
+		"$3", "watched", "1", "10", "20", "", "running", "42", "claude", "", "") + "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(sized), `"cols":50`) || !strings.Contains(string(sized), `"rows":14`) {
+		t.Fatalf("marshaled session missing its grid: %s", sized)
+	}
+	unknown, err := json.Marshal(parseSessions([]byte(
+		row("$4", "calm", "0", "1", "2", "", "done", "9", "claude", "", "") + "\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(unknown), `"cols"`) || strings.Contains(string(unknown), `"rows"`) {
+		t.Fatalf("a session with no readable grid must omit both: %s", unknown)
+	}
+}
+
+// The grid rides the list poll rather than a second tmux call, and like every
+// other column it has to stay ahead of pane_title — the one field allowed to
+// contain a separator, and therefore the one that soaks up a stray tab. A width
+// read out of application-written text would size a watcher's terminal from
+// whatever the pane last printed.
+func TestListFormatCarriesTheGrid(t *testing.T) {
+	for _, want := range []string{"#{window_width}", "#{window_height}"} {
+		if !strings.Contains(tmuxListFmt, want) {
+			t.Errorf("tmuxListFmt does not ask for %s: %q", want, tmuxListFmt)
+		}
+		if strings.Index(tmuxListFmt, want) > strings.Index(tmuxListFmt, "pane_title") {
+			t.Errorf("%s moved behind pane_title, where a tab in a pane title would eat it: %q",
+				want, tmuxListFmt)
+		}
 	}
 }
 

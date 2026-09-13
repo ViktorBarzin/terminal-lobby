@@ -205,3 +205,77 @@ export function reduce(state: FitState, event: FitEvent): FitReduction {
 function describeBox(box: HostBox | null): string {
   return box ? `the host box is ${box.width}x${box.height}` : "the host has no box yet";
 }
+
+/**
+ * The size of a session's tmux window, as the session list reports it
+ * (tmux-api `#{window_width}`/`#{window_height}`). CONTEXT.md calls this the
+ * Grid, and it belongs to the session's read-write clients.
+ */
+export interface SessionGrid {
+  cols: number;
+  rows: number;
+}
+
+/**
+ * What a terminal that HAS been let through should size itself to.
+ *
+ * A second question from the guard above, and orthogonal to it: `reduce` says
+ * whether this terminal may take a size at all, this says which size. Both are
+ * here because the component owns one funnel (`safeFit`) and both answers land
+ * in it.
+ */
+export type FitTarget =
+  /** Fill the host box — every terminal that drives its session. */
+  | { readonly kind: "host" }
+  /** Draw exactly this grid, whatever the host box is. Letterboxed by CSS. */
+  | { readonly kind: "grid"; readonly cols: number; readonly rows: number };
+
+/** The host-filling answer, which is the overwhelmingly common one. */
+const FIT_HOST: FitTarget = { kind: "host" };
+
+/**
+ * WATCHING IS THE WHOLE OF IT: a tile attached read-only renders the session at
+ * whatever size its drivers gave it, centred, with dead space around it where
+ * the tile does not match (design, "Watching tiles").
+ *
+ * WHY IT CANNOT JUST FIT. A watcher declines to claim the Grid — that refusal
+ * is Watch mode's entire promise, and it lives in SessionView, not here. So the
+ * session's window stays pinned at the driver's size while the watcher's own
+ * terminal fits its rectangle, and the two disagree. tmux does not letterbox
+ * that for us: it draws the smaller window into the TOP-LEFT of the oversized
+ * client, puts a window border down the side of it and fills everything left
+ * over with its own dots. Measured 2026-09-12 on a tile 670x601: a session
+ * pinned 50x14 inside a client fitted to 82x33, bordered and dotted rather than
+ * centred. Sizing the terminal to the session instead means the client and the
+ * window agree, tmux has nothing to fill, and the leftover is the tile's own
+ * background with the session in the middle of it.
+ *
+ * THREE REFUSALS, and each is a case this must not make worse:
+ *
+ *   - NOT WATCHING. A driving tile owns the Grid and its own box is the right
+ *     answer; taking the session's current size would freeze it at whatever the
+ *     last device to speak left it at, which is the failure `claimGrid` exists
+ *     to fix rather than one to spread.
+ *   - NO GRID. A server that predates the fields, or a tmux that answered
+ *     something unreadable, sends nothing (tmux-api omits both when it cannot
+ *     read them). Filling the host is then the picture this has always drawn —
+ *     tmux's fill and all — which is worse to look at and correct in every
+ *     other way.
+ *   - A GRID THAT IS NOT A SIZE. Zero, negative or fractional. `term.resize`
+ *     throws below 1x1, and a terminal is whole cells or it is nothing.
+ */
+export function fitTarget(watching: boolean, grid: SessionGrid | null | undefined): FitTarget {
+  if (!watching || !grid) return FIT_HOST;
+  const { cols, rows } = grid;
+  if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 1 || rows < 1) return FIT_HOST;
+  return { kind: "grid", cols, rows };
+}
+
+/**
+ * One string per distinct target, so a caller can tell "this is the size I am
+ * already drawing" from "the drivers moved the window" without comparing
+ * objects a reactive read rebuilds every time.
+ */
+export function targetKey(target: FitTarget): string {
+  return target.kind === "host" ? "host" : `${target.cols}x${target.rows}`;
+}

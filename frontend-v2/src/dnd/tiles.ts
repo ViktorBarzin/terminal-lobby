@@ -23,6 +23,19 @@
  * not exactly where the tile lands is a promise the drop then breaks, so
  * {@link previewBox} is pinned to `toRects` by test rather than by assumption.
  *
+ * AND IT IS NOT MEASURED AGAINST THE TILES ON SCREEN. A session dragged in from
+ * the sidebar is added to the arrangement; a tile ALREADY in the workspace is
+ * moved, and `moveWithin` takes it out first so its old siblings grow into the
+ * gap before the target is split. The target is therefore bigger at the moment
+ * it splits than it looked at the moment the pointer entered its band. So every
+ * question a drag asks — where the shadow goes, and whether the 240px floor
+ * allows the split at all — is asked of {@link landingRects}: the arrangement
+ * the drop lands in, which is the one on screen only when nothing leaves it.
+ * Measured on 2026-09-13, before this existed: moving one of two tiles onto the
+ * other's right edge drew the shadow 335px left of where the tile went and half
+ * its width, and a move between three equal 446px tiles was refused as too
+ * small for a split that would have left 335/670/335.
+ *
  * FOUR ANSWERS, AND THE SAME FOUR GESTURES THE DESIGN LISTS:
  *
  * ```
@@ -70,12 +83,15 @@ import { createSignal, onCleanup } from "solid-js";
 import {
   type Box,
   type Edge,
+  hasLeaf,
   MIN_TILE_PX,
   type Rect,
   removeAt,
   replaceAt,
   type SessionKey,
+  type Size,
   splitAt,
+  toRects,
   type TreeNode,
 } from "../store/workspace-tree";
 import { DRAG_START_EVENT, setTileDropClaim } from "./sidebar";
@@ -213,6 +229,40 @@ function splitFits(rect: Rect, edge: Edge): boolean {
 }
 
 /**
+ * The tiles a drop is measured against: the arrangement it will land IN, which
+ * is the arrangement on screen only when the drag adds a tile rather than
+ * moving one.
+ *
+ * A session arriving from the sidebar has no tile yet, so nothing leaves and
+ * the two are the same list. A tile already in the workspace is MOVED —
+ * `splitAt` routes it to `moveWithin`, which calls `removeAt` first so its old
+ * siblings grow into the gap, and only then splits the target. Every tile that
+ * shared a parent with the dragged one is therefore larger by the time the
+ * split happens than it is on screen, and measuring the shadow or the 240px
+ * floor against the screen is short by exactly the share the removed tile
+ * handed back.
+ *
+ * The dragged tile itself is absent from what comes back, which is the honest
+ * answer for the one drop it makes possible: a tile let go on its own edge
+ * moves nothing, `applyDrop` hands the tree back by reference, and
+ * {@link previewBox} finds no rect and draws no shadow.
+ *
+ * Empty when the dragged tile was the only one. There is no arrangement left to
+ * land in, and the only drop that could have been aimed at it is that same
+ * no-op.
+ */
+export function landingRects(
+  tree: TreeNode | null,
+  dragged: SessionKey | null,
+  onScreen: readonly Rect[],
+  container: Size,
+): readonly Rect[] {
+  if (!tree || dragged === null || !hasLeaf(tree, dragged)) return onScreen;
+  const after = removeAt(tree, dragged);
+  return after ? toRects(after, container) : [];
+}
+
+/**
  * What a pointer over the tiles is asking for.
  *
  * Pure, and pure on purpose: no DOM, no tree, no container, just the position
@@ -220,13 +270,30 @@ function splitFits(rect: Rect, edge: Edge): boolean {
  * produce is then reachable from a table of numbers, which is the only way the
  * corners and the boundaries get checked at all — jsdom has no layout, so a hit
  * test that needed to measure anything could not be tested here.
+ *
+ * TWO LISTS, AND THEY ANSWER TWO DIFFERENT QUESTIONS. `rects` is what is on
+ * screen, so it decides which tile the pointer is over and which of its bands
+ * it is in — a person aims at the tiles they can see. `landing` is where the
+ * drop puts things ({@link landingRects}), so it decides whether the split
+ * clears the floor, because that is the tile that actually gets halved. They
+ * are the same list for a session arriving from the sidebar, which is what the
+ * default says.
  */
-export function hitTest(point: Point, rects: readonly Rect[]): DropTarget {
+export function hitTest(
+  point: Point,
+  rects: readonly Rect[],
+  landing: readonly Rect[] = rects,
+): DropTarget {
   const rect = rects.find((r) => contains(r, point));
   if (!rect) return REMOVE;
   const edge = edgeAt(rect, point);
   if (!edge) return { kind: "replace", key: rect.key };
-  if (!splitFits(rect, edge)) return { kind: "invalid", key: rect.key, edge };
+  // The only tile that can be missing from the landing arrangement is the
+  // dragged one, whose own edges ask for nothing; its screen rect stands in so
+  // the answer stays a shape rather than a special case, and the drop it leads
+  // to is the tree unchanged either way.
+  const halved = landing.find((r) => r.key === rect.key) ?? rect;
+  if (!splitFits(halved, edge)) return { kind: "invalid", key: rect.key, edge };
   return { kind: "split", key: rect.key, edge };
 }
 
@@ -238,15 +305,26 @@ export function hitTest(point: Point, rects: readonly Rect[]): DropTarget {
  * the session it stands for is the one in the air and the caller already knows
  * which that is.
  *
+ * MEASURED AGAINST {@link landingRects}, NOT AGAINST THE SCREEN, which is the
+ * whole of what makes the promise true for a tile that is already in the
+ * workspace: its old space has gone back to its siblings before the target is
+ * split, so the target's screen rect is not the one being halved. Handing this
+ * the on-screen list is correct only for a session arriving from the sidebar.
+ *
  * HALF THE TILE IS NOT A GUESS. `splitAt` builds the new pair through `split()`
  * with no fractions, which is an even share, so the arriving tile gets exactly
  * half of the one it split. An `invalid` target draws the same half — the
  * caller paints it as refused rather than hiding it, so the shadow says what
  * was asked for and that it will not be given.
+ *
+ * A `replace` takes the target's whole box for the same reason and with the
+ * same correction: dropping a tile onto a sibling's middle prunes the tile it
+ * came from, so the box it takes over is the one that sibling has once that
+ * pruning is done.
  */
-export function previewBox(target: DropTarget, rects: readonly Rect[]): Box | null {
+export function previewBox(target: DropTarget, landing: readonly Rect[]): Box | null {
   if (target.kind === "remove") return null;
-  const rect = rects.find((r) => r.key === target.key);
+  const rect = landing.find((r) => r.key === target.key);
   if (!rect) return null;
   const whole: Box = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   if (target.kind === "replace") return whole;
@@ -323,6 +401,16 @@ export interface TileDropDeps {
   /** The arrangement the drop applies to, or null when there is no workspace. */
   tree: () => TreeNode | null;
   /**
+   * The box the tree is laid out in — the same `Size` `WorkspaceCanvas` was
+   * handed, or the rects will not be in the same coordinates the pointer is
+   * translated into.
+   *
+   * Here because a moved tile's landing arrangement has to be MEASURED rather
+   * than read off the screen ({@link landingRects}), and measuring a tree needs
+   * the box it is laid out in.
+   */
+  container: () => Size;
+  /**
    * The one write. `null` means the workspace ended; anything else is the new
    * arrangement. Called at most once per drag, and never for a drop that asked
    * for nothing.
@@ -380,10 +468,33 @@ let release: (() => void) | null = null;
  *  fast when the thing under the pointer is a terminal. */
 let listeners: AbortController | null = null;
 
-/** The drop the pointer is currently over, for the caller to draw a shadow
- *  from. Null between drags, and null while a drag carries no session. */
+/** The drop the pointer is currently over. Null between drags, and null while a
+ *  drag carries no session. */
 export function tileDropTarget(): DropTarget | null {
   return target();
+}
+
+/**
+ * Where the tile will land, and whether the floor allows it: the whole of the
+ * feedback a drag gets, ready to draw.
+ *
+ * Computed here rather than by the caller because the answer needs the session
+ * in the air, and that is this module's own captured `dragKey` — a caller
+ * re-deriving it would be re-deriving {@link landingRects} too, which is the
+ * second expression of one rule that put the shadow in the wrong place to begin
+ * with.
+ *
+ * Reactive through {@link tileDropTarget} and through the deps it reads, which
+ * is enough: `dragKey` is set before the first target of a drag is published
+ * and cleared after the last, so every recomputation of this sees the key its
+ * target was measured with.
+ */
+export function tileDropShadow(): { box: Box; invalid: boolean } | null {
+  const at = target();
+  if (!at || !canvas) return null;
+  const deps = canvas.deps;
+  const box = previewBox(at, landingRects(deps.tree(), dragKey, deps.rects(), deps.container()));
+  return box === null ? null : { box, invalid: at.kind === "invalid" };
 }
 
 /**
@@ -422,7 +533,13 @@ function sameTarget(a: DropTarget | null, b: DropTarget | null): boolean {
 
 function track(event: MouseEvent): void {
   if (!canvas) return;
-  const next = hitTest(point(event), canvas.deps.rects());
+  const deps = canvas.deps;
+  const rects = deps.rects();
+  // Re-measured per move rather than captured at the start of the drag: the
+  // poll is held, so the tree holds still, but a window resized mid-drag moves
+  // the rects under the pointer and the floor has to follow them.
+  const landing = landingRects(deps.tree(), dragKey, rects, deps.container());
+  const next = hitTest(point(event), rects, landing);
   claim = next;
   if (!sameTarget(target(), next)) setTarget(next);
 }

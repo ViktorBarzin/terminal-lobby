@@ -72,11 +72,12 @@ const (
 		"#{" + sessionTitleOption + "}" + listSep +
 		"#{" + sessionBornAsOption + "}" + listSep +
 		"#{" + createdStampOption + "}" + listSep +
-		"#{" + originOption + "}" + listSep + "#{pane_title}"
+		"#{" + originOption + "}" + listSep +
+		"#{window_width}" + listSep + "#{window_height}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 15
+	listFields = 17
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -105,6 +106,25 @@ const (
 	// and the word `user`. Only the row builders in the tests address this by
 	// name; parseSessions reads it positionally like every other field.
 	originColumn = 13
+
+	// gridColsColumn and gridRowsColumn are the session's GRID — the size of
+	// its tmux window, #{window_width} and #{window_height}, resolved against
+	// the session's current window the same way sessionio.PinGrid reads it.
+	//
+	// They ride this format because a WATCHING tile needs them and has no other
+	// way to learn them: it declines to claim the grid, so its own terminal is
+	// the only size it knows, and rendering at that size is what leaves tmux
+	// drawing its dot-fill around a small window inside a large client. The
+	// design's answer is to render the session at whatever size its drivers
+	// gave it, centred, and this is where that number arrives. Two more columns
+	// on a list the poll already runs, rather than a second tmux call or a
+	// second polling loop per watched tile.
+	//
+	// Before pane_title, which stays last for the reason bgColumn gives. Only
+	// the row builders in the tests address these by name; parseSessions reads
+	// them positionally like every other field.
+	gridColsColumn = 14
+	gridRowsColumn = 15
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service, t3-sync and anything
