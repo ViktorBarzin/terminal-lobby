@@ -519,9 +519,18 @@ export function tileDropPreview(): {
   if (!at || !canvas) return null;
   const deps = canvas.deps;
   const tree = deps.tree();
-  const landing = previewBox(at, landingRects(tree, dragKey, deps.rects(), deps.container()));
-  if (landing === null) return null;
+  const after = landingRects(tree, dragKey, deps.rects(), deps.container());
+  const landing = previewBox(at, after);
   const invalid = at.kind === "invalid";
+  // A REMOVE HAS NO LANDING RECT, and used to draw nothing at all, so dragging
+  // a tile out of the workspace gave no feedback until the release. It has an
+  // arrangement to show like any other drop: what you are left with once this
+  // tile goes, which `landingRects` has already computed for the floor check.
+  if (landing === null) {
+    return at.kind === "remove"
+      ? { rects: after, landing: null, dragged: dragKey, invalid: false }
+      : null;
+  }
   if (invalid || !tree || dragKey === null) {
     return { rects: [], landing, dragged: dragKey, invalid };
   }
