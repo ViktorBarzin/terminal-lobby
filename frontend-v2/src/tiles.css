@@ -393,3 +393,25 @@
   outline: 2px solid var(--ring);
   outline-offset: -1px;
 }
+
+/* The session name inside a drop preview.
+
+   A rectangle says WHERE; at four tiles it does not say WHICH, and the drag
+   image the browser carries under the cursor is the sidebar row, which is
+   somewhere else on screen entirely. The label rides in the landing rect so the
+   two answers arrive in one place. Sized and weighted to read across a room,
+   because this is glanced at mid-gesture and never studied. */
+.tl-tile-shadow-label {
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--bg-page);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  max-width: 85%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--bg-page) 45%, transparent);
+}

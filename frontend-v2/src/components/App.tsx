@@ -56,7 +56,7 @@ import {
   registerWorkspaceUndoHandler,
   WORKSPACE_SAVE_FAILED,
 } from "../store/undo.workspace";
-import { attachTileDrop, beginTileDrag, tileDropShadow } from "../dnd/tiles";
+import { attachTileDrop, beginTileDrag, tileDropPreview } from "../dnd/tiles";
 import { sessionDragActive } from "../dnd/sidebar";
 import { newSessionId } from "../lib/session-id";
 import { resolvedWatchFor } from "../store/watchmode";
@@ -1781,7 +1781,7 @@ export const App: Component = () => {
    * captured key, which lives there. A memo only for the `<Show>` below, which
    * reads it four times per frame.
    */
-  const dropShadow = createMemo(() => tileDropShadow());
+  const dropShadow = createMemo(() => tileDropPreview());
 
   /** Take this tile out of the workspace. The session keeps running and keeps
    *  its place in the sidebar; only the tile goes. */
@@ -2834,31 +2834,96 @@ export const App: Component = () => {
               theme tokens, so all nine themes draw it. */}
           <Show when={dropShadow()}>
             {(shadow) => (
-              <div
-                class="tl-tile-shadow"
-                aria-hidden="true"
-                style={{
-                  position: "absolute",
-                  left: `${shadow().box.x}px`,
-                  top: `${shadow().box.y}px`,
-                  width: `${shadow().box.width}px`,
-                  height: `${shadow().box.height}px`,
-                  // Above the skeleton, which is above the slots.
-                  "z-index": "3",
-                  "pointer-events": "none",
-                  "border-radius": "var(--radius)",
-                  // A refused split is drawn in the shape that was refused and
-                  // marked as refused: a drop that silently did nothing would
-                  // read as a broken drag rather than as a tile too small.
-                  background: shadow().invalid
-                    ? "color-mix(in srgb, var(--text-muted) 12%, transparent)"
-                    : "color-mix(in srgb, var(--accent) 18%, transparent)",
-                  outline: `2px ${shadow().invalid ? "dashed" : "solid"} var(${
-                    shadow().invalid ? "--text-muted" : "--accent"
-                  })`,
-                  "outline-offset": "-2px",
-                }}
-              />
+              <>
+                {/* EVERY TILE'S POST-DROP RECT, not only the one in the air.
+                    Viktor asked for what desktop window snapping gives you: a
+                    picture of the arrangement you are about to get. The
+                    neighbours a split is about to move are drawn as hollow
+                    outlines, so the reflow is visible before it happens, and
+                    the landing tile is filled and labelled so there is no doubt
+                    which rectangle the session lands in. */}
+                <For each={shadow().rects}>
+                  {(r) => (
+                    <Show when={!shadow().landing || r.key !== shadow().dragged}>
+                      <div
+                        class="tl-tile-ghost"
+                        aria-hidden="true"
+                        style={{
+                          position: "absolute",
+                          left: `${r.x}px`,
+                          top: `${r.y}px`,
+                          width: `${r.width}px`,
+                          height: `${r.height}px`,
+                          "z-index": "3",
+                          "pointer-events": "none",
+                          "border-radius": "var(--radius)",
+                          outline: "2px dashed color-mix(in srgb, var(--accent) 85%, transparent)",
+                          "outline-offset": "-2px",
+                          // Darkened rather than tinted. A ghost sits over a
+                          // live terminal that is still drawing, and a faint
+                          // accent wash loses to the text underneath it; taking
+                          // light OUT of the region is what makes the boundary
+                          // read at a glance, which is the whole ask.
+                          background: "color-mix(in srgb, var(--bg-page) 55%, transparent)",
+                        }}
+                      />
+                    </Show>
+                  )}
+                </For>
+                <div
+                  class="tl-tile-shadow"
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    left: `${shadow().landing?.x ?? 0}px`,
+                    top: `${shadow().landing?.y ?? 0}px`,
+                    width: `${shadow().landing?.width ?? 0}px`,
+                    height: `${shadow().landing?.height ?? 0}px`,
+                    // Above the skeleton, which is above the slots, and above
+                    // the ghosts so a landing rect that shares an edge with one
+                    // still reads as the solid half of the pair.
+                    "z-index": "4",
+                    "pointer-events": "none",
+                    "border-radius": "var(--radius)",
+                    display: "flex",
+                    "align-items": "center",
+                    "justify-content": "center",
+                    // A refused split is drawn in the shape that was refused and
+                    // marked as refused: a drop that silently did nothing would
+                    // read as a broken drag rather than as a tile too small.
+                    background: shadow().invalid
+                      ? "color-mix(in srgb, var(--text-muted) 14%, transparent)"
+                      : "color-mix(in srgb, var(--accent) 42%, transparent)",
+                    outline: `3px ${shadow().invalid ? "dashed" : "solid"} var(${
+                      shadow().invalid ? "--text-muted" : "--accent"
+                    })`,
+                    "outline-offset": "-3px",
+                    "box-shadow": shadow().invalid
+                      ? "none"
+                      : "0 0 0 1px color-mix(in srgb, var(--bg-page) 60%, transparent), 0 8px 24px color-mix(in srgb, var(--accent) 22%, transparent)",
+                  }}
+                >
+                  {/* The name of the thing being dropped, because at four tiles
+                      a bare rectangle does not say WHICH session is about to
+                      land in it. Hidden when the rectangle is too small to hold
+                      a word without becoming the thing you are looking at. */}
+                  <Show
+                    when={
+                      (shadow().landing?.width ?? 0) >= 180 && (shadow().landing?.height ?? 0) >= 64
+                    }
+                  >
+                    <span class="tl-tile-shadow-label">
+                      {shadow().invalid
+                        ? "Too small to split"
+                        : sessionLabel(
+                            store.sessions.find(
+                              (x) => x.name === sessionOf(shadow().dragged ?? "").name,
+                            ) ?? { name: sessionOf(shadow().dragged ?? "").name },
+                          )}
+                    </span>
+                  </Show>
+                </div>
+              </>
             )}
           </Show>
           <Dock dock={dock} />
