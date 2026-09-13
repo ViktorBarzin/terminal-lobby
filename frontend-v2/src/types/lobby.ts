@@ -36,6 +36,21 @@ export interface BackgroundWork {
  */
 export type SessionTool = "claude" | "codex" | "shell";
 
+/**
+ * A session's GRID: the size of its tmux window, as the session list reports
+ * it (tmux-api `#{window_width}`/`#{window_height}`). CONTEXT.md calls this
+ * the Grid, and it belongs to the session's read-write clients.
+ *
+ * The `cols` and `rows` of `Session` below, named, for the places that carry
+ * the pair around together and want both numbers or neither. It lived in
+ * `terminal/fit.ts` until 2026-09-13, when the letterbox went and left that
+ * module a pure fit guard again.
+ */
+export interface SessionGrid {
+  cols: number;
+  rows: number;
+}
+
 /** One session as returned by GET /api/sessions. */
 export interface Session {
   name: string;
@@ -72,13 +87,12 @@ export interface Session {
   /** The session's GRID: the size of its tmux window in columns and rows,
    *  owned by whoever is driving it.
    *
-   *  A tile that is WATCHING has no other way to learn it. It declines to claim
-   *  the Grid — that refusal is the whole of Watch mode's promise — so its own
-   *  terminal's size says nothing about the window it is showing, and a
-   *  terminal fitted to the tile leaves tmux drawing the smaller window into a
-   *  corner with its own dots around it. These two are what let a watcher
-   *  render the session at the size its drivers gave it, centred
-   *  (`terminal/fit.ts` `fitTarget`).
+   *  Nothing DRAWS at this size. Every terminal fits its own box, a watcher
+   *  included, and tmux draws its own presentation into whatever difference is
+   *  left over (the pane-ownership design, 2026-09-13). What the number is for
+   *  is the other direction: the size a device is about to claim can be
+   *  compared against the window it would be claiming, so a device that already
+   *  has the window says nothing.
    *
    *  Both absent from a server that predates the fields, and from a session
    *  whose size tmux would not report: absent means no opinion, never 0x0. */

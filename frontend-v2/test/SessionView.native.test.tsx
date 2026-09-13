@@ -50,6 +50,12 @@ const native = vi.hoisted(() => ({
   signal: null as null | ((kind: "bell" | "output") => void),
   /** Fire a grid claim, standing in for a landed fit or a focus. */
   claim: null as null | ((cols: number, rows: number) => void),
+  /**
+   * Was the terminal handed a SIZE TO DRAW AT, as opposed to fitting its host?
+   * The prop is read by presence rather than by value, because the answer must
+   * be that no such prop reaches the component at all.
+   */
+  toldASize: false,
   /** FALSE stands in for the window before the real component's two dynamic
    *  imports resolve, when it has handed no lever back yet. */
   readyOnMount: true,
@@ -68,6 +74,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     }) => void;
   }) => {
     native.mounted++;
+    native.toldASize = "grid" in props;
     native.active = () => props.active;
     native.args = () => props.args;
     native.signal = (kind) => props.onAttention?.(kind);
@@ -136,6 +143,7 @@ afterEach(() => {
   native.args = null;
   native.signal = null;
   native.claim = null;
+  native.toldASize = false;
   native.readyOnMount = true;
   grids.length = 0;
   vi.useRealTimers();
@@ -373,6 +381,35 @@ describe("the grid claim <SessionView> makes for the terminal", () => {
       "qa-grid-quiet 120x40",
       "qa-grid-quiet 120x40",
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * The size the terminal is NOT told
+ * ------------------------------------------------------------------ */
+
+/**
+ * A TERMINAL FITS ITS OWN BOX, and the shell hands it nothing that could say
+ * otherwise (decision 1 of the pane-ownership design, 2026-09-13).
+ *
+ * The view knows the session's window size — it polls it, and `claimGrid` needs
+ * it to tell a redundant claim from a real one — so "the terminal decides its
+ * own size" is a property of this handover rather than of the terminal alone.
+ * Between 8e92832 and this change the size WAS handed down, and a watching tile
+ * drew the session's window centred in its own dead space. Now tmux draws its
+ * own presentation in the leftover, which is what the grilling asked for.
+ */
+describe("the size <SessionView> does not hand the terminal", () => {
+  it("gives a driving terminal no size to draw at", () => {
+    render(() => <SessionView session="qa-size-drive" grid={() => ({ cols: 231, rows: 62 })} />);
+    expect(native.toldASize).toBe(false);
+  });
+
+  /** The case that letterboxed, and the only one that ever could. */
+  it("gives a WATCHING terminal no size to draw at either", () => {
+    localStorage.setItem(WATCH_KEY_PREFIX + "qa-size-watch", "ro");
+    render(() => <SessionView session="qa-size-watch" grid={() => ({ cols: 50, rows: 14 })} />);
+    expect(native.toldASize).toBe(false);
   });
 });
 

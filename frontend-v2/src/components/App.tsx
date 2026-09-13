@@ -2716,12 +2716,16 @@ export const App: Component = () => {
                         store.sessions.some((s) => s.name === k.name && s.driven === true)
                       }
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
-                      // THE SESSION'S OWN WINDOW SIZE, for a tile that is
-                      // WATCHING: it never claims the Grid, so this is the only
-                      // thing that can tell its terminal how big the session it
-                      // is showing actually is, and drawing at that size is
-                      // what puts dead space around it instead of tmux's own
-                      // border and dots (design, "Watching tiles").
+                      // THE SESSION'S OWN WINDOW SIZE, which no tile draws at.
+                      // A watching tile fits its own box like every other one
+                      // and lets tmux crop or fill the difference; the
+                      // letterbox that used to read this is gone.
+                      //
+                      // It stays because the grid CLAIM wants it: the claim
+                      // worth skipping is the one for a window this device
+                      // already matches, and the tile cannot know that without
+                      // the session's own number. That comparison lands with
+                      // the claim wiring.
                       //
                       // BY KEY, through `tileSession`, for the reason that
                       // lookup exists: your `auth` and emo's `auth` are two
@@ -2730,8 +2734,7 @@ export const App: Component = () => {
                       //
                       // Null unless BOTH numbers are real. tmux-api omits them
                       // when it could not read a size, and half a size is not
-                      // one — `fitTarget` refuses either way, and saying so
-                      // here keeps the shape honest.
+                      // one.
                       grid={() => {
                         const s = tileSession();
                         return s?.cols && s?.rows ? { cols: s.cols, rows: s.rows } : null;

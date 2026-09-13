@@ -49,6 +49,8 @@
  *     component yet.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { render } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { FONT_SIZE_KEY, PREFS_DIRTY_KEY, PREFS_KEY } from "../src/store/prefs";
@@ -201,6 +203,17 @@ const xt = vi.hoisted(() => {
     }
     paste(text: string): void {
       this.pasted.push(text);
+    }
+    /**
+     * Every `term.resize(cols, rows)`, as "COLSxROWS". Empty is the answer the
+     * component owes: a terminal takes the size of its host through the fit
+     * addon, and nothing is allowed to hand it a different one.
+     */
+    readonly resized: string[] = [];
+    resize(cols: number, rows: number): void {
+      this.resized.push(`${cols}x${rows}`);
+      this.cols = cols;
+      this.rows = rows;
     }
     write(bytes: string | Uint8Array): void {
       this.written.push(bytes);
@@ -1464,6 +1477,81 @@ describe("the fit guard (term.html:5579-5613)", () => {
     await settle();
     expect(m.fit.fits).toBe(1);
     expect(resizes(m.socket())).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ *
+ * 4a. Which size a terminal takes
+ * ------------------------------------------------------------------ */
+
+/**
+ * EVERY TERMINAL FITS ITS OWN BOX, watching or driving.
+ *
+ * The fit addon measures the host and picks the grid from it, and that is the
+ * only thing allowed to choose a size. A watcher is no exception: it is
+ * smaller or larger than the session it is reading, and tmux draws its own
+ * presentation into the difference — the window in the top-left, a border
+ * beside it and its fill character over the leftover. Accepting that is
+ * decision 2 of the pane-ownership design, and it is what the 2026-09-13
+ * grilling asked for back.
+ *
+ * WHAT THIS REPLACES. Between 8e92832 (2026-09-12) and this change, a watching
+ * terminal was resized to the session's own window instead — `term.resize` with
+ * the polled cols and rows, centred by `.tl-letterboxed` — so the terminal drew
+ * dead space rather than tmux's. Two tests pin the reversal: this one, that
+ * nothing but the host box decides the size, and SessionView.native's, that the
+ * shell hands the terminal no size to draw at in the first place.
+ */
+describe("which size a terminal takes", () => {
+  it("fits the host while watching, and resizes xterm to nothing else", async () => {
+    const m = await mountOpen({ watch: true });
+    expect(m.fit.fits).toBe(1);
+    expect(m.term.resized).toEqual([]);
+  });
+
+  /** The same answer for a tile that drives, which never had another one. */
+  it("fits the host while driving", async () => {
+    const m = await mountOpen();
+    expect(m.fit.fits).toBe(1);
+    expect(m.term.resized).toEqual([]);
+  });
+
+  /**
+   * A later fit is the same question asked again: the tile changed size, so
+   * measure it again. A watcher's refit must not stop at the session's numbers.
+   */
+  it("re-fits the host when a watching tile is resized", async () => {
+    const m = await mountOpen({ watch: true });
+    m.observed();
+    vi.advanceTimersByTime(PAST_DEBOUNCE_MS);
+    await settle();
+    expect(m.fit.fits).toBe(2);
+    expect(m.term.resized).toEqual([]);
+  });
+
+  /**
+   * THE ONE ASSERTION ABOVE THAT CANNOT GO VACUOUS, and the reason it is here.
+   *
+   * The three tests above cannot hand the component a size, because after this
+   * change there is no prop to hand it through — which means they would also
+   * have passed against the code being deleted, where a watcher with no grid
+   * fell back to the host too. What made them fail before the deletion was the
+   * harness passing `grid=`, and that went with the prop. So the behavioural
+   * half of this describe guards the fit; this guards the deletion.
+   *
+   * `SessionView.native`'s "the size <SessionView> does not hand the terminal"
+   * is the other half and the sharper one: it still has a grid to offer and
+   * asserts the shell offers it to nobody.
+   */
+  it("never reaches for term.resize, whatever it is told", () => {
+    const source = readFileSync(
+      resolve(__dirname, "../src/components/TerminalNative.tsx"),
+      "utf8",
+    );
+    // Comments first: this file's own prose names `term.resize` to say it is
+    // not called, and a scan that read those would never go red.
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    expect(code).not.toMatch(/\bterm\.resize\s*\(/);
   });
 });
 
