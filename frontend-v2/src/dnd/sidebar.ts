@@ -60,7 +60,7 @@ const [dragging, setRaw] = createSignal<"session" | "group" | null>(null);
  * sidebar.css). An attribute is the cheapest way to say it once for the whole
  * page rather than threading a flag through every group.
  */
-function setDragging(kind: "session" | "group" | null): void {
+function setDragging(kind: "session" | "group" | null, synthetic = false): void {
   setRaw(kind);
   if (typeof document === "undefined") return;
   const root = document.documentElement;
@@ -75,7 +75,15 @@ function setDragging(kind: "session" | "group" | null): void {
     // drag begins, so the move that should have closed the menu never arrives
     // (measured on the Android emulator: the menu stayed open for the whole
     // drag). Announcing it here reaches every menu on the page at once.
-    document.dispatchEvent(new CustomEvent(DRAG_START_EVENT));
+    // CARRYING WHICH PATH THE DRAG TOOK, because the tile tracker cannot work
+    // it out for itself in time. A mouse gets a NATIVE drag and the browser
+    // raises `pointercancel` a few milliseconds later as it takes the gesture
+    // over; a finger gets a synthetic one and a `pointercancel` there is the
+    // real thing, an incoming call or a system gesture. The two need opposite
+    // answers, and `dragstart` has already fired by the time this event is
+    // dispatched, so a listener armed in response to it would arrive too late
+    // to see it. `@formkit/drag-and-drop` hands us `isSynth`; pass it on.
+    document.dispatchEvent(new CustomEvent(DRAG_START_EVENT, { detail: { synthetic } }));
   } else {
     delete root.dataset.tlDrag;
   }
@@ -253,7 +261,7 @@ export function attachSessionList(el: HTMLElement, deps: SessionListDeps): void 
           dragstartClasses: (node, nodes, config, isSynth) => {
             dragstartClasses(node, nodes, config, isSynth);
             inFlight = true;
-            setDragging("session");
+            setDragging("session", isSynth === true);
             // A poll that rebuilt the list mid-drag would move the rows out from
             // under the pointer, taking the dragged node's own element with them.
             release ??= deps.hold();
