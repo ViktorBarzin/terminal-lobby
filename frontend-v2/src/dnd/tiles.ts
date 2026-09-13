@@ -460,6 +460,31 @@ let inFlight = false;
 /** The session in the air, captured at the start of the drag. */
 let dragKey: SessionKey | null = null;
 
+/**
+ * Has this drag been over the tiles at all?
+ *
+ * Viktor, 2026-09-13: *"lets also make dragging reversible. so if i start
+ * dragging a session into the pane and change my mind i can return it to its
+ * original spot on the side. now i often reorder them when that is not the
+ * goal."*
+ *
+ * A card carried out to the workspace and then brought back was aimed at the
+ * workspace and thought better of, and the sidebar should be exactly as it was.
+ * What happened instead: the library reorders the list live as the pointer
+ * travels, {@link tileDropClaimed} answers false the moment the pointer leaves
+ * the tiles, and the release wrote that travel down as a reorder. Measured
+ * against the live stack: dragging one card out to a pane and back to its own
+ * row still sent `PUT /sessions/layout` and moved it.
+ *
+ * This is the discriminator, and it is deliberately about where the drag HAS
+ * BEEN rather than where it ends. A drag that never left the sidebar is an
+ * ordinary reorder and stays one; a drag that reached the workspace is about
+ * the workspace, so bringing it home cancels rather than reorders. The sidebar
+ * column is to the left of the tiles, so crossing into them is a deliberate
+ * movement rather than something a reorder does in passing.
+ */
+let visited = false;
+
 /** The poll hold, released once the write has landed. */
 let release: (() => void) | null = null;
 
@@ -561,6 +586,21 @@ export function tileDropClaimed(): boolean {
   return claim !== null && claim.kind !== "remove";
 }
 
+/**
+ * Was this drag ever aimed at the workspace, wherever it ended?
+ *
+ * The sidebar asks after {@link tileDropClaimed} says no, to tell a cancelled
+ * tile drag from an ordinary reorder. True from the first moment the pointer
+ * was over a tile until the next drag begins; see {@link visited}.
+ *
+ * Read on the same terms as the claim, and for the same reason: written on
+ * every pointer move so it already holds by the time either module's end
+ * handler runs, and neither has to know which the browser calls first.
+ */
+export function tileDragVisited(): boolean {
+  return visited;
+}
+
 function point(event: MouseEvent): Point {
   const box = canvas?.el.getBoundingClientRect();
   return { x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0) };
@@ -591,6 +631,7 @@ function track(event: MouseEvent): void {
   const landing = landingRects(deps.tree(), dragKey, rects, deps.container());
   const next = hitTest(point(event), rects, landing);
   claim = next;
+  if (next.kind !== "remove") visited = true;
   if (!sameTarget(target(), next)) setTarget(next);
 }
 
@@ -646,6 +687,7 @@ function begin(key: SessionKey, synthetic: boolean): void {
   if (inFlight || !canvas) return;
   inFlight = true;
   nativeDrag = !synthetic;
+  visited = false;
   dragKey = key;
   claim = null;
   setTarget(null);
@@ -749,7 +791,7 @@ export function attachTileDrop(el: HTMLElement, deps: TileDropDeps): void {
   // rather than imported there, because that import would close a cycle (see
   // the module docblock), and withdrawn below: with no canvas there is no
   // workspace, and every drag is the sidebar's own again.
-  setTileDropClaim(tileDropClaimed);
+  setTileDropClaim(tileDropClaimed, tileDragVisited);
   const onDragStart = (event: Event) => {
     // Before the session test, not after: a group being reordered is not a
     // session and must still retire the last drag's claim, or the sidebar would
@@ -766,7 +808,7 @@ export function attachTileDrop(el: HTMLElement, deps: TileDropDeps): void {
     // drag is abandoned rather than landed, and the poll hold goes back.
     end(false);
     claim = null;
-    setTileDropClaim(null);
+    setTileDropClaim(null, null);
     canvas = null;
   });
 }

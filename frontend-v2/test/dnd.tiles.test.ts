@@ -46,6 +46,7 @@ import {
   type Point,
   previewBox,
   type TileDropDeps,
+  tileDragVisited,
   tileDropClaimed,
   tileDropShadow,
   tileDropTarget,
@@ -642,6 +643,72 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
     expect(tileDropTarget()).toEqual({ kind: "remove" });
     // Outside the tiles is the sidebar's own business again.
     expect(tileDropClaimed()).toBe(false);
+  });
+
+  it("remembers a drag went to the workspace, so bringing it back cancels", async () => {
+    // Viktor, 2026-09-13: "if i start dragging a session into the pane and
+    // change my mind i can return it to its original spot on the side. now i
+    // often reorder them when that is not the goal."
+    //
+    // The library reorders the list live as the pointer travels, and the claim
+    // goes false the moment the pointer leaves the tiles, so the release used to
+    // write that travel down. Measured against the live stack before the fix:
+    // carrying one card out to a pane and back to its own row still sent
+    // PUT /sessions/layout and moved it. `tileDragVisited` is what the sidebar
+    // asks after the claim says no, to tell a cancelled tile drag from a plain
+    // reorder.
+    const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    expect(tileDragVisited()).toBe(false);
+
+    // Out over a tile...
+    pointer("pointermove", 100, 450);
+    expect(tileDragVisited()).toBe(true);
+
+    // ...and back to the sidebar. The claim goes, the memory of having been
+    // there does not, which is the whole point.
+    pointer("pointermove", 2000, 450);
+    expect(tileDropClaimed()).toBe(false);
+    expect(tileDragVisited()).toBe(true);
+
+    pointer("pointerup", 2000, 450);
+    // Nothing landed in the workspace either: a cancel is a cancel on both
+    // sides, so the tree is untouched and the sidebar is free to leave its own
+    // order exactly as it was.
+    expect(h.applied).toHaveLength(0);
+    await settle();
+  });
+
+  it("does not remember a drag that never reached the tiles", async () => {
+    // The other half of the rule, and the one that keeps ordinary reordering
+    // working: a drag inside the sidebar is a reorder and must still be written.
+    const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    pointer("pointermove", 2000, 200);
+    pointer("pointermove", 2000, 600);
+    expect(tileDropClaimed()).toBe(false);
+    expect(tileDragVisited()).toBe(false);
+    pointer("pointerup", 2000, 600);
+    expect(h.applied).toHaveLength(0);
+    await settle();
+  });
+
+  it("forgets the last drag's visit when the next one begins", async () => {
+    // The flag is cleared in `begin`, not at the end, for the same reason the
+    // claim is: neither module can pin down which end handler the browser calls
+    // first, so a value written at the start is the one that cannot race.
+    const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    pointer("pointermove", 100, 450);
+    pointer("pointerup", 100, 450);
+    await settle();
+    expect(tileDragVisited()).toBe(true);
+
+    startSidebarDrag();
+    expect(tileDragVisited()).toBe(false);
+    pointer("pointercancel", 2000, 450);
+    await settle();
+    expect(h.applied).toHaveLength(1);
   });
 
   it("publishes the shadow where a moved tile will land, measured without it", () => {
