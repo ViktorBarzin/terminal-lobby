@@ -339,7 +339,7 @@ take it back.
 | what | where | why |
 |---|---|---|
 | workspace id, ordered members | tmux-api, per user, beside `layout/<user>.json` | it is durable intent about the work, it changes what the sidebar does, and two tabs on one machine must agree |
-| the split tree and tile sizes | the browser, one `tl:workspaces:v1` document | a 32-inch split is meaningless on a laptop; the same reasoning that keeps sidebar collapse state per-browser |
+| the split tree and tile sizes | the browser, one `tl:workspaces:v2` document | a 32-inch split is meaningless on a laptop; the same reasoning that keeps sidebar collapse state per-browser |
 
 `store/device-prefs.ts` is not the home despite the name: it holds the gestures
 kill switch and `clearLocalData()`, and nothing else. The fitting family is one
@@ -437,7 +437,7 @@ One release, both halves together.
 - Grid re-claim on every visible-set change, declining while watching.
 - Undo handlers beside the existing ones in `store/undo.*`, with names flattened
   into `sessions`.
-- Geometry in a new `store/workspaces.ts` over one `tl:workspaces:v1` key.
+- Geometry in a new `store/workspaces.ts` over one `tl:workspaces:v2` key. Each entry carries the last time the server listed its workspace, and an id the server stops listing is kept for 30 days rather than deleted on the spot, so a document that is briefly wrong costs a device no arrangement.
 
 **The tree contract**, as built. Four files depend on it, so it is written down
 rather than inferred:

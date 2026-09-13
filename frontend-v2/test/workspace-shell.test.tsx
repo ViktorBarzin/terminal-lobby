@@ -461,8 +461,12 @@ describe("a member that dies", () => {
       [split("column", [leaf(A), leaf(B)], [0.35, 0.65]), split("column", [leaf(C), leaf(D)])],
       [0.5, 0.5],
     );
-    // The store's own document shape: id → arrangement, nothing else.
-    localStorage.setItem(WORKSPACES_KEY, JSON.stringify({ w1: tree }));
+    // The store's own document shape: id → the arrangement and the last time
+    // the server listed the workspace it belongs to (store/workspaces.ts).
+    localStorage.setItem(
+      WORKSPACES_KEY,
+      JSON.stringify({ w1: { tree, seen: Date.now() } }),
+    );
     world.sessions = ["auth", "deploy", "docs", "logs"].map(session);
     world.doc = {
       version: 1,

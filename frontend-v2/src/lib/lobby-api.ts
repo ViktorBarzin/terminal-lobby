@@ -483,7 +483,7 @@ export const lobbyApi: LobbyApi = {
 // A Workspace is several sessions shown at once as Tiles, arranged as a tree of
 // rows and columns. ADR-0027 splits that object across two stores and only the
 // server half travels here: the workspace's id and its ordered members. The tree
-// and the tile sizes stay in this browser under `tl:workspaces:v1`
+// and the tile sizes stay in this browser under `tl:workspaces:v2`
 // (store/workspaces.ts), because a four-column arrangement describes a 32-inch
 // monitor and is meaningless on a laptop.
 //

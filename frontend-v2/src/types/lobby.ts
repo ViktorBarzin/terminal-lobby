@@ -321,7 +321,7 @@ export interface RestoreSelection {
 // its ordered members, one document per OS user beside layout/<user>.json.
 //
 // The tree and the tile sizes are deliberately not here and never reach
-// tmux-api. They are per device, under the browser's own `tl:workspaces:v1` key
+// tmux-api. They are per device, under the browser's own `tl:workspaces:v2` key
 // (store/workspaces.ts), because a four-column arrangement describes a 32-inch
 // monitor, is meaningless on a laptop and is unrenderable on a phone, which sees
 // no workspaces at all. Membership roams instead, because it changes what the

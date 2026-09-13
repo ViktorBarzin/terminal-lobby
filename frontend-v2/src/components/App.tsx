@@ -1368,12 +1368,19 @@ export const App: Component = () => {
       });
   });
 
-  /** This browser's arrangements, one `tl:workspaces:v1` document. The tree
+  /** This browser's arrangements, one `tl:workspaces:v2` document. The tree
    *  layer is injected rather than imported by the store, so the node shape
    *  lives in exactly one file (store/workspaces.ts says why at length). */
   const workspaceGeometry = createWorkspacesStore({
     parseTree: parseTreeNode,
     sessionsOf: leafKeys,
+    // One `removeAt` per departing session, folded left. It is the same call
+    // closing a tile makes, so a workspace losing a session to another one ends
+    // up arranged exactly as it would had the person closed that tile — rather
+    // than losing the arrangement entirely, which is what it did until
+    // 2026-09-13.
+    without: (tree, sessions) =>
+      sessions.reduce<TreeNode | null>((left, s) => (left ? removeAt(left, s) : null), tree),
   });
   onCleanup(() => workspaceGeometry.dispose());
 
