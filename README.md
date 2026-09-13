@@ -203,6 +203,13 @@ harness cannot answer for, since it stays listed while idle, so one is
 held from `SubagentStart` until `TeammateIdle` instead.
 Design: `docs/plans/2026-09-04-background-work-session-state-design.md`.
 
+A session showing you a question or a plan to approve stays amber for as
+long as the menu is on screen, in a third option, `@claude_ask`. Before
+that (2026-09-13) the state heard about a dialog only through the
+notification the CLI sends 5–6 s after drawing one, which fires once: a
+later stamp overwrote it and nothing put it back, and one session read
+*Working* for eleven hours with a question on its pane.
+
 ## Documentation
 
 | | |
