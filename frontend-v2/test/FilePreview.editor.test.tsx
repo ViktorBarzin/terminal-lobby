@@ -20,32 +20,68 @@ function makeStore(deps: PreviewDeps): PreviewStore {
   return store;
 }
 
-const codeFile = (text: string): (() => Promise<LoadedFile>) =>
+const codeFile =
+  (text: string): (() => Promise<LoadedFile>) =>
   async () => ({ kind: "code", language: "typescript", text });
 
-describe("<FilePreview> — quick-edit mode", () => {
-  it("shows an Edit button for editable files and enters edit mode (mounts CodeMirror)", async () => {
-    const store = makeStore({ loadFile: codeFile("const a = 1;"), notify: vi.fn() });
-    await store.open("/a/b.ts");
-    const { getByRole, container } = render(() => <FilePreview store={store} />);
+/**
+ * How long CodeMirror is given to appear, and the budget the test around it
+ * needs so that wait can actually be spent.
+ *
+ * TWO NUMBERS, because one of them alone does nothing. `waitFor` gives up after
+ * its own timeout, but vitest kills the whole test at `testTimeout` first, and
+ * that default is 5,000ms — so a 15,000ms `waitFor` inside a default-budget
+ * test is a number that can never be reached. Measured on 2026-09-12: with ten
+ * spinners on the pinned core this file failed with "Test timed out in 5000ms"
+ * while its `waitFor` still claimed 15 seconds of patience. `CodeView.test.tsx`
+ * is the file that already had this right — a 20,000ms `waitFor` inside
+ * `}, 30_000)` tests — and this one carried the wait without the test budget.
+ *
+ * Why the waits are long at all: `CodeEditor` reaches the editor through
+ * `await import("./codemirror-view")`, which pulls the whole @codemirror graph
+ * through vite-node the first time any test in this file asks for it. Measured
+ * the same day, cold, on this 32-core devvm:
+ *
+ *   this file to itself                 612ms
+ *   pinned to one core                  770ms
+ *   one core, three spinners          3,031ms
+ *   one core, ten spinners           >5,000ms (killed at testTimeout)
+ *
+ * A full run is the third row: 31 isolated workers competing for transforms on
+ * one main thread, on a box already carrying other work. So these are not
+ * padding for a slow machine, they are the real cost of the import under the
+ * only conditions the suite ever runs in. Nothing here waits on a clock — a
+ * `waitFor` returns the moment its condition holds, so an idle machine pays
+ * none of it.
+ */
+const EDITOR_WAIT_MS = 15_000;
+/** Comfortably past {@link EDITOR_WAIT_MS}, so the wait is what decides. */
+const EDITOR_TEST_MS = 20_000;
 
-    const edit = getByRole("button", { name: "Edit" });
-    fireEvent.click(edit);
-    expect(store.editing()).toBe(true);
-    // The read-only code body is replaced by the CodeMirror editor (lazy
-    // mount). The timeout is explicit because this waits on a COLD dynamic
-    // import of the whole editor: ~530ms with the file to itself, and past
-    // waitFor's 1s default when the suite's isolated workers are competing for
-    // CPU — which is the one test that made a full run fail while passing
-    // alone.
-    await waitFor(() => expect(container.querySelector(".cm-editor")).toBeTruthy(), {
-      timeout: 15_000,
-    });
-    // Save is present but disabled while clean; a View button exits.
-    const save = getByRole("button", { name: "Save" }) as HTMLButtonElement;
-    expect(save.disabled).toBe(true);
-    expect(getByRole("button", { name: "View" })).toBeInTheDocument();
-  });
+describe("<FilePreview> — quick-edit mode", () => {
+  it(
+    "shows an Edit button for editable files and enters edit mode (mounts CodeMirror)",
+    async () => {
+      const store = makeStore({ loadFile: codeFile("const a = 1;"), notify: vi.fn() });
+      await store.open("/a/b.ts");
+      const { getByRole, container } = render(() => <FilePreview store={store} />);
+
+      const edit = getByRole("button", { name: "Edit" });
+      fireEvent.click(edit);
+      expect(store.editing()).toBe(true);
+      // The read-only code body is replaced by the CodeMirror editor (lazy
+      // mount). This is the COLD import of the whole editor, so it carries the
+      // explicit budget above rather than waitFor's 1s default.
+      await waitFor(() => expect(container.querySelector(".cm-editor")).toBeTruthy(), {
+        timeout: EDITOR_WAIT_MS,
+      });
+      // Save is present but disabled while clean; a View button exits.
+      const save = getByRole("button", { name: "Save" }) as HTMLButtonElement;
+      expect(save.disabled).toBe(true);
+      expect(getByRole("button", { name: "View" })).toBeInTheDocument();
+    },
+    EDITOR_TEST_MS,
+  );
 
   it("does NOT show an Edit button for images", async () => {
     const store = makeStore({ loadFile: async () => ({ kind: "image" }) });
@@ -66,7 +102,9 @@ describe("<FilePreview> — quick-edit mode", () => {
     expect(store.dirty()).toBe(true);
 
     fireEvent.keyDown(document, { key: "s", ctrlKey: true });
-    await waitFor(() => expect(writeFile).toHaveBeenCalledWith("/home/u/a.ts", "edited via editor"));
+    await waitFor(() =>
+      expect(writeFile).toHaveBeenCalledWith("/home/u/a.ts", "edited via editor"),
+    );
     expect(store.dirty()).toBe(false);
     expect(notify).toHaveBeenCalledWith("Saved", "success");
   });
@@ -114,9 +152,7 @@ describe("<FilePreview> — Escape follows the stack you can see", () => {
   const dir = "/tmp/qa-harness-scratch/vfp";
 
   /** A loaded, editable file with an empty browse listing available. */
-  async function openFile(
-    confirm: (m: string) => boolean,
-  ): Promise<PreviewStore> {
+  async function openFile(confirm: (m: string) => boolean): Promise<PreviewStore> {
     const store = makeStore({
       loadFile: codeFile("baseline\n"),
       listDir: async () => [],
@@ -156,25 +192,36 @@ describe("<FilePreview> — Escape follows the stack you can see", () => {
   // the editor came back showing the file on disk while the app was one Save
   // away from writing something else. Only reachable through Done before
   // Escape stopped discarding the draft; now it is the normal way back.
-  it("brings the draft back with the editor when Browse closes", async () => {
-    const store = await openFile(() => true);
-    const { container } = render(() => <FilePreview store={store} />);
+  it(
+    "brings the draft back with the editor when Browse closes",
+    async () => {
+      const store = await openFile(() => true);
+      const { container } = render(() => <FilePreview store={store} />);
 
-    store.beginEdit();
-    await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy());
-    store.setDraft("baseline\nDRAFT-KEEPME");
-    await store.browse(dir);
-    expect(container.querySelector(".cm-content")).toBeNull(); // covered by Browse
+      store.beginEdit();
+      // Both waits below are the editor mounting, so both carry the editor budget.
+      // This one was the 1s default until 2026-09-12 and is the assertion that
+      // failed a full suite run while passing on its own — the same cold import
+      // the first test in this file was already given 15 seconds for, waited on
+      // with the default in the file that documents why the default is not enough.
+      await waitFor(() => expect(container.querySelector(".cm-content")).toBeTruthy(), {
+        timeout: EDITOR_WAIT_MS,
+      });
+      store.setDraft("baseline\nDRAFT-KEEPME");
+      await store.browse(dir);
+      expect(container.querySelector(".cm-content")).toBeNull(); // covered by Browse
 
-    esc(); // back to the editor
+      esc(); // back to the editor
 
-    await waitFor(() =>
-      expect(container.querySelector(".cm-content")?.textContent).toContain(
-        "DRAFT-KEEPME",
-      ),
-    );
-    expect(store.unsaved()).toBe(true);
-  });
+      // Browse unmounted CodeMirror, so this is a second mount, not a re-render.
+      await waitFor(
+        () => expect(container.querySelector(".cm-content")?.textContent).toContain("DRAFT-KEEPME"),
+        { timeout: EDITOR_WAIT_MS },
+      );
+      expect(store.unsaved()).toBe(true);
+    },
+    EDITOR_TEST_MS,
+  );
 
   it("prompts only once the editor is the layer on screen", async () => {
     const confirm = vi.fn(() => true);
@@ -230,17 +277,9 @@ describe("<FilePreview> — Escape follows the stack you can see", () => {
     // Every press changes something the user can see: Browse, then the editor
     // it was hiding, then the overlay. No silent no-op in the ladder.
     esc();
-    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([
-      false,
-      true,
-      true,
-    ]);
+    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([false, true, true]);
     esc();
-    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([
-      false,
-      false,
-      true,
-    ]);
+    expect([store.browsing(), store.editing(), store.isOpen()]).toEqual([false, false, true]);
     esc();
     expect(store.isOpen()).toBe(false);
   });

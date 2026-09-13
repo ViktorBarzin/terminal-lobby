@@ -125,9 +125,33 @@ export async function unsubscribePush(): Promise<void> {
 }
 
 /**
- * Tell the server which session THIS device has on screen, so the push sender
- * can withhold that one from this device and still tell every other device
- * (tmux-api pushfocus.go). `session` is "" when the app is showing no session.
+ * Tell the server which sessions THIS device has on screen, so the push sender
+ * can withhold those from this device and still tell every other device
+ * (tmux-api pushfocus.go).
+ *
+ * A SET, because a workspace puts several live sessions in front of one pair of
+ * eyes and the design counts every visible tile as open. `sessions` is empty
+ * when the app is showing none — the lobby list, a backgrounded tab, a window
+ * sitting behind another one — which silences nothing.
+ *
+ * TWO FIELDS ON THE WIRE, and the duplication is the point. The SPA is a static
+ * build behind the ingress and tmux-api is a binary on the box, so the halves
+ * deploy separately and this body has to mean the right thing to both:
+ *
+ * - `sessions` is the whole visible set, which a new server reads.
+ * - `session` is the focused tile, which an OLD server reads (it never sees
+ *   `sessions`: encoding/json drops the field it has no name for). It suppresses
+ *   that one tile exactly as it does today — fewer suppressions than intended,
+ *   never more. Sending the set alone would leave an old server holding "",
+ *   which silences nothing, and a push would arrive about the session under the
+ *   reader's eyes. So `focused` keeps being sent for as long as a server that
+ *   only understands it might answer.
+ *
+ * `focused` is "" when this window is not being read; `sessions` is then empty
+ * too, and the two are always consistent because the one caller derives both
+ * from the same read (notify/notifications.ts `reportFocusNow`). The server
+ * unions them regardless, so a caller that got that wrong would over-report
+ * rather than under-report.
  *
  * Keyed by this browser's push endpoint, which is also what makes it a no-op on
  * a device the server does not push to: no subscription, nothing to say.
@@ -136,7 +160,7 @@ export async function unsubscribePush(): Promise<void> {
  * rather than believing a report that never landed. Best-effort like the rest of
  * this module: every failure is a `false`, never a throw.
  */
-export async function reportFocus(session: string): Promise<boolean> {
+export async function reportFocus(sessions: readonly string[], focused: string): Promise<boolean> {
   try {
     if (!pushSupported()) return false;
     const reg = await navigator.serviceWorker.ready;
@@ -145,7 +169,7 @@ export async function reportFocus(session: string): Promise<boolean> {
     const resp = await fetchWithDeadline(PUSH_FOCUS_API, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ endpoint: sub.endpoint, session }),
+      body: JSON.stringify({ endpoint: sub.endpoint, sessions, session: focused }),
     });
     return resp.ok;
   } catch {

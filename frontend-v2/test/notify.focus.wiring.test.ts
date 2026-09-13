@@ -25,8 +25,13 @@ vi.mock("../src/pwa/push", () => ({
   VAPID_PUBLIC_API: "/api/sessions/push/vapid-public",
   PUSH_TEST_API: "/api/sessions/push/test",
   deviceSubscriptionState: () => Promise.resolve(h.delivers),
-  reportFocus: (session: string) => {
-    h.reports.push(session);
+  // The report is a SET now (the visible tiles, pwa/push.ts `reportFocus`).
+  // Joined back into one string here so every case below still reads as the one
+  // session it is about, and a two-tile report would show up as "auth deploy"
+  // rather than quietly matching the first name. test/push-focus.test.ts is
+  // where the set itself, and the body it produces, are asserted.
+  reportFocus: (sessions: readonly string[]) => {
+    h.reports.push(sessions.join(" "));
     if (!h.hold) return Promise.resolve(true);
     return new Promise<boolean>((resolve) => {
       h.hold = () => resolve(true);

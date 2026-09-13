@@ -1,5 +1,13 @@
 import Resizable from "@corvu/resizable";
-import { type Component, createEffect, createMemo, type JSX, untrack } from "solid-js";
+import {
+  type Component,
+  createComputed,
+  createEffect,
+  createMemo,
+  createSignal,
+  type JSX,
+  untrack,
+} from "solid-js";
 import {
   fitsIn,
   leaf,
@@ -131,6 +139,26 @@ function shapeOf(node: TreeNode): string {
   return `${node.dir === "row" ? "r" : "c"}(${node.children.map(shapeOf).join(",")})`;
 }
 
+/**
+ * The tree a canvas of this size draws: the whole arrangement, or the focused
+ * tile alone when the box cannot give every tile the 240px floor.
+ *
+ * The arrangement is not lost and not rewritten — a window dragged narrow and
+ * back shows the same tiles it did before, because nothing is stored on the way
+ * through. A workspace whose focused tile has gone (a kill, a rename) falls
+ * back to the first tile in reading order, which is deterministic.
+ *
+ * A plain function of its three inputs rather than a component-body closure, so
+ * the signal that holds the answer can be seeded and refilled from the one
+ * copy of the rule. See {@link WorkspaceCanvas}'s `drawn`.
+ */
+function treeToDraw(tree: TreeNode, container: Size, focused: SessionKey | null): TreeNode {
+  if (fitsIn(tree, container)) return tree;
+  const keys = leafKeys(tree);
+  const key = focused !== null && keys.includes(focused) ? focused : keys[0];
+  return key === undefined ? tree : leaf(key);
+}
+
 /** What the recursive skeleton needs from the component that owns the tree. */
 interface SkeletonContext {
   /** The live fractions of the split at this path, as corvu's controlled `sizes`. */
@@ -194,39 +222,100 @@ function skeletonFor(node: TreeNode, path: NodePath, ctx: SkeletonContext): JSX.
 
 export const WorkspaceCanvas: Component<WorkspaceCanvasProps> = (props) => {
   /**
-   * The tree actually drawn: the whole arrangement, or the focused tile alone
-   * when the window is too small to give every tile the 240px floor.
+   * THE TREE THE SKELETON IS DRAWN FROM, as a SIGNAL rather than as a memo.
    *
-   * The arrangement is not lost and not rewritten — a window dragged narrow and
-   * back shows the same tiles it did before, because nothing was stored on the
-   * way through. A workspace whose focused tile has gone (a kill, a rename)
-   * falls back to the first tile in reading order, which is deterministic.
+   * A memo is what this was, and the kind is the whole of the bug. corvu reads
+   * its controlled `sizes` prop from inside its own DISPOSAL: `Resizable.Panel`
+   * unregisters in an `onCleanup`, `unregisterPanel` calls `setSizes`, and
+   * `createControllableSignal`'s setter reads `props.value()` before it reports.
+   * That read reaches {@link SkeletonContext.sizesAt}, which is how the tree is
+   * reached from inside Solid's `cleanNode`.
+   *
+   * READING A STALE MEMO THERE RECOMPUTES IT. `untrack` does not change that —
+   * it suppresses the subscription, not the recomputation — so a memo read from
+   * a teardown drags `updateComputation` into the middle of a disposal, and the
+   * disposal walk then finds the `owned` array it is iterating set to null:
+   * `TypeError: Cannot read properties of null (reading '0')`, thrown out of
+   * Solid's own `cleanNode`. Reading a SIGNAL cannot do any of that. It returns
+   * what is in it.
+   *
+   * Measured in Chrome on 2026-09-12 against two real tmux sessions, closing
+   * the second-to-last tile of a workspace. The write runs inside a `batch`, so
+   * the teardown happens in the flush that batch ends with and the TypeError
+   * unwound out of `writeWorkspace` before it reached `putWorkspaces` —
+   * `landWorkspace`'s `.catch` then swallowed it in silence. The tiles came off
+   * screen, tmux-api was never told the workspace had ended, and a reload
+   * brought the closed tile back. The same unwind left Solid's update queue
+   * half-drained, so corvu's own root and handle stayed in the page and drew a
+   * divider down the middle of the one session left on screen. One read of one
+   * memo, both faults.
+   *
+   * Before the fix this was ALSO reading `props.tree` there, which is the
+   * accessor a `<Show when={workspaceTree()}>` hands out and which Solid makes
+   * throw once its condition is false ("Attempting to access a stale value from
+   * <Show>"). That error is the one a reader sees first and it is a symptom of
+   * the same read: the memo recomputed during the disposal, and the prop it
+   * recomputes from had already been revoked. Bisected on the same day — with
+   * the throw caught and the value left stale, the TypeError remains; with the
+   * memo turned into a signal, both go.
+   *
+   * `createComputed` rather than `createEffect` to keep it filled, because it
+   * runs in the same flush as the change rather than after it. A frame of lag
+   * here is a divider that trails the drag, and the design's "skeleton drives
+   * the slot layer" means corvu is handed the tree's fractions in the tick they
+   * change. It is also what makes the teardown safe: a computation Solid has
+   * already disposed is skipped rather than re-run, so the one flush that ends
+   * a workspace never calls this at all, and the signal keeps the last
+   * arrangement for corvu to read on its way out.
    */
-  const shown = createMemo<TreeNode>(() => {
-    const tree = props.tree;
-    if (fitsIn(tree, props.container)) return tree;
-    const keys = leafKeys(tree);
-    const focused = props.focused;
-    const key = focused !== null && keys.includes(focused) ? focused : keys[0];
-    return key === undefined ? tree : leaf(key);
-  });
+  const [drawn, setDrawn] = createSignal<TreeNode>(
+    untrack(() => treeToDraw(props.tree, props.container, props.focused)),
+  );
+  createComputed(() => setDrawn(treeToDraw(props.tree, props.container, props.focused)));
 
   // The whole interface to the slot layer. `untrack` around the call so a
   // caller that reads a signal in its handler does not subscribe this effect to
   // it and re-emit on changes that moved no tile.
   createEffect(() => {
-    const rects = toRects(shown(), props.container);
+    const rects = toRects(drawn(), props.container);
     untrack(() => props.onRects(rects));
   });
 
   const ctx: SkeletonContext = {
     sizesAt: (path) => {
-      const node = nodeAt(shown(), path);
+      const node = nodeAt(drawn(), path);
       return node?.kind === "split" ? [...node.fractions] : [];
     },
     onSizes: (path, next) => {
-      const node = nodeAt(untrack(shown), path);
+      // UNTRACKED, because corvu calls this from inside an effect of its own
+      // (`createEffect(() => onSizesChange(sizes()))`, its root) as well as
+      // from the untracked setter. A tracked read there would subscribe that
+      // effect to the tree and have it re-report on every arrangement change.
+      const node = nodeAt(untrack(drawn), path);
       if (node?.kind !== "split") return;
+      // A ROW THAT IS NOT ONE SIZE PER CHILD IS NOT A DRAG, and this is the
+      // half of the swallow a teardown needs.
+      //
+      // corvu keeps its own array of panel sizes and splices an entry out of it
+      // as each `Resizable.Panel` unregisters, reporting the shorter row each
+      // time. The fraction comparison below cannot swallow that: `sameFractions`
+      // answers false for rows of different lengths, by design, because two
+      // lengths really are two different arrangements. Measured on 2026-09-12,
+      // a two-tile workspace coming off screen: without this line the canvas
+      // calls `onFractions([], [0])` TWICE on its way out — a one-entry row, of
+      // zero, for a split with two children. `onFractions` promises "its
+      // complete new row of sizes, one per child, summing to 1", and that row
+      // is none of those things.
+      //
+      // The shell drops both today, because `tiles()` is already null by then
+      // and its handler returns. That is the shell defending itself against
+      // this file, and it is the only thing standing between a teardown and a
+      // tile written to zero width. Refusing here costs nothing: corvu's own
+      // resize path writes a complete row (`setSizes(newSizes.map(
+      // fixToPrecision))`, one entry per panel), so every row a real drag
+      // produces passes, and the partial rows reported while panels register or
+      // unregister are echoes either way.
+      if (next.length !== node.children.length) return;
       // THE ECHO, SWALLOWED. A controlled corvu root reports the sizes it was
       // just handed: once per panel as each registers, and again from its own
       // effect on every render. Passed on, each echo writes a new tree object,
@@ -249,10 +338,10 @@ export const WorkspaceCanvas: Component<WorkspaceCanvasProps> = (props) => {
    * Solid disposes a memo's previous computations when it re-runs, so the old
    * skeleton's corvu roots unregister their handles on the way out.
    */
-  const shape = createMemo(() => shapeOf(shown()));
+  const shape = createMemo(() => shapeOf(drawn()));
   const skeleton = createMemo<JSX.Element>(() => {
     shape();
-    return untrack(() => skeletonFor(shown(), [], ctx));
+    return untrack(() => skeletonFor(drawn(), [], ctx));
   });
 
   return (

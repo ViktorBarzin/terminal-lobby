@@ -5,11 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"sync"
 	"time"
 )
 
-// Which session each of a user's DEVICES is looking at right now.
+// Which sessions each of a user's DEVICES has on screen right now.
 //
 // The push sender's job is to tell you about work you cannot see. Until now it
 // guessed at what you could see from tmux's client_activity — "did a human type
@@ -45,10 +46,20 @@ type focusStore struct {
 
 // focusRecord is one device's last report.
 type focusRecord struct {
-	// session is what that device is showing; "" for the lobby list, a
-	// backgrounded page, or an unfocused window. "" never matches anything.
-	session string
-	at      time.Time
+	// sessions is EVERYTHING that device says it has on screen, not only the
+	// tile taking keystrokes. A workspace puts several live sessions in front of
+	// one pair of eyes (docs/adr/0027), and the design's surface table counts
+	// every one of them as open: "whatever suppression the open session gets
+	// today — push, bell badge, unseen marker — applies to the whole visible
+	// set". The other three suppressions shipped that way and this one did not,
+	// so a push about a tile the reader was looking at still reached the phone.
+	//
+	// Empty means the device is showing no session — the lobby list, a
+	// backgrounded page, an unfocused window — and matches nothing. "" is never
+	// a member (report drops it), so no report can silence a session named ""
+	// either.
+	sessions []string
+	at       time.Time
 }
 
 const (
@@ -61,9 +72,21 @@ const (
 	// and a looping client must not be able to grow this map without limit. Well
 	// above any real device count; the oldest report is evicted first.
 	maxFocusDevices = 32
-	// maxFocusBody is the biggest report accepted. An endpoint URL plus a
-	// 32-byte session name is a few hundred bytes.
+	// maxFocusBody is the biggest report accepted. An endpoint URL plus
+	// maxFocusSessions names of up to 32 bytes each is under 1.5 KiB.
 	maxFocusBody = 4 * 1024
+	// maxFocusSessions bounds ONE report. A workspace is a handful of tiles on a
+	// desktop — the design's worked example is four, and a phone shows none — so
+	// this is far above any real screen and is here only to stop a hand-rolled
+	// body from pinning a long slice per device.
+	//
+	// A report over the cap is refused rather than truncated, which is the same
+	// stance the rest of this handler takes on a body it would have to guess at.
+	// The page leaves its own record alone on a failed POST and tries again on
+	// the next tick (notifications.ts `reportFocusNow` believes only a report
+	// the server took), and until one lands this device is notified about
+	// sessions it may be able to see — the direction that loses no alert.
+	maxFocusSessions = 32
 )
 
 func newFocusStore() *focusStore {
@@ -81,9 +104,24 @@ func (f *focusStore) clock() time.Time {
 	return time.Now()
 }
 
-// report records what one device is showing, replacing whatever it said before:
-// a device looks at one session at a time.
-func (f *focusStore) report(osUser, endpoint, session string) {
+// report records what one device is showing, replacing whatever it said before.
+// A report is the whole truth about that screen, so the previous set is dropped
+// rather than merged into: a closed tile stops being visible the moment the
+// page says so.
+//
+// Variadic, so the single-session call this store was born with — report(user,
+// endpoint, "billing") — still says exactly what it always said, and a
+// workspace says report(user, endpoint, "auth", "deploy"). Duplicates are
+// dropped, and so is "": that is the legacy way of saying "showing nothing",
+// never a name (sessionNameRe wants at least one character), and a stored ""
+// would turn watching(…, "") into a question about a real member.
+func (f *focusStore) report(osUser, endpoint string, sessions ...string) {
+	onScreen := make([]string, 0, len(sessions))
+	for _, s := range sessions {
+		if s != "" && !slices.Contains(onScreen, s) {
+			onScreen = append(onScreen, s)
+		}
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	m := f.at[osUser]
@@ -91,7 +129,7 @@ func (f *focusStore) report(osUser, endpoint, session string) {
 		m = map[string]focusRecord{}
 		f.at[osUser] = m
 	}
-	m[endpoint] = focusRecord{session: session, at: f.clock()}
+	m[endpoint] = focusRecord{sessions: onScreen, at: f.clock()}
 	f.evictLocked(m)
 }
 
@@ -109,17 +147,21 @@ func (f *focusStore) evictLocked(m map[string]focusRecord) {
 	}
 }
 
-// watching says whether this device said it is showing this session, recently
-// enough to believe. Everything unknown answers false, so an unreported device
-// is notified.
+// watching says whether this device said it has this session ON SCREEN,
+// recently enough to believe.
+//
+// A MEMBERSHIP test, not the equality it used to be. The tile you are typing
+// into and the three beside it are all things you can see, and the question the
+// sender asks is "can they see this one", not "is this the one taking keys".
+// Everything unknown answers false, so an unreported device is notified.
 func (f *focusStore) watching(osUser, endpoint, session string) bool {
 	if session == "" {
-		return false // looking at nothing silences nothing
+		return false // asking about nothing is silenced by nothing
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.at[osUser][endpoint]
-	if !ok || rec.session != session {
+	if !ok || !slices.Contains(rec.sessions, session) {
 		return false
 	}
 	return f.clock().Sub(rec.at) <= focusTTL
@@ -148,9 +190,36 @@ func (f *focusStore) size(osUser string) int {
 
 // handlePushFocus takes the page's "this is what I am showing" report.
 //
-//	POST {"endpoint": "<push endpoint>", "session": "<name>"}
+//	POST {"endpoint": "<push endpoint>", "sessions": ["auth","deploy"], "session": "auth"}
 //
-// An empty session means the device is showing no session — the lobby list, a
+// TWO SHAPES, READ AS ONE SET. The page and this server ship separately (the
+// SPA is a static build behind the ingress, this is a Go binary on the box), so
+// for a while each will meet the other half at the wrong version:
+//
+//	sender      fields read            what the device is taken to be showing
+//	--------    -------------------    --------------------------------------
+//	old page    session                that one session; "" for none
+//	new page    sessions ∪ session     every visible tile
+//
+// The two mixed pairs are the ones worth spelling out, and neither may lose an
+// alert or swallow one:
+//
+//   - NEW page → OLD server. The old server never reads `sessions`
+//     (encoding/json drops an unknown field), so it suppresses the focused tile
+//     exactly as it does today and still pushes about the other tiles. Fewer
+//     suppressions than intended, never more. That is why the new page keeps
+//     sending `session` alongside the set rather than sending the set alone: a
+//     set-only body would leave an old server holding "", which silences
+//     nothing, and a push would arrive about the session under the reader's
+//     eyes.
+//   - OLD page → NEW server. No `sessions` key, so the union is the single name
+//     and the record is precisely what it has always been.
+//
+// The union rather than a preference for one field: everything named is on
+// screen either way, and a focused tile is by definition visible, so a set that
+// somehow omitted it would be wrong about the one session we are surest of.
+//
+// An empty union means the device is showing no session — the lobby list, a
 // backgrounded tab, an unfocused window — and silences nothing.
 //
 // resolveRealOSUser, not resolveOSUser: focus is a property of a DEVICE, and a
@@ -172,25 +241,56 @@ func handlePushFocus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Endpoint string `json:"endpoint"`
-		Session  string `json:"session"`
+		Endpoint string   `json:"endpoint"`
+		Session  string   `json:"session"`
+		Sessions []string `json:"sessions"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
-		http.Error(w, "body must be {\"endpoint\":\"...\",\"session\":\"...\"}", http.StatusBadRequest)
+		http.Error(w, "body must be {\"endpoint\":\"...\",\"sessions\":[\"...\"]}", http.StatusBadRequest)
 		return
 	}
 	if !validPushEndpoint(body.Endpoint) {
 		http.Error(w, "endpoint must be an absolute http(s) URL", http.StatusBadRequest)
 		return
 	}
-	// "" is the honest report for "showing no session" and is the only value
-	// outside sessionNameRe that is accepted.
-	if body.Session != "" && !sessionNameRe.MatchString(body.Session) {
-		http.Error(w, "session must be a session name", http.StatusBadRequest)
+	onScreen, reason := focusReportSet(body.Session, body.Sessions)
+	if reason != "" {
+		http.Error(w, reason, http.StatusBadRequest)
 		return
 	}
-	focusStoreInstance.report(osUser, body.Endpoint, body.Session)
+	focusStoreInstance.report(osUser, body.Endpoint, onScreen...)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// focusReportSet folds the two wire shapes into the one set the store keeps,
+// or returns the reason the report is refused.
+//
+// Every element carries the same name validation the single-name field has
+// always had, because each one goes on to be compared against a real session.
+// The two values outside sessionNameRe that mean something are handled here:
+// `session` may be "" for "showing nothing", while an "" INSIDE the array is
+// junk — an array element is a claim about a tile, and there is no tile called
+// "" — so it is refused rather than quietly dropped.
+func focusReportSet(session string, sessions []string) (onScreen []string, reason string) {
+	if session != "" && !sessionNameRe.MatchString(session) {
+		return nil, "session must be a session name"
+	}
+	if len(sessions) > maxFocusSessions {
+		return nil, "too many sessions on screen"
+	}
+	onScreen = make([]string, 0, len(sessions)+1)
+	for _, s := range sessions {
+		if !sessionNameRe.MatchString(s) {
+			return nil, "every element of sessions must be a session name"
+		}
+		if !slices.Contains(onScreen, s) {
+			onScreen = append(onScreen, s)
+		}
+	}
+	if session != "" && !slices.Contains(onScreen, session) {
+		onScreen = append(onScreen, session)
+	}
+	return onScreen, ""
 }
 
 // validPushEndpoint is the same shape check the subscription store applies: an
