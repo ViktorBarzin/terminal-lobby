@@ -42,6 +42,19 @@ vi.mock("../src/components/TerminalNative", () => ({
  * caught `terminalFrameArgs` at the moment the IFRAME navigated. The lobby
  * draws its own terminal now and is handed the same args as a prop, built by
  * the same call, so the seam is the same one and the flag is gone.
+ *
+ * WHAT THAT PARAGRAPH MISSED, and it cost a shipped bug. The iframe's
+ * navigation was not just where the args were observable — it was the
+ * RE-ATTACH. A new document meant a new ttyd connection carrying the new
+ * attach mode, so "the args changed" and "the tmux client changed" were the
+ * same event. Against a mounted terminal they are two: the prop describes the
+ * NEXT connect, and tmux holds the live client read-only for as long as it
+ * lives. So a test here can say the toggle ASKED for read-write, and cannot
+ * say anything about the socket. From 2026-09-05 to 2026-09-13 it asked and
+ * nothing answered, with this file green throughout.
+ *
+ * The socket half is pinned in TerminalNative.wiring.test.tsx, "the attach
+ * mode changing under a live socket".
  */
 
 // The session store opens an EventSource; jsdom has none, so stub it away. The
@@ -215,7 +228,12 @@ describe("<SessionView> — acting as another user", () => {
     expect(watchButton(container).title).toContain("bob");
   });
 
-  it("takes control on a click, and re-attaches read-write", async () => {
+  /**
+   * The ASK, not the attach. The terminal is a stub here, so what this can
+   * show is that the click reaches the arg builder without a watch — the
+   * connection that carries it is the wiring test's (see the header).
+   */
+  it("takes control on a click, and asks the attach for read-write", async () => {
     const { container } = lensView();
     await waitFor(() => expect(terminalFrameArgs).toHaveBeenCalled());
     const btn = watchButton(container);
