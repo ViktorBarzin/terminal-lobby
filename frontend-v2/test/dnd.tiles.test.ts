@@ -598,8 +598,18 @@ function mount(opts: {
   };
 }
 
-function startSidebarDrag(): void {
-  document.dispatchEvent(new CustomEvent(DRAG_START_EVENT));
+/**
+ * Start a sidebar drag on one of the two paths the library can take.
+ *
+ * `synthetic` is the finger's path, where `@formkit/drag-and-drop` runs the
+ * drag itself and a `pointercancel` really is the platform taking the gesture
+ * away. The default is the MOUSE path, where the browser runs a native drag and
+ * raises `pointercancel` a few milliseconds after `dragstart` purely because it
+ * is taking over — which is not a person letting go, and treating it as one is
+ * what stopped every mouse drag from working at all until 2026-09-13.
+ */
+function startSidebarDrag(synthetic = false): void {
+  document.dispatchEvent(new CustomEvent(DRAG_START_EVENT, { detail: { synthetic } }));
 }
 
 function pointer(type: string, x: number, y: number): void {
@@ -752,17 +762,45 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
     expect(h.releases()).toBe(1);
   });
 
-  it("abandons the drop when the platform takes the gesture away", async () => {
-    // `pointercancel` is an incoming call, a system gesture, or the browser
-    // starting a native drag of its own. None of them is a person letting go
-    // over a tile, and a native drag start raises it on the way past — so
-    // committing here would land a tile the moment a mouse drag began.
+  it("abandons the drop when the platform takes a FINGER's gesture away", async () => {
+    // On the synthetic path `pointercancel` is the real thing: an incoming
+    // call, or a system gesture claiming the touch. Nobody let go over a tile,
+    // so nothing lands.
     const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
-    startSidebarDrag();
+    startSidebarDrag(true);
     pointer("pointermove", 100, 450);
     pointer("pointercancel", 100, 450);
     expect(h.applied).toHaveLength(0);
     expect(tileDropTarget()).toBeNull();
+    await settle();
+    expect(h.releases()).toBe(1);
+  });
+
+  it("keeps tracking a MOUSE drag through the pointercancel a native drag raises", async () => {
+    // THE BUG THIS PINS, measured against the shipped build on 2026-09-13 with
+    // timestamps in milliseconds:
+    //
+    //   pointerdown@3270  dragstart@3299  tl-drag-start@3300
+    //   pointercancel@3304          <- the tracker was torn down here
+    //   dragover@3428 ... 37 more   <- every one reaching a dead tracker
+    //   drop@4560  dragend@4562
+    //
+    // Chromium raises `pointercancel` as it takes a native drag over, so every
+    // mouse drag onto a tile died four milliseconds in: no shadow was ever
+    // drawn and no drop ever landed. Only the finger path worked. No test could
+    // see it, because a test dispatches its own events and none of them raises
+    // a real `pointercancel` — which is why this one dispatches it explicitly.
+    const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    pointer("pointercancel", 100, 450);
+    // Still live: the drag goes on being tracked, and `dragover` is where a
+    // native drag reports its position once the browser has taken over.
+    document.dispatchEvent(
+      new MouseEvent("dragover", { clientX: 100, clientY: 450, bubbles: true }),
+    );
+    expect(tileDropTarget()).not.toBeNull();
+    document.dispatchEvent(new MouseEvent("dragend", { bubbles: true }));
+    expect(h.applied).toHaveLength(1);
     await settle();
     expect(h.releases()).toBe(1);
   });
