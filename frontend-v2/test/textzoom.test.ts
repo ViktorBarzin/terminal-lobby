@@ -106,10 +106,28 @@ function rig() {
 describe("the Chromium front-end", () => {
   it("steps the size once a real pinch is classified", () => {
     const r = rig();
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], r.surface));
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        r.surface,
+      ),
+    );
     // Three moves before it decides, then a 14% spread = two steps.
     for (let i = 0; i < CLASSIFY_MOVE; i++) {
-      r.surface.dispatchEvent(touch("touchmove", [[0, 0], [0, 114]], r.surface));
+      r.surface.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, 0],
+            [0, 114],
+          ],
+          r.surface,
+        ),
+      );
     }
     expect(r.set).toHaveBeenCalled();
     expect(r.size()).toBe(sizeForRatio(FONT_SIZE_DEFAULT, 1.14));
@@ -118,10 +136,28 @@ describe("the Chromium front-end", () => {
 
   it("lets a two-finger pan go", () => {
     const r = rig();
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], r.surface));
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        r.surface,
+      ),
+    );
     // Span held constant while both fingers travel: a pan, not a pinch.
     for (let i = 0; i < CLASSIFY_MOVE + 2; i++) {
-      r.surface.dispatchEvent(touch("touchmove", [[0, i * 10], [0, 100 + i * 10]], r.surface));
+      r.surface.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, i * 10],
+            [0, 100 + i * 10],
+          ],
+          r.surface,
+        ),
+      );
     }
     expect(r.set).not.toHaveBeenCalled();
     r.stop();
@@ -131,9 +167,27 @@ describe("the Chromium front-end", () => {
     const r = rig();
     const elsewhere = document.createElement("div");
     document.body.appendChild(elsewhere);
-    elsewhere.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], elsewhere));
+    elsewhere.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        elsewhere,
+      ),
+    );
     for (let i = 0; i < CLASSIFY_MOVE; i++) {
-      elsewhere.dispatchEvent(touch("touchmove", [[0, 0], [0, 130]], elsewhere));
+      elsewhere.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, 0],
+            [0, 130],
+          ],
+          elsewhere,
+        ),
+      );
     }
     expect(r.set).not.toHaveBeenCalled();
     r.stop();
@@ -141,10 +195,38 @@ describe("the Chromium front-end", () => {
 
   it("never fights a stream the browser already owns", () => {
     const r = rig();
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], r.surface));
-    r.surface.dispatchEvent(touch("touchmove", [[0, 0], [0, 130]], r.surface, false));
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        r.surface,
+      ),
+    );
+    r.surface.dispatchEvent(
+      touch(
+        "touchmove",
+        [
+          [0, 0],
+          [0, 130],
+        ],
+        r.surface,
+        false,
+      ),
+    );
     for (let i = 0; i < CLASSIFY_MOVE; i++) {
-      r.surface.dispatchEvent(touch("touchmove", [[0, 0], [0, 130]], r.surface));
+      r.surface.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, 0],
+            [0, 130],
+          ],
+          r.surface,
+        ),
+      );
     }
     expect(r.set).not.toHaveBeenCalled();
     r.stop();
@@ -152,10 +234,38 @@ describe("the Chromium front-end", () => {
 
   it("aborts on a third finger and does not resume", () => {
     const r = rig();
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], r.surface));
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100], [50, 50]], r.surface));
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        r.surface,
+      ),
+    );
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+          [50, 50],
+        ],
+        r.surface,
+      ),
+    );
     for (let i = 0; i < CLASSIFY_MOVE; i++) {
-      r.surface.dispatchEvent(touch("touchmove", [[0, 0], [0, 130]], r.surface));
+      r.surface.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, 0],
+            [0, 130],
+          ],
+          r.surface,
+        ),
+      );
     }
     expect(r.set).not.toHaveBeenCalled();
     r.stop();
@@ -164,9 +274,27 @@ describe("the Chromium front-end", () => {
   it("stops listening on cleanup", () => {
     const r = rig();
     r.stop();
-    r.surface.dispatchEvent(touch("touchstart", [[0, 0], [0, 100]], r.surface));
+    r.surface.dispatchEvent(
+      touch(
+        "touchstart",
+        [
+          [0, 0],
+          [0, 100],
+        ],
+        r.surface,
+      ),
+    );
     for (let i = 0; i < CLASSIFY_MOVE; i++) {
-      r.surface.dispatchEvent(touch("touchmove", [[0, 0], [0, 130]], r.surface));
+      r.surface.dispatchEvent(
+        touch(
+          "touchmove",
+          [
+            [0, 0],
+            [0, 130],
+          ],
+          r.surface,
+        ),
+      );
     }
     expect(r.set).not.toHaveBeenCalled();
   });
@@ -236,9 +364,11 @@ describe("the scale is a font-size scale", () => {
   });
 
   it("never lets the compose field fall below the iOS zoom floor", () => {
-    // Under 16px iOS zooms the page on focus and leaves it zoomed.
+    // Under 16px iOS zooms the page on focus and leaves it zoomed. The chip
+    // layer takes the same size in the same rule, or it lays the identical
+    // string out at 14px and every pill lands beside its word instead of on it.
     expect(css).toMatch(
-      /\.tl-composer-input\s*\{\s*font-size:\s*max\(16px,\s*calc\(16px \* var\(--tl-text-scale, 1\)\)\)/,
+      /\.tl-composer-input,\s*\.tl-composer-mirror\s*\{\s*font-size:\s*max\(16px,\s*calc\(16px \* var\(--tl-text-scale, 1\)\)\)/,
     );
   });
 });

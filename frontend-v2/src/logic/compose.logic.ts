@@ -26,40 +26,70 @@ const BUILTIN: ReadonlyArray<readonly [string, string]> = [
   ["/add-dir", "Add a new working directory"],
   ["/advisor", "Let Claude consult a stronger model at key moments"],
   ["/agents", "(removed) Ask Claude to create/manage subagents, or edit"],
-  ["/artifact-capabilities", "Runtime capabilities a published Artifact page can be granted — behavior static HTML cannot provide on its own, such as the page reading live or"],
+  [
+    "/artifact-capabilities",
+    "Runtime capabilities a published Artifact page can be granted — behavior static HTML cannot provide on its own, such as the page reading live or",
+  ],
   ["/artifact-design", "Design guidance and fundamentals for Artifacts."],
-  ["/artifact-diagramming", "Diagramming know-how for Artifacts — when a picture earns its place, how to draw one that shows the real mechanism, and the inline-SVG mechanics that keep"],
+  [
+    "/artifact-diagramming",
+    "Diagramming know-how for Artifacts — when a picture earns its place, how to draw one that shows the real mechanism, and the inline-SVG mechanics that keep",
+  ],
   ["/artifacts", "Browse your published and shared artifacts"],
   ["/autocompact", "Set how full the context gets before auto-summarizing"],
   ["/autofix-pr", "Monitor and autofix any issues with the current PR"],
   ["/background", "Send this session to the background and free the"],
-  ["/batch", "Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree agents that each open a PR."],
+  [
+    "/batch",
+    "Research and plan a large-scale change, then execute it in parallel across 5–30 isolated worktree agents that each open a PR.",
+  ],
   ["/branch", "Create a branch of the current conversation at this"],
   ["/btw", "Ask a quick side question without interrupting the main"],
   ["/bug", "Report a bug or share your conversation"],
   ["/cd", "Move this session to a new working directory"],
   ["/chrome", "Open Claude in Chrome settings"],
-  ["/claude-api", "Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration."],
-  ["/clear", "Start a new session with empty context; previous session stays on disk (resumable with /resume)"],
+  [
+    "/claude-api",
+    "Reference for the Claude API / Anthropic SDK — model ids, pricing, params, streaming, tool use, MCP, agents, caching, token counting, model migration.",
+  ],
+  [
+    "/clear",
+    "Start a new session with empty context; previous session stays on disk (resumable with /resume)",
+  ],
   ["/color", "Set the prompt bar color for this session"],
   ["/compact", "Free up context by summarizing the conversation so far"],
   ["/config", "Open settings"],
   ["/context", "Visualize current context usage as a colored grid"],
   ["/copy", "Copy Claude's last response to clipboard (or /copy N for the Nth-latest)"],
-  ["/dataviz", "Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization, in ANY output medium — an HTML or React"],
+  [
+    "/dataviz",
+    "Use this skill whenever you are about to create ANY chart, graph, plot, dashboard, or data visualization, in ANY output medium — an HTML or React",
+  ],
   ["/debug", "Enable debug logging for this session and help diagnose"],
-  ["/deep-research", "[dynamic workflow] Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report."],
+  [
+    "/deep-research",
+    "[dynamic workflow] Deep research harness — fan-out web searches, fetch sources, adversarially verify claims, synthesize a cited report.",
+  ],
   ["/design", "Grant or revoke Claude agent access to your Design"],
   ["/design-login", "Authorize design-system access for /design-sync with your claude.ai"],
-  ["/design-sync", "Push a React design system to claude.ai/design. This runs a converter that bundles the real component code (from Storybook or a bare package) and uploads it."],
+  [
+    "/design-sync",
+    "Push a React design system to claude.ai/design. This runs a converter that bundles the real component code (from Storybook or a bare package) and uploads it.",
+  ],
   ["/diff", "View uncommitted changes and per-turn diffs"],
-  ["/doctor", "Health-check the user's Claude Code setup and fix issues: diagnose installation health — what the `claude doctor` terminal diagnostics cover — from local"],
+  [
+    "/doctor",
+    "Health-check the user's Claude Code setup and fix issues: diagnose installation health — what the `claude doctor` terminal diagnostics cover — from local",
+  ],
   ["/effort", "Set effort level for model usage"],
   ["/exit", "Exit the CLI"],
   ["/export", "Export the current conversation to a file or clipboard"],
   ["/fast", "Toggle fast mode (Opus 5)"],
   ["/feedback", "Send feedback to Anthropic or report a bug"],
-  ["/fewer-permission-prompts", "Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce"],
+  [
+    "/fewer-permission-prompts",
+    "Scan your transcripts for common read-only Bash and MCP tool calls, then add a prioritized allowlist to project .claude/settings.json to reduce",
+  ],
   ["/focus", "Toggle focus view: just your prompt, summary, and"],
   ["/fork", "Copy this conversation into a new background session and keep working"],
   ["/goal", "Set a goal Claude checks before stopping"],
@@ -75,7 +105,10 @@ const BUILTIN: ReadonlyArray<readonly [string, string]> = [
   ["/list-agents", "List subagents and other Claude sessions you can"],
   ["/login", "Sign in with your Anthropic account"],
   ["/logout", "Sign out from your Anthropic account"],
-  ["/loop", "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace."],
+  [
+    "/loop",
+    "Run a prompt or slash command on a recurring interval (e.g. /loop 5m /foo). Omit the interval to let the model self-pace.",
+  ],
   ["/mcp", "Manage MCP servers"],
   ["/memory", "Edit CLAUDE.md files and memory settings"],
   ["/mobile", "Show QR code to download the Claude mobile app"],
@@ -94,15 +127,30 @@ const BUILTIN: ReadonlyArray<readonly [string, string]> = [
   ["/rename", "Rename the current conversation"],
   ["/resume", "Resume a previous conversation"],
   ["/rewind", "Restore the code and/or conversation to a previous"],
-  ["/run", "Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real"],
-  ["/run-skill-generator", "Author or improve the run-<unit> skill — a per-project skill that tells agents how to build, launch, and drive this project's app. Use when the user asks"],
+  [
+    "/run",
+    "Launch and drive this project's app to see a change working. Use when asked to run, start, or screenshot the app, or to confirm a change works in the real",
+  ],
+  [
+    "/run-skill-generator",
+    "Author or improve the run-<unit> skill — a per-project skill that tells agents how to build, launch, and drive this project's app. Use when the user asks",
+  ],
   ["/sandbox", "◯ sandbox disabled (⏎ to configure)"],
-  ["/schedule", "Create, update, list, or run scheduled cloud agents (routines) that execute on a cron schedule."],
+  [
+    "/schedule",
+    "Create, update, list, or run scheduled cloud agents (routines) that execute on a cron schedule.",
+  ],
   ["/scroll-speed", "Adjust mouse wheel scroll speed"],
   ["/security-review", "Complete a security review of the pending changes on the current"],
-  ["/simplify", "Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only — it does not hunt for bugs;"],
+  [
+    "/simplify",
+    "Review the changed code for reuse, simplification, efficiency, and altitude cleanups, then apply the fixes. Quality only — it does not hunt for bugs;",
+  ],
   ["/skills", "List available skills"],
-  ["/status", "Show Claude Code status including version, model, account, API connectivity, and tool"],
+  [
+    "/status",
+    "Show Claude Code status including version, model, account, API connectivity, and tool",
+  ],
   ["/statusline", "Set up Claude Code's status line UI"],
   ["/stickers", "Order Claude Code stickers"],
   ["/subtask", "Send a subagent off with your full context; its result comes back"],
@@ -112,10 +160,16 @@ const BUILTIN: ReadonlyArray<readonly [string, string]> = [
   ["/terminal-setup", "Install Shift+Enter key binding for newlines"],
   ["/theme", "Change the theme"],
   ["/tui", "Set the terminal UI renderer (default | fullscreen)"],
-  ["/update-config", "Use this skill to configure the Claude Code harness via settings.json. Automated behaviors (\"from now on when X\", \"each time X\", \"whenever X\","],
+  [
+    "/update-config",
+    'Use this skill to configure the Claude Code harness via settings.json. Automated behaviors ("from now on when X", "each time X", "whenever X",',
+  ],
   ["/usage", "Show session cost, plan usage, and activity stats"],
   ["/usage-credits", "Configure usage credits or request them from your admin when you hit a"],
-  ["/verify", "Verify that a code change actually does what it's supposed to by exercising it end-to-end and observing behavior — drive the affected flow, not just tests"],
+  [
+    "/verify",
+    "Verify that a code change actually does what it's supposed to by exercising it end-to-end and observing behavior — drive the affected flow, not just tests",
+  ],
   ["/voice", "Toggle voice mode"],
   ["/workflows", "Browse running and completed workflows"],
 ];
@@ -128,9 +182,11 @@ export interface SlashCommand {
   source?: string;
 }
 
-export const BUILTIN_COMMANDS: ReadonlyArray<SlashCommand> = BUILTIN.map(
-  ([name, description]) => ({ name, description, source: "builtin" }),
-);
+export const BUILTIN_COMMANDS: ReadonlyArray<SlashCommand> = BUILTIN.map(([name, description]) => ({
+  name,
+  description,
+  source: "builtin",
+}));
 
 /**
  * The built-ins plus what this session actually has, one entry per name.
@@ -264,10 +320,7 @@ function sourceRank(source: string | undefined): number {
  * and always, so the list is stable: a menu that reorders itself as the ranks
  * shift is hard to aim at.
  */
-export function rankCommands(
-  commands: ReadonlyArray<SlashCommand>,
-  token: string,
-): SlashCommand[] {
+export function rankCommands(commands: ReadonlyArray<SlashCommand>, token: string): SlashCommand[] {
   return commands
     .map((c) => ({ c, rank: commandRank(c, token) }))
     .filter((r) => r.rank >= 0)
@@ -448,24 +501,47 @@ export function modeLabel(mode: string): string {
   }
 }
 
+/** One attachment, as the send sees it: where its bytes are, and the token
+ *  standing for it in the message. */
+export interface ComposableAttachment {
+  path: string;
+  token?: string;
+}
+
 /**
- * The message an attachment-carrying composer sends (design decision 9): each
- * path on its own line, then the prose.
+ * The message an attachment-carrying composer sends: every token swapped for
+ * the absolute path it stands for, in place.
  *
- * Paths FIRST so Claude has the files before the instruction that refers to
- * them, and one per line so a bubble reads as attachments-then-message.
- * Newlines are safe because session-events pastes the prompt in bracketed mode
- * and submits with a separate Enter (sessionio/tmux.go) — inside a bracketed
- * paste a newline is a soft newline, not a submit.
+ * In place is the point. Design decision 9 put each path on its own line at the
+ * FRONT, which is where a tray above the field had no better answer — but a
+ * person pasting a screenshot mid-sentence means it to be read mid-sentence,
+ * and the timeline has rendered a path wherever it sits since decision 2.
+ * Viktor asked for this on 2026-09-13. The old shape is still what an
+ * attachment with no token gets, which is how a draft written before this
+ * lands: those paths go first, one per line, exactly as before.
+ *
+ * Newlines stay safe either way because session-events pastes the prompt in
+ * bracketed mode and submits with a separate Enter (sessionio/tmux.go) — inside
+ * a bracketed paste a newline is a soft newline, not a submit.
  *
  * Returns "" when there is nothing to send, which is what the caller checks
  * instead of testing the text alone: attachments with no prose is a valid send.
  */
-export function composeMessage(text: string, paths: readonly string[]): string {
-  const body = text.trim();
-  const unique = [...new Set(paths)];
-  if (unique.length === 0) return body;
-  return [...unique, ...(body ? [body] : [])].join("\n");
+export function composeMessage(text: string, attachments: readonly ComposableAttachment[]): string {
+  let body = text;
+  const loose: string[] = [];
+  const seen = new Set<string>();
+  for (const a of attachments) {
+    if (seen.has(a.path)) continue;
+    seen.add(a.path);
+    // split/join rather than replace: a token the writer copied twice means the
+    // same file twice, and a lone replace would leave the second one as text.
+    if (a.token && body.includes(a.token)) body = body.split(a.token).join(a.path);
+    else loose.push(a.path);
+  }
+  body = body.trim();
+  if (loose.length === 0) return body;
+  return [...loose, ...(body ? [body] : [])].join("\n");
 }
 
 /**

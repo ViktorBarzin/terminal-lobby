@@ -160,6 +160,10 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
     expect(field(container).value).toBe("");
   });
 
+  // A parked first prompt carries its paths in the text, so it arrives with no
+  // attachments of its own. One that does bring them — anything else that parks
+  // — gets them anchored into the message rather than shown in a tray that no
+  // longer exists.
   it("brings the attachment chips with it", () => {
     const { container } = render(() => (
       <PromptField onSend={onSend} label="Message" draftKey="k7m2q9x4tp0v" />
@@ -175,7 +179,7 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
       ],
       at: 2,
     });
-    expect(field(container).value).toBe("look at this");
-    expect(container.querySelectorAll(".tl-tray-item").length).toBe(1);
+    expect(field(container).value).toBe("look at this [img: a.png]");
+    expect(container.querySelectorAll(".tl-inline-chip").length).toBe(1);
   });
 });

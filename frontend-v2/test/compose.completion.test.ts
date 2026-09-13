@@ -1,10 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  completionFor,
-  composeMessage,
-  modeFromPane,
-  modeLabel,
-} from "../src/logic/compose.logic";
+import { completionFor, composeMessage, modeFromPane, modeLabel } from "../src/logic/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
@@ -20,7 +15,9 @@ describe("slash completion", () => {
     expect(values(c)).toContain("/config");
     // A prefix match comes first; /clear can still appear further down on a
     // description match, but never ahead of them.
-    expect(values(c).indexOf("/compact")).toBeLessThan(values(c).indexOf("/clear") === -1 ? 99 : values(c).indexOf("/clear"));
+    expect(values(c).indexOf("/compact")).toBeLessThan(
+      values(c).indexOf("/clear") === -1 ? 99 : values(c).indexOf("/clear"),
+    );
   });
 
   it("carries each command's description into the menu", () => {
@@ -82,13 +79,15 @@ describe("the permission mode, read off the pane", () => {
   const line = (s: string) => `\n\u2500\u2500\u2500\u2500\n  ${s} \u00b7 \u2190 for agents\n`;
 
   it("reads every stop of the cycle", () => {
-    expect(modeFromPane(line("\u23f5\u23f5 bypass permissions on (shift+tab to cycle)")))
-      .toBe("bypassPermissions");
+    expect(modeFromPane(line("\u23f5\u23f5 bypass permissions on (shift+tab to cycle)"))).toBe(
+      "bypassPermissions",
+    );
     expect(modeFromPane(line("\u23f5\u23f5 auto mode on (shift+tab to cycle)"))).toBe("auto");
     // The one stop that carries no "(shift+tab to cycle)" tail.
     expect(modeFromPane(line("\u23f8 manual mode on"))).toBe("manual");
-    expect(modeFromPane(line("\u23f5\u23f5 accept edits on (shift+tab to cycle)")))
-      .toBe("acceptEdits");
+    expect(modeFromPane(line("\u23f5\u23f5 accept edits on (shift+tab to cycle)"))).toBe(
+      "acceptEdits",
+    );
     expect(modeFromPane(line("\u23f8 plan mode on (shift+tab to cycle)"))).toBe("plan");
   });
 
@@ -133,31 +132,33 @@ describe("the mode chip's label", () => {
 });
 
 // --- the wire format an attachment produces --------------------------------
-// docs/plans/2026-08-17-text-view-attachments-design.md decision 9: the paths
-// come first, one per line, then the prose. Bracketed paste (sessionio/tmux.go
-// pastes, then sends a separate Enter) makes the newlines soft, so a multi-line
-// prompt is one message rather than several submits.
+// A path stands where its token stood, because that is where the writer put the
+// file (2026-09-13). Bracketed paste (sessionio/tmux.go pastes, then sends a
+// separate Enter) makes the newlines soft, so a multi-line prompt is one
+// message rather than several submits.
 describe("composeMessage", () => {
   const a = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-a1.png";
   const b = "/var/lib/clipboard-store/wizard/qa/file-20260817-abcd-report.pdf";
+  const img = { path: a, token: "[img]" };
+  const pdf = { path: b, token: "[file: report.pdf]" };
 
   it("is just the text when nothing is attached", () => {
     expect(composeMessage("what's wrong here?", [])).toBe("what's wrong here?");
   });
 
-  it("puts each path on its own line ahead of the prose", () => {
-    expect(composeMessage("what's wrong, vs the pdf?", [a, b])).toBe(
-      `${a}\n${b}\nwhat's wrong, vs the pdf?`,
+  it("puts each path where its token stands", () => {
+    expect(composeMessage("what's wrong in [img], vs [file: report.pdf]?", [img, pdf])).toBe(
+      `what's wrong in ${a}, vs ${b}?`,
     );
   });
 
-  it("sends the paths alone when there is no prose", () => {
-    expect(composeMessage("", [a])).toBe(a);
-    expect(composeMessage("   ", [a])).toBe(a);
+  it("sends the path alone when the token is the whole message", () => {
+    expect(composeMessage("[img]", [img])).toBe(a);
+    expect(composeMessage("  [img] ", [img])).toBe(a);
   });
 
   it("trims the prose but keeps its interior newlines", () => {
-    expect(composeMessage("  line one\nline two  ", [a])).toBe(`${a}\nline one\nline two`);
+    expect(composeMessage("  line one\n[img] line two  ", [img])).toBe(`line one\n${a} line two`);
   });
 
   it("has nothing to send when both halves are empty", () => {
@@ -166,6 +167,27 @@ describe("composeMessage", () => {
   });
 
   it("drops a duplicate path rather than asking Claude to read it twice", () => {
-    expect(composeMessage("look", [a, a])).toBe(`${a}\nlook`);
+    expect(composeMessage("look at [img]", [img, { ...img, token: "[img 2]" }])).toBe(
+      `look at ${a}`,
+    );
+  });
+
+  // The old shape, still reached by a draft written before attachments were
+  // anchored and by anything that hands over a path with no token at all.
+  it("falls back to a line each, ahead of the prose, with no token", () => {
+    expect(composeMessage("what's wrong, vs the pdf?", [{ path: a }, { path: b }])).toBe(
+      `${a}\n${b}\nwhat's wrong, vs the pdf?`,
+    );
+    expect(composeMessage("", [{ path: a }])).toBe(a);
+  });
+
+  // A token whose text the writer has since edited away cannot be placed, so it
+  // goes to the front rather than being dropped: the file was still attached.
+  it("falls back for a token that is no longer in the message", () => {
+    expect(composeMessage("what's wrong?", [img])).toBe(`${a}\nwhat's wrong?`);
+  });
+
+  it("places a token the writer copied twice at both of them", () => {
+    expect(composeMessage("[img] vs [img]", [img])).toBe(`${a} vs ${a}`);
   });
 });

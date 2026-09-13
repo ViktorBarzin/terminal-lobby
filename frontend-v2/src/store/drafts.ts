@@ -23,13 +23,20 @@ import { lsGet, lsSet } from "../lib/storage";
 
 export const DRAFTS_KEY = "tl:session-drafts:v1";
 
-/** One tray chip, as persisted. The path is what the send splices into the prompt. */
+/** One attached file, as persisted. The path is what the send swaps in. */
 export interface DraftAttachment {
   /** absolute path on the devvm — the store path, or wherever it came from. */
   path: string;
   /** stored basename; the chip's label is derived from it. */
   name: string;
   kind: AttachmentKind;
+  /**
+   * The token standing for this file in the message text — `[img]`,
+   * `[file: report.pdf]` (lib/attachments.ts). Persisted beside the text so a
+   * reloaded draft still knows which chip is which. Absent on a record written
+   * before attachments were anchored, which `anchorRestored` gives one to.
+   */
+  token?: string;
 }
 
 export interface Draft {
@@ -63,11 +70,11 @@ function writeAll(doc: Record<string, unknown>): void {
  */
 function readAttachment(v: unknown): DraftAttachment | null {
   if (!v || typeof v !== "object") return null;
-  const { path, name, kind } = v as Record<string, unknown>;
+  const { path, name, kind, token } = v as Record<string, unknown>;
   if (typeof path !== "string" || !path.startsWith("/")) return null;
   if (typeof name !== "string" || !name) return null;
   if (kind !== "image" && kind !== "doc") return null;
-  return { path, name, kind };
+  return typeof token === "string" && token ? { path, name, kind, token } : { path, name, kind };
 }
 
 /**

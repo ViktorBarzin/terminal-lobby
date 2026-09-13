@@ -216,3 +216,138 @@ export function segmentMessage(text: string): Segment[] {
   if (at < text.length) out.push({ kind: "text", text: text.slice(at) });
   return out;
 }
+
+// ---- inline attachment tokens -------------------------------------------
+//
+// An attached file is written into the message AS a token — `[img]`,
+// `[img: chart.png]`, `[file: report.pdf]` — standing exactly where the paste,
+// the drop or the picker put it, and swapped for the absolute path at send
+// time (logic/compose.logic.ts `composeMessage`). It replaces the tray that sat
+// above the field and put every path at the FRONT of the message, which is what
+// Viktor asked for on 2026-09-13: the file belongs where he wrote it.
+//
+// A textarea can only hold characters, so the token has to BE readable text:
+// the chip look is painted behind it by a mirror layer the composer draws
+// (PromptField, `.tl-composer-mirror`), and the text alone is what survives if
+// that layer is ever wrong. No emoji, for the reason Icons.tsx gives — an
+// emoji-default codepoint renders in colour and at its own size on every OS.
+
+/** Everything the token machinery needs to know about one attachment. */
+export interface TokenizedAttachment {
+  /** stored basename, which decides the label. */
+  name: string;
+  kind: AttachmentKind;
+  /** the token standing for it in the message, once it has one. */
+  token?: string;
+}
+
+/**
+ * Every token SHAPE, for finding ones no attachment owns any more.
+ *
+ * Deliberately narrow: the two heads, an optional ` 2` disambiguator and an
+ * optional `: label`. A markdown link whose text is exactly `img` or `file`
+ * would match, which costs that link its brackets in a restored draft and
+ * nothing else — the price of a pattern loose enough to catch the labels people
+ * actually attach.
+ */
+const TOKEN_RE = /\[(?:img|file)(?:\s\d+)?(?::\s[^\][\n]{1,80})?\]/g;
+
+/** `file-<stamp>-<token>-` is stripped by storedDisplayName; these two prefixes
+ *  are the store's own names for a pasted image and a `show-image` render, and
+ *  carry nothing a reader wants in their message. */
+const UNNAMED_RE = /^(?:pasted|displayed)-/;
+/** What Chrome calls a clipboard image, which is no more informative. */
+const GENERIC_RE = /^image\.\w+$/i;
+
+/** The longest label a token carries before it is cut short. */
+const LABEL_MAX = 22;
+
+/** The part of a token that names the file, or null when the name says nothing
+ *  the writer did not already know (a pasted screenshot). */
+function tokenLabel(name: string): string | null {
+  const shown = storedDisplayName(name);
+  if (!shown || UNNAMED_RE.test(shown) || GENERIC_RE.test(shown)) return null;
+  return shown.length > LABEL_MAX ? shown.slice(0, LABEL_MAX - 1) + "…" : shown;
+}
+
+/**
+ * The token for one attachment, unique among the ones already in the message.
+ *
+ * Uniqueness is what makes the swap at send time unambiguous, so a second
+ * screenshot is `[img 2]` rather than a duplicate of the first.
+ */
+export function attachToken(
+  name: string,
+  kind: AttachmentKind,
+  taken: ReadonlySet<string>,
+): string {
+  const head = kind === "image" ? "img" : "file";
+  const label = tokenLabel(name);
+  const body = (n: number): string =>
+    `[${head}${n > 1 ? ` ${n}` : ""}${label ? `: ${label}` : ""}]`;
+  let n = 1;
+  while (taken.has(body(n))) n += 1;
+  return body(n);
+}
+
+/**
+ * Cut `[start, end)` out of the text, taking one separating space with it, and
+ * say where the caret should land. Removing a chip from the middle of a
+ * sentence must not leave a double space behind.
+ */
+export function cutSpan(text: string, start: number, end: number): { text: string; at: number } {
+  let from = start;
+  let to = end;
+  if (text[to] === " ") to += 1;
+  else if (from > 0 && text[from - 1] === " ") from -= 1;
+  return { text: text.slice(0, from) + text.slice(to), at: from };
+}
+
+/** Remove a token from the text, wherever it stands. A token that is not there
+ *  leaves the text alone. */
+export function dropToken(text: string, token: string): string {
+  const at = text.indexOf(token);
+  return at < 0 ? text : cutSpan(text, at, at + token.length).text;
+}
+
+/**
+ * Make a restored message and its attachments agree about what is in it.
+ *
+ * Two things can be out of step by the time a draft is read back:
+ *   - a token whose attachment is gone (the new-session composer holds FILES,
+ *     which cannot be persisted, so its tokens outlive them) is cut out;
+ *   - an attachment with no token — a draft written before attachments were
+ *     anchored — is given one at the end of the message rather than dropped.
+ *
+ * A chip the writer deleted needs nothing here: the field drops that
+ * attachment at the keystroke, so it is never saved in the first place.
+ */
+export function anchorRestored<T extends TokenizedAttachment>(
+  text: string,
+  items: readonly T[],
+): { text: string; items: T[] } {
+  const kept: T[] = [];
+  const taken = new Set<string>();
+  for (const item of items) {
+    if (!item.token || taken.has(item.token) || !text.includes(item.token)) continue;
+    taken.add(item.token);
+    kept.push(item);
+  }
+
+  let out = text;
+  const orphans = [...out.matchAll(TOKEN_RE)].filter((m) => !taken.has(m[0]));
+  // Backwards, so an earlier cut cannot move a later match's index.
+  for (let i = orphans.length - 1; i >= 0; i--) {
+    const m = orphans[i]!;
+    out = cutSpan(out, m.index, m.index + m[0].length).text;
+  }
+
+  for (const item of items) {
+    if (kept.includes(item)) continue;
+    const token = attachToken(item.name, item.kind, taken);
+    taken.add(token);
+    out = out.trimEnd() ? `${out.trimEnd()} ${token}` : token;
+    kept.push({ ...item, token });
+  }
+  return { text: out, items: kept };
+}

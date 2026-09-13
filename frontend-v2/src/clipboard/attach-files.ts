@@ -27,6 +27,16 @@ import type { DraftAttachment } from "../store/drafts";
 export interface AttachFilesOptions {
   /** How to tell the person what happened. Absent means silently. */
   notify?: (message: string, kind: "error" | "info") => void;
+  /**
+   * The token already standing for this file in the message being written.
+   *
+   * Only the new-session composer has one: it writes the token when the file is
+   * picked and uploads after the session exists, so this is what carries the
+   * pairing across that gap and lets the send swap the path in where the writer
+   * put it. Absent everywhere else, where the upload happens first and the
+   * token is minted from its result.
+   */
+  tokenFor?: (file: File, index: number) => string | undefined;
   /** injectable for tests; defaults to window.fetch. */
   fetchImpl?: typeof fetch;
 }
@@ -38,7 +48,7 @@ export async function uploadAttachments(
 ): Promise<DraftAttachment[]> {
   const added: DraftAttachment[] = [];
   const transferred: string[] = [];
-  for (const file of files) {
+  for (const [index, file] of files.entries()) {
     try {
       const up = await uploadBlob(file, {
         session,
@@ -51,7 +61,8 @@ export async function uploadAttachments(
         transferred.push(up.path);
         continue;
       }
-      added.push({ path: up.path, name, kind: attachmentKind(name) });
+      const token = opts.tokenFor?.(file, index);
+      added.push({ path: up.path, name, kind: attachmentKind(name), ...(token ? { token } : {}) });
     } catch (err) {
       opts.notify?.(
         `Couldn't attach ${file.name}: ${err instanceof Error ? err.message : "upload failed"}`,

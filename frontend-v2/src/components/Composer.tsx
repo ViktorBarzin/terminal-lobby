@@ -92,8 +92,6 @@ export const Composer: Component<{
    * evicted phone tab does not lose a half-written message with a photo on it.
    */
   session?: string;
-  /** Effective OS user, so a tray thumbnail knows it may fetch its own store. */
-  me?: string;
   /**
    * Upload these files and return what became attachable. The uploader decides:
    * a document over the store cap stays an ephemeral /tmp transfer and comes back
@@ -101,8 +99,6 @@ export const Composer: Component<{
    * per input file.
    */
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
-  /** Open one attachment in the file preview overlay. */
-  onOpenPreview?: (path: string) => void;
   /** Watching: the controls that type are inert, and so is attaching. */
   inertReason?: string;
   /** Hand the caller the sinks a message can be filled from OUTSIDE this
@@ -151,9 +147,7 @@ export const Composer: Component<{
         commands={props.commands}
         commandsOk={props.commandsOk}
         draftKey={props.session}
-        me={props.me}
         onAttach={props.onAttach}
-        onOpenPreview={props.onOpenPreview}
         inertReason={props.inertReason}
         onCycleMode={props.onCycleMode}
         onEmptyDigit={onEmptyDigit}
@@ -165,30 +159,30 @@ export const Composer: Component<{
         }
         leftExtra={
           <>
-          <Show when={props.mode && props.onCycleMode}>
-            <button
-              type="button"
-              class="tl-mode-chip"
-              // The mode is the chip's whole meaning, so it drives the colour
-              // from CSS rather than a second mapping in here.
-              data-mode={props.mode}
-              title={`Permission mode: ${modeLabel(props.mode ?? "")} (Shift+Tab)`}
-              onClick={() => props.onCycleMode?.()}
-            >
-              {modeLabel(props.mode ?? "")}
-            </button>
-          </Show>
-          <Show when={props.harness && props.onPickModel}>
-            {(_ok) => (
-              <ModelMenu
-                harness={props.harness!}
-                state={() => props.model}
-                busy={() => props.modelBusy === true}
-                onPick={(field, id) => props.onPickModel?.(field, id)}
-                inertReason={props.inertReason}
-              />
-            )}
-          </Show>
+            <Show when={props.mode && props.onCycleMode}>
+              <button
+                type="button"
+                class="tl-mode-chip"
+                // The mode is the chip's whole meaning, so it drives the colour
+                // from CSS rather than a second mapping in here.
+                data-mode={props.mode}
+                title={`Permission mode: ${modeLabel(props.mode ?? "")} (Shift+Tab)`}
+                onClick={() => props.onCycleMode?.()}
+              >
+                {modeLabel(props.mode ?? "")}
+              </button>
+            </Show>
+            <Show when={props.harness && props.onPickModel}>
+              {(_ok) => (
+                <ModelMenu
+                  harness={props.harness!}
+                  state={() => props.model}
+                  busy={() => props.modelBusy === true}
+                  onPick={(field, id) => props.onPickModel?.(field, id)}
+                  inertReason={props.inertReason}
+                />
+              )}
+            </Show>
           </>
         }
         rightExtra={
