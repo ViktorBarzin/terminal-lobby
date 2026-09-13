@@ -2009,67 +2009,56 @@ label.tl-set-row-label {
   height: 40px;
   padding: 0 10px;
 }
-/* ---- the attachment tray (design 2026-08-17 decision 1) ----------------
-   Above the input, so the field stays prose and the path never has to be read
-   or edited by hand. */
-.tl-tray {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  max-width: 860px;
-  margin: 0 auto 8px;
-}
-.tl-tray-item {
+/* ---- attachments, inside the message ----------------------------------
+   A tray above the field held the chips until 2026-09-13, and its paths went to
+   the FRONT of the message whatever the writer meant. An attachment is a token
+   in the text now, standing where it was pasted; these two rules are the chip
+   drawn behind it.
+
+   The layer and the field must lay the same string out identically, so every
+   property that decides where a glyph lands is set on BOTH — the padding here,
+   the font-size in the mobile block near the end of this file. A rule that
+   reaches one and not the other slides every chip off its word. */
+.tl-field {
   position: relative;
   display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
 }
-.tl-tray-open {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  font: inherit;
-  color: var(--text-primary);
-  background: var(--bg-card);
-  border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  cursor: pointer;
-  overflow: hidden;
-  max-width: 220px;
-}
-.tl-tray-item[data-kind="doc"] .tl-tray-open {
-  padding: 6px 10px;
-}
-.tl-tray-open img {
-  display: block;
-  width: 56px;
-  height: 56px;
-  object-fit: cover;
-}
-.tl-tray-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.9em;
-}
-/* Deliberately a real target rather than a hover affordance: the tray is used on
-   a phone, where there is no hover. */
-.tl-tray-remove {
+.tl-composer-mirror {
   position: absolute;
-  top: -6px;
-  right: -6px;
-  width: 20px;
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  inset: 0;
+  overflow: hidden;
+  /* It exists to be looked past: the caret, the selection and every click
+     belong to the field on top of it. */
+  pointer-events: none;
+  user-select: none;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   font: inherit;
-  line-height: 1;
-  color: var(--text-primary);
-  background: var(--bg-sidebar);
-  border: 1px solid var(--border-strong);
-  border-radius: 999px;
-  cursor: pointer;
+  padding: 9px 12px;
+  /* The text is the FIELD's. This copy only carries the pills. */
+  color: transparent;
+}
+/* No border and no padding of its own: either would move the text under it.
+   The pill is drawn OUTSIDE the box instead — a 1px spread shadow for the fill
+   and an outline for the edge, neither of which takes part in layout.
+
+   The edge is not decoration. Measured across the themes on 2026-09-13: a fill
+   alone at 20% reads on a dark ground and all but disappears on a light one
+   (catppuccin-latte), where the outline is what makes it a chip rather than a
+   faint wash. 1px of bleed rather than 2, so two chips side by side stay two. */
+.tl-inline-chip {
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
+  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  outline-offset: 0;
+}
+.tl-inline-chip[data-kind="doc"] {
+  background: color-mix(in srgb, var(--text-muted) 24%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 24%, transparent);
+  outline-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
 }
 .tl-attach-btn {
   flex: 0 0 auto;
@@ -2116,6 +2105,7 @@ label.tl-set-row-label {
   flex: 1 1 auto;
   /* The surface around it carries both now. */
   border: 0;
+  /* Transparent, so the chip layer behind it shows through. */
   background: transparent;
   /* Sole flex child now, so a long unbroken token in the draft would otherwise
      set a min-content floor and push the field past the row. */
@@ -2126,6 +2116,8 @@ label.tl-set-row-label {
   padding: 9px 12px;
   max-height: 200px;
   overflow-y: auto;
+  /* Above the chip layer, which is absolutely positioned in the same box. */
+  position: relative;
 }
 .tl-composer-input:focus {
   outline: 2px solid var(--ring);
@@ -2444,13 +2436,11 @@ body.tl-kb-up {
    spill past the keyboard line. Capped they scroll instead of growing.
    Measured at 390x844 with --kb-offset 336 (keyboard line y=508), a question
    card docked: a 6-image tray went from 11.8px past the line to 0, and a
-   143-char draft from 35.8px past to 0. Nothing here fires on a desktop, and
-   all of it reverts the moment the keyboard closes. */
+   143-char draft from 35.8px past to 0. The tray is gone — its files are chips
+   inside the message now, which cost no height of their own — and what is left
+   here still holds for the surfaces that do stack above the composer. Nothing
+   here fires on a desktop, and all of it reverts when the keyboard closes. */
 @media (pointer: coarse) {
-  body.tl-kb-up .tl-tray {
-    max-height: 58px; /* one row of thumbnails */
-    overflow-y: auto;
-  }
   body.tl-kb-up .tl-queued {
     max-height: 46px; /* two chips */
     overflow-y: auto;
@@ -2621,8 +2611,12 @@ body.tl-kb-up {
   /* 16px blocks iOS Safari's focus auto-zoom on the compose field, so the
      pinch scale may raise this but never lower it: below 16 the platform zooms
      the whole page on focus and leaves it zoomed, which is a worse outcome than
-     a field that stops shrinking. */
-  .tl-composer-input {
+     a field that stops shrinking.
+
+     The chip layer takes it too, or it lays the same text out at 14px and every
+     pill lands somewhere the word is not. */
+  .tl-composer-input,
+  .tl-composer-mirror {
     font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
   }
 }

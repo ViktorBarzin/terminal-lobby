@@ -38,7 +38,7 @@ import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
 import { uploadAttachments } from "../clipboard/attach-files";
 import { composeMessage } from "../logic/compose.logic";
-import { attachmentKind } from "../lib/attachments";
+import { attachmentKind, dropToken } from "../lib/attachments";
 import { parkDraft, type DraftAttachment } from "../store/drafts";
 import { showToast } from "../store/toast";
 
@@ -297,7 +297,12 @@ export const NewSessionComposer: Component<{
     // look for it. What that replaced was a POST that drove the CLI's own
     // picker after the session was up, which cost about four seconds and put a
     // `/model` line in a conversation that had not started.
-    const files = tray.map((a) => held.get(a.path)).filter((f): f is File => f !== undefined);
+    // Paired, not two independent lists: the token is how the send knows where
+    // in the text this file's path goes, and a chip whose File has gone missing
+    // must not shift the rest of them onto the wrong tokens.
+    const picked = tray
+      .map((a) => ({ file: held.get(a.path), token: a.token }))
+      .filter((p): p is { file: File; token: string | undefined } => p.file !== undefined);
     held.clear();
     // Everything the delivery needs, read while this component is still on
     // screen. It runs after the create has selected the session and unmounted
@@ -318,7 +323,8 @@ export const NewSessionComposer: Component<{
     void sendFirstPrompt({
       session: id,
       text,
-      files,
+      files: picked.map((p) => p.file),
+      tokens: picked.map((p) => p.token),
       claude: key === "claude",
       deliver,
       upload,
@@ -508,17 +514,25 @@ async function sendFirstPrompt(o: {
   session: string;
   text: string;
   files: readonly File[];
+  /** Each file's token in `text`, by the same index — see `tokenFor`. */
+  tokens: readonly (string | undefined)[];
   claude: boolean;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
 }): Promise<void> {
   const attached = await o.upload(o.files, o.session, {
     notify: (message, kind) => void showToast(message, kind, 8000),
+    tokenFor: (_file, i) => o.tokens[i],
   });
-  const prompt = composeMessage(
-    o.text,
-    attached.map((a) => a.path),
-  );
+  // A file that did not make it leaves its token behind, and a token that no
+  // path replaced would go to Claude as the literal `[img]`. The upload has
+  // already said what failed and why; the message simply loses the chip.
+  const landed = new Set(attached.map((a) => a.token));
+  let written = o.text;
+  for (const token of o.tokens) {
+    if (token && !landed.has(token)) written = dropToken(written, token);
+  }
+  const prompt = composeMessage(written, attached);
   const lines = [prompt].filter((l): l is string => !!l);
   const ok = await o.deliver({
     session: o.session,
@@ -531,6 +545,10 @@ async function sendFirstPrompt(o: {
   // one that has been unmounted since they pressed Enter.
   // parkDraft, not saveDraft: that composer is already mounted and has already
   // read storage, so it has to be TOLD (store/drafts.ts).
-  parkDraft(o.session, { text: prompt, attachments: attached, at: Date.now() });
+  //
+  // No attachments beside it: `prompt` already carries every path, spliced in
+  // where its token stood. Parking them too would hand the live composer files
+  // it would splice in a SECOND time on the retry.
+  parkDraft(o.session, { text: prompt, attachments: [], at: Date.now() });
   showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
 }

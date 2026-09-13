@@ -35,20 +35,10 @@ import { QuestionCard } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork } from "../types/lobby";
-import {
-  installTextZoom,
-  loadTextSize,
-  saveTextSize,
-  scaleFor,
-} from "../mobile/textzoom";
+import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
-import {
-  isCurrentModel,
-  type ModelField,
-  type ModelHarness,
-  type ModelState,
-} from "../lib/models";
+import { isCurrentModel, type ModelField, type ModelHarness, type ModelState } from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
 
 /**
@@ -60,8 +50,7 @@ import type { SetModelResult } from "../lib/model-api";
  * same trick the permission-mode chip uses for its pane reading, and it needs
  * no bookkeeping to expire.
  */
-const modelKey = (m: ModelState | undefined): string =>
-  `${m?.model ?? ""}/${m?.effort ?? ""}`;
+const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.effort ?? ""}`;
 
 /**
  * When to look at the pane after asking it to change, in ms. The CLI's status
@@ -178,9 +167,7 @@ export const TextView: Component<{
   /** What the timeline draws. `withPendingPrompts` returns `events` itself when
    *  nothing is in flight, so the common case reuses the fold above rather than
    *  repeating it; an unsent prompt is rare and short-lived. */
-  const shownRows = createMemo(() =>
-    sent().length === 0 ? baseRows() : deriveRows(shown()),
-  );
+  const shownRows = createMemo(() => (sent().length === 0 ? baseRows() : deriveRows(shown())));
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
   const [modeBusy, setModeBusy] = createSignal(false);
@@ -644,14 +631,9 @@ export const TextView: Component<{
         });
         const got = field === "model" ? r.state.model : r.state.effort;
         const took =
-          field === "model"
-            ? isCurrentModel(props.harness ?? "claude", id, got)
-            : got === id;
+          field === "model" ? isCurrentModel(props.harness ?? "claude", id, got) : got === id;
         if (got && !took) {
-          props.notify?.(
-            `The session stayed on ${got} — something on the box pins it`,
-            "error",
-          );
+          props.notify?.(`The session stayed on ${got} — something on the box pins it`, "error");
         }
       })
       .finally(() => setModelBusy(false));
@@ -783,9 +765,7 @@ export const TextView: Component<{
         commands={commands()}
         commandsOk={catalogueOk()}
         session={props.session}
-        me={props.me}
         onAttach={props.onAttach}
-        onOpenPreview={props.onOpenPreview}
         inertReason={props.inertReason}
         register={(api) => {
           sinks = api;

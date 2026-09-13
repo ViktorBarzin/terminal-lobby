@@ -26,8 +26,8 @@ import {
   saveDraft,
   type DraftAttachment,
 } from "../store/drafts";
-import { contentUrlFor, storedDisplayName } from "../lib/attachments";
-import { FileTextIcon, PaperclipIcon } from "./Icons";
+import { anchorRestored, attachToken, cutSpan } from "../lib/attachments";
+import { PaperclipIcon } from "./Icons";
 
 /**
  * The field a prompt is written in, and the bar under it.
@@ -38,9 +38,15 @@ import { FileTextIcon, PaperclipIcon } from "./Icons";
  * new-session composer writes the prompt a session will be CREATED with and
  * puts a project, a command and a model beside it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
- * newline, `/` and `@` completion, the attachment tray, the unsent draft, ↑
- * history, and the mobile input attributes (autocapitalize off, autocorrect and
+ * newline, `/` and `@` completion, attachments, the unsent draft, ↑ history,
+ * and the mobile input attributes (autocapitalize off, autocorrect and
  * spellcheck on, enterkeyhint send) that restore QuickType and swipe typing.
+ *
+ * An attached file lives IN the message, as a token the mirror layer draws a
+ * chip behind — see `mirror` below and lib/attachments.ts for the token
+ * vocabulary. It used to be a chip in a tray above the field whose path was
+ * spliced in at the front on send, which is what Viktor asked to change on
+ * 2026-09-13: a screenshot pasted mid-sentence belongs mid-sentence.
  *
  * Each composer contributes its own controls through `leftExtra` and
  * `rightExtra`, which land inside the two bar groups: the left one may scroll
@@ -48,7 +54,7 @@ import { FileTextIcon, PaperclipIcon } from "./Icons";
  * last child so it does not move when something is inserted beside it.
  */
 export interface PromptFieldSinks {
-  /** Add attachments to the tray (a window drop, a gallery tile). */
+  /** Put attachments into the message (a window drop, a gallery tile). */
   add: (items: DraftAttachment[]) => void;
   /** Insert text at the caret (a clipboard paste that is not an image). */
   insertText: (text: string) => void;
@@ -63,12 +69,12 @@ export const PromptField: Component<{
   textSize?: number;
   /**
    * Send what was written. Resolves false when the send was refused, which puts
-   * the typed text AND the tray back in the field.
+   * the typed text AND its attachments back in the field.
    *
-   * `text` is the whole message with the attachment paths already spliced in,
-   * unless `pendingAttachments` says the tray's paths do not exist yet — then
-   * it is the prose alone and the tray arrives beside it for the caller to
-   * compose once it has real paths.
+   * `text` is the whole message with each token already swapped for the path it
+   * stands for, unless `pendingAttachments` says those paths do not exist yet —
+   * then it is the text as written, tokens and all, and the attachments arrive
+   * beside it for the caller to finish once the upload has given it real paths.
    */
   onSend: (text: string, attachments: readonly DraftAttachment[]) => Promise<boolean>;
   placeholder?: string;
@@ -99,8 +105,6 @@ export const PromptField: Component<{
    * nothing persists.
    */
   draftKey?: string;
-  /** Effective OS user, so a tray thumbnail knows it may fetch its own store. */
-  me?: string;
   /**
    * Upload these files and return what became attachable. The uploader decides:
    * a document over the store cap stays an ephemeral /tmp transfer and comes back
@@ -108,8 +112,6 @@ export const PromptField: Component<{
    * per input file.
    */
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
-  /** Open one attachment in the file preview overlay. */
-  onOpenPreview?: (path: string) => void;
   /** Watching: the controls that type are inert, and so is attaching. */
   inertReason?: string;
   /** Cycle the permission mode (Shift+Tab in the CLI). */
@@ -139,7 +141,7 @@ export const PromptField: Component<{
    */
   sendNeedsInput?: boolean;
   /**
-   * The tray holds files that have not been uploaded yet.
+   * The attachments are files that have not been uploaded yet.
    *
    * True only for the new-session composer, where there is nothing to upload
    * INTO until Enter is pressed: the session is created by that keypress
@@ -147,11 +149,13 @@ export const PromptField: Component<{
    * would leave litter behind every abandoned draft.
    *
    * Two things follow, and they are the same fact twice. `onSend` is handed the
-   * prose and the tray separately rather than one composed message, because the
-   * paths it would splice in are placeholders. And the tray is left OUT of the
-   * saved draft: a `File` does not survive JSON, so a reloaded tab would restore
-   * chips pointing at nothing. The typed text still persists, which is the half
-   * that can.
+   * prose and the attachments separately rather than one composed message,
+   * because the paths it would swap in are placeholders — the caller finishes
+   * the job once the upload has given it real ones. And the attachments are
+   * left OUT of the saved draft: a `File` does not survive JSON, so a reloaded
+   * tab would restore chips pointing at nothing. The typed text still persists,
+   * which is the half that can, and its orphaned tokens are cut out of it on
+   * the way back in (`anchorRestored`).
    */
   pendingAttachments?: boolean;
   /** Take focus on mount. The new-session composer does this on a desktop; a
@@ -172,8 +176,11 @@ export const PromptField: Component<{
 }> = (props) => {
   let ta: HTMLTextAreaElement | undefined;
   let fileInput: HTMLInputElement | undefined;
+  /** The chip layer behind the field — see `mirror` and the JSX below. */
+  let mirrorEl: HTMLDivElement | undefined;
   const [draft, setDraft] = createSignal("");
-  const [tray, setTray] = createSignal<DraftAttachment[]>([]);
+  /** The files this message carries, each anchored to its token in the text. */
+  const [attached, setAttached] = createSignal<DraftAttachment[]>([]);
   const [attaching, setAttaching] = createSignal(false);
   const [caret, setCaret] = createSignal(0);
   const [paths, setPaths] = createSignal<string[]>([]);
@@ -227,10 +234,23 @@ export const PromptField: Component<{
     ta.style.height = Math.min(ta.scrollHeight + chrome, 200) + "px";
   };
 
+  /**
+   * Whether the caret is a real place the writer put it.
+   *
+   * An untouched textarea reports `selectionStart === 0`, which is
+   * indistinguishable from a caret parked at the start — so inserting "at the
+   * caret" put a dropped file at the FRONT of a message nobody had clicked
+   * into. Until something says otherwise, an insertion goes to the end.
+   */
+  let caretKnown = false;
+
   const sync = () => {
     if (!ta) return;
+    caretKnown = true;
     setDraft(ta.value);
     setCaret(ta.selectionStart ?? ta.value.length);
+    // A chip the writer has deleted takes its file with it — see `attached`.
+    reconcile(ta.value);
     autosize();
   };
 
@@ -238,8 +258,9 @@ export const PromptField: Component<{
     if (!ta) return;
     ta.value = "";
     setDraft("");
-    setTray([]);
+    setAttached([]);
     setHistAt(-1);
+    caretKnown = false;
     autosize();
     if (props.draftKey) clearDraft(props.draftKey);
   };
@@ -254,10 +275,13 @@ export const PromptField: Component<{
     if (!key) return;
     const saved = loadDraft(key);
     if (!saved) return;
-    if (!props.pendingAttachments) setTray(saved.attachments);
-    if (saved.text && ta) {
-      ta.value = saved.text;
-      setDraft(saved.text);
+    // Held files cannot be persisted, so the pending composer restores none and
+    // `anchorRestored` cuts the tokens they left behind out of the text.
+    const restored = anchorRestored(saved.text, props.pendingAttachments ? [] : saved.attachments);
+    setAttached(restored.items);
+    if (restored.text && ta) {
+      ta.value = restored.text;
+      setDraft(restored.text);
       autosize();
     }
   });
@@ -275,6 +299,10 @@ export const PromptField: Component<{
    *
    * What was typed in the meantime is never thrown away: a parked message joins
    * it on a new line rather than replacing it.
+   *
+   * A parked first prompt carries its paths in the TEXT — the send composed it
+   * before the delivery failed — so it arrives with no attachments of its own
+   * and nothing here has to anchor anything.
    */
   const onParked = (e: Event) => {
     const key = props.draftKey;
@@ -287,7 +315,7 @@ export const PromptField: Component<{
     ta.value = current ? current + "\n" + parked.text : parked.text;
     setDraft(ta.value);
     if (!props.pendingAttachments && parked.attachments.length > 0) {
-      addToTray(parked.attachments);
+      addAttachments(parked.attachments);
     }
     autosize();
   };
@@ -343,7 +371,7 @@ export const PromptField: Component<{
     if (!key) return;
     // Both halves are read reactively so either one changing persists the pair.
     const text = draft();
-    const attachments = props.pendingAttachments ? [] : tray();
+    const attachments = props.pendingAttachments ? [] : attached();
     saveDraft(key, { text, attachments, at: Date.now() });
   });
 
@@ -352,43 +380,119 @@ export const PromptField: Component<{
     if (!files.length || !props.onAttach) return;
     setAttaching(true);
     try {
-      // De-duplicated by path in addToTray: attaching the same file twice would
-      // ask Claude to read it twice and give the tray two identical chips.
-      addToTray(await props.onAttach(files));
+      // De-duplicated by path in addAttachments: attaching the same file twice
+      // would ask Claude to read it twice and write two chips for one file.
+      addAttachments(await props.onAttach(files));
     } finally {
       setAttaching(false);
     }
   };
 
-  const addToTray = (items: DraftAttachment[]): void => {
+  /**
+   * Put files into the message where the writer is.
+   *
+   * Each one is written as a token at the caret and remembered against it, so
+   * the send can swap in its path there and the mirror can draw a chip over it.
+   * Every intake arrives here — the paste, the window drop, the picker, a
+   * gallery tile — because all four mean the same thing: this file belongs in
+   * what I am writing.
+   */
+  const addAttachments = (items: DraftAttachment[]): void => {
     if (!items.length) return;
-    setTray((current) => {
-      const have = new Set(current.map((a) => a.path));
-      return [...current, ...items.filter((a) => !have.has(a.path))];
-    });
+    const current = attached();
+    const have = new Set(current.map((a) => a.path));
+    const taken = new Set(current.map((a) => a.token).filter((t): t is string => !!t));
+    const fresh: DraftAttachment[] = [];
+    for (const item of items) {
+      if (have.has(item.path)) continue;
+      have.add(item.path);
+      const token = attachToken(item.name, item.kind, taken);
+      taken.add(token);
+      fresh.push({ ...item, token });
+    }
+    if (!fresh.length) return;
+    splice(fresh.map((a) => a.token).join(" "), true);
+    setAttached([...current, ...fresh]);
   };
+
+  /**
+   * Write text into the message at the caret, or at the END when nothing has
+   * put a caret in the field yet (see `caretKnown`).
+   *
+   * `pad` keeps a chip from fusing with the words on either side of it. Plain
+   * text never pads: a paste has to land exactly as typed.
+   */
+  const splice = (text: string, pad: boolean): void => {
+    if (!ta || !text) return;
+    const at = caretKnown ? (ta.selectionStart ?? ta.value.length) : ta.value.length;
+    const end = caretKnown ? (ta.selectionEnd ?? at) : at;
+    const before = ta.value.slice(0, at);
+    const after = ta.value.slice(end);
+    const body =
+      (pad && before && !/\s$/.test(before) ? " " : "") +
+      text +
+      (pad && after && !/^\s/.test(after) ? " " : "");
+    ta.value = before + body + after;
+    const pos = at + body.length;
+    ta.setSelectionRange(pos, pos);
+    sync();
+    ta.focus();
+  };
+
   /**
    * Insert text at the caret — what a paste read OUTSIDE this component does to
    * the message being written. Same splice the completion menu performs, so a
    * paste behaves like typing: the caret lands after the inserted text and the
    * rest of the message survives.
    */
-  const insertText = (text: string): void => {
-    if (!ta || !text) return;
-    const at = ta.selectionStart ?? ta.value.length;
-    const end = ta.selectionEnd ?? at;
-    ta.value = ta.value.slice(0, at) + text + ta.value.slice(end);
-    const pos = at + text.length;
-    ta.setSelectionRange(pos, pos);
-    sync();
-    ta.focus();
+  const insertText = (text: string): void => splice(text, false);
+
+  /**
+   * Drop the files whose chips are no longer in the message.
+   *
+   * Deleting a chip IS how an attachment is removed now, so this runs on every
+   * change to the text: select-all-and-retype, a history recall, an edit that
+   * ate the token. The keystroke that removes a whole chip in one press is in
+   * `onKeyDown`; this is the backstop that keeps the two halves honest however
+   * the text got that way.
+   */
+  const reconcile = (text: string): void => {
+    setAttached((current) => {
+      const live = current.filter((a) => !a.token || text.includes(a.token));
+      return live.length === current.length ? current : live;
+    });
   };
 
-  onMount(() => props.register?.({ add: addToTray, insertText, focus: () => ta?.focus() }));
+  onMount(() => props.register?.({ add: addAttachments, insertText, focus: () => ta?.focus() }));
 
-  const removeAt = (path: string): void => {
-    setTray((current) => current.filter((a) => a.path !== path));
-  };
+  /** The message split into runs of prose and the tokens standing in it, which
+   *  is what the mirror layer paints chips from. */
+  const mirror = createMemo<{ text: string; kind?: DraftAttachment["kind"] }[]>(() => {
+    const text = draft();
+    const items = attached().filter((a) => !!a.token);
+    const parts: { text: string; kind?: DraftAttachment["kind"] }[] = [];
+    let at = 0;
+    for (;;) {
+      let next = -1;
+      let hit: DraftAttachment | undefined;
+      for (const a of items) {
+        const i = text.indexOf(a.token!, at);
+        if (i >= 0 && (next < 0 || i < next)) {
+          next = i;
+          hit = a;
+        }
+      }
+      if (next < 0 || !hit) break;
+      if (next > at) parts.push({ text: text.slice(at, next) });
+      parts.push({ text: hit.token!, kind: hit.kind });
+      at = next + hit.token!.length;
+    }
+    if (at < text.length) parts.push({ text: text.slice(at) });
+    // A block drops its last line break, so without this the mirror is one line
+    // shorter than the field and every chip below a trailing newline is off.
+    if (text.endsWith("\n")) parts.push({ text: " " });
+    return parts;
+  });
 
   /** What `/` or `@` at the caret is currently offering. */
   // Built-ins plus what this session actually has. Merged in a memo so a
@@ -443,7 +547,7 @@ export const PromptField: Component<{
    * Off the `draft` signal rather than the textarea, because an element's
    * `value` is not reactive and the bar has to redraw as you type.
    */
-  const sendable = createMemo(() => draft().trim() !== "" || tray().length > 0);
+  const sendable = createMemo(() => draft().trim() !== "" || attached().length > 0);
 
   /**
    * Send the composed message.
@@ -455,25 +559,21 @@ export const PromptField: Component<{
    */
   const submit = () => {
     const raw = ta?.value ?? "";
-    const held = tray();
-    // The TRAY counts too: attachments with no prose is a valid message, so the
+    const held = attached();
+    // The FILES count too: attachments with no prose is a valid message, so the
     // old `if (!t) return` would have swallowed a photo sent on its own.
-    const message = props.pendingAttachments
-      ? raw.trim()
-      : composeMessage(
-          raw,
-          held.map((a) => a.path),
-        );
+    const message = props.pendingAttachments ? raw.trim() : composeMessage(raw, held);
     if (!message && held.length === 0) return;
     clear();
     void props.onSend(message, held).then((ok) => {
       if (ok || !ta || ta.value !== "") return;
       // A refusal restores BOTH halves. The text already had this guarantee; an
       // attachment needs it more, because re-attaching means finding the file
-      // again.
+      // again — and the tokens are still in the text that comes back, so the
+      // chips land where they were.
       ta.value = raw;
       setDraft(raw);
-      setTray(held);
+      setAttached(held);
       autosize();
     });
   };
@@ -500,6 +600,33 @@ export const PromptField: Component<{
         setPaths([]);
         setCaret(-1); // closes the menu until the next keystroke
         return;
+      }
+    }
+
+    // Backspace or Delete against a chip takes the WHOLE chip. A token eaten
+    // one character at a time stops being an attachment at the first keystroke
+    // (`reconcile` drops the file) and leaves the rest of its text sitting in
+    // the message as prose, which is the worst of both.
+    if (ta && (e.key === "Backspace" || e.key === "Delete") && !e.altKey && !e.metaKey) {
+      const at = ta.selectionStart ?? 0;
+      if (at === (ta.selectionEnd ?? at)) {
+        const back = e.key === "Backspace";
+        const hit = attached().find((a) =>
+          a.token
+            ? back
+              ? ta!.value.slice(0, at).endsWith(a.token)
+              : ta!.value.slice(at).startsWith(a.token)
+            : false,
+        );
+        if (hit?.token) {
+          e.preventDefault();
+          const start = back ? at - hit.token.length : at;
+          const cut = cutSpan(ta.value, start, start + hit.token.length);
+          ta.value = cut.text;
+          ta.setSelectionRange(cut.at, cut.at);
+          sync();
+          return;
+        }
       }
     }
 
@@ -615,51 +742,6 @@ export const PromptField: Component<{
 
   return (
     <>
-      {/* The attachment tray (decision 1). Above the input so the field stays
-          prose; each chip opens the file preview, and × removes it. Nothing here
-          is destructive — the file is already in the store and listed in the 🖼
-          gallery, so removing a chip drops a reference, never an upload. */}
-      <Show when={tray().length > 0}>
-        <div class="tl-tray" aria-label="Attachments">
-          <For each={tray()}>
-            {(item) => (
-              <div class="tl-tray-item" data-kind={item.kind}>
-                <button
-                  type="button"
-                  class="tl-tray-open"
-                  title={item.path}
-                  aria-label={`Open ${storedDisplayName(item.name)}`}
-                  onClick={() => props.onOpenPreview?.(item.path)}
-                >
-                  <Show
-                    when={item.kind === "image" && contentUrlFor(item.path, props.me ?? "")}
-                    fallback={
-                      <>
-                        <FileTextIcon />
-                        <span class="tl-tray-name">{storedDisplayName(item.name)}</span>
-                      </>
-                    }
-                  >
-                    <img
-                      src={contentUrlFor(item.path, props.me ?? "")!}
-                      alt={storedDisplayName(item.name)}
-                      loading="lazy"
-                    />
-                  </Show>
-                </button>
-                <button
-                  type="button"
-                  class="tl-tray-remove"
-                  aria-label={`Remove ${storedDisplayName(item.name)}`}
-                  onClick={() => removeAt(item.path)}
-                >
-                  ×
-                </button>
-              </div>
-            )}
-          </For>
-        </div>
-      </Show>
       <Show when={completion() && (completion()!.items.length > 0 || slashUnreadable())}>
         <div class="tl-complete" role="listbox" ref={menuEl}>
           <For each={completion()!.items}>
@@ -708,27 +790,55 @@ export const PromptField: Component<{
           the field goes transparent, so the whole thing is one control. */}
       <div class="tl-composer-box">
         <div class="tl-composer-row">
-          <textarea
-            ref={ta}
-            class="tl-composer-input"
-            rows={1}
-            placeholder={props.placeholder ?? "Message…"}
-            title={props.hint ?? "Enter to send · Shift+Enter for a newline"}
-            autocapitalize="off"
-            autocorrect="on"
-            spellcheck={true}
-            enterkeyhint="send"
-            aria-label={props.label}
-            onInput={() => {
-              sync();
-              setPicked(0);
-              void refreshPaths();
-            }}
-            onKeyDown={onKeyDown}
-            onBeforeInput={onBeforeInput}
-            onPointerDown={onPointerDown}
-            onClick={sync}
-          />
+          {/* The chip layer.
+
+              A textarea holds characters and nothing else, so an attachment
+              inside the message can only BE text — the token. This element is
+              the same string laid out in the same box behind the field, with a
+              pill painted behind each token and every glyph transparent, so
+              what the reader sees is the field's own text sitting on a chip.
+              It owns no state and takes no clicks; if it were ever wrong the
+              message would still read correctly, which is why the token says
+              `[img: chart.png]` rather than relying on the paint. */}
+          <div class="tl-field">
+            <div class="tl-composer-mirror" aria-hidden="true" ref={mirrorEl}>
+              <For each={mirror()}>
+                {(part) => (
+                  <Show when={part.kind} fallback={part.text}>
+                    <span class="tl-inline-chip" data-kind={part.kind}>
+                      {part.text}
+                    </span>
+                  </Show>
+                )}
+              </For>
+            </div>
+            <textarea
+              ref={ta}
+              class="tl-composer-input"
+              rows={1}
+              placeholder={props.placeholder ?? "Message…"}
+              title={props.hint ?? "Enter to send · Shift+Enter for a newline"}
+              autocapitalize="off"
+              autocorrect="on"
+              spellcheck={true}
+              enterkeyhint="send"
+              aria-label={props.label}
+              onInput={() => {
+                sync();
+                setPicked(0);
+                void refreshPaths();
+              }}
+              onKeyDown={onKeyDown}
+              onBeforeInput={onBeforeInput}
+              onPointerDown={onPointerDown}
+              onClick={sync}
+              // The field scrolls past 200px; the layer behind it has to go
+              // with it or the chips stay where the text no longer is.
+              onScroll={() => {
+                if (mirrorEl && ta) mirrorEl.scrollTop = ta.scrollTop;
+              }}
+            />
+          </div>
         </div>
         {/* The controls, on their own bar. They used to share the row with the
             field, which left the field 92.8px of a 343.2px row once a turn

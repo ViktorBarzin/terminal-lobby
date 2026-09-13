@@ -134,10 +134,16 @@ function mount(
           wire.catalogueDirs.push(dir);
           return { commands: wire.catalogue, ok: wire.catalogueOk };
         }}
-        upload={async (files, session) => {
+        upload={async (files, session, opts) => {
           wire.uploads.push({ files, session });
           const i = Math.min(wire.uploads.length - 1, wire.chips.length - 1);
-          return wire.chips[i] ?? [];
+          // Carrying the token across the upload is the real uploader's job
+          // (clipboard/attach-files.ts) and the whole reason the send can put
+          // the path where the chip was, so the double does it too.
+          return (wire.chips[i] ?? []).map((chip, n) => {
+            const token = opts?.tokenFor?.(files[n]!, n);
+            return token ? { ...chip, token } : chip;
+          });
         }}
         deliver={async (o) => {
           wire.delivered.push({
@@ -855,7 +861,7 @@ describe("<NewSessionComposer> — attachments", () => {
     await m.store.refresh();
 
     pickFile(m.container, aFile("shot.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     expect(w.uploads).toEqual([]);
     m.store.dispose();
   });
@@ -878,7 +884,7 @@ describe("<NewSessionComposer> — attachments", () => {
     await m.store.refresh();
 
     pickFile(m.container, aFile("shot.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     expect(m.container.querySelector<HTMLButtonElement>(".tl-send")!.disabled).toBe(false);
     enter(field(m.container)!);
 
@@ -902,9 +908,9 @@ describe("<NewSessionComposer> — attachments", () => {
     const m = mount(api, {}, w);
     await m.store.refresh();
 
-    pickFile(m.container, aFile("shot.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
     type(field(m.container)!, "what is wrong here?");
+    pickFile(m.container, aFile("shot.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
@@ -912,8 +918,10 @@ describe("<NewSessionComposer> — attachments", () => {
     expect(w.uploads.length).toBe(1);
     expect(w.uploads[0]!.session).toBe(id);
     expect(w.uploads[0]!.files.map((f) => f.name)).toEqual(["shot.png"]);
+    // The path lands where the chip was — the upload only happens once the
+    // session exists, so the token is what held its place until then.
     expect(w.delivered[0]!.lines).toEqual([
-      "/var/lib/clipboard-store/wizard/s/shot-a1.png\nwhat is wrong here?",
+      "what is wrong here? /var/lib/clipboard-store/wizard/s/shot-a1.png",
     ]);
     m.store.dispose();
   });
@@ -925,7 +933,7 @@ describe("<NewSessionComposer> — attachments", () => {
     await m.store.refresh();
 
     pickFile(m.container, aFile("shot.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     m.store.dispose();
     m.unmount();
 
@@ -939,13 +947,15 @@ describe("<NewSessionComposer> — attachments", () => {
 
     type(field(m.container)!, "what is wrong here?");
     pickFile(m.container, aFile("shot.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
 
     // A File does not survive JSON, so restoring one would be a chip pointing
-    // at nothing. The half that CAN persist still does.
+    // at nothing. The half that CAN persist still does — the token goes with
+    // the text, and `anchorRestored` cuts it out on the way back in, since by
+    // then there is no file behind it.
     const saved = loadDraft(NEW_SESSION_DRAFT_KEY)!;
     expect(saved.attachments).toEqual([]);
-    expect(saved.text).toBe("what is wrong here?");
+    expect(saved.text).toBe("what is wrong here? [img: shot.png]");
     expect(localStorage.getItem(DRAFTS_KEY)).not.toContain("held:");
     m.store.dispose();
   });
@@ -1062,8 +1072,8 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     return e;
   };
 
-  const trayNames = (c: HTMLElement): string[] =>
-    [...c.querySelectorAll(".tl-tray-name")].map((el) => el.textContent ?? "");
+  const chipText = (c: HTMLElement): string[] =>
+    [...c.querySelectorAll(".tl-inline-chip")].map((el) => el.textContent ?? "");
 
   it("holds a pasted image, the way it holds a picked one", async () => {
     const api = new FakeApi();
@@ -1072,7 +1082,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     await m.store.refresh();
 
     pasteImage(aFile("pasted.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     expect(w.uploads).toEqual([]); // nothing to upload into yet
     m.store.dispose();
   });
@@ -1092,9 +1102,9 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     const m = mount(api, {}, w);
     await m.store.refresh();
 
-    pasteImage(aFile("pasted.png"));
-    await waitFor(() => expect(m.container.querySelector(".tl-tray-item")).not.toBeNull());
     type(field(m.container)!, "what is wrong here?");
+    pasteImage(aFile("pasted.png"));
+    await waitFor(() => expect(m.container.querySelector(".tl-inline-chip")).not.toBeNull());
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
@@ -1102,7 +1112,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     expect(w.uploads[0]!.session).toBe(created(api));
     expect(w.uploads[0]!.files.map((f) => f.name)).toEqual(["pasted.png"]);
     expect(w.delivered[0]!.lines).toEqual([
-      "/var/lib/clipboard-store/wizard/s/pasted-a1.png\nwhat is wrong here?",
+      "what is wrong here? /var/lib/clipboard-store/wizard/s/pasted-a1.png",
     ]);
     m.store.dispose();
   });
@@ -1113,7 +1123,9 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     await m.store.refresh();
 
     const e = dropFiles(aFile("shot.png"), aFile("notes.txt", "text/plain"));
-    await waitFor(() => expect(trayNames(m.container)).toEqual(["shot.png", "notes.txt"]));
+    await waitFor(() =>
+      expect(chipText(m.container)).toEqual(["[img: shot.png]", "[file: notes.txt]"]),
+    );
     // Without this the browser navigates away to the dropped file.
     expect(e.defaultPrevented).toBe(true);
     m.store.dispose();

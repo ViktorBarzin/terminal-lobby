@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import {
   STORE_ROOT,
+  anchorRestored,
+  attachToken,
   attachmentKind,
+  cutSpan,
+  dropToken,
   contentUrlFor,
   isRenderablePath,
   parseStorePath,
@@ -9,6 +13,7 @@ import {
   segmentMessage,
   storedDisplayName,
   type Segment,
+  type TokenizedAttachment,
 } from "../src/lib/attachments";
 
 /**
@@ -237,5 +242,102 @@ describe("previewContentUrl", () => {
 
   it("has nothing to resolve for a relative path", () => {
     expect(previewContentUrl("notes.md")).toBeNull();
+  });
+});
+
+// --- the tokens an attachment stands as, inside the message ----------------
+// A file is written into the prompt as a token where the writer put it, and
+// swapped for its path at send time (2026-09-13). These decide whether a chip
+// can be paired back to its file at all, and each fails quietly when wrong: a
+// mispaired token sends the wrong path, and a token the restore does not
+// recognize reaches Claude as literal text.
+describe("attachToken", () => {
+  const none = new Set<string>();
+
+  it("names the file when the name says something", () => {
+    expect(attachToken("chart.png", "image", none)).toBe("[img: chart.png]");
+    expect(attachToken("report.pdf", "doc", none)).toBe("[file: report.pdf]");
+  });
+
+  it("recovers the name the writer chose from a stored one", () => {
+    expect(attachToken("file-20260817-150232-c17e6008-report.pdf", "doc", none)).toBe(
+      "[file: report.pdf]",
+    );
+  });
+
+  it("says nothing more than the kind for a name only the store cares about", () => {
+    expect(attachToken("pasted-20260817-150232-a1.png", "image", none)).toBe("[img]");
+    expect(attachToken("displayed-20260817-150232-a1.png", "image", none)).toBe("[img]");
+    // What Chrome calls a clipboard image.
+    expect(attachToken("image.png", "image", none)).toBe("[img]");
+  });
+
+  it("numbers around the tokens already in the message", () => {
+    expect(attachToken("shot.png", "image", new Set(["[img: shot.png]"]))).toBe(
+      "[img 2: shot.png]",
+    );
+    expect(attachToken("a.png", "image", new Set(["[img]"]))).toBe("[img: a.png]");
+    expect(attachToken("x.png", "image", new Set(["[img: x.png]", "[img 2: x.png]"]))).toBe(
+      "[img 3: x.png]",
+    );
+  });
+
+  it("cuts a long name short rather than filling the line with it", () => {
+    const t = attachToken("a-very-long-screenshot-name-indeed.png", "image", none);
+    expect(t.length).toBeLessThanOrEqual(30);
+    expect(t.endsWith("…]")).toBe(true);
+  });
+});
+
+describe("cutSpan and dropToken", () => {
+  it("takes the space that separated the chip from its neighbour", () => {
+    expect(dropToken("look at [img] here", "[img]")).toBe("look at here");
+    expect(dropToken("look at [img]", "[img]")).toBe("look at");
+    expect(dropToken("[img] here", "[img]")).toBe("here");
+  });
+
+  it("leaves a message that never had the token alone", () => {
+    expect(dropToken("nothing attached", "[img]")).toBe("nothing attached");
+  });
+
+  it("says where the caret lands", () => {
+    expect(cutSpan("look at [img] here", 8, 13)).toEqual({ text: "look at here", at: 8 });
+  });
+});
+
+describe("anchorRestored", () => {
+  const img = { name: "chart.png", kind: "image" as const, token: "[img: chart.png]" };
+
+  it("keeps an attachment whose token is still in the text", () => {
+    const r = anchorRestored("what about [img: chart.png]?", [img]);
+    expect(r.text).toBe("what about [img: chart.png]?");
+    expect(r.items).toEqual([img]);
+  });
+
+  it("anchors one that has no token yet, at the end", () => {
+    const loose: TokenizedAttachment = { name: "chart.png", kind: "image" };
+    const r = anchorRestored("half written", [loose]);
+    expect(r.text).toBe("half written [img: chart.png]");
+    expect(r.items[0]!.token).toBe("[img: chart.png]");
+  });
+
+  it("cuts out a token no attachment owns any more", () => {
+    // The new-session composer holds Files, which cannot be persisted, so its
+    // tokens outlive them by exactly one reload.
+    const r = anchorRestored("what is wrong here? [img: shot.png]", []);
+    expect(r.text).toBe("what is wrong here?");
+    expect(r.items).toEqual([]);
+  });
+
+  it("keeps the ones it owns while cutting the ones it does not", () => {
+    const r = anchorRestored("[img] and [img: chart.png] and [file: gone.pdf]", [img]);
+    expect(r.text).toBe("and [img: chart.png] and");
+    expect(r.items).toEqual([img]);
+  });
+
+  it("has nothing to do for a plain message", () => {
+    const r = anchorRestored("just words", []);
+    expect(r.text).toBe("just words");
+    expect(r.items).toEqual([]);
   });
 });

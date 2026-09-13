@@ -5,13 +5,15 @@ import { DRAFTS_KEY, loadDraft, saveDraft } from "../src/store/drafts";
 import type { DraftAttachment } from "../src/store/drafts";
 
 /**
- * The attachment tray
- * (docs/plans/2026-08-17-text-view-attachments-design.md, decisions 1, 6, 9, 10).
+ * Attachments, inside the message.
  *
- * The composer is where this feature is actually used: attach, see it, remove it,
- * send it, and find it still there after a reload. The upload itself is somebody
- * else's job — `onAttach` is the seam — so these tests are about what the tray
- * shows and what Send puts on the wire.
+ * A file is a token in the text — `[img]`, `[file: report.pdf]` — standing
+ * where the paste, the drop or the picker put it, and swapped for its absolute
+ * path at send time. It replaced a tray above the field whose paths all went to
+ * the FRONT of the message (Viktor, 2026-09-13), so what these tests pin is
+ * WHERE the path comes out, and that deleting the chip takes the file with it.
+ *
+ * The upload itself is somebody else's job — `onAttach` is the seam.
  */
 
 const IMG: DraftAttachment = {
@@ -38,7 +40,6 @@ function mount(over: Partial<Harness> = {}) {
       working={false}
       pending={[]}
       session="qa"
-      me="wizard"
       onSend={onSend}
       onStop={() => {}}
       onResolve={() => {}}
@@ -50,128 +51,247 @@ function mount(over: Partial<Harness> = {}) {
   return { ...r, onSend, onAttach, field, send };
 }
 
-const file = (name: string, type: string): File =>
-  new File(["bytes"], name, { type });
+const file = (name: string, type: string): File => new File(["bytes"], name, { type });
+
+/** Pick a file through the composer's own input, as a person would. */
+const pick = (container: HTMLElement, f: File) => {
+  const input = container.querySelector<HTMLInputElement>("input[type=file]")!;
+  Object.defineProperty(input, "files", { value: [f], configurable: true });
+  fireEvent.change(input);
+};
+
+/** Put the caret somewhere, the way clicking into the field does. */
+const caretTo = (field: HTMLTextAreaElement, at: number) => {
+  field.setSelectionRange(at, at);
+  fireEvent.click(field);
+};
+
+const chips = (container: HTMLElement) => container.querySelectorAll(".tl-inline-chip");
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
 
 describe("attaching", () => {
-  it("uploads a picked file and shows it as a chip", async () => {
-    const onAttach = vi.fn().mockResolvedValue([IMG]);
-    const { container } = mount({ onAttach });
-
-    const input = container.querySelector<HTMLInputElement>("input[type=file]")!;
-    Object.defineProperty(input, "files", { value: [file("a.png", "image/png")] });
-    fireEvent.change(input);
-
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-    expect(onAttach).toHaveBeenCalledTimes(1);
-    expect(container.querySelector(".tl-tray-item img")).not.toBeNull();
-  });
-
-  // The tray is the whole point of decision 1: the field stays prose.
-  it("leaves the typed message untouched when a file is attached", async () => {
+  it("writes a token into the message and draws a chip behind it", async () => {
     const onAttach = vi.fn().mockResolvedValue([IMG]);
     const { container, field } = mount({ onAttach });
-    fireEvent.input(field, { target: { value: "what's wrong here?" } });
 
-    const input = container.querySelector<HTMLInputElement>("input[type=file]")!;
-    Object.defineProperty(input, "files", { value: [file("a.png", "image/png")] });
-    fireEvent.change(input);
+    pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-    expect(field.value).toBe("what's wrong here?");
-    expect(field.value).not.toContain("/var/lib");
+    await waitFor(() => expect(field.value).toBe("[img]"));
+    expect(onAttach).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
+    expect(chips(container)[0]!.textContent).toBe("[img]");
   });
 
-  it("labels a document chip with the name the user chose", async () => {
+  it("lands the chip at the caret, not at the front", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field } = mount({ onAttach });
+    fireEvent.input(field, { target: { value: "what is wrong here?" } });
+    caretTo(field, 16); // "what is wrong he|re?" — inside the last word
+    field.setSelectionRange(13, 13); // "what is wrong| here?"
+    fireEvent.click(field);
+
+    pick(container, file("a.png", "image/png"));
+
+    await waitFor(() => expect(field.value).toBe("what is wrong [img] here?"));
+  });
+
+  // An untouched textarea reports selectionStart 0, which is indistinguishable
+  // from a caret parked at the front — so "at the caret" used to mean "at the
+  // front" for a message nobody had clicked into, which is the bug this whole
+  // change is about.
+  it("appends when nothing has put a caret in the field", async () => {
+    saveDraft("qa", { text: "look at this", attachments: [], at: 1 });
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field } = mount({ onAttach });
+    await waitFor(() => expect(field.value).toBe("look at this"));
+
+    pick(container, file("a.png", "image/png"));
+
+    await waitFor(() => expect(field.value).toBe("look at this [img]"));
+  });
+
+  it("names a document in its token", async () => {
     const onAttach = vi.fn().mockResolvedValue([DOC]);
-    const { container, findByText } = mount({ onAttach });
-    const input = container.querySelector<HTMLInputElement>("input[type=file]")!;
-    Object.defineProperty(input, "files", { value: [file("report.pdf", "application/pdf")] });
-    fireEvent.change(input);
-    expect(await findByText("report.pdf")).toBeTruthy();
+    const { container, field } = mount({ onAttach });
+    pick(container, file("report.pdf", "application/pdf"));
+    await waitFor(() => expect(field.value).toBe("[file: report.pdf]"));
+    await waitFor(() => expect(chips(container)[0]!.getAttribute("data-kind")).toBe("doc"));
   });
 
-  it("removes a chip when its × is pressed", async () => {
-    saveDraft("qa", { text: "", attachments: [IMG], at: 1 });
-    const { container } = mount();
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-    fireEvent.click(container.querySelector<HTMLElement>(".tl-tray-remove")!);
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).toBeNull());
+  it("numbers a second unnamed image so the two tokens differ", async () => {
+    const second = { ...IMG, path: IMG.path.replace("a1", "a2") };
+    const onAttach = vi.fn().mockResolvedValueOnce([IMG]).mockResolvedValueOnce([second]);
+    const { container, field } = mount({ onAttach });
+
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toBe("[img]"));
+    pick(container, file("b.png", "image/png"));
+
+    await waitFor(() => expect(field.value).toBe("[img] [img 2]"));
+  });
+
+  it("keeps a token from fusing with the word beside it", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field } = mount({ onAttach });
+    fireEvent.input(field, { target: { value: "see" } });
+    caretTo(field, 3);
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toBe("see [img]"));
+  });
+});
+
+describe("removing", () => {
+  it("drops the file when its token is edited out of the message", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field, send, onSend } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
+
+    fireEvent.input(field, { target: { value: "never mind" } });
+    await waitFor(() => expect(chips(container)).toHaveLength(0));
+
+    send();
+    expect(onSend).toHaveBeenCalledWith("never mind", []);
+  });
+
+  it("takes the whole chip on one Backspace", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field, onSend, send } = mount({ onAttach });
+    fireEvent.input(field, { target: { value: "look" } });
+    caretTo(field, 4);
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toBe("look [img]"));
+
+    field.setSelectionRange(10, 10);
+    fireEvent.keyDown(field, { key: "Backspace" });
+
+    await waitFor(() => expect(field.value).toBe("look"));
+    expect(chips(container)).toHaveLength(0);
+    send();
+    expect(onSend).toHaveBeenCalledWith("look", []);
+  });
+
+  it("takes the whole chip on one Delete from in front of it", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toBe("[img]"));
+
+    field.setSelectionRange(0, 0);
+    fireEvent.keyDown(field, { key: "Delete" });
+
+    await waitFor(() => expect(field.value).toBe(""));
+    expect(chips(container)).toHaveLength(0);
+  });
+
+  it("leaves an ordinary Backspace alone", async () => {
+    const { field } = mount();
+    fireEvent.input(field, { target: { value: "look" } });
+    field.setSelectionRange(4, 4);
+    const e = new KeyboardEvent("keydown", { key: "Backspace", cancelable: true, bubbles: true });
+    field.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(false);
   });
 });
 
 describe("sending", () => {
-  it("puts the paths first, one per line, then the prose", async () => {
-    saveDraft("qa", { text: "", attachments: [IMG, DOC], at: 1 });
-    const { field, send, onSend, container } = mount();
-    await waitFor(() => expect(container.querySelectorAll(".tl-tray-item")).toHaveLength(2));
+  it("puts each path where its token stood", async () => {
+    const onAttach = vi.fn().mockResolvedValueOnce([IMG]).mockResolvedValueOnce([DOC]);
+    const { container, field, send, onSend } = mount({ onAttach });
 
-    fireEvent.input(field, { target: { value: "what's wrong, vs the pdf?" } });
+    fireEvent.input(field, { target: { value: "what's wrong here, vs the pdf?" } });
+    caretTo(field, 18); // "what's wrong here,| vs the pdf?"
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toContain("[img]"));
+    caretTo(field, field.value.length);
+    pick(container, file("report.pdf", "application/pdf"));
+    await waitFor(() => expect(field.value).toContain("[file: report.pdf]"));
+
     send();
 
-    // The tray rides along beside the composed message: the live composer
-    // ignores it, having already spliced the paths in, and the new-session
+    // The attachments ride along beside the composed message: the live composer
+    // ignores them, having already swapped the paths in, and the new-session
     // composer is the one that needs the parts (PromptField.pendingAttachments).
-    expect(onSend).toHaveBeenCalledWith(
-      `${IMG.path}\n${DOC.path}\nwhat's wrong, vs the pdf?`,
-      [IMG, DOC],
-    );
+    expect(onSend).toHaveBeenCalledWith(`what's wrong here, ${IMG.path} vs the pdf? ${DOC.path}`, [
+      { ...IMG, token: "[img]" },
+      { ...DOC, token: "[file: report.pdf]" },
+    ]);
   });
 
-  it("sends attachments with no message at all", async () => {
-    saveDraft("qa", { text: "", attachments: [IMG], at: 1 });
-    const { send, onSend, container } = mount();
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
+  it("sends an attachment with no message at all", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, send, onSend } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(onAttach).toHaveBeenCalled());
     send();
-    expect(onSend).toHaveBeenCalledWith(IMG.path, [IMG]);
+    expect(onSend).toHaveBeenCalledWith(IMG.path, [{ ...IMG, token: "[img]" }]);
   });
 
-  it("sends nothing when both the field and the tray are empty", () => {
+  it("sends nothing when the message is empty", () => {
     const { send, onSend } = mount();
     send();
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("clears the tray once the send lands", async () => {
-    saveDraft("qa", { text: "", attachments: [IMG], at: 1 });
-    const { send, container } = mount();
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
+  it("clears the attachments once the send lands", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, send } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
     send();
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).toBeNull());
+    await waitFor(() => expect(chips(container)).toHaveLength(0));
     expect(loadDraft("qa")).toBeNull();
   });
 
   // A refusal must never destroy what was typed OR what was attached — the same
   // guarantee the text already had.
-  it("puts the tray back when the session refuses the prompt", async () => {
-    saveDraft("qa", { text: "", attachments: [IMG], at: 1 });
+  it("puts the chips back when the session refuses the prompt", async () => {
     const onSend = vi.fn().mockResolvedValue(false);
-    const { send, field, container } = mount({ onSend });
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container, field, send } = mount({ onSend, onAttach });
     fireEvent.input(field, { target: { value: "look" } });
+    caretTo(field, 4);
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(field.value).toBe("look [img]"));
+
     send();
 
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-    expect(field.value).toBe("look");
+    await waitFor(() => expect(field.value).toBe("look [img]"));
+    expect(chips(container)).toHaveLength(1);
   });
 });
 
 describe("persistence", () => {
-  it("restores the text and the tray a reload left behind", async () => {
-    saveDraft("qa", { text: "half written", attachments: [IMG], at: 1 });
-    const { field, container } = mount();
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
-    expect(field.value).toBe("half written");
+  it("restores the text and its chips", async () => {
+    saveDraft("qa", {
+      text: "half written [img]",
+      attachments: [{ ...IMG, token: "[img]" }],
+      at: 1,
+    });
+    const { field, container, send, onSend } = mount();
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
+    expect(field.value).toBe("half written [img]");
+    send();
+    expect(onSend).toHaveBeenCalledWith(`half written ${IMG.path}`, [{ ...IMG, token: "[img]" }]);
   });
 
-  it("saves what is typed, so the next mount finds it", async () => {
-    const { field } = mount();
-    fireEvent.input(field, { target: { value: "typed but not sent" } });
-    await waitFor(() => expect(loadDraft("qa")?.text).toBe("typed but not sent"));
+  // Written before attachments were anchored: the record has no token, so the
+  // restore gives it one rather than dropping the file.
+  it("anchors an attachment a pre-token draft left loose", async () => {
+    saveDraft("qa", { text: "half written", attachments: [IMG], at: 1 });
+    const { field, container } = mount();
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
+    expect(field.value).toBe("half written [img]");
+  });
+
+  it("saves the token with the text, so the next mount pairs them", async () => {
+    const onAttach = vi.fn().mockResolvedValue([IMG]);
+    const { container } = mount({ onAttach });
+    pick(container, file("a.png", "image/png"));
+    await waitFor(() => expect(loadDraft("qa")?.attachments[0]?.token).toBe("[img]"));
+    expect(loadDraft("qa")?.text).toBe("[img]");
   });
 
   it("keeps a corrupt store from breaking the composer", () => {
@@ -194,7 +314,6 @@ describe("register", () => {
         working={false}
         pending={[]}
         session="qa"
-        me="wizard"
         onSend={onSend}
         onStop={() => {}}
         onResolve={() => {}}
@@ -211,17 +330,19 @@ describe("register", () => {
     expect(typeof api().insertText).toBe("function");
   });
 
-  it("adds an attachment to the tray from outside", async () => {
-    const { api, container } = mountWithRegister();
+  it("drops an attachment into the message from outside", async () => {
+    const { api, container, field } = mountWithRegister();
+    fireEvent.input(field, { target: { value: "have a look" } });
+    caretTo(field, 11);
     api().add([IMG]);
-    await waitFor(() => expect(container.querySelector(".tl-tray-item")).not.toBeNull());
+    await waitFor(() => expect(chips(container)).toHaveLength(1));
+    expect(field.value).toBe("have a look [img]");
   });
 
   it("inserts pasted text at the caret rather than replacing the message", async () => {
     const { api, field } = mountWithRegister();
     fireEvent.input(field, { target: { value: "before after" } });
-    field.setSelectionRange(7, 7); // between "before " and "after"
-    fireEvent.click(field);
+    caretTo(field, 7); // between "before " and "after"
     api().insertText("MIDDLE ");
     await waitFor(() => expect(field.value).toBe("before MIDDLE after"));
   });

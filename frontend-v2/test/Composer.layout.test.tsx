@@ -49,7 +49,11 @@ describe("<Composer> — the field owns its row", () => {
       (e) => !(e instanceof HTMLInputElement && e.type === "file"),
     );
     expect(kids.length, "one child, the field").toBe(1);
-    expect(kids[0]!.className).toContain("tl-composer-input");
+    // The field and the chip layer drawn behind it, which is not a control and
+    // takes no space of its own — see `.tl-composer-mirror`.
+    expect(kids[0]!.className).toContain("tl-field");
+    expect(kids[0]!.querySelector("textarea.tl-composer-input")).not.toBeNull();
+    expect(kids[0]!.children).toHaveLength(2);
   });
 
   it("puts the controls on their own bar below it", () => {
