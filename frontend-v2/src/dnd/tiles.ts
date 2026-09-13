@@ -712,8 +712,26 @@ function begin(key: SessionKey, synthetic: boolean): void {
   document.addEventListener("pointermove", track, opts);
   document.addEventListener("dragover", track, opts);
   document.addEventListener("pointerup", () => end(true), opts);
-  document.addEventListener("dragend", () => end(true), opts);
+  // `drop` COMMITS AND `dragend` CANCELS, which is not interchangeable however
+  // much the pair looks it.
+  //
+  // A native drag fires `drop` then `dragend` when a person lets go, and ONLY
+  // `dragend` when the browser takes the gesture away — and Escape mid-drag is
+  // exactly that, the browser's own cancel. Committing on `dragend` therefore
+  // made Escape LAND the split rather than abandon it. Measured against the
+  // live stack from an empty workspace: holding a card over a pane and pressing
+  // Escape took the preview down and left two tiles behind, with
+  // `PUT /sessions/workspaces` already sent, before the mouse was even
+  // released.
+  //
+  // Ordering makes the pair safe: on a real drop `drop` runs first and takes
+  // `inFlight` with it, so the `dragend` two milliseconds later is a no-op.
+  // Measured: dragover@4559, drop@4560, dragend@4562.
+  //
+  // `pointerup` above still commits, because the finger's synthetic drag fires
+  // no `drop` at all.
   document.addEventListener("drop", () => end(true), opts);
+  document.addEventListener("dragend", () => end(false), opts);
   // A NATIVE DRAG RAISES `pointercancel` ON ITS WAY PAST, and that is the
   // browser handing the gesture over rather than the person letting go of it.
   // Measured against the shipped build on 2026-09-13, with timestamps in ms:

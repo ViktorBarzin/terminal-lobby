@@ -679,6 +679,33 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
     await settle();
   });
 
+  it("lands on drop and abandons on a bare dragend, which is Escape", async () => {
+    // A native drag fires `drop` then `dragend` when a person lets go, and ONLY
+    // `dragend` when the browser takes the gesture away. Escape mid-drag is the
+    // browser's own cancel, so it arrives as a bare `dragend` — and while that
+    // was wired to commit, pressing Escape LANDED the split instead of
+    // abandoning it. Measured from an empty workspace before the fix: the
+    // preview went down, two tiles appeared, and `PUT /sessions/workspaces` had
+    // already been sent, all before the mouse was released.
+    //
+    // The pair is safe in this order because a real release fires `drop` first
+    // and takes `inFlight` with it, so the `dragend` behind it does nothing.
+    const dropped = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    pointer("pointermove", 100, 450);
+    document.dispatchEvent(new MouseEvent("drop", { bubbles: true }));
+    expect(dropped.applied).toHaveLength(1);
+    await settle();
+
+    const escaped = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
+    startSidebarDrag();
+    pointer("pointermove", 100, 450);
+    document.dispatchEvent(new MouseEvent("dragend", { bubbles: true }));
+    expect(escaped.applied).toHaveLength(0);
+    await settle();
+    expect(escaped.releases()).toBe(1);
+  });
+
   it("does not remember a drag that never reached the tiles", async () => {
     // The other half of the rule, and the one that keeps ordinary reordering
     // working: a drag inside the sidebar is a reorder and must still be written.
@@ -780,17 +807,21 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
     await settle();
   });
 
-  it("follows a native drag through dragover and dragend, which carry no pointer events", () => {
+  it("follows a native drag through dragover and drop, which carry no pointer events", () => {
     // A mouse gets the library's native path, where the browser suppresses
     // pointer events for the length of the drag and reports the position on
     // `dragover` instead. Same tracker, different event names.
+    //
+    // It ends on `drop`, not on `dragend`: a release fires both, a cancel fires
+    // only the second, and the tracker has to tell them apart or Escape lands
+    // the split it was meant to abandon.
     const h = mount({ tree: leaf("a"), rects: ONE, dragged: "n" });
     startSidebarDrag();
     document.dispatchEvent(
       new MouseEvent("dragover", { clientX: 1100, clientY: 450, bubbles: true }),
     );
     expect(tileDropTarget()).toEqual({ kind: "split", key: "a", edge: "right" });
-    document.dispatchEvent(new MouseEvent("dragend", { bubbles: true }));
+    document.dispatchEvent(new MouseEvent("drop", { bubbles: true }));
     expect(leafKeys(h.applied[0] ?? leaf("?"))).toEqual(["a", "n"]);
   });
 
@@ -866,7 +897,7 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
       new MouseEvent("dragover", { clientX: 100, clientY: 450, bubbles: true }),
     );
     expect(tileDropTarget()).not.toBeNull();
-    document.dispatchEvent(new MouseEvent("dragend", { bubbles: true }));
+    document.dispatchEvent(new MouseEvent("drop", { bubbles: true }));
     expect(h.applied).toHaveLength(1);
     await settle();
     expect(h.releases()).toBe(1);
