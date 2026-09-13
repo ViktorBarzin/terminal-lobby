@@ -5065,3 +5065,220 @@ body.tl-kb-up {
 .tl-skill-dot-idle {
   background: var(--state-done);
 }
+
+/* The machine-health sparkline (components/Sparkline.tsx) — an hour of the
+   deciding pressure, drawn beside the numbers it is made of.
+
+   Every colour here is a theme token, and the choice of which one is the whole
+   of the styling decision. The alarm colour in this codebase is --danger and it
+   carries one meaning, "you are disconnected" (.tl-status-dot above); a busy
+   machine never reaches that, so the threshold rule borrows --state-running,
+   the amber the degraded dot already uses. The same colour then means the same
+   thing in both places. */
+.tl-spark {
+  /* A COLUMN, because the chart now has words under it. It was a 40px-high row
+     while the svg was the only child, and leaving it that way put the axis
+     labels alongside the chart and clipped them to the chart's height. The
+     40px moved on to the two things that draw in that space. */
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+}
+
+/* The empty state keeps the chart's height so the row does not jump when the
+   first readings arrive ten minutes after a restart. */
+.tl-spark-empty {
+  display: flex;
+  align-items: center;
+  height: 40px;
+}
+.tl-spark-svg {
+  display: block;
+  width: 100%;
+  /* The 40 units of the viewBox, so at the roughly 200px a phone gives this row
+     the drawing is 1:1 and a horizontal stretch is the only scaling that ever
+     happens. */
+  height: 40px;
+  /* The line and the newest-reading tick inherit this, so a row that wants to
+     tint the chart sets `color` on an ancestor and nothing inside the component
+     needs to know about status. */
+  color: var(--text-primary);
+}
+/* preserveAspectRatio="none" scales x and y separately, which would otherwise
+   draw the line thicker on a wide panel than on a narrow one. This holds every
+   stroke at the width declared below however far the box is stretched. */
+.tl-spark-base,
+.tl-spark-threshold,
+.tl-spark-line,
+.tl-spark-now {
+  vector-effect: non-scaling-stroke;
+}
+.tl-spark-base {
+  /* --border-strong rather than --border: on a card in the slate theme the
+     weaker one is #1f242d against #161b22 and the floor was not visible at all,
+     which left a chart with one reading in it looking like an empty box. */
+  stroke: var(--border-strong);
+  stroke-width: 1;
+}
+.tl-spark-threshold {
+  stroke: var(--state-running);
+  stroke-width: 1;
+  /* Dashed, so the rule cannot be read as a reading. The dashes stay even under
+     the stretch for the same reason the widths do. */
+  stroke-dasharray: 3 3;
+  opacity: 0.75;
+}
+.tl-spark-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tl-spark-now {
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+.tl-spark-empty {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+
+/* ---- "This machine", the sixth Right now row (settings/RightNow.tsx) ----
+
+   The five rows above it are a label, a phrase and sometimes a button on one
+   line, and they stay that way. A table where one entry is four times the
+   height of its neighbours already asks enough of a reader without the
+   neighbours changing shape to match, so every rule here is scoped to the one
+   row by its data-channel.
+
+   WIDTH IS THE WHOLE PROBLEM. This panel gets about 355px of content on a
+   phone, and five figures plus an hour of history do not fit across it. So
+   every container wraps, every box may shrink below its content, and the only
+   thing held on one line is a single figure — a break between figures reads
+   fine, where "12.6 of" with "31.3 GB" underneath does not. Nothing here may
+   scroll sideways: a settings panel with a hidden right-hand edge hides the
+   figure on the end from anyone who does not think to drag it. */
+.tl-rightnow-row[data-channel="machine"] {
+  flex-wrap: wrap;
+  /* The chart ends flush with its box, so without this the next row's border
+     sits on the baseline of the graph. */
+  padding-bottom: 10px;
+}
+.tl-rightnow-machine {
+  /* A line of its own under the top line, whatever that line ended up holding,
+     indented past the dot so it starts where the label does: 8px of mark plus
+     the row's own 8px gap. */
+  flex: 1 1 100%;
+  min-width: 0;
+  margin-top: 6px;
+  padding-left: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.tl-rightnow-machine-said {
+  /* The row's own 13px. This is the sentence someone opened the panel to read,
+     not a footnote to the figures under it. */
+  margin: 0;
+  color: var(--text-primary);
+}
+.tl-rightnow-machine-window,
+.tl-rightnow-machine-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-rightnow-figures {
+  display: flex;
+  flex-wrap: wrap;
+  /* 3px down, 14px across. One number cannot do both jobs: sideways the gap
+     separates one figure from the next, downwards it separates one line of
+     figures from another, and making them equal turns a wrapped row into a grid
+     nobody laid out. */
+  gap: 3px 14px;
+  margin: 0;
+  min-width: 0;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-rightnow-figure {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  /* Below content width, so a long value wraps the row rather than pushing it
+     past the edge of the panel. */
+  min-width: 0;
+}
+.tl-rightnow-figure dt {
+  color: var(--text-muted);
+}
+.tl-rightnow-figure dd {
+  /* A dd carries 40px of inline start margin by default, which would leave each
+     value most of a phone's width from the word it belongs to. */
+  margin: 0;
+  color: var(--text-primary);
+  /* These move every few seconds while the panel is open, and digits of unequal
+     width make the whole line twitch each time they do. */
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* The chart takes the verdict's colour from the row, which is the only element
+   that has one. The two cannot disagree: the series it draws is the pressure
+   that decided the dot. --state-running is the amber the degraded dot already
+   uses, and --danger stays out of this row entirely, because red means "you are
+   disconnected" and a busy machine never is (ADR-0028). */
+.tl-rightnow-row[data-channel="machine"][data-status="degraded"] .tl-spark-svg {
+  color: var(--state-running);
+}
+
+/* The chart's words. Muted and small: they are furniture for reading the line,
+   not readings in their own right, and the figures above the chart are where
+   the numbers live (ADR-0028). */
+.tl-rightnow-machine-chart-what {
+  margin: 10px 0 2px;
+  /* Scaled like every other size in here: a reader who has turned the text up
+     is exactly the reader who needs the chart explained. test/textzoom.test.ts
+     holds the whole stylesheet to this. */
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+
+.tl-spark-axis {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+
+/* The rule's own label sits centred between the two time ends, which is where
+   the dotted line it describes runs. */
+.tl-spark-axis-rule {
+  flex: 0 1 auto;
+  white-space: nowrap;
+}
+
+/* The swatch is the ONLY thing tying this label to the rule it names: the rule
+   is a horizontal line whose height moves with the data, and the label sits in
+   a fixed row under the chart, so the two can be an inch apart. It therefore
+   has to look like the rule rather than merely sit near it — same colour token
+   (--state-running), same 3-and-3 dash rhythm, same 0.75 opacity as
+   .tl-spark-threshold above. A grey swatch under a coloured rule is a caption
+   for something else. */
+.tl-spark-axis-rule::before {
+  content: "";
+  display: inline-block;
+  width: 16px;
+  margin-right: 5px;
+  vertical-align: middle;
+  border-top: 1px dashed var(--state-running);
+  opacity: 0.75;
+}
+
+.tl-spark-axis-start,
+.tl-spark-axis-end {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}

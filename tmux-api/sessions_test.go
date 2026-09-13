@@ -357,6 +357,8 @@ func TestParseSessionsCountsOutstandingWorkByKind(t *testing.T) {
 		{"one agent", "a:a1cbb47bebad51b9b", &Background{Agents: 1}},
 		{"two agents and a command", "a:a1 a:a2 b:bmm8ohp9u", &Background{Agents: 2, Commands: 1}},
 		{"a workflow", "w:wy71p4jz3", &Background{Workflows: 1}},
+		{"a teammate counts as an agent", "t:probe2", &Background{Agents: 1}},
+		{"a teammate and a subagent", "a:a1 t:probe2", &Background{Agents: 2}},
 		{"one of each", "a:a1 b:b1 w:w1", &Background{Agents: 1, Commands: 1, Workflows: 1}},
 		// The hook validates ids before it writes them, so a token in a shape
 		// this parser does not know came from somewhere else. Counting it as

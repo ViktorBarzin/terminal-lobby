@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // mkHome lays out a fake home with one transcript and returns (home, path).
@@ -51,10 +53,11 @@ func TestPrivopReadsATranscriptUnderItsOwnHome(t *testing.T) {
 	if !resp.OK {
 		t.Fatalf("refused a legitimate read: %s", resp.Err)
 	}
-	if len(resp.Lines) != 1 || !strings.Contains(resp.Lines[0], `"hi"`) {
-		t.Fatalf("lines: %+v", resp.Lines)
+	lines := sessionio.SplitLines(resp.Blob)
+	if len(lines) != 1 || !strings.Contains(lines[0], `"hi"`) {
+		t.Fatalf("lines: %+v", lines)
 	}
-	if resp.Next != int64(len(resp.Lines[0])+1) {
+	if resp.Next != int64(len(lines[0])+1) {
 		t.Fatalf("offset should sit past the newline, got %d", resp.Next)
 	}
 }

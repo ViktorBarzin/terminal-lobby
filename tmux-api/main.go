@@ -328,6 +328,19 @@ func main() {
 	// poll already makes. Runs for the life of the process, like the sender.
 	go runPrewarmReaper(make(chan struct{}))
 
+	// Whether the BOX is stalling, so a person can tell "the box is slow" from
+	// "my connection is slow" (health.go, ADR-0028). Started unconditionally
+	// and for the life of the process, like the reaper: five world-readable
+	// /proc files every ten seconds, no privilege, no helper, and a few
+	// kilobytes for the hour of history the panel draws. Whether anyone ever
+	// opens that panel is not worth a switch.
+	//
+	// It cannot take the service down. Every file it reads is optional by
+	// design — an unreadable one becomes empty text, an empty one becomes a
+	// reading of "unknown" — so there is no /proc shape that turns a sample
+	// into a panic on this goroutine.
+	go runHealthSampler(make(chan struct{}))
+
 	// TMUX_API_ADDR: scratch-build override for the dev harness
 	// (dev-harness.py --tmux-api-port documents testing a local build,
 	// which can't bind 7684 while the production service holds it).
@@ -357,6 +370,7 @@ func main() {
 		addr = a
 	}
 	log.Printf("tmux-api listening on %s (self=%s)", addr, selfUser)
+	timing.Metrics = metrics
 	go timing.Run(nil)
 	log.Fatal(http.ListenAndServe(addr, timing.Wrap(http.DefaultServeMux)))
 }
@@ -382,6 +396,10 @@ func main() {
 // mux_routes_test.go now drives this function's own output and fails when a
 // declared handler has no line here.
 func registerRoutes(mux *http.ServeMux) {
+	// /metrics is registered before the rest so it is obvious it is not one of
+	// the lobby's API routes. It carries no auth: it exposes counts and timings,
+	// never session names or content, and the listener is not public.
+	mux.HandleFunc("/metrics", handleMetrics)
 	mux.HandleFunc("/sessions", handleSessions)
 	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
 	// prefers the longer pattern, but stating the order makes the intent plain.
@@ -407,6 +425,7 @@ func registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/dirs", handleDirs)
 	mux.HandleFunc("/prefs", handlePrefs)
 	mux.HandleFunc("/netinfo", handleNetinfo)
+	mux.HandleFunc("/machine", handleMachine)
 	mux.HandleFunc("/agent-spend", handleAgentSpend)
 	mux.HandleFunc("/telemetry", handleTelemetry)
 	mux.HandleFunc("/push-subscriptions", handlePushSubscriptions)

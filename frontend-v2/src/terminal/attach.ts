@@ -76,6 +76,14 @@ export interface AttachDeps {
    * `buildTerminalArgs`. Passed whole and used for BOTH `/token` and `/ws`,
    * because a flag on one and not the other attaches a socket the token was not
    * issued for (wire.ts says so at `tokenUrl`).
+   *
+   * READ AT EVERY CONNECT, not captured when the attach was built: the caller
+   * may pass a getter, and TerminalNative does, because the attach mode moves
+   * under a live mount. A hover attaches with `pre` (tmux's ignore-size, so it
+   * cannot take the window) and the click that promotes it drops that mode —
+   * the socket in flight keeps what it was opened with, and the next one must
+   * not come back as a preload. `openSocket` takes ONE reading per attempt, so
+   * the pair above still agree.
    */
   args: string;
   /** Where the page is, for ws: vs wss:. Injected so tests need no location. */
@@ -427,9 +435,17 @@ export function attach(deps: AttachDeps): Attachment {
   async function openSocket(gen: number): Promise<void> {
     detach();
     liveGen = gen;
+    // ONE READING PER ATTEMPT. `deps.args` is a live getter at its one real
+    // caller (TerminalNative), because the attach mode changes under a mount:
+    // a hover attaches with `pre` and the click that promotes it drops that,
+    // so the connect AFTER a promotion must not re-attach as a preload. Read
+    // once here and used for both halves below, because a flag on the token
+    // and not on the socket attaches a socket the token was not issued for —
+    // the rule `tokenUrl` in wire.ts states.
+    const args = deps.args;
     let token: string;
     try {
-      const res = await f(tokenUrl(deps.base, deps.args), { credentials: "same-origin" });
+      const res = await f(tokenUrl(deps.base, args), { credentials: "same-origin" });
       // Both the rejected parse (a 404's HTML body) and the throw inside
       // tokenFromResponse (a JSON `null`) land here, which is term.html's
       // behaviour: no socket is opened and the ladder takes the next rung.
@@ -445,7 +461,7 @@ export function attach(deps: AttachDeps): Attachment {
       (typeof location !== "undefined"
         ? { protocol: location.protocol, host: location.host }
         : { protocol: "https:", host: "localhost" });
-    const url = socketUrl(page, deps.base, deps.args);
+    const url = socketUrl(page, deps.base, args);
     let s: WebSocket;
     try {
       s = mkSocket(url, WS_SUBPROTOCOL);

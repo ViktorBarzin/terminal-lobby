@@ -79,7 +79,12 @@ const xt = vi.hoisted(() => {
     atlasCleared = 0;
     /** Every `term.paste()` the component made, in order. */
     readonly pasted: string[] = [];
-    readonly written: Uint8Array[] = [];
+    /**
+     * Both shapes the real `write` takes. Server output arrives as bytes; a
+     * sequence the component writes into its own terminal — the attach's mode
+     * reset (terminal/modes.ts) — is a string, as it is in xterm's own API.
+     */
+    readonly written: (string | Uint8Array)[] = [];
     focused = 0;
     refreshed = 0;
     disposed = 0;
@@ -196,7 +201,7 @@ const xt = vi.hoisted(() => {
     paste(text: string): void {
       this.pasted.push(text);
     }
-    write(bytes: Uint8Array): void {
+    write(bytes: string | Uint8Array): void {
       this.written.push(bytes);
     }
     focus(): void {
@@ -263,6 +268,7 @@ vi.mock("../src/telemetry/diag", async (importOriginal) => {
 
 // Imported after the mocks so the component's dynamic imports resolve to them.
 import { TerminalNative } from "../src/components/TerminalNative";
+import { DETACHED_MODE_RESET } from "../src/terminal/modes";
 import { THEME_LIVE_GLOBAL } from "../src/terminal/theme";
 
 /* ------------------------------------------------------------------ *
@@ -557,6 +563,11 @@ async function mountOpen(
 }
 
 const isBytes = (v: unknown): v is Uint8Array => v instanceof Uint8Array;
+
+/** Everything the component wrote into xterm, in order, as text. */
+function writes(m: Mounted): string[] {
+  return m.term.written.map((b) => (isBytes(b) ? new TextDecoder().decode(b) : b));
+}
 
 /** MSG_INPUT frames with a payload. The empty ones are liveness probes. */
 function inputs(s: FakeSocket): number[][] {
@@ -4785,8 +4796,10 @@ describe("attention (term.html:5676-5781)", () => {
     const m = await mountOpen({ active: true });
     output(m);
     expect(m.attention).toEqual([]);
-    // And the bytes still reached xterm.
-    expect(m.term.written).toHaveLength(1);
+    // And the bytes still reached xterm. By CONTENT rather than by count: the
+    // attach writes its own mode reset (terminal/modes.ts) into the same
+    // terminal, and a count could not tell the frame apart from it.
+    expect(writes(m)).toContain("hi");
   });
 
   /**
@@ -5756,5 +5769,119 @@ describe("claiming the grid for a pinned tmux window", () => {
     const m = await mount();
     expect(m.fit.fits).toBe(1); // the boot fit ran
     expect(m.grids).toEqual([]); // and said nothing
+  });
+
+  /**
+   * THE FOURTH MOMENT, and the one the other three cannot cover: the socket
+   * itself coming back. A session parked off screen has no tmux client at all
+   * (terminal/battery.ts drops it after 30 s), so the claim the `shown` fit
+   * makes on the way back arrives before this device has a client — tmux-api
+   * finds nothing of ours to promote and, for a pinned session, nobody driving
+   * either, which is a 409 nothing retries. Measured 2026-09-12 on
+   * `ny-reibursment`: the window stayed at the 60 columns a phone had left it
+   * at while the desktop drew 144, and Text-and-back was the only way out.
+   */
+  it("claims the grid when the socket comes back, after the fit's claim raced it", async () => {
+    const m = await mount();
+    expect(m.grids).toEqual([]); // the boot fit had nothing to speak for
+
+    m.socket().accept();
+    await settle();
+
+    expect(m.grids).toEqual(["80x24"]);
+  });
+
+  /**
+   * ...but only for the session in front of you. A hidden mount reconnecting
+   * is someone else's window to lose: the phone reading this same session would
+   * have its grid pulled to this desktop's size by a socket nobody here is
+   * looking at.
+   */
+  it("claims nothing when a hidden session's socket comes back", async () => {
+    const m = await mount({ onScreen: false, active: false });
+
+    m.socket().accept();
+    await settle();
+
+    expect(m.grids).toEqual([]);
+  });
+});
+
+/**
+ * A reattach clears the modes the dead program left set (terminal/modes.ts).
+ *
+ * The gap this covers is not visible from either side on its own. attach.ts
+ * knows a socket opened; xterm knows it is in mouse-tracking mode; neither
+ * knows that the far end is a shell script that will not be tmux for another
+ * ~500 ms, and that everything sent meanwhile is echoed onto the grid by a pty
+ * still in canonical mode. The component is where those two facts meet, so the
+ * write belongs here and so does the test.
+ */
+describe("a reattach drops the last program's modes", () => {
+  /**
+   * ON THE SOCKET OPENING, which is the moment the pty exists and tmux does
+   * not. Waiting for the first output frame would be too late by the whole
+   * window: the reports measured on 2026-09-12 started 5 ms after the
+   * handshake and ran for 500 ms before tmux's redraw arrived.
+   */
+  it("clears mouse tracking and focus reporting when the socket opens", async () => {
+    const m = await mount();
+    expect(writes(m)).toEqual([]);
+
+    m.socket().accept();
+    await settle();
+
+    expect(writes(m).join("")).toBe(DETACHED_MODE_RESET);
+  });
+
+  /**
+   * EVERY attach, not just the first. The parked session coming back is the
+   * reported case, and it is the only one where the modes are actually stale —
+   * a terminal's first socket opens against an xterm that has never been asked
+   * for anything.
+   */
+  it("clears them again on the socket after a drop", async () => {
+    const m = await mountOpen();
+    m.socket().drop();
+    await settle();
+    vi.advanceTimersByTime(60_000);
+    await settle();
+
+    m.socket().accept();
+    await settle();
+
+    expect(writes(m).filter((w) => w === DETACHED_MODE_RESET)).toHaveLength(2);
+  });
+
+  /**
+   * AND IT IS NOT NEWS. The reset is the client talking to itself, so routing
+   * it through the `write` that feeds attention.ts would light the session's
+   * card for output the session never produced — once per reconnect, on a
+   * session nobody is looking at.
+   */
+  it("reports no attention for the reset", async () => {
+    const m = await mount();
+
+    m.socket().accept();
+    await settle();
+
+    expect(m.attention).toEqual([]);
+  });
+
+  /**
+   * The reset lands BEFORE the output that follows it. xterm applies writes in
+   * order, so a reset queued after tmux's redraw would undo the tracking mode
+   * tmux had just asked for and leave the terminal deaf to the mouse for the
+   * life of the connection.
+   */
+  it("writes the reset ahead of the first output frame", async () => {
+    const m = await mount();
+
+    m.socket().accept();
+    await settle();
+    m.socket().deliver([0x30, 0x68, 0x69]);
+    await settle();
+
+    expect(writes(m)).toEqual([DETACHED_MODE_RESET, "hi"]);
   });
 });

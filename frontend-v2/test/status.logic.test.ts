@@ -6,6 +6,7 @@ import {
   badgeWord,
   buildChannel,
   channelPhrase,
+  machineChannel,
   notificationsChannel,
   scope,
   sessionsChannel,
@@ -17,6 +18,7 @@ import {
   type Channel,
   type ChannelId,
   type ChannelState,
+  type MachineReport,
 } from "../src/diagnostics/status";
 
 const ch = (id: ChannelId, state: ChannelState, detail = ""): Channel => ({ id, state, detail });
@@ -77,6 +79,35 @@ describe("the badge's word", () => {
     expect(badgeWord([ch("build", "degraded"), ch("terminal", "degraded")])).toBe("Reconnecting");
   });
 
+  /**
+   * A busy box is degraded for the same reason a stale build is: something is
+   * worth saying and the link is not it. "Reconnecting" here would send a
+   * reader to check their wifi about a machine that is grinding on disk.
+   */
+  it("says Machine busy when the box alone is the complaint", () => {
+    expect(badgeWord([ch("machine", "degraded"), ch("terminal", "working")])).toBe("Machine busy");
+  });
+
+  /** Both true, neither of them the link. The box is slow NOW and the update is
+   *  only waiting, so the box gets the word. */
+  it("lets a busy machine outrank a waiting update", () => {
+    expect(badgeWord([ch("build", "degraded"), ch("machine", "degraded")])).toBe("Machine busy");
+  });
+
+  it("prefers the connection problem when the machine is also busy", () => {
+    expect(badgeWord([ch("machine", "degraded"), ch("transcript", "degraded")])).toBe(
+      "Reconnecting",
+    );
+  });
+
+  /** The number beside "Reconnecting" is a retry attempt, so it can only come
+   *  from a channel that retries. */
+  it("never takes the badge's count from the machine", () => {
+    expect(
+      badgeWord([{ ...ch("machine", "degraded"), count: 12 }, ch("terminal", "degraded")]),
+    ).toBe("Reconnecting");
+  });
+
   it("is silent for an unknown-only set", () => {
     expect(badgeWord([ch("terminal", "unknown")])).toBeNull();
   });
@@ -110,9 +141,17 @@ describe("the badge's word", () => {
 });
 
 describe("the panel's verdict", () => {
+  /**
+   * WORKING, not connected. The panel gained a row that reports the box itself,
+   * so the old sentence claimed something narrower than the six rows check: a
+   * machine can be stalling with every connection healthy (ADR-0028).
+   */
   it("says so plainly when nothing is wrong", () => {
     expect(verdict([ch("terminal", "working"), ch("sessions", "working")])).toBe(
-      "Everything is connected.",
+      "Everything is working.",
+    );
+    expect(verdict([ch("machine", "working"), ch("sessions", "working")])).toBe(
+      "Everything is working.",
     );
   });
 
@@ -133,7 +172,30 @@ describe("the panel's verdict", () => {
   /** An unknown channel is not a thing needing attention, so it must not be counted. */
   it("does not count what has not reported", () => {
     expect(verdict([ch("terminal", "unknown"), ch("sessions", "working")])).toBe(
-      "Everything is connected.",
+      "Everything is working.",
+    );
+  });
+
+  /**
+   * The machine's sentence hangs on its TIER, not its state. One amber covers
+   * both a brush past a threshold and a sustained grind, and the words are
+   * where that difference survives — they are what someone who opened the panel
+   * came to read anyway.
+   */
+  it("picks the machine's sentence by tier", () => {
+    expect(verdict([{ ...ch("machine", "degraded"), tier: "busy" }])).toBe(
+      "Typing and commands may feel slow. The machine is busy.",
+    );
+    expect(verdict([{ ...ch("machine", "degraded"), tier: "very-busy" }])).toBe(
+      "Typing and commands are slow right now. The machine is very busy.",
+    );
+  });
+
+  /** A row that reached degraded without saying how busy gets the quieter of
+   *  the two, which is all the threshold it crossed actually supports. */
+  it("uses the quieter sentence for a machine row carrying no tier", () => {
+    expect(verdict([ch("machine", "degraded")])).toBe(
+      "Typing and commands may feel slow. The machine is busy.",
     );
   });
 
@@ -160,6 +222,7 @@ describe("scoping to what is on screen", () => {
       "sessions",
       "notifications",
       "build",
+      "machine",
     ]);
     expect(worst(scope(all, LOBBY_CHANNELS))).toBe("working");
     expect(worst(scope(all, SESSION_CHANNELS))).toBe("down");
@@ -173,7 +236,21 @@ describe("scoping to what is on screen", () => {
       "sessions",
       "notifications",
       "build",
+      "machine",
     ]);
+  });
+
+  /**
+   * The one channel that belongs on BOTH surfaces. A dead terminal socket is a
+   * fact about one screen and must stay off the list's badge; the box is the
+   * same box whichever screen you are on, so the list can report it as honestly
+   * as the session can.
+   */
+  it("reports the machine on every surface, last in the order", () => {
+    expect(SESSION_CHANNELS).toContain("machine");
+    expect(LOBBY_CHANNELS).toContain("machine");
+    expect(SESSION_CHANNELS.at(-1)).toBe("machine");
+    expect(LOBBY_CHANNELS.at(-1)).toBe("machine");
   });
 
   it("fills a channel that has said nothing with unknown", () => {
@@ -348,6 +425,137 @@ describe("the build channel", () => {
   });
 });
 
+describe("the machine channel", () => {
+  const reading = (over: Partial<MachineReport> = {}): MachineReport => ({
+    state: "working",
+    worst: "io",
+    cpuPct: 0.4,
+    ioPct: 1.2,
+    memPct: 0,
+    load1: 0.9,
+    nproc: 32,
+    tier: "fine",
+    memAvailableMb: 12920,
+    memTotalMb: 32087,
+    windowSeconds: 600,
+    partialWindow: false,
+    source: "psi",
+    ...over,
+  });
+
+  it("is unknown until the box has reported", () => {
+    expect(machineChannel(null).state).toBe("unknown");
+    expect(machineChannel(null).detail).toBe("not reporting");
+  });
+
+  it("is unknown when the reading itself says it does not know", () => {
+    expect(machineChannel(reading({ state: "unknown" })).state).toBe("unknown");
+  });
+
+  it("says Fine while nothing is over its line", () => {
+    const c = machineChannel(reading());
+    expect(c.state).toBe("working");
+    expect(c.detail).toBe("Fine");
+  });
+
+  /** "io_full 62%" is the one thing a reader holding a slow terminal cannot
+   *  use, and the row is about 200px wide on a phone. */
+  it.each([
+    ["cpu", "the processor is busy"],
+    ["io", "waiting on the disk"],
+    ["memory", "low on memory"],
+  ] as const)("names %s in words a non-engineer can read", (worstResource, phrase) => {
+    const c = machineChannel(reading({ state: "degraded", worst: worstResource, tier: "busy" }));
+    expect(c.state).toBe("degraded");
+    expect(c.detail).toBe(phrase);
+  });
+
+  it("carries the tier, which is what picks the sentence", () => {
+    const c = machineChannel(reading({ state: "degraded", worst: "io", tier: "very-busy" }));
+    expect(c.tier).toBe("very-busy");
+  });
+
+  /**
+   * AMBER AT WORST, checked here rather than trusted. `degraded` means wait and
+   * `down` means act: there is no action to take about a busy machine, and the
+   * box is plainly not down, because this reading came from it. Red keeps its
+   * one meaning, "you are disconnected" (ADR-0028).
+   */
+  it("never reports the machine as down, whatever the reading claims", () => {
+    for (const state of ["working", "degraded", "down", "unknown"] as const) {
+      for (const worstResource of ["cpu", "io", "memory", "load"] as const) {
+        for (const tier of ["fine", "busy", "very-busy"] as const) {
+          for (const source of ["psi", "load", "unknown"] as const) {
+            const c = machineChannel(reading({ state, worst: worstResource, tier, source }));
+            expect(c.state).not.toBe("down");
+            expect(c.detail).toBeTruthy();
+          }
+        }
+      }
+    }
+  });
+
+  it("clamps a verdict claiming down to degraded", () => {
+    expect(machineChannel(reading({ state: "down", worst: "io", tier: "very-busy" })).state).toBe(
+      "degraded",
+    );
+  });
+
+  /**
+   * Old kernels and some container runtimes have no /proc/pressure at all. The
+   * row stays and says what it is reading instead, on ADR-0016's reasoning: a
+   * row that explains itself can be asked about, while one that disappears
+   * reads as a bug. Presenting the coarser number as the same one would be
+   * worse than either.
+   */
+  it("says in words when there is no pressure to read", () => {
+    expect(machineChannel(reading({ source: "load" })).detail).toBe("Fine, by load average");
+    const busy = machineChannel(reading({ source: "load", state: "degraded", tier: "busy" }));
+    expect(busy.state).toBe("degraded");
+    expect(busy.detail).toBe("busy, by load average");
+  });
+
+  /** Load average is one figure for the whole box, so there is no resource to
+   *  name on that path and naming one would be an invention. */
+  it("names no resource on the fallback path", () => {
+    const c = machineChannel(reading({ source: "load", state: "degraded", worst: "io" }));
+    expect(c.detail).toBe("busy, by load average");
+  });
+
+  /**
+   * "Nothing arrived" and "arrived, but over too short a window to judge" are
+   * both `unknown`, and they must not say the same thing. The row prints the
+   * figures underneath, so "not reporting" above a live "Disk 84%" contradicts
+   * itself on screen. tmux-api fills in every figure from the first sample and
+   * withholds only the verdict, until it has four minutes of history.
+   */
+  it("says nothing arrived when nothing arrived", () => {
+    expect(machineChannel(null).detail).toBe("not reporting");
+    expect(machineChannel(reading({ state: "unknown", source: "unknown" })).detail).toBe(
+      "not reporting",
+    );
+  });
+
+  it("says it is still measuring when the reading is real but the window is short", () => {
+    const c = machineChannel(
+      reading({ state: "unknown", source: "psi", windowSeconds: 60, partialWindow: true, ioPct: 84 }),
+    );
+    expect(c.state).toBe("unknown");
+    expect(c.detail).toBe("still measuring");
+  });
+
+  /* `worst` names the resource nearest its own line and is always set, so the
+   * old "names no resource" case cannot arise. What replaces it is the reading
+   * tmux-api produces before its first sample: source `unknown`, which any
+   * handler running early in the process's life will see, and which must read
+   * as not-yet-known rather than as health. */
+  it("does not report health from a reading that has taken no sample", () => {
+    const c = machineChannel(reading({ state: "unknown", source: "unknown", windowSeconds: 0, partialWindow: true }));
+    expect(c.state).toBe("unknown");
+    expect(c.detail).toBeTruthy();
+  });
+});
+
 describe("what happened since this page loaded", () => {
   const at = (ms: number, id: ChannelId, from: ChannelState, to: ChannelState) => ({
     id,
@@ -423,5 +631,12 @@ describe("row phrasing", () => {
     for (const id of SESSION_CHANNELS) {
       for (const state of states) expect(channelPhrase(id, state)).toBeTruthy();
     }
+  });
+
+  it("gives the machine the same words its live row uses", () => {
+    expect(channelPhrase("machine", "working")).toBe("Fine");
+    // Nothing REQUESTS this reading — it rides the session poll — so a row that
+    // has not heard from the box has not failed a check.
+    expect(channelPhrase("machine", "unknown")).toBe("not reporting");
   });
 });

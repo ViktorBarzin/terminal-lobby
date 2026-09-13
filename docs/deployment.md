@@ -162,6 +162,93 @@ gh run list --repo ViktorBarzin/terminal-lobby --workflow=release --limit 1
 homelab logs query '{unit="ttyd"}' --since 15m
 ```
 
+## Machine health thresholds
+
+The lobby reports whether the box itself is stalling, as a sixth row, `This
+machine`, in Settings under Network. `tmux-api` reads `/proc/pressure` every 10
+seconds and measures it against six numbers. All six ship commented out in
+`/etc/terminal-lobby.conf`, so a box that leaves them alone runs on the values
+the binary compiles in and picks up a later recalibration. Override them in
+`/etc/terminal-lobby.local.conf` and restart `tmux-api`. Why the colour comes
+from stall time and not from a load average:
+[adr/0028-stall-time-says-the-box-is-busy.md](adr/0028-stall-time-says-the-box-is-busy.md).
+
+| variable | default | what it measures |
+|---|---|---|
+| `TL_HEALTH_CPU_PCT` | `10` | CPU, `some`: time at least one task spent waiting to run |
+| `TL_HEALTH_IO_PCT` | `50` | IO, `full`: time every non-idle task spent waiting on disk |
+| `TL_HEALTH_MEM_PCT` | `10` | memory, `full`: time every non-idle task spent waiting on memory |
+| `TL_HEALTH_CPU_VERY_PCT` | `20` | the CPU reading again, where "may feel slow" becomes "is slow right now" |
+| `TL_HEALTH_IO_VERY_PCT` | `70` | the IO reading, at the same tier |
+| `TL_HEALTH_MEM_VERY_PCT` | `20` | the memory reading, at the same tier |
+
+Each is a percentage of a **ten-minute window** spent stalled, computed from the
+cumulative `total=` counters in `/proc/pressure` rather than from the `avg`
+fields beside them, because the thresholds were calibrated against ten-minute
+rates and `avg60` is noisier than what anyone measured. Cross one of the first
+three and the row turns amber. Cross the matching `_VERY_` line and the sentence
+at the top of the panel changes. The dot never goes red: red means "you are
+disconnected" everywhere else in this UI, and a busy box is the opposite of
+disconnected.
+
+The `_VERY_` lines are not multiples of the first three and setting them as if
+they were breaks IO. A stall rate cannot exceed 100%, so twice IO's 50% is a
+line no ten minutes of disk stall could ever cross; the measured maximum here is
+87.59%. `tmux-api` refuses a `_VERY_` line that is not strictly above its own
+amber line, logs what you typed, and pins that resource at 100 so it reports
+busy and never very busy. The same refusal catches an amber line raised past a
+`_VERY_` line left alone. A value that is not a percentage above 0 and up to 100
+is logged and ignored and the compiled default stands, because a cosmetic
+setting should not keep the service from starting.
+
+### The defaults describe one machine
+
+They come from 696 hours of this devvm's own history in Prometheus, each line
+picked to land near 1% of a month on its own:
+
+| resource | amber above | hours in 30 d | very busy above | hours in 30 d |
+|---|---|---|---|---|
+| CPU, `some` | 10% | 7.17 | 20% | 2.50 |
+| IO, `full` | 50% | 7.33 | 70% | 1.17 |
+| memory, `full` | 10% | 4.83 | 20% | 1.33 |
+| any of the three | | **17.00**, 2.44% of 696 h | | |
+
+The target was 1-3% of the time, about half an hour a day: rare enough to carry
+meaning, common enough that people meet it before the day it matters.
+
+Another box will not have this box's distribution. IO stall here is 4.5 times
+more common than CPU stall: the picture people carry of an overloaded machine is
+a busy CPU, and on this box that is the rarer event. A box with slower disks or
+fewer cores sits somewhere else again. Watch the row for a week against how the
+machine actually feels before moving anything. Amber more often than you will
+read it means raising the line for the resource the row blames; green through an
+hour that felt bad means lowering that one.
+
+If you already scrape the box, `node_pressure_*` answers the same question over
+a longer window. Without it, each `/proc/pressure` line carries avg10, avg60 and
+avg300 beside the total, and avg300 is the nearest single field to what the row
+computes, over five minutes rather than ten:
+
+```sh
+watch -n10 grep . /proc/pressure/cpu /proc/pressure/io /proc/pressure/memory
+```
+
+### On a kernel without /proc/pressure
+
+Older kernels and some container runtimes do not have it, the Docker dev
+environment among them, and none of the six variables is read there. The row
+keeps reporting, from the load average per core and the memory headroom in
+`/proc/meminfo`, and says on screen that it has fallen back, so the three stall
+percentages are absent rather than silently zero. That fallback calls the box
+busy above one runnable task per core, the figure a load average is already read
+against, which this devvm crosses 0.84-1.1% of the time: the same band of rarity
+as the three stall thresholds. Memory headroom is shown beside it and decides
+nothing, because no headroom threshold has been measured and an invented one
+would fire at a rate nobody has checked.
+
+A row that vanishes reads as a bug and cannot be asked about, which is why it
+degrades instead of disappearing.
+
 ## The container
 
 The single-user image is built and published by `.github/workflows/container.yml`,

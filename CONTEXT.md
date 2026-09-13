@@ -162,9 +162,11 @@ another client reading the same Session, and does not count as driving (**Last
 driven** stays put). Alone on a Session it sizes the window like any other
 client, which is what opening it would have done anyway. A
 promotion clears the flag on the same client, so the socket the hover opened is
-the one the user then types into; there is no second attach. The third value of
-the client's attach request, beside watch and drive, and resolved by the server
-downgrade-only like the others. Speculative and collected: one at a time, on a
+the one the user then types into; there is no second attach. It also ends the
+mode: the next connect this mount makes, after a park or a dropped socket, is an
+ordinary attach, so the window follows the device again (ADR-0026, amended
+2026-09-12). The third value of the client's attach request, beside watch and
+drive, and resolved by the server downgrade-only like the others. Speculative and collected: one at a time, on a
 TTL, and it never creates a Session that has gone away. _Compare_: **Pre-warm
 slot**, which speculates on CREATING a session for a directory; this speculates
 on OPENING one that exists. _Avoid_: warm attach, pre-warmed session, prefetch
@@ -306,7 +308,10 @@ back in its project rather than Ungrouped.
 The per-user sidebar arrangement owned by tmux-api: the ordered list
 of projects, each project's ordered member sessions, the Ungrouped
 order, and the Ungrouped section's slot among the projects. Collapse
-state is NOT part of the layout — it is a per-browser view preference.
+state is NOT part of the layout — it is a per-browser view preference, and
+so is how WIDE the sidebar is dragged (`tl:sidebar-w:v1`, 200-560px,
+`store/sidebar-width.ts`): a width in pixels answers a question about one
+screen, so it stays on the browser that answered it.
 
 **Tile**:
 One rectangle showing one **Session**, in a **Workspace**. Holds whatever
@@ -409,23 +414,45 @@ _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
 
 **Outstanding work**:
-Background tasks a session launched that have not reported back —
-background subagents, **Workflow** runs and background commands. A
-session with any is *running* rather than *completed*, because it will
-produce more output without anyone prompting it, and the sidebar names
-what it is waiting on ("2 agents", "1 workflow"). Kept as the set of
-task ids in the session's `@claude_bg` option: a launch that returns
-`async_launched` adds one, and it is removed either by that id's
-task-notification or, at the end of any turn, by no longer appearing in
-the harness's own list of live tasks. The second path is the load-bearing
-one: a notification for a task that finished mid-turn is absorbed into
-that turn and never arrives as a prompt. Nothing expires, so a person
-typing into the session also re-derives it — the same recovery path a
-stale **Session state** has. Only the main
-thread's own launches count: a subagent's background tasks report back
-to the subagent, so counting one would leave an id nothing can retire.
+Work a session started that has not finished — background subagents,
+**Workflow** runs, background commands and **teammates**. A session with
+any is *running* rather than *completed*, because it will produce more
+output without anyone prompting it, and the sidebar names what it is
+waiting on ("2 agents", "1 workflow"). Kept in the session's `@claude_bg`
+option, by two different keys for two different reasons.
+
+The first three are kept by the harness's own task id, and at the end of
+every turn the set is rebuilt from `background_tasks`, the list of live
+tasks the harness puts in the `Stop` payload. That list is the
+load-bearing path in both directions: a notification for a task that
+finished mid-turn is absorbed into that turn and never arrives as a
+prompt, and the list is also the only thing that clears an id nobody
+retired, since nothing expires. Which is why neither a prompt a person
+types nor a compaction touches the set — both used to empty it, and both
+reported a session finished while a workflow ran (2026-09-12).
+
+A **teammate** is kept by its NAME, because that same list reports one as
+running for as long as it exists, idle or not. `SubagentStart` says a
+teammate started working and `TeammateIdle` says it stopped; both carry
+the name, a rebuild carries the name tokens through, and they are dropped
+when the list holds no teammate at all.
+
+Only the main thread's own launches count: a subagent's background tasks
+report back to the subagent, so counting one would leave an id nothing
+can retire.
 _Avoid_: pending tasks, background jobs (both read as shell job control),
 and any wording that makes it a fourth **Session state**
+
+**Teammate**:
+A named agent the session's Claude spawned that stays alive between
+tasks, so the same one can be given more work. It is the Agent tool
+called with a `name`, and the harness draws the team in a bar of its own.
+A teammate is **Outstanding work** only while it is working: `SubagentStart`
+says it started, which happens at the spawn and again every time it is
+messaged, and `TeammateIdle` says it stopped. The sidebar counts one as an
+agent, since that is the word a person reading the card wants.
+_Avoid_: subagent (the background kind, which reports once and ends),
+team member (a **Member** belongs to a **Project**)
 
 **Session images**:
 The per-(user, session) store of images the session visually touched —
