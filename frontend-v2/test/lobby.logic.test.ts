@@ -23,6 +23,9 @@ import {
   stabilizeModel,
   stateLabel,
   visibleGroupSeqTokens,
+  WORKSPACE_HUE_ANGLES,
+  WORKSPACE_HUES,
+  workspaceHue,
   type SidebarModel,
 } from "../src/components/lobby.logic";
 import type { Layout, Session } from "../src/types/lobby";
@@ -718,5 +721,64 @@ describe("opensOnContent", () => {
     expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: true })).toBe(true);
     expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: false })).toBe(false);
     expect(opensOnContent({ flip: false, hasSelection: false, savedCollapse: false })).toBe(false);
+  });
+});
+
+/**
+ * The colour a workspace paints its sidebar rows with.
+ *
+ * Viktor, 2026-09-13: *"color code the same sessions together"*. The sidebar
+ * had no way to say which sessions belong to a workspace you are not currently
+ * looking at, and one accent cannot tell two groups apart — so a workspace gets
+ * a hue, and it gets it from its own id so the colour is the group's rather
+ * than the screen's.
+ */
+describe("workspaceHue", () => {
+  it("gives one workspace the same colour every time", () => {
+    expect(workspaceHue("w6ss6qjj3841v")).toBe(workspaceHue("w6ss6qjj3841v"));
+  });
+
+  // The point of taking the id rather than the position in the membership
+  // document: closing one workspace must not repaint the others.
+  it("does not depend on anything but the id", () => {
+    const before = ["wa", "wb", "wc"].map(workspaceHue);
+    const after = ["wc", "wa"].map(workspaceHue);
+    expect(after).toEqual([before[2], before[0]]);
+  });
+
+  it("answers one of the palette's hues, and never a red one", () => {
+    for (const id of ["w1", "w2", "alpha", "", "w6ss6qjj3841v", "x".repeat(64)]) {
+      expect(WORKSPACE_HUE_ANGLES).toContain(workspaceHue(id));
+    }
+  });
+
+  // Red is what every theme spends on --danger. A row outlined in it reads as a
+  // warning rather than as a group, so the palette skips the band rather than
+  // stepping evenly round the circle and landing in it.
+  it("keeps the whole palette out of the danger band", () => {
+    for (const hue of WORKSPACE_HUE_ANGLES) {
+      expect(hue > 20 && hue < 340, `${hue} is in the red band`).toBe(true);
+    }
+    // And far enough apart to tell apart: the closest pair is no nearer than a
+    // quarter of what an even six-way split would give.
+    const sorted = [...WORKSPACE_HUE_ANGLES].sort((a, b) => a - b);
+    for (let i = 1; i < sorted.length; i++) {
+      expect(sorted[i]! - sorted[i - 1]!).toBeGreaterThanOrEqual(360 / WORKSPACE_HUES / 4);
+    }
+  });
+
+  it("spreads a realistic handful of workspaces across distinct colours", () => {
+    // Six evenly-spaced slots, and nobody has six workspaces: a session belongs
+    // to at most one and a workspace is made by splitting, so the count is
+    // bounded by how many things somebody watches at once. Sampled over the id
+    // shape tmux-api mints rather than over invented names.
+    const ids = Array.from({ length: 200 }, (_, i) => `w${i.toString(36)}qjj3841v`);
+    const slots = new Set(ids.map(workspaceHue));
+    expect(slots.size).toBe(WORKSPACE_HUES);
+    // No slot starved: a hash that piled 200 ids into two colours would pass
+    // the line above and still look broken on screen.
+    const counts = new Map<number, number>();
+    for (const id of ids) counts.set(workspaceHue(id), (counts.get(workspaceHue(id)) ?? 0) + 1);
+    for (const n of counts.values()) expect(n).toBeGreaterThan(200 / WORKSPACE_HUES / 3);
   });
 });

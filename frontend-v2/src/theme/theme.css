@@ -439,10 +439,25 @@ body {
   --skeleton-highlight: rgba(255, 255, 255, 0.04);
   --hover-tint: rgba(255, 255, 255, 0.04);
   --ring: var(--accent);
+  /* HOW A WORKSPACE COLOUR LANDS ON THIS THEME. The HUE comes from the
+     workspace's id (components/lobby.logic.ts workspaceHue) and is the same on
+     every theme, because it is the group's identity; only how light and how
+     saturated it is painted belongs to the theme. Two numbers rather than a
+     palette of six per theme: six hues times nine themes is fifty-four values
+     to keep in step, and the fifty-fifth workspace would want a fifty-fifth.
+     oklch is what makes that work — its lightness is perceptual, so one figure
+     reads the same across the circle where an hsl one does not. */
+  --ws-l: 72%;
+  --ws-c: 0.14;
 }
 body.theme-ink,
 body.theme-t3-light,
 body.theme-catppuccin-latte {
+  /* Darker and a little stronger, because these paint on white: 72% lightness
+     is a pale bar on a pale list, and the 3px it gets has no area to make up
+     for it. */
+  --ws-l: 52%;
+  --ws-c: 0.16;
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
   --scrollbar-thumb-active: rgba(0, 0, 0, 0.3);

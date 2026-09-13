@@ -367,6 +367,19 @@ keeps the full one it has today, so the sidebar still says where the keystrokes
 are going. Members can sit in different projects, so they are not adjacent and
 no bracket can join them.
 
+**Each workspace has a colour** (2026-09-13). Its rows are outlined and tinted in
+one of six hues, picked from the workspace's id so the colour is the group's
+rather than the screen's: it survives a reload, a second device, and another
+workspace being closed. Rows of a workspace you are NOT in carry the same colour
+at about half strength, which is the only thing in the sidebar that says which
+sessions belong together while you are looking at something else. The bar down
+the left edge is untouched and still answers the other two questions — where the
+keystrokes are, and what finished while you were away — because it is already
+`--state-done` on every unseen row and could not carry a second meaning as well.
+
+Workspaces stay unnamed. The colour is the identity, and a workspace is still
+something you make by dragging rather than something you set up.
+
 ```mermaid
 stateDiagram-v2
   [*] --> OneSession

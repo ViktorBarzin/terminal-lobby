@@ -135,6 +135,16 @@ const marked = (container: HTMLElement): string[] =>
     (c) => c.dataset.name!,
   );
 
+/** Rows in a workspace that is NOT the one on screen: the quietest level. */
+const grouped = (container: HTMLElement): string[] =>
+  Array.from(container.querySelectorAll<HTMLElement>(".tl-card-grouped")).map(
+    (c) => c.dataset.name!,
+  );
+
+/** The workspace colour a row was given, as SessionCard writes it inline. */
+const hue = (container: HTMLElement, name: string): string =>
+  card(container, name).style.getPropertyValue("--tl-ws-hue");
+
 /**
  * A matchMedia that answers from a real viewport rather than from a substring
  * guess, copied in spirit from test/mobile-flip.test.tsx: the flip query is a
@@ -218,12 +228,17 @@ describe("sidebar workspace marks — two levels", () => {
     expect(card(container, "deploy").classList.contains("tl-card-active")).toBe(false);
   });
 
-  it("marks nothing for a workspace that is not the one on screen", async () => {
-    // Membership is server-side and outlives the tab, so on any given screen
-    // most workspaces are ones you are not in. Marking their members would say
-    // "these are in front of you" about sessions that are not.
+  /**
+   * Membership is server-side and outlives the tab, so on any given screen most
+   * workspaces are ones you are not in. Until 2026-09-13 they got nothing at
+   * all, which left "which of these belong together" unanswerable without
+   * entering each group in turn. They now get the quietest level: the bar in
+   * their own colour and nothing else, because the card tint above means "in
+   * front of you" and these are not.
+   */
+  it("marks another workspace at the quieter level, in its own colour", async () => {
     const { container } = await mountSidebar(
-      ["auth", "deploy", "logs", "notes"],
+      ["auth", "deploy", "logs", "notes", "alone"],
       fakeWorkspaces(
         {
           [keyOf({ name: "auth" })]: "w1",
@@ -236,6 +251,44 @@ describe("sidebar workspace marks — two levels", () => {
     );
 
     expect(marked(container).sort()).toEqual(["logs", "notes"]);
+    expect(grouped(container).sort()).toEqual(["auth", "deploy"]);
+    // One workspace, one colour, wherever its rows sit; and the two workspaces
+    // do not share one, which is the whole point of the mark.
+    expect(hue(container, "auth")).toBe(hue(container, "deploy"));
+    expect(hue(container, "logs")).toBe(hue(container, "notes"));
+    expect(hue(container, "auth")).not.toBe(hue(container, "logs"));
+    // A session in no workspace has no colour to carry.
+    expect(hue(container, "alone")).toBe("");
+    expect(card(container, "alone").classList.contains("tl-card-grouped")).toBe(false);
+  });
+
+  // The colour comes from the workspace's id, so the row that is ON screen and
+  // a row of the same workspace seen from elsewhere read as one group.
+  it("gives the same workspace the same colour at either level", async () => {
+    const members = {
+      [keyOf({ name: "auth" })]: "w1",
+      [keyOf({ name: "deploy" })]: "w1",
+    };
+    const inside = await mountSidebar(["auth", "deploy"], fakeWorkspaces(members, "w1"));
+    const outside = await mountSidebar(["auth", "deploy"], fakeWorkspaces(members, "w2"));
+    expect(marked(inside.container).sort()).toEqual(["auth", "deploy"]);
+    expect(grouped(outside.container).sort()).toEqual(["auth", "deploy"]);
+    expect(hue(inside.container, "auth")).toBe(hue(outside.container, "auth"));
+  });
+
+  // Where the keystrokes go outranks which group a row is in, and the focused
+  // row says so with the flat accent rather than with a hue.
+  it("leaves the focused row out of both group levels", async () => {
+    const { container, store } = await mountSidebar(
+      ["auth", "deploy"],
+      fakeWorkspaces({ [keyOf({ name: "auth" })]: "w1", [keyOf({ name: "deploy" })]: "w1" }, "w1"),
+    );
+    store.select("auth");
+    await waitFor(() =>
+      expect(card(container, "auth").classList.contains("tl-card-active")).toBe(true),
+    );
+    expect(card(container, "auth").classList.contains("tl-card-grouped")).toBe(false);
+    expect(card(container, "auth").classList.contains("tl-card-member")).toBe(false);
   });
 
   it("marks nothing at all while a single session is on screen", async () => {
@@ -371,6 +424,23 @@ describe("sidebar workspace marks — the phone has none", () => {
     [keyOf({ name: "deploy" })]: "w1",
   };
 
+  it("colours no card on a phone either, at either level", async () => {
+    stubViewport({ width: 390, height: 844, coarse: true });
+    const { container } = await mountSidebar(
+      ["auth", "deploy", "logs"],
+      fakeWorkspaces(
+        {
+          [keyOf({ name: "auth" })]: "w1",
+          [keyOf({ name: "deploy" })]: "w1",
+          [keyOf({ name: "logs" })]: "w2",
+        },
+        "w1",
+      ),
+    );
+    expect(grouped(container)).toEqual([]);
+    expect(hue(container, "logs")).toBe("");
+  });
+
   it("marks no card on a phone, even with a workspace on screen", async () => {
     stubViewport(phone);
     const { container } = await mountSidebar(["auth", "deploy"], fakeWorkspaces(members, "w1"));
@@ -456,6 +526,75 @@ describe("the quieter mark is the active one, stepped down", () => {
     expect(Number(mix![1])).toBeLessThan(100);
   });
 
+  /**
+   * THE GROUP'S COLOUR IS NOT ON THE BAR, and a screenshot is why.
+   *
+   * The first attempt at "colour code the same sessions together" put a
+   * per-workspace hue on this bar. The bar is also what `.tl-card-unseen` uses,
+   * in --state-done, and on a real sidebar where most sessions have finished
+   * since they were last opened nearly every row already carried a green one:
+   * the group colour would have been hidden behind it most of the time, and
+   * where both showed, one 2px strip would have carried two unrelated meanings.
+   *
+   * So the bar keeps saying where the keystrokes are and what finished while
+   * you were away, and the group goes on the row's border and background —
+   * channels membership already spent, running the whole way round a row.
+   */
+  it("keeps the workspace hue off the bar, which unseen already owns", () => {
+    const css = readFileSync(CSS_PATH, "utf8");
+    expect(rule(".tl-card-unseen::before")).toMatch(/background:\s*var\(--state-done\)/);
+    for (const selector of [".tl-card-member::before", ".tl-card-active::before"]) {
+      expect(rule(selector), selector).not.toContain("--tl-ws-hue");
+    }
+    // And the level that is not on screen draws no bar at all, so it cannot
+    // compete with either of them.
+    expect(css).not.toContain(".tl-card-grouped::before");
+  });
+
+  it("carries the group on the row's border and tint, at both levels", () => {
+    for (const selector of [".tl-card-member", ".tl-card-grouped"]) {
+      const body = rule(selector);
+      expect(body, `${selector} border`).toMatch(
+        /border-color:\s*oklch\(var\(--ws-l\) var\(--ws-c\) var\(--tl-ws-hue\)/,
+      );
+      expect(body, `${selector} tint`).toContain("--tl-ws-hue");
+      expect(body, `${selector} tint`).toContain("color-mix(");
+    }
+  });
+
+  // One workspace is one colour wherever its rows appear. The difference
+  // between the two levels is how much of it there is, not which it is.
+  it("says the quieter level with less of the same colour, not another one", () => {
+    const quiet = rule(".tl-card-grouped");
+    const loud = rule(".tl-card-member");
+    const alpha = (body: string) => Number(body.match(/var\(--tl-ws-hue\) \/ (0?\.\d+)\)/)![1]);
+    expect(alpha(quiet)).toBeLessThan(alpha(loud));
+    const tint = (body: string) => Number(body.match(/\)\s*(\d+)%/)![1]);
+    expect(tint(quiet)).toBeLessThan(tint(loud));
+  });
+
+  // Three levels on the same two properties, settled by source order at equal
+  // specificity: grouped, then member, then active.
+  it("orders the group levels so the one on screen wins", () => {
+    const css = readFileSync(CSS_PATH, "utf8");
+    expect(css.indexOf("\n.tl-card-grouped {")).toBeGreaterThan(-1);
+    expect(css.indexOf("\n.tl-card-grouped {")).toBeLessThan(css.indexOf("\n.tl-card-member {"));
+    expect(css.indexOf("\n.tl-card-member {")).toBeLessThan(css.indexOf("\n.tl-card-active {"));
+  });
+
+  // Every theme has to answer how a hue lands on it, or the border computes an
+  // invalid colour and the row is left with no mark at all.
+  it("lets each theme say how light and how saturated a workspace colour is", () => {
+    const theme = readFileSync(resolve(process.cwd(), "src/theme/theme.css"), "utf8");
+    expect(theme).toMatch(/--ws-l:\s*\d+%/);
+    expect(theme).toMatch(/--ws-c:\s*0?\.\d+/);
+    // The light themes cannot use the dark figure: 72% lightness on white is a
+    // pale border with 1px to make its case in.
+    expect(theme.match(/--ws-l:/g)!.length).toBeGreaterThan(1);
+    const light = theme.indexOf("body.theme-catppuccin-latte,");
+    expect(light).toBeGreaterThan(-1);
+  });
+
   it("leaves the heavier name to the focused row alone", async () => {
     // Weight is the third carrier of the active treatment, and it is the one
     // the quiet level gives up: 700 on the focused card, the list's resting 600
@@ -464,6 +603,15 @@ describe("the quieter mark is the active one, stepped down", () => {
     const css = readFileSync(CSS_PATH, "utf8");
     expect(css).toContain(".tl-card-active .tl-card-name");
     expect(css).not.toContain(".tl-card-member .tl-card-name");
+  });
+
+  it("is ordered so the louder levels still win", async () => {
+    // Three levels on one ::before, settled by source order at equal
+    // specificity: grouped, then member, then active and unseen.
+    const css = readFileSync(CSS_PATH, "utf8");
+    expect(css.indexOf(".tl-card-grouped::before")).toBeLessThan(
+      css.indexOf(".tl-card-member::before"),
+    );
   });
 
   it("is ordered so the focused and unseen bars still win", async () => {

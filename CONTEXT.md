@@ -340,7 +340,9 @@ splits inside a session, which `PaneKeypad` drives), cell, window, slot
 
 **Workspace**:
 Several **Tile**s arranged as a tree of rows and columns, and the set of
-sessions in them. Unnamed and implicit: the first split makes one, closing
+sessions in them. Has a colour, taken from its id, which its sessions' sidebar
+rows are outlined and tinted in — the only thing that says which sessions belong
+together while you are looking at something else. Unnamed and implicit: the first split makes one, closing
 back to a single tile ends one, and it is identified by its members rather
 than by a name. A session belongs to at most one workspace, so dragging it
 into another moves it. Two stores hold a workspace between them, the same
