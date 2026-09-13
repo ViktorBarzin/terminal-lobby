@@ -33,3 +33,6 @@ scripts/qa-repro-*
 .playwright-mcp/
 
 .worktrees/
+
+# Screenshot proof from live-verification agents; never part of a commit.
+.shots/

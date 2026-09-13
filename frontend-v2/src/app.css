@@ -2226,6 +2226,42 @@ label.tl-set-row-label {
   overflow: hidden;
   background: var(--terminal-bg);
 }
+/* A WATCHING TILE'S DEAD SPACE (design, "Watching tiles").
+
+   A read-only client never claims the session's Grid, so the window it is
+   showing stays whatever size its drivers gave it. The terminal is sized to
+   THAT rather than to this box (TerminalNative's `sizeTarget`, the rule in
+   terminal/fit.ts), which leaves the difference over as space — and this is
+   where the session lands inside it.
+
+   WHAT IT REPLACES, measured 2026-09-12 on a tile 670x601 showing a session
+   pinned at 50x14. The terminal fitted the tile at 82x33, and tmux does not
+   letterbox a window smaller than its client: it drew the 50x14 window into the
+   top-left corner, put a window border down the side of it and filled the rest
+   with its own dots. The eye in the tile header was right and the Grid was
+   never claimed; the picture was a bordered box in a corner of a field of dots.
+
+   `safe center` rather than `center`, and it earns the word. A watcher can be
+   SMALLER than what it is watching — a phone on a session a desktop is driving
+   at 231x62 — and a centred overflow spills equally in both directions, taking
+   the first column and the top rows off the top-left where every line starts.
+   `safe` falls back to start-alignment for exactly that case, so an oversized
+   session is clipped at the far edges and readable from its first character.
+
+   Nothing here moves or reparents a slot: the class lands on the host the
+   terminal already hangs off, and the four numbers positioning the tile are
+   untouched (ADR-0027). */
+.tl-terminal-native.tl-letterboxed {
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+}
+/* Flex would otherwise be free to shrink the terminal to fit the tile, which is
+   the one thing a letterbox must not do: the session is drawn at its own size
+   or the dead space means nothing. */
+.tl-terminal-native.tl-letterboxed > .xterm {
+  flex: 0 0 auto;
+}
 
 /* ---- Command palette + shortcuts help (pillar #2 keybindings) ---------- */
 .tl-cmdpalette-backdrop {

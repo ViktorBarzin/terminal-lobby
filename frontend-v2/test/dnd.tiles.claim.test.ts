@@ -213,6 +213,13 @@ async function mount(opts: {
       dragged: () => dragged,
       rects: () => opts.rects,
       tree: () => opts.tree,
+      // The box the one tile fills. Every drag here comes from the sidebar, so
+      // no tile leaves the arrangement and the landing rects are the rects —
+      // but the module measures rather than assumes, so it needs the box.
+      container: () => ({
+        width: opts.rects[0]?.width ?? 0,
+        height: opts.rects[0]?.height ?? 0,
+      }),
       apply: (next) => {
         applied.push(next);
       },

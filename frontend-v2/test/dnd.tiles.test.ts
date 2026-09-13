@@ -42,10 +42,12 @@ import {
   type DropTarget,
   EDGE_BAND,
   hitTest,
+  landingRects,
   type Point,
   previewBox,
   type TileDropDeps,
   tileDropClaimed,
+  tileDropShadow,
   tileDropTarget,
 } from "../src/dnd/tiles";
 import {
@@ -56,6 +58,7 @@ import {
   leafKeys,
   MIN_TILE_PX,
   type Rect,
+  removeAt,
   type SessionKey,
   type Size,
   split,
@@ -230,6 +233,62 @@ describe("hitTest — what the pointer is asking for", () => {
   });
 
   /**
+   * THE FLOOR IS THE LANDING TILE'S, NOT THE SCREEN TILE'S.
+   *
+   * Three equal tiles across 1340px are 446px each, and half of 446 is 223 —
+   * under the floor, so every horizontal edge refuses. But moving one of the
+   * three is `removeAt` first: the other two become 670px each, and half of 670
+   * is 335. The split that was refused would have left 335/670/335, three tiles
+   * all comfortably above 240, and the person dragging saw a refusal for a
+   * move the arithmetic allows. Measured 2026-09-13.
+   */
+  it("measures the floor on the tile as the drop will find it, not as the screen shows it", () => {
+    const tree = split("row", [leaf("a"), leaf("b"), leaf("c")]);
+    const container: Size = { width: 1340, height: 636 };
+    const rects = toRects(tree, container);
+    const onto = pointOn(rectFor(rects, "c"), "left");
+
+    // A session arriving from the sidebar really is refused: `c` stays 446px
+    // wide and the new tile would be 223px.
+    expect(hitTest(onto, rects)).toEqual({ kind: "invalid", key: "c", edge: "left" });
+
+    // `a` moving there is not, because `a` leaves first.
+    const landing = landingRects(tree, "a", rects, container);
+    expect(hitTest(onto, rects, landing)).toEqual({ kind: "split", key: "c", edge: "left" });
+    // And the drop it leads to is a real one, with no tile under the floor.
+    const after = applyDrop(tree, "a", hitTest(onto, rects, landing));
+    if (!after) throw new Error("a move cannot empty a workspace");
+    expect(toRects(after, container).map((r) => Math.round(r.width))).toEqual([670, 335, 335]);
+  });
+
+  /**
+   * The same agreement as below, asked of a move: the refusal has to match
+   * `canSplit` on the tree the drop will actually split, which is the tree with
+   * the dragged tile already out of it.
+   */
+  it("agrees with canSplit on the tree a move leaves behind", () => {
+    const tree = split("row", [leaf("a"), split("column", [leaf("b"), leaf("c")])], [0.55, 0.45]);
+    const container: Size = { width: 900, height: 640 };
+    const rects = toRects(tree, container);
+    const seen = new Set<string>();
+    for (const dragged of leafKeys(tree)) {
+      const after = removeAt(tree, dragged);
+      if (!after) throw new Error("a move cannot empty a workspace");
+      const landing = landingRects(tree, dragged, rects, container);
+      for (const rect of rects) {
+        if (rect.key === dragged) continue;
+        for (const edge of EDGES) {
+          const hit = hitTest(pointOn(rect, edge), rects, landing);
+          expect(hit.kind === "split").toBe(canSplit(after, rect.key, edge, container));
+          seen.add(hit.kind);
+        }
+      }
+    }
+    // Both answers appear, or the agreement is only being checked one way.
+    expect([...seen].sort()).toEqual(["invalid", "split"]);
+  });
+
+  /**
    * The hit test reads the 240px floor off a RECT and `canSplit` reads it off
    * the TREE. Both are the same arithmetic — `toRects` and `canSplit`'s own
    * `boxOfPath` walk the same cumulative edges — but they are two expressions
@@ -338,6 +397,74 @@ describe("previewBox — the shadow that stands in for the tile", () => {
     }
   });
 
+  /**
+   * THE SAME PROPERTY FOR A TILE THAT IS ALREADY IN THE WORKSPACE, which the
+   * one above cannot reach: it always drags "n", which is never a leaf of its
+   * tree, so `splitAt` never takes the `moveWithin` branch inside it and the
+   * premise it rests on — "splitAt halves the tile it splits" — holds for every
+   * case it checks.
+   *
+   * A move is `removeAt` and then a split, so the target has already grown by
+   * the dragged tile's share before it is halved. Measured on 2026-09-13 with
+   * the shadow drawn from the tiles on screen: moving one of two tiles onto the
+   * other's right edge put the shadow at x=595 for a tile that landed at x=930,
+   * and drew it 335px wide for a tile that arrived 670px wide.
+   */
+  it("lands a moved tile exactly where the shadow was, on every edge of every other tile", () => {
+    const tree = split("row", [leaf("a"), split("column", [leaf("b"), leaf("c")])], [0.6, 0.4]);
+    const container: Size = { width: 1600, height: 900 };
+    const rects = toRects(tree, container);
+    let checked = 0;
+    for (const dragged of leafKeys(tree)) {
+      const landing = landingRects(tree, dragged, rects, container);
+      for (const rect of rects) {
+        if (rect.key === dragged) continue;
+        for (const edge of EDGES) {
+          const target: DropTarget = { kind: "split", key: rect.key, edge };
+          const after = applyDrop(tree, dragged, target);
+          if (!after) throw new Error("a move cannot empty a workspace");
+          expectSameBox(previewBox(target, landing), rectFor(toRects(after, container), dragged));
+          checked += 1;
+        }
+      }
+    }
+    // Three tiles, each moved onto the other two, four edges each.
+    expect(checked).toBe(24);
+  });
+
+  /**
+   * A replace has the same correction for a subtler reason. `replaceAt` swaps
+   * the key in first and prunes the dragged tile's old slot second, so dropping
+   * a tile onto a SIBLING's middle gives the target that sibling's space plus
+   * the space the pruned tile handed back — the whole container, when the two
+   * were the only tiles.
+   */
+  it("lands a moved tile on a replaced sibling exactly where the shadow was", () => {
+    const tree = split("row", [leaf("a"), leaf("b")], [0.6, 0.4]);
+    const container: Size = { width: 1600, height: 900 };
+    const rects = toRects(tree, container);
+    const target: DropTarget = { kind: "replace", key: "b" };
+    const after = applyDrop(tree, "a", target);
+    if (!after) throw new Error("a replace cannot empty a workspace");
+    const landed = rectFor(toRects(after, container), "a");
+    expectSameBox(previewBox(target, landingRects(tree, "a", rects, container)), landed);
+    // The point of the case, in numbers: `b` is 640px wide on screen and `a`
+    // takes the whole 1600 once its own tile is pruned.
+    expectSameBox(landed, { x: 0, y: 0, width: 1600, height: 900 });
+  });
+
+  it("shows nothing for a tile let go on its own edge, because nothing will move", () => {
+    // `applyDrop` hands the tree straight back for this one, so a shadow
+    // promising a half would be promising a drop that never happens. The
+    // dragged tile is absent from the landing arrangement, which is what says
+    // so without a branch for it.
+    const tree = split("row", [leaf("a"), leaf("b")]);
+    const container: Size = { width: 1600, height: 900 };
+    const landing = landingRects(tree, "a", toRects(tree, container), container);
+    expect(previewBox({ kind: "split", key: "a", edge: "right" }, landing)).toBeNull();
+    expect(previewBox({ kind: "replace", key: "a" }, landing)).toBeNull();
+  });
+
   it("lands a replaced tile exactly where the shadow was", () => {
     const tree = split("row", [leaf("a"), leaf("b")], [0.6, 0.4]);
     const container: Size = { width: 1600, height: 900 };
@@ -408,6 +535,15 @@ describe("applyDrop — the one write a finished drag asks for", () => {
 // The wiring
 // ---------------------------------------------------------------------------
 
+/** The box a rect list fills, which is the container `toRects` produced it
+ *  from — so a harness states its tiles and the container follows. */
+function areaOf(rects: readonly Rect[]): Size {
+  return {
+    width: Math.max(0, ...rects.map((r) => r.x + r.width)),
+    height: Math.max(0, ...rects.map((r) => r.y + r.height)),
+  };
+}
+
 /** One mounted canvas with fake deps, and the gestures that drive it. */
 function mount(opts: {
   tree: TreeNode | null;
@@ -433,6 +569,7 @@ function mount(opts: {
     dragged: () => dragged,
     rects: () => opts.rects,
     tree: () => opts.tree,
+    container: () => areaOf(opts.rects),
     apply: (next) => {
       applied.push(next);
     },
@@ -495,6 +632,39 @@ describe("attachTileDrop — a drag in the air, and the single write at the end"
     expect(tileDropTarget()).toEqual({ kind: "remove" });
     // Outside the tiles is the sidebar's own business again.
     expect(tileDropClaimed()).toBe(false);
+  });
+
+  it("publishes the shadow where a moved tile will land, measured without it", () => {
+    // Two tiles, and the left one dragged onto the right one's right edge. The
+    // right tile is 800px wide on screen and 1600 wide by the time it splits,
+    // because the dragged tile's own 800 has gone back to it first. The shadow
+    // a person sees is the second one.
+    const tree = split("row", [leaf("a"), leaf("b")]);
+    const container: Size = { width: 1600, height: 900 };
+    const h = mount({ tree, rects: toRects(tree, container), dragged: null });
+
+    beginTileDrag("a");
+    pointer("pointermove", 1500, 450);
+    expect(tileDropTarget()).toEqual({ kind: "split", key: "b", edge: "right" });
+    const shadow = tileDropShadow();
+    if (!shadow) throw new Error("a split over a tile has a shadow");
+    expect(shadow.invalid).toBe(false);
+    expectSameBox(shadow.box, { x: 800, y: 0, width: 800, height: 900 });
+
+    pointer("pointerup", 1500, 450);
+    const after = h.applied[0];
+    if (!after) throw new Error("the drop writes an arrangement");
+    expectSameBox(rectFor(toRects(after, container), "a"), shadow.box);
+  });
+
+  it("publishes no shadow for a tile let go on its own edge", () => {
+    const tree = split("row", [leaf("a"), leaf("b")]);
+    const container: Size = { width: 1600, height: 900 };
+    mount({ tree, rects: toRects(tree, container), dragged: null });
+    beginTileDrag("a");
+    pointer("pointermove", 40, 450);
+    expect(tileDropTarget()).toEqual({ kind: "split", key: "a", edge: "left" });
+    expect(tileDropShadow()).toBeNull();
   });
 
   it("writes the arrangement once when the pointer comes up, and clears the preview", async () => {

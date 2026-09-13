@@ -93,6 +93,26 @@ type Session struct {
 	// and it means the unstamped state arrives at the frontend as an absent key
 	// rather than as "".
 	Origin string `json:"origin,omitempty"`
+	// Cols and Rows are the session's GRID: the size of its tmux window, as
+	// #{window_width} and #{window_height} report it for the session's current
+	// window. Zero when tmux gave a size this could not read, which reads as
+	// "no opinion" — never as a real size.
+	//
+	// WHO NEEDS THEM. A tile that is WATCHING declines to claim the grid, so
+	// nothing it knows about its own box says anything about the session it is
+	// showing. Without these two the watcher's terminal is whatever size its
+	// rectangle allows, tmux draws the smaller pinned window into a corner of
+	// it and fills the rest with its own dots, and the reader gets a border and
+	// a field of dots instead of dead space. With them the watching tile
+	// renders the session at the size its drivers gave it, centred.
+	//
+	// The number moves when the drivers move it, so it rides the session poll
+	// rather than being read once at attach: a watcher follows a desktop
+	// resizing its window within a poll.
+	//
+	// omitempty keeps the old wire shape for consumers that predate the fields.
+	Cols int `json:"cols,omitempty"`
+	Rows int `json:"rows,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`

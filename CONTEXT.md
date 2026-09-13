@@ -259,7 +259,11 @@ never reverted. Among several read-write clients the Grid belongs to the one
 being used, which is what tmux's own `window-size latest` does — but the hooks
 only fire on a client attaching, detaching or resizing, so a device that is
 merely READING a session claims the Grid explicitly
-(`POST /sessions/{name}/grid`).
+(`POST /sessions/{name}/grid`). It is also READABLE, as `cols` and `rows` on
+every session in the list: a client that declines to claim it has no other way
+to know how big the session it is showing is, and a Watch-mode tile draws itself
+at exactly that size (see **Tile**). Both are absent when tmux would not say,
+which means no opinion rather than a size of zero.
 _Avoid_: window size (means the browser's), canvas, viewport
 
 **Parked** (a session):
@@ -320,7 +324,9 @@ view that session is set to on this device — the terminal by default, the
 **title**, the **Session state**, a watch marker when the tile is read-only,
 and a close control. A tile claims its session's **Grid**, so the session's
 tmux window is the size of the tile, for every device attached to it; a
-tile that is watching never claims. One session can occupy at most one
+tile that is watching never claims, and draws the session at the **Grid**
+its drivers gave it instead, centred in the rectangle with dead space
+around it. One session can occupy at most one
 tile: keepalive mounts a single live view per session, and two tiles of one
 session would contend for its Grid. _Avoid_: pane (tmux's word for the
 splits inside a session, which `PaneKeypad` drives), cell, window, slot

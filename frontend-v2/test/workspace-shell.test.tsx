@@ -30,7 +30,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, waitFor } from "@solidjs/testing-library";
-import { createEffect, untrack, type ComponentProps } from "solid-js";
+import { createEffect, untrack, useContext, type ComponentProps } from "solid-js";
+import { PreloadHoverContext, type PreloadHover } from "../src/components/SessionCard";
 import type { SessionView as RealSessionView } from "../src/components/SessionView";
 import type { ConnectionControl } from "../src/diagnostics/status-store";
 import type { Layout, Session, Whoami } from "../src/types/lobby";
@@ -76,6 +77,10 @@ const world = vi.hoisted(() => ({
   connection: null as ConnectionControl | null,
   /** Is a sidebar card in the air (dnd/sidebar's own signal, stubbed). */
   dragging: false,
+  /** The preload seam the real cards hold, taken from the context App provides.
+   *  A hover is the only way into `store/preload.ts`, and the sidebar is the
+   *  only thing that hovers. */
+  hover: null as PreloadHover | null,
 }));
 
 vi.mock("../src/lib/lobby-api", async (importOriginal) => {
@@ -108,8 +113,15 @@ vi.mock("../src/components/SessionView", () => ({
   },
 }));
 
+/* Scenery, with one wire kept: the real sidebar's cards read the preload seam
+   out of a context App provides (SessionCard's `PreloadHoverContext`), and a
+   hover is the only thing that fills the preload slot. The stand-in takes the
+   same context so a test can rest the pointer on a card without mounting one. */
 vi.mock("../src/components/Sidebar", () => ({
-  Sidebar: () => <aside class="tl-sidebar" />,
+  Sidebar: () => {
+    world.hover = useContext(PreloadHoverContext) ?? null;
+    return <aside class="tl-sidebar" />;
+  },
 }));
 
 /**
@@ -204,6 +216,7 @@ beforeEach(() => {
   world.views.clear();
   world.connection = null;
   world.dragging = false;
+  world.hover = null;
   localStorage.clear();
   window.location.hash = "";
 });
@@ -630,6 +643,72 @@ describe("a drop in the middle of a lone session", () => {
     // And one tile is not a workspace, so nothing was grouped and nothing was
     // written: a replace on a lone session leaves the document alone.
     expect(world.puts).toEqual([]);
+  });
+});
+
+// ---- a hover that becomes a tile -------------------------------------------
+
+/**
+ * DRAGGING A SESSION THE POINTER ALREADY PRELOADED, which is the ordinary way
+ * one arrives: the card is under the cursor for the 250 ms dwell before the
+ * drag begins, so almost every drop from the sidebar lands a session that is in
+ * the preload slot at that moment.
+ *
+ * A preload declines to claim the Grid, and it has to: `POST /sessions/{name}/grid`
+ * is what clears the client's ignore-size flag server-side, so a speculative
+ * hover claiming would move a phone's window to this desktop's size for a
+ * session nobody here has opened (ADR-0026, SessionView's third refusal). The
+ * claim that lifts the refusal is the COMMITMENT — `preload.select`, which a
+ * click makes.
+ *
+ * A drop is that same commitment and was not making it, so the refusal outlived
+ * the hover. MEASURED IN CHROME on 2026-09-13, against the branch stack on
+ * :5199: a hovered session dropped into a second tile drew its 80-column window
+ * in the top-left corner of the tile with a tmux window border down its side
+ * and tmux's own dot-fill over the rest, and stayed that way until the tile was
+ * clicked — the click being the only thing that had ever said "committed". The
+ * slot is mounted, attached and on screen the whole time, so nothing about the
+ * picture says which of the two is wrong.
+ */
+describe("a session dropped straight out of a hover", () => {
+  it("stops being a preload, so its tile can claim the grid", async () => {
+    world.sessions = [session("auth"), session("deploy")];
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.view("auth").visible).toBe(true));
+
+    // The pointer rests on deploy's card: the dwell fires and the shell mounts
+    // it hidden, attached, as a preload.
+    world.hover?.hoverEnter({ name: "deploy" });
+    await waitFor(() => expect(shell.view("deploy")?.preloading?.()).toBe(true));
+
+    // ...and the drag begins from that same card, landing on the right third of
+    // the pane, which splits it.
+    dragCardTo("deploy", SHELL.width - 20, SHELL.height / 2);
+
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+    // The tile is on screen and committed to. Both halves matter: a slot that
+    // is still a preload is one whose every grid claim is refused, and the
+    // session's tmux window then keeps whatever size the last device left it
+    // at, inside a tile of a different one.
+    expect(shell.view("deploy").visible).toBe(true);
+    expect(shell.view("deploy").preloading?.()).toBe(false);
+  });
+
+  it("leaves the preload alone when the drop went somewhere else", async () => {
+    // The other direction, so the release is tied to the session that landed
+    // rather than fired at whatever the slot happened to hold: a hover on one
+    // card and a drag from another leaves the hovered session speculative.
+    world.sessions = [session("auth"), session("deploy"), session("docs")];
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.view("auth").visible).toBe(true));
+
+    world.hover?.hoverEnter({ name: "docs" });
+    await waitFor(() => expect(shell.view("docs")?.preloading?.()).toBe(true));
+
+    dragCardTo("deploy", SHELL.width - 20, SHELL.height / 2);
+
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+    expect(shell.view("docs").preloading?.()).toBe(true);
   });
 });
 

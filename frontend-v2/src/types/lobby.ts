@@ -69,6 +69,21 @@ export interface Session {
    *  typing is attached twice and driven by nobody. Watch mode joins a new
    *  device as a viewer only when this is true. */
   driven?: boolean;
+  /** The session's GRID: the size of its tmux window in columns and rows,
+   *  owned by whoever is driving it.
+   *
+   *  A tile that is WATCHING has no other way to learn it. It declines to claim
+   *  the Grid — that refusal is the whole of Watch mode's promise — so its own
+   *  terminal's size says nothing about the window it is showing, and a
+   *  terminal fitted to the tile leaves tmux drawing the smaller window into a
+   *  corner with its own dots around it. These two are what let a watcher
+   *  render the session at the size its drivers gave it, centred
+   *  (`terminal/fit.ts` `fitTarget`).
+   *
+   *  Both absent from a server that predates the fields, and from a session
+   *  whose size tmux would not report: absent means no opinion, never 0x0. */
+  cols?: number;
+  rows?: number;
   /** tmux's #{session_activity}: output OR any attach, a read-only one included.
    *  NOT displayed anywhere — see `lastDrive`, which is what the sidebar shows. */
   lastActivity: number;

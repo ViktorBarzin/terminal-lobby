@@ -56,7 +56,7 @@ import {
   registerWorkspaceUndoHandler,
   WORKSPACE_SAVE_FAILED,
 } from "../store/undo.workspace";
-import { attachTileDrop, beginTileDrag, previewBox, tileDropTarget } from "../dnd/tiles";
+import { attachTileDrop, beginTileDrag, tileDropShadow } from "../dnd/tiles";
 import { sessionDragActive } from "../dnd/sidebar";
 import { newSessionId } from "../lib/session-id";
 import { resolvedWatchFor } from "../store/watchmode";
@@ -1591,6 +1591,30 @@ export const App: Component = () => {
       tiles: tree ? leafKeys(tree).map(sessionOf) : [],
       live: liveKeys(),
     });
+    // A LENS READS SOMEBODY ELSE'S MEMBERSHIP AND DOES NOT WRITE IT (the
+    // design's `?as=` row). Every request this tab makes carries `?as=`, so the
+    // PUT below would land in the TARGET's document, on every device they own,
+    // from a tab they cannot see — which is the one thing a lens is not for.
+    //
+    // MEMBERSHIP ONLY, which is why this asks `sameMembership` rather than
+    // `ACT_AS` alone. The split tree is this tab's own, per device by
+    // construction (ADR-0027), so a lens may drag a divider, rearrange its
+    // tiles and lay the group out however it likes; what it may not do is
+    // decide which sessions are in the group. The refusal is here rather than
+    // at the two gestures because both funnel through this one write, and
+    // before the local batch because the arrangement must not move either — a
+    // tile added locally and not in the document is one the next reconcile
+    // takes away again, with nothing on screen to explain the flicker.
+    //
+    // The undo stack is already empty in a lens tab (`createUndoStore({
+    // enabled: ACT_AS === "" })`), so there is nothing to unwind here.
+    if (ACT_AS !== "" && !sameMembership(wasDoc, nextDoc)) {
+      notify(
+        "Acting as someone else: you can rearrange these tiles, not change whose sessions they are.",
+        "warning",
+      );
+      return;
+    }
     if (record) workspaceUndo.record(id, record.from, tree);
     batch(() => {
       // The survivor a close lands on, computed from the tree the tiles were in
@@ -1746,14 +1770,18 @@ export const App: Component = () => {
     onCleanup(() => document.removeEventListener("pointerdown", noteCard, true));
   });
 
-  /** The shadow under a drag: where the tile will land, and whether the split it
-   *  asks for is one the 240px floor allows. */
-  const dropShadow = createMemo(() => {
-    const target = tileDropTarget();
-    if (!target) return null;
-    const box = previewBox(target, dropRects());
-    return box === null ? null : { box, invalid: target.kind === "invalid" };
-  });
+  /**
+   * The shadow under a drag: where the tile will land, and whether the split it
+   * asks for is one the 240px floor allows.
+   *
+   * Asked of `dnd/tiles.ts` whole rather than assembled here. The box depends on
+   * the session in the air — a tile already in the workspace leaves its old
+   * space to its siblings before the target is split, so the target is bigger
+   * when it splits than it is on screen — and that session is the drag's own
+   * captured key, which lives there. A memo only for the `<Show>` below, which
+   * reads it four times per frame.
+   */
+  const dropShadow = createMemo(() => tileDropShadow());
 
   /** Take this tile out of the workspace. The session keeps running and keeps
    *  its place in the sidebar; only the tile goes. */
@@ -1878,6 +1906,26 @@ export const App: Component = () => {
         return next;
       });
       preload.select(sel);
+      // A TILE IS A COMMITMENT, and the preload has to hear about it from here
+      // because a drop does not move the selection: the session lands beside
+      // the one you were already on, so the line above never speaks for it.
+      //
+      // What that costs while the slot still holds it: `claimGrid` refuses a
+      // preload outright (SessionView's third refusal, ADR-0026), and the same
+      // POST is what clears the client's ignore-size flag server-side. So a
+      // tile dropped straight out of a hover keeps its session's window at
+      // whatever size the last device left it at, inside a tile of a different
+      // one — and tmux draws that smaller window into the corner with a border
+      // and a field of its own dots, until a click on the tile finally commits.
+      // Measured in Chrome on 2026-09-13 against the branch stack, where it is
+      // the common case rather than an edge: the 250 ms dwell has almost always
+      // fired on the card a drag then starts from.
+      //
+      // After the keep above, in the same batch, for the reason that ordering
+      // already had: the mount list is keepalive's rows plus the one preload,
+      // and emptying the slot first would leave the promoted session in neither
+      // for an instant, which unmounts the row and throws away the attach.
+      for (const key of members) preload.select(sessionOf(key));
     });
   });
   /**
@@ -2101,6 +2149,10 @@ export const App: Component = () => {
       dragged: () => (sessionDragActive() && pressedCard ? keyOf({ name: pressedCard }) : null),
       rects: dropRects,
       tree: dropTree,
+      // The box `dropRects` is measured in, which is also what `WorkspaceCanvas`
+      // lays the tree out in: a moved tile's landing arrangement is computed
+      // from the tree, and it has to come out in the same coordinates.
+      container: tileArea,
       apply: (next) => {
         const before = untrack(workspaceTree);
         const group = untrack(tiles);
@@ -2664,6 +2716,26 @@ export const App: Component = () => {
                         store.sessions.some((s) => s.name === k.name && s.driven === true)
                       }
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
+                      // THE SESSION'S OWN WINDOW SIZE, for a tile that is
+                      // WATCHING: it never claims the Grid, so this is the only
+                      // thing that can tell its terminal how big the session it
+                      // is showing actually is, and drawing at that size is
+                      // what puts dead space around it instead of tmux's own
+                      // border and dots (design, "Watching tiles").
+                      //
+                      // BY KEY, through `tileSession`, for the reason that
+                      // lookup exists: your `auth` and emo's `auth` are two
+                      // rows in one list, and a find on the name alone would
+                      // hand this tile the other session's size.
+                      //
+                      // Null unless BOTH numbers are real. tmux-api omits them
+                      // when it could not read a size, and half a size is not
+                      // one — `fitTarget` refuses either way, and saying so
+                      // here keeps the shape honest.
+                      grid={() => {
+                        const s = tileSession();
+                        return s?.cols && s?.rows ? { cols: s.cols, rows: s.rows } : null;
+                      }}
                       // FOCUSED, NOT MERELY VISIBLE. Both of these describe the
                       // SELECTED session — the one the URL names — and four
                       // visible tiles would otherwise all be told that a
