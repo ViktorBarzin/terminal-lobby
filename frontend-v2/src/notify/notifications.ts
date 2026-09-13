@@ -233,23 +233,22 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   };
 
   // ---- tell the server what this device is showing -----------------------
-  // So the push sender can withhold the session on screen from THIS device and
+  // So the push sender can withhold the sessions on screen from THIS device and
   // still tell every other one (notify/focus.ts has the why). Only a device the
   // server actually pushes to has anything to report.
   //
-  // ONE SESSION, AND IN A WORKSPACE THAT IS NOT THE WHOLE ANSWER. The report is
-  // the focused tile, which is right as far as it goes and stops at the wire:
-  // `POST /api/sessions/push/focus` carries `{"endpoint":…,"session":…}` — one name,
-  // validated against `sessionNameRe` — and `focusStore.report` keeps one record
-  // per endpoint, matched with `rec.session != session`
-  // (tmux-api/pushfocus.go). So there is no in-band way to say "these four", and
-  // a push about a visible-but-unfocused tile still reaches the phone in your
-  // pocket while that tile is on screen. Closing it is a set on the wire: a
-  // `sessions` array in `pwa/push.ts` `reportFocus`, a `[]string` in the focus
-  // store with a membership test in `watching`, and `focusedSession` answering
-  // with the visible set instead of one name. Every other suppression in this
-  // file — the unseen mark, the icon badge, the foreground banner — already
-  // follows the whole visible set, and this is the one that cannot yet.
+  // THE WHOLE VISIBLE SET, not the focused tile. This was the last suppression
+  // still measured against `selected` alone: the unseen mark, the icon badge
+  // and the foreground banner all moved to `onScreen` in an earlier round, and
+  // push could not follow because the wire carried one name — `POST
+  // /api/sessions/push/focus` with `{"endpoint":…,"session":…}`, kept as one
+  // record per endpoint and matched by equality. A two-tile workspace with
+  // `auth` focused therefore left `deploy` fully notifiable, and a push landed
+  // on the phone in your pocket about a session you were watching arrive on the
+  // screen in front of you. `pwa/push.ts reportFocus` now sends a `sessions`
+  // array beside the focused name, and `focusStore.watching` is a membership
+  // test over the set (tmux-api/pushfocus.go, which spells out what each half
+  // does when it meets the other at the wrong version).
   let lastFocus: FocusReport | null = null;
   let focusInFlight = false;
   // Something moved while a report was in the air. One request at a time keeps
@@ -257,21 +256,53 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
   // session you just left — but dropping the newer one would do exactly that
   // for a whole tick, so it is deferred rather than lost.
   let focusMovedAgain = false;
+  /**
+   * The set this device would report right now: every tile on screen, sorted
+   * and deduplicated, or nothing at all when the window is not being read.
+   *
+   * `focusedSession` is the gate as well as the focused name. It answers "" for
+   * a hidden tab and for a visible-but-unfocused window, and a set reported
+   * from either would silence sessions nobody is looking at — the one direction
+   * that loses an alert.
+   *
+   * The focused tile is folded in rather than assumed to be in `visible`: it is
+   * on screen by definition, and this keeps the two halves of the body
+   * consistent whatever the shell passes. Sorted because the key below is a
+   * string compare — two tiles swapping places is not news, and a POST per
+   * divider drag would be.
+   */
+  const focusSet = (focused: string): readonly string[] =>
+    focused === "" ? [] : [...new Set([focused, ...untrack(onScreen)])].sort();
   const reportFocusNow = (selected: string | null): void => {
     if (!untrack(pushDelivers)) return;
     if (focusInFlight) {
       focusMovedAgain = true;
       return;
     }
-    const next = focusedSession({
+    const focused = focusedSession({
       visible: !hasDoc || !document.hidden,
       focused: !hasDoc || document.hasFocus(),
       selected,
     });
+    const shown = focusSet(focused);
+    // The report's identity, which `shouldReport` compares as one string.
+    //
+    // It carries the focused name as well as the set. Membership is all a
+    // current server reads, but one that predates this change reads `session`
+    // alone (pwa/push.ts spells out that pairing), and on that server moving the
+    // keyboard between two tiles of one workspace still has to move which tile
+    // it suppresses. Keying on the set alone would have left it holding the tile
+    // you started on. That costs one POST per focus change, which is exactly
+    // what this has always sent.
+    //
+    // "" stays the identity of "showing nothing" — the value shouldReport never
+    // heartbeats and never announces at boot — and it is unambiguous because
+    // the set is empty exactly when the focused name is.
+    const next = shown.length === 0 ? "" : `${focused} of ${shown.join(" ")}`;
     const now = Date.now();
     if (!shouldReport(lastFocus, next, now)) return;
     focusInFlight = true;
-    void reportFocus(next).then((ok) => {
+    void reportFocus(shown, focused).then((ok) => {
       focusInFlight = false;
       // Only a report the server took counts as said. A failed one leaves the
       // record alone so the next tick tries again rather than believing it.
@@ -647,12 +678,26 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
     // push still covers it.
     if (Date.now() - lastPushCheck > PUSH_RECHECK_MS) void syncPushDelivery();
   };
-  // The session on screen changed, or this device just learned the server pushes
-  // to it. Both are things to say at once; the tick below only covers the case
-  // with no event at all, a page left open on one session for hours.
+  // What is on screen changed, or this device just learned the server pushes to
+  // it. Both are things to say at once; the tick below only covers the case with
+  // no event at all, a page left open on one session for hours.
   createEffect(() => {
     const delivers = pushDelivers(); // tracked
     const selected = opts.selected(); // tracked
+    // Tracked too, and it is the half a workspace moves: splitting a second
+    // session in, or closing one, changes what you can see without changing
+    // which tile has the keyboard.
+    //
+    // Read HERE rather than through a memo over it. `opts.visible` is an App.tsx
+    // closure over `visibleKeys`, a memo declared 700 lines BELOW the call that
+    // passes it, so a lazy read is the contract ("read lazily, so the accessor
+    // is only called once the memo exists"). A memo of my own would compute
+    // eagerly at construction and throw on the half-built component — measured,
+    // and it took the whole app down at boot. An effect body runs after the
+    // render phase, which is late enough. The extra runs this costs are free:
+    // the shell rebuilds that Set on every poll, and an unchanged set stops at
+    // `shouldReport` without a POST.
+    onScreen();
     if (!delivers) return;
     reportFocusNow(selected);
   });

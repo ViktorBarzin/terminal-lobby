@@ -296,6 +296,14 @@ tile puts a horizontal scrollbar on a terminal.
 
 **Every visible tile re-claims its grid after any change to the visible set** —
 leaving a workspace, removing a tile, dragging a divider, resizing the window.
+
+Focusing a tile also sends one, and that is existing behaviour rather than
+something workspaces added: `TerminalNative` has listened for `focusin` on the
+host and called `claimGrid` for as long as the native terminal has existed
+(`onHostFocusIn`, identical on master). Clicking into the single-session lobby's
+terminal does the same thing. It restates the size that terminal already has, so
+no tmux window moves, and it is right in principle too: the tile you just
+focused is the one you are driving.
 Without this, a session narrowed by a tile stays narrow: a pinned tmux window
 only re-reads its clients on an attach, a detach or a resize, and switching a
 slot's visibility is none of those. That exact failure was measured on
