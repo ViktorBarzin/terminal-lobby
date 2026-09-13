@@ -326,7 +326,9 @@ One rectangle showing one **Session**, in a **Workspace**. Holds whatever
 view that session is set to on this device — the terminal by default, the
 **Text view** where that was chosen — plus a thin header carrying the
 **title**, the **Session state**, a watch marker when the tile is read-only,
-and a close control. A tile claims its session's **Grid**, so the session's
+and a close control. The header's title is editable in place, so a tile is
+where a session is retitled as well as where it is read, and the rectangle is
+ringed in the colour of its **Session state**. A tile claims its session's **Grid**, so the session's
 tmux window is the size of the tile, for every device attached to it; a
 tile that is watching never claims, and draws the session at the **Grid**
 its drivers gave it instead, centred in the rectangle with dead space

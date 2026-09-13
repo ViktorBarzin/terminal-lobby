@@ -57,7 +57,14 @@ const world = vi.hoisted(() => ({
   /** `owner` is present only for a session somebody else runs and shared with
    *  you — the same convention `Session.owner` and `WorkspaceMember.owner`
    *  carry, so a session of your own is one without it. */
-  sessions: [] as { name: string; attached: number; created: number; owner?: string }[],
+  sessions: [] as {
+    name: string;
+    attached: number;
+    created: number;
+    owner?: string;
+    /** What Claude is doing in there, which is the ring around the tile. */
+    state?: string;
+  }[],
   /** Reject `listSessions` — a tmux-api restarting under a page reload. */
   sessionsFail: false,
   /**
@@ -71,6 +78,8 @@ const world = vi.hoisted(() => ({
     workspaces: [] as { id: string; members: { name: string; owner?: string }[] }[],
   },
   puts: [] as unknown[],
+  /** Retitles that reached tmux-api, `[name, title]` in the order they went. */
+  titles: [] as [string, string][],
   /** The mounted SessionViews, by session name. */
   views: new Map<string, ViewProps>(),
   /** What the Right now panel was handed. */
@@ -96,6 +105,9 @@ vi.mock("../src/lib/lobby-api", async (importOriginal) => {
       },
       getLayout: async (): Promise<Layout> => emptyLayout(),
       putLayout: async (): Promise<void> => {},
+      setSessionTitle: async (name: string, title: string): Promise<void> => {
+        world.titles.push([name, title]);
+      },
     },
     getWorkspaces: async () => ({ ...emptyWorkspaces(), ...world.doc }),
     putWorkspaces: async (doc: unknown): Promise<void> => {
@@ -213,6 +225,7 @@ beforeEach(() => {
   world.sessionsFail = false;
   world.doc = { version: 1, workspaces: [] };
   world.puts = [];
+  world.titles = [];
   world.views.clear();
   world.connection = null;
   world.dragging = false;
@@ -322,6 +335,7 @@ function rectOf(el: HTMLElement): { x: number; y: number; width: number; height:
 const CSS = {
   app: readFileSync(resolve(process.cwd(), "src/app.css"), "utf8"),
   sidebar: readFileSync(resolve(process.cwd(), "src/sidebar.css"), "utf8"),
+  tiles: readFileSync(resolve(process.cwd(), "src/tiles.css"), "utf8"),
 };
 
 /** The declaration block of the rule whose selector is exactly `selector`, or
@@ -519,6 +533,242 @@ describe("a session emo shared with you", () => {
       version: 1,
       workspaces: [{ id: "w1", members: [{ name: "auth" }, { name: "shared", owner: "emo" }] }],
     });
+  });
+});
+
+/**
+ * WHAT EACH SESSION IS DOING, said around the whole tile.
+ *
+ * Viktor, 2026-09-13: *"let's also color code the border. so it's clear the
+ * status of each session"*. The state has been an 8px dot since the sidebar was
+ * the only surface, which answers the question fine when the eye is already
+ * running down a list of rows. A workspace is the other case: four live
+ * terminals, the eye inside one of them, and "which of the other three is
+ * waiting on me" answered by three dots of eight pixels.
+ *
+ * Asserted at the shell rather than on the header, because the state has to
+ * travel from the poll's session list through the by-KEY lookup to the slot the
+ * rect positions — and that lookup is the part with a history (a `find` on the
+ * name alone drew a foreign session's state on your tile). The stylesheet's
+ * half is in tile-header.test.tsx, which reads tiles.css.
+ */
+describe("the ring around a tile", () => {
+  const ringOf = (shell: Shell, name: string) =>
+    shell.tiles().get(name)?.getAttribute("data-state");
+
+  it("carries each session's own state, and follows it as it changes", async () => {
+    world.sessions = [
+      { ...session("auth"), state: "running" },
+      { ...session("deploy"), state: "awaiting" },
+      { ...session("docs"), state: "done" },
+    ];
+    world.doc = { version: 1, workspaces: [{ id: "w1", members: ms("auth", "deploy", "docs") }] };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(3));
+
+    expect(ringOf(shell, "auth")).toBe("running");
+    expect(ringOf(shell, "deploy")).toBe("awaiting");
+    expect(ringOf(shell, "docs")).toBe("done");
+
+    // The poll is what moves a state, and the ring is a read of the same list.
+    world.sessions = [
+      { ...session("auth"), state: "awaiting" },
+      { ...session("deploy"), state: "awaiting" },
+      { ...session("docs"), state: "done" },
+    ];
+    await waitFor(() => expect(ringOf(shell, "auth")).toBe("awaiting"), {
+      timeout: POLL_WAIT_MS,
+    });
+  }, 20_000);
+
+  // A shell with no live Claude in it has no state, and the ring stays: four
+  // rectangles of terminal need an edge whatever is or is not running in them.
+  // The empty string is what the stylesheet paints neutral.
+  it("rings a session with no live Claude in the neutral colour", async () => {
+    world.sessions = [session("auth"), session("deploy")];
+    world.doc = { version: 1, workspaces: [{ id: "w1", members: ms("auth", "deploy") }] };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+    expect(ringOf(shell, "auth")).toBe("");
+  });
+
+  // Reading the state BY KEY rather than by name is what keeps emo's session
+  // off your tile. Two sessions called `auth` are two different terminals, and
+  // a `find` on the name alone returns whichever the poll happened to list
+  // first — which would draw somebody else's state on your tile and yours on
+  // theirs.
+  it("does not take a foreign session's state for a session of the same name", async () => {
+    world.sessions = [
+      { ...session("auth"), owner: "emo", state: "running" },
+      { ...session("auth"), state: "done" },
+    ];
+    world.doc = {
+      version: 1,
+      workspaces: [{ id: "w1", members: [{ name: "auth" }, { name: "auth", owner: "emo" }] }],
+    };
+    const shell = await openShell("auth");
+    // Both tiles are `auth`, and `shell.tiles()` keys on the NAME — so the two
+    // collapse into one entry there and the slots are read directly instead.
+    const rings = () =>
+      [...shell.root.querySelectorAll<HTMLElement>(".tl-session-slot.tl-tiled")]
+        .map((el) => el.getAttribute("data-state"))
+        .sort();
+    await waitFor(() => expect(rings()).toHaveLength(2));
+    expect(rings()).toEqual(["done", "running"]);
+  });
+
+  /**
+   * IT IS AN ELEMENT, AND IT COSTS THE TERMINAL NOTHING.
+   *
+   * Two shapes were rejected in a browser, and this is what is left. A BORDER
+   * on the slot narrows the session: a tile IS the size of its tmux window
+   * (`claimGrid`) and these slots are sized by four inline pixel values under
+   * `box-sizing: border-box`, so 2px of border is 4 columns and 4 rows out of
+   * every terminal in the workspace, four refits and four resizes out to tmux.
+   * An OUTLINE with a negative offset costs nothing and could not be seen: it
+   * paints inside the padding box, and the terminal's own background paints
+   * after its parent's outline and covers it — measured by sampling the branch
+   * build's screenshot, which read the state colour at the header's y and black
+   * twelve pixels lower.
+   *
+   * So: absolute, so it takes no space, and a later sibling, so it paints over
+   * the terminal. Asserted against the stylesheet because jsdom applies no CSS
+   * and lays nothing out — a border here would typecheck, render, look right in
+   * a screenshot and quietly narrow four terminals.
+   */
+  it("is painted over the terminal and takes no space from it", async () => {
+    world.sessions = [session("auth"), session("deploy")];
+    world.doc = { version: 1, workspaces: [{ id: "w1", members: ms("auth", "deploy") }] };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+
+    const tile = shell.tiles().get("auth")!;
+    const ring = tile.querySelector(".tl-tile-ring");
+    expect(ring, "a tiled slot carries a ring element").toBeTruthy();
+    // LAST, so it paints over the terminal rather than under it.
+    expect(tile.lastElementChild).toBe(ring);
+    // And out of the accessible tree: the strip's dot says this in words.
+    expect(ring!.getAttribute("aria-hidden")).toBe("true");
+    // Four live terminals are underneath it, so the one declaration that keeps
+    // their clicks reaching them is INLINE, where a stylesheet that failed to
+    // load cannot take it away. The skeleton over the same terminals is written
+    // the same way (WorkspaceCanvas), and workspace-canvas.test.tsx holds
+    // tiles.css to carrying no pointer-events at all.
+    expect((ring as HTMLElement).style.pointerEvents).toBe("none");
+
+    const rule = ruleFor(CSS.tiles, ".tl-tile-ring");
+    expect(rule, "tiles.css draws the ring").toBeTruthy();
+    expect(rule).toMatch(/position:\s*absolute/);
+    expect(rule).toMatch(/border:\s*2px solid/);
+    // The slot itself keeps its box: nothing here may narrow the session.
+    const slot = ruleFor(CSS.app, ".tl-session-slot.tl-tiled");
+    expect(slot).not.toMatch(/(^|[\s;])(border|padding|outline):/);
+  });
+
+  // The dot in the strip and the ring around the tile are one state in two
+  // places, so they read one palette. A second set of colours here would be the
+  // copy nobody remembered to move when a theme changed.
+  it("rings in the same tokens the state dot is filled with", () => {
+    for (const state of ["running", "awaiting", "done"] as const) {
+      const rule = ruleFor(CSS.tiles, `.tl-session-slot[data-state="${state}"] .tl-tile-ring`);
+      expect(rule, `tiles.css colours a ${state} tile`).toMatch(
+        new RegExp(`border-color:\\s*var\\(--state-${state}\\)`),
+      );
+      // The same token the sidebar's dot takes, which is what makes them agree.
+      expect(CSS.app).toContain(`--state-${state}`);
+    }
+  });
+
+  // Outside a workspace there is nothing to distinguish a tile from, and the
+  // session bar above the terminal already carries the state.
+  it("is absent on a lone session, which is the whole screen", async () => {
+    world.sessions = [session("auth")];
+    const shell = await openShell("auth");
+    await waitFor(() => expect(world.views.get("auth")).toBeTruthy());
+    expect(shell.tiles().size).toBe(0);
+    const slot = shell.root.querySelector<HTMLElement>(".tl-session-slot");
+    expect(slot?.hasAttribute("data-state")).toBe(false);
+  });
+});
+
+/**
+ * Renaming a session from the tile it is drawn in.
+ *
+ * Viktor, 2026-09-13: *"let's allow renaming of the sessions - i should be able
+ * to double click on the pane and that should tirgger a text box that will
+ * allow me to change the name which will rename the session in there"*.
+ *
+ * The box itself is TileHeader's, asserted in tile-header.test.tsx. What is
+ * here is the wire: that a double click on a real tile reaches `store.rename`,
+ * that the TITLE is what goes out, and that a tile belonging to somebody else
+ * offers no box at all.
+ */
+describe("retitling a session from its tile", () => {
+  const titleOf = (shell: Shell, name: string) =>
+    shell.tiles().get(name)?.querySelector<HTMLElement>(".tl-tile-title");
+  const boxOf = (shell: Shell, name: string) =>
+    shell.tiles().get(name)?.querySelector<HTMLInputElement>("input.tl-tile-rename");
+
+  it("sends the typed title to tmux-api", async () => {
+    world.sessions = [session("auth"), session("deploy")];
+    world.doc = { version: 1, workspaces: [{ id: "w1", members: ms("auth", "deploy") }] };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+
+    titleOf(shell, "deploy")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await waitFor(() => expect(boxOf(shell, "deploy")).toBeTruthy());
+    const box = boxOf(shell, "deploy")!;
+    box.value = "Ship the release";
+    box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    await waitFor(() => expect(world.titles).toEqual([["deploy", "Ship the release"]]));
+    // And the box is gone: the strip is a title again.
+    expect(boxOf(shell, "deploy")).toBeFalsy();
+  });
+
+  // A foreign session's title belongs to its owner. The gesture is hidden
+  // rather than left to fail at the server.
+  it("offers no box on a session somebody else owns", async () => {
+    world.sessions = [session("auth"), { ...session("shared"), owner: "emo" }];
+    world.doc = {
+      version: 1,
+      workspaces: [{ id: "w1", members: [{ name: "auth" }, { name: "shared", owner: "emo" }] }],
+    };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+
+    titleOf(shell, "shared")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await waitFor(() => expect(world.views.get("shared")).toBeTruthy());
+    expect(boxOf(shell, "shared")).toBeFalsy();
+    expect(world.titles).toEqual([]);
+  });
+
+  /**
+   * A drag across the text in the box must not lift the tile.
+   *
+   * The slot's capture-phase `pointerdown` (App.tsx) starts a tile drag from
+   * any press on the header, and the header is now sometimes a text box.
+   * Selecting a word in it crosses the 4px slop immediately, so without the
+   * refusal the tile leaves its split in the middle of being renamed.
+   */
+  it("does not lift the tile when the press lands in the box", async () => {
+    world.sessions = [session("auth"), session("deploy")];
+    world.doc = { version: 1, workspaces: [{ id: "w1", members: ms("auth", "deploy") }] };
+    const shell = await openShell("auth");
+    await waitFor(() => expect(shell.tiles().size).toBe(2));
+    const before = rectOf(shell.tiles().get("deploy")!);
+
+    titleOf(shell, "deploy")!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await waitFor(() => expect(boxOf(shell, "deploy")).toBeTruthy());
+    const box = boxOf(shell, "deploy")!;
+    box.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, clientX: 40, clientY: 20 }));
+    document.dispatchEvent(
+      new PointerEvent("pointermove", { bubbles: true, clientX: 300, clientY: 400 }),
+    );
+    document.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }));
+
+    expect(boxOf(shell, "deploy")).toBeTruthy();
+    expect(rectOf(shell.tiles().get("deploy")!)).toEqual(before);
   });
 });
 
