@@ -6,7 +6,9 @@ devvm's `/etc/claude-code/managed-settings.json` (owned by
 `infra/scripts/workstation/`) run a small script deployed by this repo
 that stamps a tmux session option (`@claude_state`) on state
 transitions — UserPromptSubmit/PreToolUse → running, Notification →
-awaiting input, Stop/SessionStart → completed, SessionEnd → unset. The
+awaiting input, Stop/SessionStart → completed, SessionEnd → unset; and a
+drawn question or plan approval holds the session at awaiting input for
+as long as it stands, see "A drawn dialog is a level" below. The
 script no-ops when `$TMUX` is unset, so t3-serve and headless Claude
 instances are unaffected. `tmux-api` returns the option through the
 `list-sessions -F` call it already makes — no extra forks.
@@ -38,6 +40,41 @@ resulting state itself — see "Interrupts have no hook" below.
   the hook script and its consumers live here. Both sides tolerate the
   other being absent (missing script → hook exits 0; unset option →
   no indicator).
+- **A drawn dialog is a level, not an edge** (2026-09-13). A blocking
+  dialog reached the state only through `Notification`, which fires once.
+  Two things followed from that. It arrives 5–6 s after the dialog is
+  drawn, and any later stamp overwrites it with nothing to put it back:
+  measured on `server-io-bottleneck-solutions`, an `AskUserQuestion` went
+  up at 23:09:42 on 2026-09-12, the notification promoted the session to
+  `awaiting` at 23:09:49, a hook stamped it back to `running` at 23:51:48
+  with the dialog still on the pane, and it read *Working* for the next
+  eleven hours with nobody working. Nothing in the transcript was written
+  at that second, which is why `tl.event` now rides the transition record.
+
+  So the dialog is recorded as a third option, `@claude_ask`, holding the
+  `tool_use_id` of the call whose menu is on screen. While it is set the
+  script resolves every stamp to `awaiting`, whatever event asked for it.
+  Two tools draw such a menu and do nothing else — `AskUserQuestion` and
+  `ExitPlanMode` — and both pair cleanly, measured on 2.1.269 (2026-09-13):
+  `PreToolUse` ~1 s before the dialog, `PostToolUse` with the same
+  `tool_use_id` when it is answered or escaped, and a `permission_prompt`
+  notification 5–6 s in for either one. Stamping on the `PreToolUse` is
+  what removes the lag.
+
+  The marker is cleared by that `PostToolUse`, and also by any
+  `UserPromptSubmit`, any other tool call, `SessionStart`, `SessionEnd`
+  and `Injector.Cancel`. That set is what keeps an ABANDONED dialog from
+  pinning a session amber: Claude Code takes a live dialog down when
+  something else claims the turn and re-asks, the first call never gets a
+  `tool_result`, and nothing reports the takedown — but the prompt that
+  caused it does, and the re-ask sets the marker again. A dialog the user
+  simply walks away from stays amber, which is what the screen shows.
+
+  Reading the pane instead would answer the same question directly and was
+  not built here: it costs a `capture-pane` per session per refresh, which
+  is the cost this ADR declined at the top. `session-events` does read
+  panes for the Text view, for sessions somebody has open (registry.go);
+  the sidebar needs every session, which is the difference.
 - **Interrupts have no hook, so the interrupter owns the transition.**
   `Stop` is the only hook that writes `done`, and Ctrl-C does not fire
   it — nothing else in the system clears the stamp either. One click of

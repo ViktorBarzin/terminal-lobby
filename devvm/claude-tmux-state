@@ -1,9 +1,11 @@
 #!/bin/sh
 # claude-tmux-state — Claude Code hook that stamps the current tmux
 # session with @claude_state so the terminal-lobby sidebar can show a
-# per-session indicator (ADR-0001), and with @claude_bg so that indicator
+# per-session indicator (ADR-0001), with @claude_bg so that indicator
 # survives the main turn ending while background work is still running
-# (docs/plans/2026-09-04-background-work-session-state-design.md).
+# (docs/plans/2026-09-04-background-work-session-state-design.md), and with
+# @claude_ask so it holds while a question or a plan sits on screen waiting
+# for a person.
 #
 # Wired org-wide via /etc/claude-code/managed-settings.json (infra repo):
 #
@@ -39,6 +41,10 @@ command -v tmux >/dev/null 2>&1 || exit 0
 
 mode="${1:-}"
 
+# Set by an event that means no blocking dialog can be on screen any more; the
+# next stamp acts on it. See "The drawn blocking dialog" below.
+ask_clear=0
+
 stamp() {
     # Usage event (docs/adr/0006-usage-telemetry.md) on a REAL transition only.
     # This hook fires on every UserPromptSubmit AND every PreToolUse, all of
@@ -67,9 +73,38 @@ stamp() {
     #
     # Folding is a case statement rather than jq because this runs on every
     # state transition in every session on the box.
-    prev="$(tmux show-option -qv -t "$TMUX_PANE" @claude_state 2>/dev/null || true)"
-    tmux set-option -t "$TMUX_PANE" @claude_state "$1" >/dev/null 2>&1 || true
-    if [ "$prev" != "$1" ]; then
+    want="$1"
+    # Both options in ONE tmux call. The ask marker is read on every stamp, so
+    # reading it separately would add a third fork to the hot path; a format
+    # resolves a user option through the pane's own option hierarchy, which is
+    # the same lookup show-option was doing. The marker is validated by id_ok
+    # before it is written, so it can never contain the separator.
+    marks="$(tmux display-message -p -t "$TMUX_PANE" '#{@claude_ask} #{@claude_state}' 2>/dev/null || true)"
+    ask="${marks%% *}"
+    prev="${marks#* }"
+    # A DRAWN blocking dialog outranks every other reading. Between the
+    # PreToolUse that opens an AskUserQuestion or an ExitPlanMode and the
+    # PostToolUse that closes it, the session is blocked on a person, whatever
+    # else fires meanwhile — and things do fire meanwhile. Measured on a real
+    # session (2026-09-12 23:09:49 awaiting, 23:51:48 back to running with a
+    # dialog still on screen and nothing in the transcript): the Notification
+    # that promotes a session is a one-shot EDGE, so any later running-stamp
+    # overwrote it and nothing corrected the reading for the next eleven hours.
+    # This is what makes the reading a LEVEL instead.
+    #
+    # An event that means no dialog can be up clears it HERE rather than on its
+    # own, so the unset costs a fork only when there is something to unset. The
+    # common case is the hot path — every tool call of every session on the box
+    # — and it has no marker to clear.
+    if [ -n "$ask" ]; then
+        if [ "$ask_clear" = 1 ]; then
+            tmux set-option -u -t "$TMUX_PANE" @claude_ask >/dev/null 2>&1 || true
+        else
+            [ "$want" = awaiting ] || want=awaiting
+        fi
+    fi
+    tmux set-option -t "$TMUX_PANE" @claude_state "$want" >/dev/null 2>&1 || true
+    if [ "$prev" != "$want" ]; then
         sess="$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null || true)"
         case "$sess" in
         "" | *[!A-Za-z0-9_-]*) sess=invalid ;;
@@ -78,7 +113,16 @@ stamp() {
         case "$from" in
         *[!A-Za-z0-9_-]*) from=invalid ;;
         esac
-        logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$sess\",\"tl.from\":\"$from\",\"tl.to\":\"$1\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
+        # Which hook event moved it. Reading the transition without this is
+        # what made the 2026-09-12 case take a measurement to explain: the log
+        # said awaiting→running with nothing in the transcript at that second,
+        # and every event this script handles was a candidate. Folded like the
+        # rest — it comes off the payload.
+        by="${event:-$mode}"
+        case "$by" in
+        "" | *[!A-Za-z0-9_-]*) by=invalid ;;
+        esac
+        logger -t claude-tmux-state "TLEVENT {\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"event.name\":\"claude.state_changed\",\"service.name\":\"claude-tmux-state\",\"user.id\":\"$(id -un)\",\"attrs\":{\"tl.session\":\"$sess\",\"tl.from\":\"$from\",\"tl.to\":\"$want\",\"tl.event\":\"$by\",\"tl.client\":\"hook\"}}" 2>/dev/null || true
     fi
 }
 
@@ -88,6 +132,7 @@ stamp() {
 if [ "$mode" = clear ]; then
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
     tmux set-option -u -t "$TMUX_PANE" @claude_bg >/dev/null 2>&1 || true
+    tmux set-option -u -t "$TMUX_PANE" @claude_ask >/dev/null 2>&1 || true
     # Record that this ending was DELIBERATE, so tl-session-watch does not
     # report it as a lost session (2026-09-03).
     #
@@ -170,6 +215,45 @@ id_ok() {
     "" | *[!A-Za-z0-9_-]*) return 1 ;;
     esac
     return 0
+}
+
+# ---- The drawn blocking dialog --------------------------------------------
+# @claude_ask holds the tool_use_id of a blocking dialog that is ON SCREEN, and
+# is empty when none is. Two tools draw one, and both do nothing else: they put
+# a menu up and wait for a person.
+#
+#   AskUserQuestion   the question menu
+#   ExitPlanMode      the plan approval
+#
+# Both were measured on 2.1.269 (2026-09-13) and pair cleanly. PreToolUse fires
+# ~1s before the dialog is drawn; PostToolUse fires when it is answered or
+# escaped, carrying the SAME tool_use_id; and the Notification that used to be
+# the only signal arrives 5-6s after the dialog, as `permission_prompt` for
+# both ("Claude needs your permission", "Claude Code needs your approval for
+# the plan").
+#
+# So the marker buys two things the Notification cannot. It is immediate rather
+# than six seconds late, and it is a level rather than an edge, which is what
+# makes the reading survive whatever else fires while the dialog is up.
+#
+# It is cleared by the PostToolUse that closes the dialog, and also by any
+# other tool call, any UserPromptSubmit, SessionStart and SessionEnd — each of
+# which means no dialog can be on screen. That set is what keeps an ABANDONED
+# call from pinning a session: Claude Code takes a live dialog DOWN when
+# something else claims the turn, and re-asks, so the first call never gets a
+# tool_result and its PostToolUse never arrives. Nothing reports the takedown,
+# but the prompt that caused it does, and the re-ask sets the marker again.
+#
+# The clearers set ask_clear and let stamp do the write, which keeps the unset
+# off the hot path (see stamp).
+ask_write() { tmux set-option -t "$TMUX_PANE" @claude_ask "$1" >/dev/null 2>&1 || true; }
+
+# ask_tool answers whether the tool this event is about draws a blocking dialog.
+ask_tool() {
+    case "$1" in
+    AskUserQuestion | ExitPlanMode) return 0 ;;
+    esac
+    return 1
 }
 
 # ---- The outstanding-work set ---------------------------------------------
@@ -443,6 +527,9 @@ UserPromptSubmit)
         id_ok "$jv" && bg_del "$jv"
         ;;
     esac
+    # Whatever dialog was up is not up any more: this prompt is what took it
+    # down, including the prompt of a re-ask.
+    ask_clear=1
     stamp running
     ;;
 PreToolUse)
@@ -451,10 +538,36 @@ PreToolUse)
     # done and running for as long as a background agent worked, which is why
     # the wrong colour was intermittent rather than constant.
     [ -n "$agent" ] && exit 0
+    # A tool that draws a blocking dialog is the session going quiet, not the
+    # session working. Stamped here rather than waiting for the Notification
+    # six seconds later, and recorded so that everything firing while the
+    # dialog stands reads awaiting too.
+    json_field tool_name
+    if ask_tool "$jv"; then
+        # The id is advisory — it makes `tmux show-option @claude_ask` say
+        # which call is on screen, and nothing ever compares it. Which is why
+        # it does not matter that it is read from the whole payload, where a
+        # tool_input quoting the field name would shadow the real one.
+        json_field tool_use_id
+        id_ok "$jv" || jv=drawn
+        ask_write "$jv"
+        stamp awaiting
+        exit 0
+    fi
+    # Any other tool call means no dialog is up: a turn cannot run a tool while
+    # it waits on one. This is the corrector for a marker whose PostToolUse
+    # never came — the abandoned call of a dialog Claude Code took down and
+    # re-asked, which reports nothing of its own.
+    ask_clear=1
     stamp running
     ;;
 PostToolUse)
     [ -n "$agent" ] && exit 0
+    # The dialog has been answered or escaped. Its id is not compared with the
+    # one recorded: an abandoned call never reaches here, so the marker may be
+    # a LATER call's, and either way no dialog is on screen once a blocking
+    # tool has returned.
+    ask_clear=1
     record_launch
     stamp running
     ;;
@@ -483,6 +596,9 @@ SessionStart)
     compact | clear) ;;
     *) bg_write "" ;;
     esac
+    # No dialog survives any of the four. A new process redraws nothing, and a
+    # compaction or a /clear happens between turns, which a dialog cannot.
+    ask_clear=1
     # Whatever survived decides the state, the same way Stop decides it: keeping
     # the ids and then stamping done would paint the session green anyway.
     bg_read

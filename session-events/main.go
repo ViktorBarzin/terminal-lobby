@@ -375,6 +375,14 @@ func main() {
 			http.Error(w, "the session is working — stop it first", http.StatusConflict)
 			return
 		}
+		// Nor over a drawn dialog, where `/model` would be typed into the
+		// question rather than at the prompt. The state alone does not say so:
+		// a session sitting on a question reads `awaiting`, which is also what
+		// a session waiting at its prompt reads (ADR-0001).
+		if ask, _ := injector.Option(osUser, session, sessionio.OptionAsk); ask != "" {
+			http.Error(w, "the session is asking something — answer it first", http.StatusConflict)
+			return
+		}
 		state, err := injector.SetModel(r.Context(), osUser, session, h,
 			sessionio.ModelState{Model: body.Model, Effort: body.Effort})
 		if err != nil {

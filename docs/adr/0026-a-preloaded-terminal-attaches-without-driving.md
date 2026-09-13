@@ -211,3 +211,43 @@ Alongside it, the terminal claims the grid when its socket OPENS, if this
 session is the one being read. That is the fourth claim moment, beside a landed
 fit, a view coming back on screen and terminal focus, and it is the one a fit
 cannot speak for. Landed in v0.53.7.
+
+## Amendment — 2026-09-13: where "the socket keeps its args" stops being right
+
+The amendment above says the socket already open keeps the args it was opened
+with, and its client is promoted server-side instead. That is the right answer
+for `pre`, and it is the wrong answer for `ro`. The difference is what tmux will
+change under a live client: `refresh-client -f '!ignore-size'` turns the preload
+flag off on the client that already exists, so a promotion needs no new
+connection, and the warm socket is the whole point of the hover. There is no
+equivalent for read-only. `attach -r` is decided when the client attaches and
+holds for the client's life, so a device that asked to watch and then asked to
+drive has to attach again.
+
+Nothing did. Measured against the deployed build on 2026-09-13, with a 60x20
+client holding a session open while a 1440x900 desktop joined it:
+
+| step | this device's tmux client | window |
+|---|---|---|
+| opened the session | `149x47 attached,ignore-size,read-only` | 60x19 |
+| tapped "take control" | unchanged | 60x19 |
+| Text view and back | unchanged | 149x46 |
+
+Two things follow from one cause. The window kept the phone's 60 columns,
+because a read-only ignore-size client is what the pin's hook filters out and
+what tmux skips when it sizes a window. And the keystrokes went nowhere, since
+tmux drops a read-only client's input, which a separate probe confirms. The view
+switch moved the size alone because the grid claim travels over HTTP rather than
+down the socket, which is why Text-and-back read as the cure.
+
+So a change of attach mode reconnects, and the new client carries the mode that
+was asked for; the claim then rides `onAttach` like any other reconnect. Only
+the read-only half: a promoted preload still keeps its socket, a hidden mount is
+left parked, and an `ended` session is not revived to change a mode. Landed in
+v0.55.1.
+
+The provenance is worth recording, because the behaviour was not designed away
+so much as dropped. Until the de-iframe port (`2c64552`, v0.34.0, 2026-09-05)
+the terminal was a frame, and `TerminalView` re-navigated it whenever the args
+changed — so "the args changed" and "the tmux client changed" were one event.
+Against a mounted xterm they are two.

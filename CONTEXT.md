@@ -144,9 +144,13 @@ without moving the Grid, and without moving **Last driven**. Three states — wa
 the session bar or a sidebar card's `Attach as` menu. Unset resolves
 automatically, joining as a viewer when the session already has a read-write
 client (**driven**); that decision is taken once, when a view takes the session
-on. Per (session, device), remembered in the browser and never sent to the
-server as state — the desktop keeps driving while the phone
-watches the same session. Applies to your own sessions as well as shared ones;
+on. Changing it RECONNECTS the terminal, unlike a **Preload attach** promotion:
+the mode is the socket's, since tmux holds a client read-only for as long as it
+lives, so a live connection cannot be told about the change and has to be
+replaced (2026-09-13; between 2026-09-05 and then it was not, and taking
+control moved the button alone). Per (session, device), remembered in the
+browser and never sent to the server as state — the desktop keeps driving while
+the phone watches the same session. Applies to your own sessions as well as shared ones;
 owning a session is what authorizes watching it. A client may only ever request
 **at or below** its Attach mode, so asking to watch can never grant access. In a
 **Lens** it is **locked** on: the choice is gone, the controls that type are
@@ -644,6 +648,10 @@ report while it is pending — a permission prompt, or an `AskUserQuestion`
 menu. The text view mirrors it as a card; `session-events` answers it by
 injecting keys into the pty (ADR-0010). Distinct from **Session state**
 *awaiting input*, which is the sidebar's coarser signal that some prompt exists.
+The two kinds the hooks can see as they are drawn — an `AskUserQuestion` and an
+`ExitPlanMode` — hold the session at *awaiting input* for as long as the menu
+stands, rather than for the instant the notification about it arrives
+(ADR-0001).
 
 **Drawn question**:
 The one question of an `AskUserQuestion` call that the pane is showing. A
