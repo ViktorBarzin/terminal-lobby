@@ -6,7 +6,8 @@ import type { SessionKey, TreeNode } from "./workspace-tree";
  * The per-device half of a Workspace: which arrangement THIS BROWSER holds for
  * each workspace, and nothing about who belongs to one.
  *
- *   tl:workspaces:v1   workspace id → the serialised split tree
+ *   tl:workspaces:v2   workspace id → the serialised split tree, and when
+ *                      the server last listed the workspace it belongs to
  *
  * ADR-0027 splits a workspace across two stores and this is the smaller half.
  * Membership — the id and its ordered members — lives in tmux-api beside
@@ -32,15 +33,25 @@ import type { SessionKey, TreeNode } from "./workspace-tree";
  *
  * VERSIONING IS THE KEY SUFFIX, NOT A FIELD IN THE DOCUMENT. `store/undo.ts:55`
  * states the rule as "Bump the suffix if the entry shape ever changes", and
- * `store/device-prefs.ts:23` says the consequence outright: nothing here has a
- * migration path, and no store in this codebase has ever had one. So the day
- * the tree's serialised shape changes, this key becomes `tl:workspaces:v2` and
- * every device's arrangements are abandoned — each workspace re-derives from
- * its server-side member order on the next entry, and the first drag rebuilds
- * it. That is the cost, and it is payable: an arrangement is one screen's
- * geometry, not the work. Membership is untouched, because it is on the server.
- * A v2 that wants to keep v1's arrangements has to carry the first migration
- * this codebase has written — read the old key, convert each tree, delete it.
+ * `store/device-prefs.ts:23` says the consequence outright: nothing here had a
+ * migration path, and no store in this codebase had ever had one. v2 is that
+ * first migration, written on 2026-09-13 when the entry grew its timestamp: the
+ * old key is read when the new one is absent, each tree adopted and stamped as
+ * last listed now, and `tl:workspaces:v1` removed by the first write. The
+ * alternative was the bare bump this paragraph used to describe, which
+ * abandons every device's arrangements — the exact loss the timestamp is here
+ * to prevent, so paying it to ship the prevention would have been an odd trade.
+ *
+ * WHAT THE TIMESTAMP IS FOR. `seen` is the last time the SERVER's membership
+ * document listed this workspace, and {@link prune} deletes an entry only once
+ * that is {@link ARRANGEMENT_TTL_MS} old. Before 2026-09-13 an id missing from
+ * one answer was deleted on the spot, and Viktor lost a laptop's arrangement to
+ * a five-minute window in which a verification run on the devvm had replaced
+ * the document: the workspace came back, the arrangement could not, because the
+ * server never had it. An id the server stops listing is ABSENT, and absence is
+ * only conclusive after a month. The reason prune exists is still served — the
+ * document cannot grow without bound — it just stops throwing away work to save
+ * a few hundred bytes the same hour.
  *
  * THE SESSION-TO-WORKSPACE REVERSE LOOKUP IS DERIVED, NEVER STORED. It is what
  * makes clicking a sidebar member open its group, so it is read on every
@@ -73,9 +84,42 @@ import type { SessionKey, TreeNode } from "./workspace-tree";
  * here: this store compares keys and never takes one apart.
  */
 
-/** Where the arrangements live. Bump the suffix if the tree's shape changes,
- *  and read what that costs in the docblock above. */
-export const WORKSPACES_KEY = "tl:workspaces:v1";
+/** Where the arrangements live. Bump the suffix if the entry's shape changes,
+ *  and read what that costs — and what it takes to not pay it — above. */
+export const WORKSPACES_KEY = "tl:workspaces:v2";
+
+/** The shape v2 replaced: `id → tree`, with no record of when the workspace was
+ *  last seen. Read once, when v2 is absent; removed by the first write. */
+export const WORKSPACES_KEY_V1 = "tl:workspaces:v1";
+
+/**
+ * How long this device keeps an arrangement for a workspace the server has
+ * stopped listing.
+ *
+ * A month, and the number is chosen from what it protects rather than from what
+ * it costs. An id vanishes from the document for two reasons: somebody closed
+ * the workspace back to a single tile on another device, which is permanent and
+ * only wants the entry gone eventually; or the document was briefly wrong — a
+ * write from another tab, a restore, a script on the box — which is transient
+ * and wants the arrangement back. The first is indifferent to the wait. The
+ * second is not, and a person notices a lost arrangement immediately and comes
+ * back to it days later, so the window has to cover a weekend and a holiday
+ * rather than a poll.
+ *
+ * An entry is a few hundred bytes, so a month of them is not a quota concern on
+ * any browser this app runs in.
+ */
+export const ARRANGEMENT_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * How stale a stamp gets before {@link prune} writes a fresher one.
+ *
+ * The effect that calls prune runs on every change to the membership document,
+ * so stamping on each would put a `localStorage` write behind every poll to buy
+ * an hour of precision on a month-long window. An hour of slack costs nothing
+ * an entry's lifetime can notice.
+ */
+const STAMP_EVERY_MS = 60 * 60 * 1000;
 
 /**
  * The two questions this store asks `store/workspace-tree.ts`.
@@ -98,6 +142,19 @@ export interface WorkspacesDeps {
   parseTree(value: unknown): TreeNode | null;
   /** `leafKeys`: one keepalive key per tile in the tree. */
   sessionsOf(tree: TreeNode): readonly SessionKey[];
+  /**
+   * The same tree without those sessions' tiles, or null when none are left.
+   *
+   * `removeAt` applied once per session, which is what App wires in. It is here
+   * for one job: a session dragged into workspace B has to stop being a tile in
+   * workspace A, and until 2026-09-13 this store answered that by throwing A's
+   * whole arrangement away — it could not edit a tree out without learning the
+   * node shape it deliberately does not know, and leaving A claiming the session
+   * would put the document in the state `load()` has to drop both entries to
+   * resolve. Injected, that third option exists: A loses the tile and keeps
+   * everything else, which is what it looks like on screen anyway.
+   */
+  without(tree: TreeNode, sessions: readonly SessionKey[]): TreeNode | null;
 }
 
 export interface WorkspacesStore {
@@ -126,12 +183,17 @@ export interface WorkspacesStore {
   /** Forget one workspace's arrangement (closed back to a single tile). */
   forget(id: string): void;
   /**
-   * Drop the arrangements of workspaces the server no longer lists.
+   * Note which workspaces the server still lists, and drop the arrangements of
+   * the ones it has not listed for {@link ARRANGEMENT_TTL_MS}.
    *
    * An EMPTY list is "I do not know yet", never "you have no workspaces" — the
    * same guard `store/drafts.ts` and `store/visits.ts` need. A poll in flight or
    * a briefly unreachable tmux-api would otherwise wipe every arrangement on the
    * device, and there is nowhere to recover them from.
+   *
+   * A SINGLE ANSWER IS NOT A DELETION either, which is the 2026-09-13 change:
+   * an id missing from this list is stamped-nothing and kept, so a document that
+   * is briefly wrong costs nothing. Only the calendar deletes.
    */
   prune(live: readonly string[]): void;
   /** Bumps on every change, so memos reading the three getters re-run. */
@@ -140,16 +202,57 @@ export interface WorkspacesStore {
   dispose(): void;
 }
 
-/** The whole document, or {} for absent, corrupt or foreign-shaped storage. */
-function readDocument(): Record<string, unknown> {
+/** One workspace's row on disk: the arrangement, and when the server last said
+ *  the workspace it belongs to still exists. */
+interface Entry {
+  tree: TreeNode;
+  seen: number;
+}
+
+/** A parsed object document, or {} for absent, corrupt or foreign-shaped
+ *  storage. Shared by both key versions, which differ only in what the VALUES
+ *  are. */
+function readObject(key: string): Record<string, unknown> {
   try {
-    const parsed: unknown = JSON.parse(lsGet(WORKSPACES_KEY) ?? "null");
+    const parsed: unknown = JSON.parse(lsGet(key) ?? "null");
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
       ? (parsed as Record<string, unknown>)
       : {};
   } catch {
     return {}; // private mode / corrupt entry
   }
+}
+
+/**
+ * Every stored row as `[id, tree-shaped value, seen]`, in document order.
+ *
+ * Reads v2, or adopts v1 when v2 is absent. NOTHING IS WRITTEN HERE. A read
+ * stays pure the way the rest of this store keeps it, so a tab that opens and
+ * touches no workspace writes no storage; the promotion happens on the first
+ * real write, which is where {@link persist} removes the old key. A device that
+ * never writes keeps answering out of v1 forever, which is the same answer.
+ *
+ * A ROW WITH NO USABLE STAMP IS STAMPED NOW, never dropped and never treated as
+ * ancient. The stamp only decides when an unlisted workspace ages out, so the
+ * safe direction for a truncated write or a foreign build is the one that keeps
+ * the arrangement and starts its clock again.
+ */
+function readRows(now: number): [string, unknown, number][] {
+  const v2 = readObject(WORKSPACES_KEY);
+  const rows: [string, unknown, number][] = [];
+  if (Object.keys(v2).length > 0) {
+    for (const [id, value] of Object.entries(v2)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const entry = value as { tree?: unknown; seen?: unknown };
+      const seen = typeof entry.seen === "number" && Number.isFinite(entry.seen) ? entry.seen : now;
+      rows.push([id, entry.tree, seen]);
+    }
+    return rows;
+  }
+  for (const [id, tree] of Object.entries(readObject(WORKSPACES_KEY_V1))) {
+    rows.push([id, tree, now]);
+  }
+  return rows;
 }
 
 /**
@@ -163,8 +266,8 @@ function readDocument(): Record<string, unknown> {
  */
 export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
   const [version, setVersion] = createSignal(0);
-  /** id → arrangement, in the order the entries were first seen. */
-  let doc = new Map<string, TreeNode>();
+  /** id → arrangement and its stamp, in the order the entries were first seen. */
+  let doc = new Map<string, Entry>();
   /** session key → id. Rebuilt with `doc`, and written to by nothing else. */
   let index = new Map<SessionKey, string>();
 
@@ -196,42 +299,76 @@ export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
   function load(): void {
     doc = new Map();
     index = new Map();
-    const kept = new Map<string, { tree: TreeNode; sessions: readonly SessionKey[] }>();
+    const kept = new Map<string, { entry: Entry; sessions: readonly SessionKey[] }>();
     /** how many surviving entries claim each session. */
     const claims = new Map<SessionKey, number>();
-    for (const [id, value] of Object.entries(readDocument())) {
+    for (const [id, value, seen] of readRows(Date.now())) {
       if (!id) continue; // an entry nothing could ever ask for
       const parsed = deps.parseTree(value);
       if (parsed === null) continue;
       const sessions = deps.sessionsOf(parsed);
       if (sessions.length === 0) continue;
       if (new Set(sessions).size !== sessions.length) continue;
-      kept.set(id, { tree: parsed, sessions });
+      kept.set(id, { entry: { tree: parsed, seen }, sessions });
       for (const session of sessions) claims.set(session, (claims.get(session) ?? 0) + 1);
     }
-    for (const [id, entry] of kept) {
-      if (entry.sessions.some((s) => (claims.get(s) ?? 0) > 1)) continue;
-      doc.set(id, entry.tree);
-      for (const session of entry.sessions) index.set(session, id);
+    for (const [id, held] of kept) {
+      if (held.sessions.some((s) => (claims.get(s) ?? 0) > 1)) continue;
+      doc.set(id, held.entry);
+      for (const session of held.sessions) index.set(session, id);
     }
   }
 
-  /** Mirror the in-memory document to storage. A refused write costs the
+  /** Mirror the in-memory document to storage, and retire the old key the first
+   *  time a migrated document is written back. A refused write costs the
    *  arrangement and nothing else, so `lsSet` swallowing it is the behaviour
    *  this store wants: the tab keeps rendering what it already has. */
   function persist(): void {
     lsSet(WORKSPACES_KEY, JSON.stringify(Object.fromEntries(doc)));
+    // AFTER the new key, never before: a write that fails on quota leaves v1
+    // standing rather than leaving the device with neither.
+    if (lsGet(WORKSPACES_KEY_V1) !== null) lsSet(WORKSPACES_KEY_V1, null);
   }
 
   /** Take one workspace out of both maps. True when there was one to take. */
   function drop(id: string): boolean {
     const held = doc.get(id);
     if (held === undefined) return false;
-    for (const session of deps.sessionsOf(held)) {
+    for (const session of deps.sessionsOf(held.tree)) {
       if (index.get(session) === id) index.delete(session);
     }
     doc.delete(id);
     return true;
+  }
+
+  /**
+   * Take named sessions out of a workspace that is about to lose them, keeping
+   * the rest of its arrangement.
+   *
+   * The entry KEEPS ITS PLACE in the document: `Map.set` on a key that is
+   * already there does not move it, so `ids()` still reads oldest first. That is
+   * the whole reason this does not go through `drop` and a fresh `set`.
+   *
+   * It falls back to dropping the workspace whole if the trim gives back a tree
+   * that still names one of the departing sessions. Nothing in the tree layer
+   * does that today; the cost of being wrong is a document claiming one session
+   * for two workspaces, which `load()` resolves by throwing BOTH entries away,
+   * so the cheap guard is worth its three lines.
+   */
+  function trim(id: string, moved: readonly SessionKey[]): void {
+    const held = doc.get(id);
+    if (held === undefined) return;
+    const left = deps.without(held.tree, moved);
+    const gone = new Set(moved);
+    if (left === null || deps.sessionsOf(left).some((s) => gone.has(s))) {
+      drop(id);
+      return;
+    }
+    for (const session of deps.sessionsOf(held.tree)) {
+      if (index.get(session) === id) index.delete(session);
+    }
+    doc.set(id, { tree: left, seen: held.seen });
+    for (const session of deps.sessionsOf(left)) index.set(session, id);
   }
 
   function forget(id: string): void {
@@ -243,21 +380,21 @@ export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
   /**
    * Write one arrangement, and make the document consistent around it.
    *
-   * A session the incoming tree claims is taken away from whichever workspace
-   * held it, and THAT WORKSPACE'S WHOLE ARRANGEMENT GOES WITH IT. Editing its
-   * tree to remove the tile is not an option here — surgery on a tree belongs to
-   * the tree layer, and this store cannot do it without learning the node shape
-   * it deliberately does not know. Leaving it alone is worse: the document would
-   * then claim one session for two workspaces, which is the state `load()` has
-   * to throw both entries away to resolve.
+   * A session the incoming tree claims is taken out of whichever workspace held
+   * it, AND ONLY THAT SESSION. The surgery is `deps.without`, injected for this
+   * one job, because a tree edit belongs to the tree layer and this store does
+   * not know the node shape. Leaving the other entry alone is not an option: the
+   * document would then claim one session for two workspaces, which is the state
+   * `load()` has to throw both entries away to resolve.
    *
-   * The normal path loses nothing either way round. Dragging a session from A
-   * into B is two writes, and whichever lands first the other repairs: write the
-   * reflowed A then B, and B finds no conflict; write B first and A is
-   * discarded, then writing A puts it straight back. What the drop actually
-   * covers is a crash between those two writes, where the device wakes up having
-   * forgotten how A was arranged and auto-arranges it — the designed fallback
-   * for a workspace this device has not seen.
+   * UNTIL 2026-09-13 THE WHOLE ARRANGEMENT WENT. The normal path lost nothing —
+   * dragging a session from A into B is two writes and whichever lands first the
+   * other repairs — so what it cost was the abnormal one: a crash between those
+   * writes, or another tab writing a B that claims a member of A, and A woke up
+   * auto-arranged. Viktor lost a laptop's arrangement that way (see
+   * ARRANGEMENT_TTL_MS above for the other half of the same afternoon), and the
+   * third option was there all along for the price of one more injected
+   * function.
    */
   function setTree(id: string, next: TreeNode): void {
     if (!id) return;
@@ -271,14 +408,25 @@ export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
     // what the grid pinning exists to prevent. Refused whole: this store cannot
     // edit the duplicate out, and half-applying it would be worse.
     if (new Set(sessions).size !== sessions.length) return;
+    // Grouped before anything is edited, because one write can take two tiles
+    // from the same workspace and trimming per session would read an index the
+    // previous trim has already moved.
+    const taken = new Map<string, SessionKey[]>();
     for (const session of sessions) {
       const holder = index.get(session);
-      if (holder !== undefined && holder !== id) drop(holder);
+      if (holder === undefined || holder === id) continue;
+      const list = taken.get(holder);
+      if (list) list.push(session);
+      else taken.set(holder, [session]);
     }
+    for (const [holder, moved] of taken) trim(holder, moved);
     // Clear what this workspace used to hold before claiming what it holds now,
     // so a session dragged out of it stops answering the reverse lookup.
+    const was = doc.get(id);
     drop(id);
-    doc.set(id, next);
+    // The stamp survives a rearrangement: it records when the SERVER last
+    // listed this workspace, and moving a divider is not news about that.
+    doc.set(id, { tree: next, seen: was?.seen ?? Date.now() });
     for (const session of sessions) index.set(session, id);
     persist();
     setVersion((v) => v + 1);
@@ -287,13 +435,25 @@ export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
   function prune(live: readonly string[]): void {
     if (live.length === 0) return;
     const keep = new Set(live);
-    let changed = false;
-    for (const id of [...doc.keys()]) {
-      if (!keep.has(id)) changed = drop(id) || changed;
+    const now = Date.now();
+    /** an entry went, so every reader has to look again. */
+    let dropped = false;
+    /** only a timestamp moved, which nothing can read — write, do not re-render. */
+    let stamped = false;
+    for (const [id, entry] of [...doc]) {
+      if (keep.has(id)) {
+        if (now - entry.seen < STAMP_EVERY_MS) continue;
+        entry.seen = now; // in place: the entry keeps its position in the document
+        stamped = true;
+        continue;
+      }
+      // Missing from THIS answer is not gone. Only a month of answers is.
+      if (now - entry.seen < ARRANGEMENT_TTL_MS) continue;
+      dropped = drop(id) || dropped;
     }
-    if (!changed) return;
+    if (!dropped && !stamped) return;
     persist();
-    setVersion((v) => v + 1);
+    if (dropped) setVersion((v) => v + 1);
   }
 
   /**
@@ -323,7 +483,7 @@ export function createWorkspacesStore(deps: WorkspacesDeps): WorkspacesStore {
     },
     treeFor: (id) => {
       version(); // track
-      return doc.get(id) ?? null;
+      return doc.get(id)?.tree ?? null;
     },
     workspaceOf: (sessionKey) => {
       version(); // track

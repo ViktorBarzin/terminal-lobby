@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { keyOf } from "../src/store/keepalive";
 import { leaf, leafKeys, split, type TreeNode } from "../src/store/workspace-tree";
 import {
+  ARRANGEMENT_TTL_MS,
   WORKSPACES_KEY,
+  WORKSPACES_KEY_V1,
   createWorkspacesStore,
   type WorkspacesDeps,
 } from "../src/store/workspaces";
@@ -57,15 +59,58 @@ function parseTree(value: unknown): TreeNode | null {
   return split(dir, kids, fracs);
 }
 
-const deps: WorkspacesDeps = { parseTree, sessionsOf: leafKeys };
+/**
+ * Taking named sessions out of a tree, which is the third thing the store asks
+ * of the tree layer. `removeAt` is the real one App wires in; this stands in
+ * for it the way `parseTree` above stands in for the validator, and it is
+ * written against `TreeNode` so it stops compiling if the node shape moves.
+ */
+function without(tree: TreeNode, sessions: readonly string[]): TreeNode | null {
+  const gone = new Set(sessions);
+  const walk = (node: TreeNode): TreeNode | null => {
+    if (node.kind === "leaf") return gone.has(node.key) ? null : node;
+    const kids: TreeNode[] = [];
+    const fracs: number[] = [];
+    node.children.forEach((child, i) => {
+      const kept = walk(child);
+      if (kept === null) return;
+      kids.push(kept);
+      fracs.push(node.fractions[i] ?? 1);
+    });
+    if (kids.length === 0) return null;
+    if (kids.length === 1) return kids[0]!;
+    const total = fracs.reduce((a, b) => a + b, 0);
+    return split(
+      node.dir,
+      kids,
+      fracs.map((f) => f / total),
+    );
+  };
+  return walk(tree);
+}
+
+const deps: WorkspacesDeps = { parseTree, sessionsOf: leafKeys, without };
 
 const store = () => createWorkspacesStore(deps);
 /** A session's identity as the slot layer knows it: owner and name. */
 const key = (name: string, owner?: string) => keyOf({ name, owner });
 /** The document as it actually sits in storage, for the shape assertions. */
 const raw = (): unknown => JSON.parse(localStorage.getItem(WORKSPACES_KEY) ?? "null");
+/** Just the trees, which is what most cases are about: the timestamp beside
+ *  each one only decides when an unlisted workspace ages out. */
+const trees = (): Record<string, unknown> => {
+  const doc = raw();
+  if (!doc || typeof doc !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(doc as Record<string, { tree?: unknown }>).map(([id, e]) => [id, e?.tree]),
+  );
+};
 /** Put a document in storage by hand — a foreign build, or a half-written write. */
 const seed = (doc: unknown): void => localStorage.setItem(WORKSPACES_KEY, JSON.stringify(doc));
+/** The same, given trees rather than entries: each is wrapped as this build
+ *  writes it, stamped as last listed now. */
+const seedTrees = (doc: Record<string, unknown>, seen = Date.now()): void =>
+  seed(Object.fromEntries(Object.entries(doc).map(([id, tree]) => [id, { tree, seen }])));
 
 /** jsdom's own descriptor, kept so the case that replaces the global with a
  *  throwing getter can hand it back. Same shape as test/storage.test.ts. */
@@ -98,13 +143,17 @@ describe("createWorkspacesStore — round trip", () => {
     reloaded.dispose();
   });
 
-  it("persists under tl:workspaces:v1 as workspace id to tree, and writes no second key", () => {
+  it("persists under tl:workspaces:v2 as workspace id to tree and stamp, and writes no second key", () => {
     const s = store();
     s.setTree("w1", tile("auth"));
     s.setTree("w2", row(tile("docs"), tile("logs")));
-    expect(raw()).toEqual({ w1: tile("auth"), w2: row(tile("docs"), tile("logs")) });
+    expect(raw()).toEqual({
+      w1: { tree: tile("auth"), seen: expect.any(Number) },
+      w2: { tree: row(tile("docs"), tile("logs")), seen: expect.any(Number) },
+    });
     // The reverse lookup is derived at load, never stored beside the trees,
-    // because a second key can disagree with them (ADR-0027).
+    // because a second key can disagree with them (ADR-0027). Nor is the old
+    // key left behind: this device has nothing to say under v1 any more.
     expect(Object.keys(localStorage)).toEqual([WORKSPACES_KEY]);
     s.dispose();
   });
@@ -152,7 +201,7 @@ describe("createWorkspacesStore — round trip", () => {
     s.forget("w1");
     expect(s.treeFor("w1")).toBeNull();
     expect(s.treeFor("w2")).toEqual(row(tile("docs"), tile("logs")));
-    expect(raw()).toEqual({ w2: row(tile("docs"), tile("logs")) });
+    expect(trees()).toEqual({ w2: row(tile("docs"), tile("logs")) });
     s.dispose();
   });
 });
@@ -179,7 +228,7 @@ describe("createWorkspacesStore — a corrupt document is dropped, never thrown"
   });
 
   it("drops the entry the tree layer refuses and keeps its siblings", () => {
-    seed({
+    seedTrees({
       w1: row(tile("auth"), tile("deploy")),
       broken: { kind: "split", dir: "diagonal", children: [], fractions: [] },
       w2: tile("docs"),
@@ -197,14 +246,14 @@ describe("createWorkspacesStore — a corrupt document is dropped, never thrown"
     ["a bare string", "column"],
     ["an array", []],
   ])("drops an entry that is %s rather than a tree", (_label, entry) => {
-    seed({ w1: tile("auth"), bad: entry });
+    seedTrees({ w1: tile("auth"), bad: entry });
     const s = store();
     expect(s.ids()).toEqual(["w1"]);
     s.dispose();
   });
 
   it("drops a half-written split whose fractions do not match its children", () => {
-    seed({
+    seedTrees({
       w1: { kind: "split", dir: "row", children: [tile("a"), tile("b")], fractions: [1] },
       w2: row(tile("c"), tile("d")),
     });
@@ -214,7 +263,7 @@ describe("createWorkspacesStore — a corrupt document is dropped, never thrown"
   });
 
   it("drops an entry whose id is empty, because nothing could ever ask for it", () => {
-    seed({ "": tile("auth"), w1: tile("docs") });
+    seedTrees({ "": tile("auth"), w1: tile("docs") });
     const s = store();
     expect(s.ids()).toEqual(["w1"]);
     expect(s.workspaceOf(key("auth"))).toBeNull();
@@ -225,16 +274,16 @@ describe("createWorkspacesStore — a corrupt document is dropped, never thrown"
     // A read stays pure, the way store/drafts.ts keeps it. A boot that rewrote
     // every document would put a storage write on every tab open, including the
     // tabs that have no workspaces at all.
-    seed({ w1: 7 });
+    seed({ w1: { tree: 7, seen: 1 } });
     store().dispose();
-    expect(raw()).toEqual({ w1: 7 });
+    expect(raw()).toEqual({ w1: { tree: 7, seen: 1 } });
   });
 
   it("leaves the dropped entries behind on the next write", () => {
-    seed({ w1: tile("auth"), broken: { kind: "split", dir: "diagonal" } });
+    seedTrees({ w1: tile("auth"), broken: { kind: "split", dir: "diagonal" } });
     const s = store();
     s.setTree("w2", tile("docs"));
-    expect(raw()).toEqual({ w1: tile("auth"), w2: tile("docs") });
+    expect(trees()).toEqual({ w1: tile("auth"), w2: tile("docs") });
     s.dispose();
   });
 });
@@ -306,7 +355,7 @@ describe("createWorkspacesStore — the session-to-workspace reverse lookup", ()
   });
 
   it("is derived at load, so a fresh store answers from the document alone", () => {
-    seed({ w1: row(tile("auth"), tile("deploy")), w2: tile("docs") });
+    seedTrees({ w1: row(tile("auth"), tile("deploy")), w2: tile("docs") });
     const s = store();
     expect(s.workspaceOf(key("deploy"))).toBe("w1");
     expect(s.workspaceOf(key("docs"))).toBe("w2");
@@ -426,18 +475,48 @@ describe("createWorkspacesStore — one session, at most one workspace", () => {
    * session is not something the DOM can express — and they would contend for
    * its Grid continuously if it were.
    */
-  it("gives the session to the newer write and drops the stale arrangement", () => {
+  it("gives the session to the newer write and takes the tile out of the older one", () => {
     const s = store();
-    s.setTree("w1", row(tile("auth"), tile("deploy")));
+    s.setTree("w1", row(tile("auth"), tile("deploy"), tile("logs")));
     s.setTree("w2", row(tile("docs"), tile("deploy"))); // deploy dragged in, w1 not yet reflowed
 
     expect(s.workspaceOf(key("deploy"))).toBe("w2");
-    // w1's tree still named deploy, so it described an arrangement this device
-    // can no longer render. Geometry is regenerable from the server's member
-    // order; an ambiguous lookup would send a sidebar click to the wrong group.
+    // w1 keeps everything the move did not take. Before 2026-09-13 the whole
+    // arrangement went here, which is how a briefly-wrong document cost Viktor
+    // a laptop's panes — see the TTL describe below for the other half.
+    expect(s.treeFor("w1")).toEqual(row(tile("auth"), tile("logs")));
+    expect(s.workspaceOf(key("auth"))).toBe("w1");
+    expect(s.ids()).toEqual(["w1", "w2"]);
+    s.dispose();
+  });
+
+  it("keeps the emptied workspace out of the document when the move took its last tile", () => {
+    const s = store();
+    s.setTree("w1", tile("deploy"));
+    s.setTree("w2", row(tile("docs"), tile("deploy")));
     expect(s.treeFor("w1")).toBeNull();
-    expect(s.workspaceOf(key("auth"))).toBeNull();
     expect(s.ids()).toEqual(["w2"]);
+    s.dispose();
+  });
+
+  it("takes two tiles from one workspace in a single write", () => {
+    const s = store();
+    s.setTree("w1", row(tile("auth"), tile("deploy"), tile("logs")));
+    s.setTree("w2", row(tile("docs"), tile("deploy"), tile("logs")));
+    expect(s.treeFor("w1")).toEqual(tile("auth"));
+    expect(s.workspaceOf(key("logs"))).toBe("w2");
+    s.dispose();
+  });
+
+  // Trimming edits the entry in place rather than removing and re-adding it, so
+  // `ids()` still reads oldest first — the order the rest of the app shows
+  // workspaces in.
+  it("leaves the trimmed workspace where it was in the document", () => {
+    const s = store();
+    s.setTree("w1", row(tile("auth"), tile("deploy")));
+    s.setTree("w2", tile("docs"));
+    s.setTree("w3", row(tile("build"), tile("deploy")));
+    expect(s.ids()).toEqual(["w1", "w2", "w3"]);
     s.dispose();
   });
 
@@ -480,7 +559,7 @@ describe("createWorkspacesStore — one session, at most one workspace", () => {
     // Order-independent on purpose: a half-written document has no newer entry
     // to prefer, and answering with either one would be a coin toss that a
     // reload could decide the other way.
-    seed({
+    seedTrees({
       w1: row(tile("auth"), tile("deploy")),
       w2: tile("deploy"),
       w3: tile("docs"),
@@ -494,7 +573,7 @@ describe("createWorkspacesStore — one session, at most one workspace", () => {
   });
 
   it("drops a stored entry that names one session twice", () => {
-    seed({ w1: row(tile("auth"), tile("auth")), w2: tile("docs") });
+    seedTrees({ w1: row(tile("auth"), tile("auth")), w2: tile("docs") });
     const s = store();
     expect(s.ids()).toEqual(["w2"]);
     s.dispose();
@@ -542,6 +621,7 @@ describe("createWorkspacesStore — an arrangement holding no session is not an 
   const blankDeps: WorkspacesDeps = {
     parseTree: deps.parseTree,
     sessionsOf: (t) => (t.kind === "leaf" && t.key === key("blank") ? [] : deps.sessionsOf(t)),
+    without: deps.without,
   };
 
   it("removes the entry when a write holds no sessions at all", () => {
@@ -555,22 +635,99 @@ describe("createWorkspacesStore — an arrangement holding no session is not an 
   });
 
   it("drops a stored entry that holds no sessions", () => {
-    seed({ w1: tile("blank"), w2: tile("docs") });
+    seedTrees({ w1: tile("blank"), w2: tile("docs") });
     const s = createWorkspacesStore(blankDeps);
     expect(s.ids()).toEqual(["w2"]);
     s.dispose();
   });
 });
 
-describe("createWorkspacesStore — pruning to the workspaces the server still lists", () => {
-  it("drops geometry for a workspace that no longer exists", () => {
+/**
+ * WHAT THIS DEVICE ARRANGED STAYS ARRANGED, even while the server is not
+ * listing the workspace.
+ *
+ * Viktor, 2026-09-13: *"something happened and my panes got lost on my laptop
+ * ... i want splits to persist for the same device"*. What happened was that
+ * the membership document briefly did not list his workspace — a verification
+ * run on this box replaced it for about five minutes — and the eager prune this
+ * replaces deleted the arrangement from the laptop the moment it read that
+ * document. The workspace came back; the arrangement could not, because the
+ * server never had it.
+ *
+ * So an id the server stops listing is now treated as ABSENT rather than as
+ * DELETED, and absence is only conclusive after {@link ARRANGEMENT_TTL_MS}.
+ * The reason prune exists at all is still served: the document cannot grow
+ * without bound, it just stops throwing away work to save a few hundred bytes
+ * the same hour.
+ */
+describe("createWorkspacesStore — an arrangement outlives a workspace going missing", () => {
+  /** The store reads Date.now() and nothing else, so one spy is the whole clock. */
+  let now = 1_700_000_000_000;
+  beforeEach(() => {
+    now = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+  });
+  const after = (ms: number) => {
+    now += ms;
+  };
+
+  it("keeps an arrangement the server's answer did not mention", () => {
+    const s = store();
+    s.setTree("w1", row(tile("auth"), tile("deploy")));
+    s.prune(["w2"]);
+    expect(s.treeFor("w1")).toEqual(row(tile("auth"), tile("deploy")));
+    expect(s.workspaceOf(key("auth"))).toBe("w1");
+    s.dispose();
+  });
+
+  // The case that cost Viktor his panes: gone from one answer, back in the next.
+  it("hands it back unchanged when the workspace reappears", () => {
+    const s = store();
+    const arranged = row(column(tile("auth"), tile("deploy")), tile("docs"));
+    s.setTree("w1", arranged);
+    s.prune(["w2"]);
+    after(4 * 60_000);
+    s.prune(["w1", "w2"]);
+    expect(s.treeFor("w1")).toEqual(arranged);
+    s.dispose();
+  });
+
+  it("survives a reload while the workspace is still missing", () => {
+    const first = store();
+    first.setTree("w1", row(tile("auth"), tile("deploy")));
+    first.prune(["w2"]);
+    first.dispose();
+    const second = store();
+    expect(second.treeFor("w1")).toEqual(row(tile("auth"), tile("deploy")));
+    second.dispose();
+  });
+
+  it("drops it once it has gone unlisted for the whole window", () => {
     const s = store();
     s.setTree("w1", row(tile("auth"), tile("deploy")));
     s.setTree("w2", tile("docs"));
+    after(ARRANGEMENT_TTL_MS + 1);
     s.prune(["w2"]);
     expect(s.ids()).toEqual(["w2"]);
     expect(s.workspaceOf(key("auth"))).toBeNull();
-    expect(raw()).toEqual({ w2: tile("docs") });
+    expect(trees()).toEqual({ w2: tile("docs") });
+    s.dispose();
+  });
+
+  // The clock runs from the last time the SERVER listed it, not from the last
+  // time this device wrote it — otherwise a workspace nobody rearranges for a
+  // month would age out while it is on screen.
+  it("counts from the last answer that listed it, not from the last write", () => {
+    const s = store();
+    s.setTree("w1", row(tile("auth"), tile("deploy")));
+    for (let i = 0; i < 40; i++) {
+      after(ARRANGEMENT_TTL_MS / 4);
+      s.prune(["w1"]);
+    }
+    expect(s.treeFor("w1")).toEqual(row(tile("auth"), tile("deploy")));
+    after(ARRANGEMENT_TTL_MS + 1);
+    s.prune(["w2"]);
+    expect(s.treeFor("w1")).toBeNull();
     s.dispose();
   });
 
@@ -581,17 +738,94 @@ describe("createWorkspacesStore — pruning to the workspaces the server still l
     // exactly that happened to the visit store on every app open.
     const s = store();
     s.setTree("w1", row(tile("auth"), tile("deploy")));
+    after(ARRANGEMENT_TTL_MS + 1);
     s.prune([]);
     expect(s.ids()).toEqual(["w1"]);
     s.dispose();
   });
 
-  it("writes nothing when there was nothing to prune", () => {
+  // The effect behind this runs on every change to the membership document, so
+  // a stamp that wrote and bumped every time would put a storage write and a
+  // re-render behind every poll.
+  it("does not bump version for a stamp nobody can read", () => {
     const s = store();
     s.setTree("w1", tile("auth"));
     const before = s.version();
-    s.prune(["w1", "w2"]);
+    after(2 * 60 * 60_000);
+    s.prune(["w1"]);
+    s.prune(["w1"]);
     expect(s.version()).toBe(before);
+    s.dispose();
+  });
+
+  it("writes nothing at all when the stamp is still fresh", () => {
+    const s = store();
+    s.setTree("w1", tile("auth"));
+    const write = vi.spyOn(Storage.prototype, "setItem");
+    after(60_000);
+    s.prune(["w1"]);
+    expect(write).not.toHaveBeenCalled();
+    s.dispose();
+  });
+});
+
+/**
+ * The upgrade that carries this change must not do the thing the change exists
+ * to prevent. `tl:workspaces:v1` held the tree alone; v2 holds it beside the
+ * timestamp, so the key suffix moves — and this store's own docblock says a
+ * bare suffix bump abandons every device's arrangements. That is the cost this
+ * migration is here to refuse to pay.
+ */
+describe("createWorkspacesStore — adopting an older build's document", () => {
+  it("reads arrangements written under the v1 key", () => {
+    localStorage.setItem(
+      WORKSPACES_KEY_V1,
+      JSON.stringify({ w1: row(tile("auth"), tile("deploy")), w2: tile("docs") }),
+    );
+    const s = store();
+    expect(s.ids()).toEqual(["w1", "w2"]);
+    expect(s.treeFor("w1")).toEqual(row(tile("auth"), tile("deploy")));
+    expect(s.workspaceOf(key("docs"))).toBe("w2");
+    s.dispose();
+  });
+
+  it("leaves both keys alone until something is written", () => {
+    // A read stays pure here as it does everywhere else in this store, so a tab
+    // that opens and touches no workspace writes no storage at all.
+    const v1 = JSON.stringify({ w1: tile("auth") });
+    localStorage.setItem(WORKSPACES_KEY_V1, v1);
+    store().dispose();
+    expect(localStorage.getItem(WORKSPACES_KEY_V1)).toBe(v1);
+    expect(localStorage.getItem(WORKSPACES_KEY)).toBeNull();
+  });
+
+  it("promotes to v2 on the first write and takes the old key away", () => {
+    localStorage.setItem(WORKSPACES_KEY_V1, JSON.stringify({ w1: tile("auth") }));
+    const s = store();
+    s.setTree("w2", tile("docs"));
+    expect(trees()).toEqual({ w1: tile("auth"), w2: tile("docs") });
+    expect(localStorage.getItem(WORKSPACES_KEY_V1)).toBeNull();
+    s.dispose();
+  });
+
+  it("ignores v1 once v2 exists, so a stale old key cannot resurrect anything", () => {
+    localStorage.setItem(WORKSPACES_KEY_V1, JSON.stringify({ old: tile("gone") }));
+    seedTrees({ w1: tile("auth") });
+    const s = store();
+    expect(s.ids()).toEqual(["w1"]);
+    s.dispose();
+  });
+
+  it("gives a migrated arrangement the full window before it can age out", () => {
+    // Stamping them as last listed at the moment of the upgrade is the only
+    // honest answer: v1 recorded no dates, so the alternative is inventing one
+    // old enough to delete what it just adopted.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    localStorage.setItem(WORKSPACES_KEY_V1, JSON.stringify({ w1: tile("auth") }));
+    const s = store();
+    clock.mockReturnValue(1_700_000_000_000 + ARRANGEMENT_TTL_MS - 1);
+    s.prune(["w2"]);
+    expect(s.treeFor("w1")).toEqual(tile("auth"));
     s.dispose();
   });
 });
@@ -617,10 +851,13 @@ describe("createWorkspacesStore — version", () => {
 describe("createWorkspacesStore — the other tab on this device", () => {
   /** A storage event carries a second tab's write. jsdom fires none of its own,
    *  and neither does a real browser in the tab that did the writing. */
-  const fromOtherTab = (doc: unknown): void => {
-    seed(doc);
+  const fromOtherTab = (doc: Record<string, unknown>): void => {
+    seedTrees(doc);
     window.dispatchEvent(
-      new StorageEvent("storage", { key: WORKSPACES_KEY, newValue: JSON.stringify(doc) }),
+      new StorageEvent("storage", {
+        key: WORKSPACES_KEY,
+        newValue: localStorage.getItem(WORKSPACES_KEY),
+      }),
     );
   };
 

@@ -106,7 +106,7 @@ places.
 | state | store | scope |
 |---|---|---|
 | workspace id, ordered members | tmux-api, beside `layout/<user>.json` | per user, all devices |
-| the split tree and tile sizes | the browser, one `tl:workspaces:v1` document | per device |
+| the split tree and tile sizes | the browser, one `tl:workspaces:v2` document | per device |
 
 ### Why membership roams
 

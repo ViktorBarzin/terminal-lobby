@@ -19,7 +19,7 @@
  *     that re-PUT a captured document would erase a workspace somebody made on
  *     their phone. {@link WorkspaceUndoPorts.apply} is handed ONE workspace's
  *     new state and folds it into the document as it is right now.
- *   - The split tree is this browser's alone, under `tl:workspaces:v1`, with no
+ *   - The split tree is this browser's alone, under `tl:workspaces:v2`, with no
  *     other writer than another tab on the same device — which re-reads on the
  *     `storage` event (store/workspaces.ts). Restoring it wholesale is the same
  *     move `undo.layout.ts`'s orderMode entry makes for a frozen layout, and is

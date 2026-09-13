@@ -198,7 +198,7 @@ function renormalize(fracs: readonly number[]): number[] {
 /**
  * The fractions to use for a split with `n` children. An array of the wrong
  * length is repaired to an even share rather than trusted: it can only arrive
- * from a hand-built node or a `tl:workspaces:v1` document written to an older
+ * from a hand-built node or a `tl:workspaces:v2` document written to an older
  * shape, and guessing which child each number belonged to would be worse than
  * spreading them evenly.
  */
