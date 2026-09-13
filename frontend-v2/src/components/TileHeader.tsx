@@ -1,5 +1,6 @@
-import { Show, type Accessor, type Component } from "solid-js";
-import { sessionLabel, type Session } from "../types/lobby";
+import { createSignal, Show, type Accessor, type Component } from "solid-js";
+import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
+import { MAX_TITLE_RUNES } from "../lib/title";
 import { StateDot } from "./StateDot";
 
 /**
@@ -37,9 +38,10 @@ export type TileSession = Pick<Session, "name" | "title" | "pane_title" | "state
  * seconds a member is dying (design, "Death and restore") the strip dims,
  * strikes its title through, and swaps the close control for the `↺` arrow with
  * the seconds beside it — the same swap a sidebar card makes when it gives up
- * its `⋯` button. It is still four items and still 24px: no row is added, the
- * header's height does not change, so no tile's rect moves, no terminal refits
- * and no `claimGrid` fires for a colour.
+ * its `⋯` button. It is four items in a 30px strip — 24px until 2026-09-13,
+ * when Viktor asked for a title he could actually read. A focus change still
+ * moves nothing: the height is the same whichever tile is focused, so no tile's
+ * rect moves, no terminal refits and no `claimGrid` fires for a colour.
  *
  * TWO OF THE FOUR ARE BORROWED, NOT BUILT. The title comes from
  * `sessionLabel`, the ladder every user-facing surface in the app goes through,
@@ -92,6 +94,24 @@ export const TileHeader: Component<{
    * is the other one.
    */
   onClose: () => void;
+  /**
+   * Give this session a new title, from the box a double click opens on the
+   * strip.
+   *
+   * TITLE, not name: a session's tmux name is an opaque id minted at creation
+   * that never moves again (ADR-0019), and the title is the only thing anyone
+   * reads. The server follows one into the other on its own, which is what
+   * keeps `tmux ls` readable, and nothing here has to know.
+   *
+   * The same call the sidebar card's own double-click makes, deliberately: two
+   * ways to rename one session that disagreed about what an empty box means
+   * would be worse than one. Empty clears the title and hands the session back
+   * to whatever summary Claude writes next.
+   *
+   * Absent on a session that is not the caller's to retitle, which is what
+   * hides the gesture rather than letting it fail at the server.
+   */
+  onRename?: (title: string) => void;
   /**
    * TRUE while this session is inside its kill window: the eight seconds
    * (store/lobby.ts GRACE_MS) in which the DELETE has not gone out and the
@@ -154,12 +174,62 @@ export const TileHeader: Component<{
    * Hover text, the same pair a sidebar card offers. The tmux name is otherwise
    * invisible now that every surface shows titles, and it is what `tmux ls` and
    * the status bar print — so it stays reachable for anyone mapping a tile back
-   * to a shell. It doubles as the way to read a title the 24px strip clipped.
+   * to a shell. It doubles as the way to read a title the strip clipped.
    */
   const titleAttr = () =>
     props.session.pane_title
       ? `${props.session.name} · ${props.session.pane_title}`
       : props.session.name;
+
+  // ---- renaming -------------------------------------------------------------
+  // A double click on the title opens a box over it. The SIDEBAR CARD'S
+  // GESTURE, moved onto the surface a person is actually looking at while a
+  // workspace is up (SessionCard `beginRename`): same double click, same Enter,
+  // same Escape, same blur that abandons, same "empty clears the title".
+  let inputEl: HTMLInputElement | undefined;
+  const [editing, setEditing] = createSignal(false);
+  /**
+   * What the box opened with, held rather than read live.
+   *
+   * The card pauses the store's poll for the length of an edit (`store.hold`)
+   * so the row cannot be rebuilt under the typing. A header has no store, and
+   * does not need one: capturing the draft is what stops a poll landing a new
+   * title in the middle of the box. Solid keeps `value` bound, so reading
+   * `sessionTitleDraft(props.session)` there would overwrite what a person had
+   * half-typed the moment Claude retitled the session they were renaming.
+   *
+   * It is also the value a commit compares against, which is what makes
+   * "opened it, changed nothing, pressed Enter" send no request.
+   */
+  const [draft, setDraft] = createSignal("");
+
+  const renameable = () => !!props.onRename && !props.killing;
+
+  const beginRename = (e?: Event) => {
+    // Not a title on a session that is leaving, and not one on a session that
+    // is somebody else's — the card refuses on the same two grounds.
+    if (!renameable()) return;
+    e?.stopPropagation();
+    setDraft(sessionTitleDraft(props.session));
+    setEditing(true);
+    // Two microtasks, as the card does it: the input does not exist until the
+    // `Show` has re-run, and selecting before focus leaves nothing selected.
+    queueMicrotask(() => inputEl?.focus());
+    queueMicrotask(() => inputEl?.select());
+  };
+
+  const endRename = () => setEditing(false);
+
+  const commitRename = () => {
+    const next = inputEl?.value ?? "";
+    const was = draft();
+    endRename();
+    // The TITLE, not the name. The tmux name is an opaque id minted at creation
+    // (ADR-0019) and the server moves it to follow a title on its own
+    // (ADR-0022); the poll brings the result back. An empty one clears the
+    // title and hands the session to whatever summary lands next.
+    if (next !== was) props.onRename?.(next);
+  };
 
   /**
    * Whole seconds until this kill lands, or 0 when there is nothing to count.
@@ -204,9 +274,87 @@ export const TileHeader: Component<{
           mark a session as unread on the very screen that is reading it. */}
       <StateDot state={props.session.state} bg={props.session.bg} />
 
-      <span class="tl-tile-title" title={titleAttr()}>
-        {label()}
-      </span>
+      {/* The title, or the box that is replacing it. The box takes the span's
+          own place in the flex row (src/tiles.css) so the strip does not jump
+          under the cursor that opened it, and every other item on the strip
+          stays exactly where it was. */}
+      <Show
+        when={!editing()}
+        fallback={
+          <input
+            ref={inputEl}
+            class="tl-tile-rename"
+            value={draft()}
+            // The cap Go enforces on the way in (lib/title.ts, mirroring
+            // slug.CleanTitle) — refused at the keyboard rather than truncated
+            // after the fact.
+            maxlength={MAX_TITLE_RUNES}
+            aria-label={`Rename ${label()}`}
+            // A press in the box is the box's. The slot's capture-phase
+            // pointerdown (App.tsx) declines it too, which is what stops a drag
+            // across the text from lifting the tile; this stops the rest.
+            onClick={(e) => e.stopPropagation()}
+            onDblClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              // The app's own bindings live on the document: Escape closes a
+              // workspace and single letters reach a terminal, so a title with
+              // an "n" in it must not open a new session.
+              e.stopPropagation();
+              if (e.key === "Enter") commitRename();
+              else if (e.key === "Escape") endRename();
+            }}
+            // Clicking away abandons rather than commits, which is the card's
+            // answer and the safer one: a half-typed title should not become a
+            // session's name because somebody looked at another tile.
+            onBlur={endRename}
+          />
+        }
+      >
+        {/* TWO TITLES, and which one is drawn is whether this session is the
+            reader's to retitle. They look identical — same class, same clamp,
+            same hover text — and differ in what they are: one is a control that
+            opens the box, the other is a label.
+
+            Written as a branch rather than as one span with conditional
+            attributes because a `role="button"` that is sometimes a lie is
+            worse than no role at all: a screen reader would announce a foreign
+            tile's title as a button, and pressing it would do nothing. */}
+        <Show
+          when={renameable()}
+          fallback={
+            <span class="tl-tile-title" title={titleAttr()}>
+              {label()}
+            </span>
+          }
+        >
+          <span
+            class="tl-tile-title"
+            title={titleAttr()}
+            // The only thing advertising the gesture is the cursor, so the
+            // stylesheet gets told which titles actually have it.
+            data-rename=""
+            // A KEYBOARD PATH, not decoration to satisfy a lint rule. A double
+            // click is the gesture Viktor asked for and it is the only one this
+            // strip had: with no tab stop and no key, a rename from a workspace
+            // was mouse-only. `role="button"` is what the click-to-edit pattern
+            // resolves to — there is no ARIA role for an editable label — and
+            // it is the same pair a sidebar card's row wears.
+            role="button"
+            tabindex={0}
+            aria-label={`Rename ${label()}`}
+            onDblClick={beginRename}
+            onKeyDown={(e) => {
+              // F2 as well as Enter: it is the rename key in every file
+              // manager and in VS Code, and it costs one comparison.
+              if (e.key !== "Enter" && e.key !== "F2") return;
+              e.preventDefault();
+              beginRename(e);
+            }}
+          >
+            {label()}
+          </span>
+        </Show>
+      </Show>
 
       {/* Shown whenever the tile is read-only, which is one rule rather than
           the card's two: a sidebar row suppresses this eye on a foreign session

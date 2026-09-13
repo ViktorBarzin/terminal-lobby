@@ -2534,6 +2534,28 @@ export const App: Component = () => {
                   // slot is a speculative attach rather than a session somebody
                   // opened. It goes the moment a click promotes it.
                   data-preload={preloading() ? "" : undefined}
+                  // WHAT EACH SESSION IS DOING, said around the whole tile.
+                  //
+                  // Viktor, 2026-09-13: *"let's also color code the border. so
+                  // it's clear the status of each session"*. The 8px dot in the
+                  // strip has carried this since the sidebar was the only
+                  // surface, and a dot is a fine answer when the eye is already
+                  // on a list of rows. A workspace is the other case: four live
+                  // terminals, the eye somewhere in the middle of one of them,
+                  // and the question is which of the other three has finished
+                  // or is waiting on an answer. src/tiles.css rings the tile in
+                  // the same `--state-*` token the dot is filled with.
+                  //
+                  // Only on a tiled slot, and the selector says so too: a lone
+                  // session is the whole screen, its state is on the session
+                  // bar above it, and a ring around the viewport would be an
+                  // outline nothing is being distinguished from.
+                  //
+                  // An empty state is a session with no live Claude, which
+                  // rings in the neutral border colour rather than dropping the
+                  // ring: four rectangles of terminal need an edge whatever is
+                  // or is not running in them.
+                  data-state={rect() ? (tileSession()?.state ?? "") : undefined}
                   // CLICK A TILE TO FOCUS IT. Focus-follows-mouse was rejected
                   // in the design because a stray mouse movement sends the next
                   // keystrokes to a different agent, and in a terminal that
@@ -2571,7 +2593,11 @@ export const App: Component = () => {
                       // acts on the tile it is drawn on, so it does not need
                       // that tile focused first, and the drag below already
                       // declined a press on a button for its own reason.
-                      if (on?.closest(".tl-tile-header") && on.closest("button")) return;
+                      // The rename box is in that list for a second reason:
+                      // dragging across the text to select it would otherwise
+                      // cross the 4px slop and LIFT THE TILE out of its split,
+                      // mid-rename.
+                      if (on?.closest(".tl-tile-header") && on.closest("button, input")) return;
                       if (!focused()) store.select(k.name, k.owner);
                       // A TILE IS DRAGGED BY ITS HEADER, which is also the strip
                       // that names it, so the press that focuses a tile and the
@@ -2601,6 +2627,20 @@ export const App: Component = () => {
                       focused={focused()}
                       watching={resolvedWatchFor(k.name) === true}
                       onClose={() => closeTile(k.key)}
+                      // A double click on the strip retitles the session, the
+                      // sidebar card's own gesture on the surface a person is
+                      // actually looking at while a workspace is up.
+                      //
+                      // ABSENT ON A FOREIGN TILE, which is what hides the
+                      // gesture rather than letting it fail at the server: a
+                      // key carries an owner only when that owner is somebody
+                      // else (`liveKeys`), so the presence of `k.owner` IS the
+                      // question "is this mine to retitle". `store.rename` puts
+                      // the same PUT out that the card does, and the poll
+                      // brings the new title back to both surfaces at once.
+                      onRename={
+                        k.owner ? undefined : (title) => void store.rename(k.name, title)
+                      }
                       // THE KILL WINDOW, drawn where the person is standing.
                       // Killing a tiled session dims the sidebar card and
                       // counts it down; until these four props were passed the
@@ -2766,6 +2806,41 @@ export const App: Component = () => {
                       onPreviewState={(st) => focused() && setPreviewState(st)}
                     />
                   </TileFocusContext.Provider>
+                  {/* The ring, and it is LAST for the reason it exists as an
+                      element at all.
+
+                      An `outline` on the slot was the first shape of this, and
+                      it was measured on the branch build: the ring painted
+                      along the header strip and vanished the moment it crossed
+                      the terminal. A negative `outline-offset` puts the ring
+                      inside the padding box, and a child that paints a
+                      background there — the terminal does, over its whole
+                      rect — paints after its parent's outline and covers it.
+                      Sampling the screenshot at the tile's left edge read the
+                      state colour at the header's y and the terminal's black
+                      12px lower.
+
+                      A later sibling paints over that, and being absolute it
+                      takes no space from the terminal underneath, which is what
+                      a border on the slot would have done: a tile IS the size
+                      of its tmux window (`claimGrid`), so 2px of border is 4
+                      columns and 4 rows out of every session in the workspace.
+                      `aria-hidden`, because the strip's dot already says this
+                      state in words. */}
+                  <Show when={rect()}>
+                    <span
+                      class="tl-tile-ring"
+                      aria-hidden="true"
+                      // INLINE, like the skeleton's own (WorkspaceCanvas). This
+                      // is a sheet the size of a tile sitting over a live
+                      // terminal; a stylesheet that failed to load would leave
+                      // it swallowing every click meant for that terminal, so
+                      // the one declaration that must never go missing is not
+                      // in a stylesheet. tiles.css says the same at its head,
+                      // and test/workspace-canvas.test.tsx holds the file to it.
+                      style={{ "pointer-events": "none" }}
+                    />
+                  </Show>
                 </div>
               );
             }}

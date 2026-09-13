@@ -38,6 +38,7 @@ import { render, fireEvent } from "@solidjs/testing-library";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { TileHeader, type TileSession } from "../src/components/TileHeader";
+import { isEditingTarget } from "../src/keybindings/editing";
 
 /** A minted name: 12 characters of Crockford base32 (src/lib/session-id.ts). */
 const MINTED = "k3f9m2zq7abc";
@@ -54,6 +55,7 @@ interface Mounted {
   close: HTMLButtonElement;
   onClose: ReturnType<typeof vi.fn>;
   onUndoKill: ReturnType<typeof vi.fn>;
+  onRename: ReturnType<typeof vi.fn>;
 }
 
 function mount(
@@ -67,16 +69,23 @@ function mount(
     until?: number;
     /** The sidebar's 1Hz tick, so a case can step the countdown by hand. */
     tick?: Accessor<number>;
+    /**
+     * FALSE for a session that is not this reader's to retitle, which is the
+     * shape App.tsx passes for a foreign tile: the handler is simply absent.
+     */
+    rename?: boolean;
   } = {},
 ): Mounted {
   const onClose = vi.fn();
   const onUndoKill = vi.fn();
+  const onRename = vi.fn();
   const { container } = render(() => (
     <TileHeader
       session={session(o.session)}
       focused={o.focused}
       watching={o.watching}
       onClose={onClose}
+      onRename={o.rename === false ? undefined : onRename}
       killing={o.killing}
       killingUntil={o.until}
       tick={o.tick}
@@ -91,6 +100,7 @@ function mount(
     close: container.querySelector<HTMLButtonElement>(".tl-tile-close")!,
     onClose,
     onUndoKill,
+    onRename,
   };
 }
 
@@ -214,6 +224,207 @@ describe("the close control", () => {
     const m = mount();
     fireEvent.click(m.header);
     expect(m.onClose).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Renaming a session from the tile it is drawn in.
+ *
+ * Viktor, 2026-09-13: *"let's allow renaming of the sessions - i should be able
+ * to double click on the pane and that should tirgger a text box that will
+ * allow me to change the name which will rename the session in there"*.
+ *
+ * THE SIDEBAR CARD'S GESTURE, ON THE OTHER SURFACE THAT NAMES A SESSION. The
+ * card has had this since long before workspaces existed (SessionCard
+ * `beginRename`), and a workspace is exactly the state where the sidebar is the
+ * thing you are NOT looking at: four terminals are, and each wears the only
+ * label it has. So the pair is asserted the way the kill window is asserted
+ * further down, as sameness. Same double click, same Enter to commit, same
+ * Escape to abandon, same blur that abandons rather than commits, same "empty
+ * clears the title".
+ *
+ * It reports the press rather than doing the rename, like every other control
+ * on this strip. What `onRename` reaches is `store.rename(name, title)`, and it
+ * is the TITLE that changes: the tmux name is an opaque id minted at creation
+ * (ADR-0019) which the server moves on its own (ADR-0022). Nothing here knows
+ * that, which is the point of not writing it twice.
+ */
+describe("renaming a session from its tile", () => {
+  /** The box, which only exists while one is being typed into. */
+  const box = (h: HTMLElement) => h.querySelector<HTMLInputElement>("input.tl-tile-rename");
+  const titleEl = (h: HTMLElement) => h.querySelector<HTMLElement>(".tl-tile-title");
+  /** `beginRename` focuses and selects on the microtask queue, as the card does. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+
+  it("opens a box on a double click, holding the title ready to be replaced", async () => {
+    const m = mount({ session: { title: "Deploy the thing" } });
+    expect(box(m.header)).toBeNull();
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    const input = box(m.header)!;
+    expect(input).toBeTruthy();
+    expect(input.value).toBe("Deploy the thing");
+    // Focused and selected, so the next keystroke replaces the title rather
+    // than landing somewhere in the middle of it.
+    expect(document.activeElement).toBe(input);
+    expect(input.selectionStart).toBe(0);
+    expect(input.selectionEnd).toBe("Deploy the thing".length);
+  });
+
+  // The box stands where the title stood. A strip that swapped a span for an
+  // input of another size would jump under the cursor that opened it.
+  it("puts the box in the title's place, and the title back when it closes", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    expect(titleEl(m.header)).toBeNull();
+    fireEvent.keyDown(box(m.header)!, { key: "Escape" });
+    expect(box(m.header)).toBeNull();
+    expect(titleEl(m.header)!.textContent).toBe("Deploy");
+  });
+
+  // A minted id is shown as "New session" and opens an EMPTY box: twelve random
+  // characters are not a draft anybody wants to edit (types/lobby.ts
+  // `sessionTitleDraft`, which the card opens with too).
+  it("opens empty on a session that has only a minted id", async () => {
+    const m = mount();
+    expect(m.title).toBe("New session");
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    expect(box(m.header)!.value).toBe("");
+  });
+
+  it("asks its owner to rename on Enter, and closes the box", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    const input = box(m.header)!;
+    fireEvent.input(input, { target: { value: "Ship it" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(m.onRename).toHaveBeenCalledWith("Ship it");
+    expect(box(m.header)).toBeNull();
+  });
+
+  // Emptying the box clears the title, handing the session back to whatever
+  // summary lands next. The card's own contract, and the reason this is an
+  // empty string rather than a refusal.
+  it("clears the title when the box is emptied", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    const input = box(m.header)!;
+    fireEvent.input(input, { target: { value: "" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(m.onRename).toHaveBeenCalledWith("");
+  });
+
+  it("says nothing to its owner when the text came back unchanged", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    fireEvent.keyDown(box(m.header)!, { key: "Enter" });
+    expect(m.onRename).not.toHaveBeenCalled();
+  });
+
+  it("abandons on Escape, leaving the title where it was", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    const input = box(m.header)!;
+    fireEvent.input(input, { target: { value: "Ship it" } });
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(m.onRename).not.toHaveBeenCalled();
+    expect(titleEl(m.header)!.textContent).toBe("Deploy");
+  });
+
+  // Clicking away abandons rather than commits, which is the card's answer and
+  // the safer one: a half-typed title left on screen while you go and read
+  // another tile should not become the session's name because you looked away.
+  it("abandons when the box loses focus", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    const input = box(m.header)!;
+    fireEvent.input(input, { target: { value: "Ship it" } });
+    fireEvent.blur(input);
+    expect(m.onRename).not.toHaveBeenCalled();
+    expect(box(m.header)).toBeNull();
+  });
+
+  /**
+   * Cmd+Z while retyping a title walks the BOX back, not the workspace.
+   *
+   * The keybinding engine's one listener is capture-phase on `window`
+   * (keybindings/engine.ts), so nothing the box does to the event can shield
+   * it — the refusal has to happen at the binding table, and it does, through
+   * `isEditingTarget` (keybindings/editing.ts). Every other lobby chord sits in
+   * the Alt+Shift namespace for the same reason. This asserts the box lands on
+   * the right side of that answer, which is a property of its being a plain
+   * text `<input>` and would quietly stop being true if it became anything
+   * else.
+   */
+  it("owns the undo chord while it is open, as every other text field does", async () => {
+    const m = mount({ session: { title: "Deploy" } });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    expect(isEditingTarget(box(m.header))).toBe(true);
+    fireEvent.keyDown(box(m.header)!, { key: "Escape" });
+    // And hands it straight back: a closed box is a title again, and Cmd+Z
+    // there is the workspace's own undo.
+    expect(isEditingTarget(titleEl(m.header))).toBe(false);
+  });
+
+  // A foreign session belongs to somebody else, and its title is theirs. The
+  // gesture is hidden rather than allowed to fail at the server, which is what
+  // the absent handler means.
+  it("offers no box on a session that is not the reader's to retitle", async () => {
+    const m = mount({ session: { title: "Deploy" }, rename: false });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    expect(box(m.header)).toBeNull();
+    expect(titleEl(m.header)!.hasAttribute("data-rename")).toBe(false);
+  });
+
+  // Nor a title on a session that is leaving. The card refuses the same way
+  // while its kill window runs, and the press worth having in those eight
+  // seconds is the arrow.
+  it("offers no box while the session is dying", async () => {
+    const m = mount({ session: { title: "Deploy" }, killing: true });
+    fireEvent.dblClick(titleEl(m.header)!);
+    await flush();
+    expect(box(m.header)).toBeNull();
+  });
+
+  /**
+   * The gesture Viktor asked for is a double click, and until this strip had a
+   * key as well a rename from a workspace was mouse-only: the title was a
+   * `<span>`, so there was no tab stop to reach and nothing to press.
+   */
+  it("opens on Enter and on F2, so the gesture is not mouse-only", async () => {
+    for (const key of ["Enter", "F2"]) {
+      const m = mount({ session: { title: "Deploy" } });
+      const title = titleEl(m.header)!;
+      expect(title.getAttribute("role")).toBe("button");
+      expect(title.tabIndex).toBe(0);
+      expect(title.getAttribute("aria-label")).toBe("Rename Deploy");
+      fireEvent.keyDown(title, { key });
+      await flush();
+      expect(box(m.header), `${key} opens the box`).toBeTruthy();
+    }
+  });
+
+  // A title nobody may edit is a label, not a control. Announcing it as a
+  // button would promise a press that does nothing.
+  it("is a plain label on a session that is not the reader's", () => {
+    const title = titleEl(mount({ session: { title: "Deploy" }, rename: false }).header)!;
+    expect(title.hasAttribute("role")).toBe(false);
+    expect(title.tabIndex).toBe(-1);
+  });
+
+  // The cursor is the only thing that advertises the gesture, so it is on the
+  // titles that have it and off the ones that do not.
+  it("marks a renameable title, where the stylesheet can key a cursor on it", () => {
+    expect(mount().header.querySelector(".tl-tile-title")!.hasAttribute("data-rename")).toBe(true);
   });
 });
 
@@ -418,6 +629,39 @@ function ruleBodies(selector: string): string {
   if (out.length === 0) throw new Error(`no rule for ${selector}`);
   return out.join("\n");
 }
+
+/**
+ * Viktor, 2026-09-13: *"the pane title is too smal to be readable. we need to
+ * make it more easy to know what each session is about"*.
+ *
+ * The strip is the ONLY thing naming a tile and four of them are on screen at
+ * once, so these numbers are the feature rather than decoration. Asserted
+ * against the stylesheet because jsdom applies none and lays nothing out.
+ */
+describe("a strip sized to be read", () => {
+  const header = ruleBodies(".tl-tile-header");
+
+  it("is tall enough and set large enough to read at a glance", () => {
+    expect(header).toMatch(/--tl-tile-header-h:\s*30px/);
+    expect(header).toMatch(/font-size:\s*calc\(14px \*/);
+  });
+
+  // The complaint's other half. The title used to inherit the strip's muted
+  // colour and only went primary when the tile was focused, so in a 2x2 three
+  // of the four titles were the hard-to-read ones. Focus is carried by the
+  // accent underline and the wash instead.
+  it("sets the title in the primary colour whether the tile is focused or not", () => {
+    expect(ruleBodies(".tl-tile-title")).toMatch(/color:\s*var\(--text-primary\)/);
+  });
+
+  // The box takes the title's own box, so the strip does not jump when it opens.
+  it("gives the rename box the title's place in the strip", () => {
+    const rename = ruleBodies(".tl-tile-rename");
+    expect(rename).toMatch(/flex:\s*1 1 auto/);
+    expect(ruleBodies(".tl-tile-title")).toMatch(/flex:\s*1 1 auto/);
+    expect(rename).toMatch(/font:\s*inherit/);
+  });
+});
 
 describe("the focused header, as it is painted", () => {
   const focused = ruleBodies(".tl-tile-header[data-focused]");

@@ -397,7 +397,8 @@ and for the same reason.
 
 | surface | behaviour |
 |---|---|
-| tile header | ~24px: title, state dot, watch indicator when read-only, close. Nothing else — context meter and spend stay on the session bar |
+| tile header | ~30px: title, state dot, watch indicator when read-only, close. Nothing else — context meter and spend stay on the session bar. A double click on the title opens a box that retitles the session, the same gesture and the same call as a sidebar card's |
+| tile ring | 2px around each tile in its **Session state**'s colour, so which sessions are running, waiting and done reads from across the room rather than from four 8px dots. It is drawn over the terminal rather than as a border on the tile, because a tile is the size of its tmux window and a border would take four columns and four rows out of every session in the workspace |
 | session bar | one bar, showing the focused tile's session. Its contents change as focus moves |
 | Ctrl+J dock | full width under every tile, exactly where it is today. It is one scratch shell for the tab, not per tile |
 | terminal or text per tile | a tile honours `store/viewmode.ts`, which is already per session per device. The bar's view switch changes the focused tile, and the split geometry is unaffected by it |

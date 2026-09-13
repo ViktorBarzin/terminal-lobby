@@ -36,6 +36,61 @@
   z-index: 2;
 }
 
+/* ---- The ring a tile wears ---------------------------------------------- */
+
+/* WHAT EACH SESSION IS DOING, drawn around the whole tile.
+
+   Viktor, 2026-09-13: *"let's also color code the border. so it's clear the
+   status of each session"*. The same `--state-*` token the dot in the strip is
+   filled with, so the two cannot disagree and no second palette is invented
+   here; every theme already defines all three (theme/theme.css).
+
+   AN OVERLAY RATHER THAN A BORDER, and the tmux window is what pays for the
+   difference. A tile IS the size of its session (`claimGrid`), and these slots
+   are sized by four inline pixel values under `box-sizing: border-box` — so 2px
+   of border on the slot is 4px of width and 4px of height out of every terminal
+   in the workspace, four refits and four resizes out to tmux. Absolute, it
+   takes nothing.
+
+   AN OVERLAY RATHER THAN AN OUTLINE, which is what this was until it was
+   measured in a browser. `outline` with a negative offset draws inside the
+   padding box, and a child that paints a background over that box paints after
+   its parent's outline: the ring showed along the header strip and disappeared
+   where the terminal began. The screenshot read the state colour at the
+   header's y and the terminal's black twelve pixels below it. A later sibling
+   paints over the terminal, which is why this is an element.
+
+   The colour changes when a session's state does, and that is free: no geometry
+   moves, nothing refits, no grid is claimed. Keep that property.
+
+   IT DOES NOT COMPETE WITH FOCUS. Focus washes the header strip in the accent
+   and underlines it (further down this file); status rings the tile. One reads
+   as "where do my keystrokes go", the other as "what is each of these doing",
+   and they sit on different parts of the tile so one tile can say both.
+
+   NOTHING IS ANNOUNCED HERE. The strip's dot carries the same state with a
+   label a screen reader reads (`stateLabel`), and a ring that repeated it would
+   have every tile say its state twice. */
+.tl-tile-ring {
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--border);
+  /* pointer-events are NOT here, for the reason written at the head of this
+     file: this is a sheet over four live terminals, and a sheet that swallowed
+     their clicks is the one failure a stylesheet must not be able to cause.
+     App.tsx sets them inline where a missing rule cannot remove them, the same
+     way WorkspaceCanvas does for the skeleton. */
+}
+.tl-session-slot[data-state="running"] .tl-tile-ring {
+  border-color: var(--state-running);
+}
+.tl-session-slot[data-state="awaiting"] .tl-tile-ring {
+  border-color: var(--state-awaiting);
+}
+.tl-session-slot[data-state="done"] .tl-tile-ring {
+  border-color: var(--state-done);
+}
+
 /* ---- The skeleton ------------------------------------------------------ */
 
 /* One per split. corvu sets `display: flex` and the `flex-direction` matching
@@ -166,17 +221,33 @@
    close control. Nothing else — the context meter and the spend figure stay on
    the session bar, which shows the FOCUSED tile and follows focus around
    (design, "Everything else, and what changes"). */
+/* SIZED TO BE READ, not to be small.
+   Viktor, 2026-09-13: *"the pane title is too smal to be readable. we need to
+   make it more easy to know what each session is about"*.
+
+   It started at 24px and 12px muted text, on the reasoning that chrome above a
+   terminal should cost as few pixels as possible. That traded the wrong way:
+   the strip is the ONLY thing naming a tile, four of them are on screen at
+   once, and a title you have to lean in for does not do the job the strip
+   exists for. 30px and 14px at weight 600 costs 6px of terminal per tile, about
+   a third of a row, and is the difference between glancing and squinting.
+
+   The title is `--text-primary` whether the tile is focused or not, which is
+   the other half of the same complaint: it used to go muted the moment focus
+   moved, so three of four titles were the hard-to-read ones. Focus is carried
+   by the accent underline and the wash, measured at ~5:1 against 1.19:1, so it
+   never needed the text colour to say it as well. */
 .tl-tile-header {
-  --tl-tile-header-h: 24px;
+  --tl-tile-header-h: 30px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   flex: 0 0 auto;
   height: var(--tl-tile-header-h);
-  padding: 0 6px;
+  padding: 0 8px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-page);
-  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-size: calc(14px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   user-select: none;
 }
@@ -201,6 +272,41 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+/* Only where a double click actually opens a box. A foreign session's title is
+   its owner's, and a session inside its kill window is leaving, so neither
+   offers the I-beam that would promise an edit. */
+.tl-tile-title[data-rename] {
+  cursor: text;
+}
+
+/* The rename box, opened by a double click on the title. Sized and placed to
+   sit exactly where the title was, so the strip does not jump when it opens and
+   the word you are editing does not move under the cursor. */
+.tl-tile-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: calc(var(--tl-tile-header-h) - 8px);
+  padding: 0 5px;
+  border: 1px solid var(--accent);
+  border-radius: calc(var(--radius) / 2);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font: inherit;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  /* The strip is `user-select: none` so a double click on a title highlights
+     nothing. Inside the box that rule is wrong: it is text being edited. */
+  user-select: text;
+}
+
+.tl-tile-rename:focus {
+  outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 1px;
 }
 
 /* Removing a tile leaves the session running and in the sidebar where it was,
@@ -278,8 +384,12 @@
 .tl-tile-header[data-focused] {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg-page));
 }
+/* 700 against the strip's own 600. Every title is legible now (see the head of
+   the `.tl-tile-header` rule), so this is no longer what makes ONE of them
+   readable — it is one more thing pointing at the tile taking the keystrokes,
+   under the accent underline and the wash. */
 .tl-tile-header[data-focused] .tl-tile-title {
-  font-weight: 600;
+  font-weight: 700;
 }
 
 /* ---- On its way out ---------------------------------------------------- */
