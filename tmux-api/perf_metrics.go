@@ -24,7 +24,11 @@ package main
 // browser, the same rule event attribution follows. OS usernames are a closed
 // roster set and safe as a label; nothing else here is labelled.
 
-import "terminal-lobby/telemetry"
+import (
+	"time"
+
+	"terminal-lobby/telemetry"
+)
 
 // perfRollupGauges maps the attributes perf.rollup already carries to metric
 // names. echo is the round trip a person feels. input is keydown to ws.send,
@@ -39,17 +43,34 @@ var perfRollupGauges = map[string]string{
 	"tl.input.p95": "tl_input_latency_p95_ms",
 }
 
+// perfNow is a test seam, the same shape as spendNow in agentspend.go.
+// Production never reassigns it.
+var perfNow = time.Now
+
 // recordPerfRollup copies one browser rollup into gauges. Unusable input
 // writes nothing: these values crossed the network from a page, so a missing
 // or non-numeric field must produce no series rather than a wrong one.
+//
+// It also stamps when the rollup landed, because nothing here ever clears a
+// gauge. A browser stops posting the moment its tab is hidden, and the last
+// number it sent then sits in /metrics until the process restarts. Measured
+// 2026-09-13: emo's p95 read 527 ms, identical to the millisecond, across 29
+// consecutive scrapes covering 145 minutes. An alert reading that alone
+// cannot distinguish a session that is slow now from one that was slow once,
+// so it gates on the stamp instead.
 func recordPerfRollup(m *telemetry.Metrics, osUser string, attrs telemetry.Attrs) {
 	if osUser == "" {
 		return
 	}
 	labels := map[string]string{"user": osUser}
+	wrote := false
 	for attr, metric := range perfRollupGauges {
 		if v, ok := attrs[attr].(float64); ok {
 			m.SetGauge(metric, labels, v)
+			wrote = true
 		}
+	}
+	if wrote {
+		m.SetGauge("tl_echo_latency_updated_timestamp_seconds", labels, float64(perfNow().Unix()))
 	}
 }
