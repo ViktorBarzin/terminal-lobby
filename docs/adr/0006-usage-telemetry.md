@@ -108,7 +108,7 @@ joined to the read that consumed it.
 
 | Source | Events |
 |---|---|
-| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`), a pinned window pointed at the client reading it (`session.grid_sized`, `tl.kind` = the grid asked for; emitted only when something moved, so an unpinned session is silent), workspace membership written (`workspace.arranged`, `tl.count` = how many workspaces the user holds afterwards; the split tree is per-device and never arrives, ADR-0027) |
+| `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`), a pinned window pointed at the client reading it (`session.grid_sized`, `tl.kind` = the grid asked for; emitted only when something moved, so an unpinned session is silent), workspace membership written (`workspace.arranged`, `tl.count` = how many workspaces the user holds afterwards, `tl.tiles` = sessions across them, `tl.max` = the largest one; the split TREE is per-device and never arrives, ADR-0027, but the member count does) |
 | `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers, files kept beside a session (`file.attached`, `tl.count` = bytes) |
 | `file-api` | file preview, file save (by extension) |
 | `session-events` | prompt sent, cancel, SSE stream open/close, a blocking prompt answered (`claude.answered`, `tl.client` = `api` for keys or `api-text` for free text, `tl.count` = the answer's size) |
@@ -187,3 +187,42 @@ renders these.
 - Event volume is bounded by the intake's rate cap, not by taste. A new
   high-frequency call site should be counted client-side and reported
   periodically rather than emitted per occurrence.
+
+## Amendment, 2026-09-15: the Prometheus half exists, and workspaces are counted
+
+Two things above are no longer accurate, recorded here rather than edited into
+the original decision. The table row for `tmux-api` IS edited, because it is an
+inventory of what each event carries rather than part of the decision, and an
+inventory that lists two of four attributes is simply wrong.
+
+**The Retention constraint said long-term trends "would need counters in
+Prometheus (26 weeks), which this ADR does not build".** They are built.
+`tmux-api/metrics_endpoint.go` serves `/metrics`, scraped as job
+`terminal-lobby`, and it exists because on 2026-09-12 the devvm stalled for
+about three hours with nothing able to answer "is the lobby up". It carries
+`tl_build_info`, `tl_uptime_seconds` and `tl_sessions{user}`, and since
+2026-09-15 also `tl_workspaces{user}`, `tl_workspace_tiles{user}`,
+`tl_workspace_max_tiles{user}` and two totals.
+
+This does not replace the event stream and was never meant to. The division
+that has settled: **Loki answers what happened** (a kill, a rename, a workspace
+rearranged, with 30 days of it), **Prometheus answers what is true right now
+and for how long** (a service up, a latency, how many people are holding a
+workspace, with 26 weeks of it). An event fires on a CHANGE, so a thing made
+once and used all week emits once; a gauge is read at scrape time, so it counts
+what exists. Neither can do the other's half, which is why both are here.
+
+**`workspace.arranged` now says how big the grouping is.** It carried
+`tl.count` alone, and the note beside it — that the split tree is per-device and
+never reaches the server — was read as meaning nothing about the shape could be
+recorded. That is true of the TREE, which is rows, columns and fractions
+(ADR-0027). It is not true of how many sessions are in a workspace: membership
+is exactly what the server holds. So `tl.tiles` and `tl.max` were always
+available, and without them the event could not separate somebody who tried a
+pair from somebody living in a 2x3 wall.
+
+**One trap worth writing down, because it fails silently.** These journal lines
+are `<timestamp> TLEVENT {json}`, so a `| json` stage applied to the raw line
+parses nothing, and an unparsed line contributes zero to an aggregation rather
+than erroring. Every query above already strips the prefix with `line_format`
+first, and a new panel that forgets to draws a flat line forever.
