@@ -1,26 +1,44 @@
 # Seeing what a session's agents are doing
 
-**Status:** design, prototypes out for selection.
+**Status:** approved 2026-09-15. Marginalia chosen; building it.
 **Owner:** wizard. **Repos touched:** terminal-lobby.
 **Decisions from:** a grilling session on 2026-09-12.
 
-## The five to choose between
+## Chosen: Marginalia
 
-Open one, press `16 agents`, then `idle`. That pair separates them faster than
-anything else on this page. Each one plays a scripted session on a compressed
-clock, so the motion can be judged rather than imagined.
+**[Open the prototype](agent-panel/p1-ambient.html)**, press `16 agents`, then
+`idle`.
 
-| | open it | where it puts the panel | the bet |
-|---|---|---|---|
-| 1 | **[Marginalia](agent-panel/p1-ambient.html)** | a rail down the right margin, no card, one hairline | identity and nesting drawn by a single coloured rule, and no spinner anywhere |
-| 2 | **[Console](agent-panel/p2-instrument.html)** | a resizable dock, grown out of today's strip | a `LAST 12` column of tool-call bars, the only honest shape data with no denominator makes |
-| 3 | **[Strand](agent-panel/p3-narrative.html)** | inline in the timeline, where the spawn happened | a running head appears only once the live work scrolls off, so there is no second place the facts live |
-| 4 | **[Runway](agent-panel/p4-spatial.html)** | a dock with every agent on one time axis | a fan-out has a shape, and a silence is a visible gap nothing has to name |
-| 5 | **[Foreground](agent-panel/p5-focus.html)** | a sticky band above the timeline | one agent leads, picked by stated facts, and the card says which rule fired |
+Viktor picked it on 2026-09-15 from five built independently. What that choice
+commits us to, taken from the prototype rather than restated loosely:
 
-Five agents built these independently from one brief and a different design
-thesis each, so four of the five chose a different placement. The rest of this
-page is the reasoning and the measurements they were built against.
+| | |
+|---|---|
+| **Where it lives** | The right margin of the reading column, 260px wide to match the sidebar. No card, no background, no badges. |
+| **The spine** | Each entry carries a 2px left rule in the agent's own Claude Code colour, and indenting that same rule is how nesting is drawn, so identity and the tree cost one stroke between them. |
+| **A workflow** | Gets a grey spine with muted members, because inside a run you are watching a population rather than sixteen individuals. |
+| **No spinner** | Peripheral vision is most sensitive to movement, so the only things that change are the elapsed digits and the tool name. |
+| **The tally** | One tick per agent above the list, dim when that agent has not written for a while. |
+| **Workflow rows** | One line each, description plus current tool only. Elapsed and tokens move up to the phase and run headers, since five values across sixteen rows is the density this design is trying to
+avoid. |
+
+That last row is a deliberate departure from the row content in the decisions
+table below, which asked for four values on every row. It applies to workflow
+members only; an ad-hoc subagent keeps all four.
+
+### The other four
+
+Kept for reference, and because two of them answer questions Marginalia does
+not: Console's `LAST 12` tool-call bars, and Runway's shared time axis.
+
+| | prototype | where it put the panel |
+|---|---|---|
+| 2 | [Console](agent-panel/p2-instrument.html) | a resizable dock, grown out of today's strip |
+| 3 | [Strand](agent-panel/p3-narrative.html) | inline in the timeline, where the spawn happened |
+| 4 | [Runway](agent-panel/p4-spatial.html) | a dock with every agent on one time axis |
+| 5 | [Foreground](agent-panel/p5-focus.html) | a sticky band above the timeline |
+
+Four of the five chose a different placement.
 
 ## The problem
 
@@ -234,22 +252,40 @@ Each page carries the same state buttons (`3 agents`, `16 agents`, `workflow`,
 and a replay control for watching the motion. Every one was verified by driving
 it at 1440x900 and reading the screenshots back.
 
-## What this costs to build
+## How it gets built
 
 Nothing in today's pipeline opens the `subagents/` directory.
-`sessionio/normalize.go:186` skips sidechain records for model detection,
-`:388` only sets a flag, and `sessionio/filesource.go` never looks in that
-directory. So this is new plumbing in `session-events` rather than a rendering
-change: watch `subagents/`, parse each agent's meta and tail its file, and carry
-per-agent state onto the SSE stream. The renderer work then depends on which
-prototype wins.
+`sessionio/normalize.go` skips sidechain records for model detection and only
+sets a flag for them, and `sessionio/filesource.go` never looks in that
+directory. So most of this is new plumbing in `session-events` rather than a rendering
+change.
 
-One latent bug sits in the path this feature will exercise. `host` in
-`timeline.logic.ts:319` is a single variable set on each
-`collab_agent_tool_call` and cleared only by that call's own result, so with two
-agents in flight every child row lands under the second one. It has never been
-observed because no sidechain data exists here, and it will start mattering the
-moment agent work reaches the timeline.
+In order, each step leaving the tree green:
+
+| # | step | where | done when |
+|---|---|---|---|
+| 1 | Read one agent's identity and live state from disk: parse `agent-*.meta.json`, tail `agent-*.jsonl`, derive current tool, elapsed, tool count, output tokens. | `sessionio/` | unit tests over recorded fixtures, including a file that grows mid-read |
+| 2 | Watch the `subagents/` directory so a new agent appears without a restart, and carry the set onto the SSE stream as a new event. | `session-events/` | a live session spawning three agents shows three on the wire |
+| 3 | Read `workflows/wf_*.json` for phases and per-agent structural state, merged with the per-agent files, which stay the live source. | `sessionio/` | a real workflow run reports its phases and members |
+| 4 | The panel itself: the margin rail, the coloured spine, the tally, the indent-as-nesting rule, and the disappear-when-idle behaviour. | `frontend-v2/src/components/` | driven at 1440x900 against a live session with agents actually running |
+| 5 | Fold `.tl-bg-strip` into it, so a session never reports the same fact twice. | `TextView.tsx`, `app.css` | the strip is gone when the panel is present, and unchanged when it is not |
+| 6 | Drill-in: tapping an agent renders its own transcript. | `frontend-v2/src/components/` | an agent's inner conversation reads correctly, including its thinking and tool payloads |
+
+Steps 1 to 3 are testable without any UI, and step 4 is the first one worth
+looking at. Step 6 is the largest single piece and the one that could be split
+out if the rest is wanted sooner.
+
+**One latent bug sits in the path this exercises.** `host` in
+`timeline.logic.ts:320` is a single variable, set on each
+`collab_agent_tool_call` (`:454`) and cleared only by that call's own result,
+so with two agents in flight every child row lands under the second one
+(`:333`). It has never been observed, because no sidechain data exists here to
+trigger it. Step 6 is where it starts mattering, so it is fixed there rather
+than carried.
+
+**The panel reads `@claude_bg`, which is now trustworthy.** The three events
+that used to empty it mid-run were fixed on 2026-09-12 (ADR-0001). Step 5
+depends on that fix holding.
 
 ## Open questions
 
