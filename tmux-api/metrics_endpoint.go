@@ -22,8 +22,8 @@ package main
 // API routes beside it are gated by TL_PROXY_SECRET; this one is not.
 //
 // That is judged acceptable because of what is in it: request counts, request
-// latencies, an uptime, a build id, and per-OS-user session COUNTS. No session
-// names, no project names, no paths, no content. The one identifier it leaks
+// latencies, an uptime, a build id, per-OS-user session COUNTS, and per-OS-user
+// workspace counts. No session names, no project names, no paths, no content. The one identifier it leaks
 // is the set of OS usernames, which node_exporter on the same host and port
 // range already exposes far more about. If the sensitivity bar ever moves,
 // gate it on the same X-TL-Proxy-Secret the other routes use and have the
@@ -61,6 +61,61 @@ func liveSessionCounts() map[string]int {
 	return out
 }
 
+// workspaceUse is what one user's workspaces amount to right now.
+//
+// THREE NUMBERS, BECAUSE ONE DOES NOT ANSWER THE QUESTION. Viktor asked for
+// "number of active panes per user" to find out whether the feature is used.
+// Tiles alone cannot separate one person watching six sessions from three
+// people watching two, and groups alone cannot tell a pair from a 2x3 wall —
+// which is the difference between "somebody tried it" and "somebody lives in
+// it". Largest is the ceiling anyone has actually reached, and it is the figure
+// that says whether the arrangement work was worth doing.
+type workspaceUse struct {
+	// Workspaces this user holds. Zero for somebody who has never made one and
+	// for somebody who closed their last one back to a single tile, which is
+	// how a workspace ends.
+	Groups int
+	// Sessions across all of them: the "panes" figure, since a workspace member
+	// IS a tile. The split tree that arranges them is per-device and never
+	// reaches this service (ADR-0027), so this counts the tiles a workspace has
+	// and says nothing about the shape they were given.
+	Tiles int
+	// The biggest single workspace, in tiles.
+	Largest int
+}
+
+// workspaceCounter is the seam, for the same reason sessionCounter is one: the
+// path worth testing is the one where the documents cannot be read, and that
+// cannot be produced on demand from a real directory.
+var workspaceCounter = func() map[string]workspaceUse { return workspaceUseFor(mappedOSUsers()) }
+
+// workspaceUseFor reads each user's workspaces document — the same file
+// /workspaces serves, one small JSON per user — and counts it.
+//
+// A user with no document is present with zeroes rather than absent. A series
+// that disappears reads as "no data" on a graph, which looks exactly like the
+// scrape being broken; a zero is the answer to the question being asked. A
+// document that cannot be read is the same: the store answers an empty
+// Workspaces for a missing file and an error for anything worse, and an error
+// leaves that user at zero rather than taking the scrape down.
+func workspaceUseFor(users []string) map[string]workspaceUse {
+	out := map[string]workspaceUse{}
+	for _, u := range users {
+		use := workspaceUse{}
+		if ws, err := workspaceStoreInstance.load(u); err == nil {
+			use.Groups = len(ws.Workspaces)
+			for _, g := range ws.Workspaces {
+				use.Tiles += len(g.Members)
+				if n := len(g.Members); n > use.Largest {
+					use.Largest = n
+				}
+			}
+		}
+		out[u] = use
+	}
+	return out
+}
+
 func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	// Build and uptime first and unconditionally. These are what make the
 	// scrape meaningful when everything below is unavailable.
@@ -79,10 +134,37 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		metrics.SetGauge("tl_sessions_total", nil, float64(total))
 	}
 
+	// Per-user workspace use. Same label rule: the OS username is a closed set
+	// from the roster, and nothing about WHICH sessions are grouped appears
+	// here — only how many.
+	if use := workspaceCounter(); use != nil {
+		groups, tiles := 0, 0
+		for user, u := range use {
+			label := map[string]string{"user": user}
+			metrics.SetGauge("tl_workspaces", label, float64(u.Groups))
+			metrics.SetGauge("tl_workspace_tiles", label, float64(u.Tiles))
+			metrics.SetGauge("tl_workspace_max_tiles", label, float64(u.Largest))
+			groups += u.Groups
+			tiles += u.Tiles
+		}
+		metrics.SetGauge("tl_workspaces_total", nil, float64(groups))
+		metrics.SetGauge("tl_workspace_tiles_total", nil, float64(tiles))
+	}
+
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	fmt.Fprintf(w, "# HELP tl_build_info Build of the running tmux-api, value always 1.\n")
 	fmt.Fprintf(w, "# HELP tl_uptime_seconds Seconds since this process started.\n")
 	fmt.Fprintf(w, "# HELP tl_sessions Live tmux sessions per OS user.\n")
 	fmt.Fprintf(w, "# HELP tl_sessions_total Live tmux sessions across every mapped user.\n")
+	// WHAT EXISTS, NOT WHO IS LOOKING. A workspace lives on the server and is
+	// ended by closing it back to a single tile, so holding one is itself the
+	// usage signal — but nothing here knows whether a browser has it on screen
+	// at this moment, and the help text says so rather than letting a dashboard
+	// imply it.
+	fmt.Fprintf(w, "# HELP tl_workspaces Workspaces a user currently holds, whether or not one is on screen.\n")
+	fmt.Fprintf(w, "# HELP tl_workspace_tiles Sessions tiled across a user's workspaces.\n")
+	fmt.Fprintf(w, "# HELP tl_workspace_max_tiles Tiles in a user's largest workspace.\n")
+	fmt.Fprintf(w, "# HELP tl_workspaces_total Workspaces across every mapped user.\n")
+	fmt.Fprintf(w, "# HELP tl_workspace_tiles_total Tiled sessions across every mapped user.\n")
 	metrics.Render(w)
 }
