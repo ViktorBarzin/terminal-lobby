@@ -1112,3 +1112,65 @@ func TestKilledMemberRestoredUnderANewNameKeepsItsTile(t *testing.T) {
 		t.Fatalf("restored under a new name: got %v, want %v", ws.Workspaces[0].Members, want)
 	}
 }
+
+// -- what a write records ------------------------------------------------------
+//
+// Viktor, 2026-09-15: *"let's also add some metrics - to know if users are using
+// this feature. e.g we can report number of active panes per user"*.
+//
+// This event is the only record of a workspace CHANGING, so what it leaves out
+// is unrecoverable: until this test it said "1 workspace" whether that workspace
+// held two tiles or six, and no query could have separated somebody who tried
+// the feature once from somebody who lives in it.
+func TestWorkspaceWriteRecordsHowManyTilesWereGrouped(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	withTempWorkspaceStore(t)
+
+	body := `{"version":1,"workspaces":[
+		{"id":"w1","members":[{"name":"auth"},{"name":"deploy"}]},
+		{"id":"w2","members":[{"name":"docs"},{"name":"logs"},{"name":"build"},{"name":"release"}]}
+	]}`
+	out := captureLog(t, func() {
+		rec := httptest.NewRecorder()
+		handleWorkspaces(rec, workspacesReq(http.MethodPut, body, "alice"))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	for _, want := range []string{
+		`"tl.count":2`,
+		// Six sessions are on screen across the two, which is the figure the
+		// question was about.
+		`"tl.tiles":6`,
+		// And the bigger of the two holds four, which is what separates a pair
+		// from a wall.
+		`"tl.max":4`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in the event:\n%s", want, out)
+		}
+	}
+}
+
+// Closing the last workspace back to a single tile ends it, and the zeroes are
+// what a dashboard needs to show the drop rather than a series going quiet.
+func TestWorkspaceWriteRecordsZeroesWhenTheLastOneIsClosed(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	withUserMap(t, "alice="+osSelf+"\n")
+	withTempWorkspaceStore(t)
+
+	out := captureLog(t, func() {
+		rec := httptest.NewRecorder()
+		handleWorkspaces(rec, workspacesReq(http.MethodPut, `{"version":1,"workspaces":[]}`, "alice"))
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+	for _, want := range []string{`"tl.count":0`, `"tl.tiles":0`, `"tl.max":0`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s in the event:\n%s", want, out)
+		}
+	}
+}

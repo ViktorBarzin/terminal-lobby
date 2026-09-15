@@ -106,11 +106,16 @@ var knownEvents = map[string]bool{
 	// A workspace document written (PUT /workspaces), which is what every
 	// structural change to a Workspace ends in: a tile added, a tile closed, or
 	// a session dragged from one workspace into another. tl.count is how many
-	// workspaces the user holds AFTERWARDS, not how many tiles in one — the
-	// split tree is per-device and never reaches the server (ADR-0027), so this
-	// can answer whether anyone groups sessions at all and nothing about the
-	// shape they gave it.
-	"workspace.arranged": true, // tl.count, tl.client
+	// workspaces the user holds afterwards, tl.tiles how many sessions are in
+	// them and tl.max how many the largest one holds.
+	//
+	// The SHAPE is still absent and cannot be added: the split tree is
+	// per-device and never reaches the server (ADR-0027), so this says how many
+	// tiles a workspace has and nothing about the rows and columns they were
+	// put in. A WRITE is also not a sighting — a workspace made once and used
+	// all week emits here once — which is why tmux-api/metrics_endpoint.go
+	// carries tl_workspaces and tl_workspace_tiles as gauges beside it.
+	"workspace.arranged": true, // tl.count, tl.tiles, tl.max, tl.client
 
 	// -- sharing ------------------------------------------------------------
 	"share.granted": true, // (tl.kind = ro|rw)

@@ -484,12 +484,27 @@ func handleWorkspaces(w http.ResponseWriter, r *http.Request) {
 		logAndFail(w, "workspaces save for %s failed: %v", osUser, err)
 		return
 	}
-	// tl.count is how many workspaces the user has, not how many tiles: the
-	// question this answers is whether anyone groups sessions at all, which is
-	// what decides whether the feature earned its keep. The name must be in
-	// telemetry/events.go's catalog or Emit drops it silently.
+	// WHAT THE GROUPING LOOKS LIKE, not just that there is one. tl.count is how
+	// many workspaces the user holds afterwards; tl.tiles is how many sessions
+	// are in them and tl.max how many the biggest one holds, which is the
+	// difference between somebody who tried a pair and somebody living in a 2x3
+	// wall. Added 2026-09-15 when Viktor asked for panes per user; until then
+	// this said 1 whether that workspace held two tiles or six.
+	//
+	// The SHAPE those tiles were arranged in is still absent and cannot be
+	// added here: the split tree is per-device and never reaches this service
+	// (ADR-0027). The name must be in telemetry/events.go's catalog or Emit
+	// drops it silently.
+	tiles, largest := 0, 0
+	for _, g := range ws.Workspaces {
+		tiles += len(g.Members)
+		if n := len(g.Members); n > largest {
+			largest = n
+		}
+	}
 	events.Emit("workspace.arranged", osUser, telemetry.Attrs{
-		"tl.count": len(ws.Workspaces), "tl.client": "api",
+		"tl.count": len(ws.Workspaces), "tl.tiles": tiles, "tl.max": largest,
+		"tl.client": "api",
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
