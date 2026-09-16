@@ -365,6 +365,21 @@ revoking it when the screen goes away. An image whose bytes cannot be read —
 a format Chromium will not decode, a path that answers 404 — falls back to the
 pill and its token text, and the line stops making room for it.
 
+**The picture opens.** 80x44 recognises a screenshot and cannot read one, so
+the chip is a way in to the image rather than a view of it: pressing it opens
+the same `.tl-lightbox` overlay the gallery uses, on the URL the chip is
+already drawn from, which is what lets a held file open before anything has
+uploaded it. Escape or a press anywhere closes it.
+
+Two details that are not decoration. The control is a `<button>` with
+`tabindex="-1"`: the chip layer is `aria-hidden`, being a copy of text the
+field already carries, so a focusable control inside it would be worse than a
+pointer-only one, and the two accessibility rules this repo lints for exist to
+stop a click handler on a bare image. And opening the picture blurs the field,
+because on a phone the keyboard covers half of what the press asked to see;
+the caret survives a blur, so closing hands focus back and typing carries on
+where it was. A field nobody was typing in gets nothing back.
+
 ## Open questions
 
 - Whether a doc large enough to be refused from the store should still be

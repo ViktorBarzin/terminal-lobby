@@ -108,3 +108,91 @@ describe("room for the picture", () => {
     expect(container.querySelector(".tl-field")!.getAttribute("data-thumbs")).toBe(null);
   });
 });
+
+/**
+ * The thumbnail opens the picture.
+ *
+ * 80x44 is enough to recognise a screenshot and nowhere near enough to read
+ * one, so the chip is a way IN to the image rather than a view of it (Viktor,
+ * 2026-09-16: "let's make it clickable, so when the user clicks it, they can
+ * see the entire image in full screen"). It opens the same `.tl-lightbox`
+ * overlay the gallery uses, on the same URL the chip is already drawn from,
+ * which is what lets a held file, uploaded nowhere yet, open at all.
+ */
+describe("opening the picture", () => {
+  const open = async (c: HTMLElement) => {
+    await waitFor(() => expect(c.querySelector(".tl-inline-zoom")).not.toBeNull());
+    fireEvent.click(c.querySelector(".tl-inline-zoom")!);
+    await waitFor(() => expect(c.querySelector(".tl-lightbox")).not.toBeNull());
+  };
+
+  it("shows the whole image, from the URL the chip was drawn from", async () => {
+    const { container } = mount([{ ...IMG, preview: "blob:held-1" }]);
+    await open(container);
+    const full = container.querySelector<HTMLImageElement>(".tl-lightbox img")!;
+    expect(full.getAttribute("src")).toBe("blob:held-1");
+  });
+
+  it("closes on Escape", async () => {
+    const { container } = mount([IMG]);
+    await open(container);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+  });
+
+  it("closes when the overlay is pressed", async () => {
+    const { container } = mount([IMG]);
+    await open(container);
+    fireEvent.click(container.querySelector(".tl-lightbox")!);
+    await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+  });
+
+  it("leaves the caret where it was", async () => {
+    // The button sits ON TOP of the field, so a press that ran its default
+    // would move the caret into the token it covers and take the focus with
+    // it. Opening a picture is not an edit.
+    const { container } = mount([IMG]);
+    await waitFor(() => expect(container.querySelector(".tl-inline-zoom")).not.toBeNull());
+    const e = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    container.querySelector(".tl-inline-zoom")!.dispatchEvent(e);
+    expect(e.defaultPrevented).toBe(true);
+  });
+
+  it("puts the keyboard away while the picture is up, and gives it back after", async () => {
+    // On a phone the field's keyboard covers half the screen, which is half of
+    // the picture the press asked to see. Measured on the emulator on
+    // 2026-09-16: the tap opened the image behind a keyboard that was still up.
+    const { container } = mount([IMG]);
+    const ta = container.querySelector("textarea")!;
+    ta.focus();
+    expect(document.activeElement).toBe(ta);
+
+    await open(container);
+    expect(document.activeElement).not.toBe(ta);
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(document.activeElement).toBe(ta));
+  });
+
+  it("leaves the focus alone when it was not the field's", async () => {
+    // Opening a picture from a field nobody was typing in must not raise a
+    // keyboard on the way out of it.
+    const { container } = mount([IMG]);
+    const ta = container.querySelector("textarea")!;
+    // After the attach, not before: writing a token into the message puts the
+    // caret back in the field, so a blur before that lands is undone.
+    await waitFor(() => expect(container.querySelector(".tl-inline-zoom")).not.toBeNull());
+    ta.blur();
+
+    await open(container);
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+    expect(document.activeElement).not.toBe(ta);
+  });
+
+  it("gives a document chip nothing to open", async () => {
+    const { container } = mount([DOC]);
+    await waitFor(() => expect(container.querySelectorAll(".tl-inline-chip")).toHaveLength(1));
+    expect(container.querySelector(".tl-inline-zoom")).toBeNull();
+  });
+});

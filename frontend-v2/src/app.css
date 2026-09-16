@@ -2081,7 +2081,14 @@ label.tl-set-row-label {
   box-shadow: none;
   outline: none;
 }
-.tl-inline-thumb {
+/* The picture's box, and the press that opens it full size.
+
+   A button rather than a click on the image, because the two accessibility
+   rules this repo lints for (biome.jsonc) exist to stop exactly that: a
+   mouse-only control wearing no role. It carries `tabindex="-1"` instead of a
+   place in the tab order, since this whole layer is `aria-hidden` and a
+   focusable thing inside one is worse than a thing a keyboard cannot reach. */
+.tl-inline-zoom {
   position: absolute;
   left: 0;
   /* Centred on the token's own text box — the height of the glyphs, not of the
@@ -2095,14 +2102,29 @@ label.tl-set-row-label {
      PromptField's number, because the line grows to match it. */
   width: 100%;
   height: var(--tl-thumb-h);
-  object-fit: cover;
+  padding: 0;
+  border: 0;
   border-radius: 4px;
   z-index: 3;
+  /* The layer around it takes no clicks (`.tl-composer-mirror`), so this one
+     asks for them back. */
+  pointer-events: auto;
+  cursor: zoom-in;
   /* The same edge the pill wore. On a screenshot of the app itself, which is
      most of what gets pasted here, nothing else says where the picture ends. */
   outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   /* Behind a PNG with transparency, so it reads as a tile rather than a hole. */
   background: var(--bg-card);
+}
+.tl-inline-zoom:hover {
+  outline-color: var(--accent);
+}
+.tl-inline-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 4px;
 }
 /* Room for the picture, in the field and in the copy of it behind. Both, or
    every chip slides off its token. */

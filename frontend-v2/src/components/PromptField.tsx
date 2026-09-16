@@ -26,8 +26,16 @@ import {
   saveDraft,
   type DraftAttachment,
 } from "../store/drafts";
-import { anchorRestored, attachToken, cutSpan, PAD, previewContentUrl } from "../lib/attachments";
+import {
+  anchorRestored,
+  attachToken,
+  cutSpan,
+  PAD,
+  previewContentUrl,
+  storedDisplayName,
+} from "../lib/attachments";
 import { PaperclipIcon } from "./Icons";
+import { dismissOnPress } from "./overlay";
 
 /**
  * How tall a thumbnail is drawn, and how wide its box is, in px.
@@ -583,6 +591,54 @@ export const PromptField: Component<{
   /** A picture is in the message, so the line has to be tall enough for one. */
   const hasThumb = createMemo(() => attached().some((a) => !!a.token && !!thumbFor(a)));
 
+  /**
+   * The attached picture being looked at full size, or null.
+   *
+   * The chip is a way IN to the image rather than a view of it: 80x44 says
+   * which screenshot is attached and cannot say what is in it. It opens the
+   * same `.tl-lightbox` the gallery uses, on the URL the chip is already drawn
+   * from — which is what lets a held file open at all, since nothing has
+   * uploaded it yet and no path of its own would resolve.
+   */
+  const [zoom, setZoom] = createSignal<{ src: string; name: string } | null>(null);
+  /** Whether closing the picture owes the field its focus back. */
+  let refocusAfterZoom = false;
+
+  /**
+   * Open the picture, and put the keyboard away.
+   *
+   * On a phone the field's keyboard covers half the screen, which is half of
+   * the picture the press just asked to see — measured on the emulator on
+   * 2026-09-16, where the tap opened the image behind a keyboard that stayed
+   * up. Blurring drops it, and the caret survives a blur, so handing focus
+   * back on close puts the writer exactly where they were. A field nobody was
+   * typing in gets nothing back, or closing a picture would raise a keyboard
+   * over the screen the person is trying to read.
+   */
+  const openZoom = (src: string, name: string): void => {
+    refocusAfterZoom = !!ta && document.activeElement === ta;
+    ta?.blur();
+    setZoom({ src, name });
+  };
+
+  const closeZoom = (): void => {
+    setZoom(null);
+    if (refocusAfterZoom) ta?.focus();
+    refocusAfterZoom = false;
+  };
+
+  // Escape closes it, and does not reach the field underneath: without the
+  // capture the same keystroke would also close the completion menu or
+  // whatever else the composer does with Escape.
+  const onZoomKey = (e: KeyboardEvent) => {
+    if (e.key !== "Escape" || !zoom()) return;
+    e.preventDefault();
+    e.stopPropagation();
+    closeZoom();
+  };
+  window.addEventListener("keydown", onZoomKey, true);
+  onCleanup(() => window.removeEventListener("keydown", onZoomKey, true));
+
   // The line height goes with it, and the field's own height is written in px
   // at the moment of typing — so without this the field keeps the height it had
   // for 21px lines and clips the picture it just made room for.
@@ -924,19 +980,40 @@ export const PromptField: Component<{
                             character-for-character match of the field. */}
                         <Show when={thumbFor(item())}>
                           {(src) => (
-                            <img
-                              class="tl-inline-thumb"
-                              src={src()}
-                              alt=""
-                              // The store keeps the original — a 4100px screen
-                              // grab is a normal paste here — and this box is
-                              // 80px wide. Decoding off the main thread keeps
-                              // that from landing on the keystroke that
-                              // attached it.
-                              decoding="async"
-                              draggable={false}
-                              onError={() => setBroken((was) => new Set(was).add(item().path))}
-                            />
+                            <button
+                              type="button"
+                              class="tl-inline-zoom"
+                              // Pointer-only, deliberately. This layer is
+                              // `aria-hidden` — it is a copy of text the field
+                              // already carries — so a control inside it must
+                              // not be in the tab order, and a screen reader
+                              // is not told about a picture twice. What it
+                              // does have is the only affordance a mouse or a
+                              // thumb can use: 80x44 recognises a screenshot,
+                              // it does not read one.
+                              tabindex={-1}
+                              title="Open the full image"
+                              // The button sits ON TOP of the field, so the
+                              // default press would move the caret into the
+                              // token it covers. Opening a picture is not an
+                              // edit.
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => openZoom(src(), item().name)}
+                            >
+                              <img
+                                class="tl-inline-thumb"
+                                src={src()}
+                                alt=""
+                                // The store keeps the original — a 4100px
+                                // screen grab is a normal paste here — and
+                                // this box is 80px wide. Decoding off the main
+                                // thread keeps that from landing on the
+                                // keystroke that attached it.
+                                decoding="async"
+                                draggable={false}
+                                onError={() => setBroken((was) => new Set(was).add(item().path))}
+                              />
+                            </button>
                           )}
                         </Show>
                       </span>
@@ -1050,6 +1127,17 @@ export const PromptField: Component<{
           </div>
         </div>
       </div>
+      {/* The attached picture, full size. Same class as the gallery's, so the
+          two look and behave alike, and pressing anywhere on it closes it —
+          the surface is not a control, which is why the gesture goes on
+          through `dismissOnPress` rather than an onClick (components/overlay). */}
+      <Show when={zoom()}>
+        {(shot) => (
+          <div class="tl-lightbox" ref={dismissOnPress(closeZoom, { keepFocus: true })}>
+            <img src={shot().src} alt={storedDisplayName(shot().name)} />
+          </div>
+        )}
+      </Show>
     </>
   );
 };
