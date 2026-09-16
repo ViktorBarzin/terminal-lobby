@@ -362,3 +362,56 @@ func TestEveryStagedSourceDirectoryIsCopiedIntoTheStage(t *testing.T) {
 		}
 	}
 }
+
+// agent-api's port is the one this package does not own a neighbourhood of.
+// The six browser-facing services sit at 7681 and 7683-7689; agent-api is at
+// 8710, in the range a shared box hands out to whatever asked first -- the
+// `python3 -m http.server <port>` a person runs to look at a page is the
+// common case, and eight such listeners were live between 8130 and 8933 when
+// this was written. agent-api ends main with log.Fatal(ListenAndServe()), so
+// a taken port leaves nothing on 8710 and both of its probes fail.
+//
+// Neither failure is evidence that the release is bad, and the response to a
+// failed probe is not proportional to it: Decide returns RevertAndHold, which
+// downgrades terminal-lobby and runs `apt-mark hold`, so ttyd, tmux-api and
+// the SPA stop deploying until a human unholds the package. Marking these two
+// advisory keeps the probe -- it still runs, still prints, still counts in
+// terminal_lobby_verify_failed_probes, and tl-reconcile still reports the unit
+// INACTIVE -- and takes away only its power to downgrade the box.
+func TestAgentAPIsChecksCannotDowngradeTheBox(t *testing.T) {
+	var seen int
+	for _, c := range Package.Checks {
+		if c.Unit != "agent-api" {
+			continue
+		}
+		seen++
+		if !c.Advisory {
+			t.Errorf("check %q is gating; a squatted 8710 would downgrade the package "+
+				"and hold it, stopping every later deploy", c.Name)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("agent-api has no check at all")
+	}
+}
+
+// The other side of the same rule. Advisory is for the one service no person's
+// session depends on; a release that broke the terminal, the session list or
+// the file browser must still revert, so nothing else may quietly acquire it.
+func TestEveryServiceAPersonUsesKeepsAGatingCheck(t *testing.T) {
+	gating := map[string]bool{}
+	for _, c := range Package.Checks {
+		if !c.Advisory {
+			gating[c.Unit] = true
+		}
+	}
+	for _, u := range Package.Units {
+		if u.Template || strings.HasSuffix(u.Name, ".timer") || u.Name == "agent-api" {
+			continue
+		}
+		if !gating[u.Name] {
+			t.Errorf("unit %s has only advisory checks; a release could break it and "+
+				"still be kept", u.Name)
+		}
+	}
+}

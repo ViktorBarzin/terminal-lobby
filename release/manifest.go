@@ -190,6 +190,17 @@ type Check struct {
 	Name       string
 	URL        string
 	WantStatus int
+	// Advisory takes away this probe's power to revert the package, and
+	// nothing else: it still runs, still prints when it fails, and still
+	// counts in terminal_lobby_verify_failed_probes.
+	//
+	// A revert downgrades terminal-lobby and holds it, so a failed probe stops
+	// every later deploy of every other service in the package until someone
+	// unholds it by hand. That is the right price for a service a person's
+	// session runs through, and the wrong one for a service whose absence
+	// nobody notices. Set it only where a failure means "this one service is
+	// not answering", never where it means "the box is broken".
+	Advisory bool
 }
 
 // Manifest is what the package contains and what watches it. Both halves of the
@@ -268,8 +279,28 @@ var Package = Manifest{
 		// stripped the header and the shared secret. A release that broke that
 		// strip would leave a port where the browser path answers for a
 		// program, so the refusal probe is worth more here than elsewhere.
-		{Unit: "agent-api", Name: "agent-api /health", URL: "http://127.0.0.1:8710/health", WantStatus: 200},
-		{Unit: "agent-api", Name: "agent-api /v1/conversations refuses anonymous", URL: "http://127.0.0.1:8710/v1/conversations", WantStatus: 401},
+		//
+		// Both are advisory, and 8710 is why. It is the one port the package
+		// holds outside its own block -- the other seven services sit at 7681
+		// and 7683-7689, and nothing else on a devvm goes looking there, while
+		// 8710 is in the range a shared box hands to whoever asked first. The
+		// `python3 -m http.server <port>` a person runs to look at a rendered
+		// page is the common case; eight such listeners were live between 8130
+		// and 8933 on this box when these two probes were written. agent-api
+		// ends main with log.Fatal(ListenAndServe()), so a taken port leaves
+		// nothing here to answer and both probes fail.
+		//
+		// The release is fine in that case, and a revert would not fix it: it
+		// downgrades to a version that does not ship agent-api at all and then
+		// holds the package, stopping every later deploy of ttyd, tmux-api and
+		// the SPA until a human runs `apt-mark unhold`. Nobody's session
+		// depends on this port, and nothing answers on it until a credential is
+		// written in TL_BEARER_TOKENS, so it does not get to make that call.
+		// What still reports a broken one: the FAILED line tl-apply prints,
+		// terminal_lobby_verify_failed_probes, and tl-reconcile naming the unit
+		// INACTIVE after the deploy.
+		{Unit: "agent-api", Name: "agent-api /health", URL: "http://127.0.0.1:8710/health", WantStatus: 200, Advisory: true},
+		{Unit: "agent-api", Name: "agent-api /v1/conversations refuses anonymous", URL: "http://127.0.0.1:8710/v1/conversations", WantStatus: 401, Advisory: true},
 		// Reports stale rather than up once ticks stop, so a watcher that is
 		// running but no longer looking fails the release check instead of
 		// passing it. It carries no authed surface, so there is no refusal to

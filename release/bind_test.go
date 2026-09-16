@@ -127,3 +127,34 @@ func TestShippedConfigSaysWhatTheSecretCovers(t *testing.T) {
 		}
 	}
 }
+
+// The other half of the squatted-port defect. agent-api ends main with
+// log.Fatal(ListenAndServe()), so something already on 8710 exits the process
+// immediately. With systemd's defaults -- StartLimitBurst=5 over
+// StartLimitIntervalSec=10s -- Restart=always gives up inside ten seconds and
+// leaves the unit failed, so the service stays dead long after the port is
+// free again and only a hand-typed `systemctl restart` brings it back.
+//
+// A taken port is a transient condition on a shared box, not a broken build,
+// and the unit has to outlast it: wait between tries and never stop trying.
+func TestSystemdNeverGivesUpOnAgentAPI(t *testing.T) {
+	unit := repoFile(t, "devvm", "agent-api.service")
+	if !strings.Contains(unit, "Restart=always") {
+		t.Error("devvm/agent-api.service does not set Restart=always")
+	}
+	if !strings.Contains(unit, "StartLimitIntervalSec=0") {
+		t.Error("devvm/agent-api.service keeps systemd's default start limit; five " +
+			"failed binds in ten seconds leave the unit failed until a human " +
+			"restarts it, long after whatever held 8710 has gone")
+	}
+	var restartSec string
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, "RestartSec=") {
+			restartSec = strings.TrimSpace(strings.TrimPrefix(line, "RestartSec="))
+		}
+	}
+	if restartSec == "" {
+		t.Error("devvm/agent-api.service sets no RestartSec; with the start limit off, " +
+			"systemd's 100ms default retries a failing bind ten times a second forever")
+	}
+}

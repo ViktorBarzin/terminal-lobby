@@ -85,6 +85,9 @@ func RestartSet(units []Unit, changed []string) []string {
 type Probe struct {
 	Name string
 	OK   bool
+	// Advisory carries Check.Advisory through to the decision: the probe ran
+	// and is reported, and its failure alone does not revert the package.
+	Advisory bool
 }
 
 // Action is what to do with the version that was just installed.
@@ -106,18 +109,57 @@ func (a Action) String() string {
 }
 
 // Decide reads the verification results. It fails closed: a release that ran no
-// probe has not been shown to work, and leaving users inside an unverified
-// version costs more than a revert does.
+// GATING probe has not been shown to work, and leaving users inside an
+// unverified version costs more than a revert does.
+//
+// Advisory probes are reported and counted but cannot revert. Reverting
+// downgrades the package and holds it, which stops every later deploy until a
+// human unholds it, so it is reserved for the services a person's session runs
+// through. agent-api is the one service outside that set, and the failure it is
+// most likely to show -- nothing listening on a port another process took on a
+// shared box -- is not a statement about the release at all.
 func Decide(probes []Probe) Action {
-	if len(probes) == 0 {
-		return RevertAndHold
-	}
+	gating := 0
 	for _, p := range probes {
+		if p.Advisory {
+			continue
+		}
+		gating++
 		if !p.OK {
 			return RevertAndHold
 		}
 	}
+	// Reached by a run that probed nothing, and by one whose every probe was
+	// advisory: neither has shown that what a person uses still works.
+	if gating == 0 {
+		return RevertAndHold
+	}
 	return Keep
+}
+
+// GatingFirst orders checks so the ones that can revert the package are probed
+// before the ones that cannot, keeping their relative order otherwise.
+//
+// Verification runs under one shared deadline, and a probe that will never pass
+// spends it a second at a time. An advisory check is the likeliest to be in
+// that state -- a port something else is holding stays held -- and without this
+// it would drain the budget ahead of the checks that decide whether the box
+// keeps this version, leaving them a single attempt each. A service that is
+// slow to come back from its restart would then fail, and the advisory failure
+// that cannot revert the package would have caused a revert anyway.
+func GatingFirst(checks []Check) []Check {
+	out := make([]Check, 0, len(checks))
+	for _, c := range checks {
+		if !c.Advisory {
+			out = append(out, c)
+		}
+	}
+	for _, c := range checks {
+		if c.Advisory {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // RestartTargets resolves a restart set to the systemd targets to act on,

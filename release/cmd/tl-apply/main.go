@@ -107,14 +107,20 @@ func apply() int {
 
 	probes := verify()
 	writeMetrics(probes)
+	// Printed before the decision, not after it, so an advisory failure is on
+	// screen in the install log even on the run that keeps the version.
+	for _, p := range probes {
+		switch {
+		case p.OK:
+		case p.Advisory:
+			fmt.Fprintln(os.Stderr, "tl-apply: FAILED (advisory, not reverting):", p.Name)
+		default:
+			fmt.Fprintln(os.Stderr, "tl-apply: FAILED:", p.Name)
+		}
+	}
 	if release.Decide(probes) == release.Keep {
 		fmt.Println("tl-apply: verified")
 		return 0
-	}
-	for _, p := range probes {
-		if !p.OK {
-			fmt.Fprintln(os.Stderr, "tl-apply: FAILED:", p.Name)
-		}
 	}
 	// The emergency brake is ARMED here, not run here. This is executing inside
 	// postinst, which dpkg runs while holding its lock -- a nested apt-get would
@@ -140,8 +146,9 @@ const verifyBudget = 90 * time.Second
 func verify() []release.Probe {
 	client := &http.Client{Timeout: 5 * time.Second}
 	deadline := time.Now().Add(verifyBudget)
-	probes := make([]release.Probe, 0, len(release.Package.Checks))
-	for _, c := range release.Package.Checks {
+	checks := release.GatingFirst(release.Package.Checks)
+	probes := make([]release.Probe, 0, len(checks))
+	for _, c := range checks {
 		ok := false
 		for {
 			resp, err := client.Get(c.URL)
@@ -159,7 +166,7 @@ func verify() []release.Probe {
 			}
 			time.Sleep(time.Second)
 		}
-		probes = append(probes, release.Probe{Name: c.Name, OK: ok})
+		probes = append(probes, release.Probe{Name: c.Name, OK: ok, Advisory: c.Advisory})
 	}
 	return probes
 }

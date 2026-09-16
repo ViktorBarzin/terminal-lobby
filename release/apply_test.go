@@ -275,3 +275,93 @@ func TestEmptyListUnitsOutputYieldsNoInstances(t *testing.T) {
 		t.Fatalf("want nothing, got %v", got)
 	}
 }
+
+// A revert downgrades the whole package and holds it, which stops every later
+// deploy of ttyd, tmux-api and the SPA until a human runs `apt-mark unhold`.
+// That price is right for a service a person's session runs through, and wrong
+// for agent-api: nothing a person does touches it, it answers nothing until a
+// credential is written, and its port is outside the block this package owns.
+// A probe of it has to be able to fail without taking the box with it.
+func TestAFailedAdvisoryProbeKeepsTheVersion(t *testing.T) {
+	got := Decide([]Probe{
+		{Name: "tmux-api /health", OK: true},
+		{Name: "agent-api /health", OK: false, Advisory: true},
+	})
+	if got != Keep {
+		t.Fatalf("want Keep when only an advisory probe failed, got %v", got)
+	}
+}
+
+// The escape hatch is per-probe and does not widen. One advisory probe passing
+// says nothing about the gating one beside it.
+func TestAnAdvisoryProbeDoesNotExcuseAGatingOne(t *testing.T) {
+	got := Decide([]Probe{
+		{Name: "agent-api /health", OK: true, Advisory: true},
+		{Name: "tmux-api /health", OK: false},
+	})
+	if got != RevertAndHold {
+		t.Fatalf("want RevertAndHold when a gating probe failed, got %v", got)
+	}
+}
+
+// Same reading as a run that probed nothing: advisory results alone have not
+// shown that anything a person uses still works, so the release is unverified.
+// Without this, marking every check advisory would turn verification off and
+// still report success.
+func TestARunOfOnlyAdvisoryProbesIsTreatedAsFailure(t *testing.T) {
+	got := Decide([]Probe{
+		{Name: "agent-api /health", OK: true, Advisory: true},
+		{Name: "agent-api /v1 refuses anonymous", OK: true, Advisory: true},
+	})
+	if got != RevertAndHold {
+		t.Fatalf("want RevertAndHold when no gating probe ran, got %v", got)
+	}
+}
+
+// Verification runs under one shared deadline. An advisory check is the one
+// most likely to be failing for a reason that will not clear inside it -- a
+// port another process is holding stays held -- and probing it first would
+// spend the budget that the checks deciding the box's fate need for their
+// retries.
+func TestGatingChecksAreProbedBeforeAdvisoryOnes(t *testing.T) {
+	in := []Check{
+		{Name: "agent-api /health", Advisory: true},
+		{Name: "tmux-api /health"},
+		{Name: "agent-api /v1 refuses anonymous", Advisory: true},
+		{Name: "ttyd refuses anonymous"},
+	}
+	got := GatingFirst(in)
+	if len(got) != len(in) {
+		t.Fatalf("GatingFirst dropped checks: %d in, %d out", len(in), len(got))
+	}
+	var names []string
+	for _, c := range got {
+		names = append(names, c.Name)
+	}
+	want := []string{
+		"tmux-api /health", "ttyd refuses anonymous",
+		"agent-api /health", "agent-api /v1 refuses anonymous",
+	}
+	if !equal(names, want) {
+		t.Errorf("want %v, got %v", want, names)
+	}
+}
+
+// The live order, so a check added to the manifest between the two agent-api
+// entries does not quietly land behind them.
+func TestTheShippedChecksReorderToGatingFirst(t *testing.T) {
+	ordered := GatingFirst(Package.Checks)
+	seenAdvisory := false
+	for _, c := range ordered {
+		if c.Advisory {
+			seenAdvisory = true
+			continue
+		}
+		if seenAdvisory {
+			t.Fatalf("gating check %q is probed after an advisory one", c.Name)
+		}
+	}
+	if !seenAdvisory {
+		t.Skip("no advisory check ships; nothing to order")
+	}
+}
