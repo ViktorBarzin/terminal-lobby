@@ -121,6 +121,17 @@ type Gate struct {
 	// observe the difference.
 	countAdminReads func()
 
+	// TokensOwnerUID is the uid the bearer credentials file must belong to.
+	// The zero value is root, which is the only owner that means anything on a
+	// box like this one: the services run as an ordinary account, so a file
+	// that account owns is a file it can add a line to, and a line names any
+	// terminal account on the box. Nothing reads this from the environment or
+	// from a config file, so no deployed box can be talked into a weaker rule
+	// by configuration.
+	//
+	// Set it only in a test, which cannot create a root-owned file.
+	TokensOwnerUID int
+
 	// countTokenReads and countTokenCompares are the same kind of seam for the
 	// bearer credentials, and the two properties they pin are worth as much as
 	// the behaviour around them. A request with no Authorization header must

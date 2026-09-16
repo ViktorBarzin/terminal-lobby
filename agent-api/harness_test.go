@@ -58,11 +58,12 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	// The credentials file, in the format authuser documents: three
-	// whitespace-separated fields, mode 0640 so the gate does not refuse it.
+	// whitespace-separated fields, the DIGEST of each token rather than the
+	// token, and mode 0640 so the gate does not refuse it.
 	tokens := filepath.Join(t.TempDir(), "tokens")
 	body := "# the caller that is under test\n" +
-		testActor + "  " + testToken + "  " + testOSUser + "\n" +
-		"scratch  " + testOtherToken + "  " + testOSUser + "\n"
+		testActor + "  " + authuser.BearerDigest(testToken) + "  " + testOSUser + "\n" +
+		"scratch  " + authuser.BearerDigest(testOtherToken) + "  " + testOSUser + "\n"
 	if err := os.WriteFile(tokens, []byte(body), 0o640); err != nil {
 		t.Fatalf("write tokens: %v", err)
 	}
@@ -80,6 +81,9 @@ func newHarness(t *testing.T) *harness {
 		// this host, so the account lookup is the thing to skip — not the
 		// terminal-account check above it, which is the rule under test.
 		SkipAccountCheck: true,
+		// A credentials file must be root-owned on a real box, which a test
+		// cannot produce. authuser owns the tests for that rule.
+		TokensOwnerUID: os.Getuid(),
 	}
 
 	h := &harness{

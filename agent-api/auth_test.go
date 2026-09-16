@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"terminal-lobby/authuser"
 )
 
 // everyV1Route is the full surface. A route added without a line here is a
@@ -124,12 +126,13 @@ func TestCredentialForANonTerminalAccountIsRefused(t *testing.T) {
 	h := newHarness(t)
 	// Point the gate at a credentials file whose OS user is in no user map.
 	tokens := t.TempDir() + "/tokens"
-	if err := os.WriteFile(tokens, []byte("ghost  "+strings.Repeat("k", 40)+"  nobody\n"), 0o640); err != nil {
+	ghostToken := strings.Repeat("k", 40)
+	if err := os.WriteFile(tokens, []byte("ghost  "+authuser.BearerDigest(ghostToken)+"  nobody\n"), 0o640); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	h.srv.Gate.Config.BearerTokensPath = tokens
 
-	w := h.do(request{method: "GET", path: "/v1/conversations", token: strings.Repeat("k", 40)})
+	w := h.do(request{method: "GET", path: "/v1/conversations", token: ghostToken})
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("status %d, want 403: %s", w.Code, w.Body.String())
 	}

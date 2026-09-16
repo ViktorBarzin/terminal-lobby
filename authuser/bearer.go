@@ -19,13 +19,29 @@ package authuser
 //
 // Format, one credential per line, # comments and blanks ignored:
 //
-//	<name>  <token>  <os-user>
-//	muse    7f3c…    wizard
+//	<name>  sha256:<digest of the token>  <os-user>
+//	muse    sha256:9f86d081…              wizard
 //
 // Three fields separated by whitespace rather than the user map's '=', because
 // there are three of them. A line that does not parse is skipped, the way the
 // user map skips one, so a half-written entry costs that entry rather than
 // every credential on the box.
+//
+// The middle field is a verifier, not the token, and that is the whole reason
+// this file can be trusted with anything. TL_PROXY_SECRET lives in
+// /etc/terminal-lobby.local.conf, 0640 root:root: systemd reads it as root and
+// hands it over after dropping to User=wizard, so nothing else running as
+// wizard ever sees it. This file has no such help — the service opens it
+// itself, at request time, as wizard — so it has to be readable by the account
+// every other lobby process also runs as. Holding tokens there would make the
+// per-caller credential weaker than the shared secret it replaces. Holding
+// digests hands a reader something it cannot present.
+//
+// Which leaves who may WRITE it, and that one the file mode cannot answer: the
+// service account owning the file is exactly the state 0600 describes, and an
+// account that owns the file appends a line naming any terminal account on the
+// box. So the owner must be root. Both halves are checked on every read, and
+// either one failing means no credentials rather than an error.
 //
 // What the tests pin, and what a reader should be able to rely on:
 //
@@ -39,22 +55,26 @@ package authuser
 //     credentials at all: the feature is off there, and an Authorization header
 //     belongs to whatever the proxy is doing upstream.
 //   - Tokens are compared with crypto/subtle, every credential on every
-//     request, and never reach a log line, a response body or Identity.
+//     request, and never reach a log line, a response body, Identity or the
+//     file itself.
 //
 // The credential names an OS user, and that user must be a terminal account on
-// this box. The file is meant to be root-owned, so that check is defence in
-// depth rather than a boundary — the same argument the act-as charset check
-// makes — but it is what stops one typo'd line handing out an account the lobby
-// does not serve.
+// this box. The file is root-owned, so that check is defence in depth rather
+// than a boundary — the same argument the act-as charset check makes — but it
+// is what stops one typo'd line handing out an account the lobby does not
+// serve.
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
 	"os"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 // DefaultBearerTokensPath is where the credentials live when TL_BEARER_TOKENS
@@ -74,23 +94,53 @@ const (
 // this box issued. Callers answer 401.
 var ErrBadBearer = errors.New("invalid bearer token")
 
-// tokenRe bounds a token: RFC 6750's b64token charset, so hex, base64url and
-// Vault's dotted tokens all pass, and nothing with whitespace, a quote or a
-// shell metacharacter does.
+// tokenRe bounds a token as PRESENTED: RFC 6750's b64token charset, so hex,
+// base64url and Vault's dotted tokens all pass, and nothing with whitespace, a
+// quote or a shell metacharacter does.
 //
-// The 32-character floor is the part worth keeping. Without it, a line written
-// in the user map's format — "muse = wizard" — parses into three fields whose
-// middle one is "=", and a one-character token that anybody can guess would
-// authenticate as a real account. A machine credential nobody types has no
-// reason to be shorter than this.
+// The 32-character floor is the part worth keeping, and it is checked here
+// rather than on the file because the file holds a digest — 64 hex characters
+// whatever it digests, which would have left the floor nowhere to live. A
+// credential nobody types has no reason to be shorter than this, and a token
+// short enough to guess is also short enough to recover from its digest by
+// anything that can read the file.
 var tokenRe = regexp.MustCompile(`^[A-Za-z0-9._~+/=-]{32,512}$`)
 
-// bearerCred is one parsed line. The token is unexported and never leaves this
-// file: Identity carries the NAME, which is what /whoami echoes and what
+// digestPrefix names the algorithm in the file, so a line carries what it is
+// rather than 64 characters a reader has to recognise. It also means a
+// pasted-in token fails to parse and says so, instead of being mistaken for a
+// digest and silently never matching.
+const digestPrefix = "sha256"
+
+// BearerDigest is the middle field of a credentials line for a given token:
+// the one definition of the format, so an issuing tool and the gate cannot
+// drift. Equivalent to `printf %s "$TOKEN" | sha256sum`.
+func BearerDigest(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return digestPrefix + ":" + hex.EncodeToString(sum[:])
+}
+
+// parseDigest reads that field back.
+func parseDigest(field string) ([sha256.Size]byte, bool) {
+	var out [sha256.Size]byte
+	algo, digits, found := strings.Cut(field, ":")
+	if !found || !strings.EqualFold(algo, digestPrefix) {
+		return out, false
+	}
+	raw, err := hex.DecodeString(digits)
+	if err != nil || len(raw) != len(out) {
+		return out, false
+	}
+	copy(out[:], raw)
+	return out, true
+}
+
+// bearerCred is one parsed line. The digest is unexported and never leaves
+// this file: Identity carries the NAME, which is what /whoami echoes and what
 // tmux-api writes to the log.
 type bearerCred struct {
 	Name   string
-	token  string
+	digest [sha256.Size]byte
 	OSUser string
 }
 
@@ -134,37 +184,78 @@ func (g *Gate) bearerCreds() []bearerCred {
 	}
 	defer f.Close()
 
-	// Mode from the open file rather than a separate stat, so what is checked
-	// is what is read. The services run as an ordinary account, so this file
-	// cannot be 0600 root-owned the way /etc/terminal-lobby.local.conf is —
-	// which is exactly why the mode is worth checking rather than assuming. On
-	// a shared box a world-readable token is every local account's token, and a
-	// group-writable file lets a second account issue itself one.
+	// Owner and mode from the OPEN file rather than a separate stat, so what
+	// is checked is what is read.
 	info, err := f.Stat()
 	if err != nil {
 		return nil
 	}
+	// Who may write it. The services run as an ordinary account, so a file
+	// that account owns is one it can append a line to, and a line names any
+	// terminal account on the box. 0600 owned by the service account is the
+	// mode an operator reaches for first and the one this refuses.
+	owner, ok := fileOwnerUID(info)
+	if !ok || owner != g.TokensOwnerUID {
+		log.Printf("authuser: ignoring bearer credentials in %s: owned by uid %d, want %d — "+
+			"an account that owns this file can issue itself a credential for any user on "+
+			"this box; chown %d:<the group the services run as> and chmod 0640 it",
+			path, owner, g.TokensOwnerUID, g.TokensOwnerUID)
+		return nil
+	}
+	// Who may read it. Digests are not tokens, but the file still names which
+	// accounts have machine callers, and group-write is a second account
+	// issuing itself a credential.
 	if perm := info.Mode().Perm(); perm&0o027 != 0 {
 		log.Printf("authuser: ignoring bearer credentials in %s: mode %04o lets accounts "+
-			"other than the owner read or change them; chmod 0640 (or 0600) it", path, perm)
+			"other than the owner read or change them; chmod 0640 it", path, perm)
 		return nil
 	}
 
 	var out []bearerCred
-	for _, line := range readLines(f) {
-		fields := strings.Fields(line)
+	for _, line := range readNumberedLines(f) {
+		fields := strings.Fields(line.Text)
 		if len(fields) != 3 {
+			g.skipLine(path, line.Number, "want three whitespace-separated fields, <name> sha256:<digest> <os-user>")
 			continue
 		}
-		name, token, osUser := fields[0], fields[1], fields[2]
+		name, field, osUser := fields[0], fields[1], fields[2]
+		digest, ok := parseDigest(field)
+		if !ok {
+			// The likeliest cause by far is a token written where its digest
+			// goes, so the reason says what to write and the report says which
+			// line — never what the line holds, which on this branch is the
+			// one place a token could still be.
+			g.skipLine(path, line.Number, "the second field is not sha256:<64 hex digits>; "+
+				`store the digest, "printf %s \"$TOKEN\" | sha256sum", not the token`)
+			continue
+		}
 		// The OS user is bound for `sudo -u <user>` argv and a /home/<user>
 		// path, same as an act-as target, so it is held to the same charset.
-		if !userRe.MatchString(name) || !tokenRe.MatchString(token) || !userRe.MatchString(osUser) {
+		if !userRe.MatchString(name) || !userRe.MatchString(osUser) {
+			g.skipLine(path, line.Number, "the credential name and the OS user must each be a plain account name")
 			continue
 		}
-		out = append(out, bearerCred{Name: name, token: token, OSUser: osUser})
+		out = append(out, bearerCred{Name: name, digest: digest, OSUser: osUser})
 	}
 	return out
+}
+
+// skipLine reports a line the parser could not use. By NUMBER and reason, with
+// nothing copied out of the line: a line that does not parse is the one that
+// might hold a token where a digest belongs.
+func (g *Gate) skipLine(path string, number int, why string) {
+	log.Printf("authuser: %s line %d skipped: %s", path, number, why)
+}
+
+// fileOwnerUID reports the uid that owns an open file. A platform that cannot
+// answer gets no credentials, which is the same answer every other doubt on
+// this path produces.
+func fileOwnerUID(info os.FileInfo) (int, bool) {
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return -1, false
+	}
+	return int(st.Uid), true
 }
 
 // matchBearer finds the credential whose token was presented.
@@ -174,14 +265,20 @@ func (g *Gate) bearerCreds() []bearerCred {
 // sits inside: the number of comparisons would report which credential
 // answered, and how long the loop ran would report how far down the file it is.
 func (g *Gate) matchBearer(creds []bearerCred, presented string) (bearerCred, bool) {
+	// The floor and the charset, on the one thing that still carries them. It
+	// depends on the caller's own input and on no credential, so leaving early
+	// here reports nothing about the file.
+	if !tokenRe.MatchString(presented) {
+		return bearerCred{}, false
+	}
+	want := sha256.Sum256([]byte(presented))
 	var found bearerCred
 	ok := false
-	want := []byte(presented)
 	for _, c := range creds {
 		if g.countTokenCompares != nil {
 			g.countTokenCompares()
 		}
-		if subtle.ConstantTimeCompare([]byte(c.token), want) == 1 {
+		if subtle.ConstantTimeCompare(c.digest[:], want[:]) == 1 {
 			found, ok = c, true
 		}
 	}

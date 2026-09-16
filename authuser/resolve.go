@@ -333,14 +333,33 @@ func (g *Gate) userMap() map[string]string {
 // blanks and # comments dropped. Both the admin list and the user map are this
 // shape, and both are read per request.
 func readLines(f *os.File) []string {
-	var out []string
+	numbered := readNumberedLines(f)
+	out := make([]string, 0, len(numbered))
+	for _, l := range numbered {
+		out = append(out, l.Text)
+	}
+	return out
+}
+
+// configLine is one meaningful line and where in the file it is.
+type configLine struct {
+	// Number is the line's position in the FILE, counting the comments and
+	// blanks that readLines drops, because that is the number an operator
+	// reads off an editor when told which line was skipped.
+	Number int
+	Text   string
+}
+
+// readNumberedLines is readLines keeping that number.
+func readNumberedLines(f *os.File) []configLine {
+	var out []configLine
 	sc := bufio.NewScanner(f)
-	for sc.Scan() {
+	for n := 1; sc.Scan(); n++ {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		out = append(out, line)
+		out = append(out, configLine{Number: n, Text: line})
 	}
 	return out
 }

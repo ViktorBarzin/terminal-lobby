@@ -8,35 +8,43 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
 
-// Fixture tokens. Both are over the minimum length, which is itself a rule the
-// tests below pin: a one-character "token" left by a format mix-up must never
-// authenticate anyone.
+// Fixture tokens — what a caller presents. Both are over the minimum length,
+// which is itself a rule the tests below pin: a one-character "token" left by
+// a format mix-up must never authenticate anyone.
 const (
 	museToken = "muse-0000000000000000000000000000000001"
 	opsToken  = "ops-00000000000000000000000000000000002"
 )
 
-// The fixture credentials, in the file's own format. bob and alice are the two
-// terminal accounts bearerGate's user map declares; alice also administers the
-// box, which is how the act-as tests below have someone to be refused as.
-const fixtureTokens = "# the agent broker\n" +
-	"muse  " + museToken + "  bob\n" +
+// The fixture credentials, in the file's own format: the DIGEST of each token,
+// never the token. bob and alice are the two terminal accounts bearerGate's
+// user map declares; alice also administers the box, which is how the act-as
+// tests below have someone to be refused as.
+var fixtureTokens = "# the agent broker\n" +
+	"muse  " + BearerDigest(museToken) + "  bob\n" +
 	"\n" +
-	"ops   " + opsToken + "   alice\n"
+	"ops   " + BearerDigest(opsToken) + "   alice\n"
 
 // bearerGate builds a gate over an admins list, a user map and a tokens file.
 //
 // Passing "" for tokens leaves the file ABSENT rather than empty. That is the
 // case every box is in today and it must behave differently from a file with
 // credentials in it, so the two are never written by the same helper argument.
+//
+// TokensOwnerUID is moved off its production default here, and only here. A
+// test cannot create a root-owned file, and the rule it would otherwise fail
+// is the subject of its own tests below rather than a detail every case has to
+// carry.
 func bearerGate(t *testing.T, tokens string) *Gate {
 	t.Helper()
 	g := resolveGate(t, Config{MultiUser: "on"}, "alice\n", "alice=alice\nbob.smith=bob\n")
 	g.Config.BearerTokensPath = filepath.Join(filepath.Dir(g.AdminsPath), "tokens")
+	g.TokensOwnerUID = os.Getuid()
 	if tokens != "" {
 		writeTokens(t, g, tokens)
 	}
@@ -255,18 +263,21 @@ func TestEmptyTokensFileAuthenticatesNobody(t *testing.T) {
 // assumed this file used the user map's format would write, and a naive split
 // would turn "muse=x=bob" into a one-character token.
 func TestMalformedTokenLinesAreSkipped(t *testing.T) {
+	digest := BearerDigest(museToken)
 	for _, c := range []struct{ name, line string }{
-		{"two fields", "muse  " + museToken},
-		{"four fields", "muse  " + museToken + "  bob  extra"},
-		{"user-map format", "muse=" + museToken + "=bob"},
+		{"two fields", "muse  " + digest},
+		{"four fields", "muse  " + digest + "  bob  extra"},
+		{"user-map format", "muse=" + digest + "=bob"},
 		{"equals as the token", "muse = bob"},
-		{"short token", "muse  tooshort  bob"},
-		{"token one byte under the minimum", "muse  " + strings.Repeat("a", 31) + "  bob"},
-		{"token with a shell metacharacter", "muse  " + strings.Repeat("a", 31) + ";id  bob"},
-		{"os user with a leading dash", "muse  " + museToken + "  -bob"},
-		{"os user with a traversal", "muse  " + museToken + "  ../root"},
-		{"name with a dot", "mu.se  " + museToken + "  bob"},
-		{"name too long", strings.Repeat("n", 33) + "  " + museToken + "  bob"},
+		{"a plaintext token where the digest goes", "muse  " + museToken + "  bob"},
+		{"a bare digest with no algorithm", "muse  " + strings.TrimPrefix(digest, "sha256:") + "  bob"},
+		{"a digest one hex digit short", "muse  sha256:" + strings.Repeat("a", 63) + "  bob"},
+		{"a digest that is not hex", "muse  sha256:" + strings.Repeat("g", 64) + "  bob"},
+		{"a digest under another algorithm", "muse  md5:" + strings.Repeat("a", 32) + "  bob"},
+		{"os user with a leading dash", "muse  " + digest + "  -bob"},
+		{"os user with a traversal", "muse  " + digest + "  ../root"},
+		{"name with a dot", "mu.se  " + digest + "  bob"},
+		{"name too long", strings.Repeat("n", 33) + "  " + digest + "  bob"},
 	} {
 		g := bearerGate(t, c.line+"\n")
 		if got := g.bearerCreds(); len(got) != 0 {
@@ -282,7 +293,7 @@ func TestMalformedTokenLinesAreSkipped(t *testing.T) {
 // and a half-written entry should cost that entry, not every credential on the
 // box. The user map has behaved this way since before the gate existed.
 func TestAGoodLineSurvivesABadOne(t *testing.T) {
-	g := bearerGate(t, "broken line\nmuse  "+museToken+"  bob\nalso broken\n")
+	g := bearerGate(t, "broken line\nmuse  "+BearerDigest(museToken)+"  bob\nalso broken\n")
 	got, err := g.Resolve(bearerReq("Bearer", museToken))
 	if err != nil {
 		t.Fatalf("unexpected error %v", err)
@@ -292,9 +303,10 @@ func TestAGoodLineSurvivesABadOne(t *testing.T) {
 	}
 }
 
-// A secret every account on a shared box can read is not a credential. The
-// services run as an ordinary user, so the file cannot be 0600 root-owned —
-// which makes the mode worth checking rather than assuming.
+// A file every account on a shared box can read is not a credentials file,
+// even one that holds only digests: it names which accounts have machine
+// callers, and a group-writable one lets a second account issue itself a
+// credential.
 func TestAWorldReadableTokensFileIsIgnored(t *testing.T) {
 	g := bearerGate(t, fixtureTokens)
 	if err := os.Chmod(g.Config.BearerTokensPath, 0o644); err != nil {
@@ -321,6 +333,151 @@ func TestAWorldReadableTokensFileIsIgnored(t *testing.T) {
 	}
 }
 
+// --- what the file is worth to whoever can read it --------------------------
+
+// The reason the file holds digests. TL_PROXY_SECRET lives in
+// /etc/terminal-lobby.local.conf, which is 0640 root:root: systemd reads it as
+// root and hands it to the process after dropping to User=wizard, so nothing
+// else running as wizard can read it. This file is opened by the service
+// itself, at request time, as wizard — so it MUST be readable by that account,
+// and everything else running as that account reads it too. A file of tokens
+// would therefore be worse than the secret it replaces. A file of digests
+// hands a reader nothing it can present.
+func TestNothingReadableInTheFileAuthenticatesAnyone(t *testing.T) {
+	g := bearerGate(t, fixtureTokens)
+	body, err := os.ReadFile(g.Config.BearerTokensPath)
+	if err != nil {
+		t.Fatalf("read tokens: %v", err)
+	}
+	for _, field := range strings.Fields(string(body)) {
+		// Both the field as written and the digest with its algorithm
+		// stripped, which is what a reader would try first.
+		for _, candidate := range []string{field, strings.TrimPrefix(field, "sha256:")} {
+			if _, err := g.Resolve(bearerReq("Bearer", candidate)); err == nil {
+				t.Fatalf("a field copied out of the credentials file authenticated: %q", candidate)
+			}
+		}
+	}
+	// And the real tokens still work, so the assertion above is not passing
+	// because the fixture authenticates nobody at all.
+	if got, err := g.Resolve(bearerReq("Bearer", museToken)); err != nil || got.OSUser != "bob" {
+		t.Fatalf("the issued token resolved to (%q, %v), want bob", got.OSUser, err)
+	}
+}
+
+// The file is the verifier, and the token exists where the caller keeps it.
+// Writing the token itself is the mistake this catches, and it costs that line
+// rather than authenticating anyone.
+func TestAPlaintextTokenInTheFileIsNotACredential(t *testing.T) {
+	var buf bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&buf)
+	defer log.SetOutput(old)
+
+	g := bearerGate(t, "muse  "+museToken+"  bob\n")
+	if got := g.bearerCreds(); len(got) != 0 {
+		t.Fatalf("a plaintext token parsed into %d credentials, want 0", len(got))
+	}
+	if _, err := g.Resolve(bearerReq("Bearer", museToken)); !errors.Is(err, ErrNoIdentity) {
+		t.Fatalf("err = %v, want the header path's ErrNoIdentity", err)
+	}
+	// The operator has to be able to find the line, and the line is the one
+	// place a token could still be. So: which line, never its contents.
+	logged := buf.String()
+	if !strings.Contains(logged, "line 1") {
+		t.Fatalf("the log does not say which line was skipped: %q", logged)
+	}
+	if strings.Contains(logged, museToken) || strings.Contains(logged, museToken[:8]) {
+		t.Fatalf("the skipped line's token reached the log: %q", logged)
+	}
+}
+
+// --- who may write the file -------------------------------------------------
+
+// The other half of the same finding. Mode alone accepts 0600 owned by the
+// service account, which is the simplest mode that lets User=wizard read it —
+// and a file that account owns is a file it can append a line to. A line names
+// any terminal account on the box, so appending one is how a process running
+// as wizard would hold emo's sessions, files and skills through all six
+// services. Root ownership is what makes the file an instruction from the
+// operator rather than from whatever else shares the account.
+func TestATokensFileTheServiceAccountOwnsIsIgnored(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: the fixture file is already root-owned")
+	}
+	g := bearerGate(t, fixtureTokens)
+	if err := os.Chmod(g.Config.BearerTokensPath, 0o600); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	// The production rule, which bearerGate relaxed so the rest of the file
+	// can test something else.
+	g.TokensOwnerUID = 0
+	if got := g.bearerCreds(); len(got) != 0 {
+		t.Fatalf("a file owned by uid %d yielded %d credentials, want 0", os.Getuid(), len(got))
+	}
+	if _, err := g.Resolve(bearerReq("Bearer", museToken)); !errors.Is(err, ErrNoIdentity) {
+		t.Fatalf("err = %v, want the header path's ErrNoIdentity", err)
+	}
+	// 0640 does not rescue it either: the mode says who may read, and this
+	// rule is about who may write.
+	if err := os.Chmod(g.Config.BearerTokensPath, 0o640); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	if got := g.bearerCreds(); len(got) != 0 {
+		t.Fatalf("0640 owned by uid %d yielded %d credentials, want 0", os.Getuid(), len(got))
+	}
+}
+
+// Root is the default rather than something a box opts into, because a rule
+// every install has to remember to switch on is a rule no install has on.
+func TestRootOwnershipIsTheDefaultAndNoSettingRelaxesIt(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root: the fixture file is already root-owned")
+	}
+	if got := (&Gate{}).TokensOwnerUID; got != 0 {
+		t.Fatalf("an unconfigured gate wants uid %d, want 0 (root)", got)
+	}
+	g := bearerGate(t, fixtureTokens)
+	path := g.Config.BearerTokensPath
+	// Everything an operator could reach for to make it read the file anyway.
+	t.Setenv("TL_BEARER_TOKENS", path)
+	t.Setenv("TL_MULTI_USER", "on")
+	t.Setenv("TL_BEARER_TOKENS_OWNER", strconv.Itoa(os.Getuid()))
+	t.Setenv("TL_TOKENS_OWNER_UID", strconv.Itoa(os.Getuid()))
+	g.Config = Config{}
+	g.TokensOwnerUID = 0
+	g.Configure("test-service", "127.0.0.1:0")
+	if g.TokensOwnerUID != 0 {
+		t.Fatalf("the environment moved TokensOwnerUID to %d", g.TokensOwnerUID)
+	}
+	if got := g.bearerCreds(); len(got) != 0 {
+		t.Fatalf("after Configure the gate read %d credentials out of a file it does not trust", len(got))
+	}
+}
+
+// --- the length floor -------------------------------------------------------
+
+// The floor used to be enforced on what the file held. A digest is 64 hex
+// characters whatever it digests, so the floor moved to what the caller
+// presents — otherwise it would have quietly stopped existing, and a digest of
+// "1234" would be a working credential.
+func TestAShortOrMalformedTokenIsRefusedEvenWhenItsDigestIsIssued(t *testing.T) {
+	for _, token := range []string{
+		"x",
+		"1234",
+		"=",
+		"muse",
+		strings.Repeat("a", 31),
+		strings.Repeat("a", 29) + ";id",
+		strings.Repeat("a", 513),
+	} {
+		g := bearerGate(t, "muse  "+BearerDigest(token)+"  bob\n")
+		if _, err := g.Resolve(bearerReq("Bearer", token)); !errors.Is(err, ErrBadBearer) {
+			t.Fatalf("a %d-character token %q authenticated: err = %v", len(token), token, err)
+		}
+	}
+}
+
 // --- the account a credential names ----------------------------------------
 
 // The token file is root-owned, so this is defence in depth rather than a
@@ -328,7 +485,7 @@ func TestAWorldReadableTokensFileIsIgnored(t *testing.T) {
 // a typo'd line handing out an account the lobby does not serve.
 func TestACredentialMustNameATerminalAccount(t *testing.T) {
 	for _, osUser := range []string{"root", "nobody", "carol"} {
-		g := bearerGate(t, "muse  "+museToken+"  "+osUser+"\n")
+		g := bearerGate(t, "muse  "+BearerDigest(museToken)+"  "+osUser+"\n")
 		if _, err := g.Resolve(bearerReq("Bearer", museToken)); !errors.Is(err, ErrNoAccount) {
 			t.Fatalf("credential naming %q: err = %v, want ErrNoAccount", osUser, err)
 		}
@@ -458,11 +615,17 @@ func TestTokensAreComparedWithCryptoSubtle(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"== presented", "presented ==", "== c.token", "c.token ==",
-		"== cred.token", "cred.token ==",
+		"== cred.token", "cred.token ==", "== c.digest", "c.digest ==",
+		"== cred.digest", "cred.digest ==", "== want", "want ==",
 	} {
 		if strings.Contains(string(src), bad) {
-			t.Fatalf("bearer.go compares a token with %q; use subtle.ConstantTimeCompare", bad)
+			t.Fatalf("bearer.go compares a credential with %q; use subtle.ConstantTimeCompare", bad)
 		}
+	}
+	// And the file holds a verifier rather than the token, so the comparison
+	// has to be against a digest of what was presented.
+	if !strings.Contains(string(src), "sha256.Sum256(") {
+		t.Fatal("bearer.go does not hash the presented token; the file would have to hold tokens")
 	}
 }
 
