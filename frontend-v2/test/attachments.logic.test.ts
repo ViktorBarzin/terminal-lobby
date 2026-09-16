@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  PAD,
   STORE_ROOT,
   anchorRestored,
   attachToken,
@@ -287,6 +288,28 @@ describe("attachToken", () => {
     expect(t.length).toBeLessThanOrEqual(30);
     expect(t.endsWith("…]")).toBe(true);
   });
+
+  // An image token is drawn as the picture itself, painted over the token's own
+  // characters — so the token has to be as WIDE as the picture, or the picture
+  // covers the words after it. The padding is figure spaces, which do not break
+  // a line, so the token can never be split with the thumbnail across the break.
+  it("pads the token out to the width a thumbnail needs", () => {
+    expect(attachToken("pasted-20260817-150232-a1.png", "image", none, 6)).toBe(
+      `[img${PAD.repeat(6)}]`,
+    );
+    expect(attachToken("chart.png", "image", none, 3)).toBe(`[img: chart.png${PAD.repeat(3)}]`);
+  });
+
+  it("numbers around a padded token already in the message", () => {
+    const taken = new Set([`[img${PAD.repeat(6)}]`]);
+    expect(attachToken("pasted-20260817-150232-a2.png", "image", taken, 6)).toBe(
+      `[img 2${PAD.repeat(6)}]`,
+    );
+  });
+
+  it("pads nothing when no width was asked for", () => {
+    expect(attachToken("pasted-20260817-150232-a1.png", "image", none)).toBe("[img]");
+  });
 });
 
 describe("cutSpan and dropToken", () => {
@@ -333,6 +356,15 @@ describe("anchorRestored", () => {
     const r = anchorRestored("[img] and [img: chart.png] and [file: gone.pdf]", [img]);
     expect(r.text).toBe("and [img: chart.png] and");
     expect(r.items).toEqual([img]);
+  });
+
+  it("cuts out a padded token no attachment owns any more", () => {
+    // The same reload as above, for a token written wide enough to carry a
+    // picture. A pattern that did not know about the padding would leave the
+    // whole thing in the message, and Claude would be sent the literal token.
+    const r = anchorRestored(`what is wrong here? [img${PAD.repeat(8)}]`, []);
+    expect(r.text).toBe("what is wrong here?");
+    expect(r.items).toEqual([]);
   });
 
   it("has nothing to do for a plain message", () => {

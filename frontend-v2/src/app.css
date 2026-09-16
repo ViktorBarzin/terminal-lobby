@@ -2060,6 +2060,56 @@ label.tl-set-row-label {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 24%, transparent);
   outline-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
 }
+/* An attached image is drawn as the image.
+
+   `[img]` says a picture is attached without saying WHICH picture, and on the
+   new-session screen that pill is the only thing about the paste there is to
+   see (Viktor, 2026-09-16). The picture is painted over the token's own
+   characters: the token is padded out to THUMB_W in the field's real font
+   (PromptField, `padFor`) so the two are the same width, and the line grows to
+   THUMB_LINE so there is room for something taller than a line of text.
+
+   It is the one thing in the mirror that sits ABOVE the field rather than
+   behind it — z-index against the field's `position: relative` — because the
+   characters it stands for are the FIELD's and would otherwise show through it.
+   Neither this layer nor the field is a stacking context, so the two compete
+   directly; the mirror's own `overflow: hidden` still clips it when the field
+   scrolls, which is what keeps a picture from escaping the box. */
+.tl-inline-chip[data-thumb] {
+  position: relative;
+  background: none;
+  box-shadow: none;
+  outline: none;
+}
+.tl-inline-thumb {
+  position: absolute;
+  left: 0;
+  /* Centred on the token's own text box — the height of the glyphs, not of the
+     grown line — so the picture sits on the writing rather than above it. */
+  top: 50%;
+  transform: translateY(-50%);
+  /* The WHOLE token, not a fixed width: the pad takes it to at least
+     --tl-thumb-w (PromptField, `padFor`), and rounding or a ` 2` disambiguator
+     can take it a few px past that. Covering exactly the measured width left
+     the tail of the closing bracket showing beside the picture. The height is
+     PromptField's number, because the line grows to match it. */
+  width: 100%;
+  height: var(--tl-thumb-h);
+  object-fit: cover;
+  border-radius: 4px;
+  z-index: 3;
+  /* The same edge the pill wore. On a screenshot of the app itself, which is
+     most of what gets pasted here, nothing else says where the picture ends. */
+  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  /* Behind a PNG with transparency, so it reads as a tile rather than a hole. */
+  background: var(--bg-card);
+}
+/* Room for the picture, in the field and in the copy of it behind. Both, or
+   every chip slides off its token. */
+.tl-field[data-thumbs] .tl-composer-input,
+.tl-field[data-thumbs] .tl-composer-mirror {
+  line-height: var(--tl-thumb-line);
+}
 .tl-attach-btn {
   flex: 0 0 auto;
   display: flex;

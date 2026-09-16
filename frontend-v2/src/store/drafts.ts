@@ -38,6 +38,18 @@ export interface DraftAttachment {
    * before attachments were anchored, which `anchorRestored` gives one to.
    */
   token?: string;
+  /**
+   * Where the chip's thumbnail is read from, for a file no server can serve
+   * yet: the new-session composer holds `File`s in memory until Enter creates
+   * the session to upload them into, so its `path` names nothing (an object URL
+   * from that File goes here instead).
+   *
+   * Never persisted in any useful sense — an object URL dies with the document,
+   * `readAttachment` does not read the field back, and the composer that makes
+   * them saves no attachments at all. An uploaded file leaves this absent and
+   * the chip resolves its own path through `previewContentUrl`.
+   */
+  preview?: string;
 }
 
 export interface Draft {

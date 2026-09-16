@@ -34,8 +34,22 @@ const all = css.join("\n");
  * --tl-ws-hue is read only under `.tl-card-member` and `.tl-card-grouped`, and
  * SessionCard puts neither class on a row it has not also given the property
  * to — so the `oklch()` that reads it is never computed without one.
+ *
+ * The three --tl-thumb-* are the size of an attached image's thumbnail, which
+ * PromptField owns because the same width decides how many pad characters the
+ * token carries — a stylesheet that disagreed would put the picture over the
+ * words beside it. It writes all three onto `.tl-field`, unconditionally, and
+ * every read is inside that element.
  */
-const SET_BY_JS = new Set(["--kb-offset", "--sk-h", "--app-vh", "--tl-ws-hue"]);
+const SET_BY_JS = new Set([
+  "--kb-offset",
+  "--sk-h",
+  "--app-vh",
+  "--tl-ws-hue",
+  "--tl-thumb-w",
+  "--tl-thumb-h",
+  "--tl-thumb-line",
+]);
 
 /** Every `--name:` declaration across the stylesheets. */
 function defined(): Set<string> {

@@ -251,7 +251,18 @@ export interface TokenizedAttachment {
  * nothing else — the price of a pattern loose enough to catch the labels people
  * actually attach.
  */
-const TOKEN_RE = /\[(?:img|file)(?:\s\d+)?(?::\s[^\][\n]{1,80})?\]/g;
+const TOKEN_RE = /\[(?:img|file)(?:\s\d+)?(?::\s[^\][\n]{1,80})? *\]/g;
+
+/**
+ * The character an image token is padded with, so the thumbnail painted over it
+ * has the width to be a picture rather than a smear.
+ *
+ * A FIGURE SPACE (U+2007) rather than a plain one because it is non-breaking:
+ * a wrapped line can never split a token and leave half a thumbnail on each
+ * side of the break. It sits INSIDE the brackets, so it is part of the token
+ * the send swaps out and never reaches the message as stray whitespace.
+ */
+export const PAD = " ";
 
 /** `file-<stamp>-<token>-` is stripped by storedDisplayName; these two prefixes
  *  are the store's own names for a pasted image and a `show-image` render, and
@@ -276,16 +287,23 @@ function tokenLabel(name: string): string | null {
  *
  * Uniqueness is what makes the swap at send time unambiguous, so a second
  * screenshot is `[img 2]` rather than a duplicate of the first.
+ *
+ * `pad` is how many figure spaces to carry before the closing bracket. An image
+ * is drawn as the picture itself, painted over the token's own characters, so
+ * the token has to be at least as wide as the picture — the composer measures
+ * that in the font the field is actually using and asks for the count here
+ * (PromptField, `padFor`). Zero, the default, is a token to be read.
  */
 export function attachToken(
   name: string,
   kind: AttachmentKind,
   taken: ReadonlySet<string>,
+  pad = 0,
 ): string {
   const head = kind === "image" ? "img" : "file";
   const label = tokenLabel(name);
   const body = (n: number): string =>
-    `[${head}${n > 1 ? ` ${n}` : ""}${label ? `: ${label}` : ""}]`;
+    `[${head}${n > 1 ? ` ${n}` : ""}${label ? `: ${label}` : ""}${PAD.repeat(pad)}]`;
   let n = 1;
   while (taken.has(body(n))) n += 1;
   return body(n);

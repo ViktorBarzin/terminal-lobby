@@ -60,6 +60,20 @@ export const NEW_SESSION_DRAFT_KEY = ":new";
 const HELD_PATH_PREFIX = "held:";
 
 /**
+ * A URL the chip can draw a held file from, or undefined where the platform
+ * will not make one (jsdom has no `createObjectURL`; a browser refuses on a
+ * revoked or detached blob). Absent simply means the chip stays the pill it
+ * was, which is what this screen showed before there were thumbnails at all.
+ */
+function objectUrl(f: File): string | undefined {
+  try {
+    return typeof URL.createObjectURL === "function" ? URL.createObjectURL(f) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * The new-session composer: you say what you want to do, and the session is
  * created to do it.
  *
@@ -213,6 +227,10 @@ export const NewSessionComposer: Component<{
   // tab keeps the prose and loses the chips — `anchorRestored` cuts the tokens
   // they left behind out of the restored text.
   const held = new Map<string, File>();
+  // The chip's picture, for files that exist nowhere a server can serve them
+  // from. Kept beside the files rather than in the chip alone, so every one can
+  // be handed back when this screen goes away.
+  const previews = new Map<string, string>();
   let heldSeq = 0;
   const holdFiles = (files: File[]): Promise<DraftAttachment[]> => {
     const chips: DraftAttachment[] = [];
@@ -220,13 +238,21 @@ export const NewSessionComposer: Component<{
       heldSeq += 1;
       const path = `${HELD_PATH_PREFIX}${heldSeq}/${f.name}`;
       held.set(path, f);
-      chips.push({ path, name: f.name, kind: attachmentKind(f.name) });
+      const kind = attachmentKind(f.name);
+      const preview = kind === "image" ? objectUrl(f) : undefined;
+      if (preview) previews.set(path, preview);
+      chips.push({ path, name: f.name, kind, preview });
     }
     return Promise.resolve(chips);
   };
   // Leaving without creating takes the files with it — nothing was uploaded, so
-  // there is nothing to clean up anywhere else.
-  onCleanup(() => held.clear());
+  // there is nothing to clean up anywhere else. The object URLs are the one
+  // thing that outlives the map on its own, so they are handed back by name.
+  onCleanup(() => {
+    for (const url of previews.values()) URL.revokeObjectURL(url);
+    previews.clear();
+    held.clear();
+  });
 
   // ---- paste and drop, with no session to upload into ---------------------
   //
