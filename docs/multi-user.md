@@ -122,7 +122,7 @@ sudo $EDITOR /etc/terminal-lobby.users     # <identity> = <os_user>, one per lin
 sudo useradd -m bob                        # tl-users does not create accounts
 sudo tl-users check                        # show what would be written
 sudo tl-users apply                        # write both files
-sudo systemctl restart ttyd tmux-api file-api session-events skills-api
+sudo systemctl restart ttyd tmux-api file-api session-events skills-api agent-api
 ```
 
 `apply` renders `/etc/ttyd-user-map` and `/etc/sudoers.d/ttyd-users` from that

@@ -215,7 +215,7 @@ func main() {
 			tombstoneState(*root, gone)
 		}
 		fmt.Printf("wrote %s and %s for %d account(s)\n", mapDest, sudoersDest, len(users))
-		fmt.Println("restart the services to pick up the map: systemctl restart ttyd tmux-api file-api session-events skills-api")
+		fmt.Println("restart the services to pick up the map: systemctl restart ttyd tmux-api file-api session-events skills-api agent-api")
 
 	default:
 		flag.Usage()

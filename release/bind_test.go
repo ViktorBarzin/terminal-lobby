@@ -69,6 +69,11 @@ func TestCompiledBindDefaultsAreLoopback(t *testing.T) {
 		"tmux-api/main.go":         regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
 		"file-api/main.go":         regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
 		"skills-api/main.go":       regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
+		// agent-api is not browser-facing and takes no identity header, so
+		// TL-3 is not why it needs a floor. The reason is that a port whose
+		// whole job is driving sessions for a program must not be reachable
+		// from the network on a box where nobody has said so.
+		"agent-api/main.go": regexp.MustCompile(`listenAddr\s*=\s*"([^"]*)"`),
 		// session-events has no constant; its flag default is the same floor.
 		"session-events/main.go": regexp.MustCompile(`flag\.String\("addr",\s*"([^"]*)"`),
 	}

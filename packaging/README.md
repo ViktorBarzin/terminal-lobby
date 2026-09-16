@@ -109,6 +109,7 @@ reconcile as a lobby upgrade.
 | `tmux-api` | about a second of API gap, which the sidebar's poll rides out |
 | `clipboard-upload` | in-flight uploads and asset requests |
 | `file-api`, `skills-api` | in-flight requests to the file preview and the Skills overlay |
+| `agent-api` | the task ids of turns in flight, which it holds in memory. The conversations themselves are tmux sessions and keep running; a caller polling a task it started before the restart gets a 404 and has to read the conversation to see where its turn got to |
 | `tl-t3-sync@<user>` | that user's T3 thread mirroring only |
 
 The lobby's content-hashed chunks are installed **additively** and pruned by

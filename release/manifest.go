@@ -46,7 +46,7 @@ func DefaultConfig() string {
 #
 # Every service reads this file (systemd EnvironmentFile), including ttyd,
 # whose -H flag expands ${TL_AUTH_HEADER} from here. Restart the units after
-# editing: systemctl restart ttyd tmux-api file-api session-events skills-api
+# editing: systemctl restart ttyd tmux-api file-api session-events skills-api agent-api
 #
 # This file belongs to the package and is replaced when the defaults change.
 # Put YOUR settings in /etc/terminal-lobby.local.conf instead: the units read
@@ -87,6 +87,13 @@ TL_AUTH_HEADER=X-Forwarded-User
 # 32 characters, a field that will not parse, or a file the world can read or
 # the group can write. With no credentials at all the feature is off, and a
 # request carrying a bearer takes the header path exactly as it did before.
+#
+# One port takes nothing else. agent-api on 8710, the machine-facing API,
+# refuses every route under /v1 that carries no bearer, and strips the header
+# and the secret before it reads identity, so an empty file leaves it running
+# and serving nobody. TL_BIND is shared, so widening the bind to reach it from
+# somewhere else opens 7681 and 7683-7688 in the same change. Set
+# TL_PROXY_SECRET then too.
 #
 # Unset means the path shown.
 #TL_BEARER_TOKENS=/etc/terminal-lobby-tokens
@@ -215,6 +222,10 @@ var Package = Manifest{
 	Enable: []string{
 		"ttyd", "tmux-api", "clipboard-upload",
 		"session-events", "file-api", "skills-api",
+		// The machine-facing port. Enabled like the rest, and it is the
+		// credentials file rather than the unit that decides whether it can do
+		// anything. With none written, every /v1 request is refused.
+		"agent-api",
 		"clipboard-cleanup.timer",
 		// A long-running service rather than a timer: the comparison is between
 		// consecutive looks, so the previous snapshot has to survive the tick.
@@ -232,6 +243,14 @@ var Package = Manifest{
 		{Unit: "file-api", Name: "file-api /files/list refuses anonymous", URL: "http://127.0.0.1:7686/files/list", WantStatus: 401},
 		{Unit: "skills-api", Name: "skills-api /health", URL: "http://127.0.0.1:7688/health", WantStatus: 200},
 		{Unit: "skills-api", Name: "skills-api /skills refuses anonymous", URL: "http://127.0.0.1:7688/skills", WantStatus: 401},
+		// agent-api refuses anonymously for a different reason than its five
+		// siblings do. They refuse a request carrying no identity header; this
+		// one refuses anything without a per-caller bearer, having first
+		// stripped the header and the shared secret. A release that broke that
+		// strip would leave a port where the browser path answers for a
+		// program, so the refusal probe is worth more here than elsewhere.
+		{Unit: "agent-api", Name: "agent-api /health", URL: "http://127.0.0.1:8710/health", WantStatus: 200},
+		{Unit: "agent-api", Name: "agent-api /v1/conversations refuses anonymous", URL: "http://127.0.0.1:8710/v1/conversations", WantStatus: 401},
 		// Reports stale rather than up once ticks stop, so a watcher that is
 		// running but no longer looking fails the release check instead of
 		// passing it. It carries no authed surface, so there is no refusal to
@@ -254,6 +273,7 @@ var Package = Manifest{
 		{Src: "bin/session-events", Dest: "/usr/local/bin/session-events", Mode: 0o755},
 		{Src: "bin/file-api", Dest: "/usr/local/bin/file-api", Mode: 0o755},
 		{Src: "bin/skills-api", Dest: "/usr/local/bin/skills-api", Mode: 0o755},
+		{Src: "bin/agent-api", Dest: "/usr/local/bin/agent-api", Mode: 0o755},
 		{Src: "bin/tl-t3-sync", Dest: "/usr/local/bin/tl-t3-sync", Mode: 0o755},
 		{Src: "bin/tl-session-watch", Dest: "/usr/local/bin/tl-session-watch", Mode: 0o755},
 		// Spawned by T3 in place of claude, once per thread — no unit supervises it.
@@ -346,6 +366,7 @@ var Package = Manifest{
 		{Src: "devvm/session-events.service", Dest: "/etc/systemd/system/session-events.service", Mode: 0o644},
 		{Src: "devvm/file-api.service", Dest: "/etc/systemd/system/file-api.service", Mode: 0o644},
 		{Src: "devvm/skills-api.service", Dest: "/etc/systemd/system/skills-api.service", Mode: 0o644},
+		{Src: "devvm/agent-api.service", Dest: "/etc/systemd/system/agent-api.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.service", Dest: "/etc/systemd/system/clipboard-cleanup.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
 		{Src: "devvm/tl-t3-sync@.service", Dest: "/etc/systemd/system/tl-t3-sync@.service", Mode: 0o644},
@@ -389,6 +410,10 @@ var Package = Manifest{
 		{Name: "skills-api", Files: []string{
 			"/usr/local/bin/skills-api",
 			"/etc/systemd/system/skills-api.service",
+		}},
+		{Name: "agent-api", Files: []string{
+			"/usr/local/bin/agent-api",
+			"/etc/systemd/system/agent-api.service",
 		}},
 		{Name: "clipboard-cleanup.timer", Files: []string{
 			"/etc/systemd/system/clipboard-cleanup.service",
@@ -457,7 +482,8 @@ TL_BIND=0.0.0.0
 TLEOF
   chmod 0644 "$TL_LOCAL_CONF"
   echo "terminal-lobby: pinned TL_AUTH_HEADER=X-Authentik-Username in $TL_LOCAL_CONF (existing multi-user box)"
-  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681 and 7683-7688 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
+  echo "terminal-lobby: TL_BIND=0.0.0.0 in $TL_LOCAL_CONF leaves 7681, 7683-7688 and 8710 open to the network; set TL_PROXY_SECRET there and have your proxy send X-TL-Proxy-Secret" >&2
+  echo "terminal-lobby: 8710 is agent-api, which the secret does not cover; it refuses every request until a credential is written in TL_BEARER_TOKENS" >&2
 fi
 `
 

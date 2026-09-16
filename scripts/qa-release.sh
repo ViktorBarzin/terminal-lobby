@@ -80,7 +80,7 @@ if touches '^frontend-v2/'; then
   ( cd frontend-v2 && npm run -s typecheck ) || die "tsc --noEmit"
   ( cd frontend-v2 && npm test -- --run ) || die "vitest"
 fi
-for svc in tmux-api clipboard-upload session-events file-api; do
+for svc in tmux-api clipboard-upload session-events file-api agent-api; do
   if touches "^${svc}/"; then
     log "gate: go test ./${svc}"
     ( cd "$svc" && go test ./... ) || die "go test in ${svc}"
@@ -124,7 +124,7 @@ fi
 #
 # What is still worth saying is whether this lane changed anything the box will
 # actually ship, so the operator knows whether to expect a release.
-if touches '^(frontend-v2|frontend|session-events|file-api|skills-api|tmux-api|clipboard-upload|devvm|packaging|release)/'; then
+if touches '^(frontend-v2|frontend|session-events|file-api|skills-api|agent-api|tmux-api|clipboard-upload|devvm|packaging|release)/'; then
   log "landed; the package pipeline will build and the box will install it"
   log "watch: gh run list --repo ViktorBarzin/terminal-lobby --workflow=release --limit 1"
 else

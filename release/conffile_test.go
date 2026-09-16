@@ -123,6 +123,11 @@ func TestEveryIdentityAwareUnitSourcesTheConfig(t *testing.T) {
 	binaries := []string{
 		"ttyd", "tmux-api", "file-api", "session-events", "skills-api",
 		"clipboard-upload", "tl-t3-sync",
+		// agent-api resolves no identity HEADER and still belongs here. It
+		// reads TL_BIND, and TL_BEARER_TOKENS is the file that decides whether
+		// it can answer anything at all, so a unit that stopped sourcing the
+		// config would take its credentials with it.
+		"agent-api",
 	}
 	units, err := filepath.Glob(filepath.Join("..", "devvm", "*.service"))
 	if err != nil || len(units) == 0 {

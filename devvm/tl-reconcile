@@ -130,7 +130,7 @@ done
 # postinst has already restarted what changed and run tl-apply's verification;
 # a non-zero exit above would have failed this script. Report the unit states so
 # the trigger's caller sees them without a second connection.
-for unit in ttyd tmux-api file-api session-events skills-api clipboard-upload; do
+for unit in ttyd tmux-api file-api session-events skills-api clipboard-upload agent-api; do
   systemctl is-active --quiet "$unit" 2>/dev/null && s=active || s=INACTIVE
   log "$unit: $s"
 done

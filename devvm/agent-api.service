@@ -1,0 +1,48 @@
+[Unit]
+Description=agent-api (terminal-lobby machine-facing API)
+After=network.target
+
+[Service]
+# Every service reads the same configuration: the identity header name, the
+# optional proxy secret, the single/multi-user mode and the bind address.
+# '-' means an absent file is not an error, so a box that predates the package
+# still starts on the compiled-in defaults.
+#
+# Two files, in order: the package's, then local overrides. The second wins on
+# any key it sets. Local settings belong there, not in the first, so a package
+# upgrade never prompts about a conffile you edited.
+#
+# This unit reads one key from them that the browser-facing five do not:
+# TL_BEARER_TOKENS, the per-caller credentials file. Nothing under /v1 answers
+# without a line in it, so a box that has never been given one runs this
+# service and serves nobody, which is the right default for a port whose
+# callers are programs.
+EnvironmentFile=-/etc/terminal-lobby.conf
+EnvironmentFile=-/etc/terminal-lobby.local.conf
+# Binds :8710, loopback until TL_BIND says otherwise. Unlike its siblings it is
+# not behind the K8s ingress and takes no identity header at all: the caller is
+# a program presenting a bearer credential, and the auth wrapper strips
+# TL_AUTH_HEADER and X-TL-Proxy-Secret from every request before the identity
+# gate reads it, so the browser path cannot answer here whatever this box is
+# configured with.
+ExecStart=/usr/local/bin/agent-api
+User=wizard
+Restart=always
+# Runs as wizard, sibling to clipboard-upload (:7683), tmux-api (:7684),
+# session-events (:7685), file-api (:7686) and skills-api (:7688). It reaches
+# tmux through sessionio in-process, over the same `sudo -u <user> tmux` grant
+# they use (devvm/sudoers.d-ttyd-users), and calls none of their ports — so it
+# needs no grant of its own, and no sandboxing directive that would take sudo
+# away. NoNewPrivileges here would break every session it touches.
+
+# /var/log/agent-api, created by systemd and owned by User= before ExecStart
+# runs. The service account cannot create a directory under /var/log itself,
+# and without this the trace disables itself at startup while the service goes
+# on serving — unrecorded, which is the one thing the design says it must not
+# be. 0750 rather than 0755 because a line carries the caller's prompt
+# verbatim; promtail, which tails the file into Loki, runs as root.
+LogsDirectory=agent-api
+LogsDirectoryMode=0750
+
+[Install]
+WantedBy=multi-user.target

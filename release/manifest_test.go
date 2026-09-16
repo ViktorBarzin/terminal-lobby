@@ -3,6 +3,7 @@ package release
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -262,6 +263,65 @@ func TestEverySourceFileInTheManifestExistsInTheRepo(t *testing.T) {
 				f.Dest, f.Src, path)
 		}
 	}
+}
+
+// The third of the same family, and the one a new service falls into. The two
+// guards above cover Srcs that exist in the checkout; a `bin/` Src is exempt
+// from them because the build compiles it — which means nothing at all checks
+// that the build compiles it. build-deb.sh names the Go services in a literal
+// word list, so shipping a seventh service is two edits in two files, and
+// doing one of them builds clean, tests clean and dies at dpkg-staging on a
+// missing bin/<name>.
+//
+// Read as: for every bin/ Src, build-deb.sh writes something to that path in
+// the stage — either through the services loop, or through a -o line of its
+// own. And the reverse, because a binary that is compiled and then shipped by
+// nothing is a build step nobody needs.
+func TestEveryShippedBinaryIsBuiltByTheBuildScript(t *testing.T) {
+	build := buildScript(t)
+	built := map[string]bool{}
+	// The services loop: `for svc in a b c; do ... -o "$STAGE/bin/$svc"`.
+	m := regexp.MustCompile(`for svc in ([^;]+); do`).FindStringSubmatch(build)
+	if m == nil {
+		t.Fatal("no `for svc in ...; do` loop in packaging/build-deb.sh, so nothing here knows what it compiles")
+	}
+	if !strings.Contains(build, `-o "$STAGE/bin/$svc"`) {
+		t.Fatal("the services loop no longer writes to $STAGE/bin/$svc; this test is reading the wrong thing")
+	}
+	for _, svc := range strings.Fields(m[1]) {
+		built["bin/"+svc] = true
+	}
+	// Everything else the build compiles into the stage, named one at a time.
+	for _, o := range regexp.MustCompile(`-o "\$STAGE/(bin/[A-Za-z0-9._-]+)"`).FindAllStringSubmatch(build, -1) {
+		built[o[1]] = true
+	}
+
+	shipped := map[string]bool{}
+	for _, f := range Package.Files {
+		if !strings.HasPrefix(f.Src, "bin/") {
+			continue
+		}
+		shipped[f.Src] = true
+		if !built[f.Src] {
+			t.Errorf("the manifest installs %s from Src %q, and packaging/build-deb.sh compiles nothing to that path; "+
+				"add it to the services loop", f.Dest, f.Src)
+		}
+	}
+	for src := range built {
+		if !shipped[src] {
+			t.Errorf("packaging/build-deb.sh compiles %s and no manifest file ships it", src)
+		}
+	}
+}
+
+// buildScript reads packaging/build-deb.sh, which several guards here parse.
+func buildScript(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "packaging", "build-deb.sh"))
+	if err != nil {
+		t.Fatalf("cannot read the build script: %v", err)
+	}
+	return string(b)
 }
 
 // The other half of the same break. A Src can name a file that exists in the
