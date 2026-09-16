@@ -163,7 +163,14 @@ func TestRouteListIsComplete(t *testing.T) {
 	// The bare "/v1" is the stdlib mux redirecting to the subtree pattern, not
 	// a route. It must not be served, and the target it names must still be
 	// behind the gate, which the next assertion covers.
-	if got := h.do(request{method: "GET", path: "/v1", token: testToken}).Code; got != http.StatusMovedPermanently && got != http.StatusNotFound {
+	// Which status the redirect uses is the stdlib's business and it has
+	// changed: the pre-1.22 mux answered 301, the pattern mux answers 307 so
+	// the method survives. Accept any redirect rather than pinning one, or
+	// this passes on the Go the author happens to have and fails on CI's.
+	switch got := h.do(request{method: "GET", path: "/v1", token: testToken}).Code; got {
+	case http.StatusMovedPermanently, http.StatusPermanentRedirect,
+		http.StatusTemporaryRedirect, http.StatusFound, http.StatusNotFound:
+	default:
 		t.Errorf("GET /v1 answered %d, want a redirect or 404", got)
 	}
 	// Even an unregistered /v1 path must require auth, or the wrapper is in
