@@ -1,0 +1,693 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Terminal Lobby agent-api",
+    "version": "1.0.0",
+    "summary": "Start and drive Claude Code conversations on the devvm over HTTP.",
+    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. It returns immediately with a task id, because a turn takes minutes and sometimes hours.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. On `needs_input` the agent is blocked on a question, which the task carries; relay it to a person.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable — `POST .../messages` against one is refused with 403.",
+    "license": { "name": "AGPL-3.0-or-later" }
+  },
+  "servers": [
+    {
+      "url": "http://{host}:8710",
+      "description": "The devvm, on its private tailnet address.",
+      "variables": {
+        "host": {
+          "default": "localhost",
+          "description": "The devvm's tailnet address. Nothing else routes to this port."
+        }
+      }
+    }
+  ],
+  "tags": [
+    { "name": "conversations", "description": "Starting, listing and reading Claude Code conversations." },
+    { "name": "tasks", "description": "Following one message from acceptance to an answer." },
+    { "name": "service", "description": "Liveness and this document." }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getHealth",
+        "summary": "Report that the service is up.",
+        "description": "Always answers 200 with the body `ok`. Requires no credential, so a monitor can poll it. It reports the process, not the tmux server behind it: use GET /v1/conversations to learn whether conversations are reachable.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The service is running.",
+            "content": {
+              "text/plain": {
+                "schema": { "type": "string", "description": "The literal string `ok`." },
+                "example": "ok"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "tags": ["service"],
+        "operationId": "getOpenAPI",
+        "summary": "Return this document.",
+        "description": "Requires no credential, because a client has to read the contract before it can hold one. It describes the routes; it reveals nothing about the conversations behind them.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The OpenAPI 3.1 description of this service.",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "description": "An OpenAPI 3.1 document." }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/conversations": {
+      "get": {
+        "tags": ["conversations"],
+        "operationId": "listConversations",
+        "summary": "List every conversation on the caller's account.",
+        "description": "Returns all live tmux sessions belonging to the operating-system account the credential resolves to, including conversations a person started at the keyboard. Those are readable but not writable — check `writable` before sending a message, or read the 403 the messages route returns.",
+        "responses": {
+          "200": {
+            "description": "The conversations, in the order the tmux server reports them.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A list of conversations.",
+                  "required": ["conversations"],
+                  "properties": {
+                    "conversations": {
+                      "type": "array",
+                      "description": "Every live conversation on the caller's account.",
+                      "items": { "$ref": "#/components/schemas/Conversation" }
+                    }
+                  }
+                },
+                "example": {
+                  "conversations": [
+                    {
+                      "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                      "name": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                      "cwd": "/home/wizard/code/infra",
+                      "state": "running",
+                      "created_by": "muse",
+                      "writable": true,
+                      "queued_turns": 0
+                    },
+                    {
+                      "conversation_id": "review",
+                      "name": "reviewing the broker design",
+                      "cwd": "/home/wizard/code/terminal-lobby",
+                      "state": "awaiting",
+                      "writable": false,
+                      "queued_turns": 0
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      },
+      "post": {
+        "tags": ["conversations"],
+        "operationId": "createConversation",
+        "summary": "Start a new Claude Code conversation.",
+        "description": "Creates a detached tmux session running Claude Code in the given directory, and returns its `conversation_id`. The conversation is yours: you can send it messages, and so can nobody else.\n\nThe conversation stays alive until someone kills it. Nothing here closes one, so open them deliberately — each holds a Claude process and its context in memory on a shared workstation.\n\nThe new conversation's `state` is `no_agent` for the first second or two, while Claude Code starts. Sending a message immediately is fine: the message waits for the session to be ready.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateConversationRequest" },
+              "examples": {
+                "minimal": {
+                  "summary": "Everything but the directory left to the harness's defaults.",
+                  "value": { "cwd": "/home/wizard/code/infra" }
+                },
+                "full": {
+                  "summary": "A named conversation that may edit files without asking.",
+                  "value": {
+                    "cwd": "/home/wizard/code/terminal-lobby",
+                    "model": "opus",
+                    "effort": "high",
+                    "permission_mode": "acceptEdits",
+                    "name": "muse-lobby-work"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The conversation was created.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Conversation" },
+                "example": {
+                  "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "name": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "cwd": "/home/wizard/code/infra",
+                  "state": "no_agent",
+                  "created_by": "muse",
+                  "writable": true,
+                  "queued_turns": 0
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": {
+            "description": "The name is already taken by a live conversation. Choose another, or omit `name` and let the service mint one.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": { "error": "creating the conversation: new-session muse-lobby-work: exit status 1: duplicate session: muse-lobby-work" }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/v1/conversations/{id}": {
+      "get": {
+        "tags": ["conversations"],
+        "operationId": "getConversation",
+        "summary": "Describe one conversation.",
+        "description": "The same record the list returns, for a single conversation. A conversation that has been killed is gone rather than marked dead, so this answers 404.",
+        "parameters": [{ "$ref": "#/components/parameters/ConversationID" }],
+        "responses": {
+          "200": {
+            "description": "The conversation.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Conversation" },
+                "example": {
+                  "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "name": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "cwd": "/home/wizard/code/infra",
+                  "state": "done",
+                  "created_by": "muse",
+                  "writable": true,
+                  "queued_turns": 0
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/v1/conversations/{id}/transcript": {
+      "get": {
+        "tags": ["conversations"],
+        "operationId": "getTranscript",
+        "summary": "Read a conversation's whole history.",
+        "description": "Every message in the conversation, oldest first, from the transcript Claude Code writes to disk. Readable for any conversation on the account, including ones you did not create.\n\nThis is the conversation, not the machinery: tool calls, tool results and the harness's own bookkeeping records are left out. It can be large — a long conversation runs to megabytes — so prefer a task's `result` when all you need is the answer to one message.",
+        "parameters": [{ "$ref": "#/components/parameters/ConversationID" }],
+        "responses": {
+          "200": {
+            "description": "The conversation so far.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "A conversation's messages.",
+                  "required": ["conversation_id", "messages"],
+                  "properties": {
+                    "conversation_id": {
+                      "type": "string",
+                      "description": "The conversation these messages belong to."
+                    },
+                    "messages": {
+                      "type": "array",
+                      "description": "Every message, oldest first.",
+                      "items": { "$ref": "#/components/schemas/TranscriptMessage" }
+                    }
+                  }
+                },
+                "example": {
+                  "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "messages": [
+                    { "role": "user", "text": "What does stacks/proxy actually run?", "at": "2026-09-16T11:02:31.442Z" },
+                    { "role": "assistant", "text": "Two products on one NordVPN tunnel: the per-user remote browsers, and cluster VPN egress.", "at": "2026-09-16T11:02:48.119Z" }
+                  ]
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": {
+            "description": "No such conversation, or it has no Claude Code transcript — a plain shell session has none.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": { "error": "conversation \"scratch\" has no Claude transcript (no Claude has run in it, or it has not started writing one yet)" }
+              }
+            }
+          },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/v1/conversations/{id}/messages": {
+      "post": {
+        "tags": ["conversations"],
+        "operationId": "sendMessage",
+        "summary": "Send a message to a conversation.",
+        "description": "Accepts the message and returns a task id. It does NOT wait for the answer: a turn takes minutes and sometimes hours, so poll `GET /v1/tasks/{task_id}` instead.\n\nA conversation runs one turn at a time. If it is busy, `queued_behind` says how many turns are ahead of yours and your message waits its turn rather than interrupting. Different conversations run at the same time.\n\nOnly a conversation you created is writable. One a person started at the keyboard is refused with 403, whatever the list says you can read.",
+        "parameters": [{ "$ref": "#/components/parameters/ConversationID" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SendMessageRequest" },
+              "examples": {
+                "question": {
+                  "summary": "A question.",
+                  "value": { "text": "Which stacks still read the retired forgejo registry?" }
+                },
+                "work": {
+                  "summary": "A piece of work.",
+                  "value": { "text": "Add a --dry-run flag to scripts/presence, test-first, and land it on master." }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The message was accepted and a task created for it.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/MessageAccepted" },
+                "example": {
+                  "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                  "status": "accepted",
+                  "queued_behind": 0
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "The conversation is readable but not writable by this caller.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": { "error": "conversation \"review\" was not created through this API, so it is readable but not writable (it belongs to whoever started it in the terminal)" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/v1/tasks/{id}": {
+      "get": {
+        "tags": ["tasks"],
+        "operationId": "getTask",
+        "summary": "Poll one message's progress.",
+        "description": "Returns the task's status and, depending on it, the field that matters:\n\n- `accepted` — queued behind another turn. Nothing has reached the agent yet.\n- `running` — the agent is working.\n- `needs_input` — the agent is blocked on a question, in `question`. Relay it to a person; answering is not something this API can do for you yet, and the conversation stays blocked until someone answers it in the terminal.\n- `done` — finished. `result` is the agent's final message.\n- `failed` — the turn could not be run or followed. `error` says why.\n- `cancelled` — you cancelled it.\n\nThe first three can change; the last three never do. `detail_url` points at the conversation's full transcript, which carries the whole turn.\n\nTasks live in memory, so a restart of this service loses the ids while the conversations survive. A 404 for an id you were polling means restart, not lost work: list the conversations and read the transcript.",
+        "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+        "responses": {
+          "200": {
+            "description": "The task.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Task" },
+                "examples": {
+                  "running": {
+                    "summary": "The agent is working.",
+                    "value": {
+                      "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                      "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                      "status": "running",
+                      "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
+                      "created_at": "2026-09-16T11:02:31.442Z",
+                      "updated_at": "2026-09-16T11:02:33.110Z"
+                    }
+                  },
+                  "needs_input": {
+                    "summary": "Blocked on a question for a person.",
+                    "value": {
+                      "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                      "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                      "status": "needs_input",
+                      "question": "Land this on master, or open a pull request?",
+                      "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
+                      "created_at": "2026-09-16T11:02:31.442Z",
+                      "updated_at": "2026-09-16T11:06:02.004Z"
+                    }
+                  },
+                  "done": {
+                    "summary": "Finished, with the agent's answer.",
+                    "value": {
+                      "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                      "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                      "status": "done",
+                      "result": "Three stacks still reference it, all in comments. Nothing pulls from it.",
+                      "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
+                      "created_at": "2026-09-16T11:02:31.442Z",
+                      "updated_at": "2026-09-16T11:09:55.870Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/v1/tasks/{id}/cancel": {
+      "post": {
+        "tags": ["tasks"],
+        "operationId": "cancelTask",
+        "summary": "Stop following a message, and interrupt its turn.",
+        "description": "What this does depends on where the task is. A queued message is dropped before anything reaches the agent, and `interrupted` is false. A running turn is interrupted the way the Stop button in the terminal does it, and `interrupted` is true.\n\nOnly the caller that sent the message may cancel it. A task that has already finished cannot be cancelled: that is a 409, not an error to retry.",
+        "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+        "responses": {
+          "200": {
+            "description": "The task is cancelled.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CancelResult" },
+                "example": {
+                  "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                  "status": "cancelled",
+                  "interrupted": true
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": {
+            "description": "Another caller sent this message.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": { "error": "task \"01M2KR7X4QC3N8ZB0H5WFTJ2AK\" was sent by \"muse\", so it cannot be cancelled by \"scratch\"" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": {
+            "description": "The task already reached an end state.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Error" },
+                "example": { "error": "task \"01M2KR7X4QC3N8ZB0H5WFTJ2AK\" is already done" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "A long-lived token issued for one caller, sent as `Authorization: Bearer <token>`. It resolves to one operating-system account on the workstation, and everything the request does happens as that account. Revoking one caller's token affects no other caller."
+      }
+    },
+    "parameters": {
+      "ConversationID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The conversation id, as returned by POST /v1/conversations.",
+        "schema": {
+          "type": "string",
+          "description": "1 to 32 characters of letters, digits, underscore or dash.",
+          "pattern": "^[a-zA-Z0-9_-]{1,32}$"
+        },
+        "example": "agent-01M2KR6R0079D934XTRGMJVSF3"
+      },
+      "TaskID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The task id, as returned by POST /v1/conversations/{id}/messages.",
+        "schema": { "type": "string", "description": "A 26-character sortable identifier." },
+        "example": "01M2KR7X4QC3N8ZB0H5WFTJ2AK"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "The request was malformed or asked for something outside the allowed range.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": { "error": "cwd \"/etc\" is outside /home/wizard/code" }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "No credential, or one this workstation did not issue. The body is plain text, not JSON, because it is written before any handler runs.",
+        "content": {
+          "text/plain": {
+            "schema": { "type": "string", "description": "A short reason." },
+            "example": "invalid bearer token"
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No such conversation or task.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": { "error": "no conversation \"agent-gone\"" }
+          }
+        }
+      },
+      "ServerError": {
+        "description": "The workstation could not answer: the tmux server is unreachable, or a file could not be read.",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/Error" },
+            "example": { "error": "listing sessions: list-sessions: exit status 1" }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "description": "Every refusal from a /v1 route has this shape.",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "string",
+            "description": "What was wrong, in words meant to be shown to a person."
+          }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "description": "One Claude Code conversation, running in its own terminal session on the workstation.",
+        "required": ["conversation_id", "name", "cwd", "state", "writable", "queued_turns"],
+        "properties": {
+          "conversation_id": {
+            "type": "string",
+            "description": "The id to address this conversation by, in every other route."
+          },
+          "name": {
+            "type": "string",
+            "description": "The display name a person gave it in the terminal interface, or the id when nobody has."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "The directory the conversation is working in."
+          },
+          "state": {
+            "type": "string",
+            "description": "What the agent in this conversation is doing right now, independent of any task: `running` is working, `awaiting` is blocked on a question for a person, `done` is idle and ready for a message, and `no_agent` means no Claude Code is running in the session at all — a plain shell, or a conversation that has only just been created.",
+            "enum": ["running", "awaiting", "done", "no_agent"]
+          },
+          "created_by": {
+            "type": "string",
+            "description": "The credential that created this conversation through the API. Absent when a person started it at the keyboard."
+          },
+          "writable": {
+            "type": "boolean",
+            "description": "Whether this caller may send it messages. False for a conversation someone else created or a person started."
+          },
+          "queued_turns": {
+            "type": "integer",
+            "description": "How many turns in this conversation have not finished, counting the one in flight. Zero means the conversation is idle and a message sent now starts immediately.",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateConversationRequest": {
+        "type": "object",
+        "description": "What a new conversation should be.",
+        "required": ["cwd"],
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "description": "The absolute path of the directory the conversation works in. It must exist and be inside the account's own `code` directory — `/home/wizard/code` for the `wizard` account. Symbolic links are resolved before the check, so a link out of that tree is refused.",
+            "example": "/home/wizard/code/infra"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model to run, passed to the harness as `--model`. Omit for the harness's default. Not enumerated here because the available models change with every Claude Code release; ask a person, or omit it.",
+            "example": "opus"
+          },
+          "effort": {
+            "type": "string",
+            "description": "How hard the model reasons. Omit for the harness's default.",
+            "enum": ["low", "medium", "high"],
+            "example": "high"
+          },
+          "permission_mode": {
+            "type": "string",
+            "description": "How the agent handles actions that would normally need approval. `default` asks; `acceptEdits` edits files without asking but still asks for anything else; `plan` produces a plan and changes nothing; `bypassPermissions` asks for nothing at all. Omit for `default`.",
+            "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
+            "example": "acceptEdits"
+          },
+          "name": {
+            "type": "string",
+            "description": "A name for the conversation, which also becomes its id. Must be unique among live conversations. Omit and the service mints a sortable one.",
+            "pattern": "^[a-zA-Z0-9_-]{1,32}$",
+            "example": "muse-lobby-work"
+          }
+        }
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "description": "One message for the agent.",
+        "required": ["text"],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "What to say to the agent, exactly as it should arrive. It is typed into the conversation as one message, so a multi-line instruction works and needs no escaping.",
+            "minLength": 1,
+            "example": "Which stacks still read the retired forgejo registry?"
+          }
+        }
+      },
+      "MessageAccepted": {
+        "type": "object",
+        "description": "The receipt for an accepted message.",
+        "required": ["task_id", "status", "queued_behind"],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "description": "Poll GET /v1/tasks/{task_id} with this."
+          },
+          "status": {
+            "type": "string",
+            "description": "Always `accepted` here. It is the first of the six values a task can have.",
+            "enum": ["accepted"]
+          },
+          "queued_behind": {
+            "type": "integer",
+            "description": "How many turns are ahead of this one in the same conversation, counting the one in flight. Zero means it starts immediately; anything else means it waits its turn.",
+            "minimum": 0
+          }
+        }
+      },
+      "Task": {
+        "type": "object",
+        "description": "One message's progress from acceptance to an answer.",
+        "required": ["task_id", "conversation_id", "status", "created_at", "updated_at"],
+        "properties": {
+          "task_id": { "type": "string", "description": "This task's id." },
+          "conversation_id": {
+            "type": "string",
+            "description": "The conversation the message was sent to."
+          },
+          "status": {
+            "type": "string",
+            "description": "Where the turn is. `accepted`, `running` and `needs_input` will change; `done`, `failed` and `cancelled` never will, so a poller can stop.",
+            "enum": ["accepted", "running", "needs_input", "done", "failed", "cancelled"]
+          },
+          "question": {
+            "type": "string",
+            "description": "Present on `needs_input` only: what the agent is asking a person. It cannot be answered through this API — someone has to answer it in the terminal interface — so relay it."
+          },
+          "result": {
+            "type": "string",
+            "description": "Present on `done` only: the agent's final message for this turn."
+          },
+          "error": {
+            "type": "string",
+            "description": "Present on `failed` only: why the turn could not be run or followed."
+          },
+          "detail_url": {
+            "type": "string",
+            "description": "The conversation's full transcript, which carries the whole turn rather than just its final message. Absent while the status is `accepted`, because nothing has happened yet.",
+            "example": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the message was accepted."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the status last changed. It does not move while nothing happens, so it is the age of the current status rather than the time of the last poll."
+          }
+        }
+      },
+      "CancelResult": {
+        "type": "object",
+        "description": "The outcome of a cancellation.",
+        "required": ["task_id", "status", "interrupted"],
+        "properties": {
+          "task_id": { "type": "string", "description": "The task that was cancelled." },
+          "status": {
+            "type": "string",
+            "description": "Always `cancelled` here.",
+            "enum": ["cancelled"]
+          },
+          "interrupted": {
+            "type": "boolean",
+            "description": "True when a turn in flight was interrupted. False when the message was still queued and was dropped before the agent saw it."
+          },
+          "warning": {
+            "type": "string",
+            "description": "Present only when the task was cancelled but the interrupt did not reach the conversation. The service has stopped following the turn; the agent may still be working."
+          }
+        }
+      },
+      "TranscriptMessage": {
+        "type": "object",
+        "description": "One thing that was said in a conversation.",
+        "required": ["role", "text"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "Who said it.",
+            "enum": ["user", "assistant"]
+          },
+          "text": { "type": "string", "description": "What was said." },
+          "at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When, as recorded by the harness. Absent on the few records that carry no timestamp."
+          }
+        }
+      }
+    }
+  }
+}
