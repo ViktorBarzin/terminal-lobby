@@ -1,6 +1,15 @@
 [Unit]
 Description=agent-api (terminal-lobby machine-facing API)
 After=network.target
+# Never stop trying to start. 8710 is outside the block this package owns --
+# the other seven services sit at 7681 and 7683-7689 -- and on a shared box the
+# 8xxx range is where people put an ad-hoc listener for an hour. agent-api ends
+# the process when a listener it opened fails, so a taken port exits it, and
+# with systemd's default limit of five starts in ten seconds the unit would be
+# failed and staying failed within a few seconds of the install, long after
+# whatever held the port had gone. A taken port is a condition that passes;
+# this outlasts it and comes up on its own when it does.
+StartLimitIntervalSec=0
 
 [Service]
 # Every service reads the same configuration: the identity header name, the
@@ -19,15 +28,31 @@ After=network.target
 # callers are programs.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
-# Binds :8710, loopback until TL_BIND says otherwise. Unlike its siblings it is
-# not behind the K8s ingress and takes no identity header at all: the caller is
-# a program presenting a bearer credential, and the auth wrapper strips
-# TL_AUTH_HEADER and X-TL-Proxy-Secret from every request before the identity
-# gate reads it, so the browser path cannot answer here whatever this box is
-# configured with.
+# Binds 127.0.0.1:8710 always, and TL_AGENT_BIND names any further address to
+# bind ALONGSIDE it, comma-separated. Loopback stays because tl-apply verifies
+# the install by probing 127.0.0.1:8710. A value naming every interface
+# (0.0.0.0, ::, a bare :port), or a host this box cannot resolve, stops the
+# service at startup rather than being narrowed or widened for it.
+#
+# It does NOT read the box-wide TL_BIND the other five services take: their proxy
+# is the cluster ingress on another host, so TL_BIND is 0.0.0.0 on this box and
+# inheriting it would put a port that starts Claude sessions on the LAN as soon
+# as the package installed. This one is reached over the tailnet instead, so
+# the address that belongs here is this host's tailnet address, which the
+# Headscale ACL opens to tag:muse alone. Left unset, the service is reachable
+# from this host only, and says so at startup.
+#
+# Unlike its siblings it is not behind the K8s ingress and takes no identity
+# header at all: the caller is a program presenting a bearer credential, and
+# the auth wrapper strips TL_AUTH_HEADER and X-TL-Proxy-Secret from every
+# request before the identity gate reads it, so the browser path cannot answer
+# here whatever this box is configured with.
 ExecStart=/usr/local/bin/agent-api
 User=wizard
 Restart=always
+# With the start limit off, systemd's 100ms default would retry a bind that
+# cannot succeed ten times a second for as long as the port stays taken.
+RestartSec=5
 # Runs as wizard, sibling to clipboard-upload (:7683), tmux-api (:7684),
 # session-events (:7685), file-api (:7686) and skills-api (:7688). It reaches
 # tmux through sessionio in-process, over the same `sudo -u <user> tmux` grant

@@ -4,19 +4,37 @@ package main
 
 // getTask serves GET /v1/tasks/{id}.
 //
-// Readable by any authenticated caller, which is consistent with the rest of
-// the surface rather than an omission: every conversation on this OS user's
-// box is already listable and readable, so a task's result carries nothing a
-// caller could not reach through the transcript. Writing is where ownership
-// bites, and that is postMessage and cancelTask.
+// Readable by any credential that resolves to the SAME OS user, and by no
+// other. Within one OS user it is deliberately open — every conversation on
+// that account is already listable and readable, so a task's result carries
+// nothing the caller could not read out of the transcript — and that argument
+// stops at the account boundary. A credentials line names an OS user per
+// caller, this box has more than one terminal account, and a task's result is
+// the agent's final message, so without this check a credential for emo could
+// read what a conversation of wizard's produced. Ids are not guessable, but
+// every request writes one to trace.jsonl and promtail ships that to Loki, so
+// they are not secret either.
+//
+// A task belonging to another account answers exactly like an id that was
+// never issued. Two answers would tell a caller which ids exist elsewhere,
+// and there is nothing it could do with the difference.
+//
+// Writing is checked in the same two places it always was: postMessage and
+// cancelTask.
 func (s *Server) getTask(c *call) (any, error) {
 	id := c.r.PathValue("id")
 	c.taskID = id
-	v, ok := s.Tasks.Get(id)
-	if !ok {
+	_, osUser, ok := s.Tasks.Meta(id)
+	if !ok || osUser != c.id.OSUser {
 		// Worth saying WHY an id can vanish: tasks live in memory, so a
 		// restart of the service loses them while the conversation itself
 		// survives in tmux. A caller that gets this has not lost the work.
+		return nil, notFound("no task %q (task ids do not survive a restart of this service; "+
+			"the conversation and its transcript do)", id)
+	}
+	v, ok := s.Tasks.Get(id)
+	if !ok {
+		// Pruned between the two reads. Same answer as an id nobody issued.
 		return nil, notFound("no task %q (task ids do not survive a restart of this service; "+
 			"the conversation and its transcript do)", id)
 	}
@@ -37,7 +55,11 @@ func (s *Server) cancelTask(c *call) (any, error) {
 	c.taskID = id
 
 	actor, osUser, ok := s.Tasks.Meta(id)
-	if !ok {
+	// The account check the read path makes, first and for the same reason:
+	// two credentials may carry the same NAME while naming different OS
+	// users, and the actor comparison below would let the second one stop the
+	// first one's turn. Another account's task answers like an absent id.
+	if !ok || osUser != c.id.OSUser {
 		return nil, notFound("no task %q", id)
 	}
 	v, _ := s.Tasks.Get(id)

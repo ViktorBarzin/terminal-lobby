@@ -709,3 +709,118 @@ func TestCancelInterruptsTheLiveName(t *testing.T) {
 		t.Fatalf("interrupt went to %v, want the live tmux name", calls)
 	}
 }
+
+// A rename during the READINESS wait must not lose the history mark.
+//
+// The wait runs up to a minute in production and tmux-api renames a session
+// from the content of its first turn, so the name resolved before the wait
+// can be gone by the time it ends. Reading the transcript under that name
+// does not fail loudly: the option read misses, and the answer is "no
+// transcript", which is the same answer an empty history gives. A mark of 0
+// then makes the PREVIOUS turn's own output look like proof that this turn
+// started, so the watcher believes the leftover "done" and reports the
+// previous answer as this one's, inside a second, while the real turn runs on.
+//
+// The sequence is the ordinary one: a second message queued behind the first,
+// drained the moment turn one ends, which is when the autotitle rename lands.
+func TestTurnMarksHistoryUnderTheNameTheSessionHasNow(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{
+		Name: "agent-work", BornAs: "agent-work", Owner: testActor, State: "done",
+	})
+	h.sessions.setTranscript(testOSUser, "agent-work",
+		userLine("the turn before", "2026-09-16T10:00:00Z"),
+		assistantLine("THE PREVIOUS ANSWER", "2026-09-16T10:00:01Z"))
+	// Room for the watcher to poll while the test holds the turn open, rather
+	// than failing the task for a turn that never visibly started.
+	h.srv.StartGrace = 5 * time.Second
+
+	release := make(chan struct{})
+	h.sessions.readyBlock = release
+
+	task := h.sendMessage("agent-work", "the next question")
+	for h.sessions.readyCallCount() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	// tmux-api's autotitle, landing while the readiness wait is still open.
+	h.sessions.rename(testOSUser, "agent-work", "a-title-from-the-first-turn")
+	close(release)
+
+	// The prompt is in and the session has produced nothing since, so there is
+	// nothing to report. @claude_state is still the previous turn's "done",
+	// which is exactly the state the stale-done guard exists for.
+	if v := h.waitStatus(task, StatusRunning, StatusDone, StatusFailed); v.Status != StatusRunning {
+		t.Fatalf("the turn was reported %q with result %q before it had produced anything",
+			v.Status, v.Result)
+	}
+	for i := 0; i < 50; i++ {
+		if v, _ := h.srv.Tasks.Get(task); v.Status.terminal() {
+			t.Fatalf("the turn was reported %q with result %q before it had produced anything",
+				v.Status, v.Result)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+
+	h.sessions.appendTranscript(testOSUser, "a-title-from-the-first-turn",
+		assistantLine("THE NEW ANSWER", "2026-09-16T11:00:00Z"))
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone {
+		t.Fatalf("status %q error %q", v.Status, v.Error)
+	}
+	if v.Result != "THE NEW ANSWER" {
+		t.Fatalf("result %q, want this turn's answer rather than the one before it", v.Result)
+	}
+}
+
+// A task belongs to the OS user it ran as, and a credential for another
+// account cannot read it.
+//
+// A credentials line names an OS user per caller and this box has more than
+// one terminal account, so "everything here is readable anyway" holds only
+// within one account. A task's result is the agent's final message. Ids are
+// not guessable, but every request writes one to trace.jsonl, which promtail
+// ships to Loki, so they are not secret either.
+func TestTaskOfAnotherOSUserIsNotReadable(t *testing.T) {
+	h := newHarness(t)
+
+	// A task that ran as emo. Built in the store rather than over the wire,
+	// because the store is the only difference under test: everything about
+	// the request below is the caller under test, credential included.
+	other := &Task{
+		ID: h.srv.IDs.New(), ConversationID: "emo-work",
+		Actor: "emos-credential", OSUser: "emo", Text: "what did you find",
+	}
+	h.srv.Tasks.Add(other)
+	h.srv.Tasks.Update(other.ID, StatusRunning, nil)
+	h.srv.Tasks.Update(other.ID, StatusDone, func(tk *Task) { tk.Result = "emo's private answer" })
+
+	w := h.call("GET", "/v1/tasks/"+other.ID, "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "private answer") {
+		t.Fatalf("another account's result was served: %s", w.Body.String())
+	}
+
+	// Cancelling it is refused the same way and never reaches the session.
+	// The same 404 rather than a 403, so the answer says nothing about which
+	// ids exist on another account.
+	if w := h.call("POST", "/v1/tasks/"+other.ID+"/cancel", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("cancel answered %d, want 404: %s", w.Code, w.Body.String())
+	}
+	if v, _ := h.srv.Tasks.Get(other.ID); v.Status != StatusDone {
+		t.Fatalf("another account's task was moved to %q", v.Status)
+	}
+
+	// The control: the caller's own task, in the same store, still reads.
+	mine := &Task{
+		ID: h.srv.IDs.New(), ConversationID: "c1",
+		Actor: testActor, OSUser: testOSUser, Text: "mine",
+	}
+	h.srv.Tasks.Add(mine)
+	var got TaskView
+	h.decodeJSON(h.call("GET", "/v1/tasks/"+mine.ID, ""), http.StatusOK, &got)
+	if got.ID != mine.ID {
+		t.Fatalf("the caller's own task did not read back: %+v", got)
+	}
+}

@@ -94,6 +94,9 @@ const unknownMark = -1
 // settles is logged and the message is sent anyway, which is sessionio's own
 // reasoning: typing into a pane that never drew a prompt is a gamble, and
 // dropping the caller's message is a certainty.
+//
+// The session is resolved TWICE, and the second one is not redundant. See the
+// comment on the second call.
 func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 	live, err := s.find(t.OSUser, t.ConversationID)
 	if err != nil {
@@ -112,6 +115,27 @@ func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 	case <-cancelled:
 		return 0, false
 	default:
+	}
+
+	// Resolved AGAIN, because the name above is up to readyTimeout old and
+	// tmux-api renames a session from the content of its first turn. Reading
+	// the transcript under a name that has moved does not fail loudly: the
+	// option read misses, SessionMap.Get says no, and TranscriptLines answers
+	// errNoTranscript — which is indistinguishable from an empty history and
+	// would mark a conversation with hundreds of lines as starting at 0.
+	// watchTurn would then find a transcript longer than 0 on its first tick,
+	// take that as proof this turn had started, believe the PREVIOUS turn's
+	// leftover "done", and hand the caller the previous turn's final message
+	// as this one's answer. Reachable on the sequence this service was built
+	// for: a queued message drained the moment the turn ahead of it ends,
+	// which is when the rename lands.
+	live, err = s.find(t.OSUser, t.ConversationID)
+	if err != nil {
+		// Gone while we waited, or renamed to something this service can no
+		// longer resolve. NOT a mark of zero: an unknown mark is what stops a
+		// leftover "done" from being believed, and runTurn resolves once more
+		// and reports the failure properly.
+		return unknownMark, true
 	}
 
 	lines, err := s.Sessions.TranscriptLines(t.OSUser, live.Name)
