@@ -64,10 +64,20 @@ RestartSec=5
 # runs. The service account cannot create a directory under /var/log itself,
 # and without this the trace disables itself at startup while the service goes
 # on serving — unrecorded, which is the one thing the design says it must not
-# be. 0750 rather than 0755 because a line carries the caller's prompt
-# verbatim; promtail, which tails the file into Loki, runs as root.
+# be.
+#
+# 0700, and this line decides it whatever else sets the directory: systemd
+# re-applies LogsDirectoryMode on EVERY start, to a directory that already
+# exists as well as one it creates. Measured on systemd 255 here, 2026-09-16:
+# a pre-created 0700 directory read 0750 after a single start. infra's
+# playbooks/devvm.yml creates this same directory at 0700, for the reason that
+# settles the value — a trace line carries the caller's request verbatim, and
+# ancamilea, emo and breakglass all have shells on this box — so anything wider
+# here would quietly override the playbook and then show up in its next
+# --check run as drift that never clears. promtail, which tails the file into
+# Loki, runs as root and needs no group bit.
 LogsDirectory=agent-api
-LogsDirectoryMode=0750
+LogsDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target

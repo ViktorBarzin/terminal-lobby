@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -156,5 +157,78 @@ func TestSystemdNeverGivesUpOnAgentAPI(t *testing.T) {
 	if restartSec == "" {
 		t.Error("devvm/agent-api.service sets no RestartSec; with the start limit off, " +
 			"systemd's 100ms default retries a failing bind ten times a second forever")
+	}
+}
+
+// unitKey reads the last value a systemd unit sets for one key.
+func unitKey(unit, key string) string {
+	var v string
+	for _, line := range strings.Split(unit, "\n") {
+		if strings.HasPrefix(line, key+"=") {
+			v = strings.TrimSpace(strings.TrimPrefix(line, key+"="))
+		}
+	}
+	return v
+}
+
+// The trace directory's mode has two writers, and only one of them decides.
+//
+// infra's playbooks/devvm.yml creates /var/log/agent-api at 0700 and argues
+// for it at length: a trace line carries the caller's prompt verbatim, and
+// ancamilea, emo and breakglass all have shells on this box. systemd then
+// re-applies LogsDirectoryMode on EVERY start of this unit, to a directory
+// that already exists as well as one it creates -- systemd.exec(5): "The
+// innermost specified directories will have their access mode adjusted to the
+// what is specified in ... LogsDirectoryMode=". Measured on systemd 255 here
+// on 2026-09-16: a pre-created 0700 directory read 0750 after one start.
+//
+// So this value is the one the box actually runs, and anything wider than the
+// playbook's silently overrides it AND puts /var/log/agent-api into every
+// later `ansible-playbook --check --diff` as permanent drift. Neither repo's
+// own test suite can see that, because the two halves live in two repos.
+func TestTheTraceDirectoryStaysOwnerOnly(t *testing.T) {
+	unit := repoFile(t, "devvm", "agent-api.service")
+
+	if unitKey(unit, "LogsDirectory") == "" {
+		t.Fatal("devvm/agent-api.service declares no LogsDirectory; the service account " +
+			"cannot create a directory under /var/log itself, so the trace would " +
+			"disable itself at startup while the service went on serving")
+	}
+
+	mode := unitKey(unit, "LogsDirectoryMode")
+	if mode == "" {
+		t.Fatal("devvm/agent-api.service sets no LogsDirectoryMode; systemd's default is " +
+			"0755 and the trace holds the caller's request verbatim")
+	}
+	bits, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		t.Fatalf("LogsDirectoryMode=%q is not an octal mode: %v", mode, err)
+	}
+	if bits&0o077 != 0 {
+		t.Errorf("LogsDirectoryMode=%s opens /var/log/agent-api to group or other; "+
+			"systemd re-applies it on every start, so it overrides the 0700 that "+
+			"infra's playbooks/devvm.yml sets and three other accounts have shells here",
+			mode)
+	}
+}
+
+// The directory systemd creates has to be the directory the service writes
+// into. They are set in two files in two languages -- LogsDirectory= here,
+// DefaultTracePath in agent-api/trace.go -- and a rename on either side is
+// invisible to the other until the trace quietly disables itself at startup
+// on a box where the service account cannot mkdir under /var/log.
+func TestLogsDirectoryIsWhereTheTraceIsWritten(t *testing.T) {
+	src := repoFile(t, "agent-api", "trace.go")
+	m := regexp.MustCompile(`DefaultTracePath\s*=\s*"([^"]+)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("no DefaultTracePath constant in agent-api/trace.go")
+	}
+	want := filepath.Dir(m[1])
+
+	name := unitKey(repoFile(t, "devvm", "agent-api.service"), "LogsDirectory")
+	// LogsDirectory= is relative to /var/log for a system unit.
+	got := filepath.Join("/var/log", name)
+	if got != want {
+		t.Errorf("the unit creates %s and the service writes to %s", got, want)
 	}
 }
