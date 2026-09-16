@@ -34,7 +34,7 @@ func TestConfigFileShipsAsAConffile(t *testing.T) {
 // alternative is finding them in source.
 func TestShippedConfigNamesEveryVariable(t *testing.T) {
 	body := DefaultConfig()
-	for _, v := range []string{"TL_AUTH_HEADER", "TL_PROXY_SECRET", "TL_MULTI_USER", "TL_BIND"} {
+	for _, v := range []string{"TL_AUTH_HEADER", "TL_PROXY_SECRET", "TL_MULTI_USER", "TL_BIND", "TL_BEARER_TOKENS"} {
 		if !strings.Contains(body, v) {
 			t.Fatalf("shipped config does not mention %s", v)
 		}

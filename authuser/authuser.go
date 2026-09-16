@@ -36,6 +36,12 @@
 // What this package does decide for itself: the admin list is read from a
 // root-owned file on disk, and an act-as target must already be a mapped
 // terminal account.
+//
+// One caller needs none of that. A program has no proxy in front of it and no
+// browser session, so bearer.go adds a second credential beside the header: a
+// token that names one caller and resolves to one OS user, revocable on its
+// own. It is additive — a request that presents no bearer takes the path above,
+// unchanged and without reading the file.
 package authuser
 
 import (
@@ -114,6 +120,15 @@ type Gate struct {
 	// design, but re-reading it twice within one is not, and nothing else can
 	// observe the difference.
 	countAdminReads func()
+
+	// countTokenReads and countTokenCompares are the same kind of seam for the
+	// bearer credentials, and the two properties they pin are worth as much as
+	// the behaviour around them. A request with no Authorization header must
+	// read no file, because every browser request is one of those. And a token
+	// comparison must visit every credential whichever one matches, because
+	// stopping early reports which one did.
+	countTokenReads    func()
+	countTokenCompares func()
 
 	// LookupUser verifies a mapped account exists on this host. Nil means
 	// os/user.Lookup; the tests supply their own.

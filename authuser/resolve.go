@@ -10,11 +10,14 @@ package authuser
 //
 // The order inside Resolve is deliberate and is what the tests pin:
 //
-//  1. the proxy secret, when configured, BEFORE anything reads identity — an
+//  1. a bearer credential, when the request presents one and this box has any.
+//     It is a whole answer on its own, so it comes before the secret it
+//     replaces — see bearer.go;
+//  2. the proxy secret, when configured, BEFORE anything reads identity — an
 //     unauthenticated caller must not reach identity resolution at all;
-//  2. the identity header, by its configured name only;
-//  3. the mode, which decides whether the user map is consulted;
-//  4. act-as, unchanged, and only ever in multi-user mode.
+//  3. the identity header, by its configured name only;
+//  4. the mode, which decides whether the user map is consulted;
+//  5. act-as, unchanged, and only ever in multi-user mode.
 
 import (
 	"bufio"
@@ -70,6 +73,12 @@ type Config struct {
 	AuthHeader  string // TL_AUTH_HEADER
 	ProxySecret string // TL_PROXY_SECRET; empty disables the check
 	MultiUser   string // TL_MULTI_USER: "auto" (default), "on", "off"
+
+	// BearerTokensPath is TL_BEARER_TOKENS: the per-caller credentials, one
+	// per line. Empty means DefaultBearerTokensPath, and an absent file there
+	// means no credentials exist and the bearer path is unavailable. See
+	// bearer.go.
+	BearerTokensPath string
 }
 
 // Header is the identity header's configured name, or the compiled default
@@ -96,9 +105,10 @@ func (g *Gate) AuthHeader() string { return g.Config.Header() }
 // EnvironmentFile, so all six processes see identical values.
 func ConfigFromEnv() Config {
 	return Config{
-		AuthHeader:  strings.TrimSpace(os.Getenv("TL_AUTH_HEADER")),
-		ProxySecret: os.Getenv("TL_PROXY_SECRET"),
-		MultiUser:   strings.TrimSpace(os.Getenv("TL_MULTI_USER")),
+		AuthHeader:       strings.TrimSpace(os.Getenv("TL_AUTH_HEADER")),
+		ProxySecret:      os.Getenv("TL_PROXY_SECRET"),
+		MultiUser:        strings.TrimSpace(os.Getenv("TL_MULTI_USER")),
+		BearerTokensPath: strings.TrimSpace(os.Getenv("TL_BEARER_TOKENS")),
 	}
 }
 
@@ -122,6 +132,19 @@ type Identity struct {
 
 // Resolve answers the whole question for one request.
 func (g *Gate) Resolve(r *http.Request) (Identity, error) {
+	// A bearer credential answers everything below on its own, so it is read
+	// first — a caller holding one sends neither the identity header nor the
+	// proxy secret. Two conditions, and both matter. Without an Authorization
+	// header nothing here runs and no file is read, which keeps the browser
+	// path exactly as it was. And with no credentials on the box the feature is
+	// off, so an Authorization header goes back to being whatever the proxy
+	// upstream is doing with it rather than a refusal.
+	if token, presented := bearerToken(r); presented {
+		if creds := g.bearerCreds(); len(creds) > 0 {
+			return g.resolveBearer(r, token, creds)
+		}
+	}
+
 	if err := g.checkSecret(r); err != nil {
 		return Identity{}, err
 	}
@@ -386,6 +409,12 @@ func (g *Gate) Authorize(w http.ResponseWriter, r *http.Request) (Identity, bool
 		return id, true
 	}
 	switch {
+	case errors.Is(err, ErrBadBearer):
+		// No token, not even a prefix: this line goes to journald and on to
+		// Loki, where it would outlive the credential by 30 days. What an
+		// operator needs is that a bearer was refused and on which route.
+		log.Printf("auth: invalid bearer token (%s %s)", r.Method, r.URL.Path)
+		http.Error(w, "invalid bearer token", http.StatusUnauthorized)
 	case errors.Is(err, ErrBadSecret):
 		log.Printf("auth: bad or missing proxy secret (%s %s)", r.Method, r.URL.Path)
 		http.Error(w, "missing or incorrect proxy secret", http.StatusUnauthorized)
@@ -426,6 +455,11 @@ func (g *Gate) Configure(service, bindAddr string) {
 		mode = "multi-user"
 	}
 	log.Printf("%s: identity header %q, %s mode", service, g.Config.Header(), mode)
+	// Count and path only. A name would be harmless and a token would not, and
+	// the count is what answers "did the file I just wrote take effect".
+	if n := len(g.bearerCreds()); n > 0 {
+		log.Printf("%s: %d bearer credentials loaded from %s", service, n, g.bearerTokensPath())
+	}
 	if g.Config.ProxySecret == "" {
 		log.Printf("%s: no TL_PROXY_SECRET set — any caller that can reach %s may "+
 			"send %s and be treated as that user. Set TL_PROXY_SECRET in "+
