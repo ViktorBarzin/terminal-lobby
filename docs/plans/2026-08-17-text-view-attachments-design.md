@@ -327,6 +327,44 @@ timeline already rendered a path wherever it sat, so a screenshot sent
 mid-sentence appears mid-sentence in the bubble. An attachment with no token
 still takes decision 9's shape, which is how a draft written before this lands.
 
+## Revised 2026-09-16: an image is drawn as the image
+
+The pill stays for a document. For an image it is replaced by the picture
+itself, painted over the token's own characters.
+
+Viktor, on the new-session screen: "when pasting images in the composer for a
+new session, i see just [img]. let's replace that with a proper thumbnail of
+the image instead." The token says a picture is attached without saying which
+picture, and on that screen it is the only account of the paste there is —
+nothing has been uploaded yet, so no other surface shows it either.
+
+Two things make room for the picture inside a textarea, and both come from the
+same constraint decision 9's replacement already named: the field holds
+characters and nothing else.
+
+- The token is padded with figure spaces (U+2007) until it is as wide as the
+  thumbnail, measured in the font the field is really using, so the picture
+  covers the token and nothing beside it. Figure spaces are non-breaking, so a
+  wrapped line cannot split a token with the picture across the break.
+- The line grows from 21px to 52px while an image is in the message. A textarea
+  has one line height for all its lines, so every line of that message is 52px
+  — the cost Viktor chose over a thumbnail floating above the field: a long
+  message shows about four lines in the box instead of nine.
+
+The mirror layer still paints the chips, with one change of order. The picture
+sits ABOVE the field rather than behind it, because the characters underneath
+it are the field's own and would otherwise show through. Everything else in
+that layer stays behind, so the caret, the selection and the text are the
+field's as before.
+
+Where the picture comes from depends on which composer is asking. The live one
+reads it back from the store through `previewContentUrl`, the same resolver the
+timeline uses. The new-session composer has nothing on a server yet, so it
+makes an object URL from the held `File` and hands it over on the attachment,
+revoking it when the screen goes away. An image whose bytes cannot be read —
+a format Chromium will not decode, a path that answers 404 — falls back to the
+pill and its token text, and the line stops making room for it.
+
 ## Open questions
 
 - Whether a doc large enough to be refused from the store should still be
