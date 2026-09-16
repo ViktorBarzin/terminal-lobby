@@ -161,7 +161,7 @@ export interface FitReduction {
  * and a negative are refused too. A zero is what a hidden host reports, and a
  * NaN is what an unlaid-out one can report. Both compute a grid from nothing.
  */
-export function hasBox(box: HostBox | null): boolean {
+export function hasBox(box: HostBox | null): box is HostBox {
   return !!box && box.width > 0 && box.height > 0;
 }
 
@@ -278,4 +278,109 @@ export function fitTarget(watching: boolean, grid: SessionGrid | null | undefine
  */
 export function targetKey(target: FitTarget): string {
   return target.kind === "host" ? "host" : `${target.cols}x${target.rows}`;
+}
+
+/**
+ * The rectangle a watched session occupies, and the size to write beside it.
+ * `null` when there is nothing to draw.
+ */
+export interface LetterboxFrame {
+  /** The session's own box in CSS px — what the frame is drawn around. */
+  width: number;
+  height: number;
+  /** The Grid in words, e.g. `60 × 19`. */
+  label: string;
+}
+
+/**
+ * SHOW THE GRID, rather than leaving the session as an island in a dark field.
+ *
+ * A watcher draws the session at the size its drivers gave it (`fitTarget`),
+ * which on a desktop reading a phone's session is a small rectangle in the
+ * middle of a large empty one. Measured 2026-09-16 on the deployed build: a
+ * session pinned 60x19 inside a 1340x809 view drew 432x304, a ninth of the
+ * area, with nothing to say the rest was not the session's. Viktor asked for
+ * the Grid itself to be drawn instead of the session being scaled up, so the
+ * dead space reads as "their screen is smaller than yours" rather than as a
+ * terminal that failed to fill its pane.
+ *
+ * WHY IT REFUSES AN OVERFLOW rather than drawing a frame off the edges. The
+ * host centres the session with `safe center` (app.css), which falls back to
+ * start-alignment the moment the session is BIGGER than the box — a phone
+ * watching a 231x62 desktop. The frame is positioned from the centre, so on
+ * that fallback it would be drawn somewhere the session is not. An overflow is
+ * also the case where a frame says nothing: the edges being cut off is already
+ * the whole message.
+ *
+ * Equal on both axes is no frame either. There is no dead space to explain, and
+ * a ring around a terminal that fills its pane is a border nobody asked for.
+ */
+export function letterboxFrame(
+  target: FitTarget,
+  term: HostBox | null,
+  host: HostBox | null,
+): LetterboxFrame | null {
+  if (target.kind !== "grid" || !hasBox(term) || !hasBox(host)) return null;
+  if (term.width > host.width || term.height > host.height) return null;
+  if (term.width === host.width && term.height === host.height) return null;
+  return { width: term.width, height: term.height, label: `${target.cols} × ${target.rows}` };
+}
+
+/**
+ * tmux's `status` option takes 0 to 5 lines, so a window up to five rows
+ * shorter than the client reading it is that client's own claim with the
+ * status rows taken off — `SizeGrid` subtracts them server-side
+ * (sessionio/grid.go), and the browser never learns how many there were.
+ */
+const MAX_STATUS_LINES = 5;
+
+/**
+ * Is the session's window too SMALL for the terminal reading it? That is the
+ * state tmux draws as a bordered box in the top-left corner with a field of
+ * its own dots around it.
+ *
+ * THE GAP IT CLOSES. A driving client claims the Grid when its own box changes
+ * and when the visible set moves (SessionView), and a pinned window otherwise
+ * follows a tmux client attaching, detaching or resizing. A SECOND device
+ * claiming the window is none of those from here — this view did not change,
+ * its box did not change, its client did not resize — so the one client that
+ * has just been shrunk is the one nothing tells. Reported by Viktor
+ * 2026-09-16 with a screenshot of exactly that, while DRIVING (the bar read
+ * "Watch", not "Watching"): `health` is pinned, he submitted a prompt into it
+ * at 15:07:16, and no `session.grid_sized` went out all day. The pin's hook
+ * picks the read-write client with the newest ACTIVITY (sessionio's
+ * `gridHook`), and reading a session is not activity, so the phone that typed
+ * last holds the window while the desktop in front of you reads it in 60
+ * columns.
+ *
+ * The Grid rides the session list, so the disagreement can be seen even though
+ * it cannot be felt. This is that comparison.
+ *
+ * SMALLER ONLY, AND THAT IS WHAT STOPS A CLAIM WAR. A window BIGGER than this
+ * terminal is somebody else's larger screen, and this client is cropped rather
+ * than dotted. If both sides re-claimed, two devices driving one session would
+ * take the window from each other on every poll and re-wrap the pane each
+ * time; with only the cramped side speaking, the larger client wins once and
+ * the exchange ends. The smaller device is not left out — its OWN fit still
+ * claims on attach and on resize, which is how a phone takes a session over in
+ * the first place, and the caller gates this on the browser having focus so an
+ * idle second monitor does not take it straight back.
+ *
+ * COLUMNS ARE EXACT, ROWS ARE A RANGE, and the asymmetry is tmux's status bar:
+ * the claim sends the CLIENT's rows and the server takes the status lines off
+ * before it resizes (sessionio.SizeGrid), so a window one row shorter than this
+ * terminal is the normal, agreeing case. Columns have no such subtraction, and
+ * they are also where the damage shows: a 60-column window inside a
+ * 184-column client is what re-wraps Claude's output into a third of the
+ * screen.
+ *
+ * A grid that is not a size answers false. tmux-api omits both fields when it
+ * could not read them, and a claim fired at a number nobody reported would be
+ * a guess with a POST behind it.
+ */
+export function gridCramped(mine: SessionGrid, grid: SessionGrid | null | undefined): boolean {
+  if (!grid) return false;
+  if (!Number.isInteger(grid.cols) || !Number.isInteger(grid.rows)) return false;
+  if (grid.cols < 1 || grid.rows < 1) return false;
+  return grid.cols < mine.cols || grid.rows < mine.rows - MAX_STATUS_LINES;
 }

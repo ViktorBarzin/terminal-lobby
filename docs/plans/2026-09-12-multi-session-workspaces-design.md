@@ -324,6 +324,14 @@ read-only client taking the size is the one thing the pinning exists to stop,
 and the server cannot tell two devices of one person apart — the caller
 declining is what keeps that promise.
 
+The dead space says what it is (added 2026-09-16). A session smaller than the
+tile is ringed at its own edges with its Grid written above the top-right
+corner, which is the difference between "their screen is 60 columns" and "this
+terminal failed to fill its rectangle". The session is not scaled up to fit:
+a watcher sees what the drivers see, at the size they see it. A session BIGGER
+than the tile keeps the behaviour it had — drawn from its first character,
+clipped at the far edges, no ring, since the clipping already says it.
+
 ## Workspaces
 
 A workspace is created implicitly by the first split and never needs a name. It

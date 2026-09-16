@@ -2305,6 +2305,60 @@ label.tl-set-row-label {
   flex: 0 0 auto;
 }
 
+/* THE GRID, DRAWN (Viktor, 2026-09-16).
+
+   Letterboxing alone left the session as a lit island in a field of the same
+   colour: measured on the deployed build, a 60x19 session drew 432x304 inside
+   a 1340x809 view, a ninth of the area, with nothing to say that the rest was
+   not the session failing to fill its pane. He asked for the Grid itself to be
+   visible rather than for the session to be scaled up — a watcher reads what
+   the drivers see, at the size they see it.
+
+   Three things say it, and none of them touches the terminal: the dead space
+   is tinted away from the terminal's own background, a hairline ring is drawn
+   around the session's rectangle, and the Grid is written above its top-right
+   corner. The two numbers and the caption come from `paintFrame` in
+   TerminalNative; the rule for when there is a rectangle at all is
+   `letterboxFrame` in terminal/fit.ts, which refuses the overflow case
+   because `safe center` start-aligns it and a frame positioned from the
+   centre would then be drawn where the session is not.
+
+   Pseudo-elements rather than nodes: xterm owns the inside of this host, and
+   an element in there is one more thing for the DOM renderer, the selection
+   service and the drag handlers to step around. */
+.tl-terminal-native.tl-lb-framed {
+  position: relative;
+  background: color-mix(in srgb, var(--terminal-bg) 92%, var(--text-muted));
+}
+.tl-terminal-native.tl-lb-framed::before,
+.tl-terminal-native.tl-lb-framed::after {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  pointer-events: none;
+}
+/* The ring. `box-shadow` rather than a border, so the rectangle stays exactly
+   the session's size and the hairline sits outside it — a border would put a
+   pixel of chrome over the first column. */
+.tl-terminal-native.tl-lb-framed::before {
+  content: "";
+  width: var(--tl-lb-w);
+  height: var(--tl-lb-h);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+/* The Grid in words, right-aligned with the ring and sitting 6px above it.
+   Percentages in `translate` are the caption's OWN size, which is how it
+   anchors to a corner of a box it is not inside. */
+.tl-terminal-native.tl-lb-framed::after {
+  content: var(--tl-lb-label, "");
+  transform: translate(calc(var(--tl-lb-w) / 2 - 100%), calc(-1 * var(--tl-lb-h) / 2 - 100% - 6px));
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
 /* ---- Command palette + shortcuts help (pillar #2 keybindings) ---------- */
 .tl-cmdpalette-backdrop {
   position: fixed;

@@ -7,6 +7,8 @@ import {
   isFitOwed,
   reduce,
   fitTarget,
+  gridCramped,
+  letterboxFrame,
   targetKey,
   type FitAction,
   type FitEvent,
@@ -357,5 +359,127 @@ describe("what size a terminal takes", () => {
     expect(targetKey(fitTarget(true, { cols: 50, rows: 14 }))).toBe("50x14");
     expect(targetKey(fitTarget(true, { cols: 82, rows: 33 }))).toBe("82x33");
     expect(targetKey(fitTarget(false, grid))).toBe("host");
+  });
+});
+
+/**
+ * THE FRAME AROUND A WATCHED SESSION.
+ *
+ * Viktor, 2026-09-16: a session driven from a smaller screen should not be
+ * scaled up, and the dead space around it should say so. These are the rules
+ * for when there is a rectangle to draw at all — the drawing itself is two
+ * pseudo-elements in app.css, positioned from the numbers this returns.
+ */
+describe("letterboxFrame", () => {
+  const grid = fitTarget(true, { cols: 60, rows: 19 });
+  const host: HostBox = { width: 1340, height: 809 };
+
+  /** The measured case: 60x19 drew 432x304 inside a 1340x809 view. */
+  it("frames a session smaller than the view, and names its grid", () => {
+    expect(letterboxFrame(grid, { width: 432, height: 304 }, host)).toEqual({
+      width: 432,
+      height: 304,
+      label: "60 × 19",
+    });
+  });
+
+  /** A driving terminal fills its host, so there is no Grid target and no
+   *  dead space to explain. */
+  it("draws nothing for a terminal that fills its host", () => {
+    expect(
+      letterboxFrame(fitTarget(false, { cols: 60, rows: 19 }), { width: 432, height: 304 }, host),
+    ).toBeNull();
+    expect(letterboxFrame(grid, host, host)).toBeNull();
+  });
+
+  /**
+   * `safe center` start-aligns an overflowing session, so the frame would be
+   * drawn where the session is not — and the clipped edges already say the
+   * session is bigger than this screen.
+   */
+  it.each([
+    ["wider", { width: 1642, height: 500 }],
+    ["taller", { width: 400, height: 900 }],
+    ["both", { width: 1642, height: 900 }],
+  ])("draws nothing for a session %s than the view", (_why, term) => {
+    expect(letterboxFrame(grid, term, host)).toBeNull();
+  });
+
+  /** Nothing has been laid out yet, or the host is one of keepalive's hidden
+   *  ones. Neither is a rectangle. */
+  it("draws nothing without two real boxes", () => {
+    expect(letterboxFrame(grid, null, host)).toBeNull();
+    expect(letterboxFrame(grid, { width: 432, height: 304 }, null)).toBeNull();
+    expect(letterboxFrame(grid, { width: 0, height: 0 }, host)).toBeNull();
+  });
+});
+
+/**
+ * WHEN A DRIVING VIEW HAS TO SAY ITS SIZE AGAIN.
+ *
+ * The screenshot Viktor sent on 2026-09-16 was a driving view sitting in a
+ * 60-column window with tmux's dots around it: another device held the Grid,
+ * and nothing about this view had changed, so nothing made it speak.
+ */
+describe("gridCramped", () => {
+  const mine = { cols: 184, rows: 50 };
+
+  it("sees a window another device shrank", () => {
+    expect(gridCramped(mine, { cols: 60, rows: 19 })).toBe(true);
+  });
+
+  /**
+   * The agreeing case, and the reason rows are a range: the server takes the
+   * status lines off the rows this client claimed, so the window it reports
+   * back is shorter than the terminal that asked for it.
+   */
+  it.each([
+    ["no status bar", { cols: 184, rows: 50 }],
+    ["one status line", { cols: 184, rows: 49 }],
+    ["tmux's maximum five", { cols: 184, rows: 45 }],
+  ])("accepts its own claim with %s", (_why, grid) => {
+    expect(gridCramped(mine, grid)).toBe(false);
+  });
+
+  /** Six rows short is more than any status bar tmux will draw, so the rows
+   *  belong to somebody else's client. */
+  it("sees a window shorter than any status bar explains", () => {
+    expect(gridCramped(mine, { cols: 184, rows: 44 })).toBe(true);
+  });
+
+  /** One column out is one column of Claude's output re-wrapped, so columns
+   *  are compared exactly. */
+  it("sees a single column of disagreement", () => {
+    expect(gridCramped(mine, { cols: 183, rows: 49 })).toBe(true);
+  });
+
+  /**
+   * THE CLAIM WAR THIS REFUSES TO START. A window bigger than this terminal
+   * belongs to a larger client, and this one is cropped rather than dotted.
+   * Two devices that both claimed back would take the window from each other
+   * on every poll; with only the cramped side speaking, the larger client
+   * wins once and it ends.
+   */
+  it.each([
+    ["wider", { cols: 231, rows: 49 }],
+    ["taller", { cols: 184, rows: 62 }],
+    ["both", { cols: 231, rows: 62 }],
+  ])("leaves a window %s than the terminal alone", (_why, grid) => {
+    expect(gridCramped(mine, grid)).toBe(false);
+  });
+
+  /**
+   * tmux-api omits both fields when it could not read a size, and a server
+   * that predates them sends neither. Claiming against a number nobody
+   * reported would be a POST behind a guess.
+   */
+  it.each([
+    ["nothing polled yet", null],
+    ["a server that says nothing", undefined],
+    ["no columns", { cols: 0, rows: 19 }],
+    ["half a row", { cols: 60, rows: 19.5 }],
+    ["a size that is not a number", { cols: Number.NaN, rows: 19 }],
+  ])("stays quiet for %s", (_why, grid) => {
+    expect(gridCramped(mine, grid)).toBe(false);
   });
 });

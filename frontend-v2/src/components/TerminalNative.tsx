@@ -1,12 +1,4 @@
-import {
-  createEffect,
-  createSignal,
-  on,
-  onCleanup,
-  onMount,
-  Show,
-  type Component,
-} from "solid-js";
+import { createEffect, createSignal, on, onCleanup, onMount, Show, type Component } from "solid-js";
 import { ownWhile } from "../lib/ownwhile";
 // xterm ships its own stylesheet and WILL NOT LAY OUT WITHOUT IT: the rows get
 // no positioning, so the terminal renders as a narrow column of overlapping
@@ -27,6 +19,7 @@ import type { TerminalReport } from "../diagnostics/status";
 import {
   NO_FIT_OWED,
   fitTarget,
+  letterboxFrame,
   reduce as reduceFit,
   targetKey,
   type FitEvent,
@@ -1485,7 +1478,49 @@ export const TerminalNative: Component<{
         // socket exists: the boot size rides the handshake instead.
         attachment?.resize();
         claimGrid();
+        paintFrame(term.element ?? null, box);
         return true;
+      };
+
+      /**
+       * DRAW THE GRID a watcher is reading, around the session rather than
+       * over it.
+       *
+       * The rule and the measurement behind it are `letterboxFrame` in
+       * terminal/fit.ts; the ring and the size caption are `.tl-lb-framed`'s
+       * two pseudo-elements in app.css. This is only the arithmetic in
+       * between: what the terminal ended up as, in CSS px, handed to the
+       * stylesheet as two lengths and a string.
+       *
+       * AFTER THE FIT, NEVER BEFORE IT. xterm sizes its screen element inside
+       * `resize()`/`fit()`, so the box read here is the one the session just
+       * took. Reading it earlier measures the PREVIOUS grid, which is a frame
+       * around where the session used to be for as long as nothing else moves.
+       *
+       * The host's own box comes in rather than being measured again: `safeFit`
+       * has already read it, and fit.ts's rule is that a box cached before the
+       * trigger can be stale — this one was read for this fit.
+       */
+      const paintFrame = (element: HTMLElement | null, box: HostBox | null): void => {
+        if (!host) return;
+        const frame = letterboxFrame(
+          sizeTarget(),
+          element ? { width: element.offsetWidth, height: element.offsetHeight } : null,
+          box,
+        );
+        if (!frame) {
+          host.classList.remove("tl-lb-framed");
+          host.style.removeProperty("--tl-lb-w");
+          host.style.removeProperty("--tl-lb-h");
+          host.style.removeProperty("--tl-lb-label");
+          return;
+        }
+        host.style.setProperty("--tl-lb-w", `${frame.width}px`);
+        host.style.setProperty("--tl-lb-h", `${frame.height}px`);
+        // Quoted, because the caption is a `content:` value: a bare 60 × 19 is
+        // not a CSS string and the pseudo-element would draw nothing at all.
+        host.style.setProperty("--tl-lb-label", `"${frame.label}"`);
+        host.classList.add("tl-lb-framed");
       };
 
       /**

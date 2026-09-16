@@ -267,7 +267,13 @@ merely READING a session claims the Grid explicitly
 every session in the list: a client that declines to claim it has no other way
 to know how big the session it is showing is, and a Watch-mode tile draws itself
 at exactly that size (see **Tile**). Both are absent when tmux would not say,
-which means no opinion rather than a size of zero.
+which means no opinion rather than a size of zero. The same two numbers tell a
+DRIVING view that another device has taken the Grid — the one client left too
+small for its window is also the one nothing else can tell, since none of its
+own triggers fired — and it claims the Grid back on the next poll, provided the
+browser has focus. Only the client the window is too SMALL for speaks: a window
+bigger than the client reading it belongs to a larger screen, and two devices
+that both claimed back would take it from each other on every poll.
 _Avoid_: window size (means the browser's), canvas, viewport
 
 **Parked** (a session):
@@ -332,7 +338,12 @@ ringed in the colour of its **Session state**. A tile claims its session's **Gri
 tmux window is the size of the tile, for every device attached to it; a
 tile that is watching never claims, and draws the session at the **Grid**
 its drivers gave it instead, centred in the rectangle with dead space
-around it. One session can occupy at most one
+around it. The dead space is not left unexplained: a session smaller than
+the tile is ringed at its own edges with its **Grid** written above the
+corner, so the gap reads as their screen being smaller rather than as a
+terminal that failed to fill the rectangle. A session BIGGER than the tile
+is drawn from its first character and clipped at the far edges, with no
+ring — the clipping says it already. One session can occupy at most one
 tile: keepalive mounts a single live view per session, and two tiles of one
 session would contend for its Grid. _Avoid_: pane (tmux's word for the
 splits inside a session, which `PaneKeypad` drives), cell, window, slot

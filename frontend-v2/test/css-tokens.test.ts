@@ -40,6 +40,13 @@ const all = css.join("\n");
  * token carries — a stylesheet that disagreed would put the picture over the
  * words beside it. It writes all three onto `.tl-field`, unconditionally, and
  * every read is inside that element.
+ *
+ * --tl-lb-w and --tl-lb-h are the box a WATCHED session drew, in CSS px. Only
+ * xterm knows it: the terminal is sized to the session's Grid rather than to
+ * its host, and the pixels that comes to depend on the font and the cell
+ * metrics. TerminalNative measures the element after each fit (`paintFrame`)
+ * and writes both onto the host in the same breath as `.tl-lb-framed`, which
+ * is the only selector that reads them.
  */
 const SET_BY_JS = new Set([
   "--kb-offset",
@@ -49,6 +56,8 @@ const SET_BY_JS = new Set([
   "--tl-thumb-w",
   "--tl-thumb-h",
   "--tl-thumb-line",
+  "--tl-lb-w",
+  "--tl-lb-h",
 ]);
 
 /** Every `--name:` declaration across the stylesheets. */

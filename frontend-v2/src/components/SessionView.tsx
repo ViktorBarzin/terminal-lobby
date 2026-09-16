@@ -20,7 +20,7 @@ import {
   type NotifyKind,
 } from "../store/session";
 import type { SseStatus } from "../sse/client";
-import type { SessionGrid } from "../terminal/fit";
+import { gridCramped, type SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
@@ -181,12 +181,16 @@ export const SessionView: Component<{
   /** The size of the session's tmux window — its Grid — from the session list,
    *  or null when nobody could say.
    *
-   *  Only a WATCHING view reads it, and then it is the size its terminal draws
-   *  at: a watcher declines to claim the Grid (see `claimGrid` below), so the
-   *  window keeps whatever its drivers gave it, and a terminal fitted to the
-   *  tile instead leaves tmux drawing that smaller window into a corner with a
-   *  border and a field of dots around it. Handed on to TerminalNative, where
-   *  `fitTarget` (terminal/fit.ts) is the rule. */
+   *  A WATCHING view draws at it: a watcher declines to claim the Grid (see
+   *  `claimGrid` below), so the window keeps whatever its drivers gave it, and
+   *  a terminal fitted to the tile instead leaves tmux drawing that smaller
+   *  window into a corner with a border and a field of dots around it. Handed
+   *  on to TerminalNative, where `fitTarget` (terminal/fit.ts) is the rule.
+   *
+   *  A DRIVING view watches it for disagreement, which is the other half of
+   *  the same number: a device that has had the window claimed out from under
+   *  it is the one device that cannot feel it, because nothing of its own
+   *  changed. See the re-claim effect below `reclaimGrid`. */
   grid?: () => SessionGrid | null;
   /** The user this tab is acting as ("" = an ordinary tab). A lens comes up
    *  WATCHING every session it opens, and the controls that type into the pty
@@ -655,6 +659,96 @@ export const SessionView: Component<{
       const last = lastGrid;
       if (last) claimGrid(last.cols, last.rows);
     }, GRID_RECLAIM_MS);
+  });
+
+  /**
+   * Whether the Grid last polled fitted this terminal. Starts true so a view
+   * that opens on a window already too small claims once and then goes quiet,
+   * rather than once per poll.
+   */
+  let gridFitted = true;
+
+  /**
+   * Is this browser the one being USED? `document.hasFocus()`, read at the
+   * moment it is asked.
+   *
+   * Not the parking signal. `windowAway` above is `document.hidden` alone, and
+   * focus was deliberately left out of it on 2026-09-11 because a lobby left
+   * visible on a second monitor is open precisely to be noticed
+   * (terminal/battery.ts). This is a different question with the opposite
+   * answer: taking a session's window back from another device is an action,
+   * and an unfocused lobby must not take one. Without it the desktop wins
+   * every time — a phone taking a session over claims the Grid, the desktop
+   * behind it is cramped, and it would grab the window back inside a second
+   * while nobody was even sitting at it. With it, the phone keeps the session
+   * for as long as it is the screen being used.
+   *
+   * THE SIGNAL HAS TO BE REACTIVE, and `document.hasFocus()` is not. The
+   * effect below is woken by the session poll, and a poll that reports the
+   * same too-small window twice wakes nothing — so a claim deferred for want
+   * of focus would sit there until the Grid happened to change again.
+   * Measured while building this: unfocus, another device claims, focus
+   * returns, and twelve seconds later the window was still 60 columns. The
+   * counter is what the effect subscribes to.
+   */
+  const [focusRev, setFocusRev] = createSignal(0);
+  const noteFocus = (): void => {
+    setFocusRev((n) => n + 1);
+  };
+  if (typeof window !== "undefined") {
+    window.addEventListener("focus", noteFocus);
+    onCleanup(() => window.removeEventListener("focus", noteFocus));
+  }
+  const beingUsed = (): boolean => typeof document === "undefined" || document.hasFocus();
+
+  /**
+   * SAY IT AGAIN WHEN SOMEBODY ELSE'S DEVICE LEAVES THIS ONE TOO SMALL.
+   *
+   * The case none of the triggers above can see. A claim goes out when this
+   * terminal's own box changes and when the visible set moves; a pinned window
+   * also follows a tmux client attaching, detaching or resizing. A second
+   * device claiming the Grid is none of those FROM HERE — this view did not
+   * change, its box did not change, its client did not resize — so the one
+   * client that has just been shrunk is the one nothing tells. tmux draws the
+   * smaller window into the top-left corner of this client, borders it, and
+   * fills the rest with its own dots.
+   *
+   * Reported by Viktor on 2026-09-16 with a screenshot of exactly that, while
+   * DRIVING (the bar read "Watch", not "Watching"): `health` is pinned, he
+   * submitted a prompt into it at 15:07:16, and no `session.grid_sized` went
+   * out all day. The Grid rides the session list, so the disagreement is
+   * visible even though it cannot be felt — `gridCramped` (terminal/fit.ts) is
+   * the comparison, and carries why only the cramped side of it speaks.
+   *
+   * ONE CLAIM PER DISAGREEMENT, and the latch is what keeps it there. A claim
+   * that lands is followed by a poll that fits, which re-arms this; a claim
+   * that changes nothing — an unpinned session, where `SizeGrid` leaves the
+   * window to tmux on purpose — would otherwise be a POST per poll for as long
+   * as the session is open. A device that takes the Grid a second time is a
+   * fresh fits-then-does-not, so it is answered again.
+   *
+   * EVERY REFUSAL STILL STANDS, because this goes through `claimGrid`: a
+   * watcher never claims (its terminal is drawn at the Grid instead, which is
+   * the whole of `fitTarget`), and neither does a preload or a foreign
+   * session. `claimedGrid` is cleared first because the numbers this sends are
+   * the ones it last sent — the quiet window exists to swallow a repeat, and
+   * this is the one case where the repeat is the point.
+   */
+  createEffect(() => {
+    const grid = props.grid?.();
+    focusRev();
+    const mine = untrack(() => lastGrid);
+    if (!mine || !untrack(onScreen)) return;
+    if (!gridCramped(mine, grid)) {
+      gridFitted = true;
+      return;
+    }
+    // Not latched while unfocused: this is a claim deferred, not one made, and
+    // coming back to the tab has to be able to make it.
+    if (!gridFitted || !beingUsed()) return;
+    gridFitted = false;
+    claimedGrid = "";
+    claimGrid(mine.cols, mine.rows);
   });
 
   /**
