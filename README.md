@@ -116,6 +116,54 @@ glance whether anything is waiting on you.
 
 ![sidebar with projects, one expanded and the rest collapsed](docs/screenshots/lobby.png)
 
+Attaching gives you the session itself, rendered by the lobby rather than
+handed to an iframe.
+
+![a session attached, with its Claude transcript on screen](docs/screenshots/terminal.png)
+
+**Workspaces** put several sessions on screen at once. Drag a session onto a
+tile to split it and drag a divider to resize. Splitting never moves a running
+terminal: the tiles position slots in a fixed DOM order, so a session keeps its
+xterm, its socket and its tmux attach while the layout changes around it. A
+split that would leave any tile under 240px is refused at the drop rather than
+shrinking into it. See
+`docs/adr/0027-a-live-terminal-never-moves-and-a-workspace-splits-in-two.md`.
+
+![three sessions tiled in one workspace](docs/screenshots/workspace.png)
+
+**Undo** covers the sidebar. `Ctrl+Z` (`Cmd+Z`) takes back the last structural
+change and `Ctrl+Shift+Z` puts it back: kill, create, retitle, move between
+projects, reorder cards and groups, the session-order mode, project create,
+rename and delete, collapse, and the watch choice. A kill no longer asks. The
+card dims and counts down for eight seconds before anything reaches the server,
+so the way out is to carry on rather than to answer a dialog naming a
+12-character session id. Settings → Keyboard hands `Ctrl+Z` back to the
+terminal if you would rather keep SIGTSTP. See
+`docs/adr/0025-undo-takes-ctrl-z-and-a-kill-waits.md`.
+
+![a killed session dimmed, counting down, with undo offered](docs/screenshots/undo.png)
+
+**Agent spend** is a Settings page for what the agents in your sessions have
+consumed, over today, 7 days, this month or all time. Each tool speaks its own
+language: Claude Code reports dollars, which it computes itself, and Codex
+reports how much of its 5-hour and weekly limits is gone, because a ChatGPT
+plan reports no cost anywhere. The Claude figures come from a recorder in the
+statusLine slot (`devvm/tl-usage-record`, wired the same way the state dot's
+hooks are); Codex needs nothing installed. A small figure beside the gear
+carries the one number for the session you are attached to. See
+`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
+
+![the agent spend page, broken down by model and by session](docs/screenshots/spend.png)
+
+**Machine health** answers "is it me or the box". Settings → Network carries a
+"This machine" row that reads stall time from `/proc/pressure`, because load
+average counts what is queued while stall time measures what actually waited.
+Where the kernel has no `/proc/pressure` the row falls back to load average per
+core and memory headroom, and says on screen that it has. See
+`docs/adr/0028-stall-time-says-the-box-is-busy.md`.
+
+![the machine health row, reading stall time rather than load average](docs/screenshots/machine-health.png)
+
 **Watch mode** attaches read-only. The eye marks the session, typing is
 disabled, and Upload and Paste grey out, so you can follow along without
 touching the pane.
@@ -133,19 +181,9 @@ a copy of someone else's without touching theirs.
 ![the skills manager](docs/screenshots/skills.png)
 
 **Settings** carries nine themes, terminal font and text tuning, cursor
-options and scrolling behaviour. Theme is per-device.
+options, scrolling behaviour and the keyboard map. Theme is per-device.
 
 ![the settings panel](docs/screenshots/settings.png)
-
-**Agent spend** is a Settings page for what the agents in your sessions have
-consumed, over today, 7 days, this month or all time. Each tool speaks its own
-language: Claude Code reports dollars, which it computes itself, and Codex
-reports how much of its 5-hour and weekly limits is gone, because a ChatGPT
-plan reports no cost anywhere. The Claude figures come from a recorder in the
-statusLine slot (`devvm/tl-usage-record`, wired the same way the state dot's
-hooks are); Codex needs nothing installed. A small figure beside the gear
-carries the one number for the session you are attached to. See
-`docs/adr/0023-agent-spend-via-a-statusline-wrapper.md`.
 
 Light themes are first-class, not an afterthought:
 
@@ -209,6 +247,25 @@ that (2026-09-13) the state heard about a dialog only through the
 notification the CLI sends 5–6 s after drawing one, which fires once: a
 later stamp overwrote it and nothing put it back, and one session read
 *Working* for eleven hours with a question on its pane.
+
+**Where a session came from.** A session records what created it, so the ones
+a person opened are not mixed in with the ones a harness or a bridge made.
+Anything created by tooling collects in a group that stays closed, and its
+completions do not ring your phone. See
+`docs/adr/0024-a-session-knows-who-made-it.md`.
+
+**Opening is warm.** Hovering a session in the sidebar attaches it in the
+background, at the size it will be shown at, so the click lands on a terminal
+that is already drawn. A preloaded terminal attaches without driving: it sends
+no input and does not take the session out of whatever state it was in. See
+`docs/adr/0026-a-preloaded-terminal-attaches-without-driving.md`.
+
+**Connection status.** Five things stay alive between the browser and the box
+— the terminal socket, the transcript stream, the session-list poll,
+notifications, and whether the page is running the current build. When one of
+them is not, the dot by the sidebar title says which, and Settings → Network
+spells it out rather than showing a generic spinner. See
+`docs/adr/0016-connection-status-in-the-ui.md`.
 
 ## Documentation
 
