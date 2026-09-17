@@ -121,6 +121,19 @@ handed to an iframe.
 
 ![a session attached, with its Claude transcript on screen](docs/screenshots/terminal.png)
 
+**Text mode** is the same session read as a conversation instead of a screen.
+It is built from the Claude Code transcript rather than from the pane, so it
+carries what the transcript holds and the terminal only shows in passing:
+thinking, every tool call and its result, token usage, mode changes and queued
+prompts. The work between two replies collapses into one line you can open.
+The composer is at parity with the CLI, including the permission-mode chip and
+the model, and a blocking question is answered from here by mirroring the pane
+and injecting the keys. Terminal is the default on every device; text is one
+tap away and the choice sticks per session. See
+`docs/adr/0018-the-transcript-is-what-people-said.md`.
+
+![text mode, with the work log opened](docs/screenshots/text-mode.png)
+
 **Workspaces** put several sessions on screen at once. Drag a session onto a
 tile to split it and drag a divider to resize. Splitting never moves a running
 terminal: the tiles position slots in a fixed DOM order, so a session keeps its
@@ -188,6 +201,21 @@ options, scrolling behaviour and the keyboard map. Theme is per-device.
 Light themes are first-class, not an afterthought:
 
 ![the ink theme, warm paper light](docs/screenshots/theme-ink.png)
+
+**On a phone** the sidebar becomes the whole screen and a session takes the
+whole screen, with `‹ Sessions` between them. A terminal gets a key row the
+soft keyboard cannot provide: Tab, Esc, the four arrows, Copy and Paste, plus a
+keyboard-dismiss pinned outside the scrolling row so it never scrolls away. Tab
+leads because it is the most-tapped key that is not an arrow. Copy and Paste
+are there because on a phone in terminal mode the row is the only route to
+either.
+
+![the session list and a terminal with its key row, on a phone](docs/screenshots/mobile.png)
+
+Text mode is where a phone is at its best, since a conversation reflows and an
+80-column pane does not.
+
+![text mode on a phone](docs/screenshots/mobile-text.png)
 
 The `‹` toggle in the top of the sidebar collapses it for a fullscreen
 terminal view; click `›` to bring it back. Choice persists per browser
