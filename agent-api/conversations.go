@@ -204,6 +204,10 @@ func (s *Server) createConversation(c *call) (any, error) {
 		Name:    name,
 		Dir:     cwd,
 		Command: []string{claudeCommandLine(s.ClaudeBin, req)},
+		// The credential's name, so the lobby can say WHICH caller opened
+		// this rather than only that a person did not. On a bearer request
+		// authuser puts that name in Identity.Header; it is never the token.
+		Origin: c.id.Header,
 	}); err != nil {
 		// The commonest failure by far is a name already taken, which
 		// sessionio refuses rather than attaching to — attaching would hand

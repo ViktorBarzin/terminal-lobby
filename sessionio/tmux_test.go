@@ -591,3 +591,31 @@ func TestCommandTakesTheCallersBinaries(t *testing.T) {
 		t.Errorf("unset argv = %v, want the package defaults %v", bare.Args, fallback)
 	}
 }
+
+// A caller that is not a person names itself, and that name is what gets
+// stamped. The lobby files anything other than OriginUser under System, so
+// this is the difference between an agent's conversation appearing in the
+// owner's own list and appearing apart from it.
+//
+// Empty still means OriginUser, because every existing caller passes nothing
+// and must keep meaning "a person asked for this".
+func TestNewSessionStampsTheOriginTheCallerNames(t *testing.T) {
+	in, osUser, _ := scratchServer(t)
+
+	for _, tc := range []struct{ name, origin, want string }{
+		{"t3e2e-origin-named", "muse", "muse"},
+		{"t3e2e-origin-empty", "", OriginUser},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := in.NewSession(NewSessionSpec{
+				OSUser: osUser, Name: tc.name, Command: []string{"sh"}, Origin: tc.origin,
+			}); err != nil {
+				t.Fatalf("NewSession: %v", err)
+			}
+			v, ok := in.Option(osUser, tc.name, OptionOrigin)
+			if !ok || v != tc.want {
+				t.Fatalf("%s = (%q, %v), want (%q, true)", OptionOrigin, v, ok, tc.want)
+			}
+		})
+	}
+}

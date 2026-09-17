@@ -73,7 +73,8 @@ const (
 	// here that creates a session on a PERSON's behalf has to stamp it, or
 	// their work is filed away as tooling's. See NewSession.
 	OptionOrigin = "@tl_origin"
-	// OriginUser is the only value this package writes. A harness stamps
+	// OriginUser is this package's DEFAULT. A caller naming itself in
+	// NewSessionSpec.Origin overrides it. A harness stamps
 	// "test" on its own sessions; that is not this package's job.
 	OriginUser = "user"
 	// OptionThread holds the T3 thread id a session is mirrored into. Written
@@ -531,6 +532,15 @@ type NewSessionSpec struct {
 	// Env is set on the new session's environment (-e). Claude reads several
 	// of these at startup, so they cannot be exported after the fact.
 	Env map[string]string
+	// Origin is what gets stamped as OptionOrigin. Empty means OriginUser,
+	// which keeps every existing caller unchanged.
+	//
+	// A harness or an API that creates sessions on someone else's behalf
+	// should name ITSELF here, because the lobby reads this to decide whether
+	// a person made the session: anything other than OriginUser files it under
+	// System, away from the sessions the owner opened themselves, and the
+	// sidebar's rescue path can hand it back with setSessionOrigin.
+	Origin string
 }
 
 // NewSession creates a detached tmux session. It fails when the name is already
@@ -573,7 +583,11 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 	// `=name` exactSession form the rest of this package uses. Measured here on
 	// tmux 3.4 — `set-option -t =name` answers "no such session: =name" for a
 	// session that plainly exists.
-	if oerr := in.SetOption(spec.OSUser, spec.Name, OptionOrigin, OriginUser); oerr != nil {
+	origin := spec.Origin
+	if origin == "" {
+		origin = OriginUser
+	}
+	if oerr := in.SetOption(spec.OSUser, spec.Name, OptionOrigin, origin); oerr != nil {
 		return fmt.Errorf("new-session %s: session created but stamping %s failed: %w",
 			spec.Name, OptionOrigin, oerr)
 	}

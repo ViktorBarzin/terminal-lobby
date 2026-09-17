@@ -434,3 +434,35 @@ func TestUnstampedConversationUsesItsLiveName(t *testing.T) {
 		t.Fatalf("id %q", got.ID)
 	}
 }
+
+// A conversation an agent opened must not look like one the owner opened.
+//
+// agent-api already records the caller in its own @agent_owner option, but the
+// LOBBY decides whose list a session belongs in from @tl_origin, and that
+// stayed "user" no matter who asked. So Muse's conversations were dealt into
+// Viktor's own sidebar rather than System. This bridges the two.
+//
+// The stamp is the CREDENTIAL's name rather than a constant, so two external
+// callers stay apart.
+func TestCreateStampsTheCallerAsTheOrigin(t *testing.T) {
+	h := newHarness(t)
+	cwd := filepath.Join(h.homeBase, testOSUser, "code", "infra")
+	h.decodeJSON(h.call("POST", "/v1/conversations",
+		`{"cwd":`+jsonString(cwd)+`,"name":"c-origin"}`), http.StatusCreated, nil)
+
+	h.sessions.mu.Lock()
+	defer h.sessions.mu.Unlock()
+	if len(h.sessions.created) == 0 {
+		t.Fatal("no session was created")
+	}
+	got := h.sessions.created[len(h.sessions.created)-1].Origin
+	switch got {
+	case "":
+		t.Fatal("origin left empty, so the lobby reads this as a session the owner opened")
+	case "user":
+		t.Fatal(`origin stamped "user", which is exactly the claim this must not make`)
+	case testActor:
+	default:
+		t.Errorf("origin = %q, want the caller's credential %q", got, testActor)
+	}
+}
