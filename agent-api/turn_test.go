@@ -824,3 +824,56 @@ func TestTaskOfAnotherOSUserIsNotReadable(t *testing.T) {
 		t.Fatalf("the caller's own task did not read back: %+v", got)
 	}
 }
+
+// A pane that has not drawn its prompt cannot interpret Prompt's C-e C-u
+// prelude, so those bytes arrive as literal text glued to the front of the
+// message. Measured on this box 2026-09-17: the first message to a freshly
+// created conversation reached the agent as "\x05\x15Reply with...", while
+// the second and third on the same session were clean.
+//
+// Both directions are pinned. Dropping the prelude when the pane IS live would
+// reintroduce the concatenation bug it exists to prevent, so "always use the
+// uncleared route" must fail this too.
+func TestAnUnreadyPaneIsSentWithoutTheClearingPrelude(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		readyErr      error
+		wantUncleared bool
+	}{
+		{"pane never drew a prompt", errors.New("pane never drew a prompt"), true},
+		{"pane is ready", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.readyConversation("c1")
+			h.sessions.readyErr = tc.readyErr
+			h.sessions.onPrompt = func(f *fakeSessions, k string) {
+				f.setStateLocked(k, "running")
+				go func() {
+					time.Sleep(5 * time.Millisecond)
+					f.appendTranscript(testOSUser, "c1",
+						userLine("hello", "2026-09-16T11:00:00Z"),
+						assistantLine("hi", "2026-09-16T11:00:09Z"))
+					f.setState(testOSUser, "c1", "done")
+				}()
+			}
+
+			task := h.sendMessage("c1", "hello")
+			if v := h.waitStatus(task, StatusDone, StatusFailed); v.Status != StatusDone {
+				t.Fatalf("status %q, error %q", v.Status, v.Error)
+			}
+
+			h.sessions.mu.Lock()
+			uncleared := len(h.sessions.promptsUncleared)
+			h.sessions.mu.Unlock()
+			if got := uncleared > 0; got != tc.wantUncleared {
+				t.Errorf("uncleared route used = %v, want %v", got, tc.wantUncleared)
+			}
+			// Whichever route it took, the text must arrive verbatim.
+			prompts := h.sessions.promptCalls()
+			if len(prompts) != 1 || prompts[0].Text != "hello" {
+				t.Fatalf("injected %+v, want exactly one call carrying \"hello\"", prompts)
+			}
+		})
+	}
+}

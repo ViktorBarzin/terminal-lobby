@@ -55,7 +55,11 @@ func (s *Server) runTurn(t *Task) {
 		s.fail(t, "conversation %s is no longer live, so the message was not sent", t.ConversationID)
 		return
 	}
-	if err := s.Sessions.Prompt(t.OSUser, live.Name, t.Text); err != nil {
+	send := s.Sessions.Prompt
+	if t.uncleared {
+		send = s.Sessions.PromptUncleared
+	}
+	if err := send(t.OSUser, live.Name, t.Text); err != nil {
 		s.fail(t, "sending the message to %s failed: %v", t.ConversationID, err)
 		return
 	}
@@ -106,7 +110,16 @@ func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 	}
 	if err := s.Sessions.WaitReady(t.OSUser, live.Name,
 		s.readyTimeout(), s.pollInterval()); err != nil {
-		logf("agent-api: %s never settled at its prompt (%v); sending anyway",
+		// Sending anyway is right: dropping the message outright is worse, and
+		// a busy pane queues it. But HOW it is sent has to change. Prompt's
+		// C-e C-u prelude needs something running that reads them as line
+		// editing, and a pane that never drew a prompt has nothing that does,
+		// so they arrive as literal text glued to the front of the message.
+		// Nothing is on that input line to clear either, which is what makes
+		// dropping the prelude safe here and only here.
+		t.uncleared = true
+		logf("agent-api: %s never settled at its prompt (%v); sending without "+
+			"the line-clearing prelude, which it could not interpret yet",
 			t.ConversationID, err)
 	}
 	// The wait above can take a minute, so the cancel is re-checked before

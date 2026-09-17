@@ -249,6 +249,32 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 	return in.Command(osUser, "send-keys", "-t", exactPane(session), "Enter").Run()
 }
 
+// PromptUncleared is Prompt without the C-e C-u prelude, for a pane that has
+// not drawn its prompt yet.
+//
+// Prompt's prelude assumes something is running that interprets C-e and C-u as
+// line editing. On a session created moments ago that is not true yet: the tty
+// buffers the bytes, and when Claude Code's input handler finally reads them it
+// takes them as literal text. Measured on this box 2026-09-17 against a
+// freshly created conversation — the first message arrived as
+// "\x05\x15Reply with...", and the second and third on the same session were
+// clean, which is what pins it to readiness rather than to the paste.
+//
+// Dropping the prelude is safe precisely in that case and only in that case: a
+// pane that has never drawn a prompt has no input line to clear. Callers that
+// know the pane is live must keep using Prompt, or they reintroduce the
+// concatenation bug its prelude exists to prevent.
+func (in *Injector) PromptUncleared(osUser, session, text string) error {
+	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+		return err
+	}
+	// -p = bracketed paste, -d = delete the buffer afterwards.
+	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
+		return err
+	}
+	return in.Command(osUser, "send-keys", "-t", exactPane(session), "Enter").Run()
+}
+
 // Cancel sends Ctrl-C (interrupt) to the session, then re-derives
 // @claude_state: an interrupt ends the turn WITHOUT firing Claude's Stop hook,
 // which is the only writer of "done" (/etc/claude-code/managed-settings.json).

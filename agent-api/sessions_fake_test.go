@@ -27,10 +27,11 @@ type fakeSessions struct {
 	panes map[string]string
 
 	// Recordings, for assertions.
-	prompts    []promptCall
-	cancels    []string
-	created    []CreateSpec
-	readyCalls int
+	prompts          []promptCall
+	promptsUncleared []promptCall
+	cancels          []string
+	created          []CreateSpec
+	readyCalls       int
 
 	// Faults a test can arm.
 	listErr   error
@@ -197,6 +198,15 @@ func (f *fakeSessions) Create(spec CreateSpec) error {
 	}
 	f.live[k] = &LiveSession{Name: spec.Name, Dir: spec.Dir}
 	return nil
+}
+
+// promptsUncleared records the messages sent WITHOUT the line-clearing
+// prelude, so a test can assert which route a turn took.
+func (f *fakeSessions) PromptUncleared(osUser, session, text string) error {
+	f.mu.Lock()
+	f.promptsUncleared = append(f.promptsUncleared, promptCall{osUser, session, text})
+	f.mu.Unlock()
+	return f.Prompt(osUser, session, text)
 }
 
 func (f *fakeSessions) Prompt(osUser, session, text string) error {

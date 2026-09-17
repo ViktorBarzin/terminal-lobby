@@ -105,6 +105,10 @@ type Sessions interface {
 	Create(spec CreateSpec) error
 	// Prompt submits text to the session's input line.
 	Prompt(osUser, session, text string) error
+
+	// PromptUncleared is Prompt without the line-clearing prelude, for a
+	// pane that has not drawn its prompt yet and so cannot interpret it.
+	PromptUncleared(osUser, session, text string) error
 	// Cancel interrupts the turn in flight.
 	Cancel(osUser, session string) error
 	// Option reads one tmux session option; ok=false means the read did not
@@ -244,6 +248,10 @@ func (t *tmuxSessions) Create(spec CreateSpec) error {
 
 func (t *tmuxSessions) Prompt(osUser, session, text string) error {
 	return t.in.Prompt(osUser, session, text)
+}
+
+func (t *tmuxSessions) PromptUncleared(osUser, session, text string) error {
+	return t.in.PromptUncleared(osUser, session, text)
 }
 
 func (t *tmuxSessions) Cancel(osUser, session string) error {

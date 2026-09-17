@@ -93,6 +93,12 @@ type Task struct {
 	// Text is the caller's own words, kept so the trace can replay the run.
 	Text string
 
+	// uncleared records that the pane had not drawn its prompt when this
+	// turn went out, so the message was pasted without the line-clearing
+	// prelude. Set by awaitReady, read once by runTurn; not part of the
+	// wire representation.
+	uncleared bool
+
 	Status   TaskStatus
 	Question string
 	Result   string
