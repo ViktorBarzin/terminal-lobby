@@ -497,24 +497,33 @@ document, referenced by its absolute path in the prompt, which is what
 Claude reads. Up to 25MB it joins the session's store directory under a
 `file-` prefix and rides the same 30-day grace as **Session images**;
 larger, it stays a 7-day transfer ephemeron in /tmp and carries no chip.
-Before sending it is a removable chip in the composer's **tray**; after
-sending it is drawn where its path stands in the message. An attachment
-whose bytes nothing can serve — another user's store, outside the
-caller's home, swept — shows its path instead.
+Before sending it is an **Inline chip** standing where it was pasted;
+after sending it is drawn where its path stands in the message. An
+attachment whose bytes nothing can serve — another user's store, outside
+the caller's home, swept — shows its path instead.
 The upload happens when the file is attached in a live **Composer**, and
 on send in the **New-session composer**, which has no session to upload
 into until Enter creates one.
 _Avoid_: upload (names the act, not the thing), image (a document is
 one too)
 
-**Tray**:
-The strip of pending Attachments above the composer's input, with the
-unsent message text its other half. Both persist per (session, browser)
-so a reload or an evicted tab does not lose a half-written message. In
-the **New-session composer** only the text persists: its files are still
-`File` objects in the tab, which JSON cannot carry, so a reloaded tab
-shows the prose with an empty tray.
-_Avoid_: attachment bar, dropzone (the drop target is the whole window)
+**Inline chip**:
+A pending **Attachment** as it appears inside the message being written:
+a token in the text — `[img]`, `[img 2]`, `[file: report.pdf]` — where
+the paste, the drop or the picker put it, swapped for the file's
+absolute path on send. A layer behind the field paints it; an image is
+painted as the picture itself, which the token is padded out to the
+width of, and pressing that picture opens it full size. Deleting the
+token deletes the attachment.
+It replaced a strip of chips above the input on 2026-09-13 (a **tray**,
+the old name): a screenshot pasted half-way through a sentence is about
+that half of the sentence, and the tray could only put every path at the
+front. The chip and the unsent text persist per (session, browser), so a
+reload does not lose a half-written message. In the **New-session
+composer** only the text persists: its files are still `File` objects in
+the tab, which JSON cannot carry, so a reloaded tab shows the prose with
+the orphaned tokens cut out of it.
+_Avoid_: tray, attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
 
@@ -590,8 +599,9 @@ _Avoid_: remove, delete
 
 **Prompt field**:
 The surface a prompt is written on: multi-line, Enter to send and Shift+Enter
-for a newline, `/` and `@` completion, an attachment **tray**, and an unsent
-draft kept per browser. One component, mounted by both composers.
+for a newline, `/` and `@` completion, attachments written into the message as
+**Inline chips**, and an unsent draft kept per browser. One component, mounted
+by both composers.
 _Avoid_: input box, message box
 
 **Composer**:

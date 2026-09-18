@@ -521,8 +521,8 @@ src/
                          → the unseen-done predicate behind the tab-title (N✓)
                          badge and the favicon's green tick
     drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
-                         unsent text AND its attachment tray, pruned to the live
-                         session list the way visits.ts prunes
+                         unsent text AND the attachments anchored in it,
+                         pruned to the live session list the way visits.ts prunes
     prompt-line.ts       Per-browser first-lines (tl:session-prompt-line:v1):
                          what a card reads between being created and Claude's
                          summary landing. Deliberately not stamped as @title —
@@ -691,9 +691,10 @@ src/
                          and Stop, docked around PromptField
     PromptField.tsx      The writing surface both composers share: multi-line
                          with Enter to send and Shift+Enter for a newline, `/`
-                         and `@` completion, the attachment tray, the unsent
-                         draft, ↑ history, and the mobile input attributes that
-                         restore QuickType and swipe typing
+                         and `@` completion, attachments as inline chips (an
+                         image is drawn as the picture, and opens full size when
+                         pressed), the unsent draft, ↑ history, and the mobile
+                         input attributes that restore QuickType and swipe typing
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip
@@ -913,7 +914,7 @@ src/
     upload.ts            clipboard-upload client + field routing
     attach.ts            The DOM glue (window listeners + drop overlay)
     attach-files.ts      Upload files into a session's store and hand back the
-                         tray chips. Shared by the two composers, which do it at
+                         chips. Shared by the two composers, which do it at
                          different moments: the live one when a file is picked,
                          the new-session one after the create, because until
                          then there is no session to own the file
