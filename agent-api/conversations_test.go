@@ -466,3 +466,44 @@ func TestCreateStampsTheCallerAsTheOrigin(t *testing.T) {
 		t.Errorf("origin = %q, want the caller's credential %q", got, testActor)
 	}
 }
+
+// A slug this box does not offer is refused at CREATE, with the list in the
+// message. It used to be accepted and then fail inside the harness seconds
+// later, where the caller saw a conversation that existed and never answered
+// rather than a reason.
+func TestCreateRefusesAModelThisBoxDoesNotOffer(t *testing.T) {
+	h := newHarness(t)
+	h.srv.Models = models{Allowed: []string{"claude-opus-5", "claude-sonnet-5"}, Default: "claude-opus-5"}
+	cwd := filepath.Join(h.homeBase, testOSUser, "code", "infra")
+
+	w := h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(cwd)+`,"model":"gpt-4"}`)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400 — an unavailable model must be refused here", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "claude-opus-5") {
+		t.Errorf("the refusal does not say what IS available: %s", w.Body.String())
+	}
+	// One the box does offer still works.
+	if got := h.call("POST", "/v1/conversations",
+		`{"cwd":`+jsonString(cwd)+`,"model":"claude-sonnet-5","name":"ok-model"}`).Code; got != http.StatusCreated {
+		t.Fatalf("status %d on an offered model, want 201", got)
+	}
+}
+
+// The ladder is five rungs. xhigh and max were being refused with a 400 while
+// `claude --help` accepted them.
+func TestEveryEffortRungTheCLIAcceptsIsAccepted(t *testing.T) {
+	h := newHarness(t)
+	cwd := filepath.Join(h.homeBase, testOSUser, "code", "infra")
+	for i, e := range []string{"low", "medium", "high", "xhigh", "max"} {
+		w := h.call("POST", "/v1/conversations",
+			`{"cwd":`+jsonString(cwd)+`,"effort":`+jsonString(e)+`,"name":`+jsonString("eff-"+e)+`}`)
+		if w.Code != http.StatusCreated {
+			t.Errorf("effort %q (rung %d) answered %d, want 201: %s", e, i, w.Code, w.Body.String())
+		}
+	}
+	if got := h.call("POST", "/v1/conversations",
+		`{"cwd":`+jsonString(cwd)+`,"effort":"ludicrous"}`).Code; got != http.StatusBadRequest {
+		t.Errorf("a rung that does not exist answered %d, want 400", got)
+	}
+}

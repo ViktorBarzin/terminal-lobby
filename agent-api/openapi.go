@@ -49,6 +49,74 @@ func openAPIDocument() []byte {
 	return openAPIBody
 }
 
+// openAPIWithModels is the document with this box's real model slugs written
+// into the model field's enum.
+//
+// The list cannot be embedded: it is whatever Claude Code's managed settings
+// offer today, it changes with a release, and the whole point of the document
+// is that a caller generates a client from it. A hardcoded enum would send
+// that caller a model this box does not have.
+//
+// An empty list leaves the document exactly as embedded, which is the
+// honest answer: the field stays a free string whose description says to omit
+// it, because refusing to advertise beats advertising a guess.
+func openAPIWithModels(m models) []byte {
+	if len(m.Allowed) == 0 {
+		return openAPIDocument()
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(openAPIRaw, &doc); err != nil {
+		return openAPIDocument()
+	}
+	field, ok := modelField(doc)
+	if !ok {
+		return openAPIDocument()
+	}
+	enum := make([]any, 0, len(m.Allowed))
+	for _, s := range m.Allowed {
+		enum = append(enum, s)
+	}
+	field["enum"] = enum
+	field["example"] = m.Allowed[0]
+	desc := "The model to run, passed to the harness as `--model`. These are the " +
+		"slugs this workstation offers; they change with a Claude Code release, so " +
+		"read them here rather than remembering them."
+	if m.Default != "" {
+		desc += " Omit the field to get this box's default, " + m.Default + "."
+	} else {
+		desc += " Omit the field for the harness's default."
+	}
+	field["description"] = desc
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return openAPIDocument()
+	}
+	return out
+}
+
+// modelField walks to CreateConversationRequest's model property, returning
+// false rather than panicking if the document is ever reshaped.
+func modelField(doc map[string]any) (map[string]any, bool) {
+	comp, ok := doc["components"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	schemas, ok := comp["schemas"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	req, ok := schemas["CreateConversationRequest"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	props, ok := req["properties"].(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	f, ok := props["model"].(map[string]any)
+	return f, ok
+}
+
 // validateOpenAPI fails the service at startup if the embedded document will
 // not parse. A broken contract is worth refusing to start for: a caller
 // discovering it at client-generation time is a much more confusing failure

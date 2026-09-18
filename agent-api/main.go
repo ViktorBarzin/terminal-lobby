@@ -59,6 +59,7 @@ var (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
 	validateOpenAPI()
+	modelList := loadModels(os.Getenv("TL_MANAGED_SETTINGS"))
 
 	self, err := user.Current()
 	if err != nil {
@@ -124,6 +125,7 @@ func main() {
 		IDs:       newIDGen(nil),
 		HomeBase:  "/home",
 		ClaudeBin: claudeBinary(),
+		Models:    modelList,
 	}
 	srv.Runner = NewRunner(srv.runTurn)
 

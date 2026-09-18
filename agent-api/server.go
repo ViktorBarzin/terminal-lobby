@@ -69,6 +69,9 @@ type Server struct {
 	HomeBase string
 	// ClaudeBin is the harness a new conversation runs.
 	ClaudeBin string
+	// Models is the slug list this box offers, read from Claude Code's managed
+	// settings at startup. An empty list means accept anything; see models.
+	Models models
 
 	PollInterval time.Duration
 	StartGrace   time.Duration
@@ -219,7 +222,7 @@ func (s *Server) Routes() http.Handler {
 	})
 	root.HandleFunc("GET /openapi.json", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(openAPIDocument())
+		w.Write(openAPIWithModels(s.Models))
 	})
 	return root
 }

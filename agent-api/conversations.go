@@ -40,9 +40,6 @@ var permissionModes = map[string]bool{
 	"plan":              true,
 }
 
-// efforts is claude's reasoning ladder.
-var efforts = map[string]bool{"low": true, "medium": true, "high": true}
-
 // Conversation is what the API reports about one session.
 type Conversation struct {
 	ID string `json:"conversation_id"`
@@ -181,8 +178,15 @@ func (s *Server) createConversation(c *call) (any, error) {
 	if req.Model != "" && !argValueRe.MatchString(req.Model) {
 		return nil, badRequest("model %q is not a model name", req.Model)
 	}
+	// Refused HERE rather than at session start. A slug this box does not
+	// offer otherwise fails inside the harness seconds later, where the caller
+	// sees a conversation that exists and never answers rather than a reason.
+	if !s.Models.permits(req.Model) {
+		return nil, badRequest("model %q is not one of %v; GET /openapi.json lists what this workstation offers",
+			req.Model, s.Models.Allowed)
+	}
 	if req.Effort != "" && !efforts[req.Effort] {
-		return nil, badRequest("effort %q is not one of low, medium, high", req.Effort)
+		return nil, badRequest("effort %q is not one of %v", req.Effort, effortOrder)
 	}
 	if req.PermissionMode != "" && !permissionModes[req.PermissionMode] {
 		return nil, badRequest("permission_mode %q is not one of default, acceptEdits, bypassPermissions, plan", req.PermissionMode)
