@@ -473,7 +473,15 @@ func TestRepairHalfSuspendedAgainstRealTmux(t *testing.T) {
 // A LIVE pane carrying a resume command is not a half-finished suspend — it is
 // a suspend that failed before the kill, or a resume whose mark-clearing did
 // not finish. Marking it would report a running conversation as suspended.
-func TestRepairHalfSuspendedLeavesALivePaneAloneAgainstRealTmux(t *testing.T) {
+// A live pane whose claude is GONE is repaired, because that is what a suspend
+// leaves behind on a `tmux-persist`-restored session: killing the claude inside
+// `sh -c '…; claude …; exec bash -l'` runs the shell on to its last command, so
+// the pane stays alive with the conversation just as dead. This test used to
+// assert the opposite and pass, because it read the pane's liveness as the
+// session's. Measured on the box 2026-09-19: the first sweep killed `beads-2`
+// and `health` into exactly this shape and the repair skipped both, leaving two
+// conversations no click could bring back.
+func TestRepairHalfSuspendedMarksALivePaneWhoseClaudeIsGoneAgainstRealTmux(t *testing.T) {
 	osSelf, _ := twoLocalUsers(t)
 	tmux := withRealTmux(t)
 
@@ -485,12 +493,74 @@ func TestRepairHalfSuspendedLeavesALivePaneAloneAgainstRealTmux(t *testing.T) {
 		shellQuoteArgv([]string{"/bin/sh", "-c", "echo resumed"})); err != nil {
 		t.Fatalf("stamping %s: %v: %s", resumeCmdOption, err, out)
 	}
+	if !repairHalfSuspended(osSelf, time.Now()) {
+		t.Fatal("a pane that lost its claude was not repaired")
+	}
+	if got := liveSessionNamed(t, osSelf, name); got.SuspendedAt == 0 {
+		t.Fatal("SuspendedAt = 0 on a pane whose claude is gone")
+	}
+}
+
+// And a pane that still HAS its claude is left alone, which is the guard the
+// test above used to stand in for. The fixture is a copy of /bin/sleep named
+// `claude`, because claudeUnderPane reads comm out of /proc/<pid>/stat and comm
+// is the executable's basename — so this is a real positive for the same code
+// path a real conversation takes, without needing a real Claude.
+func TestRepairHalfSuspendedLeavesAPaneThatStillHasAClaudeAgainstRealTmux(t *testing.T) {
+	osSelf, _ := twoLocalUsers(t)
+	tmux := withRealTmux(t)
+
+	bin := filepath.Join(t.TempDir(), "claude")
+	src, err := os.ReadFile("/bin/sleep")
+	if err != nil {
+		t.Skipf("no /bin/sleep to borrow: %v", err)
+	}
+	if err := os.WriteFile(bin, src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "k7m2q9x4tpz8"
+	if out, err := tmux("new-session", "-d", "-s", name, "/bin/sh", "-c", bin+" 600"); err != nil {
+		t.Fatalf("new-session: %v: %s", err, out)
+	}
+	if out, err := tmux("set-option", "-t", exactPane(name), resumeCmdOption,
+		shellQuoteArgv([]string{"/bin/sh", "-c", "echo resumed"})); err != nil {
+		t.Fatalf("stamping %s: %v: %s", resumeCmdOption, err, out)
+	}
+	// The pane forks sh then the binary; give the child a moment to appear in
+	// /proc, or the walk answers "no claude" about a claude that is starting.
+	deadline := time.Now().Add(5 * time.Second)
+	pid := panePIDOf(t, tmux, name)
+	for time.Now().Before(deadline) {
+		if there, ok := claudeUnderPane(pid); ok && there {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if there, ok := claudeUnderPane(pid); !ok || !there {
+		t.Skipf("the fixture claude never showed under pane %d (there=%v ok=%v)", pid, there, ok)
+	}
+
 	if repairHalfSuspended(osSelf, time.Now()) {
-		t.Fatal("a running session was marked suspended")
+		t.Fatal("a session still running its claude was marked suspended")
 	}
 	if got := liveSessionNamed(t, osSelf, name); got.SuspendedAt > 0 {
-		t.Fatalf("SuspendedAt = %d on a live session", got.SuspendedAt)
+		t.Fatalf("SuspendedAt = %d on a session whose claude is alive", got.SuspendedAt)
 	}
+}
+
+// panePIDOf reads #{pane_pid} for a session in the test's own tmux server.
+func panePIDOf(t *testing.T, tmux func(...string) (string, error), name string) int {
+	t.Helper()
+	out, err := tmux("display", "-p", "-t", exactPane(name), "#{pane_pid}")
+	if err != nil {
+		t.Fatalf("pane_pid: %v: %s", err, out)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		t.Fatalf("pane_pid %q: %v", out, err)
+	}
+	return pid
 }
 
 // waitUntil polls a CONDITION rather than sleeping a guessed interval, and says

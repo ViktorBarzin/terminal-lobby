@@ -874,10 +874,38 @@ func TestHalfSuspendedNamesLeavesALivePaneAlone(t *testing.T) {
 	}
 }
 
+// A pane can outlive the claude it was running, and on this box two sessions
+// did. `tmux-persist` restores a session as
+// `sh -c '…; claude --resume <uuid> …; echo "  claude exited — shell
+// preserved"; exec bash -l'`, so killing claude runs the shell on to its last
+// command instead of ending the pane: #{pane_dead} stays 0 and
+// #{pane_current_command} becomes bash. Measured live on 2026-09-19, sweep at
+// 20:10:24 — `beads-2` and `health` had their claude killed, their memory
+// reclaimed and their resume command stamped, and the repair pass skipped both
+// because it asked only about #{pane_dead}. They sat unresumable until this.
+//
+// So the question is "is the claude gone", which the pane's own death answers
+// only sometimes. claudeGone carries the /proc answer for the rows that still
+// have a live pane, and either one is enough.
+func TestHalfSuspendedNamesFindsAPaneWhoseShellOutlivedItsClaude(t *testing.T) {
+	rows := []halfSuspendedRow{
+		{name: "shell-survived", paneDead: false, claudeGone: true, resumeCmd: "claude --resume u"},
+		{name: "dead-pane", paneDead: true, resumeCmd: "claude --resume u"},
+		{name: "still-working", paneDead: false, claudeGone: false, resumeCmd: "claude --resume u"},
+		{name: "already-marked", paneDead: false, claudeGone: true, suspended: testNow, resumeCmd: "claude --resume u"},
+		{name: "never-suspended", paneDead: false, claudeGone: true},
+	}
+	got := halfSuspendedNames(rows)
+	want := []string{"shell-survived", "dead-pane"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("halfSuspendedNames = %v, want %v", got, want)
+	}
+}
+
 func TestParseHalfSuspendedKeepsTheResumeCommandWhole(t *testing.T) {
 	// The command is last and holds every leftover separator: a quoted
 	// argument can contain one and must not shift the fields ahead of it.
-	line := "one" + listSep + "1" + listSep + "" + listSep + "/bin/sh -c 'claude --resume u\t--name x'"
+	line := "one" + listSep + "1" + listSep + "" + listSep + "4242" + listSep + "/bin/sh -c 'claude --resume u\t--name x'"
 	rows := parseHalfSuspended([]byte(line + "\n"))
 	if len(rows) != 1 {
 		t.Fatalf("parsed %d rows, want 1", len(rows))
@@ -887,6 +915,9 @@ func TestParseHalfSuspendedKeepsTheResumeCommandWhole(t *testing.T) {
 	}
 	if !rows[0].paneDead || rows[0].suspended != 0 {
 		t.Fatalf("row = %+v, want a dead pane with no stamp", rows[0])
+	}
+	if rows[0].panePID != 4242 {
+		t.Fatalf("panePID = %d, want 4242", rows[0].panePID)
 	}
 }
 

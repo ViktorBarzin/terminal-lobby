@@ -85,7 +85,16 @@ const (
 	// SIGTERM. Past it the session is LEFT ALONE rather than SIGKILLed: an
 	// unflushed transcript is the one thing that would make a resume come back
 	// wrong, and the next sweep will try again in five minutes.
-	suspendGrace = 10 * time.Second
+	//
+	// 30s, raised from 10s after the first sweep on the devvm (2026-09-19
+	// 20:10). Of six candidates, four outlived a 10s grace and every one of
+	// them exited shortly after, so the grace was measuring the wrong thing:
+	// the kill had worked and the code declined to record it. Transcript size
+	// did not predict it — `ny-reibursment` has a 441 KB transcript and still
+	// took longer than 10s. Nothing waits on this: the sweep is a background
+	// timer, so a longer grace costs a slower sweep and nothing else, and the
+	// repair pass below is the backstop for whatever still slips past.
+	suspendGrace = 30 * time.Second
 
 	// The three tmux session options this file owns. Only tmux-api writes them.
 	//
@@ -1054,7 +1063,16 @@ type halfSuspendedRow struct {
 	name      string
 	paneDead  bool
 	suspended int64
+	panePID   int
 	resumeCmd string
+	// claudeGone is the /proc answer for a pane that is still alive: true when
+	// nothing under it is a claude. A pane's own death answers this only when
+	// the pane's command was claude itself. `tmux-persist` restores a session
+	// as `sh -c '…; claude …; exec bash -l'`, so the shell runs on after the
+	// kill and #{pane_dead} stays 0 with the conversation just as gone.
+	// Filled by readHalfSuspended, left false when the pane is already dead
+	// (paneDead answers it) or when /proc could not say.
+	claudeGone bool
 }
 
 // halfSuspendedNames picks out the sessions a suspend killed and then failed to
@@ -1077,7 +1095,14 @@ type halfSuspendedRow struct {
 func halfSuspendedNames(rows []halfSuspendedRow) []string {
 	var out []string
 	for _, r := range rows {
-		if r.name == "" || r.suspended > 0 || r.resumeCmd == "" || !r.paneDead {
+		if r.name == "" || r.suspended > 0 || r.resumeCmd == "" {
+			continue
+		}
+		// Either answer to "is the claude gone". Measured live 2026-09-19: the
+		// first sweep on this box killed `beads-2` and `health`, whose panes
+		// ran on into `exec bash -l`, and asking only about paneDead left both
+		// unresumable.
+		if !r.paneDead && !r.claudeGone {
 			continue
 		}
 		out = append(out, r.name)
@@ -1096,16 +1121,18 @@ func parseHalfSuspended(out []byte) []halfSuspendedRow {
 		}
 		// The resume command is last and gets every leftover separator: it is
 		// a shell command line and the only field here that can hold one.
-		parts := strings.SplitN(line, listSep, 4)
-		if len(parts) != 4 {
+		parts := strings.SplitN(line, listSep, 5)
+		if len(parts) != 5 {
 			continue
 		}
 		at, _ := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
+		pid, _ := strconv.Atoi(strings.TrimSpace(parts[3]))
 		rows = append(rows, halfSuspendedRow{
 			name:      parts[0],
 			paneDead:  strings.TrimSpace(parts[1]) == "1",
 			suspended: at,
-			resumeCmd: parts[3],
+			panePID:   pid,
+			resumeCmd: parts[4],
 		})
 	}
 	return rows
@@ -1117,11 +1144,26 @@ func parseHalfSuspended(out []byte) []halfSuspendedRow {
 var readHalfSuspended = func(osUser string) []halfSuspendedRow {
 	out, err := tmuxCmd(osUser, "list-sessions", "-F",
 		"#{session_name}"+listSep+"#{pane_dead}"+listSep+
-			"#{"+suspendedOption+"}"+listSep+"#{"+resumeCmdOption+"}").Output()
+			"#{"+suspendedOption+"}"+listSep+"#{pane_pid}"+listSep+
+			"#{"+resumeCmdOption+"}").Output()
 	if err != nil {
 		return nil
 	}
-	return parseHalfSuspended(out)
+	rows := parseHalfSuspended(out)
+	// The /proc walk only for rows that could still be repaired: a live pane
+	// carrying a resume command and no mark. That set is normally empty and at
+	// worst a handful, so this costs nothing on an ordinary sweep.
+	for i := range rows {
+		r := &rows[i]
+		if r.paneDead || r.suspended > 0 || r.resumeCmd == "" || r.panePID <= 0 {
+			continue
+		}
+		there, ok := claudeUnderPane(r.panePID)
+		// Unreadable /proc leaves claudeGone false, so an unanswerable pane is
+		// left alone rather than marked suspended on a guess.
+		r.claudeGone = ok && !there
+	}
+	return rows
 }
 
 // repairHalfSuspended stamps the sessions halfSuspendedNames found, and reports
