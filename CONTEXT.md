@@ -258,8 +258,8 @@ _Avoid_: timeout, TTL, expiry (nothing expires, and the Session stays either way
 **Suspended session**:
 A Session whose Claude process has been killed to give its memory back, with the
 tmux session, its window, its pane and its scrollback left standing. Usually the
-pane is dead and frozen; where the pane's command outlives its Claude — the
-shape `tmux-persist` restores, `…; claude …; exec bash -l` — the pane is alive
+pane is dead and frozen; where the pane's command outlives its Claude, the
+shape `tmux-persist` restores (`…; claude …; exec bash -l`), the pane is alive
 holding a shell, which is suspended just the same, because what the mark means
 is that the Claude is gone. It
 keeps its place in the sidebar, carries `suspended` as its **Session state**, and
@@ -463,7 +463,7 @@ happened; this one holds only what can still be taken back)
 
 **Kill**:
 Deliberate destruction of a Session by a person, through `DELETE /sessions/{name}`.
-A process merely *exiting* — OOM, a reboot, a `/exit` typed into the pane — is not
+A process merely *exiting* (OOM, a reboot, a `/exit` typed into the pane) is not
 a kill, and the distinction is load-bearing: a kill writes a tombstone and drops
 the session's layout entry and manifest row, while a death leaves both standing so
 a restore can bring the session back. It used to cross to a T3 thread as well

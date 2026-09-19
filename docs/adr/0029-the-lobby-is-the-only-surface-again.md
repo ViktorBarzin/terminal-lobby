@@ -16,7 +16,7 @@ memory bill flat on a box where earlyoom fires. The kill-notify
 `DELETE /sessions/{name}` is the only proof that a session was destroyed on
 purpose, and an OOM, a crashed tmux server and a reboot are indistinguishable
 from the outside. The durable binding index (`sessionio/index.go`) held the one
-fact that dies with a tmux session and cannot be recovered from anywhere else —
+fact that dies with a tmux session and cannot be recovered from anywhere else:
 the session's name and cwd, keyed by a conversation uuid that outlives it.
 
 The engineering held up. The reason for it did not: the person it was built
@@ -62,9 +62,9 @@ flowchart LR
 | The design doc | `docs/plans/2026-08-15-t3-code-bridge-design.md`, 440 lines | Deleted; git history holds it |
 
 ADR-0009 stays where it is, carrying a note that this record supersedes it. Its
-reasoning about integrating with software that upgrades nightly — use a seam the
-vendor documents, never a fork — is the part worth keeping, and it is advice
-about a class of problem rather than about T3.
+reasoning about integrating with software that upgrades nightly, which is to
+use a seam the vendor documents rather than a fork, is the part worth keeping,
+and it is advice about a class of problem rather than about T3.
 
 ### What stays, and why
 
@@ -75,8 +75,8 @@ Four things looked removable and are not.
 Its comment named the bridge as its only caller, which is now agent-api.
 
 **`sessionio.SessionMap`** and the `@claude_transcript` stamp are untouched. The
-index and the map were deliberate opposites — one outlived the tmux session, the
-other died with it so a reused name could never serve a dead conversation — and
+index and the map were deliberate opposites. One outlived the tmux session, the
+other died with it so a reused name could never serve a dead conversation, and
 only the first belonged to the bridge.
 
 **`slug/`** keeps every exported function. `FromTitle`, `Free`, `CleanTitle`,
@@ -92,8 +92,8 @@ would have let a throwaway e2e session take a minted id, land in a person's
 sidebar and push to their phone.
 
 Two smaller keeps, stated so they are not a surprise:
-`sessionio.Injector.KillSession` has no production caller now — it existed so
-deleting a thread could destroy the session behind it — and stays as the
+`sessionio.Injector.KillSession` has no production caller now. It existed so
+deleting a thread could destroy the session behind it, and it stays as the
 counterpart to `NewSession` on the same seam, covered by that package's tests.
 The `Unit{Template: true}` machinery in `release/` has no templated unit to
 drive now that `tl-t3-sync@` is gone, and stays with its tests rebased onto a
@@ -115,7 +115,7 @@ asterisk.
   `tl-t3-sync@wizard.service` was active and running, and three `tl-t3-bridge`
   processes were live under T3 threads. dpkg removes files a new version stops
   shipping, so the upgrade takes `/usr/local/bin/tl-t3-sync`,
-  `/usr/local/bin/tl-t3-bridge` and the unit with it — and, on its own, would
+  `/usr/local/bin/tl-t3-bridge` and the unit with it, and on its own that would
   leave the running service going from an unlinked binary with a dangling
   enablement symlink in `multi-user.target.wants`. So the manifest names the
   unit in a `Retire` list and the postinst stops it, disables it and removes

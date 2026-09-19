@@ -120,7 +120,7 @@ is holding the clock for the one they are looking at.
 
 **`stampDrives` and the resume are the only writers.** A prompt delivered over
 HTTP by agent-api reaches the pane through `sessionio.Prompt` and never
-attaches a client, so it does not move the stamp — which is why an agent-api
+attaches a client, so it does not move the stamp, which is why an agent-api
 conversation is excluded from the sweep rather than timed by it (open questions
 below). `resumeSession` writes the stamp as well, because a session brought
 back by hand still carries the stamp that made it a candidate and the next
@@ -248,7 +248,7 @@ mark written first, each of those would have been stamped and never killed,
 once every five minutes.
 
 Two changes close it. The signal goes through `tmux run-shell` on the session's
-own server, which runs as that user, so no new sudoers grant is needed —
+own server, which runs as that user, so no new sudoers grant is needed:
 `/usr/bin/tmux` is already granted per target user. And any failure after
 `remain-on-exit` was set puts the option back, so a session that could not be
 suspended is left exactly as it was found.
@@ -434,7 +434,7 @@ it. That is what makes the sidebar entry worth clicking.
   falling curve rather than counted. A month of `session.resumed` events with
   `tl.suspendedSeconds` answers it directly, and 24 hours is the obvious
   candidate if the data supports it, worth 3.8 GiB more at today's mix.
-- **What a prompt posted to a suspended session does — settled, in two
+- **What a prompt posted to a suspended session does, settled in two
   halves.** `POST /prompt/{session}` reads `@tl_suspended` and answers 409
   naming the session, because nothing below it says anything useful: measured
   on tmux 3.4, `send-keys` into a dead pane exits 0 and the keystrokes vanish,

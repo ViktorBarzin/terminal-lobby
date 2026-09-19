@@ -46,7 +46,7 @@ Watch-mode client does not move it and neither does a **Preload attach**
 A resume writes it too, which makes `resumeSession` the option's second writer
 after `stampDrives`. Without it the stamp that made a session a candidate is
 still on the session when its claude comes back, and the next sweep five
-minutes later suspends it again — the lobby's own click is covered only because
+minutes later suspends it again. The lobby's own click is covered only because
 opening the card attaches a client a moment afterwards.
 
 Transcript mtime was the obvious alternative and it was measured and rejected. A
@@ -73,8 +73,8 @@ set at the last possible moment.
 **Once the signal is away, `remain-on-exit` is never put back.** An earlier
 draft turned it off again whenever the kill did not finish inside the 10-second
 grace. The SIGTERM is still in flight at that moment, so the moment claude does
-exit the pane exits and the one-pane session is destroyed with its scrollback —
-reproduced on tmux 3.4, 2026-09-19: option on, unwind, the process exits a
+exit the pane exits and the one-pane session is destroyed with its scrollback.
+Reproduced on tmux 3.4, 2026-09-19: option on, unwind, the process exits a
 moment later, `list-sessions` answers "no server running". Left on, the cost is
 a pane held as a corpse the next time that claude exits by itself, which the
 repair pass below turns into a resumable suspended session. The recoverable
@@ -92,20 +92,21 @@ is withheld for is a CLAUDE still under the pane after the kill, which is what
 the resume would respawn over. The resume asks the same question rather than
 reading `#{pane_dead}` alone.
 
-**The policy is re-read at the moment of the kill.** A pass is not instant —
+**The policy is re-read at the moment of the kill.** A pass is not instant:
 each candidate costs a /proc walk, three set-options and a wait of up to 10
-seconds — so the list a candidate came from can be minutes old by the time its
+seconds, so the list a candidate came from can be minutes old by the time its
 turn arrives, and somebody can open the session or start a turn in between. The
 pane read that the suspend already makes carries `#{session_attached}`,
 `@claude_state`, `@tl_suspended` and `@agent_owner` as well, and a suspend is
 abandoned when any of them says no.
 
 **A suspend that stops half way is repaired by the next sweep.** Between the
-kill and the stamp the `set-option` can fail, or the service can be restarted —
-a package upgrade does exactly that. What is left is a dead pane with a resume
-command and no timestamp, which no later sweep would look at (its tool reads as
-a shell) and no click could resume. Each pass lists the sessions carrying
-`@tl_resume_cmd` with a dead pane and no `@tl_suspended`, and stamps them.
+kill and the stamp the `set-option` can fail, or the service can be restarted,
+which is exactly what a package upgrade does. What is left is a dead pane with
+a resume command and no timestamp, which no later sweep would look at (its
+tool reads as a shell) and no click could resume. Each pass lists the sessions
+carrying `@tl_resume_cmd` with a dead pane and no `@tl_suspended`, and stamps
+them.
 
 **The uuid is resolved from `@claude_transcript`, never from argv.** For 15 of
 the 38 live processes the pane's `--session-id` had no matching `<uuid>.jsonl`
@@ -123,8 +124,8 @@ session. Every layer below it reports success otherwise: measured on tmux 3.4,
 2026-09-19, `send-keys` into a dead pane exits 0 and the text vanishes, and
 into a pane whose wrapper shell outlived its claude the message is typed at a
 bash prompt and run as a command. The lobby's composer does not rely on that
-answer — it holds the message and sends it when the session is back
-(`frontend-v2/src/store/suspend-queue.ts`) — so the 409 is for every other
+answer. It holds the message and sends it when the session is back
+(`frontend-v2/src/store/suspend-queue.ts`), so the 409 is for every other
 caller.
 
 ### The threshold, and the evidence for it
@@ -282,8 +283,8 @@ pane.
 - 72 hours is the number for a person's session and 4 hours for tooling's, and
   a conversation driven purely over HTTP is neither: it looks idle by
   `@last_drive` however busy it is, so it is excluded rather than timed. The
-  open part is what should replace that — agent-api resuming a conversation
-  itself before it delivers a message is the obvious answer, and it needs a
+  open part is what should replace it. The obvious answer is for agent-api to
+  resume a conversation itself before delivering a message, and it needs a
   resume verb this API does not have yet.
 - 72 hours is read off a curve whose last measured point is 48 hours. The first
   month of `session.resumed` events answers it directly, and 24 hours is the
