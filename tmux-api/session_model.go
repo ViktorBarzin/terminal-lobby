@@ -113,6 +113,15 @@ type Session struct {
 	// omitempty keeps the old wire shape for consumers that predate the fields.
 	Cols int `json:"cols,omitempty"`
 	Rows int `json:"rows,omitempty"`
+	// SuspendedAt is the unix second this session was suspended: its claude
+	// killed to reclaim the ~800 MB a session tree holds, its tmux session and
+	// frozen pane kept, and the conversation one click from coming back
+	// (suspend.go). Absent means live, and its PRESENCE is what forces State to
+	// "suspended" — the two are one fact, read from @tl_suspended.
+	//
+	// omitempty keeps the old wire shape for the overwhelming majority of
+	// sessions, which are live, and for consumers that predate the field.
+	SuspendedAt int64 `json:"suspendedAt,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
@@ -167,6 +176,14 @@ const (
 	stateRunning  = "running"
 	stateAwaiting = "awaiting"
 	stateDone     = "done"
+	// stateSuspended is the one state NO hook writes. It is derived from
+	// @tl_suspended by parseSessions, because a suspended session has no claude
+	// left to stamp anything — which is also why clearDeadStates has to know
+	// about it (proc.go): a session with no claude under its pane is exactly
+	// what a suspended one looks like.
+	stateSuspended = "suspended"
 )
 
-var knownStates = map[string]bool{stateRunning: true, stateAwaiting: true, stateDone: true}
+var knownStates = map[string]bool{
+	stateRunning: true, stateAwaiting: true, stateDone: true, stateSuspended: true,
+}

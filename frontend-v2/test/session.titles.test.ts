@@ -21,14 +21,11 @@ describe("sessionLabel", () => {
   it("says New session rather than showing a minted id", () => {
     expect(sessionLabel({ name: "k7m2q9x4tp0v" })).toBe(NEW_SESSION_LABEL);
     expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "" })).toBe(NEW_SESSION_LABEL);
-    expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "Fix the deploy" })).toBe(
-      "Fix the deploy",
-    );
+    expect(sessionLabel({ name: "k7m2q9x4tp0v", title: "Fix the deploy" })).toBe("Fix the deploy");
   });
 
   // Names that were never minted here keep reading: sessions from before the
-  // migration, a shell somebody named by hand, and t3-bridge's cwd-derived
-  // names, which are still being minted today.
+  // migration, and a shell somebody named by hand.
   it("keeps a readable name readable", () => {
     for (const name of ["work", "deploy-the-thing", "shell-2", "ny-reibursment"]) {
       expect(sessionLabel({ name })).toBe(name);

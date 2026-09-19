@@ -53,6 +53,7 @@ import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnost
 import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { modelHarness } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
+import { flushHeldWhenAwake, holdForSuspended } from "../store/suspend-queue";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -168,6 +169,17 @@ export const SessionView: Component<{
   /** the owning project's base directory, so a session born here starts in the
    *  project rather than in $HOME (the attach URL's arg3). */
   dir?: string;
+  /**
+   * TRUE while the idle sweep has this session's claude process killed: its
+   * pane holds a dead shell behind frozen scrollback, and a prompt posted at
+   * it would be accepted and lost.
+   *
+   * From the session list, like `driven` and `background` beside it. Absent on
+   * every caller that has no list to read — the dock, the tests — which is the
+   * same as saying the session is live, and is what every caller meant before
+   * the sweep existed.
+   */
+  suspended?: () => boolean;
   /** TRUE when someone is already DRIVING this session (a read-write client is
    *  attached). With no explicit Watch choice recorded, this view joins as a
    *  viewer — read ONCE when the view takes the session on, never after, since
@@ -998,7 +1010,36 @@ export const SessionView: Component<{
   // overflow menu, so a press anywhere else closes it.
   const picker = createDismissableMenu(() => () => {});
 
-  const send = (t: string) => store.send(t);
+  /**
+   * Send a message — or hold it, while the session has no claude to send it to.
+   *
+   * A suspended session's pane holds a dead shell behind a frozen scrollback,
+   * and session-events would inject the prompt into it and report success. So
+   * while the row says suspended the text waits in `store/suspend-queue.ts`
+   * and goes out when the poll says the session is back, which is 1.7-3.1s of
+   * resume plus up to 5s of poll.
+   *
+   * It resolves TRUE, which is what clears the composer. The message has been
+   * accepted — it is just not on the wire yet — and false is the composer's
+   * signal to put the text back in the field, which would leave a person
+   * looking at a message they thought they had sent.
+   */
+  const send = (t: string): Promise<boolean> => {
+    if (props.suspended?.()) {
+      holdForSuspended(session, t);
+      props.notify?.("Waiting for the session to come back", "info");
+      return Promise.resolve(true);
+    }
+    return store.send(t);
+  };
+  flushHeldWhenAwake({
+    session: () => session,
+    suspended: () => props.suspended?.() ?? false,
+    // The STORE's send, never the one above: by the time this runs the session
+    // is awake, and routing a flush back through the hold could only hold it
+    // again.
+    send: (t) => store.send(t),
+  });
   const stop = () => void store.interrupt();
 
   /**

@@ -45,6 +45,24 @@ import (
 // has decided to.
 const OptionOwner = "@agent_owner"
 
+// OptionSuspended is tmux-api's mark, and the one option here this service
+// only READS. Its presence means the idle sweep killed the Claude in that
+// session and froze the pane, keeping everything needed to bring it back
+// (tmux-api/suspend.go).
+//
+// It matters to this API because a suspended conversation has no Claude to
+// take a message: `paste-buffer` into a dead pane answers "target pane has
+// exited", and into a pane whose wrapper shell survived it types the message
+// at a bash prompt. Either way the turn does not happen, so a conversation
+// wearing this mark reports its own state rather than the `done` its last
+// Claude left behind, and refuses writes.
+//
+// tmux-api does not suspend a session carrying OptionOwner, so in the ordinary
+// run of things no conversation of this API's ever wears it. This is what
+// answers honestly if one does — a mark set by hand, or by a tmux-api older
+// than that exclusion.
+const OptionSuspended = sessionio.OptionSuspended
+
 // LiveSession is one tmux session as agent-api needs to see it: the name, and
 // the four options that answer every question the conversation endpoints ask.
 // Read in one `list-sessions` rather than one option read per field, because
@@ -66,6 +84,9 @@ type LiveSession struct {
 	Transcript string
 	// Title is @title, the display name a person chose in the lobby.
 	Title string
+	// Suspended is @tl_suspended: the idle sweep killed the Claude that was in
+	// this session and left the pane frozen (OptionSuspended).
+	Suspended bool
 	// BornAs is @tl_born: the name the session was CREATED with.
 	//
 	// It is what makes a conversation id survive, and it is not decoration.
@@ -199,6 +220,7 @@ var listFields = []string{
 	"#{" + sessionio.OptionTranscript + "}",
 	"#{" + sessionio.OptionTitle + "}",
 	"#{" + sessionio.OptionBornAs + "}",
+	"#{" + OptionSuspended + "}",
 }
 
 func (t *tmuxSessions) List(osUser string) ([]LiveSession, error) {
@@ -210,6 +232,18 @@ func (t *tmuxSessions) List(osUser string) ([]LiveSession, error) {
 		}
 		return nil, fmt.Errorf("list-sessions: %w", err)
 	}
+	return parseLiveSessions(out), nil
+}
+
+// parseLiveSessions decodes the listFormat rows. Separate from List so the
+// column order can be tested without a tmux server: a field read from the
+// wrong index is invisible until something reports the wrong answer about a
+// live conversation.
+//
+// A row shorter than the format is PADDED rather than dropped — a tmux that
+// renders an unset option as nothing at the end of a line would otherwise
+// take the whole session out of the list.
+func parseLiveSessions(out []byte) []LiveSession {
 	var live []LiveSession
 	for _, line := range strings.Split(strings.TrimSuffix(string(out), "\n"), "\n") {
 		if line == "" {
@@ -227,9 +261,13 @@ func (t *tmuxSessions) List(osUser string) ([]LiveSession, error) {
 			Transcript: strings.TrimSpace(f[4]),
 			Title:      f[5],
 			BornAs:     strings.TrimSpace(f[6]),
+			// Read as PRESENCE, not as a time: the mark is a unix second, an
+			// unset option renders empty, and anything else in there still
+			// means a sweep put it on.
+			Suspended: strings.TrimSpace(f[7]) != "",
 		})
 	}
-	return live, nil
+	return live
 }
 
 // noTmuxServer reports whether tmux's stderr means "there is no server here",

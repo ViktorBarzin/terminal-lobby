@@ -507,3 +507,89 @@ func TestEveryEffortRungTheCLIAcceptsIsAccepted(t *testing.T) {
 		t.Errorf("a rung that does not exist answered %d, want 400", got)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// A conversation the idle sweep put to sleep.
+
+// suspendedConversation is one of this caller's conversations wearing
+// tmux-api's mark: the Claude that was in it has been killed and the pane is
+// frozen (tmux-api/suspend.go).
+func suspendedConversation(h *harness, name string) {
+	h.sessions.start(testOSUser, LiveSession{
+		Name: name, Dir: "/home/wizard/code", State: "done",
+		Owner: testActor, Suspended: true,
+	})
+}
+
+// The state on the session describes a Claude that no longer exists. Reporting
+// its `done` would tell a caller the conversation is idle and ready when it
+// cannot take a message at all, which is how a Muse cron job would keep
+// posting into nothing.
+func TestSuspendedConversationSaysSoRatherThanDone(t *testing.T) {
+	h := newHarness(t)
+	suspendedConversation(h, "napping")
+
+	var got Conversation
+	h.decodeJSON(h.call("GET", "/v1/conversations/napping", ""), http.StatusOK, &got)
+
+	if got.State != stateSuspendedName {
+		t.Fatalf("state = %q, want %q", got.State, stateSuspendedName)
+	}
+	if got.Writable {
+		t.Fatal("a suspended conversation reported itself writable, which sends the caller into a 409")
+	}
+	if got.CreatedBy != testActor {
+		t.Fatalf("created_by = %q — suspension does not change who owns it", got.CreatedBy)
+	}
+}
+
+// Accepting the message would answer 202 and then fail inside the runner,
+// where the caller sees a turn that never started. Measured on tmux 3.4:
+// `paste-buffer` into a dead pane answers "target pane has exited", and into a
+// restored session whose wrapper shell outlived its Claude the text is typed
+// at a bash prompt instead.
+func TestMessageToASuspendedConversationIsRefused(t *testing.T) {
+	h := newHarness(t)
+	suspendedConversation(h, "napping")
+
+	w := h.call("POST", "/v1/conversations/napping/messages", `{"text":"are you there"}`)
+	h.decodeJSON(w, http.StatusConflict, nil)
+
+	if calls := h.sessions.promptCalls(); len(calls) != 0 {
+		t.Fatalf("the message was delivered into a session with no Claude in it: %+v", calls)
+	}
+	if !strings.Contains(w.Body.String(), "resumed") {
+		t.Fatalf("the error does not say what to do about it: %s", w.Body)
+	}
+}
+
+// Cancelling one is refused the same way and for the same reason: there is no
+// turn in flight and nothing to interrupt.
+func TestSuspendedConversationRefusesEveryWrite(t *testing.T) {
+	h := newHarness(t)
+	suspendedConversation(h, "napping")
+	h.decodeJSON(h.call("POST", "/v1/conversations/napping/messages", `{"text":"hi"}`), http.StatusConflict, nil)
+}
+
+// Reading is unaffected. The transcript is on disk — that is the whole reason
+// a suspend is safe — so a caller can still read what was said.
+func TestSuspendedConversationIsStillReadable(t *testing.T) {
+	h := newHarness(t)
+	suspendedConversation(h, "napping")
+	h.sessions.setTranscript(testOSUser, "napping", userLine("hi", "2026-09-16T11:00:00Z"))
+	h.decodeJSON(h.call("GET", "/v1/conversations/napping/transcript", ""), http.StatusOK, nil)
+}
+
+// The mark rides the ONE list call this service makes, so it costs no extra
+// fork per session on a route Muse polls.
+func TestListFormatCarriesTheSuspendMark(t *testing.T) {
+	found := false
+	for _, f := range listFields {
+		if f == "#{"+OptionSuspended+"}" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("listFields does not read %s, so every suspended conversation reports itself live: %v", OptionSuspended, listFields)
+	}
+}

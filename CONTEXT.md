@@ -225,6 +225,81 @@ never empty.
 _Avoid_: last active (that is tmux's `session_activity`, which any attach bumps —
 a read-only one included — and which nothing displays)
 
+**Idle age**:
+How long since a human last had hands on a Session, which is now minus **Last
+driven** and nothing else. What the suspend sweep reads to decide whether a
+session is past its **Suspend threshold**, and what `tl.idleSeconds` records when
+one is suspended. Deliberately not the transcript file's mtime, which moves for
+reasons other than a new conversation record: measured on 2026-09-19, a
+transcript whose last record was dated 2026-08-19 had an mtime 28 minutes old,
+and keying on mtime called 36 of 38 sessions active within the hour against 9 by
+this clock. Also not tmux's `session_activity`, which any attach bumps. Watching
+a session and hovering its card both leave it alone, because neither counts as
+driving, so looking at a Session never makes it look younger than it is.
+_Avoid_: inactivity, staleness, and plain age (that is how long since
+**Created**, which is a different question)
+
+**Suspend threshold**:
+The **Idle age** at which a Session becomes eligible to be suspended. Two
+clocks, for two kinds of session. The human clock is 72 hours and covers a
+person's session, chosen because 14 days of prompt events put the chance of a
+return within a day at 26% after 4 hours quiet, 8% after 24 and 2% after 48. The
+system clock is 4 hours and covers a system session, on the same `isSystemSession`
+predicate the sidebar's **System** group uses, since a harness's leftovers are
+not a conversation anyone is coming back to. Eligibility is not enough on its
+own: a Session that is running, that is awaiting an answer, that has a client
+attached, that is a pool slot, that runs something other than Claude, that
+agent-api opened (it carries `@agent_owner`, is driven over HTTP so its **Last
+driven** never moves, and has no resume verb its caller could reach), or whose
+transcript cannot be resolved is never suspended whatever its age. Eligibility
+is also re-read at the moment of the kill, not only when the list was built.
+_Avoid_: timeout, TTL, expiry (nothing expires, and the Session stays either way)
+
+**Suspended session**:
+A Session whose Claude process has been killed to give its memory back, with the
+tmux session, its window, its pane and its scrollback left standing. Usually the
+pane is dead and frozen; where the pane's command outlives its Claude — the
+shape `tmux-persist` restores, `…; claude …; exec bash -l` — the pane is alive
+holding a shell, which is suspended just the same, because what the mark means
+is that the Claude is gone. It
+keeps its place in the sidebar, carries `suspended` as its **Session state**, and
+clicking it runs `claude --resume` in the pane it already had. What makes that
+safe is that the conversation is on disk in its transcript rather than in the
+process, so the process is only a way of continuing it. Worth 781 to 856 MB per
+session, because six stdio MCP children die with the claude that spawned them
+(305 to 377 MB of the tree is claude itself). Set by an automatic sweep and by
+nothing else, on **Idle age** past the **Suspend threshold**, and recorded in
+three tmux options only the API writes: `@tl_suspended`, `@tl_resume_cmd` and
+`@tl_suspend_state`.
+_Compare_: a **Kill**, which destroys the Session, writes a tombstone and drops
+its layout entry and manifest row. A suspend leaves all of that standing and
+changes only what is running inside the pane, which is why a clock is allowed to
+trigger one and not the other. _Compare_: a **Pre-warm slot**, which is a booted
+Claude with no conversation, waiting for one; a suspended Session is the
+opposite, a conversation with no Claude, waiting for one.
+_Avoid_: sleeping, hibernated, paused, evicted, killed; and do not confuse with
+**Parked**, which is one tab putting its own socket down while the process runs
+on, nor with the connection ladder's `suspended` phase, which is that socket
+
+**Resume** (a Session):
+Bringing a **Suspended session** back, by `tmux respawn-pane -k` running the
+`claude --resume <uuid>` stored at suspend time in `@tl_resume_cmd`. The click on
+the card is the only trigger there is. No hover starts one, because ADR-0026
+settled that a hover may attach and may not act, and nothing resumes on a
+schedule. Cold by choice, at 1.7 s for an empty transcript to 3.1 s for 24.4 MB,
+with the pre-warmed pool deliberately not used (**Pre-warm slot**). Free: the
+readout stays at $0.00 and a transcript carrying a total of 398.25 USD showed
+that figure restored from the file rather than charged again. The uuid comes from
+the Session's `@claude_transcript` option, never from the pane's argv, which
+disagreed with it for 15 of 38 live processes on 2026-09-19. A resume counts as
+a drive and stamps **Last driven**, or the sweep would take the Session again
+five minutes later. It is refused when a Claude is running under the pane,
+which means the mark is stale and a respawn would replace a live conversation.
+_Avoid_: wake, unsuspend, reopen; and do not say restore, which is taken by the
+**Resurrection record** and the restore picker, both of which bring back a
+Session that is GONE from a tmux-persist snapshot. A resume needs the tmux
+session still standing.
+
 **Channel**:
 One of the six things whose health a client can report: its **terminal** socket,
 its **transcript** stream, the **session list** poll, **notifications**, the
@@ -291,8 +366,9 @@ through the poll, so bells and badges are unaffected; what stops is anything
 reading the live byte stream, the terminal bell among them. `document.hasFocus()`
 was briefly a third away question and was removed the same day: it parked the
 Session being READ, which is the one whose bell matters.
-_Avoid_: suspended (the connection ladder's own word for a socket it is holding
-down), sleeping, unloaded (nothing is unmounted)
+_Avoid_: suspended (taken twice over, by the connection ladder for a socket it is
+holding down and by a **Suspended session** for one whose Claude has been
+killed), sleeping, unloaded (nothing is unmounted)
 
 **Co-ownership**:
 POSIX-ACL grant giving all a project's members rwX on its directory, applied
@@ -385,6 +461,17 @@ stack at all. `frontend-v2/src/store/undo.ts`; ADR-0025 has the reasoning.
 _Avoid_: history, journal, transaction log (each names a record of what
 happened; this one holds only what can still be taken back)
 
+**Kill**:
+Deliberate destruction of a Session by a person, through `DELETE /sessions/{name}`.
+A process merely *exiting* — OOM, a reboot, a `/exit` typed into the pane — is not
+a kill, and the distinction is load-bearing: a kill writes a tombstone and drops
+the session's layout entry and manifest row, while a death leaves both standing so
+a restore can bring the session back. It used to cross to a T3 thread as well
+(ADR-0029 removed that surface). A **Suspended session** is neither a kill nor a
+death: the process is signalled on purpose, and the session, its pane and its
+scrollback stay exactly where they were.
+_Avoid_: stop, end, close
+
 **Grace window**:
 The eight seconds a killed session stays in the sidebar before the DELETE goes
 out (`GRACE_MS`, `store/lobby.ts`). The card is dimmed and struck through and
@@ -432,8 +519,11 @@ tombstone, undo token
 What the Claude conversation inside a session is doing: *running* (it is
 working and will produce more output), *awaiting input* (Claude asked
 something and is blocked on the user), or *completed* (finished, ready
-for the next prompt). A session with no live Claude has no state. Note
-that *running* is not the same as "a turn is in flight": a session with
+for the next prompt), or *suspended* (a **Suspended session**, whose Claude
+was killed to give its memory back and which a click resumes). A session
+with no live Claude has no state, with that one exception, which is why
+the sweep's mark wins over the /proc scan that would otherwise blank it.
+Note that *running* is not the same as "a turn is in flight": a session with
 **Outstanding work** is running with nobody talking.
 _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
@@ -696,50 +786,7 @@ glyphs, the two review wordings, the footer, the free-text and chat rows.
 Recorded when the parser cannot fully read a screen, so a CLI restyle shows up
 as a signal rather than as a bug report. Structure only, never screen text.
 
-### T3 interoperability
-
-**Thread**:
-T3 Code's unit of conversation, the counterpart of a Session. A
-*bridged* thread is backed by one Session; a thread of any other
-provider is not, and never appears in the lobby.
-_Avoid_: session, chat, conversation
-
-**T3 workspace**:
-T3's own grouping: a title plus one absolute **workspace root**, at most
-one active workspace per root. Not a lobby Project — it has no members,
-no attach mode and no co-ownership, and its root is mandatory where a
-Project's directory is optional.
-_Avoid_: t3 project (ambiguous against Project)
-
-**Bridge**:
-The binary T3 spawns in place of `claude`. It runs as the OS user who
-owns the T3 instance, speaks the Agent SDK's stdio protocol upward, and
-downward attaches to a Session rather than starting a Claude of its own —
-so a bridged thread and its Session are one conversation in one process.
-_Avoid_: adapter, proxy, shim
-
-**Syncer**:
-The per-user reconciler that keeps a user's Threads in step with their
-Sessions: adopting new ones, following renames, and carrying destruction
-across in both directions.
-_Avoid_: sync daemon, mirror
-
-**Adoption**:
-Making an existing Session visible in T3 as a Thread. The Session keeps
-running throughout — adoption creates a view, never a second Claude.
-_Avoid_: import, migration
-
-**Warm-up**:
-The sentinel turn the Syncer dispatches at adoption. It exists only to
-make T3 spawn the Bridge, since nothing else can put content into a
-Thread; the Bridge recognises it and never passes it to the Session.
-
-**Kill**:
-Deliberate destruction of a Session by a person, which crosses to the
-other surface: killing in the lobby archives the Thread, deleting the
-Thread kills the Session. A process merely *exiting* — OOM, a reboot, a
-reaped Bridge — is not a kill and crosses nothing.
-_Avoid_: stop, end, close
+### Data used
 
 **Data used**:
 What Terminal Lobby cost a **device** in **wire bytes** over a period — today,

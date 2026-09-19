@@ -58,6 +58,7 @@ func main() {
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/control"), []byte(control(*version, *commit)), 0o644))
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/preinst"), []byte(preinst), 0o755))
 	post := strings.Replace(release.PostinstScript, "UNITS_TO_ENABLE", strings.Join(release.Package.Enable, " "), 1)
+	post = strings.Replace(post, "UNITS_TO_RETIRE", strings.Join(release.Package.Retire, " "), 1)
 	post = strings.Replace(post, "MIGRATE_CONFIG", release.MigrateConfigSnippet, 1)
 	check(os.WriteFile(filepath.Join(*out, "DEBIAN/postinst"), []byte(post), 0o755))
 

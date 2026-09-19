@@ -60,9 +60,9 @@ func TestDerivedNameFor(t *testing.T) {
 			name:  "4txnmy85ftja",
 			title: "",
 		},
-		// Renaming these changes behaviour elsewhere: t3-sync recognises
-		// machine-made sessions by prefix, and the pool's slots are deliberately
-		// unaddressable.
+		// Renaming these changes behaviour elsewhere: isSystemSession and
+		// tl-session-watch recognise machine-made sessions by prefix, and the
+		// pool's slots are deliberately unaddressable.
 		{
 			what:  "a reserved name is never derived over",
 			name:  "qa-harness-run",

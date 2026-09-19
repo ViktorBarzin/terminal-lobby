@@ -73,11 +73,12 @@ const (
 		"#{" + sessionBornAsOption + "}" + listSep +
 		"#{" + createdStampOption + "}" + listSep +
 		"#{" + originOption + "}" + listSep +
-		"#{window_width}" + listSep + "#{window_height}" + listSep + "#{pane_title}"
+		"#{window_width}" + listSep + "#{window_height}" + listSep +
+		"#{" + suspendedOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 17
+	listFields = 18
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -126,9 +127,17 @@ const (
 	gridColsColumn = 14
 	gridRowsColumn = 15
 
+	// suspendedColumn is where @tl_suspended sits: the last column before
+	// pane_title, which stays last for the reason bgColumn gives. It is the
+	// mark that makes a session read as suspended (suspend.go), so it rides the
+	// list the sidebar already polls rather than costing a call of its own.
+	// Only the row builders in the tests address it by name; parseSessions
+	// reads it positionally like every other field.
+	suspendedColumn = 16
+
 	// sessionTitleOption is where a display title lives, alongside
-	// @claude_state. Named in sessionio so this service, t3-sync and anything
-	// else reading a session's options agree on the spelling. Options die with
+	// @claude_state. Named in sessionio so this service and anything else
+	// reading a session's options agree on the spelling. Options die with
 	// the session that holds them, which is right for state and wrong for a
 	// title someone chose — the titles store (titles.go) is what carries a
 	// title across a restore.
@@ -347,6 +356,13 @@ func main() {
 	// `tmux list-sessions` per mapped user per sweep, the same call the sessions
 	// poll already makes. Runs for the life of the process, like the sender.
 	go runPrewarmReaper(make(chan struct{}))
+
+	// Suspends sessions nobody has driven for days, reclaiming the ~800 MB
+	// each holds (suspend.go). Started unconditionally and for the life of the
+	// process, like the prewarm reaper above: with nothing old enough it is one
+	// session list per mapped user every five minutes, which is the call the
+	// sessions poll already makes.
+	go runSuspendReaper(make(chan struct{}))
 
 	// Whether the BOX is stalling, so a person can tell "the box is slow" from
 	// "my connection is slow" (health.go, ADR-0028). Started unconditionally

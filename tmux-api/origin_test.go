@@ -44,11 +44,6 @@ func TestIsSystemSession(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "t3-bridge's e2e prefix",
-			session: Session{Name: "t3e2e-42", Origin: originUser},
-			want:    true,
-		},
-		{
 			name:    "the lobby's own e2e prefix",
 			session: Session{Name: "tlp-t1", Origin: originUser},
 			want:    true,

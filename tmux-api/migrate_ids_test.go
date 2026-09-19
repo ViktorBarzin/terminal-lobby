@@ -284,19 +284,18 @@ func renamedTo(t *testing.T, argv string) string {
 	return ""
 }
 
-// A machine-made session is excluded from T3 mirroring by its NAME
-// (t3-sync/main.go DefaultIgnorePrefixes). Renaming one to an id would have the
-// syncer adopt it: a real T3 thread created and warmed for a session that
-// exists to be thrown away.
+// A machine-made session is recognised by other services through its NAME
+// (reservedNamePrefixes, and tl-session-watch's systemPrefixes twin). Renaming
+// one to an id would hide it from both: a throwaway harness session would land
+// in a person's sidebar and push to their phone.
 func TestMigrateLeavesReservedNamesAlone(t *testing.T) {
 	migrationStores(t)
 	argv := withTmuxStub(t, "exit 0")
 
 	reserved := []Session{
 		{ID: "$1", Name: "qa-lobby-smoke"},
-		{ID: "$2", Name: "t3e2e-thread-42"},
-		{ID: "$3", Name: "tlp-t7"},
-		{ID: "$4", Name: poolSlotPrefix + "_home_wizard_code"},
+		{ID: "$2", Name: "tlp-t7"},
+		{ID: "$3", Name: poolSlotPrefix + "_home_wizard_code"},
 	}
 	renamed, failed := migrateUserSessionNames("wizard", reserved)
 	if renamed != 0 || failed != 0 {

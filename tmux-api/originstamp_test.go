@@ -60,9 +60,8 @@ func TestGrandfatherLeavesAReservedNameUnstamped(t *testing.T) {
 
 	stamped, failed := grandfatherUserOrigins("wizard", []Session{
 		{ID: "$1", Name: "qa-slug"},
-		{ID: "$2", Name: "t3e2e-42"},
-		{ID: "$3", Name: "tlp-t7"},
-		{ID: "$4", Name: poolSlotPrefix + "home_wizard"},
+		{ID: "$2", Name: "tlp-t7"},
+		{ID: "$3", Name: poolSlotPrefix + "home_wizard"},
 	})
 	if stamped != 0 || failed != 0 {
 		t.Fatalf("stamped=%d failed=%d, want 0 and 0", stamped, failed)

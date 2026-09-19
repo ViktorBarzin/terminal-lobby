@@ -125,6 +125,23 @@ func main() {
 		// here also made the two surfaces disagree: the bridge pastes whatever
 		// T3 sends, so the same prompt at the same moment ran from one window
 		// and was refused from the other.
+		//
+		// A SUSPENDED session is the one thing that is refused, because there
+		// is no Claude in it to queue anything. The idle sweep killed it and
+		// froze the pane (tmux-api/suspend.go), and every layer below here
+		// reports success anyway: measured on tmux 3.4, 2026-09-19, send-keys
+		// into a dead pane exits 0 and the text vanishes, and a session whose
+		// wrapper shell outlived its Claude takes the prompt at a BASH PROMPT
+		// and runs it as a command. awaitReady does not catch either one — a
+		// frozen scrollback still shows a settled prompt.
+		//
+		// The lobby's composer holds its messages instead of sending them
+		// (frontend-v2/src/store/suspend-queue.ts); this is for every other
+		// caller, and it names the session so the answer says what to do.
+		if at, _ := injector.Option(osUser, session, sessionio.OptionSuspended); at != "" {
+			http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
+			return
+		}
 		if err := injector.Prompt(osUser, session, body.Text); err != nil {
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return

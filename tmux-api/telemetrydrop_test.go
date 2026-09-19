@@ -104,7 +104,7 @@ func TestDropRuleWithNoListFallsBackToTheName(t *testing.T) {
 		want    bool
 	}{
 		{"qa-slug", true},
-		{"t3e2e-42", true},
+		{"tlp-t42", true},
 		{poolSlotPrefix + "home_wizard", true},
 		{"k7m2q9x4tp0v", false},
 	} {

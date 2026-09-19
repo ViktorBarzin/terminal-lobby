@@ -277,7 +277,7 @@ later stamp overwrote it and nothing put it back, and one session read
 *Working* for eleven hours with a question on its pane.
 
 **Where a session came from.** A session records what created it, so the ones
-a person opened are not mixed in with the ones a harness or a bridge made.
+a person opened are not mixed in with the ones a harness or an API caller made.
 Anything created by tooling collects in a group that stays closed, and its
 completions do not ring your phone. See
 `docs/adr/0024-a-session-knows-who-made-it.md`.

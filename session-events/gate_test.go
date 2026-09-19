@@ -6,36 +6,40 @@ import (
 	"testing"
 )
 
-// Decision 9 of the T3 bridge design: a mid-turn send queues in Claude, on BOTH
-// surfaces, and the lobby's turn gate goes away.
+// A mid-turn send queues in Claude, so the lobby's turn gate went away.
 //
-// The two surfaces reach the same pane by different routes — this service's
-// POST /prompt and the bridge's Attacher.Send — so nothing in either one can
-// observe the other. This test pins the halves to each other the way the
-// sentinel constant is pinned across the same boundary: the bridge says
-// out loud that it does not read @claude_state, and so must this.
+// The rule was first written for two surfaces — this service's POST /prompt and
+// the T3 bridge's Attacher.Send — and the bridge is gone (ADR-0029), leaving
+// this the only sender. The test stays because the gate is easy to reintroduce
+// by reflex: a prompt that arrives mid-turn belongs in Claude's own queue, and
+// answering 409 instead loses it with no way for the composer to say why.
 //
-// What it is guarding against is not a crash. It is the same prompt at the same
-// moment running from T3 and being refused with 409 from the lobby composer,
-// which is a difference nobody can explain from either window.
+// The TURN STATE is what must not be read here. One 409 does live in the
+// handler — a session the idle sweep suspended, which has no Claude to queue
+// anything (TestPromptRefusesASuspendedSession) — so this asks about the state
+// rather than about the status code.
 func TestPromptDoesNotGateOnTheTurnState(t *testing.T) {
 	raw, err := os.ReadFile("main.go")
 	if err != nil {
 		t.Fatalf("read main.go: %v", err)
 	}
-	body := string(raw)
-	prompt := section(t, body, "POST /prompt/{session}", "POST /cancel/{session}")
-	if strings.Contains(prompt, "StatusConflict") || strings.Contains(prompt, "StateRunning") {
-		t.Errorf("POST /prompt still gates on the turn state:\n%s", prompt)
+	prompt := promptHandler(t, string(raw))
+	for _, gate := range []string{"StateRunning", "injector.State(", "sessionio.OptionAsk"} {
+		if strings.Contains(prompt, gate) {
+			t.Errorf("POST /prompt gates on %s, which is the turn state again:\n%s", gate, prompt)
+		}
 	}
+}
 
-	bridge, err := os.ReadFile("../t3-bridge/attach.go")
-	if err != nil {
-		t.Skipf("the bridge is not in this tree: %v", err)
-	}
-	if !strings.Contains(string(bridge), "reads @claude_state — gating on it is what the lobby's old 409 did") {
-		t.Error("t3-bridge/attach.go no longer states that Send is ungated; the two surfaces may have drifted")
-	}
+// promptHandler is POST /prompt and nothing else.
+//
+// Bounded by the handler REGISTERED NEXT rather than by /cancel, which is nine
+// handlers further down: a section that wide answers questions about the wrong
+// code, and two of those handlers do read the turn state for their own
+// reasons.
+func promptHandler(t *testing.T, body string) string {
+	t.Helper()
+	return section(t, body, `web.HandleFunc("POST /prompt/{session}"`, `web.HandleFunc("GET /earlier/{session}"`)
 }
 
 // section returns the text between two markers, for a handler that lives inline
@@ -51,4 +55,42 @@ func section(t *testing.T, body, from, to string) string {
 		return rest[:j]
 	}
 	return rest
+}
+
+// A prompt is refused for a session the idle sweep put to sleep, and the check
+// runs BEFORE the injection.
+//
+// Source assertions for the reason the file's other tests give: the handler
+// lives inline in main() and the mux cannot be built from a test.
+//
+// The failure it guards is silent in two different ways, both measured on tmux
+// 3.4, 2026-09-19. Into a DEAD pane, `send-keys` exits 0 and the text
+// disappears (paste-buffer does answer "target pane has exited", so the caller
+// sees a 502 rather than a loss). Into a pane whose wrapper shell OUTLIVED its
+// Claude — the tmux-persist shape, which is every session on the box after a
+// reboot — both succeed and the message is typed at a bash prompt and RUN as a
+// shell command. Neither is something awaitReady can see: a frozen scrollback
+// still shows a settled prompt.
+func TestPromptRefusesASuspendedSession(t *testing.T) {
+	raw, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	prompt := promptHandler(t, string(raw))
+
+	guard := strings.Index(prompt, "sessionio.OptionSuspended")
+	inject := strings.Index(prompt, "injector.Prompt(")
+	if guard < 0 {
+		t.Fatalf("POST /prompt no longer reads %s, so a prompt into a suspended session is accepted and lost:\n%s",
+			"sessionio.OptionSuspended", prompt)
+	}
+	if inject < 0 {
+		t.Fatalf("POST /prompt no longer injects:\n%s", prompt)
+	}
+	if guard > inject {
+		t.Error("the suspended check runs after the injection, which is no check at all")
+	}
+	if !strings.Contains(prompt[guard:inject], "StatusConflict") {
+		t.Error("a prompt into a suspended session is not answered 409")
+	}
 }

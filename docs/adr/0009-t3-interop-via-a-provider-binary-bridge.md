@@ -1,5 +1,11 @@
 # T3 interop goes through a provider binary, not a fork
 
+> **Superseded by [ADR-0029](0029-the-lobby-is-the-only-surface-again.md)
+> (2026-09-19).** The bridge and the syncer were removed when Viktor stopped
+> using T3 Code. Everything below is left as written: it records why the
+> integration took this shape while it existed, and the reasoning about seams in
+> auto-upgrading external software is what the next one would start from.
+
 We want a session to be operable from both the lobby and T3 Code. T3 is external
 software that auto-upgrades, so the integration had to use a seam T3 already
 advertises. We chose the one it documents for users: a provider instance whose
@@ -25,4 +31,6 @@ Claude is 0.4–0.8 GB across three users.
 - Only a process T3 spawns can put content into a thread, which is why adoption needs
   a sentinel turn and why live mirroring depends on the bridge staying unreaped.
 
-Design and the full decision set: `docs/plans/2026-08-15-t3-code-bridge-design.md`.
+Design and the full decision set lived in
+`docs/plans/2026-08-15-t3-code-bridge-design.md`, removed with the code in
+ADR-0029; git history holds it.

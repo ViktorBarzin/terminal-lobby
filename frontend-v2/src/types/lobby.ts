@@ -7,8 +7,27 @@ import { isSessionId } from "../lib/session-id";
  * marked `?`.
  */
 
-/** The Claude conversation's state inside a session (from @claude_state). */
-export type ClaudeState = "running" | "awaiting" | "done";
+/**
+ * The Claude conversation's state inside a session.
+ *
+ * Three of the four come from `@claude_state`. `suspended` does not: tmux-api
+ * forces it whenever `@tl_suspended` carries a timestamp, whatever the pane
+ * last reported, because a suspended session has no claude process left to
+ * report anything. The state it had at the moment of the sweep is kept
+ * server-side in `@tl_suspend_state` and put back on resume, so this is a
+ * cover over the other three rather than a replacement for one.
+ */
+export type ClaudeState = "running" | "awaiting" | "done" | "suspended";
+
+/**
+ * The state of a session whose claude process was killed to get its memory
+ * back. Its tmux session is still there with its scrollback frozen, and
+ * clicking the row runs `claude --resume` against the transcript on disk.
+ *
+ * A constant because four files test for it and a typo in one of them is a
+ * mark that silently never appears.
+ */
+export const SUSPENDED = "suspended";
 
 /** How a viewer may attach a foreign session. */
 export type AttachAccess = "ro" | "rw";
@@ -95,6 +114,16 @@ export interface Session {
   created: number;
   /** "" when no live Claude. */
   state?: ClaudeState | "";
+  /**
+   * When the idle sweep suspended this session, in unix SECONDS (tmux-api's
+   * `@tl_suspended`). Absent on a live session, and on a server that predates
+   * the sweep.
+   *
+   * `state` is the field to branch on — tmux-api forces it to `suspended`
+   * whenever this is set, so the two can never disagree. This one is here for
+   * saying HOW LONG it has been away, which the card does not show today.
+   */
+  suspendedAt?: number;
   /** What the session is still waiting on, counted by kind. Absent when it is
    *  waiting on nothing, which is the ordinary case.
    *
@@ -196,8 +225,8 @@ export const NEW_SESSION_LABEL = "New session";
  * minted id (ADR-0019) does not, so `New session` is shown instead: it is the
  * honest description of a session whose summary has not landed yet, and twelve
  * random characters are worse than saying nothing. A name that was never
- * minted here still reads — sessions from before the migration, a shell
- * somebody named by hand, and t3-bridge's cwd-derived names.
+ * minted here still reads — sessions from before the migration, and a shell
+ * somebody named by hand.
  *
  * The line a session was created with is NOT read here. The store fills it into
  * `title` as the poll lands (store/prompt-line.ts), so every surface that shows
@@ -240,8 +269,7 @@ export function sessionTitleDraft(s: Pick<Session, "name" | "title"> | undefined
   if (!s) return "";
   if (s.title && s.title.length > 0) return s.title;
   // No title. A minted id says nothing, so the box opens empty; a name from
-  // before ids — or one t3-bridge derived from a directory — is what the card
-  // reads, so it is a fair thing to start editing.
+  // before ids is what the card reads, so it is a fair thing to start editing.
   return isSessionId(s.name) ? "" : s.name;
 }
 

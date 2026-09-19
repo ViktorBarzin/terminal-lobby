@@ -9,8 +9,8 @@ import (
 )
 
 // vectors.json pins both derivations. `cases` pins FromTitle, which only Go
-// reads now: the browser stopped deriving names with ADR-0019 and t3-bridge is
-// what FromTitle still serves. `cleanTitleCases` pins CleanTitle, which the
+// reads now: the browser stopped deriving names with ADR-0019, and tmux-api's
+// name_from_title.go is what FromTitle serves. `cleanTitleCases` pins CleanTitle, which the
 // browser DOES still have its own copy of (frontend-v2/src/lib/title.ts), so
 // those cases are read by frontend-v2/test/title.test.ts as well and the two
 // suites cannot drift apart by editing one list.
@@ -119,8 +119,8 @@ func TestCleanTitleIsIdempotent(t *testing.T) {
 	}
 }
 
-// Free is the suffix walk t3-bridge uses when it resurrects a session under a
-// name something else already holds. Moved here so Go has one implementation.
+// Free is the suffix walk a caller uses when the name it wants is already
+// taken. Kept here so Go has one implementation.
 func TestFree(t *testing.T) {
 	cases := []struct {
 		base  string

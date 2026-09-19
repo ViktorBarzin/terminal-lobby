@@ -28,7 +28,8 @@ package main
 // chunk boundaries: the incomplete tail is carried into the next call,
 // and Flush hands back an unterminated tail verbatim at end-of-stream.
 //
-// Byte-stream adaptation (T3 operates on decoded JS strings): C1 controls
+// Byte-stream adaptation (the reference implementation this follows operates
+// on decoded JS strings): C1 controls
 // (0x9B CSI, 0x9D OSC, 0x90/0x9E/0x9F DCS/PM/APC introducers, 0x9C ST)
 // are recognized only as properly UTF-8-decoded runes — a raw 0x9B..0x9F
 // byte inside a multibyte character (every emoji contains one) or invalid
@@ -177,8 +178,7 @@ func scanEscape(p []byte) (adv int, emit, complete bool) {
 		return scanString(p, 2, false)
 	default:
 		// Generic escape: intermediates 0x20-0x2f then a final 0x30-0x7e;
-		// anything else degrades to ESC + one byte (T3 parity). Never
-		// stripped.
+		// anything else degrades to ESC + one byte. Never stripped.
 		j := 1
 		for j < len(p) && p[j] >= 0x20 && p[j] <= 0x2f {
 			j++

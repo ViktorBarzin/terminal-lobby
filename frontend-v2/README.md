@@ -523,6 +523,11 @@ src/
     drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
                          unsent text AND the attachments anchored in it,
                          pruned to the live session list the way visits.ts prunes
+    suspend-queue.ts     Messages typed at a session the idle sweep suspended,
+                         held until the resume lands and the poll says it is
+                         back. WHOLE MESSAGES, never keystrokes — terminal/
+                         held.ts is the byte-level hold for a dropped socket
+                         and is a different problem. In memory, per tab
     prompt-line.ts       Per-browser first-lines (tl:session-prompt-line:v1):
                          what a card reads between being created and Claude's
                          summary landing. Deliberately not stamped as @title —

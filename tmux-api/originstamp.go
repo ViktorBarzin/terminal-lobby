@@ -14,7 +14,7 @@ package main
 // match no harness convention, which get killed by hand afterwards. The
 // alternative was hiding all 26 and dragging back the ones that matter.
 //
-// Sessions whose NAME is reserved (qa-, t3e2e-, tlp-t, the pool prefix) are
+// Sessions whose NAME is reserved (qa-, tlp-t, the pool prefix) are
 // deliberately left unstamped: reservedName forces them system whatever the
 // option says, so stamping them would write a value nothing reads and would
 // read, to anyone inspecting the option later, as the lobby claiming it made a

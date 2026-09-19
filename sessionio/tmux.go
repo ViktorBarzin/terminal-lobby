@@ -77,10 +77,6 @@ const (
 	// NewSessionSpec.Origin overrides it. A harness stamps
 	// "test" on its own sessions; that is not this package's job.
 	OriginUser = "user"
-	// OptionThread holds the T3 thread id a session is mirrored into. Written
-	// by the syncer at adoption; dies with the session, which is deliberate —
-	// a resurrected session re-derives it from the durable Index instead.
-	OptionThread = "@t3_thread"
 	// OptionTitle holds the DISPLAY TITLE a person chose for the session —
 	// arbitrary text, up to 64 runes, which the lobby shows in place of the
 	// tmux name. Written by tmux-api; unset for a session nobody has titled,
@@ -104,6 +100,22 @@ const (
 	// One name, not a history: the tab at risk is holding the name the session
 	// was CREATED with, and every later rename is one the lobby watched happen.
 	OptionBornAs = "@tl_born"
+	// OptionSuspended holds the unix second a session was SUSPENDED: the idle
+	// sweep killed the Claude in it to give the memory back, and froze the
+	// pane (terminal-lobby's tmux-api owns the sweep and is the only writer).
+	// Unset for every live session, which is nearly all of them.
+	//
+	// It is named here rather than in the service that writes it because three
+	// programs READ it and none of them can import the others: tmux-api serves
+	// it to the sidebar, agent-api refuses to write a conversation wearing it,
+	// and session-events refuses to inject a prompt into one. A suspended
+	// session has no Claude, and neither `send-keys` nor `paste-buffer` says
+	// so: measured on tmux 3.4, 2026-09-19, send-keys into a dead pane exits 0
+	// and the bytes vanish, paste-buffer answers "target pane has exited", and
+	// when the session's wrapper shell outlived its Claude the text is typed
+	// at a bash prompt and RUN. Reading this first is what keeps a prompt from
+	// going into any of those.
+	OptionSuspended = "@tl_suspended"
 )
 
 // Options is the tmux session-option store: read and written as the session's
@@ -123,9 +135,9 @@ type Options interface {
 // the mapped OS user (sudo -u), skipping sudo when the target IS this process's
 // own user.
 //
-// Every caller in the T3 bridge runs as the session's owner already
-// (t3-serve@%i runs User=%i), so the sudo branch is only exercised by
-// session-events, which runs privileged and serves several users.
+// The sudo branch is exercised by the services that run privileged and serve
+// several users — session-events and agent-api. A caller that already runs as
+// the session's owner takes the direct path.
 type Injector struct {
 	selfUser string
 	socket   string
@@ -458,7 +470,7 @@ func (in *Injector) Option(osUser, session, name string) (string, bool) {
 //
 // The `--` is defence in depth rather than a fix for a live bug: tmux 3.4 takes
 // the positional after the name as the value however it looks (measured —
-// `set-option -t demo @t3_thread -g` exits 0 and stores "-g"). The marker pins
+// `set-option -t demo @title -g` exits 0 and stores "-g"). The marker pins
 // that independently of the tmux version and of any flag a later set-option
 // grows, and it is asserted on the argv, because a value round-trips either way.
 func (in *Injector) SetOption(osUser, session, name, value string) error {
@@ -565,13 +577,12 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 	if err != nil {
 		return fmt.Errorf("new-session %s: %v: %s", spec.Name, err, strings.TrimSpace(string(out)))
 	}
-	// Say who this is for. The only caller is t3-bridge resurrecting a thread
-	// somebody opened in T3 (resurrect.go), so the answer is always "a person" —
-	// the bridge is the mechanism, not the reason. Without the stamp the session
+	// Say who this is for. The caller is agent-api, creating a session on
+	// behalf of an external credential (agent-api/sessions.go Create), and it
+	// names that credential rather than itself. Without the stamp the session
 	// reads as unattributed, which files a live conversation into the System
 	// group, stops its completions reaching a phone, and keeps it out of every
 	// tmux-persist snapshot so a reboot loses it.
-	//
 	//
 	// A failure here IS returned, and the message says the session was created,
 	// because the two failures need telling apart. NewSession's other error
@@ -596,10 +607,11 @@ func (in *Injector) NewSession(spec NewSessionSpec) error {
 
 // KillSession destroys a session and everything running in it.
 //
-// This is the only irreversible verb in the package. It exists because a
-// deliberate destruction crosses surfaces — deleting a bridged thread in T3
-// kills the tmux session (design decision 3) — and for no other reason. A
-// process merely exiting is not a kill and must not reach here.
+// This is the only irreversible verb in the package, and since the T3 bridge
+// was removed (ADR-0029) it has no production caller: it was there so that
+// deleting a bridged thread could destroy the tmux session behind it. It stays
+// as the counterpart to NewSession on the same seam, covered by this package's
+// own tests. A process merely exiting is not a kill and must not reach here.
 func (in *Injector) KillSession(osUser, session string) error {
 	out, err := in.Command(osUser, "kill-session", "-t", exactSession(session)).CombinedOutput()
 	if err != nil {

@@ -9,7 +9,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { sessionLabel, sessionTitleDraft, type Session } from "../types/lobby";
+import { sessionLabel, sessionTitleDraft, SUSPENDED, type Session } from "../types/lobby";
 import type { Selected } from "../store/keepalive";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
@@ -150,6 +150,40 @@ export const SessionCard: Component<{
    */
   const unseen = (): boolean => props.isUnseen?.(s()) ?? false;
   const foreign = () => !!s().owner && s().owner !== props.store.me();
+
+  /**
+   * The sweep took this session's claude process 72 hours after anybody last
+   * drove it. The row stays in the list — that is the whole design — dimmed,
+   * wearing the fourth dot, and clicking it is what brings the conversation
+   * back.
+   */
+  const suspended = () => s().state === SUSPENDED;
+  /**
+   * A resume is already on its way for this row.
+   *
+   * The session list is up to 5s behind and a resume takes 1.7-3.1s, so the row
+   * goes on reporting `suspended` for a second or two after the request landed
+   * — and a row that looks unchanged is a row a person clicks again. Each extra
+   * click would be another `respawn-pane -k`, which kills the claude that the
+   * first one started.
+   *
+   * CLEARED TWO WAYS, and the second one is the whole reason `store.resume`
+   * answers at all. The poll saying the session is live clears it, which is
+   * the ordinary path. A resume that FAILED never gets there — tmux-api
+   * answers 500 for a transcript that went away between the sweep and the
+   * click, 502 while it restarts — and the row stays marked suspended, so a
+   * flag cleared only by the poll would latch on and every later click would
+   * send nothing at all, with no toast to say why, until the page was
+   * reloaded.
+   *
+   * Not cleared on SETTLE: the request resolves when respawn-pane was issued,
+   * seconds before claude has loaded, and a second click in that window would
+   * respawn over the claude the first one just started.
+   */
+  let resumeSent = false;
+  createEffect(() => {
+    if (!suspended()) resumeSent = false;
+  });
 
   /**
    * This card's session, as everything outside the sidebar names it.
@@ -400,6 +434,21 @@ export const SessionCard: Component<{
    * to give.
    */
   const open = () => {
+    // THE RESUME GOES FIRST, and it is deliberately not awaited. A suspended
+    // session has no live claude, so opening it means asking for one — but the
+    // pane's frozen scrollback is already worth showing, and the view the
+    // person last had open is what they asked for. Waiting out a 1.7-3.1s
+    // request before drawing any of that would make the click feel broken.
+    // What is ordered here is the two CALLS: the request is in flight before
+    // anything else happens.
+    if (suspended() && !resumeSent) {
+      resumeSent = true;
+      void props.store.resume(s().name).then((ok) => {
+        // A refusal has already been toasted. Letting the next click try again
+        // is all that is left to do about it.
+        if (!ok) resumeSent = false;
+      });
+    }
     props.store.select(s().name, foreign() ? s().owner : undefined);
     workspaces?.onOpen(identity(), workspace());
   };
@@ -793,6 +842,11 @@ export const SessionCard: Component<{
         "tl-card-ws": workspace() !== null,
         "tl-card-unseen": unseen(),
         "tl-card-foreign": foreign(),
+        // Dimmed, which is what reads at a glance down a long sidebar — the
+        // dot beside it is the precise signal and is 8px of colour. NOT
+        // disabled: this row is the only way back into the session, so
+        // sidebar.css stops well short of the 0.45 a dying row drops to.
+        "tl-card-suspended": suspended(),
       }}
       role="button"
       tabindex={0}

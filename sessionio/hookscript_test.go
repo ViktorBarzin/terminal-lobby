@@ -635,8 +635,7 @@ func TestATeammateHoldsTheSessionRunning(t *testing.T) {
 // the harness's own bar showed it "idle". The entry reads status "running" in
 // both, and a third Stop taken 3m30s later still did. So adopting a teammate
 // from the list would pin every session that ever spawned one at running —
-// which refuses the model picker and holds a T3 attach pin open, with nothing
-// left to retire the id.
+// which refuses the model picker, with nothing left to retire the id.
 func TestATeammateIsNeverAdoptedFromTheRegistry(t *testing.T) {
 	for _, stop := range []string{"stop_teammate_working.json", "stop_teammate_idle.json"} {
 		t.Run(stop, func(t *testing.T) {

@@ -74,16 +74,26 @@ func parseProcStat(s string) (comm string, ppid int, ok bool) {
 // hasClaudeUnder reports whether pid or any descendant is a claude
 // process — the same BFS tmux-persist uses to snapshot conversations.
 func (t procTree) hasClaudeUnder(pid int) bool {
+	_, ok := t.claudeUnder(pid)
+	return ok
+}
+
+// claudeUnder is hasClaudeUnder with the pid, breadth-first so the answer is
+// the SHALLOWEST claude in the tree. That distinction is what suspend.go
+// signals: a session's own claude outranks any claude it spawned as a
+// subprocess, and killing the wrong one would leave the session running while
+// taking a subagent's work with it.
+func (t procTree) claudeUnder(pid int) (int, bool) {
 	queue := []int{pid}
 	for len(queue) > 0 {
 		p := queue[0]
 		queue = queue[1:]
 		if t.comm[p] == "claude" {
-			return true
+			return p, true
 		}
 		queue = append(queue, t.children[p]...)
 	}
-	return false
+	return 0, false
 }
 
 // Tool values on the wire — which command a session is running, for the
@@ -174,6 +184,15 @@ func clearDeadStates(sessions []Session, t procTree) {
 		return
 	}
 	for i := range sessions {
+		// A SUSPENDED session is the one case where no claude under the pane is
+		// the expected reading rather than evidence of a death: suspend.go
+		// killed it on purpose and kept everything needed to bring it back
+		// (suspend.go). Blanking its state would drop it out of the suspended
+		// group in the sidebar the moment it landed there, and the only way
+		// back would be a resume nobody could find the card to click.
+		if sessions[i].SuspendedAt > 0 || sessions[i].State == stateSuspended {
+			continue
+		}
 		if sessions[i].State == "" && sessions[i].Background == nil {
 			continue
 		}

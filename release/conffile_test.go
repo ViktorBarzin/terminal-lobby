@@ -113,16 +113,15 @@ func TestLocalOverrideIsNotAConffile(t *testing.T) {
 	}
 }
 
-// Every process that resolves an identity — the five services and t3-sync,
-// which is a CLIENT of tmux-api and has to send what tmux-api expects — must
-// source the config. t3-sync was missed the first time: its unit carried only
-// its own env file, so after an upgrade it sent the compiled default header
-// while tmux-api expected the configured one, and every call 401'd.
+// Every process that resolves an identity must source the config. The way this
+// goes wrong, measured once on the T3 syncer before it was removed: a unit that
+// carries only its own env file sends the compiled default header after an
+// upgrade while tmux-api expects the configured one, and every call 401s.
 func TestEveryIdentityAwareUnitSourcesTheConfig(t *testing.T) {
 	// ttyd expands ${TL_AUTH_HEADER} in its ExecStart; the rest read the env.
 	binaries := []string{
 		"ttyd", "tmux-api", "file-api", "session-events", "skills-api",
-		"clipboard-upload", "tl-t3-sync",
+		"clipboard-upload",
 		// agent-api resolves no identity HEADER and still belongs here. It
 		// reads TL_BIND, and TL_BEARER_TOKENS is the file that decides whether
 		// it can answer anything at all, so a unit that stopped sourcing the

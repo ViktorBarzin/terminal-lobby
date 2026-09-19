@@ -1599,3 +1599,105 @@ describe("lobby store", () => {
     });
   });
 });
+
+describe("lobby store — resuming a suspended session", () => {
+  /** A FakeApi that records resumes and can refuse them with a status. */
+  class ResumeApi extends FakeApi {
+    resumes: string[] = [];
+    refuseWith?: number;
+    async resumeSession(name: string) {
+      this.resumes.push(name);
+      if (this.refuseWith) throw new ApiError(this.refuseWith, `HTTP ${this.refuseWith}`);
+    }
+  }
+
+  it("asks the server, and says nothing when it worked", async () => {
+    const api = new ResumeApi();
+    const said: string[] = [];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        // TRUE: the card keeps its one-request-per-row latch closed on this
+        // answer, and opens it again on false.
+        await expect(store.resume("a")).resolves.toBe(true);
+        expect(api.resumes).toEqual(["a"]);
+        expect(said).toEqual([]);
+      },
+      { notify: (m) => said.push(m) },
+    );
+  });
+
+  it("stays quiet about a 409, which is a session that is already back", async () => {
+    // The list is up to 5s behind, so a second click on a row that still looks
+    // suspended is an ordinary thing to do. "It is already awake" is not news.
+    const api = new ResumeApi();
+    api.refuseWith = 409;
+    const said: string[] = [];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        // Already live counts as back, so the card does not re-ask.
+        await expect(store.resume("a")).resolves.toBe(true);
+        expect(said).toEqual([]);
+      },
+      { notify: (m) => said.push(m) },
+    );
+  });
+
+  it("reports a server error as a failure the card can retry", async () => {
+    // 500 is the transcript that went away between the sweep and the click,
+    // and 502 is tmux-api restarting. Both leave the row suspended, so the
+    // answer has to be false or the card latches shut.
+    for (const status of [500, 502, 503]) {
+      const api = new ResumeApi();
+      api.refuseWith = status;
+      const said: string[] = [];
+      await withStore(
+        api,
+        async (store) => {
+          await store.refresh();
+          await expect(store.resume("a")).resolves.toBe(false);
+          expect(said).toEqual(["Couldn't resume a"]);
+        },
+        { notify: (m) => said.push(m) },
+      );
+    }
+  });
+
+  it("says so when the session is gone", async () => {
+    // Silence here would leave someone clicking a row that will never open.
+    const api = new ResumeApi();
+    api.refuseWith = 404;
+    const said: string[] = [];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        // FALSE, and that answer is load-bearing: the row stays marked
+        // suspended after a refusal, so the card cannot tell a failed resume
+        // from one in flight and would never send another request.
+        await expect(store.resume("a")).resolves.toBe(false);
+        expect(said).toEqual(["Couldn't resume a"]);
+      },
+      { notify: (m) => said.push(m) },
+    );
+  });
+
+  it("does nothing against a server that has no resume route", async () => {
+    // Nothing to resume either: a tmux-api without the route never marks a
+    // session suspended in the first place.
+    const api = new FakeApi();
+    const said: string[] = [];
+    await withStore(
+      api,
+      async (store) => {
+        await store.refresh();
+        await expect(store.resume("a")).resolves.toBe(false);
+        expect(said).toEqual([]);
+      },
+      { notify: (m) => said.push(m) },
+    );
+  });
+});

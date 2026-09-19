@@ -239,6 +239,11 @@ func (f *fakeSessions) Option(osUser, session, name string) (string, bool) {
 	switch name {
 	case OptionOwner:
 		return s.Owner, true
+	case OptionSuspended:
+		if s.Suspended {
+			return "1700000000", true
+		}
+		return "", true
 	case "@claude_state":
 		return s.State, true
 	case "@claude_transcript":

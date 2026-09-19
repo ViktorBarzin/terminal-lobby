@@ -342,8 +342,13 @@ func TestOpenAPIConversationStateEnumMatchesTheCode(t *testing.T) {
 			t.Errorf("stateName(%q) = %q, which the document does not list", in, got)
 		}
 	}
-	if len(documented) != 4 {
-		t.Errorf("the document lists %d states, want 4", len(documented))
+	// …and the one state that does not come from @claude_state at all: the
+	// suspend mark overrides it, so conversationFrom is where it is produced.
+	if !documented[stateSuspendedName] {
+		t.Errorf("a suspended conversation reports %q, which the document does not list", stateSuspendedName)
+	}
+	if len(documented) != 5 {
+		t.Errorf("the document lists %d states, want 5", len(documented))
 	}
 }
 

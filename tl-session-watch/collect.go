@@ -41,9 +41,9 @@ var (
 	// window that matters.
 	tombstonesFn = func(user string) string { return "/var/lib/tmux-persist/" + user + ".forgotten.tsv" }
 	// The other half of the intent record, for the ending the tombstone cannot
-	// see. A tombstone is written by tmux-api's DELETE handler, so it covers a
-	// kill from the lobby and from t3-sync, which goes through the same
-	// endpoint. It does not cover a user typing /exit: claude ends, its pane
+	// see. A tombstone is written by tmux-api's DELETE handler, so it covers
+	// every kill that goes through that endpoint, whichever client asked. It
+	// does not cover a user typing /exit: claude ends, its pane
 	// exits, the session closes, and tmux-api is never involved. That read as a
 	// death and paged, which is what this file fixes (2026-09-03).
 	//
@@ -157,9 +157,9 @@ const originUser = "user"
 // person. This deliberately mirrors tmux-api's reservedNamePrefixes
 // (tmux-api/migrate_ids.go), which is the same list asked the same question;
 // the two are kept in step by hand, because this module does not import
-// tmux-api and there is no shared package the services agree through — the same
-// arrangement that list already has with t3-sync's DefaultIgnorePrefixes.
-var systemPrefixes = []string{"qa-", "t3e2e-", "tlp-t", "__terminal_lobby_prewarmed_pool_slot_"}
+// tmux-api and there is no shared package the services agree through. Both
+// dropped `t3e2e-` when the T3 bridge that owned it was removed (ADR-0029).
+var systemPrefixes = []string{"qa-", "tlp-t", "__terminal_lobby_prewarmed_pool_slot_"}
 
 // isSystemSession reports whether a session belongs to tooling rather than to a
 // person, and is the local twin of tmux-api's isSystemSession

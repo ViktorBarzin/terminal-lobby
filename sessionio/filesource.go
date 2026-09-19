@@ -23,8 +23,8 @@ const maxTranscriptLine = 8 << 20
 // via Append().
 //
 // This is the Event-level reader, above Tail: it is what the lobby's SSE stream
-// is built on. A consumer that wants the records themselves — the T3 bridge —
-// should use Tail directly rather than normalizing and un-normalizing.
+// is built on. A consumer that wants the records themselves should use Tail
+// directly rather than normalizing and un-normalizing.
 type FileSource struct {
 	session string
 	path    string

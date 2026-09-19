@@ -45,17 +45,19 @@ const migrateRenameAttempts = 4
 // reservedNamePrefixes are names that MEAN something to another service, so
 // renaming them changes behaviour rather than just changing a label.
 //
-// Machine-made sessions are excluded from T3 mirroring purely by name
-// (t3-sync/main.go DefaultIgnorePrefixes, applied in Adopter.Candidates). Give
-// a `qa-…` harness session or a `tlp-t…` e2e session an id and t3-sync stops
-// recognising it: a real T3 thread gets created and warmed for a session that
-// exists to be thrown away. They are short-lived and nobody reads their names,
-// so leaving them alone costs nothing.
+// `qa-` is scripts/qa-harness.py and qa_driver; `tlp-t` is the lobby's own
+// Playwright end-to-end run; the pool-slot prefix is prewarm.go. Renaming one
+// of those changes what another service does with it — isSystemSession
+// (origin.go) files it away from a person's sessions, and derivedNameFor
+// (name_from_title.go) declines to rename it at all. They are short-lived and
+// nobody reads their names, so leaving them alone costs nothing.
 //
-// Kept in step with t3-sync by hand, which is the same arrangement
+// The list is kept in step with tl-session-watch's systemPrefixes
+// (tl-session-watch/collect.go) by hand, the same arrangement
 // tmux-user-attach's pool-slot prefix already has with prewarm.go — there is no
-// shared package these two agree through.
-var reservedNamePrefixes = []string{"qa-", "t3e2e-", "tlp-t", poolSlotPrefix}
+// shared package these agree through. It also carried `t3e2e-`, the T3 bridge's
+// end-to-end prefix, until that bridge was removed (ADR-0029).
+var reservedNamePrefixes = []string{"qa-", "tlp-t", poolSlotPrefix}
 
 // reservedName reports whether a name belongs to something other than a person.
 func reservedName(name string) bool {

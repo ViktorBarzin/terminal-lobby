@@ -1,7 +1,7 @@
 // Package siotest provides test doubles for sessionio's interfaces.
 //
 // It is a separate package so the doubles are shared by every module that
-// consumes sessionio — session-events, tl-t3-bridge, tl-t3-sync — without
+// consumes sessionio — session-events, agent-api, spendstore — without
 // widening sessionio's own API with test-only surface. It deliberately does not
 // import sessionio: satisfying the interface structurally keeps sessionio's
 // in-package tests free to import this.
@@ -14,7 +14,7 @@ import (
 
 // FakeOptions stands in for the tmux option store: a set of LIVE sessions, each
 // holding its options. Killing a session drops its options with it, which is
-// the property every durable-binding test leans on.
+// the property every session-lifetime-binding test leans on.
 //
 // It satisfies sessionio.Options. Safe for concurrent use.
 type FakeOptions struct {

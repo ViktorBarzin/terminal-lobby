@@ -29,6 +29,7 @@
  */
 import { createSignal, type Accessor } from "solid-js";
 import { lsGet, lsSet } from "../lib/storage";
+import { SUSPENDED } from "../types/lobby";
 
 export const VISITS_KEY = "tl:session-visits:v1";
 export const STATES_KEY = "tl:session-states:v1";
@@ -60,6 +61,31 @@ export function visitKeyFor(s: VisitSession): string {
 interface StateStamp {
   state: string;
   at: number;
+}
+
+/**
+ * Does this poll's state REPLACE the stored stamp? Suspension does not.
+ *
+ * Two stores write `STATES_KEY` — this one and `store/lobby.ts`, which needs
+ * the same stamp for the working timer — so the rule lives here and both call
+ * it. A copy in each would let them disagree, and the disagreement would be
+ * invisible: whichever ran last on a given poll would win.
+ *
+ * WHY suspension is transparent. Stamping it would rewrite the record twice
+ * over one sweep, done → suspended → done, and the second rewrite lands AFTER
+ * the visit that had already marked the session read. A session somebody
+ * finished with three days ago would come back unread the moment it resumed,
+ * and every suspended session would lose the unread mark it was carrying on
+ * the way in. Leaving the record alone answers both: what a session was when
+ * the sweep found it is what it is when the sweep gives it back, which is also
+ * exactly what tmux-api does server-side with `@tl_suspend_state`.
+ *
+ * The state a suspended session reports is not lost either way — it is on the
+ * session object, as `suspended`, which is what everything that RENDERS reads.
+ * This is only about the seen/unseen latch.
+ */
+export function stampsState(state: string | undefined): boolean {
+  return (state || "") !== SUSPENDED;
 }
 
 /**
@@ -232,9 +258,15 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
   let signature = "";
 
   const isUnseen = (s: VisitSession): boolean => {
-    if (s.state !== "done") return false;
     const key = visitKeyFor(s);
     const rec = states[key];
+    // A SUSPENDED session answers with the state it carried in. The idle sweep
+    // is a decision about memory taken 72 hours after anybody touched the
+    // session; reading is something a person does, and nothing about the sweep
+    // is either. So work that finished unread stays unread while it is away,
+    // and `stampsState` below leaves the record alone to make that possible.
+    const state = s.state === SUSPENDED ? rec?.state : s.state;
+    if (state !== "done") return false;
     return (rec?.at ?? 0) > (visits[key] ?? 0);
   };
 
@@ -300,6 +332,7 @@ export function createVisitStore(opts: VisitStoreOptions = {}): VisitStore {
     }
     for (const s of sessions) {
       const cur = s.state || "";
+      if (!stampsState(cur)) continue;
       const key = visitKeyFor(s);
       const rec = states[key];
       if (!rec || rec.state !== cur) states[key] = { state: cur, at };

@@ -50,7 +50,8 @@ import {
   rememberPromptLine,
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
-import { STATES_KEY } from "./visits";
+import { STATES_KEY, stampsState } from "./visits";
+import { dropHeld } from "./suspend-queue";
 import { applyWatch, carryWatch, loadWatch, setWatchUndo } from "./watchmode";
 import { carryViewMode } from "./viewmode";
 import { carryDraft } from "./drafts";
@@ -174,6 +175,21 @@ export interface LobbyStore {
   prewarm(dir: string): Promise<void>;
   /** Hand back a slot whose create never happened. */
   releasePrewarm(dir: string): Promise<void>;
+  /**
+   * Bring a suspended session back: `claude --resume` in its frozen pane.
+   *
+   * Never called on a live session — the card checks the state first — because
+   * a resume is ~800MB and the server answers 409 for one that does not need
+   * it. Resolves once the request has been answered, not once the conversation
+   * is loaded; the list poll is what reports that.
+   *
+   * TRUE when the session is on its way back (or was already live), FALSE when
+   * the request was refused and a toast has said so. The caller needs the
+   * difference: the row it just clicked stays marked suspended either way, so
+   * without an answer it cannot tell a resume in flight from one that failed,
+   * and a card that assumes the first will never send a second request.
+   */
+  resume(name: string): Promise<boolean>;
   renameProjectAction(oldName: string, newName: string): Promise<boolean>;
   deleteProjectAction(name: string): Promise<void>;
   restore(sel?: RestoreSelection): Promise<void>;
@@ -630,6 +646,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     }
     for (const s of next) {
       const cur = s.state ?? "";
+      // Suspension does not move the stamp. Both writers of STATES_KEY obey
+      // the one rule — see `stampsState` in ./visits, which owns the key and
+      // the reasoning: a sweep is not a person reading anything, so a session
+      // comes out of one carrying the seen/unseen latch it went in with.
+      if (!stampsState(cur)) continue;
       const rec = states[s.name];
       if (!rec || rec.state !== cur) {
         states[s.name] = { state: cur, at: now };
@@ -932,6 +953,40 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   async function releasePrewarm(dir: string): Promise<void> {
     await api.releasePrewarm(dir);
+  }
+
+  /**
+   * Bring a suspended session back, and get the list looking right quickly.
+   *
+   * The burst is the point of doing this here rather than calling the API from
+   * the card. A resume takes 1.7-3.1s and the poll runs every 5s, so without it
+   * the row a person just clicked stays dimmed and marked suspended for most of
+   * a wait they are already spending — and a second click on a row that looks
+   * unchanged is the obvious thing to do next. The same three-step burst a
+   * create uses (700/1600/3000ms) covers both ends of the resume range.
+   *
+   * 409 is NOT a failure worth a toast: it means the session was already live,
+   * which is what a second click on a stale row produces, and the right
+   * response to "it is already back" is to open it. Everything else says so —
+   * a 404 is a session that went away, and silence would leave a person
+   * clicking a row that will never open.
+   *
+   * A server with no resume route at all (`api.resumeSession` absent) is
+   * treated the same way: there is nothing to say, because a server that
+   * predates the sweep never marks anything suspended in the first place.
+   */
+  async function resume(name: string): Promise<boolean> {
+    if (!api.resumeSession) return false;
+    try {
+      await api.resumeSession(name);
+    } catch (e) {
+      if (!(e instanceof ApiError) || e.status !== 409) {
+        showToast(`Couldn't resume ${name}`, "error");
+        return false;
+      }
+    }
+    quickRefreshBurst();
+    return true;
   }
 
   /**
@@ -1273,6 +1328,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   async function sendKill(name: string): Promise<boolean> {
     cancelKill(name); // landing it now, so its window is over either way
+    // Anything still waiting for this session to wake up is never going to be
+    // delivered. The undo window is already over by here, so this is the first
+    // moment the text is certainly unwanted.
+    dropHeld(name);
     let record: RestoreSelection | null = null;
     let killed = true;
     try {
@@ -1869,6 +1928,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     createProject,
     prewarm,
     releasePrewarm,
+    resume,
     renameProjectAction,
     deleteProjectAction,
     restore,

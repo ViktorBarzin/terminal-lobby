@@ -77,6 +77,16 @@ var knownEvents = map[string]bool{
 	// unpinned session — the majority — is silent. tl.session, tl.kind = the
 	// grid asked for, tl.client.
 	"session.grid_sized": true,
+	// A session nobody has driven for days, suspended by tmux-api's sweep:
+	// its claude killed, its tmux session and frozen pane kept, the
+	// conversation one click from coming back (tmux-api/suspend.go). Automatic
+	// only — there is no manual suspend. tl.session, tl.idleSeconds since the
+	// last drive, tl.rssBytes reclaimed across the whole process tree.
+	"session.suspended": true,
+	// …and the click that brought it back. tl.session, tl.suspendedSeconds it
+	// spent suspended, tl.resumeMs for the respawn call itself — Claude's own
+	// boot happens after the pane exists and is the client's to measure.
+	"session.resumed": true,
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)

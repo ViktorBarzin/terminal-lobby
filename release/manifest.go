@@ -227,6 +227,23 @@ type Manifest struct {
 	// was never enabled starts it exactly once; enabling is what brings the box
 	// back after a reboot.
 	Enable []string
+	// Retire is units this package USED to ship and no longer does, as
+	// systemctl patterns (a template's instances need the `@*` form).
+	//
+	// Deleting a unit from Files is only half of a removal. dpkg removes the
+	// files a new version stops shipping, but nothing stops the service that
+	// is running from them: measured on this box 2026-09-19, `tl-t3-sync@wizard`
+	// was loaded, active and running while the upgrade that removed
+	// tl-t3-sync@.service was being written. Left alone it keeps running from
+	// an unlinked binary until someone notices or the box reboots, its
+	// enablement symlink in multi-user.target.wants dangles, and every later
+	// daemon-reload warns about a unit with no file.
+	//
+	// An entry earns its place for ONE release — the first that no longer
+	// ships the unit — and can go once every box has taken it. Harmless to
+	// leave: the teardown is `|| true` all the way down and a pattern matching
+	// nothing does nothing.
+	Retire []string
 }
 
 // ExternalFile reports whether a watched path is installed by another package.
@@ -261,6 +278,10 @@ var Package = Manifest{
 		// consecutive looks, so the previous snapshot has to survive the tick.
 		"tl-session-watch",
 	},
+	// The T3 bridge and its syncer are gone (ADR-0029). This is the release
+	// that stops them: the files go with the manifest entries above, and the
+	// running instance goes here.
+	Retire:   []string{"tl-t3-sync@*.service"},
 	External: []string{"/usr/local/bin/ttyd"},
 	Checks: []Check{
 		{Unit: "tmux-api", Name: "tmux-api /health", URL: "http://127.0.0.1:7684/health", WantStatus: 200},
@@ -324,10 +345,7 @@ var Package = Manifest{
 		{Src: "bin/file-api", Dest: "/usr/local/bin/file-api", Mode: 0o755},
 		{Src: "bin/skills-api", Dest: "/usr/local/bin/skills-api", Mode: 0o755},
 		{Src: "bin/agent-api", Dest: "/usr/local/bin/agent-api", Mode: 0o755},
-		{Src: "bin/tl-t3-sync", Dest: "/usr/local/bin/tl-t3-sync", Mode: 0o755},
 		{Src: "bin/tl-session-watch", Dest: "/usr/local/bin/tl-session-watch", Mode: 0o755},
-		// Spawned by T3 in place of claude, once per thread — no unit supervises it.
-		{Src: "bin/tl-t3-bridge", Dest: "/usr/local/bin/tl-t3-bridge", Mode: 0o755, Unmanaged: true},
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
 		{Src: "devvm/tmux-attach.sh", Dest: "/usr/local/bin/tmux-attach.sh", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-attach", Dest: "/usr/local/bin/tmux-user-attach", Mode: 0o755, Unmanaged: true},
@@ -419,7 +437,6 @@ var Package = Manifest{
 		{Src: "devvm/agent-api.service", Dest: "/etc/systemd/system/agent-api.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.service", Dest: "/etc/systemd/system/clipboard-cleanup.service", Mode: 0o644},
 		{Src: "devvm/clipboard-cleanup.timer", Dest: "/etc/systemd/system/clipboard-cleanup.timer", Mode: 0o644},
-		{Src: "devvm/tl-t3-sync@.service", Dest: "/etc/systemd/system/tl-t3-sync@.service", Mode: 0o644},
 		{Src: "devvm/tl-session-watch.service", Dest: "/etc/systemd/system/tl-session-watch.service", Mode: 0o644},
 
 		// The grant every attach depends on. visudo -cf gates it, because a
@@ -473,10 +490,6 @@ var Package = Manifest{
 		{Name: "tl-session-watch", Files: []string{
 			"/usr/local/bin/tl-session-watch",
 			"/etc/systemd/system/tl-session-watch.service",
-		}},
-		{Name: "tl-t3-sync@", Template: true, Files: []string{
-			"/usr/local/bin/tl-t3-sync",
-			"/etc/systemd/system/tl-t3-sync@.service",
 		}},
 	},
 }
@@ -560,6 +573,19 @@ if [ -e /etc/sudoers.d/tl-reconcile ] && ! visudo -cf /etc/sudoers.d/tl-reconcil
   echo "terminal-lobby: /etc/sudoers.d/tl-reconcile is malformed; refusing to configure" >&2
   exit 1
 fi
+
+# Units this package used to ship. dpkg has already deleted their files by the
+# time this runs, which is exactly why they are stopped BY NAME here: a service
+# started from a binary that no longer exists keeps running until someone
+# notices, and systemctl disable cannot clean up a want whose unit file has
+# gone, so the symlinks are removed by hand. Every step is best-effort — a
+# pattern that matches nothing is not a failure, and neither is a box that
+# never had it.
+for unit in UNITS_TO_RETIRE; do
+  systemctl stop "$unit" >/dev/null 2>&1 || true
+  systemctl disable "$unit" >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/*.wants/$unit
+done
 
 MIGRATE_CONFIG
 

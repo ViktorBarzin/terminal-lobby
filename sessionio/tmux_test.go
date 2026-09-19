@@ -189,33 +189,33 @@ func TestNewSessionCreatesADrivableSession(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
 	dir := t.TempDir()
 
-	if in.HasSession(osUser, "t3e2e-fresh") {
+	if in.HasSession(osUser, "siotest-fresh") {
 		t.Fatal("the scratch server is not empty")
 	}
 	if err := in.NewSession(NewSessionSpec{
-		OSUser: osUser, Name: "t3e2e-fresh", Dir: dir,
+		OSUser: osUser, Name: "siotest-fresh", Dir: dir,
 		Command: []string{"sh"},
 		Env:     map[string]string{"TL_MARKER": "resurrected"},
 	}); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	if !in.HasSession(osUser, "t3e2e-fresh") {
+	if !in.HasSession(osUser, "siotest-fresh") {
 		t.Fatal("the session was created but does not resolve")
 	}
 
 	// It is a real session: options stamp, and the directory and environment
 	// asked for are the ones it got. Claude reads several env vars at startup,
 	// so passing them at creation is the only chance.
-	if err := in.SetOption(osUser, "t3e2e-fresh", OptionThread, "thread-1"); err != nil {
+	if err := in.SetOption(osUser, "siotest-fresh", OptionTitle, "thread-1"); err != nil {
 		t.Fatalf("SetOption on the new session: %v", err)
 	}
-	if v, ok := in.Option(osUser, "t3e2e-fresh", OptionThread); !ok || v != "thread-1" {
-		t.Fatalf("@t3_thread = (%q, %v)", v, ok)
+	if v, ok := in.Option(osUser, "siotest-fresh", OptionTitle); !ok || v != "thread-1" {
+		t.Fatalf("@title = (%q, %v)", v, ok)
 	}
-	if v, ok := in.Option(osUser, "t3e2e-fresh", "session_path"); !ok || v != dir {
+	if v, ok := in.Option(osUser, "siotest-fresh", "session_path"); !ok || v != dir {
 		t.Fatalf("session_path = (%q, %v), want %q", v, ok, dir)
 	}
-	out, err := in.Command(osUser, "show-environment", "-t", "t3e2e-fresh", "TL_MARKER").Output()
+	out, err := in.Command(osUser, "show-environment", "-t", "siotest-fresh", "TL_MARKER").Output()
 	if err != nil || strings.TrimSpace(string(out)) != "TL_MARKER=resurrected" {
 		t.Fatalf("session environment = %q (%v), want TL_MARKER=resurrected", out, err)
 	}
@@ -233,11 +233,11 @@ func TestNewSessionSaysAPersonAskedForIt(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
 
 	if err := in.NewSession(NewSessionSpec{
-		OSUser: osUser, Name: "t3e2e-origin", Command: []string{"sh"},
+		OSUser: osUser, Name: "siotest-origin", Command: []string{"sh"},
 	}); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
-	v, ok := in.Option(osUser, "t3e2e-origin", OptionOrigin)
+	v, ok := in.Option(osUser, "siotest-origin", OptionOrigin)
 	if !ok || v != OriginUser {
 		t.Fatalf("%s = (%q, %v), want (%q, true)", OptionOrigin, v, ok, OriginUser)
 	}
@@ -249,7 +249,7 @@ func TestNewSessionSaysAPersonAskedForIt(t *testing.T) {
 // conversation.
 func TestNewSessionRefusesAnExistingName(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
-	spec := NewSessionSpec{OSUser: osUser, Name: "t3e2e-taken", Command: []string{"sh"}}
+	spec := NewSessionSpec{OSUser: osUser, Name: "siotest-taken", Command: []string{"sh"}}
 	if err := in.NewSession(spec); err != nil {
 		t.Fatalf("first NewSession: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestListSessionsAndKillSession(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	for _, name := range []string{"t3e2e-one", "t3e2e-two"} {
+	for _, name := range []string{"siotest-one", "siotest-two"} {
 		if err := in.NewSession(NewSessionSpec{OSUser: osUser, Name: name, Dir: dir, Command: []string{"sh"}}); err != nil {
 			t.Fatalf("NewSession %s: %v", name, err)
 		}
@@ -289,20 +289,20 @@ func TestListSessionsAndKillSession(t *testing.T) {
 	for _, s := range got {
 		names[s.Name] = s.Dir
 	}
-	if len(names) != 2 || names["t3e2e-one"] != dir || names["t3e2e-two"] != dir {
+	if len(names) != 2 || names["siotest-one"] != dir || names["siotest-two"] != dir {
 		t.Fatalf("ListSessions = %+v, want both sessions with dir %s", got, dir)
 	}
 
-	if err := in.KillSession(osUser, "t3e2e-one"); err != nil {
+	if err := in.KillSession(osUser, "siotest-one"); err != nil {
 		t.Fatalf("KillSession: %v", err)
 	}
-	if in.HasSession(osUser, "t3e2e-one") {
+	if in.HasSession(osUser, "siotest-one") {
 		t.Fatal("the killed session still resolves")
 	}
-	if !in.HasSession(osUser, "t3e2e-two") {
+	if !in.HasSession(osUser, "siotest-two") {
 		t.Fatal("killing one session took the other with it")
 	}
-	if err := in.KillSession(osUser, "t3e2e-one"); err == nil {
+	if err := in.KillSession(osUser, "siotest-one"); err == nil {
 		t.Fatal("KillSession reported success for a session that does not exist")
 	}
 }
@@ -326,19 +326,19 @@ func TestHasSessionDistinguishesMissingFromUnstamped(t *testing.T) {
 // manufactured routinely: a resurrection that finds `agent` taken creates
 // `agent-2`, and `agent` is then free to die.
 //
-// Measured on tmux 3.4: with only `t3e2e-sib-2` alive, `send-keys -t t3e2e-sib`
-// exits 0 and the keys arrive in `t3e2e-sib-2`; `kill-session -t t3e2e-sib`
+// Measured on tmux 3.4: with only `siotest-sib-2` alive, `send-keys -t siotest-sib`
+// exits 0 and the keys arrive in `siotest-sib-2`; `kill-session -t siotest-sib`
 // kills it. Every verb below must fail closed instead.
 func TestVerbsRefuseAPrefixMatchOnAnAbsentSession(t *testing.T) {
 	in, osUser, sock := scratchServer(t)
 	if err := in.NewSession(NewSessionSpec{
-		OSUser: osUser, Name: "t3e2e-sib-2", Command: []string{"sh"},
+		OSUser: osUser, Name: "siotest-sib-2", Command: []string{"sh"},
 	}); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	const absent = "t3e2e-sib" // a prefix of the live one, and not a session
+	const absent = "siotest-sib" // a prefix of the live one, and not a session
 
 	if in.HasSession(osUser, absent) {
 		t.Fatalf("HasSession(%q) answered yes for a session that does not exist", absent)
@@ -349,7 +349,7 @@ func TestVerbsRefuseAPrefixMatchOnAnAbsentSession(t *testing.T) {
 	if err := in.Cancel(osUser, absent); err == nil {
 		t.Errorf("Cancel(%q) succeeded against an absent session", absent)
 	}
-	if err := in.SetOption(osUser, absent, OptionThread, "wrong-thread"); err == nil {
+	if err := in.SetOption(osUser, absent, OptionTitle, "wrong-thread"); err == nil {
 		t.Errorf("SetOption(%q) succeeded against an absent session", absent)
 	}
 	if err := in.KillSession(osUser, absent); err == nil {
@@ -358,13 +358,13 @@ func TestVerbsRefuseAPrefixMatchOnAnAbsentSession(t *testing.T) {
 
 	// The live sibling must be untouched: still there, unstamped, and with
 	// nothing typed into its pane.
-	if !in.HasSession(osUser, "t3e2e-sib-2") {
+	if !in.HasSession(osUser, "siotest-sib-2") {
 		t.Fatal("the prefix-matching verbs killed the live sibling")
 	}
-	if v, ok := in.Option(osUser, "t3e2e-sib-2", OptionThread); ok && v != "" {
-		t.Errorf("@t3_thread on the sibling = %q; a stray SetOption landed on it", v)
+	if v, ok := in.Option(osUser, "siotest-sib-2", OptionTitle); ok && v != "" {
+		t.Errorf("@title on the sibling = %q; a stray SetOption landed on it", v)
 	}
-	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "t3e2e-sib-2").Output()
+	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "siotest-sib-2").Output()
 	if err != nil {
 		t.Fatalf("capture-pane: %v", err)
 	}
@@ -378,36 +378,36 @@ func TestVerbsRefuseAPrefixMatchOnAnAbsentSession(t *testing.T) {
 func TestVerbsStillWorkOnAnExactName(t *testing.T) {
 	in, osUser, sock := scratchServer(t)
 	if err := in.NewSession(NewSessionSpec{
-		OSUser: osUser, Name: "t3e2e-exact-2", Command: []string{"sh"},
+		OSUser: osUser, Name: "siotest-exact-2", Command: []string{"sh"},
 	}); err != nil {
 		t.Fatalf("NewSession: %v", err)
 	}
 	time.Sleep(150 * time.Millisecond)
 
-	if err := in.Prompt(osUser, "t3e2e-exact-2", "echo exact-marker"); err != nil {
+	if err := in.Prompt(osUser, "siotest-exact-2", "echo exact-marker"); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
-	if err := in.SetOption(osUser, "t3e2e-exact-2", OptionThread, "thread-9"); err != nil {
+	if err := in.SetOption(osUser, "siotest-exact-2", OptionTitle, "thread-9"); err != nil {
 		t.Fatalf("SetOption: %v", err)
 	}
-	if v, ok := in.Option(osUser, "t3e2e-exact-2", OptionThread); !ok || v != "thread-9" {
-		t.Fatalf("@t3_thread = (%q, %v), want thread-9", v, ok)
+	if v, ok := in.Option(osUser, "siotest-exact-2", OptionTitle); !ok || v != "thread-9" {
+		t.Fatalf("@title = (%q, %v), want thread-9", v, ok)
 	}
-	if err := in.Cancel(osUser, "t3e2e-exact-2"); err != nil {
+	if err := in.Cancel(osUser, "siotest-exact-2"); err != nil {
 		t.Fatalf("Cancel: %v", err)
 	}
 	time.Sleep(300 * time.Millisecond)
-	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "t3e2e-exact-2").Output()
+	out, err := exec.Command("tmux", "-L", sock, "capture-pane", "-p", "-t", "siotest-exact-2").Output()
 	if err != nil {
 		t.Fatalf("capture-pane: %v", err)
 	}
 	if !strings.Contains(string(out), "exact-marker") {
 		t.Fatalf("the prompt never reached the pane:\n%s", out)
 	}
-	if err := in.KillSession(osUser, "t3e2e-exact-2"); err != nil {
+	if err := in.KillSession(osUser, "siotest-exact-2"); err != nil {
 		t.Fatalf("KillSession: %v", err)
 	}
-	if in.HasSession(osUser, "t3e2e-exact-2") {
+	if in.HasSession(osUser, "siotest-exact-2") {
 		t.Fatal("KillSession left the session alive")
 	}
 }
@@ -543,7 +543,7 @@ func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
 	}
 	// The recorder is what makes the assertion above mean anything, so prove a
 	// name the guard ALLOWS does reach it.
-	in.Option("wizard", "demo", OptionThread)
+	in.Option("wizard", "demo", OptionTitle)
 	if runs := argv(); len(runs) != 1 {
 		t.Fatalf("the recorder saw %d runs for a legal name, want 1, so the refusals above prove nothing", len(runs))
 	}
@@ -551,19 +551,19 @@ func TestOptionRefusesANameThatWouldRunACommand(t *testing.T) {
 
 // TL-22, the other latent half. The `--` is defence in depth rather than a fix
 // for a live bug: tmux 3.4 stores the positional after the name verbatim
-// however it looks (measured — `set-option -t demo @t3_thread -g` stores "-g").
+// however it looks (measured — `set-option -t demo @title -g` stores "-g").
 // So a round-trip through a real tmux passes with the `--` deleted, and the
 // argv is the only place the marker is visible.
 func TestSetOptionPinsTheValueBehindAnEndOfFlagsMarker(t *testing.T) {
 	in, argv := recordingInjector(t)
-	if err := in.SetOption("wizard", "demo", OptionThread, "-not-a-flag"); err != nil {
+	if err := in.SetOption("wizard", "demo", OptionTitle, "-not-a-flag"); err != nil {
 		t.Fatalf("SetOption: %v", err)
 	}
 	runs := argv()
 	if len(runs) != 1 {
 		t.Fatalf("tmux ran %d times, want 1: %v", len(runs), runs)
 	}
-	want := []string{"set-option", "-t", "=demo:", "--", OptionThread, "-not-a-flag"}
+	want := []string{"set-option", "-t", "=demo:", "--", OptionTitle, "-not-a-flag"}
 	if strings.Join(runs[0], " ") != strings.Join(want, " ") {
 		t.Errorf("argv = %v, want %v", runs[0], want)
 	}
@@ -603,8 +603,8 @@ func TestNewSessionStampsTheOriginTheCallerNames(t *testing.T) {
 	in, osUser, _ := scratchServer(t)
 
 	for _, tc := range []struct{ name, origin, want string }{
-		{"t3e2e-origin-named", "muse", "muse"},
-		{"t3e2e-origin-empty", "", OriginUser},
+		{"siotest-origin-named", "muse", "muse"},
+		{"siotest-origin-empty", "", OriginUser},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := in.NewSession(NewSessionSpec{

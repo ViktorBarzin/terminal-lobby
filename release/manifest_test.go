@@ -84,8 +84,7 @@ func TestEveryShippedBinaryHasAUnitOrIsDeliberatelyUnmanaged(t *testing.T) {
 			watched[f] = true
 		}
 	}
-	// tl-t3-bridge is spawned by T3 per turn, not run as a unit; the helper
-	// scripts are invoked by ttyd and by sessions.
+	// The helper scripts are invoked by ttyd and by sessions, not by a unit.
 	for _, f := range Package.Files {
 		if !strings.HasPrefix(f.Dest, "/usr/local/bin/") || f.Unmanaged {
 			continue
@@ -412,6 +411,72 @@ func TestEveryServiceAPersonUsesKeepsAGatingCheck(t *testing.T) {
 		if !gating[u.Name] {
 			t.Errorf("unit %s has only advisory checks; a release could break it and "+
 				"still be kept", u.Name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Units this package used to ship.
+
+// Deleting a unit from the manifest removes its FILES and nothing else. dpkg
+// deletes what a new version stops shipping, and the postinst only ever
+// enabled things — so the service carried on running from an unlinked binary.
+// Measured on this box 2026-09-19, while the change that removed it was being
+// written: `tl-t3-sync@wizard.service loaded active running`, its unit file
+// still on disk and its enablement symlink in multi-user.target.wants.
+func TestPostinstStopsTheUnitsThePackageRetired(t *testing.T) {
+	if len(Package.Retire) == 0 {
+		t.Skip("nothing is being retired in this release")
+	}
+	for _, want := range []string{
+		"for unit in UNITS_TO_RETIRE",
+		`systemctl stop "$unit"`,
+		`systemctl disable "$unit"`,
+		// `disable` cannot remove a want whose unit file dpkg has already
+		// deleted, so the dangling symlink goes by hand.
+		"rm -f /etc/systemd/system/*.wants/$unit",
+	} {
+		if !strings.Contains(PostinstScript, want) {
+			t.Errorf("postinst does not %q, so a retired unit keeps running after the upgrade", want)
+		}
+	}
+	// Best-effort all the way down: a box that never had the unit must not
+	// fail its upgrade over it, and postinst runs under `set -e`.
+	for _, line := range strings.Split(PostinstScript, "\n") {
+		if strings.Contains(line, "systemctl stop \"$unit\"") || strings.Contains(line, "systemctl disable \"$unit\"") {
+			if !strings.Contains(line, "|| true") {
+				t.Errorf("under set -e this aborts the upgrade on a box that never had the unit: %s", line)
+			}
+		}
+	}
+}
+
+// A retired unit is one the package no longer installs. An entry that still
+// has a unit file in the manifest would stop a service the same upgrade puts
+// back, which reads as a flap rather than a removal.
+func TestRetiredUnitsAreNotStillShipped(t *testing.T) {
+	for _, pattern := range Package.Retire {
+		base := strings.TrimSuffix(strings.ReplaceAll(pattern, "*", ""), ".service")
+		for _, u := range Package.Units {
+			if strings.TrimSuffix(u.Name, "@") == strings.TrimSuffix(base, "@") {
+				t.Errorf("%q is retired and still shipped as unit %q", pattern, u.Name)
+			}
+		}
+		for _, f := range Package.Files {
+			if strings.Contains(f.Dest, strings.TrimSuffix(base, "@")) && strings.HasSuffix(f.Dest, ".service") {
+				t.Errorf("%q is retired and the package still installs %s", pattern, f.Dest)
+			}
+		}
+	}
+}
+
+// A template unit is addressed by its instances. `tl-t3-sync@.service` matches
+// no running unit — the thing on the box is `tl-t3-sync@wizard.service` — so a
+// pattern without the `@*` would stop nothing at all.
+func TestRetiredTemplateUnitsUseTheInstanceGlob(t *testing.T) {
+	for _, pattern := range Package.Retire {
+		if strings.Contains(pattern, "@") && !strings.Contains(pattern, "@*") {
+			t.Errorf("%q names a template rather than its instances; use the @* form", pattern)
 		}
 	}
 }

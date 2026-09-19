@@ -28,16 +28,18 @@ What the pieces are and how a request reaches a terminal.
 
 ## Go modules
 
-Fifteen Go modules, joined by 21 `replace` edges to six shared libraries.
-Every edge is imported by non-test code, so none of them is dead.
+Fourteen Go modules, joined by 20 `replace` edges to six shared libraries.
+Every edge is imported by non-test code, so none of them is dead. Counted after
+ADR-0029 removed `t3-bridge` and `t3-sync`, which were two of the modules and
+four of the edges.
 
 ```mermaid
 flowchart LR
   subgraph libs["shared libraries"]
-    telemetry["telemetry - 5 consumers"]
+    telemetry["telemetry - 6 consumers"]
     authuser["authuser - 6 consumers"]
-    sessionio["sessionio - 5 consumers"]
-    slug["slug - 2 consumers"]
+    sessionio["sessionio - 4 consumers"]
+    slug["slug - 1 consumer"]
     skillscan["skillscan - 1 consumer"]
     spendstore["spendstore - 2 consumers"]
   end
@@ -48,9 +50,8 @@ flowchart LR
     skillsapi["skills-api"]
     clipboard["clipboard-upload"]
   end
-  subgraph standalone["standalone binaries"]
-    t3bridge["t3-bridge"]
-    t3sync["t3-sync"]
+  subgraph standalone["binaries outside the image"]
+    agentapi["agent-api"]
     watch["tl-session-watch"]
     release["release"]
   end
@@ -72,12 +73,13 @@ flowchart LR
   skillsapi --> skillscan
   clipboard --> telemetry
   clipboard --> authuser
-  t3bridge --> sessionio
-  t3bridge --> slug
-  t3sync --> authuser
-  t3sync --> sessionio
+  agentapi --> telemetry
+  agentapi --> authuser
+  agentapi --> sessionio
 ```
 
+`agent-api` ships in the `.deb` as a systemd unit but is not bundled into the
+container image, so a change to a library it shares does not rebuild that image.
 `tl-session-watch` and `release` stand alone: they require no local module, and
 nothing requires them.
 

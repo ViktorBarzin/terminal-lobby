@@ -18,11 +18,11 @@ const originOption = "@tl_origin"
 
 // Who made a session, as stamped into @tl_origin.
 //
-// Only two values are ever written. `user` comes from the lobby's own create
-// path (devvm/tmux-user-attach), `test` from the harnesses that drive the real
-// deployed lobby on purpose — scripts/qa-harness.py, qa_driver and
-// t3-bridge/e2e/lib.sh. A third state exists and has no constant, because it is
-// the ABSENCE of the option: nobody stamped it.
+// `user` comes from the lobby's own create path (devvm/tmux-user-attach),
+// `test` from the harnesses that drive the real deployed lobby on purpose —
+// scripts/qa-harness.py and qa_driver. agent-api writes the name of the
+// credential that asked for the session. A further state exists and has no
+// constant, because it is the ABSENCE of the option: nobody stamped it.
 const (
 	originUser = "user"
 	originTest = "test"

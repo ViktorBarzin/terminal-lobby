@@ -37,7 +37,7 @@ func TestTranscriptSlugMatchesClaudeCode(t *testing.T) {
 		{"plain", "/home/wizard/code/terminal-lobby", "-home-wizard-code-terminal-lobby"},
 		{"leading-dot component", "/home/wizard/code/infra/.worktrees/ingress-factory-nullguard",
 			"-home-wizard-code-infra--worktrees-ingress-factory-nullguard"},
-		{"dot inside a component", "/tmp/tl-t3-e2e.9eW/ws", "-tmp-tl-t3-e2e-9eW-ws"},
+		{"dot inside a component", "/tmp/tl-sio-e2e.9eW/ws", "-tmp-tl-sio-e2e-9eW-ws"},
 		{"underscore", "/home/wizard/my_dir", "-home-wizard-my-dir"},
 		{"space", "/home/wizard/two words", "-home-wizard-two-words"},
 		{"case is kept", "/home/wizard/CamelCase", "-home-wizard-CamelCase"},

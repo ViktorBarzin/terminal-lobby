@@ -239,6 +239,17 @@ func parseSessions(out []byte) []Session {
 		if !knownStates[state] {
 			state = ""
 		}
+		// @tl_suspended is parsed leniently for the same reason @last_drive is:
+		// an unset option renders EMPTY, which is every live session there is.
+		// When it IS set it WINS over whatever the hook last wrote, because the
+		// hook's state describes a claude that no longer exists — the process
+		// was killed on purpose and the state it left behind is the state the
+		// resume will put back (@tl_suspend_state), not the state the session
+		// is in now.
+		suspendedAt, _ := strconv.ParseInt(parts[suspendedColumn], 10, 64)
+		if suspendedAt > 0 {
+			state = stateSuspended
+		}
 		panePID, _ := strconv.Atoi(parts[8])
 		// The grid is parsed LENIENTLY and reported as 0 when tmux says
 		// anything this cannot read. A session whose window size is unknown is
@@ -273,9 +284,10 @@ func parseSessions(out []byte) []Session {
 			// nothing in this repo writes reaches it intact rather than being
 			// quietly normalised to "" here and read as a different kind of
 			// unknown.
-			Origin: parts[originColumn],
-			Cols:   cols,
-			Rows:   rows,
+			Origin:      parts[originColumn],
+			Cols:        cols,
+			Rows:        rows,
+			SuspendedAt: suspendedAt,
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.

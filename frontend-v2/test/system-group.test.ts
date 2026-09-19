@@ -88,9 +88,9 @@ describe("deriveSidebar / System", () => {
   });
 
   it("leaves a system session where the layout explicitly put it (the rescue)", () => {
-    const l = layout({ projects: [{ name: "work", sessions: ["t3e2e-1"] }], ungroupedIndex: 1 });
-    const m = deriveSidebar(l, [sess("t3e2e-1", { origin: "test" })], ME);
-    expect(names(m.groups.find((g) => g.name === "work")!.sessions)).toEqual(["t3e2e-1"]);
+    const l = layout({ projects: [{ name: "work", sessions: ["tlp-t1"] }], ungroupedIndex: 1 });
+    const m = deriveSidebar(l, [sess("tlp-t1", { origin: "test" })], ME);
+    expect(names(m.groups.find((g) => g.name === "work")!.sessions)).toEqual(["tlp-t1"]);
     expect(m.groups.find((g) => g.kind === "system")!.sessions).toEqual([]);
   });
 

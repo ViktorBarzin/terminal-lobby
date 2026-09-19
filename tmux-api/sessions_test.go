@@ -50,6 +50,16 @@ func rowOrigin(bg, born, created, origin string, fields ...string) string {
 // rather than appended. EMPTY is what a tmux that answers neither reports, and
 // what every fixture written before the columns existed keeps saying.
 func rowGrid(bg, born, created, origin, cols, rows string, fields ...string) string {
+	return rowSuspended(bg, born, created, origin, cols, rows, "", fields...)
+}
+
+// rowSuspended is the same line with @tl_suspended filled in too — the unix
+// second a session was suspended, which is what makes it read as suspended at
+// all (suspend.go). It sits at suspendedColumn, the last column before
+// pane_title, so it is spliced rather than appended for the reason rowCreated
+// gives. EMPTY is what every live session reports, and what every fixture
+// written before the column existed keeps saying.
+func rowSuspended(bg, born, created, origin, cols, rows, suspended string, fields ...string) string {
 	if len(fields) < bgColumn {
 		return strings.Join(fields, listSep)
 	}
@@ -85,7 +95,14 @@ func rowGrid(bg, born, created, origin, cols, rows string, fields ...string) str
 	withGrid = append(withGrid, withOrigin[:gridColsColumn]...)
 	withGrid = append(withGrid, cols, rows)
 	withGrid = append(withGrid, withOrigin[gridColsColumn:]...)
-	return strings.Join(withGrid, listSep)
+	if len(withGrid) < suspendedColumn {
+		return strings.Join(withGrid, listSep)
+	}
+	withSuspended := make([]string, 0, len(withGrid)+1)
+	withSuspended = append(withSuspended, withGrid[:suspendedColumn]...)
+	withSuspended = append(withSuspended, suspended)
+	withSuspended = append(withSuspended, withGrid[suspendedColumn:]...)
+	return strings.Join(withSuspended, listSep)
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which

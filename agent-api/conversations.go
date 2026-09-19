@@ -62,6 +62,12 @@ type Conversation struct {
 	QueuedTurns int `json:"queued_turns"`
 }
 
+// stateSuspendedName is this service's word for a conversation the idle sweep
+// has put to sleep: its Claude was killed to give the memory back, its
+// transcript is on disk, and someone has to bring it back from the lobby
+// before it can take another message.
+const stateSuspendedName = "suspended"
+
 // stateName maps @claude_state onto the API's vocabulary.
 func stateName(raw string) string {
 	switch strings.TrimSpace(raw) {
@@ -82,13 +88,25 @@ func (s *Server) conversationFrom(live LiveSession, actor string) Conversation {
 	if name == "" {
 		name = live.Name
 	}
+	// The mark WINS over @claude_state, for the reason tmux-api's own parser
+	// gives it the same precedence: the state on the session describes a
+	// Claude that no longer exists, and reporting that `done` would tell a
+	// caller the conversation is idle and ready when it cannot take a message
+	// at all.
+	state := stateName(live.State)
+	if live.Suspended {
+		state = stateSuspendedName
+	}
 	return Conversation{
-		ID:          live.ID(),
-		Name:        name,
-		CWD:         live.Dir,
-		State:       stateName(live.State),
-		CreatedBy:   live.Owner,
-		Writable:    live.Owner != "" && live.Owner == actor,
+		ID:        live.ID(),
+		Name:      name,
+		CWD:       live.Dir,
+		State:     state,
+		CreatedBy: live.Owner,
+		// Ownership AND a Claude to write to. A suspended conversation is
+		// still this caller's, which `created_by` says; what it is not is
+		// writable, and answering true here would send a caller into a 409.
+		Writable:    live.Owner != "" && live.Owner == actor && !live.Suspended,
 		QueuedTurns: s.Runner.Ahead(live.ID()),
 	}
 }
@@ -253,11 +271,10 @@ func (s *Server) createConversation(c *call) (any, error) {
 
 // claudeCommandLine builds the shell line tmux runs in the new session.
 //
-// ONE already-quoted string rather than an argv, for the reason t3-bridge's
-// resurrectCommandLine documents: tmux's new-session joins several arguments
-// with spaces and hands the result to /bin/sh, so anything carrying a space or
-// a quote arrives split. Quoting here and passing a single element makes both
-// paths identical.
+// ONE already-quoted string rather than an argv, because tmux's new-session
+// joins several arguments with spaces and hands the result to /bin/sh, so
+// anything carrying a space or a quote arrives split. Quoting here and passing
+// a single element keeps the line the caller asked for.
 func claudeCommandLine(bin string, req createRequest) string {
 	args := []string{bin}
 	if req.Model != "" {
@@ -363,6 +380,16 @@ func (s *Server) postMessage(c *call) (any, error) {
 // name reused after a session dies starts unowned.
 func (s *Server) mayWrite(live LiveSession, actor string) error {
 	switch {
+	case live.Suspended:
+		// Accepting this would answer 202 and then fail inside the runner,
+		// where the caller sees a turn that never started: `paste-buffer`
+		// against a dead pane answers "target pane has exited" (measured on
+		// tmux 3.4), and against a restored session whose wrapper shell
+		// outlived its Claude the message is typed at a bash prompt instead.
+		// Refusing up front, with the reason, is the only honest answer this
+		// service can give until it can resume a conversation itself.
+		return conflict("conversation %q was suspended after sitting idle: its Claude was stopped to give the memory back "+
+			"and the transcript is on disk, so it has to be resumed from the lobby before it can take a message", live.Name)
 	case live.Owner == "":
 		return forbidden("conversation %q was not created through this API, so it is readable but not writable "+
 			"(it belongs to whoever started it in the terminal)", live.Name)

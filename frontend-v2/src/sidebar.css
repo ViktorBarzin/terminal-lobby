@@ -652,6 +652,28 @@
 .tl-card[data-killing] .tl-card-name {
   text-decoration: line-through;
 }
+
+/* SUSPENDED: the idle sweep took this session's claude process back, and the
+   row is the way to get it again.
+
+   DIMMED, NOT DISABLED, and the number is the whole of the difference. A dying
+   row drops to 0.45 because nothing is being asked of the reader. This row is
+   a target — it is the only way back into the conversation — so it sits at
+   0.68, which keeps --text over --bg-sidebar above 5:1 on every theme here
+   while still reading as quieter than its neighbours at a glance down forty
+   rows.
+
+   Dimming the CHILDREN rather than the row, for the same two reasons the kill
+   window does it: an `opacity` on .tl-card makes a group that the focus ring
+   cannot climb out of, and one child has to stay at full strength. Here that
+   child is the state dot — it is the precise signal, 8px of it, and fading the
+   mark that says "suspended" to explain that the row is suspended is circular.
+   ::before is the active/unseen accent bar, part of the row rather than a
+   child of it. */
+.tl-card-suspended > *:not(.tl-state-dot),
+.tl-card-suspended::before {
+  opacity: 0.68;
+}
 /* A member of the Workspace on screen, other than the focused tile: this
    session is one of the terminals in front of you, and is not the one taking
    your keystrokes.
@@ -731,11 +753,7 @@
    invisible on every screen but one. */
 .tl-card-grouped {
   border-color: oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue) / 0.5);
-  background: color-mix(
-    in srgb,
-    oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue)) 7%,
-    transparent
-  );
+  background: color-mix(in srgb, oklch(var(--ws-l) var(--ws-c) var(--tl-ws-hue)) 7%, transparent);
 }
 /* The same colour, said louder: this is the group ON SCREEN. Same hue rather
    than a different one, because these rows and the ones above are the same kind
@@ -1007,6 +1025,21 @@
    is room for it. */
 .tl-state-done.tl-state-unseen {
   opacity: 1;
+}
+/* The fourth state: a HOLLOW ring where every other dot is filled.
+
+   A shape rather than a fifth colour, and deliberately so. The three filled
+   dots already spend the palette's distinguishable hues, and a fourth would
+   have to sit between them; an empty centre is legible at 8px, survives a
+   monochrome or colour-blind reading, and says the right thing on its own —
+   there is nothing running in there. --text-muted rather than an accent for
+   the same reason: a suspended session is not asking for anything.
+
+   No animation. Running pulses because it is changing; this is the state that
+   changes least of the four. */
+.tl-state-suspended {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--text-muted);
 }
 @keyframes tl-state-pulse {
   0%,

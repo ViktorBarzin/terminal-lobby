@@ -20,6 +20,7 @@ import {
   MIN_WORKSPACE_MEMBERS,
   NAME_RE,
   sessionLabel,
+  SUSPENDED,
   type Layout,
   type SessionTool,
   type Workspace,
@@ -2645,9 +2646,7 @@ export const App: Component = () => {
                       // question "is this mine to retitle". `store.rename` puts
                       // the same PUT out that the card does, and the poll
                       // brings the new title back to both surfaces at once.
-                      onRename={
-                        k.owner ? undefined : (title) => void store.rename(k.name, title)
-                      }
+                      onRename={k.owner ? undefined : (title) => void store.rename(k.name, title)}
                       // THE KILL WINDOW, drawn where the person is standing.
                       // Killing a tiled session dims the sidebar card and
                       // counts it down; until these four props were passed the
@@ -2763,6 +2762,15 @@ export const App: Component = () => {
                         store.sessions.some((s) => s.name === k.name && s.driven === true)
                       }
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
+                      // The idle sweep took this session's claude back. The
+                      // view keeps working — the frozen pane is worth reading
+                      // and the transcript is all still there — but anything
+                      // it would SEND waits until the resume lands.
+                      //
+                      // BY KEY, through `tileSession`, for the reason that
+                      // lookup exists: your `auth` and emo's `auth` are two
+                      // rows in one list.
+                      suspended={() => tileSession()?.state === SUSPENDED}
                       // THE SESSION'S OWN WINDOW SIZE, for a tile that is
                       // WATCHING: it never claims the Grid, so this is the only
                       // thing that can tell its terminal how big the session it

@@ -8,7 +8,7 @@ import (
 // The record-type triage is a WHITELIST: only assistant and user carry
 // conversation, and everything else — including record types Claude Code has
 // not invented yet — is dropped. Blacklisting would mean each new type leaks
-// into a T3 thread as a malformed message until somebody notices.
+// into the Text view as a malformed message until somebody notices.
 //
 // The inputs are the types measured in wizard's own transcripts on 2026-08-15
 // (40 most recent files, 33,000 records): assistant, user, attachment,
@@ -53,12 +53,11 @@ func TestDecodeRecordRejectsNonJSON(t *testing.T) {
 	}
 }
 
-// The bridge forwards a transcript assistant record to T3 by re-emitting its
-// `message` object under a stream-json envelope (design: "translation is a thin
-// key mapping, not a rewrite"). That only holds if the message survives
-// decoding BYTE FOR BYTE — usage, model, stop_sequence, whatever a future
-// Claude adds — so Raw must be the original bytes, not a re-encoding of the
-// fields this package happens to know about.
+// A consumer that forwards a transcript assistant record onward re-emits its
+// `message` object whole rather than rebuilding it field by field. That only
+// holds if the message survives decoding BYTE FOR BYTE — usage, model,
+// stop_sequence, whatever a future Claude adds — so Raw must be the original
+// bytes, not a re-encoding of the fields this package happens to know about.
 func TestRecordKeepsTheMessageObjectVerbatim(t *testing.T) {
 	const line = `{"type":"assistant","uuid":"u1","parentUuid":"u0","sessionId":"sess-1","cwd":"/home/wizard/x",` +
 		`"timestamp":"2026-08-15T10:00:00Z","message":{"model":"claude-opus-5","id":"msg_1","type":"message",` +

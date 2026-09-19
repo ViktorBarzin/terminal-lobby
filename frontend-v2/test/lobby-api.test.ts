@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
+  ApiError,
   killSession,
   killSessionKeepalive,
   listSessions,
   putLayout,
   restoreSessions,
+  resumeSession,
   withDeadline,
   REQUEST_TIMEOUT_MS,
   RESTORE_TIMEOUT_MS,
@@ -245,5 +247,33 @@ describe("the kill fired on the way out of the page", () => {
     );
 
     expect(() => killSessionKeepalive("alpha")).not.toThrow();
+  });
+});
+
+describe("resumeSession", () => {
+  /** A fetch that answers with one status and records what it was asked. */
+  const answering = (status: number) =>
+    vi.fn(() => Promise.resolve(new Response(status === 200 ? "{}" : "", { status })));
+
+  it("posts to the session's own resume route", async () => {
+    const f = answering(200);
+    vi.stubGlobal("fetch", f);
+    await resumeSession("deploy thing/2");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(apiUrl("/sessions/deploy%20thing%2F2/resume"));
+    expect(init.method).toBe("POST");
+  });
+
+  it("throws the status, so the caller can tell 409 from 404", async () => {
+    // 409 is "it was already live", which a second click on a row the 5s poll
+    // has not refreshed produces legitimately. 404 is a session that is gone.
+    // The store toasts for one and not the other, so the status has to survive.
+    vi.stubGlobal("fetch", answering(409));
+    const conflict = await resumeSession("a").catch((e: unknown) => e);
+    expect((conflict as ApiError).status).toBe(409);
+
+    vi.stubGlobal("fetch", answering(404));
+    const gone = await resumeSession("a").catch((e: unknown) => e);
+    expect((gone as ApiError).status).toBe(404);
   });
 });

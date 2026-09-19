@@ -1244,8 +1244,8 @@ func TestPushSenderCountsNoSystemSessionInTheBadgeOrTheWaitingList(t *testing.T)
 	stub := &stubStater{}
 	sender := newPushSender(store, stubPrefs{}, stub, testVAPID(t))
 
-	stub.set(map[string]string{"qa-slug": stateDone, "t3e2e-7": stateAwaiting, "main": stateAwaiting})
-	stub.setSystem("qa-slug", "t3e2e-7")
+	stub.set(map[string]string{"qa-slug": stateDone, "tlp-t7": stateAwaiting, "main": stateAwaiting})
+	stub.setSystem("qa-slug", "tlp-t7")
 	sender.tick() // the seeding tick: it reads, filters and remembers, and sends nothing
 
 	cur := sender.last["alice"]

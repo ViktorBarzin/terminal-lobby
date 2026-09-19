@@ -95,7 +95,7 @@ var systemSessionRule = &systemSessionMemo{now: time.Now, seen: map[string]syste
 // list when it can, and from the session's NAME when it cannot.
 //
 // The name fallback is not a guess: reservedName is half of isSystemSession
-// already, so a harness session called qa-… or t3e2e-… is answered correctly
+// already, so a harness session called qa-… or tlp-t… is answered correctly
 // with no list at all. What the fallback cannot see is an unstamped session
 // whose name looks ordinary — and there it fails towards RECORDING, which is
 // the direction telemetry has to fail in: a wrongly-kept event is noise in a

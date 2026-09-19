@@ -139,8 +139,8 @@ if [ "$mode" = clear ]; then
     # Why it is needed: the watcher calls a vanished session a death unless
     # something says otherwise, and the only thing that said otherwise was a
     # tmux-persist tombstone. tmux-api's DELETE handler writes one, which
-    # covers a kill from the lobby and from t3-sync, since that goes through
-    # the same endpoint. Nothing wrote one when a user simply typed /exit:
+    # covers every kill that goes through that endpoint, whichever client
+    # asked. Nothing wrote one when a user simply typed /exit:
     # claude ends, its pane exits, the session closes, and tmux-api never
     # hears about it. That paged emo at 08:25 on 2026-09-03 for tidying up.
     #

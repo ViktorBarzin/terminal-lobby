@@ -147,22 +147,27 @@ func equal(a, b []string) bool {
 	return true
 }
 
-// tl-t3-sync runs as tl-t3-sync@<user>. The release restarts the instances that
-// are ALREADY enabled and enables nobody: enabling a user needs a hand-written
-// env file carrying their port allocation.
+// A per-user unit runs as name@<user>. The release restarts the instances that
+// are ALREADY enabled and enables nobody: enabling a user is a deliberate act
+// with its own per-user configuration behind it.
+//
+// No unit in the manifest is templated today — tl-t3-sync@ was the one, and it
+// went with ADR-0029. The machinery is kept and tested against a fixture,
+// because the next per-user service would otherwise have to rebuild it and
+// rediscover the failed-instance marker below.
 func TestATemplatedUnitRestartsItsEnabledInstancesOnly(t *testing.T) {
-	units := []Unit{{Name: "tl-t3-sync@", Template: true, Files: []string{"bin/tl-t3-sync"}}}
-	got := RestartTargets(units, []string{"bin/tl-t3-sync"}, map[string][]string{
-		"tl-t3-sync@": {"tl-t3-sync@wizard"},
+	units := []Unit{{Name: "tl-peruser@", Template: true, Files: []string{"bin/tl-peruser"}}}
+	got := RestartTargets(units, []string{"bin/tl-peruser"}, map[string][]string{
+		"tl-peruser@": {"tl-peruser@wizard"},
 	})
-	if len(got) != 1 || got[0] != "tl-t3-sync@wizard" {
+	if len(got) != 1 || got[0] != "tl-peruser@wizard" {
 		t.Fatalf("want the enabled instance only, got %v", got)
 	}
 }
 
 func TestATemplatedUnitWithNoEnabledInstancesRestartsNothing(t *testing.T) {
-	units := []Unit{{Name: "tl-t3-sync@", Template: true, Files: []string{"bin/tl-t3-sync"}}}
-	if got := RestartTargets(units, []string{"bin/tl-t3-sync"}, nil); len(got) != 0 {
+	units := []Unit{{Name: "tl-peruser@", Template: true, Files: []string{"bin/tl-peruser"}}}
+	if got := RestartTargets(units, []string{"bin/tl-peruser"}, nil); len(got) != 0 {
 		t.Fatalf("a template with no enabled instances must restart nothing, got %v", got)
 	}
 }
@@ -252,12 +257,12 @@ func TestReinstallingTheSameBytesChangesNothing(t *testing.T) {
 // asterisk form silently skips a failed instance -- which is exactly the one a
 // release most needs to restart.
 func TestEnabledInstancesReadsBothMarkers(t *testing.T) {
-	out := `  tl-t3-sync@wizard.service    loaded active   running Terminal Lobby T3 syncer
-` + "●" + ` tl-t3-sync@bob.service       loaded failed   failed  Terminal Lobby T3 syncer
-* tl-t3-sync@anca.service      loaded active   running Terminal Lobby T3 syncer
+	out := `  tl-peruser@wizard.service    loaded active   running Terminal Lobby per-user unit
+` + "●" + ` tl-peruser@bob.service       loaded failed   failed  Terminal Lobby per-user unit
+* tl-peruser@anca.service      loaded active   running Terminal Lobby per-user unit
 `
-	got := ParseUnitInstances("tl-t3-sync@", out)
-	want := []string{"tl-t3-sync@anca", "tl-t3-sync@bob", "tl-t3-sync@wizard"}
+	got := ParseUnitInstances("tl-peruser@", out)
+	want := []string{"tl-peruser@anca", "tl-peruser@bob", "tl-peruser@wizard"}
 	if !equal(got, want) {
 		t.Fatalf("want %v, got %v", want, got)
 	}
@@ -265,13 +270,13 @@ func TestEnabledInstancesReadsBothMarkers(t *testing.T) {
 
 func TestUnrelatedUnitsAreNotCollected(t *testing.T) {
 	out := "  tmux-api.service   loaded active running tmux API\n"
-	if got := ParseUnitInstances("tl-t3-sync@", out); len(got) != 0 {
+	if got := ParseUnitInstances("tl-peruser@", out); len(got) != 0 {
 		t.Fatalf("want nothing, got %v", got)
 	}
 }
 
 func TestEmptyListUnitsOutputYieldsNoInstances(t *testing.T) {
-	if got := ParseUnitInstances("tl-t3-sync@", ""); len(got) != 0 {
+	if got := ParseUnitInstances("tl-peruser@", ""); len(got) != 0 {
 		t.Fatalf("want nothing, got %v", got)
 	}
 }

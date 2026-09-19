@@ -386,6 +386,31 @@ export async function prewarm(dir: string): Promise<void> {
   }
 }
 
+/**
+ * POST /api/sessions/{name}/resume — bring a suspended session back.
+ *
+ * tmux-api respawns the pane with `claude --resume <uuid>`, which reads the
+ * transcript JSONL back off disk: 1.7s on an empty conversation, 3.1s on a
+ * 24MB one, and $0.00 either way (a resume re-reads records, it does not
+ * re-run turns — a transcript carrying totalCostUSD 398.25 came back showing
+ * that same figure).
+ *
+ * NOT a hint, unlike `prewarm` beside it, and that is the whole difference in
+ * how this is written. A prewarm the server declines costs nothing, because the
+ * create it precedes works anyway. This one is the ONLY way back into a
+ * suspended session: if it fails, the row stays dimmed, the pane stays frozen,
+ * and a person clicking it again gets the same nothing. So it throws an
+ * ApiError carrying the status and lets the caller say so.
+ *
+ * The server answers 200 for a respawn it issued, 404 for a session that is
+ * gone, and 409 for one that was never suspended — which a second click can
+ * legitimately produce, since the session list is up to 5s behind.
+ */
+export async function resumeSession(name: string): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}/resume`, { method: "POST" });
+  if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
+}
+
 /** Release a guess that came to nothing, so its ~530MB is not held until the
  *  server's TTL collects it. Called when the create input closes without
  *  creating; the TTL remains the backstop for a closed tab. */
@@ -460,6 +485,11 @@ export interface LobbyApi {
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
   prewarm(dir: string): Promise<void>;
   releasePrewarm(dir: string): Promise<void>;
+  /** Bring a suspended session back. Optional for the same reason
+   *  `killSessionKeepalive` is: a test double that never suspends anything
+   *  satisfies this interface unchanged, and the store treats an absent one as
+   *  a server that predates the sweep. */
+  resumeSession?(name: string): Promise<void>;
 }
 
 export const lobbyApi: LobbyApi = {
@@ -476,6 +506,7 @@ export const lobbyApi: LobbyApi = {
   getSnapshot,
   prewarm,
   releasePrewarm,
+  resumeSession,
 };
 
 // --- workspaces (which sessions sit on screen together) -----------------------

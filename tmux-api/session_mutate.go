@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os/exec"
 	"strings"
-	"time"
 
 	"terminal-lobby/slug"
 	"terminal-lobby/telemetry"
@@ -74,6 +73,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		sizeSessionGrid(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "resume" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		resumeSession(w, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "capture" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -98,10 +105,9 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 // absent when nothing snapshotted the session, which the lobby reports as a
 // kill it cannot take back rather than promising an undo that would fail.
 //
-// A client that reads only the status is unaffected by the change: t3-sync
-// accepts any 2xx (t3-sync/tmuxapi.go do), qa_driver just returns the number,
-// and the lobby treats a 204 and a 200 with no record alike
-// (lib/lobby-api.ts asRestoreSelection).
+// A client that reads only the status is unaffected by the change: qa_driver
+// just returns the number, and the lobby treats a 204 and a 200 with no record
+// alike (lib/lobby-api.ts asRestoreSelection).
 type killResponse struct {
 	Resurrect *restoreSelection `json:"resurrect,omitempty"`
 }
@@ -135,23 +141,13 @@ func killSession(w http.ResponseWriter, osUser, name string) {
 		http.Error(w, "kill-session failed", http.StatusInternalServerError)
 		return
 	}
-	// Tell this user's T3 syncer, if they have one. Reaching here is the only
-	// proof anywhere on the box that a session was destroyed on PURPOSE — an
-	// OOM, a crashed tmux server or a reboot never does — and "kill crosses,
-	// exit does not" is built on exactly that (killnotify.go).
+	// Reaching here is still the only proof anywhere on the box that a session
+	// was destroyed on PURPOSE — an OOM, a crashed tmux server or a reboot
+	// never leaves one. Until ADR-0029 that fact was also posted to the user's
+	// T3 syncer, which archived the mirrored thread; the bridge is gone and
+	// nothing subscribes to it now. The two steps below are what the
+	// distinction buys today.
 	//
-	// Only the lookup is synchronous, and it is one read of a small local file.
-	// The POST goes on its own goroutine: the kill has already succeeded, so the
-	// answer the user gets must not depend on a syncer that is stopped, wedged
-	// or not installed.
-	if url, ok := syncNotifyURL(osUser); ok {
-		notice := killNotice{OSUser: osUser, Session: name, KilledAt: time.Now().UTC(), Source: killNotifySource}
-		go func() {
-			if err := postKillNotice(url, notice); err != nil {
-				log.Printf("kill-notify for %s/%s: %v", osUser, name, err)
-			}
-		}()
-	}
 	// A UI kill is deliberate — drop the session's project assignment.
 	// (Deaths outside the API keep theirs so a restore regroups them.)
 	// Remember it first: the picker can restore this session from an older

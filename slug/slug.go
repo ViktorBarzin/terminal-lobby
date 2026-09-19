@@ -9,11 +9,11 @@
 //     frontend-v2/src/lib/title.ts.
 //
 //   - FromTitle / Free / MaxNameLen derive a tmux session name. ADR-0019 left
-//     these with one consumer, t3-bridge, which names a bridged session after
-//     its working directory (main.go's Slug, resurrect.go's free-name walk).
-//     ADR-0022 brought the lobby back: a title carries the tmux name with it,
-//     so `tmux ls`, the status bar and the window title read as words rather
-//     than as a minted id (tmux-api/name_from_title.go).
+//     these with a single consumer outside the lobby, and that consumer — the
+//     T3 bridge — was removed with ADR-0029. ADR-0022 had already brought the
+//     lobby back: a title carries the tmux name with it, so `tmux ls`, the
+//     status bar and the window title read as words rather than as a minted id
+//     (tmux-api/name_from_title.go), which is the whole of this half's use now.
 //
 // vectors.json holds two lists. `cases` pins the derivation and only this
 // package reads it: the derivation is server-side, so the TypeScript side has
@@ -73,8 +73,8 @@ func CleanTitle(title string) string {
 // FromTitle derives the tmux session name for a title.
 //
 // Returns "" when nothing usable survives — a CJK or emoji-only title, or no
-// title at all. The caller supplies its own fallback: t3-bridge uses a
-// placeholder, and tmux-api leaves the session under the name it already has.
+// title at all. The caller supplies its own fallback; tmux-api leaves the
+// session under the name it already has.
 func FromTitle(title string) string {
 	clean := strings.ToLower(CleanTitle(title))
 
@@ -127,10 +127,9 @@ func nameRune(r rune) bool {
 
 // Free returns base, or the first free base-N variant.
 //
-// The suffix walk for two callers: t3-bridge, when a resurrection finds its
-// name taken, and tmux-api's name_from_title.go, when two sessions carry the
-// same title. tmux refuses a duplicate session name outright, so the walk is
-// what turns that refusal into a second usable name rather than a failure.
+// The suffix walk for tmux-api's name_from_title.go, when two sessions carry
+// the same title. tmux refuses a duplicate session name outright, so the walk
+// is what turns that refusal into a second usable name rather than a failure.
 //
 // The suffix has to fit the same budget, so a base at the limit is cut to make
 // room. Ten variants is the ceiling before it gives up and returns the last

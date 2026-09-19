@@ -24,7 +24,13 @@
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
-import type { BackgroundWork, Layout, LayoutProject, Session } from "../types/lobby";
+import {
+  SUSPENDED,
+  type BackgroundWork,
+  type Layout,
+  type LayoutProject,
+  type Session,
+} from "../types/lobby";
 
 export type GroupKind = "project" | "ungrouped" | "system";
 
@@ -126,13 +132,13 @@ export function groupToken(g: RenderGroup): string {
 /**
  * Is this session one the lobby's own create path did NOT make?
  *
- * Only `user` is a person's session. `test` is a harness (qa-harness, qa_driver,
- * t3-bridge's e2e lib), and an absent origin is anything else that reached the
- * tmux server without saying who it was — three of the four tooling sessions
+ * Only `user` is a person's session. `test` is a harness (qa-harness,
+ * qa_driver), and an absent origin is anything else that reached the tmux
+ * server without saying who it was — three of the four tooling sessions
  * measured on 2026-09-06 looked exactly like that.
  *
- * The reserved-prefix half of the rule (`reservedName` over "qa-", "t3e2e-",
- * "tlp-t" and the pool prefix) is the SERVER's, and it is already baked into
+ * The reserved-prefix half of the rule (`reservedName` over "qa-", "tlp-t" and
+ * the pool prefix) is the SERVER's, and it is already baked into
  * the origin that arrives here. Repeating it client-side would only give the
  * two copies a chance to disagree — and would drag a rescued `qa-` session back
  * into System the moment somebody dragged it out.
@@ -690,6 +696,11 @@ export function stateLabel(state: string | undefined, unseen = false, bg?: Backg
       return "Awaiting input";
     case "done":
       return unseen ? "Done, not seen yet" : "Done";
+    case SUSPENDED:
+      // The affordance is in the words because the dot is a colour and the row
+      // is a dimming, and neither reaches a screen reader. Clicking is the ONLY
+      // way back — there is no resume button to describe instead.
+      return "Suspended, click to resume";
     default:
       return "";
   }

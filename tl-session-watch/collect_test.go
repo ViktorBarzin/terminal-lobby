@@ -447,7 +447,6 @@ func TestIsSystemSession(t *testing.T) {
 		{"worktree", "test", true, "a harness owns it"},
 		{"kbfix-probe", "", true, "nobody stamped it, so the lobby did not make it"},
 		{"qa-slug", "user", true, "a reserved prefix outranks the stamp"},
-		{"t3e2e-7", "", true, "t3-bridge's e2e harness"},
 		{"tlp-t42", "user", true, "a playwright e2e session"},
 		{"__terminal_lobby_prewarmed_pool_slot_1", "user", true, "a prewarm slot"},
 		{"qa", "user", false, "a person may legitimately name a session qa"},

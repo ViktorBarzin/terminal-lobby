@@ -132,3 +132,31 @@ func (s *stampStore) Option(osUser, session, name string) (string, bool) {
 }
 
 func (s *stampStore) SetOption(osUser, session, name, value string) error { return nil }
+
+// The suspend mark is read from the column it is in, and its PRESENCE is what
+// counts. Tested against the format rather than through the fake, because the
+// fake hands back structs and cannot be wrong about a column index — which is
+// exactly the way this breaks.
+func TestParseLiveSessionsReadsTheSuspendMark(t *testing.T) {
+	row := func(cols ...string) string { return strings.Join(cols, "\t") }
+	out := row("napping", "/home/wizard/code", "done", "muse", "/t.jsonl", "a title", "napping", "1789845000") + "\n" +
+		row("awake", "/home/wizard/code", "done", "muse", "/t.jsonl", "a title", "awake", "") + "\n" +
+		// A tmux that stops printing the trailing empty column must not drop
+		// the session out of the list.
+		row("short", "/home/wizard/code", "running", "muse", "/t.jsonl", "", "short") + "\n"
+
+	got := parseLiveSessions([]byte(out))
+	if len(got) != 3 {
+		t.Fatalf("parsed %d rows, want 3: %+v", len(got), got)
+	}
+	if !got[0].Suspended {
+		t.Errorf("%q was not read as suspended", got[0].Name)
+	}
+	if got[1].Suspended || got[2].Suspended {
+		t.Errorf("a live session was read as suspended: %+v", got[1:])
+	}
+	// The columns ahead of it still land where they did.
+	if got[0].Owner != "muse" || got[0].BornAs != "napping" || got[0].State != "done" {
+		t.Errorf("the mark shifted the row: %+v", got[0])
+	}
+}
