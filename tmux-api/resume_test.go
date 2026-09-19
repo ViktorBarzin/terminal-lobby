@@ -42,6 +42,24 @@ func withResumeStub(t *testing.T, s *resumeStub) {
 		return s.claudeThere, true
 	}
 	t.Cleanup(func() { claudeUnderPane = oldUnder })
+	// The real probe asks the SESSION'S OWN tmux server rather than calling
+	// os.Stat, because peer homes here are 0750 and a local stat on another
+	// user's transcript returns EACCES (suspend.go transcriptHasAConversation
+	// carries the measurement). A test host has neither a tmux server for the
+	// target user nor the sudoers grant that reaches one, so leaving this
+	// unstubbed made five tests pass on the devvm — where tmuxCmd skips sudo
+	// for the current user — and fail on a CI runner, where every probe exits
+	// 1 and the resume answered 500. Answer the same question the probe asks,
+	// `test -f && test -s`, against the fixture file.
+	oldProbe := transcriptHasAConversation
+	transcriptHasAConversation = func(_, path string) bool {
+		if path == "" {
+			return false
+		}
+		fi, err := os.Stat(path)
+		return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+	}
+	t.Cleanup(func() { transcriptHasAConversation = oldProbe })
 	readSuspended = func(osUser, name string) (suspendedFacts, bool) {
 		return s.facts, s.readOK
 	}
