@@ -1179,7 +1179,7 @@ func repairHalfSuspended(osUser string, now time.Time) bool {
 			log.Printf("suspend: repairing a half-finished suspend on %s/%s: %v", osUser, name, err)
 			continue
 		}
-		log.Printf("suspend: %s/%s had a dead pane and a resume command but no mark — marking it suspended so it can be resumed", osUser, name)
+		log.Printf("suspend: %s/%s lost its claude and carries a resume command but no mark — marking it suspended so it can be resumed", osUser, name)
 		repaired = true
 	}
 	return repaired

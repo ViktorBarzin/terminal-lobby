@@ -1,6 +1,7 @@
 # Suspend a session nobody has driven for three days
 
-Status: approved, being implemented. Viktor, 2026-09-19.
+Status: shipped and running. Viktor, 2026-09-19. Deployed as 0.68.1 at
+20:30 UTC; what the first live sweeps found is at the foot of this page.
 Decision record: [ADR-0030](../adr/0030-a-quiet-session-gives-its-memory-back.md).
 Glossary: **Suspended session**, **Resume**, **Idle age**, **Suspend threshold**
 in [CONTEXT.md](../../CONTEXT.md).
@@ -450,3 +451,45 @@ it. That is what makes the sidebar entry worth clicking.
   asked. Nothing about the design depends on his answer, but the first run being
   mostly his sessions is a fact he should hear before it happens rather than
   after.
+
+## What the first live sweeps found
+
+Three things the tests did not, recorded because two of them were bugs in this
+design rather than in its implementation.
+
+**A pane can outlive its claude, and two did.** `tmux-persist` restores a
+session as `sh -c '…; claude --resume <uuid> …; echo "  claude exited — shell
+preserved"; exec bash -l'`. Killing the claude inside that runs the shell on to
+its last command instead of ending the pane, so `#{pane_dead}` stays 0 while
+the conversation is just as gone. The repair pass asked only about
+`#{pane_dead}`, so the 20:10 sweep killed `beads-2` and `health`, reclaimed
+their memory, stamped their resume commands, and left both reading as ordinary
+shells that no click could bring back. The pass now asks whether the claude is
+gone: a dead pane answers that, and for a live pane a /proc walk does, on the
+handful of rows carrying a resume command and no mark. Fixed in 0.68.1, and the
+20:35:30 sweep marked both.
+
+**The 10 second grace measured the wrong thing.** Four of the six candidates
+outlived it and every one exited shortly after, so the kill had worked and the
+code declined to record it. Transcript size does not predict how long the exit
+takes: `ny-reibursment` is 441 KB and was as slow as the 16 MB one. The grace
+is 30 seconds now. Nothing waits on it, so a longer grace costs a slower
+background sweep and nothing else.
+
+**A stale `@claude_transcript` is more common than expected.** All five of
+emo's eligible sessions point at conversation files that no longer exist on
+disk, so the sweep declined every one of them. That is the "never suspend what
+cannot be resumed" rule working, and it means roughly 2 GiB on this box is held
+by sessions the feature can never reclaim, because reclaiming it would lose
+conversations that are already gone. Killing them outright is a different
+decision and has not been taken.
+
+### Measured, end to end
+
+| | |
+|---|---|
+| reclaimed by the first sweep | 1,278 MB RSS and 364 MB swap, from 3 of 6 candidates |
+| box before and after | 21,854 MB used and 10,233 MB available, to 20,615 MB used and 11,471 MB available |
+| resume, dead pane | `ifnra-resilience-and-decoupling`, 26 ms to respawn, history and `$233.89` restored, 1,821 bytes appended to the same transcript |
+| resume, surviving shell | `beads-2`, same transcript uuid `1f04270e`, 1,220 bytes appended, `$21.84` and 18% context restored |
+| the guards | the 147 hour `awaiting` session was exempted, `@agent_owner` conversations were skipped, `paladin` was never touched |
