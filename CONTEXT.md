@@ -338,8 +338,27 @@ never reverted. Among several read-write clients the Grid belongs to the one
 being used, which is what tmux's own `window-size latest` does — but the hooks
 only fire on a client attaching, detaching or resizing, so a device that is
 merely READING a session claims the Grid explicitly
-(`POST /sessions/{name}/grid`). It is also READABLE, as `cols` and `rows` on
-every session in the list: a client that declines to claim it has no other way
+(`POST /sessions/{name}/grid`).
+
+MOST SESSIONS ARE NOT PINNED, since a pin is laid down by the first read-only
+attach and by nothing else (18 of the 20 running here on 2026-09-19), and the
+claim reaches those by a different route. tmux's own `latest` has the same gap
+the hooks do — it moves on a keystroke and on an attach, and reading a session
+is neither — so the claim makes the client being read tmux's latest
+(`switch-client` onto the session it is already on) instead of resizing the
+window, which would set `window-size manual` and pin every session the lobby is
+pointed at. WHICH client that is comes from the size in the request: an HTTP
+call carries no tmux client, and two clients of one user are otherwise
+indistinguishable, so the read-write client measuring exactly what the caller
+reported is the one the window follows. No client of that size means no move,
+which is the safe way to be wrong. Until 2026-09-19 an unpinned session was
+left to tmux entirely, and the claim answered 204 having moved nothing: a
+desktop reading in a 147x40 terminal sat in a 60x19 window for as long as a
+phone held it, and only a fresh attach — switching away long enough to park, or
+toggling Text mode — put it right.
+
+The Grid is also READABLE, as `cols` and `rows` on every session in the list: a
+client that declines to claim it has no other way
 to know how big the session it is showing is, and a Watch-mode tile draws itself
 at exactly that size (see **Tile**). Both are absent when tmux would not say,
 which means no opinion rather than a size of zero. The same two numbers tell a

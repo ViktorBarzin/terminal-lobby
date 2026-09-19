@@ -83,6 +83,34 @@ var promoteClient = func(osUser, clientName string) error {
 	return tmuxCmd(osUser, "refresh-client", "-t", clientName, "-f", "!ignore-size").Run()
 }
 
+// makeLatest tells tmux that ONE client is the one being used, which is how an
+// UNPINNED window is pointed at the device reading it.
+//
+// WHY NOT resize-window, WHICH IS WHAT THE PINNED PATH DOES. `resize-window`
+// sets `window-size manual` on whatever it touches, so sizing an unpinned
+// session here would pin every session the lobby is ever pointed at and take
+// it out of tmux's hands for good (sessionio.SizeGrid says the same). Putting
+// the option back afterwards does not work either: measured on tmux 3.4 here
+// 2026-09-19, with a 200x50 and a 100x30 client attached, `resize-window -x 200
+// -y 50` moved the window and `set-option -w -u window-size` snapped it
+// straight back to 100x30, because unsetting hands the size back to `latest`
+// and latest was still the other client.
+//
+// So move `latest` instead. `switch-client -c <client> -t <its own session>` is
+// a no-op for everything a person can see — the client is already on that
+// session — but tmux's `server_client_set_session` sets the window's latest
+// client and recalculates the size, which is exactly what it does for itself
+// when somebody presses a key. Measured on tmux 3.4 here 2026-09-19: the same
+// two clients, window at 100x30, and this call moved it to 200x50 with
+// `window-size` still reading `latest`.
+//
+// A PINNED session is not sent through here. Its window ignores `latest`
+// entirely — that is what the pin means — so this would be a fork that changes
+// nothing.
+var makeLatest = func(osUser, session, clientName string) error {
+	return tmuxCmd(osUser, "switch-client", "-c", clientName, "-t", exactSession(session)).Run()
+}
+
 // anyoneDriving reports whether the list holds at least one READ-WRITE client.
 // Same question markDriven answers for the session list, asked of one session:
 // a session nobody is driving must not have its grid claimed.
@@ -123,6 +151,50 @@ func anyoneDriving(clients []client) bool {
 func preloadClientName(clients []client) string {
 	for _, c := range clients {
 		if c.Name != "" && hasPreloadFlags(c.Flags) {
+			return c.Name
+		}
+	}
+	return ""
+}
+
+// readingClientName picks the client this request is speaking FOR, by the one
+// thing the request says about it: how big it is.
+//
+// The endpoint cannot be told which tmux client a caller is — one identity
+// header per user, and no client on the request (the header comment above).
+// For the pinned path that does not matter, because the window is resized
+// directly. For the unpinned path it does: `switch-client` needs a `-c`.
+//
+// The size is enough to act on. A read-write client measuring exactly what the
+// caller reported either IS the caller, or is a second device at exactly the
+// same grid — in which case pointing the window at it produces the size the
+// caller asked for anyway, so the two answers cannot be told apart from the
+// outside either.
+//
+// NO MATCH MEANS NO MOVE, and that is the right way to fail. A claim can reach
+// here a moment before the caller's own client has reported its new size, and
+// the resize that is on its way is itself a tmux event; guessing at a client of
+// some other size would hand the window to somebody else's device.
+//
+// A WATCHER IS NEVER PICKED, even when it is the size that was claimed. tmux
+// ignores a read-only client's size, so making one latest would move nothing —
+// but a pin exists precisely to keep watchers away from the window, and this
+// must not be the one place that forgets it.
+//
+// A CLIENT WITH NO SIZE IS NOT A CANDIDATE. A tmux that answers without the
+// size columns reports 0x0, and matching that against a claim of 0x0 would
+// pick a client on the strength of two numbers neither side supplied. The
+// handler's own bounds already refuse a zero grid on the way in; this is the
+// same refusal, held where the choice is made.
+func readingClientName(clients []client, cols, rows int) string {
+	if cols < 1 || rows < 1 {
+		return ""
+	}
+	for _, c := range clients {
+		if c.Name == "" || isReadOnly(c.Flags) {
+			continue
+		}
+		if c.Width == cols && c.Height == rows {
 			return c.Name
 		}
 	}
@@ -174,11 +246,28 @@ func sizeSessionGrid(w http.ResponseWriter, r *http.Request, osUser, name string
 	if sized {
 		// Only the pinned case is worth a line: an unpinned session reaching
 		// here is the ordinary majority, and recording every view switch of
-		// every session would say nothing.
+		// every session would say nothing. The unpinned arm below is silent
+		// for the same reason.
 		events.Emit("session.grid_sized", osUser, telemetry.Attrs{
 			"tl.session": name, "tl.client": "lobby-v2",
 			"tl.kind": fmt.Sprintf("%dx%d", body.Cols, body.Rows),
 		})
+	} else if c := readingClientName(clients, body.Cols, body.Rows); c != "" {
+		// `sized` is false for exactly one reason the caller cannot see: the
+		// session is not pinned, so SizeGrid left it to tmux on purpose. tmux
+		// then sizes the window from its `latest` client, which it moves on a
+		// keystroke and on an attach — and reading a session is neither, so
+		// without this the claim does nothing at all for every session nobody
+		// has ever watched. That is most of them: a pin is laid down by the
+		// first read-only attach, and 18 of the 20 sessions on this box on
+		// 2026-09-19 had never had one.
+		//
+		// Best-effort, like the promotion above: the client may have gone away
+		// between the list and this call, and the request has already done
+		// everything else it came to do.
+		if err := makeLatest(osUser, name, c); err != nil {
+			log.Printf("point unpinned %s as %s at client %s failed: %v", name, osUser, c, err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

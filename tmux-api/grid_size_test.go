@@ -23,24 +23,30 @@ type gridCall struct {
 // promoteCall is one `refresh-client -f '!ignore-size'`.
 type promoteCall struct{ osUser, client string }
 
+// latestCall is one `switch-client`, the unpinned half of the same request.
+type latestCall struct{ osUser, session, client string }
+
 // gridWorld is the tmux the handler runs against: the raw list-clients output
-// the session answers with, and what its two writing seams do.
+// the session answers with, and what its three writing seams do.
 type gridWorld struct {
 	exists     bool
 	clients    string // clientsListFmt columns, one client per line
 	sized      bool
 	sizeErr    error
 	promoteErr error
+	latestErr  error
 }
 
-// stubGridWorld swaps the handler's four seams and hands back what the two
+// stubGridWorld swaps the handler's five seams and hands back what the three
 // writing ones received.
-func stubGridWorld(t *testing.T, w gridWorld) (*[]gridCall, *[]promoteCall) {
+func stubGridWorld(t *testing.T, w gridWorld) (*[]gridCall, *[]promoteCall, *[]latestCall) {
 	t.Helper()
 	var calls []gridCall
 	var promotions []promoteCall
+	var latests []latestCall
 
-	oldExists, oldClients, oldSize, oldPromote := sessionExists, sessionClients, sizeGrid, promoteClient
+	oldExists, oldClients, oldSize := sessionExists, sessionClients, sizeGrid
+	oldPromote, oldLatest := promoteClient, makeLatest
 	sessionExists = func(string, string) bool { return w.exists }
 	sessionClients = func(string, string) []client { return parseClients([]byte(w.clients)) }
 	sizeGrid = func(osUser, name string, cols, rows int) (bool, error) {
@@ -51,15 +57,21 @@ func stubGridWorld(t *testing.T, w gridWorld) (*[]gridCall, *[]promoteCall) {
 		promotions = append(promotions, promoteCall{osUser, clientName})
 		return w.promoteErr
 	}
+	makeLatest = func(osUser, session, clientName string) error {
+		latests = append(latests, latestCall{osUser, session, clientName})
+		return w.latestErr
+	}
 	t.Cleanup(func() {
-		sessionExists, sessionClients, sizeGrid, promoteClient = oldExists, oldClients, oldSize, oldPromote
+		sessionExists, sessionClients, sizeGrid = oldExists, oldClients, oldSize
+		promoteClient, makeLatest = oldPromote, oldLatest
 	})
-	return &calls, &promotions
+	return &calls, &promotions, &latests
 }
 
 // An ordinary read-write client, which is what `driven: true` used to mean
-// before the seam handed back the whole client list.
-const gridDriverRow = "work\tattached,focused,UTF-8\t1788093053\t1788093053\t/dev/pts/3\n"
+// before the seam handed back the whole client list. 200x50, which is the size
+// the requests below claim, so it reads as the client that is asking.
+const gridDriverRow = "work\tattached,focused,UTF-8\t1788093053\t1788093053\t/dev/pts/3\t200\t50\n"
 
 // stubGridSizing is stubGridWorld for the cases that only care whether somebody
 // is driving. `sized` and `err` are what SizeGrid answers.
@@ -69,7 +81,7 @@ func stubGridSizing(t *testing.T, exists, driven, sized bool, err error) *[]grid
 	if driven {
 		clients = gridDriverRow
 	}
-	calls, _ := stubGridWorld(t, gridWorld{exists: exists, clients: clients, sized: sized, sizeErr: err})
+	calls, _, _ := stubGridWorld(t, gridWorld{exists: exists, clients: clients, sized: sized, sizeErr: err})
 	return calls
 }
 
@@ -333,7 +345,7 @@ func TestSizeGridPromotesThePreloadClient(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			withUserMap(t, "alice="+osSelf+"\n")
-			calls, promotions := stubGridWorld(t, tc.world)
+			calls, promotions, _ := stubGridWorld(t, tc.world)
 
 			body, path := tc.body, tc.path
 			if body == "" {
@@ -412,6 +424,180 @@ func TestPreloadClientNameFindsTheHoversClient(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := preloadClientName(parseClients([]byte(tc.clients))); got != tc.want {
 				t.Errorf("preloadClientName = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// --- an unpinned session, which is most of them ----------------------------
+
+// THE CLAIM HAS TO REACH AN UNPINNED SESSION TOO, and `resize-window` is not
+// how, because it pins whatever it touches.
+//
+// A pin is laid down by the first read-only attach and by nothing else, so a
+// session nobody has ever watched is unpinned — 18 of the 20 sessions running
+// on this box on 2026-09-19. For those `SizeGrid` deliberately does nothing and
+// tmux is left to size the window from its `latest` client, which tmux moves on
+// a keystroke or an attach and on nothing else. Reading a session is neither,
+// so the reason this endpoint exists — the window following the device being
+// read — was missing for the majority of sessions. Measured that day: a desktop
+// reading `gridbug` in a 147x40 terminal sat in a 60x19 window for as long as a
+// second client held it, and the two claims the browser sent both came back 204
+// with nothing moved.
+//
+// `switch-client` is how you say "this client is the one being used" in tmux's
+// own terms, and it is what tmux does for itself when somebody types.
+func TestSizeGridPointsAnUnpinnedWindowAtTheClientBeingRead(t *testing.T) {
+	const (
+		// The desktop asking, and a phone holding the window at its own size.
+		desktopRow  = "work\tattached,focused,UTF-8\t1788093053\t1788093053\t/dev/pts/3\t200\t50\n"
+		phoneRow    = "work\tattached,UTF-8\t1788093060\t1788093060\t/dev/pts/8\t60\t20\n"
+		watcherRow  = "work\tattached,ignore-size,read-only,UTF-8\t1788093060\t1788093060\t/dev/pts/9\t200\t50\n"
+		namelessRow = "work\tattached,UTF-8\t1788093053\t1788093053\t\t200\t50\n"
+	)
+
+	osSelf, _ := twoLocalUsers(t)
+
+	cases := []struct {
+		name  string
+		world gridWorld
+
+		wantCode   int
+		wantLatest []string // the client names switch-client was pointed at
+	}{
+		{
+			name:     "an unpinned window follows the client that asked",
+			world:    gridWorld{exists: true, clients: desktopRow + phoneRow, sized: false},
+			wantCode: http.StatusNoContent, wantLatest: []string{"/dev/pts/3"},
+		},
+		{
+			// A pinned window ignores `latest` entirely — that is what the pin
+			// means — so the resize is the whole of the work and a
+			// switch-client would be a fork that changes nothing.
+			name:     "a pinned session is resized, and nothing else",
+			world:    gridWorld{exists: true, clients: desktopRow + phoneRow, sized: true},
+			wantCode: http.StatusNoContent,
+		},
+		{
+			// The caller's own client has not reported its new size yet, so
+			// nothing here is the client that asked. Saying nothing is right:
+			// the resize on its way is itself a tmux event, and guessing would
+			// hand the window to somebody else's device.
+			name:     "no client is this size, so nothing moves",
+			world:    gridWorld{exists: true, clients: phoneRow, sized: false},
+			wantCode: http.StatusNoContent,
+		},
+		{
+			// A watcher never moves the window. It is ignore-size in tmux's
+			// eyes too, so making it latest would leave the window where it
+			// was — but a size it happens to share with the caller must not be
+			// what picks it.
+			name:     "a watcher of the same size is not the one picked",
+			world:    gridWorld{exists: true, clients: watcherRow + desktopRow, sized: false},
+			wantCode: http.StatusNoContent, wantLatest: []string{"/dev/pts/3"},
+		},
+		{
+			name:     "a watcher alone cannot claim the grid at all",
+			world:    gridWorld{exists: true, clients: watcherRow, sized: false},
+			wantCode: http.StatusConflict,
+		},
+		{
+			// -c needs a name, the same way -t does for the promotion.
+			name:     "a client tmux did not name is left alone",
+			world:    gridWorld{exists: true, clients: namelessRow, sized: false},
+			wantCode: http.StatusNoContent,
+		},
+		{
+			// The request has already done everything it can, and a client
+			// that went away between the list and the call is not a 500.
+			name: "switch-client failing does not fail the request",
+			world: gridWorld{exists: true, clients: desktopRow, sized: false,
+				latestErr: fmt.Errorf("no such client")},
+			wantCode: http.StatusNoContent, wantLatest: []string{"/dev/pts/3"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			withUserMap(t, "alice="+osSelf+"\n")
+			_, _, latests := stubGridWorld(t, tc.world)
+
+			w := httptest.NewRecorder()
+			handleSessionByName(w, sessionReq(http.MethodPost, "/sessions/work/grid",
+				`{"cols":200,"rows":50}`, "alice"))
+
+			if w.Code != tc.wantCode {
+				t.Errorf("status = %d, want %d (body %q)", w.Code, tc.wantCode, w.Body.String())
+			}
+			if len(*latests) != len(tc.wantLatest) {
+				t.Fatalf("switch-client called %d time(s), want %d: %+v",
+					len(*latests), len(tc.wantLatest), *latests)
+			}
+			for i, want := range tc.wantLatest {
+				got := (*latests)[i]
+				if got.client != want {
+					t.Errorf("switch-client %d targeted %q, want %q", i, got.client, want)
+				}
+				if got.session != "work" {
+					t.Errorf("switch-client %d named session %q, want \"work\"", i, got.session)
+				}
+				if got.osUser != osSelf {
+					t.Errorf("switch-client %d ran as %q, want the mapped user %q", i, got.osUser, osSelf)
+				}
+			}
+		})
+	}
+}
+
+// The client a request speaks for is picked by the one thing it says about
+// itself: the size it just reported.
+//
+// TWO CLIENTS OF THE SAME USER ARE INDISTINGUISHABLE HERE — one identity
+// header, and no way to say which tmux client an HTTP request belongs to (the
+// comment at the top of grid_size.go says so). The size closes that gap well
+// enough to act on: a client matching it either IS the caller, or is a second
+// device measuring exactly the same grid, and pointing the window at that one
+// produces the size the caller asked for anyway.
+func TestReadingClientNameFindsTheClientThatAsked(t *testing.T) {
+	const (
+		desktop = "work\tattached,focused,UTF-8\t1\t1\t/dev/pts/3\t200\t50\n"
+		phone   = "work\tattached,UTF-8\t1\t1\t/dev/pts/8\t60\t20\n"
+		watcher = "work\tattached,ignore-size,read-only,UTF-8\t1\t1\t/dev/pts/9\t200\t50\n"
+		preload = "work\tattached,ignore-size,UTF-8\t1\t1\t/dev/pts/7\t200\t50\n"
+		unnamed = "work\tattached,UTF-8\t1\t1\t\t200\t50\n"
+		unsized = "work\tattached,UTF-8\t1\t1\t/dev/pts/4\n"
+	)
+	cases := []struct {
+		name       string
+		clients    string
+		cols, rows int
+		want       string
+	}{
+		{"no clients", "", 200, 50, ""},
+		{"the one that matches", desktop + phone, 200, 50, "/dev/pts/3"},
+		{"the other one", desktop + phone, 60, 20, "/dev/pts/8"},
+		{"nothing of that size", desktop + phone, 120, 30, ""},
+		{"a watcher is skipped", watcher, 200, 50, ""},
+		{"a watcher is skipped in company", watcher + desktop, 200, 50, "/dev/pts/3"},
+		{
+			// Promoted a few lines earlier in the same request, so its flags
+			// still read ignore-size where tmux has already cleared them. It
+			// is the client being read, and it is eligible.
+			"a just-promoted preload", preload, 200, 50, "/dev/pts/7",
+		},
+		{"a client tmux did not name", unnamed, 200, 50, ""},
+		{
+			// A tmux that answered without the size columns reports 0x0, and
+			// no real client is 0x0, so nothing matches and nothing moves.
+			"a tmux that did not report a size", unsized, 200, 50, "",
+		},
+		{"and a claim of 0x0 matches it no better", unsized, 0, 0, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := readingClientName(parseClients([]byte(tc.clients)), tc.cols, tc.rows)
+			if got != tc.want {
+				t.Errorf("readingClientName(%dx%d) = %q, want %q", tc.cols, tc.rows, got, tc.want)
 			}
 		})
 	}

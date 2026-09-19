@@ -17,14 +17,21 @@ import (
 // client_activity when the client is created and moves it only on real input,
 // so the two being equal means "attached, never typed into". See latestActivity.
 //
-// client_name is last, and is what `refresh-client -t` takes: promoting a
-// preload client needs to name one, and reading it here keeps that to the same
+// client_name is what `refresh-client -t` and `switch-client -c` take:
+// promoting a preload client and pointing an unpinned window at the client
+// being read both need to name one, and reading it here keeps that to the same
 // fork rather than a second list-clients (grid_size.go).
+//
+// The client's own SIZE is the last pair, and it is the only thing that tells
+// two clients of one user apart. An HTTP request carries no tmux client, so the
+// grid claim says which client it speaks for by saying how big it is
+// (readingClientName, grid_size.go).
 //
 // Tab-delimited because a session name may contain spaces (possible outside the
 // API's NAME_RE) while neither a name nor a flag list can contain a tab, so no
 // odd name can smear its client onto the wrong session.
-const clientsListFmt = "#{client_session}\t#{client_flags}\t#{client_activity}\t#{client_created}\t#{client_name}"
+const clientsListFmt = "#{client_session}\t#{client_flags}\t#{client_activity}\t" +
+	"#{client_created}\t#{client_name}\t#{client_width}\t#{client_height}"
 
 // client is one row of clientsListFmt.
 type client struct {
@@ -33,6 +40,8 @@ type client struct {
 	Activity int64  // unix seconds; 0 when tmux did not report one
 	Created  int64  // unix seconds the client attached; 0 when not reported
 	Name     string // tmux's own name for the client (a pty path); "" when not reported
+	Width    int    // the client's terminal, in cells; 0 when not reported
+	Height   int
 }
 
 // parseClients reads the output of `list-clients -F clientsListFmt`. A row
@@ -43,24 +52,36 @@ type client struct {
 func parseClients(out []byte) []client {
 	var cs []client
 	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimRight(line, "\r")
-		session, rest, ok := strings.Cut(line, "\t")
-		if !ok || session == "" {
+		col := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(col) < 2 || col[0] == "" {
 			continue
 		}
-		flags, rest, _ := strings.Cut(rest, "\t")
-		act, rest, _ := strings.Cut(rest, "\t")
-		created, name, _ := strings.Cut(rest, "\t")
-		c := client{Session: session, Flags: flags, Name: name}
-		if v, err := strconv.ParseInt(act, 10, 64); err == nil {
+		c := client{Session: col[0], Flags: col[1], Name: clientCol(col, 4)}
+		if v, err := strconv.ParseInt(clientCol(col, 2), 10, 64); err == nil {
 			c.Activity = v
 		}
-		if v, err := strconv.ParseInt(created, 10, 64); err == nil {
+		if v, err := strconv.ParseInt(clientCol(col, 3), 10, 64); err == nil {
 			c.Created = v
+		}
+		if v, err := strconv.Atoi(clientCol(col, 5)); err == nil {
+			c.Width = v
+		}
+		if v, err := strconv.Atoi(clientCol(col, 6)); err == nil {
+			c.Height = v
 		}
 		cs = append(cs, c)
 	}
 	return cs
+}
+
+// clientCol is one column of a row that may be short, which is how every
+// optional field above loses only itself when tmux answers with fewer columns
+// than the format asked for.
+func clientCol(col []string, i int) string {
+	if i >= len(col) {
+		return ""
+	}
+	return col[i]
 }
 
 // hasClientFlag reads tmux's comma-separated #{client_flags} list, one whole
