@@ -36,6 +36,7 @@ import {
   type Layout,
   type RestoreSelection,
   type Session,
+  type SettableState,
   type SnapshotList,
   type SnapshotRow,
   type Whoami,
@@ -190,6 +191,17 @@ export interface LobbyStore {
    * and a card that assumes the first will never send a second request.
    */
   resume(name: string): Promise<boolean>;
+  /**
+   * Correct a session's state dot by hand (the ⋯ menu's Status rows).
+   *
+   * TRUE when the stamp landed and the list has been refreshed. FALSE when it
+   * was refused and a toast has said so, or when the server has no state route
+   * at all — which is what the card reads to decide whether to draw the rows.
+   *
+   * The correction lasts one turn by construction: it writes the option the
+   * hooks write, so the next hook event replaces it.
+   */
+  setState(name: string, state: SettableState): Promise<boolean>;
   renameProjectAction(oldName: string, newName: string): Promise<boolean>;
   deleteProjectAction(name: string): Promise<void>;
   restore(sel?: RestoreSelection): Promise<void>;
@@ -986,6 +998,39 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       }
     }
     quickRefreshBurst();
+    return true;
+  }
+
+  /**
+   * Set a session's state by hand, because the dot is wrong.
+   *
+   * The correction goes to the same `@claude_state` the hooks write, so it
+   * lasts until the next hook event and no longer. Nothing here has to expire
+   * it, and nothing else in the store has to know a state might be a person's.
+   *
+   * Refreshes rather than patching the row: the server is the only thing that
+   * knows whether the stamp landed, and one poll is the same instrument the
+   * rename path uses for the same reason.
+   *
+   * A server with no state route (`api.setSessionState` absent) says so, so
+   * the card can leave the menu alone rather than offering rows that do
+   * nothing.
+   */
+  async function setState(name: string, state: SettableState): Promise<boolean> {
+    if (!api.setSessionState) return false;
+    try {
+      await api.setSessionState(name, state);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists", "error");
+      else if (e instanceof ApiError && e.status === 409) {
+        // The two 409s are both "there is no state here to correct": a
+        // suspended session, or one no Claude has run in. Neither is worth
+        // two wordings on a card that already shows which it is.
+        showToast(`${name} has no Claude state to set`, "error");
+      } else showToast("Couldn't set the status", "error");
+      return false;
+    }
+    await refresh();
     return true;
   }
 
@@ -1929,6 +1974,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     prewarm,
     releasePrewarm,
     resume,
+    setState,
     renameProjectAction,
     deleteProjectAction,
     restore,

@@ -29,6 +29,19 @@ export type ClaudeState = "running" | "awaiting" | "done" | "suspended";
  */
 export const SUSPENDED = "suspended";
 
+/**
+ * The states a PERSON may set on a session, correcting a dot the hooks got
+ * wrong (the ⋯ menu's Status rows → POST /sessions/{name}/state).
+ *
+ * The three that are stamped, so not `suspended`: nothing stamps that one, and
+ * the server 400s it. The order is the order the rows are drawn in, which is
+ * the order a turn moves through them.
+ */
+export const SETTABLE_STATES = ["running", "awaiting", "done"] as const;
+
+/** One of the three. */
+export type SettableState = (typeof SETTABLE_STATES)[number];
+
 /** How a viewer may attach a foreign session. */
 export type AttachAccess = "ro" | "rw";
 

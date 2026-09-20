@@ -197,3 +197,12 @@ const (
 var knownStates = map[string]bool{
 	stateRunning: true, stateAwaiting: true, stateDone: true, stateSuspended: true,
 }
+
+// hookStates is the subset a STAMP may carry: the three the hook script writes,
+// and so the three a person correcting a wrong dot may write too
+// (session_state.go). Suspended is absent because nothing stamps it — it is
+// derived from @tl_suspended, and a stamp of it would be overruled by the very
+// next list.
+var hookStates = map[string]bool{
+	stateRunning: true, stateAwaiting: true, stateDone: true,
+}

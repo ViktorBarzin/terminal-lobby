@@ -11,6 +11,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
@@ -216,6 +217,71 @@ func (p *pushSender) markSent(u, name string) {
 		p.outstanding[u] = m
 	}
 	m[name] = true
+}
+
+// manualStates holds the sessions whose state a PERSON has just set by hand
+// (session_state.go), so this sender does not buzz their phone to report a
+// transition they made themselves. A correction to awaiting or done is exactly
+// the shape of an edge that rings.
+//
+// The handler runs on an HTTP goroutine and the sender on its own, so the
+// queue carries its own lock and nothing else about the sender is touched from
+// outside: the mark is spent inside tick, where every other write to
+// `outstanding` happens.
+//
+// Running is never queued. It fires no push, and the same loop clears an
+// outstanding mark the moment a session goes back to running, so a mark for it
+// would be gone before it could do anything.
+var manualStates = struct {
+	sync.Mutex
+	m map[string]map[string]string // os user -> session -> the state a person set
+}{}
+
+// holdManualPush queues one correction.
+func holdManualPush(osUser, session, state string) {
+	if state != stateAwaiting && state != stateDone {
+		return
+	}
+	manualStates.Lock()
+	defer manualStates.Unlock()
+	if manualStates.m == nil {
+		manualStates.m = map[string]map[string]string{}
+	}
+	held := manualStates.m[osUser]
+	if held == nil {
+		held = map[string]string{}
+		manualStates.m[osUser] = held
+	}
+	held[session] = state
+}
+
+// absorbManualStates spends this user's queued corrections against the states
+// this tick actually read.
+//
+// A mark is spent only once the sender can SEE the state it names. The write
+// and this poll are not ordered: a tick whose read went out before the stamp
+// landed would otherwise burn the mark on the old value and ring on the next
+// one. A mark for a session that has left the list is dropped, which is what
+// keeps the queue bounded by live sessions.
+func (p *pushSender) absorbManualStates(u string, cur map[string]string) {
+	manualStates.Lock()
+	defer manualStates.Unlock()
+	held := manualStates.m[u]
+	for name, want := range held {
+		got, live := cur[name]
+		if !live {
+			delete(held, name)
+			continue
+		}
+		if got != want {
+			continue // the stamp has not reached a read yet
+		}
+		p.markSent(u, name)
+		delete(held, name)
+	}
+	if len(held) == 0 {
+		delete(manualStates.m, u)
+	}
 }
 
 // clearOutstanding forgets a session's notification once the person has engaged
@@ -578,6 +644,7 @@ func (p *pushSender) tick() {
 		seen[u] = true
 		prev := p.last[u]
 		cur, titles, act, system := p.stater.read(u)
+		p.absorbManualStates(u, cur)
 		p.forgetSystemSessions(u, system, cur, titles, act)
 		p.last[u] = cur
 		p.observeActivity(u, act)

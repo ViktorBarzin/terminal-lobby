@@ -224,6 +224,12 @@ var knownEvents = map[string]bool{
 	"claude.cancelled":     true,
 	"claude.answered":      true, // a blocking prompt answered: keys (tl.client=api) or text (api-text); tl.count is the answer's SIZE, never its text
 	"claude.state_changed": true, // running/awaiting/done transition (tl.to)
+	// A PERSON set the state by hand, correcting a dot the hooks got wrong
+	// (tl.from, tl.to). Its own name rather than claude.state_changed, which
+	// is the hook script's: one says what the conversation did, this one says
+	// what somebody decided about it, and counting them together would hide
+	// how often the dots need correcting at all.
+	"claude.state_set":     true,
 	"events.stream_opened": true, // SSE attach (tl.bytes, tl.count = the opening backfill)
 	"events.stream_closed": true,
 	// Text-view load, from the reverse-open design (2026-08-28).

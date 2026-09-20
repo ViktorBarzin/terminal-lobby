@@ -25,6 +25,7 @@ import {
   type LayoutProject,
   type RestoreSelection,
   type Session,
+  type SettableState,
   type SnapshotList,
   type SnapshotRow,
   type Whoami,
@@ -326,6 +327,28 @@ export async function setSessionTitle(name: string, title: string): Promise<void
 }
 
 /**
+ * POST /api/sessions/{name}/state {state} — a person correcting a state dot
+ * the hooks got wrong (tmux-api/session_state.go).
+ *
+ * It writes the same `@claude_state` the hooks write, so the correction lasts
+ * exactly until the system has something new to say: the next hook event
+ * stamps over it. Nothing here has to expire it, and nothing else in the
+ * client has to know the state it shows might be a person's.
+ *
+ * Throws on anything but 204. The two 409s are worth telling apart in a toast:
+ * a suspended session has no Claude state to correct until it is resumed, and
+ * a session no Claude has ever run in has no dot in the first place.
+ */
+export async function setSessionState(name: string, state: SettableState): Promise<void> {
+  const res = await req(`/sessions/${encodeURIComponent(name)}/state`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ state }),
+  });
+  if (!res.ok) throw new ApiError(res.status, `set state HTTP ${res.status}`);
+}
+
+/**
  * POST /api/sessions/{name}/grid {cols, rows} — the device reading this session
  * says what size it is, so a pinned tmux window can follow it.
  *
@@ -480,6 +503,11 @@ export interface LobbyApi {
   killSessionKeepalive?(name: string): void;
   setSessionTitle(name: string, title: string): Promise<void>;
   setSessionOrigin(name: string, origin: string): Promise<void>;
+  /** Correct a session's state dot by hand. Optional for the same reason
+   *  `resumeSession` is: a test double that never corrects anything satisfies
+   *  this interface unchanged, and the store treats an absent one as a server
+   *  that predates the endpoint. */
+  setSessionState?(name: string, state: SettableState): Promise<void>;
   restoreSessions(sel?: RestoreSelection): Promise<void>;
   listSnapshots(): Promise<SnapshotList>;
   getSnapshot(ts: string): Promise<SnapshotRow[]>;
@@ -501,6 +529,7 @@ export const lobbyApi: LobbyApi = {
   killSessionKeepalive,
   setSessionTitle,
   setSessionOrigin,
+  setSessionState,
   restoreSessions,
   listSnapshots,
   getSnapshot,

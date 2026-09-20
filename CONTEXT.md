@@ -544,8 +544,31 @@ with no live Claude has no state, with that one exception, which is why
 the sweep's mark wins over the /proc scan that would otherwise blank it.
 Note that *running* is not the same as "a turn is in flight": a session with
 **Outstanding work** is running with nobody talking.
+
+Hooks are the ordinary writer, and a person is the other one. The card's
+⋯ menu carries the three stamped states, and picking one writes the same
+`@claude_state` a hook writes, so a **Correction** lasts until the next
+hook event and no longer. The rows are drawn only for a session that has
+one of those three: a *suspended* session's state comes from a different
+mark, and a session no Claude has run in has no state to correct.
 _Avoid_: status, activity (tmux "activity" means terminal output, not
 Claude turn state)
+
+**Correction**:
+A **Session state** a person set from the ⋯ menu, because the dot was
+wrong. It is not a mode and leaves no mark of its own: the write goes
+into `@claude_state`, which every consumer already reads and which the
+next hook event overwrites. So it holds for the current turn, and a
+session that is genuinely working says so again within seconds, while one
+nothing is running in keeps the reading it was given until it next has
+something to report. Two marks travel with it — the drawn-dialog mark is
+cleared unless the correction IS *awaiting*, since it would otherwise
+resolve the next stamp straight back; and *done* clears **Outstanding
+work**, because a finished session owing two agents is a contradiction
+the card would draw. Held back from the push sender, so correcting a dot
+does not notify the person who corrected it.
+_Avoid_: override, manual state, pin (none of them lasts, and nothing
+here outranks the hooks)
 
 **Outstanding work**:
 Work a session started that has not finished — background subagents,

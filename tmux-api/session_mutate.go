@@ -57,6 +57,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		setSessionOrigin(w, r, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "state" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		setSessionState(w, r, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "copy-mode" {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

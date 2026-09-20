@@ -9,7 +9,14 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { sessionLabel, sessionTitleDraft, SUSPENDED, type Session } from "../types/lobby";
+import {
+  sessionLabel,
+  sessionTitleDraft,
+  SETTABLE_STATES,
+  SUSPENDED,
+  type SettableState,
+  type Session,
+} from "../types/lobby";
 import type { Selected } from "../store/keepalive";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import type { LobbyStore } from "../store/lobby";
@@ -231,6 +238,28 @@ export const SessionCard: Component<{
   const setChoice = (c: WatchChoice) => {
     saveWatch(s().name, c, lens());
     menu.close();
+  };
+
+  // --- Status ---------------------------------------------------------------
+  /**
+   * Whether this card offers the Status rows: the session has one of the three
+   * stamped states to correct.
+   *
+   * Not a suspended one, whose dot is derived from a mark no hook writes and
+   * is not the reading that goes wrong; not an unstamped one either, which has
+   * no dot at all because no Claude has run in it. The server refuses both, so
+   * drawing the rows for them would offer a button whose only outcome is a
+   * toast.
+   */
+  const settable = () => (SETTABLE_STATES as readonly string[]).includes(s().state ?? "");
+  /**
+   * Correct the dot. It lasts until the session's Claude says otherwise —
+   * the write goes to the same option the hooks write — so this is a fix for
+   * a wrong reading, not a mode.
+   */
+  const setStatus = async (next: SettableState) => {
+    menu.close();
+    await props.store.setState(s().name, next);
   };
   const isActive = () =>
     props.store.selected()?.name === s().name &&
@@ -1021,6 +1050,28 @@ export const SessionCard: Component<{
           <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
             Kill
           </button>
+          {/* Status. The dot is stamped by hooks and has a history of reading
+              wrong — an interrupt typed at the pty, a dialog taken down with
+              nothing reporting it, a background id nobody retired — and until
+              now the only way out was to wait for the session to say something
+              new. These three write the same option the hooks write, so a
+              correction stands exactly until it does. */}
+          <Show when={settable()}>
+            <div class="tl-menu-label">Status</div>
+            <For each={SETTABLE_STATES}>
+              {(st) => (
+                <button
+                  class="tl-menu-item"
+                  role="menuitemradio"
+                  aria-checked={s().state === st}
+                  onClick={() => void setStatus(st)}
+                >
+                  {s().state === st ? "✓ " : "  "}
+                  {stateLabel(st)}
+                </button>
+              )}
+            </For>
+          </Show>
           {/* Attach as. In a tab acting as another user the same three rows
               apply to THEIR session, and Auto means watch rather than "watch if
               busy": `driven` there counts their clients, and a session nobody

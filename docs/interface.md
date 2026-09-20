@@ -72,6 +72,19 @@ the box is for overriding one, and leaving it empty hands the session back to
 whatever summary lands next. Clearing a title leaves the name where the last
 title put it.
 
+**When the dot is wrong, set it.** The same `⋯` menu carries a **Status**
+group — Working, Awaiting input, Done — with a tick on the one the session
+reads now. The dot comes from Claude Code hooks (ADR-0001) and there are
+known ways for it to get stuck: a `Ctrl+C` typed straight at the pty, a
+question the harness took down without reporting it, a background agent whose
+id nothing retired. Picking a row writes the same thing a hook writes, so the
+correction holds until the session's Claude says otherwise and no longer — a
+session that really is working goes back to Working within seconds, and one
+that had finished keeps the reading you gave it. Marking a session Done also
+clears whatever it was still counted as waiting on, and none of this notifies
+your phone. The rows are absent on a suspended session, whose dot means
+something else, and on a session no Claude has run in.
+
 The `⋯` menus in the sidebar, on a session card and on a project header, open
 where you can read them. One near the bottom of the list opens upwards instead
 of downwards and keeps its edges on screen, so the options at the end of it are

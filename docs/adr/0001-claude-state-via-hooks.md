@@ -15,7 +15,8 @@ instances are unaffected. `tmux-api` returns the option through the
 
 The hooks are *almost* the only writer. An interrupt ends a turn without
 firing `Stop`, so the one component that injects interrupts writes the
-resulting state itself — see "Interrupts have no hook" below.
+resulting state itself — see "Interrupts have no hook" below. And a person
+can write it from the card's ⋯ menu — see "A person is the third writer".
 
 ## Considered Options
 
@@ -225,3 +226,43 @@ resulting state itself — see "Interrupts have no hook" below.
   keeps that leader as `bash` while claude runs underneath — blanking
   every launcher user's dots (found on bob's sessions, 2026-07-07,
   same day).
+- **A person is the third writer** (2026-09-20, Viktor: "let's add an
+  ability for users to manually set the status of a session. this is to
+  fix any bugs the users see. it should only persist for the current turn
+  - any future updates from the system should be respected"). Every
+  correction above arrived after somebody had spent a while looking at a
+  dot that was wrong, with no way to say so. The card's ⋯ menu now carries
+  the three stamped states, and `POST /sessions/{name}/state`
+  (tmux-api/session_state.go) writes them.
+
+  It writes `@claude_state` ITSELF rather than an override field beside
+  it, and that is the whole design. Every consumer already reads that
+  option — the sidebar, the model picker's turn gate, agent-api's turn
+  tracking, the push sender, the T3 bridge's pin — so an override would
+  have had to be threaded through all of them or they would disagree
+  about one fact. Writing the option also gives the lifetime for free:
+  the next hook event stamps over it, which is exactly "persists for the
+  current turn". Nothing expires it, nothing records that a person chose
+  it, and no reader needs to know.
+
+  Two marks travel with the write, because a state alone does not survive
+  contact with them. `@claude_ask` is cleared unless the correction IS
+  awaiting, for the reason `Injector.Cancel` clears it: while it stands
+  the script resolves every stamp to awaiting, so the fix would be undone
+  by the next `PreToolUse`. And `done` clears `@claude_bg`, since a
+  finished session owing two agents is a contradiction the card draws,
+  and between turns nothing else retires an id — if the work is real, the
+  next `SubagentStart` or task-notification puts the session back to
+  running within seconds and the next `Stop` rebuilds the set from the
+  harness's list.
+
+  Two states are refused rather than written. `suspended` is derived from
+  `@tl_suspended` and forced by `parseSessions`, so a stamp of it would
+  be invisible; and a session with no `@claude_state` at all is one no
+  Claude has run in, where a stamp would grow a state dot on a plain
+  shell. Both answer 409 and the menu does not offer the rows.
+
+  The push sender holds the edge a correction makes (`manualStates`,
+  pushsender.go). Marking a stuck session done is a running→done edge
+  like any other, and the one person it would notify is the one who just
+  made it.
