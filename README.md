@@ -255,6 +255,14 @@ summary, so hooks it is). Claudes started before the hooks were
 installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
+A dot that is wrong can be set by hand: the card's `⋯` menu carries a
+**Status** group with the same three states, and picking one writes the
+same option a hook writes. So it holds until the session's Claude says
+otherwise and no longer, which is the point — a session that really is
+working corrects itself within seconds. Marking one *done* also clears
+whatever it was counted as still waiting on, and none of it notifies
+your devices.
+
 *Running* is not the same as "a turn is in flight". A session that
 launched a background agent, a workflow or a teammate keeps that dot
 until the work reports back, because it will speak again with nobody
