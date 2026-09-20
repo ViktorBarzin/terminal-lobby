@@ -275,8 +275,29 @@ func (s *Server) createConversation(c *call) (any, error) {
 // joins several arguments with spaces and hands the result to /bin/sh, so
 // anything carrying a space or a quote arrives split. Quoting here and passing
 // a single element keeps the line the caller asked for.
+// defaultPermissionMode is what a conversation gets when the caller says
+// nothing.
+//
+// bypassPermissions, deliberately. Every caller of this API is headless by
+// construction: nobody is sitting at the pane to answer a permission prompt,
+// so a session that asks does not get refused, it HANGS, and the caller sees
+// a turn that never finishes rather than a reason.
+//
+// This is not the same as removing the guardrails. A PreToolUse hook runs
+// BEFORE the permission-mode check, and a hook that DENIES still denies under
+// bypass, which is how zsh-guard keeps working on this box. A deny fails
+// loudly and the agent can adapt; only an ASK hangs, and nothing in the hook
+// chain here asks.
+//
+// A caller that wants to look without touching still says so: permission_mode
+// is on the request and "plan" is the useful one.
+const defaultPermissionMode = "bypassPermissions"
+
 func claudeCommandLine(bin string, req createRequest) string {
 	args := []string{bin}
+	if req.PermissionMode == "" {
+		req.PermissionMode = defaultPermissionMode
+	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}

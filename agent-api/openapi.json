@@ -4,7 +4,7 @@
     "title": "Terminal Lobby agent-api",
     "version": "1.0.0",
     "summary": "Start and drive Claude Code conversations on the devvm over HTTP.",
-    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. It returns immediately with a task id, because a turn takes minutes and sometimes hours.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. On `needs_input` the agent is blocked on a question, which the task carries; relay it to a person.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable — `POST .../messages` against one is refused with 403.",
+    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. It returns immediately with a task id, because a turn takes minutes and sometimes hours.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. On `needs_input` the agent is blocked on a question, which the task carries; relay it to a person.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable \u2014 `POST .../messages` against one is refused with 403.",
     "license": {
       "name": "AGPL-3.0-or-later"
     }
@@ -97,7 +97,7 @@
         ],
         "operationId": "listConversations",
         "summary": "List every conversation on the caller's account.",
-        "description": "Returns all live tmux sessions belonging to the operating-system account the credential resolves to, including conversations a person started at the keyboard. Those are readable but not writable — check `writable` before sending a message, or read the 403 the messages route returns.",
+        "description": "Returns all live tmux sessions belonging to the operating-system account the credential resolves to, including conversations a person started at the keyboard. Those are readable but not writable \u2014 check `writable` before sending a message, or read the 403 the messages route returns.",
         "responses": {
           "200": {
             "description": "The conversations, in the order the tmux server reports them.",
@@ -157,7 +157,7 @@
         ],
         "operationId": "createConversation",
         "summary": "Start a new Claude Code conversation.",
-        "description": "Creates a detached tmux session running Claude Code in the given directory, and returns its `conversation_id`. The conversation is yours: you can send it messages, and so can nobody else.\n\nThe conversation stays alive until someone kills it. Nothing here closes one, so open them deliberately — each holds a Claude process and its context in memory on a shared workstation.\n\nThe new conversation's `state` is `no_agent` for the first second or two, while Claude Code starts. Sending a message immediately is fine: the message waits for the session to be ready.",
+        "description": "Creates a detached tmux session running Claude Code in the given directory, and returns its `conversation_id`. The conversation is yours: you can send it messages, and so can nobody else.\n\nThe conversation stays alive until someone kills it. Nothing here closes one, so open them deliberately \u2014 each holds a Claude process and its context in memory on a shared workstation.\n\nThe new conversation's `state` is `no_agent` for the first second or two, while Claude Code starts. Sending a message immediately is fine: the message waits for the session to be ready.",
         "requestBody": {
           "required": true,
           "content": {
@@ -283,7 +283,7 @@
         ],
         "operationId": "getTranscript",
         "summary": "Read a conversation's whole history.",
-        "description": "Every message in the conversation, oldest first, from the transcript Claude Code writes to disk. Readable for any conversation on the account, including ones you did not create.\n\nThis is the conversation, not the machinery: tool calls, tool results and the harness's own bookkeeping records are left out. It can be large — a long conversation runs to megabytes — so prefer a task's `result` when all you need is the answer to one message.",
+        "description": "Every message in the conversation, oldest first, from the transcript Claude Code writes to disk. Readable for any conversation on the account, including ones you did not create.\n\nThis is the conversation, not the machinery: tool calls, tool results and the harness's own bookkeeping records are left out. It can be large \u2014 a long conversation runs to megabytes \u2014 so prefer a task's `result` when all you need is the answer to one message.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ConversationID"
@@ -337,7 +337,7 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "404": {
-            "description": "No such conversation, or it has no Claude Code transcript — a plain shell session has none.",
+            "description": "No such conversation, or it has no Claude Code transcript \u2014 a plain shell session has none.",
             "content": {
               "application/json": {
                 "schema": {
@@ -443,7 +443,7 @@
         ],
         "operationId": "getTask",
         "summary": "Poll one message's progress.",
-        "description": "Returns the task's status and, depending on it, the field that matters:\n\n- `accepted` — queued behind another turn. Nothing has reached the agent yet.\n- `running` — the agent is working.\n- `needs_input` — the agent is blocked on a question, in `question`. Relay it to a person; answering is not something this API can do for you yet, and the conversation stays blocked until someone answers it in the terminal.\n- `done` — finished. `result` is the agent's final message.\n- `failed` — the turn could not be run or followed. `error` says why.\n- `cancelled` — you cancelled it.\n\nThe first three can change; the last three never do. `detail_url` points at the conversation's full transcript, which carries the whole turn.\n\nTasks live in memory, so a restart of this service loses the ids while the conversations survive. A 404 for an id you were polling means restart, not lost work: list the conversations and read the transcript.",
+        "description": "Returns the task's status and, depending on it, the field that matters:\n\n- `accepted` \u2014 queued behind another turn. Nothing has reached the agent yet.\n- `running` \u2014 the agent is working.\n- `needs_input` \u2014 the agent is blocked on a question, in `question`. Relay it to a person; answering is not something this API can do for you yet, and the conversation stays blocked until someone answers it in the terminal.\n- `done` \u2014 finished. `result` is the agent's final message.\n- `failed` \u2014 the turn could not be run or followed. `error` says why.\n- `cancelled` \u2014 you cancelled it.\n\nThe first three can change; the last three never do. `detail_url` points at the conversation's full transcript, which carries the whole turn.\n\nTasks live in memory, so a restart of this service loses the ids while the conversations survive. A 404 for an id you were polling means restart, not lost work: list the conversations and read the transcript.",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskID"
@@ -697,7 +697,7 @@
           },
           "state": {
             "type": "string",
-            "description": "What the agent in this conversation is doing right now, independent of any task: `running` is working, `awaiting` is blocked on a question for a person, `done` is idle and ready for a message, `no_agent` means no Claude Code is running in the session at all — a plain shell, or a conversation that has only just been created — and `suspended` means a conversation that sat idle for days had its Claude stopped to give the memory back. A suspended conversation is not writable: its transcript is on disk and someone has to resume it from the lobby first.",
+            "description": "What the agent in this conversation is doing right now, independent of any task: `running` is working, `awaiting` is blocked on a question for a person, `done` is idle and ready for a message, `no_agent` means no Claude Code is running in the session at all \u2014 a plain shell, or a conversation that has only just been created \u2014 and `suspended` means a conversation that sat idle for days had its Claude stopped to give the memory back. A suspended conversation is not writable: its transcript is on disk and someone has to resume it from the lobby first.",
             "enum": [
               "running",
               "awaiting",
@@ -730,7 +730,7 @@
         "properties": {
           "cwd": {
             "type": "string",
-            "description": "The absolute path of the directory the conversation works in. It must exist and be inside the account's own `code` directory — `/home/wizard/code` for the `wizard` account. Symbolic links are resolved before the check, so a link out of that tree is refused.",
+            "description": "The absolute path of the directory the conversation works in. It must exist and be inside the account's own `code` directory \u2014 `/home/wizard/code` for the `wizard` account. Symbolic links are resolved before the check, so a link out of that tree is refused.",
             "example": "/home/wizard/code/infra"
           },
           "model": {
@@ -752,14 +752,15 @@
           },
           "permission_mode": {
             "type": "string",
-            "description": "How the agent handles actions that would normally need approval. `default` asks; `acceptEdits` edits files without asking but still asks for anything else; `plan` produces a plan and changes nothing; `bypassPermissions` asks for nothing at all. Omit for `default`.",
+            "description": "How the agent handles actions that would normally need approval. `default` asks; `acceptEdits` edits files without asking but still asks for anything else; `plan` produces a plan and changes nothing; `bypassPermissions` asks for nothing. OMITTING THIS GIVES bypassPermissions, because you are not sitting at the terminal: a session that asks has nobody to answer and the turn hangs rather than failing. Send `plan` when you want to look without touching.",
             "enum": [
               "default",
               "acceptEdits",
               "bypassPermissions",
               "plan"
             ],
-            "example": "acceptEdits"
+            "example": "acceptEdits",
+            "default": "bypassPermissions"
           },
           "name": {
             "type": "string",
@@ -844,7 +845,7 @@
           },
           "question": {
             "type": "string",
-            "description": "Present on `needs_input` only: what the agent is asking a person. It cannot be answered through this API — someone has to answer it in the terminal interface — so relay it."
+            "description": "Present on `needs_input` only: what the agent is asking a person. It cannot be answered through this API \u2014 someone has to answer it in the terminal interface \u2014 so relay it."
           },
           "result": {
             "type": "string",

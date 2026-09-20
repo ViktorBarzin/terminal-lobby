@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"path/filepath"
@@ -122,10 +123,18 @@ func TestCreateConversationDefaults(t *testing.T) {
 	h.decodeJSON(h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(cwd)+`}`), http.StatusCreated, nil)
 
 	spec := h.sessions.createCalls()[0]
-	// No flags at all when nothing was asked for: the harness's own defaults
-	// are better than any this service could invent.
-	if spec.Command[0] != "/usr/local/bin/claude" {
-		t.Fatalf("command %q, want the bare binary", spec.Command[0])
+	// The harness's own defaults are better than any this service could
+	// invent, with ONE exception: the permission mode. This API only ever has
+	// headless callers, and the harness default asks, which against nobody is
+	// a hang rather than a refusal. Model and effort are still left alone.
+	want := "/usr/local/bin/claude --permission-mode bypassPermissions"
+	if spec.Command[0] != want {
+		t.Fatalf("command %q, want %q", spec.Command[0], want)
+	}
+	for _, flag := range []string{"--model", "--effort"} {
+		if strings.Contains(spec.Command[0], flag) {
+			t.Errorf("%s was invented; only the permission mode is defaulted", flag)
+		}
 	}
 }
 
@@ -591,5 +600,39 @@ func TestListFormatCarriesTheSuspendMark(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("listFields does not read %s, so every suspended conversation reports itself live: %v", OptionSuspended, listFields)
+	}
+}
+
+// A headless caller that says nothing must not get a session that asks. There
+// is nobody at the pane, so an ask is not a refusal, it is a hang: the turn
+// never finishes and the caller sees no reason.
+func TestOmittingPermissionModeGivesBypass(t *testing.T) {
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{})
+	if !strings.Contains(got, "--permission-mode bypassPermissions") {
+		t.Fatalf("command line %q, want --permission-mode bypassPermissions", got)
+	}
+}
+
+// ...but a caller that DOES say gets what it asked for. "plan" is the one that
+// matters: look without touching, on a box where the default now touches.
+func TestAnExplicitPermissionModeWins(t *testing.T) {
+	for _, m := range []string{"plan", "default", "acceptEdits", "bypassPermissions"} {
+		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m})
+		if !strings.Contains(got, "--permission-mode "+m) {
+			t.Errorf("mode %q: command line %q did not carry it", m, got)
+		}
+	}
+}
+
+// The document must say so, because the caller generates its client from it
+// and would otherwise have no way to know the default is the permissive one.
+func TestTheDocumentDeclaresTheBypassDefault(t *testing.T) {
+	var doc map[string]any
+	if err := json.Unmarshal(openAPIDocument(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	p := doc["components"].(map[string]any)["schemas"].(map[string]any)["CreateConversationRequest"].(map[string]any)["properties"].(map[string]any)["permission_mode"].(map[string]any)
+	if p["default"] != "bypassPermissions" {
+		t.Errorf("default = %v, want bypassPermissions", p["default"])
 	}
 }
