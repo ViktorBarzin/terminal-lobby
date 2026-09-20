@@ -708,12 +708,15 @@ export function stateLabel(state: string | undefined, unseen = false, bg?: Backg
 
 /**
  * What a session is still waiting on, in words: "2 agents", "1 workflow",
- * "2 agents, 1 command". Empty when it is waiting on nothing.
+ * "2 agents, 1 workflow". Empty when it is waiting on nothing.
  *
- * Named by kind rather than totalled because the kinds are not comparable
- * waits — a background command is usually seconds, a workflow can be half an
- * hour — and knowing which one is running is what tells a reader whether to
- * wait or go and do something else.
+ * Named by kind rather than totalled because the two are not comparable waits
+ * — a subagent is usually a minute or two, a workflow can be half an hour —
+ * and knowing which one is running is what tells a reader whether to wait or go
+ * and do something else.
+ *
+ * A background command is not one of them, and does not hold a session at
+ * running either (2026-09-20). See `BackgroundWork`.
  */
 export function backgroundLabel(bg: BackgroundWork | undefined): string {
   if (!bg) return "";
@@ -723,7 +726,6 @@ export function backgroundLabel(bg: BackgroundWork | undefined): string {
   };
   add(bg.agents, "agent", "agents");
   add(bg.workflows, "workflow", "workflows");
-  add(bg.commands, "command", "commands");
   return parts.join(", ");
 }
 

@@ -152,12 +152,14 @@ func TestStopKeepsRunningWhileBackgroundWorkIsOutstanding(t *testing.T) {
 	// Both launches, because stop.json was captured from a session running
 	// both: since Stop rebuilds the set from that list rather than filtering
 	// what a launch recorded, the fixture's own contents are now the scenario.
+	// Only the agent lands in the set — the shell is the kind that stopped
+	// counting on 2026-09-20.
 	e.fire(t, "running", "userprompt_human.json")
 	e.fire(t, "running", "post_agent_launch.json")
 	e.fire(t, "running", "post_bash_launch.json")
 
-	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b b:bmm8ohp9u" {
-		t.Fatalf("%s after the two launches = %q, want both ids", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
+		t.Fatalf("%s after the two launches = %q, want the agent's id alone", OptionBackground, got)
 	}
 
 	e.fire(t, "done", "stop.json")
@@ -169,8 +171,8 @@ func TestStopKeepsRunningWhileBackgroundWorkIsOutstanding(t *testing.T) {
 	// A task-notification retires its own id straight away, without waiting
 	// for the Stop that ends the turn it starts.
 	e.fire(t, "running", "userprompt_notification_agent.json")
-	if got := e.opt(t, OptionBackground); got != "b:bmm8ohp9u" {
-		t.Fatalf("%s after the agent's task-notification = %q, want the command left", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "" {
+		t.Fatalf("%s after the agent's task-notification = %q, want empty", OptionBackground, got)
 	}
 	e.fire(t, "done", "stop_tasks_finished.json")
 	if got := e.opt(t, OptionState); got != StateDone {
@@ -221,9 +223,11 @@ func TestASubagentsOwnToolCallsDoNotTouchTheSession(t *testing.T) {
 
 	// Its background launches carry ids whose notifications go to the SUBAGENT,
 	// never to this session, so counting one would leave an id nothing can remove.
+	// Belt and braces since 2026-09-20: the only fixture of a subagent launch
+	// is a Bash one, and a shell is no longer recorded from either thread.
 	e.fire(t, "running", "post_bash_launch_by_subagent.json")
-	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b b:bmm8ohp9u" {
-		t.Fatalf("%s = %q, want only the main thread's own launches", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
+		t.Fatalf("%s = %q, want only the main thread's own agent", OptionBackground, got)
 	}
 	if strings.Contains(e.opt(t, OptionBackground), "bugtixgoo") {
 		t.Fatalf("%s counted the subagent's own background command", OptionBackground)
@@ -239,7 +243,6 @@ func TestEveryLaunchKindIsRecordedWithItsKind(t *testing.T) {
 	// lists the workflow.
 	for _, tc := range []struct{ name, fixture, want, stop string }{
 		{"background agent", "post_agent_launch.json", "a:a1cbb47bebad51b9b", "stop.json"},
-		{"background command", "post_bash_launch.json", "b:bmm8ohp9u", "stop.json"},
 		{"workflow", "post_workflow_launch.json", "w:w7t7pnsug", "stop_workflow_running.json"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -255,6 +258,76 @@ func TestEveryLaunchKindIsRecordedWithItsKind(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A BACKGROUND SHELL does not hold the session at running (Viktor, 2026-09-20:
+// "remove background shells as contributing to a running agent status, only
+// background agents do"). A Bash run_in_background used to count exactly like
+// a subagent, so a tailed log or a watch loop somebody left going for the
+// afternoon painted the dot blue for as long as it ran.
+//
+// Both ways in are pinned here, because the script has two: the PostToolUse
+// that sees the launch, and the Stop that reads the harness's own registry.
+// stop_shell_running.json is a real Stop captured on 2.1.278, 2026-09-20,
+// moments into `sleep 90` launched with run_in_background — its registry lists
+// the shell and nothing else.
+func TestABackgroundShellDoesNotHoldRunning(t *testing.T) {
+	t.Run("the launch is not recorded", func(t *testing.T) {
+		e := newHookEnv(t)
+		e.fire(t, "running", "userprompt_human.json")
+		e.fire(t, "running", "post_bash_launch.json")
+
+		if got := e.opt(t, OptionBackground); got != "" {
+			t.Fatalf("%s after a background command = %q, want empty", OptionBackground, got)
+		}
+	})
+
+	t.Run("Stop finishes over a live one", func(t *testing.T) {
+		e := newHookEnv(t)
+		e.fire(t, "running", "userprompt_human.json")
+		e.fire(t, "running", "post_bash_launch.json")
+
+		e.fire(t, "done", "stop_shell_running.json")
+
+		if got := e.opt(t, OptionBackground); got != "" {
+			t.Fatalf("%s = %q, want empty: the registry lists only a shell", OptionBackground, got)
+		}
+		if got := e.opt(t, OptionState); got != StateDone {
+			t.Fatalf("%s = %q, want %q: a background command is not the session working",
+				OptionState, got, StateDone)
+		}
+	})
+
+	// A token written before the change drains at the first Stop, because the
+	// rebuild reads the registry and never re-adds a shell. Nothing expires an
+	// id, so without this a session upgraded mid-run would sit at running for
+	// the rest of its life.
+	t.Run("a leftover token drains", func(t *testing.T) {
+		e := newHookEnv(t)
+		e.set(t, OptionBackground, "b:bmm8ohp9u")
+		e.fire(t, "running", "userprompt_human.json")
+
+		e.fire(t, "done", "stop.json")
+
+		if got := e.opt(t, OptionBackground); got != "a:a1cbb47bebad51b9b" {
+			t.Fatalf("%s = %q, want the agent alone: the old shell token is gone", OptionBackground, got)
+		}
+	})
+
+	// An agent launched in the same turn still holds it. The line is the KIND
+	// of work, not the fact of it being in the background.
+	t.Run("an agent still holds it", func(t *testing.T) {
+		e := newHookEnv(t)
+		e.fire(t, "running", "userprompt_human.json")
+		e.fire(t, "running", "post_bash_launch.json")
+		e.fire(t, "running", "post_agent_launch.json")
+
+		e.fire(t, "done", "stop.json")
+
+		if got := e.opt(t, OptionState); got != StateRunning {
+			t.Fatalf("%s = %q, want %q: the agent is still running", OptionState, got, StateRunning)
+		}
+	})
 }
 
 // Talking to a session does not end the work it is already doing.
@@ -303,18 +376,18 @@ func TestAStaleSetDrainsAtTheNextStop(t *testing.T) {
 }
 
 // A task-notification retires ONE id and leaves the others, so a turn that
-// launched three things stays running until the third reports.
+// launched two things stays running until the second reports.
 func TestATaskNotificationRetiresOnlyItsOwnID(t *testing.T) {
 	e := newHookEnv(t)
 	e.fire(t, "running", "userprompt_human.json")
 	e.fire(t, "running", "post_agent_launch.json")
-	e.fire(t, "running", "post_bash_launch.json")
+	e.fire(t, "running", "post_workflow_launch.json")
 
 	e.fire(t, "running", "userprompt_notification_agent.json") // retires the agent
-	if got := e.opt(t, OptionBackground); got != "b:bmm8ohp9u" {
-		t.Fatalf("%s = %q, want the background command still outstanding", OptionBackground, got)
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Fatalf("%s = %q, want the workflow still outstanding", OptionBackground, got)
 	}
-	e.fire(t, "done", "stop.json")
+	e.fire(t, "done", "stop_workflow_running.json")
 	if got := e.opt(t, OptionState); got != StateRunning {
 		t.Fatalf("%s = %q, want %q with one task left", OptionState, got, StateRunning)
 	}
@@ -469,12 +542,13 @@ func TestAnUnstampedSessionStaysUnstampedOnANotification(t *testing.T) {
 //
 // stop_tasks_finished.json is a REAL Stop payload captured from that exact
 // sequence: a background command launched and finished inside one turn, leaving
-// `background_tasks` empty while @claude_bg still held its id.
+// `background_tasks` empty while @claude_bg still held its id. The launch here
+// is an agent's, since a command no longer puts anything in the set to prune.
 func TestStopPrunesWorkTheHarnessNoLongerLists(t *testing.T) {
 	e := newHookEnv(t)
 
 	e.fire(t, "running", "userprompt_human.json")
-	e.fire(t, "running", "post_bash_launch.json")
+	e.fire(t, "running", "post_agent_launch.json")
 	if got := e.opt(t, OptionBackground); got == "" {
 		t.Fatal("the launch was not recorded, so there is nothing to prune")
 	}
@@ -501,14 +575,16 @@ func TestStopKeepsWorkTheHarnessStillLists(t *testing.T) {
 	e.fire(t, "running", "post_agent_launch.json")
 	e.fire(t, "running", "post_bash_launch.json")
 
-	// stop.json lists both of those ids as running.
+	// stop.json lists both of those ids as running. Only the agent is a kind
+	// this script carries.
 	e.fire(t, "done", "stop.json")
 
 	got := e.opt(t, OptionBackground)
-	for _, want := range []string{"a:a1cbb47bebad51b9b", "b:bmm8ohp9u"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("%s = %q, want it to still contain %q", OptionBackground, got, want)
-		}
+	if !strings.Contains(got, "a:a1cbb47bebad51b9b") {
+		t.Errorf("%s = %q, want it to still contain the agent", OptionBackground, got)
+	}
+	if strings.Contains(got, "bmm8ohp9u") {
+		t.Errorf("%s = %q, want the listed shell left out", OptionBackground, got)
 	}
 	if st := e.opt(t, OptionState); st != StateRunning {
 		t.Errorf("%s = %q, want %q", OptionState, st, StateRunning)
@@ -568,7 +644,7 @@ func TestStopWithoutTheFieldPrunesNothing(t *testing.T) {
 	e := newHookEnv(t)
 
 	e.fire(t, "running", "userprompt_human.json")
-	e.fire(t, "running", "post_bash_launch.json")
+	e.fire(t, "running", "post_agent_launch.json")
 	before := e.opt(t, OptionBackground)
 	if before == "" {
 		t.Fatal("the launch was not recorded, so there is nothing to leave alone")
@@ -696,7 +772,7 @@ func TestNoTeammateInTheListDropsTheNames(t *testing.T) {
 // restarted under the same tmux session.
 func TestStopAdoptsWorkNoLaunchRecorded(t *testing.T) {
 	for _, tc := range []struct{ name, stop, want string }{
-		{"an agent and a command", "stop.json", "a:a1cbb47bebad51b9b b:bmm8ohp9u"},
+		{"an agent beside a listed shell", "stop.json", "a:a1cbb47bebad51b9b"},
 		{"a workflow", "stop_workflow_running.json", "w:w7t7pnsug"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

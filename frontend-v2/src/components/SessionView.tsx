@@ -185,10 +185,9 @@ export const SessionView: Component<{
    *  viewer — read ONCE when the view takes the session on, never after, since
    *  the count includes this client's own attach. */
   driven?: () => boolean;
-  /** What this session still owes: background agents, workflows or commands it
-   *  launched that have not reported back. From the session list, because the
-   *  transcript closes the turn when the main thread stops talking and cannot
-   *  see them. */
+  /** What this session still owes: background agents or workflows it launched
+   *  that have not reported back. From the session list, because the transcript
+   *  closes the turn when the main thread stops talking and cannot see them. */
   background?: () => BackgroundWork | undefined;
   /** The size of the session's tmux window — its Grid — from the session list,
    *  or null when nobody could say.

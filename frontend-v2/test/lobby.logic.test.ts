@@ -28,7 +28,7 @@ import {
   workspaceHue,
   type SidebarModel,
 } from "../src/components/lobby.logic";
-import type { Layout, Session } from "../src/types/lobby";
+import type { BackgroundWork, Layout, Session } from "../src/types/lobby";
 import { emptyLayout } from "../src/types/lobby";
 
 const ME = "wizard";
@@ -584,7 +584,7 @@ describe("display helpers", () => {
     const c = countStates([
       sess("a", { state: "running" }),
       sess("b", { state: "running", bg: { agents: 2 } }),
-      sess("c", { state: "running", bg: { workflows: 1, commands: 1 } }),
+      sess("c", { state: "running", bg: { workflows: 1 } }),
       sess("d", { state: "done" }),
     ]);
     expect(c).toEqual({ running: 3, awaiting: 0, done: 1, background: 2 });
@@ -595,12 +595,18 @@ describe("display helpers", () => {
     expect(backgroundLabel({ agents: 1 })).toBe("1 agent");
     expect(backgroundLabel({ agents: 2 })).toBe("2 agents");
     expect(backgroundLabel({ workflows: 1 })).toBe("1 workflow");
-    expect(backgroundLabel({ commands: 3 })).toBe("3 commands");
     // Slowest kind first: a workflow is the one that decides whether it is
     // worth waiting.
-    expect(backgroundLabel({ commands: 1, agents: 2, workflows: 1 })).toBe(
-      "2 agents, 1 workflow, 1 command",
-    );
+    expect(backgroundLabel({ agents: 2, workflows: 1 })).toBe("2 agents, 1 workflow");
+  });
+  // A background shell stopped counting as the session working on 2026-09-20
+  // ("only background agents do"). tmux-api no longer sends a commands count;
+  // the cast is what a server that predates the change still puts on the wire,
+  // and it has to read as nothing rather than as a wait.
+  it("backgroundLabel ignores a commands count from an older server", () => {
+    const old = (n: number) => ({ commands: n }) as unknown as BackgroundWork;
+    expect(backgroundLabel(old(3))).toBe("");
+    expect(backgroundLabel({ ...old(3), agents: 1 })).toBe("1 agent");
   });
   // The tooltip and the screen reader are the only places the reason reaches
   // someone who cannot see an 8px dot, so the background detail belongs in the

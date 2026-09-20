@@ -457,9 +457,12 @@ func TestListFormatCarriesTheGrid(t *testing.T) {
 
 // Outstanding background work holds a session at "running" past the Stop that
 // used to finish it, and the sidebar says WHICH kind so a reader can tell a
-// 30-second command from a 30-minute workflow. The kinds come from the hook's
-// `<kind>:<id>` tokens: a=agent, b=background command, w=workflow
+// handful of subagents from a 30-minute workflow. The kinds come from the
+// hook's `<kind>:<id>` tokens: a=agent, t=teammate, w=workflow
 // (docs/plans/2026-09-04-background-work-session-state-design.md).
+//
+// `b`, a background shell, is deliberately absent since 2026-09-20: only
+// agents hold a session at running.
 func TestParseSessionsCountsOutstandingWorkByKind(t *testing.T) {
 	cases := []struct {
 		name, bg string
@@ -467,11 +470,16 @@ func TestParseSessionsCountsOutstandingWorkByKind(t *testing.T) {
 	}{
 		{"nothing outstanding", "", nil},
 		{"one agent", "a:a1cbb47bebad51b9b", &Background{Agents: 1}},
-		{"two agents and a command", "a:a1 a:a2 b:bmm8ohp9u", &Background{Agents: 2, Commands: 1}},
+		{"two agents", "a:a1 a:a2", &Background{Agents: 2}},
 		{"a workflow", "w:wy71p4jz3", &Background{Workflows: 1}},
 		{"a teammate counts as an agent", "t:probe2", &Background{Agents: 1}},
 		{"a teammate and a subagent", "a:a1 t:probe2", &Background{Agents: 2}},
-		{"one of each", "a:a1 b:b1 w:w1", &Background{Agents: 1, Commands: 1, Workflows: 1}},
+		{"one of each", "a:a1 w:w1", &Background{Agents: 1, Workflows: 1}},
+		// A background shell stopped counting on 2026-09-20. The hook no
+		// longer writes one; a `b:` token left on a session from before the
+		// change reads as nothing rather than pinning it at running.
+		{"a background shell counts as nothing", "b:bmm8ohp9u", nil},
+		{"an agent survives a leftover shell token", "a:a1 b:bmm8ohp9u", &Background{Agents: 1}},
 		// The hook validates ids before it writes them, so a token in a shape
 		// this parser does not know came from somewhere else. Counting it as
 		// nothing keeps a corrupted option from holding a session at running

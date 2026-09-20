@@ -37,13 +37,17 @@ export type AttachAccess = "ro" | "rw";
  * `Background`). Each key is omitted when zero, so an object with no keys never
  * reaches the wire — the whole field is dropped instead.
  *
- * Counted by kind rather than totalled because the kinds take wildly different
- * amounts of time: a background command is usually seconds, a workflow can be
+ * Counted by kind rather than totalled because the two take wildly different
+ * amounts of time: a subagent is usually a minute or two, a workflow can be
  * half an hour.
+ *
+ * A background SHELL is not here. `commands` was a third key until 2026-09-20,
+ * when a Bash run_in_background stopped counting as the session working — only
+ * agents do. A server that predates the change still sends it; nothing reads
+ * it, so it lands as an extra key and is ignored.
  */
 export interface BackgroundWork {
   agents?: number;
-  commands?: number;
   workflows?: number;
 }
 

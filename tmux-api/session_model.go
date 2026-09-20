@@ -70,10 +70,14 @@ type Session struct {
 	// the object it always did.
 	//
 	// It is what stops State reading "done" the moment the main turn ends: a
-	// background agent, a workflow or a background command keeps producing
-	// output long after Stop fires, and the session will speak again with
-	// nobody prompting it. State stays "running" for as long as this is
-	// non-nil, which every consumer of State already handles.
+	// background agent or a workflow keeps producing output long after Stop
+	// fires, and the session will speak again with nobody prompting it. State
+	// stays "running" for as long as this is non-nil, which every consumer of
+	// State already handles.
+	//
+	// A background SHELL is not counted here and does not hold the state
+	// (Viktor, 2026-09-20). The hook script stopped recording one, which is
+	// where the decision and its reasoning live.
 	Background *Background `json:"bg,omitempty"`
 	// Origin is WHO made this session, read from @tl_origin. Three states:
 	// "user" when the lobby's own create path made it, "test" when a harness
@@ -128,11 +132,14 @@ type Session struct {
 }
 
 // Background counts what a session is waiting on, by kind, so the sidebar can
-// tell a 30-second command from a 30-minute workflow rather than showing one
+// tell a handful of subagents from a 30-minute workflow rather than showing one
 // undifferentiated number.
+//
+// There is no commands count. A `commands` key was on the wire until
+// 2026-09-20; a consumer that still reads it now finds it absent, which the
+// omitempty shape already meant "none of those".
 type Background struct {
 	Agents    int `json:"agents,omitempty"`
-	Commands  int `json:"commands,omitempty"`
 	Workflows int `json:"workflows,omitempty"`
 }
 
@@ -149,6 +156,11 @@ type Background struct {
 // every id before writing it, so an unrecognised shape came from somewhere else,
 // and treating it as work would hold the session at "running" with no event able
 // to retire it.
+//
+// `b`, a background shell, is one of those unknown kinds since 2026-09-20. The
+// hook no longer writes one, and a session still carrying a `b:` token from
+// before the change reads as owing nothing rather than staying at "running"
+// until its next Stop rebuilds the set.
 func parseBackground(tokens string) *Background {
 	var b Background
 	for _, tok := range strings.Fields(tokens) {
@@ -159,8 +171,6 @@ func parseBackground(tokens string) *Background {
 		switch kind {
 		case "a", "t":
 			b.Agents++
-		case "b":
-			b.Commands++
 		case "w":
 			b.Workflows++
 		}

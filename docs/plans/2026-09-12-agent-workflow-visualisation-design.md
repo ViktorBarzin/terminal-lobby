@@ -4,6 +4,15 @@
 **Owner:** wizard. **Repos touched:** terminal-lobby.
 **Decisions from:** a grilling session on 2026-09-12.
 
+> **Note, 2026-09-20 — `@claude_bg` no longer carries background shells.** A
+> `Bash` with `run_in_background` stopped counting as the session working
+> (Viktor: "only background agents do"), so the option holds agents, workflows
+> and teammates, and the `commands` key left the wire. Two places below read
+> from the old set and are worth revisiting as the panel is built: the sample
+> strip "2 commands", and the Entities row, which lists background `Bash`
+> commands among what the panel shows. Whether the panel sources them from
+> somewhere else is open — nothing here decides it.
+
 ## Chosen: Marginalia
 
 **[Open the prototype](agent-panel/p1-ambient.html)**, press `16 agents`, then

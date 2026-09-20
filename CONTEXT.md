@@ -549,15 +549,21 @@ Claude turn state)
 
 **Outstanding work**:
 Work a session started that has not finished — background subagents,
-**Workflow** runs, background commands and **teammates**. A session with
-any is *running* rather than *completed*, because it will produce more
-output without anyone prompting it, and the sidebar names what it is
-waiting on ("2 agents", "1 workflow"). Kept in the session's `@claude_bg`
-option, by two different keys for two different reasons.
+**Workflow** runs and **teammates**. A session with any is *running*
+rather than *completed*, because it will produce more output without
+anyone prompting it, and the sidebar names what it is waiting on
+("2 agents", "1 workflow"). Kept in the session's `@claude_bg` option, by
+two different keys for two different reasons.
 
-The first three are kept by the harness's own task id, and at the end of
-every turn the set is rebuilt from `background_tasks`, the list of live
-tasks the harness puts in the `Stop` payload. That list is the
+A background SHELL is not outstanding work. A `Bash` with
+`run_in_background` counted until 2026-09-20, when Viktor drew the line
+at agents: a tailed log or a watch loop left going for the afternoon is
+not the session working. It still re-enters the session when it exits,
+so a *completed* session can speak again on its own.
+
+Subagents and workflows are kept by the harness's own task id, and at the
+end of every turn the set is rebuilt from `background_tasks`, the list of
+live tasks the harness puts in the `Stop` payload. That list is the
 load-bearing path in both directions: a notification for a task that
 finished mid-turn is absorbed into that turn and never arrives as a
 prompt, and the list is also the only thing that clears an id nobody

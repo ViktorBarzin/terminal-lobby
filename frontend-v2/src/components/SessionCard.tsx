@@ -933,7 +933,7 @@ export const SessionCard: Component<{
       {/* What the session is waiting on, when it is waiting on something. It
           sits beside the timer rather than replacing it: the elapsed time is
           how long the wait has been, and the kind is what decides whether it
-          is worth waiting — a background command is usually seconds, a
+          is worth waiting — a subagent is usually a minute or two, a
           workflow can be half an hour. */}
       <Show when={backgroundLabel(s().bg)}>
         {(what) => (

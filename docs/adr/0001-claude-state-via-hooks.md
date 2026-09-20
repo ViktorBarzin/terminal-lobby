@@ -141,7 +141,8 @@ resulting state itself — see "Interrupts have no hook" below.
   checked whether a running Workflow is listed at all. It is: a `Stop`
   taken two seconds into a live run carries
   `{"id":"w7t7pnsug","type":"workflow","status":"running"}`. Every kind
-  prunes the same way now.
+  the set still carries prunes the same way (`shell` left it on
+  2026-09-20, below).
 
   The same measurement removed the two clears that reported `done` over a
   live run (2026-09-12, Viktor: "Claude starts a workflow, then the status
@@ -197,6 +198,23 @@ resulting state itself — see "Interrupts have no hook" below.
   — a wrong green corrects itself at the next launch, a wrong blue does
   not. Design and the full trace:
   `docs/plans/2026-09-04-background-work-session-state-design.md`.
+
+  A BACKGROUND SHELL left the set on 2026-09-20 (Viktor: "remove
+  background shells as contributing to a running agent status, only
+  background agents do"). A `Bash` with `run_in_background` held the dot
+  at running exactly as a subagent did, which meant a tailed log or a
+  watch loop somebody parked for the afternoon read as the session
+  working. Agents, workflows and teammates keep the session at `running`;
+  a shell does not. Two lines carried it and both are gone — the
+  `backgroundTaskId` arm of `record_launch`, and the `shell` case of the
+  prune, which now skips the type the way it skips one it does not know.
+
+  The trade is stated rather than hidden: a background command DOES
+  re-enter the session when it exits, so a session reading `done` can
+  speak again with nobody prompting it. A `b:` token written before the
+  change is an unrecognised kind now — `parseBackground` counts it as
+  nothing, and the first `Stop` after the upgrade drops it, since the
+  rebuild reads the registry and never re-adds a shell.
 - A session whose Claude died without hooks firing (kill -9, OOM) is
   caught by a liveness backstop: a state only survives while a claude
   process is alive under the session's `pane_pid` (one /proc scan per

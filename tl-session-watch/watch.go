@@ -14,8 +14,10 @@ type Session struct {
 	Name string
 	// Background is the session's @claude_bg stamp: space-separated
 	// `<kind>:<id>` tokens for background work it launched that has not
-	// reported back (a=agent, b=command, w=workflow). Empty when it owes
-	// nothing, which is the ordinary case.
+	// reported back (a=agent, w=workflow, t=teammate). Empty when it owes
+	// nothing, which is the ordinary case. A `b`, a background command, was a
+	// fourth kind until 2026-09-20; a token from before that still parses as
+	// one of these tokens and is worth reading as historical.
 	//
 	// Reported rather than acted on. It is what makes "running" mean two
 	// different things, so a finding that names a state reads better with it

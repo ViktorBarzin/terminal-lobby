@@ -256,11 +256,13 @@ installed show no dot until their next restart/resume; worst-case
 display lag is ~10 s (5 s API cache + 5 s poll).
 
 *Running* is not the same as "a turn is in flight". A session that
-launched a background agent, a workflow, a background command or a
-teammate keeps that dot until the work reports back, because it will
-speak again with nobody prompting it, and the card names what it is
-waiting on ("2 agents", "1 workflow"). What is outstanding lives in a
-second option, `@claude_bg`, written by the same hooks. At the end of
+launched a background agent, a workflow or a teammate keeps that dot
+until the work reports back, because it will speak again with nobody
+prompting it, and the card names what it is waiting on ("2 agents",
+"1 workflow"). A background command does not hold the dot — that line
+was drawn at agents on 2026-09-20, so a tailed log left running does not
+read as the session working. What is outstanding lives in a second
+option, `@claude_bg`, written by the same hooks. At the end of
 every turn the set is rebuilt from the tasks the harness still reports
 live, so work that finished while Claude was mid-turn stops holding the
 dot, and work that is still going keeps it — through anything you type

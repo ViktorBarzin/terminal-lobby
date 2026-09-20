@@ -3,6 +3,18 @@
 **Status:** shipped 2026-09-04 in v0.28.3, verified on the box.
 **Owner:** wizard. **Repos touched:** terminal-lobby only.
 
+> **Amended 2026-09-20 — a background shell no longer counts.** Viktor: "remove
+> background shells as contributing to a running agent status, only background
+> agents do". Everything below still describes the mechanism; the set of kinds
+> it applies to is now agents, workflows and teammates. A `Bash` with
+> `run_in_background` is launched and forgotten: `record_launch` drops its
+> `backgroundTaskId` arm, and the `Stop` prune skips `type: shell` the way it
+> skips a type it does not know. The `b:` kind, `Background.Commands` and the
+> wire's `commands` key all went with it. The trade this reopens is the one
+> named under **Accepted trade-offs**: a background command does re-enter the
+> session when it exits, so a session reading `done` can speak again with
+> nobody prompting it.
+
 The sidebar's state dot goes green the moment the main Claude turn ends, even
 when that turn's last act was to launch a background agent, a `Workflow`, or a
 background `Bash`. The session reads *Done* while it is in fact still working

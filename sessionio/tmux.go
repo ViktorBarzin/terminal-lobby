@@ -31,11 +31,10 @@ const (
 	OptionState = "@claude_state"
 	// OptionBackground holds the session's OUTSTANDING WORK: space-separated
 	// `<kind>:<id>` tokens for work the session started that has not finished,
-	// kind being `a` (background subagent), `b` (background command), `w`
-	// (workflow) or `t` (teammate). Written by the same hook script as
-	// OptionState.
+	// kind being `a` (background subagent), `w` (workflow) or `t` (teammate).
+	// Written by the same hook script as OptionState.
 	//
-	// The first three are keyed by the harness's own task id, and the script
+	// `a` and `w` are keyed by the harness's own task id, and the script
 	// re-derives them at every Stop from `background_tasks`, the list the
 	// harness puts in that payload. A teammate is keyed by its NAME instead,
 	// because that list reports a teammate as running for as long as it
@@ -49,6 +48,12 @@ const (
 	// finished). A session with a non-empty set stays StateRunning, which is
 	// what every consumer of OptionState already reads correctly. Design:
 	// docs/plans/2026-09-04-background-work-session-state-design.md.
+	//
+	// A BACKGROUND SHELL is not in the set. It was, as kind `b`, until
+	// 2026-09-20: agents hold a session at running, a Bash run_in_background
+	// does not (Viktor, "only background agents do"). The hook script's own
+	// comment carries the reasoning. Tokens written before the change are
+	// unknown kinds now — parsed as nothing, and dropped by the first Stop.
 	OptionBackground = "@claude_bg"
 	// OptionAsk holds the tool_use_id of a BLOCKING DIALOG that is on screen —
 	// an AskUserQuestion's question menu, or an ExitPlanMode's plan approval —
@@ -303,12 +308,11 @@ func (in *Injector) PromptUncleared(osUser, session, text string) error {
 //
 // OptionBackground is left alone, and it decides which state is stamped. An
 // interrupt ends the TURN; it does not end the work the session already
-// started. Measured 2026-09-12 by interrupting a session that had both kinds
-// live: the workflow kept counting ("0/1 agents done · 25s" at the interrupt,
-// still climbing after) and the background command's output file went from line
-// 39 to line 55 across it. Emptying the set there reported a finished session
-// over work that was still going, which is the same defect the hook script's
-// own clears had (docs/plans/2026-09-04-background-work-session-state-design.md).
+// started. Measured 2026-09-12 by interrupting a session with a live workflow:
+// it kept counting ("0/1 agents done · 25s" at the interrupt, still climbing
+// after). Emptying the set there reported a finished session over work that was
+// still going, which is the same defect the hook script's own clears had
+// (docs/plans/2026-09-04-background-work-session-state-design.md).
 //
 // So an outstanding id keeps the session at StateRunning, exactly as it does at
 // Stop. It is still retired by the ordinary drains: the task-notification that

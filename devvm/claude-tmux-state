@@ -258,13 +258,25 @@ ask_tool() {
 
 # ---- The outstanding-work set ---------------------------------------------
 # @claude_bg holds space-separated `<kind>:<id>` tokens: `a` a background
-# subagent, `b` a background command, `w` a workflow, `t` a teammate. Empty
-# means the session owes nothing and Stop may finish it.
+# subagent, `w` a workflow, `t` a teammate. Empty means the session owes
+# nothing and Stop may finish it.
 #
-# The first three are keyed by the harness's own task id and re-derived from
-# its registry at every Stop. A teammate is keyed by its NAME instead, because
+# `a` and `w` are keyed by the harness's own task id and re-derived from its
+# registry at every Stop. A teammate is keyed by its NAME instead, because
 # the registry cannot say whether one is working (bg_sync), and the name is
 # what both events that can — SubagentStart and TeammateIdle — carry.
+#
+# A BACKGROUND SHELL — Bash with run_in_background, `type":"shell"` in the
+# registry — is deliberately not here (Viktor, 2026-09-20: "remove background
+# shells as contributing to a running agent status, only background agents
+# do"). It held the dot at running exactly like an agent did, and a tailed log
+# or a watch loop that a person left running for the afternoon is not the
+# session working. An agent, a workflow and a teammate are; a shell is a tool
+# somebody parked.
+#
+# The cost, stated because it is real: a background command DOES re-enter the
+# session when it exits, so a session reading done can speak again with nobody
+# prompting it. That was already true of anything the registry did not list.
 
 bg=""
 bg_read() { bg="$(tmux show-option -qv -t "$TMUX_PANE" @claude_bg 2>/dev/null || true)"; }
@@ -315,23 +327,29 @@ bg_del() {
 # at the first Stop, whatever started it. That covers a compaction, an
 # interrupt, and a claude restarted under the same tmux session.
 #
-# Three kinds are taken from the list, and the fourth is deliberately not:
+# Two kinds are taken from the list, and two are deliberately not:
 #
-#   shell, subagent, workflow   listed while they work and gone the moment they
+#   subagent, workflow          listed while they work and gone the moment they
 #                               finish or are stopped with TaskStop (measured
 #                               2026-09-04 and again on 2.1.269, 2026-09-12)
 #   teammate                    listed as "running" for as long as the teammate
 #                               EXISTS. Measured three times on 2026-09-12, the
 #                               last 3m30s after the teammate had answered and
 #                               the harness's own bar showed it "idle"
+#   shell                       skipped: a background command is not the
+#                               session working (see the set's own comment)
 #
 # So a teammate is carried here rather than derived: the `t:` tokens already in
 # the set survive a sync, and SubagentStart and TeammateIdle are what add and
 # retire them. They are dropped only when the registry lists no teammate at
 # all, which is the session having disbanded the team.
 #
-# For the same reason a type this script does not know is skipped rather than
-# assumed to be work. Guessing the other way costs more than a late green dot:
+# Reading the list is also what retires a `b:` token left over from before
+# 2026-09-20, when a shell still counted: the rebuild never re-adds one, so the
+# first Stop after an upgrade drops it.
+#
+# A type this script does not know is skipped rather than assumed to be work.
+# Guessing the other way costs more than a late green dot:
 # a session stuck at running refuses the model picker ("the session is working
 # — stop it first") and holds a T3 attach pin open, and nothing retires the id
 # that did it, since there is deliberately no expiry (2026-09-04). A new kind
@@ -387,7 +405,6 @@ bg_sync() {
         esac
         case "$typ" in
         subagent) kind=a ;;
-        shell) kind=b ;;
         workflow) kind=w ;;
         teammate)
             team=1
@@ -418,10 +435,13 @@ bg_sync() {
 #
 #   Agent (background)      tool_response.agentId,   status async_launched
 #   Workflow                tool_response.taskId,    status async_launched
-#   Bash run_in_background  tool_response.backgroundTaskId
 #
 # Each carries the id the eventual task-notification will name, so bg_del can
 # retire them one by one.
+#
+# A BASH run_in_background answers `tool_response.backgroundTaskId` and is not
+# recorded, for the reason the set's own comment gives: a background command
+# does not hold the session at running.
 #
 # A TEAMMATE is not recorded here, though its launch comes through this same
 # event as `{"status":"teammate_spawned","name":"counter",…}`. Adding it would
@@ -442,12 +462,6 @@ record_launch() {
         json_field taskId
         id_ok "$jv" && bg_add "w:$jv"
         return 0
-        ;;
-    esac
-    case "$payload" in
-    *'"backgroundTaskId":"'*)
-        json_field backgroundTaskId
-        id_ok "$jv" && bg_add "b:$jv"
         ;;
     esac
 }
