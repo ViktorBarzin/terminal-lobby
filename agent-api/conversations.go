@@ -298,6 +298,15 @@ func claudeCommandLine(bin string, req createRequest) string {
 	if req.PermissionMode == "" {
 		req.PermissionMode = defaultPermissionMode
 	}
+	// Appended rather than replacing: the Claude Code preset is most of what
+	// makes the agent useful, and this only adds the rules that come from
+	// being driven by a program instead of a person. Via a file when one can
+	// be written, so the command line stays short enough to read.
+	if p := agentRulesPath(); p != "" {
+		args = append(args, "--append-system-prompt-file", p)
+	} else {
+		args = append(args, "--append-system-prompt", agentSystemPrompt)
+	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
