@@ -564,7 +564,7 @@ describe("the composer's roamed choices", () => {
   // everyone who had made one.
   it("carries a family word forward to the row it means now", () => {
     expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe(
-      "claude-opus-5",
+      "claude-opus-5-5",
     );
     expect(coercePrefs({ session: { newModel: "haiku" } }).session.newModel).toBe(
       "claude-haiku-4-5-20251001",

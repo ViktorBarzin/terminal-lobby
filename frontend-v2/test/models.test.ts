@@ -31,6 +31,7 @@ describe("the model catalogue", () => {
   it("offers each harness its own models", () => {
     expect(modelsFor("claude").map((m) => m.id)).toEqual([
       "default",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-5[1m]",
       "claude-sonnet-5",
@@ -91,7 +92,8 @@ describe("the model catalogue", () => {
   // means the family's canonical row — never the [1m] variant, never last
   // generation, and never two rows at once.
   it("ticks one row, and the plain one, for a bare family word", () => {
-    expect(isCurrentModel("claude", "claude-opus-5", "opus")).toBe(true);
+    expect(isCurrentModel("claude", "claude-opus-5-5", "opus")).toBe(true);
+    expect(isCurrentModel("claude", "claude-opus-5", "opus")).toBe(false);
     expect(isCurrentModel("claude", "claude-opus-5[1m]", "opus")).toBe(false);
     expect(isCurrentModel("claude", "claude-opus-4-8", "opus")).toBe(false);
     expect(isCurrentModel("claude", "claude-sonnet-5", "sonnet")).toBe(true);
@@ -102,7 +104,7 @@ describe("the model catalogue", () => {
   // The stored preference gets the same treatment, for the same reason: a doc
   // written before 2026-09-06 says `opus`, and that is a choice somebody made.
   it("carries a stored family word forward to the row it means now", () => {
-    expect(adoptModelId("claude", "opus")).toBe("claude-opus-5");
+    expect(adoptModelId("claude", "opus")).toBe("claude-opus-5-5");
     expect(adoptModelId("claude", "haiku")).toBe("claude-haiku-4-5-20251001");
     expect(adoptModelId("claude", "claude-opus-4-8")).toBe("claude-opus-4-8");
     expect(adoptModelId("claude", "default")).toBe("default");

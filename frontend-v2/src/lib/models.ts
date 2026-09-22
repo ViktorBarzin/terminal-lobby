@@ -114,6 +114,14 @@ const anyDefault = (noun: string): ModelOption => ({
  * never shipped. The devvm now tracks latest and refreshes daily
  * (infra playbooks/devvm.yml, codex-update.timer).
  *
+ * `claude-opus-5-5` leads the list because the box leads with it: the managed
+ * `model` key became `claude-opus-5-5` on 2026-09-22, the day Opus 5.5 became
+ * entitled to this account. Being first also makes it what a bare `opus`
+ * receipt resolves to (canonicalFor below), which is the same answer the box
+ * would give. Checked the way this comment asks: a real pane on the slug
+ * answered with no fallback warning, and its transcript recorded
+ * `claude-opus-5-5` at `speed: fast`.
+ *
  * Three slugs the CLI knows are deliberately absent. `claude-sonnet-5[1m]` is
  * accepted and then ignored — the session boots as plain "Sonnet 5", with no
  * 1M marker, because only Opus carries the suffix — so a row for it would
@@ -125,6 +133,7 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
   claude: {
     model: [
       anyDefault("model"),
+      slug("claude-opus-5-5"),
       slug("claude-opus-5"),
       slug("claude-opus-5[1m]"),
       slug("claude-sonnet-5"),

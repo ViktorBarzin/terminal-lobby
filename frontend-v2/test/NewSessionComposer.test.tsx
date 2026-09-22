@@ -650,6 +650,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     const sel = pick(m.container, "Model for new session");
     expect(Array.from(sel.options).map((o) => o.value)).toEqual([
       "default",
+      "claude-opus-5-5",
       "claude-opus-5",
       "claude-opus-5[1m]",
       "claude-sonnet-5",
