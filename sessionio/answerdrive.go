@@ -406,6 +406,25 @@ const maxFreeSteps = 8
 // empty field does nothing, so the extra presses cost nothing once it is clear.
 const clearMargin = 2
 
+// clearFieldKeys is the one run of keys that empties a multi-select's
+// free-text field while the reading shows `shown` in it: C-e, then a Backspace
+// for every character shown plus clearMargin.
+//
+// C-E COMES FIRST. A walk onto the row with ↑ or ↓ puts the field's text
+// cursor at the START of the words, and a Backspace there takes nothing out.
+// The live check on CLI 2.1.280 found it on 2026-09-23: a typed "X" landed in
+// front of "Kiwi", and six Backspaces left "Kiwi" in the field and ticked.
+// Only straight after a paste is the cursor at the end, so a clear straight
+// after typing worked and the same clear after one click on another option
+// came back unverified, the reader's pick stuck. C-e moves the cursor to the
+// end of the whole text, a wrapped one included: C-e and 170 Backspaces in one
+// run cleared a 166-character field wrapped over two lines, starting from
+// position 0. End is no substitute, since it stops at the end of the first
+// visual line, and neither is C-u, which kills one visual line.
+func clearFieldKeys(shown string) []string {
+	return append([]string{"C-e"}, repeat("BSpace", utf8.RuneCountInString(shown)+clearMargin)...)
+}
+
 // answerMulti applies one request to the multi-select question on screen: the
 // set it names, read back off the pane, and then, unless it is a toggle, the
 // commit.
@@ -511,15 +530,15 @@ func (in *Injector) applyMulti(ctx context.Context, osUser, session string, befo
 
 // settleFreeText brings a multi-select's free-text row to what `want` asks,
 // one step at a time, each decided on a fresh reading: walk the cursor onto
-// the row, then Enter to flip its box, Backspace to clear it, or a paste to
-// fill it (freeTextNext says which).
+// the row, then Enter to flip its box, C-e and Backspaces to clear it, or a
+// paste to fill it (freeTextNext says which).
 //
-// Clearing goes through rawKeys, never the keys route. BSpace is not in
-// answerKeys, and that allowlist is the whole security boundary of the public
-// POST /keys route, so it stays narrow. The count is bounded by what the
-// reading shows in the row plus clearMargin, and it is only sent while the
-// reading shows the cursor on that row. A run that takes nothing out ends the
-// request rather than sending another.
+// Clearing goes through rawKeys, never the keys route. Neither C-e nor BSpace
+// is in answerKeys, and that allowlist is the whole security boundary of the
+// public POST /keys route, so it stays narrow. The count is bounded by what
+// the reading shows in the row plus clearMargin (clearFieldKeys), and it is
+// only sent while the reading shows the cursor on that row. A run that takes
+// nothing out ends the request rather than sending another.
 func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, before answerReading, want multiWant) (answerReading, string, error) {
 	var cur answerReading
 	cleared, lastClear := false, ""
@@ -562,7 +581,7 @@ func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, 
 				return cur, AnswerUnverified, nil
 			}
 			cleared, lastClear = true, shown
-			if err := in.rawKeys(osUser, session, repeat("BSpace", utf8.RuneCountInString(shown)+clearMargin)...); err != nil {
+			if err := in.rawKeys(osUser, session, clearFieldKeys(shown)...); err != nil {
 				return in.refusal(osUser, session)
 			}
 		case freeType:

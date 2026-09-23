@@ -32,7 +32,8 @@ import (
 //   - on a multi-select, Enter on a numbered row toggles it, and only Enter on
 //     the unnumbered commit row leaves the question (CLI 2.1.280, 2026-09-23);
 //   - the free-text row of a multi-select is an inline field that a paste
-//     types into and ticks, and a Backspace clears;
+//     types into and ticks, and a Backspace clears only once C-e has put the
+//     text cursor at the end: a walk onto the row leaves it at the start;
 //   - the conversation above the dialog carries both questions' text and, on a
 //     line of its own, the review screen's wording. Both are what a whole-pane
 //     comparison matches on: dialog.go recognises the review screen by any
@@ -713,6 +714,11 @@ func readingOf(t *testing.T, name string) answerReading {
 //   - a multi-select's free-text row is an inline field: printable keys and a
 //     paste go into it and tick it, Space types a space, Backspace to empty
 //     clears the box, and Enter flips the box and keeps the text;
+//   - that field has a text cursor, and a walk onto the row with ↑ or ↓ puts
+//     it at the START of the text: a typed "X" lands before the words and a
+//     Backspace takes nothing out. Typing and a paste insert at it, so it is
+//     at the end straight after a paste, and C-e moves it to the end of the
+//     whole text, a wrapped one included (the live check, 2026-09-23);
 //   - the tab box fills on the first pick and empties when none is left;
 //   - the review screen follows the last question, for a one-question call
 //     too, and is drawn with no footer;
@@ -779,6 +785,7 @@ PREAMBLE = [
 picks = [set() for _ in QS]      # the option labels ticked, per question
 field = ["" for _ in QS]         # a multi-select's inline free-text field
 field_on = [False for _ in QS]   # and its box
+fpos = 0                         # the text cursor in the field on screen
 typed = []                       # lines single-select free text leaves behind
 at = 0                           # the question on screen; len(QS) is the review
 cursor = 0
@@ -947,13 +954,21 @@ def toggle(i):
 
 
 def type_into_field(s):
-    field[at] += s
+    # Inserted at the text cursor, which then moves past it. A paste arrives
+    # as ordinary bytes, one call per character, so it inserts the same way.
+    global fpos
+    field[at] = field[at][:fpos] + s + field[at][fpos:]
+    fpos += len(s)
     field_on[at] = True
 
 
 def backspace_field():
-    if field[at]:
-        field[at] = field[at][:-1]
+    # Takes out the character BEFORE the text cursor, so a Backspace with the
+    # cursor at the start of the text takes out nothing.
+    global fpos
+    if fpos > 0:
+        field[at] = field[at][:fpos - 1] + field[at][fpos:]
+        fpos -= 1
         if field[at] == "":
             field_on[at] = False
 
@@ -984,12 +999,17 @@ def skip_paste():
 
 def multi_key(ch):
     """One key on a multi-select question."""
-    global cursor
+    global cursor, fpos
     n = nopts()
     on_field = cursor == free_row()
     if ch in ("\x7f", "\x08"):
         if on_field:
             backspace_field()
+        return
+    if ch == "\x05":
+        # C-e: the text cursor to the end of the field's text.
+        if on_field:
+            fpos = len(field[at])
         return
     if ch in ("\r", "\n"):
         if cursor < n:
@@ -1069,7 +1089,7 @@ def review_key(ch):
 
 
 def main():
-    global cursor
+    global cursor, fpos
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
@@ -1091,10 +1111,16 @@ def main():
                     skip_paste()  # a bracketed-paste marker
                 elif typing:
                     pass
-                elif code == "A":
-                    cursor = max(0, cursor - 1)
-                elif code == "B":
-                    cursor = min(rows() - 1, cursor + 1)
+                elif code in ("A", "B"):
+                    was = cursor
+                    if code == "A":
+                        cursor = max(0, cursor - 1)
+                    else:
+                        cursor = min(rows() - 1, cursor + 1)
+                    if multi() and cursor == free_row() and cursor != was:
+                        # Arriving on the inline field puts its text cursor
+                        # at the start of the text, not the end.
+                        fpos = 0
                 elif code == "D":
                     back()
                 draw()
@@ -1305,8 +1331,10 @@ func TestAToggleChangesThePicksAndStaysOnTheQuestion(t *testing.T) {
 // FREE TEXT IS ONE MORE PICK, and a toggle puts it in without leaving the
 // question. The paste lands in the inline field and ticks it, and nothing
 // presses Enter: on that row Enter flips the box off again. Replacing the text
-// clears the field with Backspace first, and leaving the pick out of the set
-// clears it altogether.
+// clears the field with C-e and Backspaces first, and leaving the pick out of
+// the set clears it altogether. The cursor never leaves the field between
+// these steps; TestAToggleClearsFreeTextAfterAnotherRowWasClicked is the same
+// clear after a walk away and back.
 func TestAToggleTypesFreeTextWithoutLeavingTheQuestion(t *testing.T) {
 	in, osUser := dialogSession(t)
 	ctx := context.Background()
@@ -1376,7 +1404,9 @@ func TestAToggleTicksFreeTextTheTerminalUnticked(t *testing.T) {
 // what a reader used to ticking boxes with Space does at the terminal. The
 // capture trims the space, so the row reads "[✔]" and the reading reports no
 // text; a toggle that leaves the pick out still clears it, with the Backspace
-// the reading cannot count.
+// the reading cannot count. That toggle walks up to Pear and back down, so the
+// clear starts with the text cursor in front of the space, and it is the C-e
+// that puts the cursor behind it.
 func TestAToggleClearsASpaceTypedIntoTheFreeTextRow(t *testing.T) {
 	in, osUser := dialogSession(t)
 	ctx := context.Background()
@@ -1405,6 +1435,95 @@ func TestAToggleClearsASpaceTypedIntoTheFreeTextRow(t *testing.T) {
 	}
 	if got := ticksOf(t, res); !sameTicks(got, "Pear") {
 		t.Errorf("the reading ticks %v, want Pear", got)
+	}
+}
+
+// FREE TEXT CAN STILL BE TAKEN BACK AFTER THE READER CLICKS ANOTHER ROW, in
+// the order the card sends it: the words typed in, an option clicked, then the
+// words cleared or replaced.
+//
+// The live check on CLI 2.1.280 (2026-09-23, its probe X2) found both of the
+// last two coming back unverified with "Kiwi" still ticked. A walk onto the
+// free-text row with ↑ or ↓ puts the field's text cursor at the START of the
+// words, and the clear was Backspaces alone, each one taking out nothing.
+// Straight after a paste the cursor is at the end, which is why the clear and
+// the replace in TestAToggleTypesFreeTextWithoutLeavingTheQuestion always
+// passed: that test never walks away from the field between them.
+func TestAToggleClearsFreeTextAfterAnotherRowWasClicked(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, step := range []struct {
+		name    string
+		choices []string
+		text    string
+		typed   string
+		checked bool
+		ticks   []string
+	}{
+		{"typed in", []string{"Type something"}, "Kiwi", "Kiwi", true, nil},
+		{"Apple clicked", []string{"Apple", "Type something"}, "Kiwi", "Kiwi", true, []string{"Apple"}},
+		{"cleared", []string{"Apple"}, "", "", false, []string{"Apple"}},
+		{"typed in again", []string{"Apple", "Type something"}, "Kiwi", "Kiwi", true, []string{"Apple"}},
+		{"Pear clicked", []string{"Apple", "Pear", "Type something"}, "Kiwi", "Kiwi", true, []string{"Apple", "Pear"}},
+		{"replaced", []string{"Apple", "Pear", "Type something"}, "Mango", "Mango", true, []string{"Apple", "Pear"}},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo",
+			AnswerRequest{Header: "Fruit", Choices: step.choices, Text: step.text, Stay: true}, theCall)
+		if err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if !res.Applied || res.Reason != "" || res.Dialog == nil {
+			t.Fatalf("%s: applied=%v reason=%q dialog=%+v", step.name, res.Applied, res.Reason, res.Dialog)
+		}
+		q := res.Dialog.Questions[0]
+		if q.Question != "Pick fruits" {
+			t.Fatalf("%s: the toggle left the question for %q", step.name, q.Question)
+		}
+		if q.Typed != step.typed || q.TypedChecked != step.checked {
+			t.Errorf("%s: typed=%q checked=%v, want %q and %v", step.name, q.Typed, q.TypedChecked, step.typed, step.checked)
+		}
+		if got := ticksOf(t, res); !sameTicks(got, step.ticks...) {
+			t.Errorf("%s: the reading ticks %v, want %v", step.name, got, step.ticks)
+		}
+	}
+}
+
+// A COMMIT THAT CARRIES A DIFFERENT SET clears the free-text pick the set
+// leaves out, and only then leaves the question.
+//
+// The card commits the set it is showing, so the diff is normally empty. One
+// that is not walks the cursor up through the options before it comes back to
+// the field, and by then the text cursor is at the start of the words. The
+// live check's probe X1d, on CLI 2.1.280 on 2026-09-23: Apple unticked, Pear
+// ticked, the typed words still there and still ticked, and the request came
+// back unverified with nothing committed.
+func TestACommitClearsTheFreeTextItsSetLeavesOut(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit",
+		Choices: []string{"Apple", "Type something"}, Text: "Kiwi fruit", Stay: true}, theCall)
+	if err != nil || !res.Applied {
+		t.Fatalf("typing the text: %+v %v", res, err)
+	}
+	res, err = in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Reason != "" || res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" {
+		t.Fatalf("applied=%v reason=%q dialog=%+v, want the commit to land on the drink", res.Applied, res.Reason, res.Dialog)
+	}
+	for _, req := range []AnswerRequest{{Header: "Drink", Choice: "Coffee"}, {Submit: true}} {
+		if res, err = in.Answer(ctx, osUser, "demo", req, theCall); err != nil || !res.Applied {
+			t.Fatalf("Answer(%+v): %+v %v", req, res, err)
+		}
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "SUBMITTED Pear | Coffee") {
+		t.Errorf("the answer that reached the stand-in is not Pear alone:\n%s", pane)
 	}
 }
 

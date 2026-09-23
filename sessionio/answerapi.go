@@ -71,7 +71,8 @@ type AnswerRequest struct {
 	// CLI 2.1.280, 2026-09-23), so free text is one more pick: the set names
 	// "Type something" beside the option labels and Text carries the words.
 	// A set that leaves it out asks for the row to be emptied, and the server
-	// clears it with Backspace, never Space, which on that row types a space.
+	// clears it with C-e and then Backspace, never Space, which on that row
+	// types a space (clearFieldKeys says why the C-e).
 	Choices []string `json:"choices,omitempty"`
 	// Text is the free-text row's words, whenever the set names that row. The
 	// CLI labels it "Type something" (optionOther); a client may also send the

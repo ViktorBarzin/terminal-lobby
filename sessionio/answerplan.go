@@ -929,7 +929,7 @@ type freeAction int
 const (
 	freeNone   freeAction = iota // the row is how the request wants it
 	freeToggle                   // Enter on the row: flip its box, keep its text
-	freeClear                    // Backspace the field empty, which clears its box too
+	freeClear                    // C-e, then Backspace the field empty, which clears its box too
 	freeType                     // paste the wanted text into the empty field
 )
 
@@ -941,7 +941,9 @@ const (
 // goes into the field and ticks the box; Backspace down to empty unticks it,
 // and Backspace on an empty field does nothing; Enter flips the box and keeps
 // the text, and on the empty row ticks "[✔] Type something", a pick the CLI
-// drops at commit. Space is not used on this row at all: it types a space.
+// drops at commit. Space is not used on this row at all: it types a space. A
+// walk onto the row leaves the text cursor at the start of the words, where a
+// Backspace takes nothing out, so a clear opens with C-e (clearFieldKeys).
 //
 // Not a pick means empty AND unticked. The ticked empty row carries no answer,
 // but a card cannot show a pick with no words, so the pane is made to match

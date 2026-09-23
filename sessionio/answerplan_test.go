@@ -1016,6 +1016,37 @@ func TestFreeTextNextReadsTheRowAgainstTheRequest(t *testing.T) {
 	}
 }
 
+// The run that empties the free-text field, which is the one run of raw keys
+// the answer path sizes from what a pane shows. C-e goes first: a walk onto
+// the row leaves the text cursor at the start of the words, where a Backspace
+// takes nothing out (the live check on CLI 2.1.280, 2026-09-23). The
+// Backspaces are bounded by the characters shown, counted as characters and
+// not bytes, plus clearMargin for trailing spaces the capture trimmed.
+func TestClearFieldKeysGoToTheEndThenBackOverWhatIsShown(t *testing.T) {
+	for _, tc := range []struct {
+		shown string
+		bs    int
+	}{
+		{"", clearMargin},
+		{"Kiwi", 4 + clearMargin},
+		{"Crème brûlée", 12 + clearMargin},
+	} {
+		keys := clearFieldKeys(tc.shown)
+		if len(keys) == 0 || keys[0] != "C-e" {
+			t.Errorf("%q: the run is %v, want C-e first", tc.shown, keys)
+			continue
+		}
+		rest := keys[1:]
+		ok := len(rest) == tc.bs
+		for _, k := range rest {
+			ok = ok && k == "BSpace"
+		}
+		if !ok {
+			t.Errorf("%q: %v after the C-e, want exactly %d Backspaces", tc.shown, rest, tc.bs)
+		}
+	}
+}
+
 // Whether a reading shows the question the way a request asked. This is the
 // whole of the verification for a toggle: the tab bar and the drawn question
 // do not change when a second pick is added, so the three signals a commit is
