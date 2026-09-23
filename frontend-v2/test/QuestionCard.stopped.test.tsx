@@ -51,6 +51,7 @@ const mount = (onChoose: (h: string, c: string[], t?: string) => Promise<void>) 
       dialog={colour}
       busy={false}
       onChoose={onChoose}
+      onToggle={async () => {}}
       onBack={async () => {}}
       onSubmit={async () => {}}
       onKeys={async () => {}}
@@ -123,6 +124,7 @@ const Harness: Component<{
         review={at() === 1 && props.secondReview === true}
         busy={false}
         onChoose={props.onChoose ?? (async () => {})}
+        onToggle={async () => {}}
         onBack={async () => {}}
         onSubmit={async () => {}}
         onKeys={async () => {}}

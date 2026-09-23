@@ -86,6 +86,7 @@ const mount = (props: Partial<ComponentProps<typeof QuestionCard>> = {}) =>
       dialog={single}
       busy={false}
       onChoose={async () => {}}
+      onToggle={async () => {}}
       onBack={async () => {}}
       onSubmit={async () => {}}
       onKeys={async () => {}}
@@ -126,11 +127,19 @@ describe("<QuestionCard> — one question, one request", () => {
     expect(onChoose).toHaveBeenCalledWith("Font", ["Serif"]);
   });
 
-  it("has no Next and no draft to submit", () => {
-    const { container } = mount({ dialog: multi });
+  it("has no Next and no draft to submit on a single-select question", () => {
+    const { container } = mount();
     fireEvent.click(rows(container)[0]!);
     expect(container.querySelector(".tl-qcard-next"), "no walk to advance").toBeNull();
     expect(container.querySelector(".tl-qcard-send"), "nothing held back to send").toBeNull();
+  });
+
+  it("gives a multi-select one way to leave the question, and nothing held back to send", () => {
+    // The commit is the pane's own row, pressed by the server, and what it
+    // commits is the ticks the pane already holds. There is still no draft.
+    const { container } = mount({ dialog: multi });
+    expect(container.querySelectorAll(".tl-qcard-next")).toHaveLength(1);
+    expect(container.querySelector(".tl-qcard-send")).toBeNull();
   });
 
   it("marks the tapped row in flight and lets no second tap through", () => {
@@ -145,15 +154,19 @@ describe("<QuestionCard> — one question, one request", () => {
     gate.release();
   });
 
-  it("tells a multi-select reader that a tap answers and a revisit adds", () => {
-    // A tap is one Space and the Enter that leaves the question, so a second
-    // fruit still means coming back. What the hint may no longer say is that
-    // the second one replaces the first: the request carries the whole
-    // desired set, so the ticks already on screen survive it.
-    const { container } = mount({ dialog: multi });
-    const hint = container.querySelector(".tl-qcard-hint")?.textContent ?? "";
-    expect(hint).toMatch(/come back/i);
-    expect(hint, "the wording the wire could not deliver").not.toMatch(/one pick per tap/i);
+  it("tells a multi-select reader to tick what applies, then names the button that leaves", () => {
+    // A click toggles one row and stays, and the commit button is what moves
+    // on, so the hint names that button by the label it carries. The wording
+    // it replaces, "Each tap answers the question. Come back to add another
+    // pick", described the bug that sent a one-question call to the review
+    // screen on its first click (2026-09-23).
+    const hint = (dialog: DialogView) =>
+      mount({ dialog }).container.querySelector(".tl-qcard-hint")?.textContent ?? "";
+    expect(hint(multi)).toMatch(/tick every answer that applies, then press Next/i);
+    const last = { ...multi, questions: [{ ...multi.questions[0]!, commit: "Submit" }] };
+    expect(hint(last)).toMatch(/then press Submit/i);
+    expect(hint(multi), "the wording of the bug").not.toMatch(/come back|each tap answers/i);
+    expect(hint(single), "a single-select click is the answer").toBe("");
   });
 
   it("keeps every description on screen, clamped", () => {

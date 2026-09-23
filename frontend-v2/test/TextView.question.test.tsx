@@ -17,7 +17,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
-import type { AnswerRequest, AnswerResponse, DialogView } from "../src/lib/answer-api";
+import type {
+  AnswerRequest,
+  AnswerResponse,
+  DialogQuestionView,
+  DialogView,
+} from "../src/lib/answer-api";
 import type { Event } from "../src/types/events";
 
 let nextId = 1;
@@ -82,8 +87,25 @@ const twoQuestions = [
   called("Drink", "Pick a drink", "Tea", "Coffee"),
 ];
 
+/**
+ * "Pick a fruit" as the pane draws it when the question is a multi-select:
+ * `ticked` filled, and whatever else the reading carries about the rows the
+ * CLI appends (the free-text row's words and box, the commit row's label).
+ */
+const fruitHolding = (ticked: string[], more: Partial<DialogQuestionView> = {}) => ({
+  question: "Pick a fruit",
+  header: "",
+  multiSelect: true,
+  options: ["Apple", "Pear"].map((label) => ({
+    label,
+    description: "",
+    ...(ticked.includes(label) ? { checked: true } : {}),
+  })),
+  ...more,
+});
+
 /** A reading of a two-question call sitting on `q`. */
-const paneAt = (q: ReturnType<typeof drawn>, done: number): DialogView => ({
+const paneAt = (q: DialogQuestionView, done: number): DialogView => ({
   questions: [q],
   headers: ["Fruit", "Drink"],
   count: 2,
@@ -158,36 +180,145 @@ describe("one choice, one request", () => {
     expect(v.text(".tl-qcard-step")).toBe("question 2 of 2");
   });
 
-  it("puts the whole desired set on the wire when a multi-select already holds a pick", async () => {
+  it("toggles a multi-select row with stay, adding to what the pane holds", async () => {
     // THE WIRE, end to end through the watcher's own reading. The `asking`
     // meta event is a marshalled sessionio.Dialog, so the ticks come off the
-    // pane, through canonicalize, into the card — and the card's second tap
-    // asks for both fruits rather than for the one that was tapped.
+    // pane, through canonicalize, into the card, and the card's click asks for
+    // both fruits rather than for the one that was clicked.
     //
-    // With one label this was a replacement: the server toggles the rows that
-    // differ from the set it is given, so "Pear" against a question holding
-    // Apple plans a Space on Apple too. Measured 2026-09-11.
+    // `stay` is what keeps the server on the question. Without it the request
+    // is a commit: until 2026-09-23 every click was one, the server walked to
+    // the CLI's commit row and pressed Enter, and the first click left the
+    // question.
     const onAnswer = vi.fn(async (_req: AnswerRequest) =>
-      reply(paneAt(drawn("Pick a drink", "Tea", "Coffee"), 1)),
+      reply(paneAt(fruitHolding(["Apple", "Pear"]), 1)),
     );
-    const fruit = {
-      question: "Pick a fruit",
-      header: "",
-      multiSelect: true,
-      options: [
-        { label: "Apple", description: "", checked: true },
-        { label: "Pear", description: "" },
-      ],
-    };
-    const v = mount([ask("tool-a", twoQuestions), asking(paneAt(fruit, 1))], onAnswer);
+    const v = mount(
+      [ask("tool-a", twoQuestions), asking(paneAt(fruitHolding(["Apple"]), 1))],
+      onAnswer,
+    );
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a fruit"));
-    // What is held is on screen before anything is tapped, because it is what
-    // the next tap will send.
+    // What is held is on screen before anything is clicked, because it is
+    // what the next click will send.
     expect(v.option("Apple")!.dataset.chosen).toBe("true");
 
     v.option("Pear")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+    // The reply is the same question with the new tick, and the card stays.
+    await waitFor(() => expect(v.option("Pear")!.dataset.chosen).toBe("true"));
+    expect(v.text(".tl-qcard-question")).toBe("Pick a fruit");
+  });
+
+  it("sends a click made during a toggle after it, against the reading it brought back", async () => {
+    const replies: Array<(r: AnswerResponse | null) => void> = [];
+    const onAnswer = vi.fn(
+      (_req: AnswerRequest) => new Promise<AnswerResponse | null>((res) => replies.push(res)),
+    );
+    const v = mount([ask("tool-a", twoQuestions), asking(paneAt(fruitHolding([]), 0))], onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a fruit"));
+
+    v.option("Apple")!.click();
+    v.option("Pear")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ header: "Fruit", choice: "Apple", stay: true });
+    // TextView's `put` refuses a second request while one is in flight, which
+    // is why the card holds the click rather than sending it now.
+    expect(v.option("Pear")!.getAttribute("aria-busy")).toBe("true");
+
+    replies.shift()!(reply(paneAt(fruitHolding(["Apple"]), 1)));
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(2));
+    expect(onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+    replies.shift()!(reply(paneAt(fruitHolding(["Apple", "Pear"]), 1)));
+    await waitFor(() => expect(v.option("Pear")!.dataset.chosen).toBe("true"));
+  });
+
+  it("commits the ticked set without stay, and draws the question the pane moved to", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) =>
+      reply(paneAt(drawn("Pick a drink", "Tea", "Coffee"), 1)),
+    );
+    const v = mount(
+      [
+        ask("tool-a", twoQuestions),
+        asking(paneAt(fruitHolding(["Apple", "Pear"], { commit: "Next" }), 1)),
+      ],
+      onAnswer,
+    );
+    await waitFor(() => expect(v.text(".tl-qcard-next")).toBe("Next"));
+
+    v.container.querySelector<HTMLElement>(".tl-qcard-next")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({ header: "Fruit", choices: ["Apple", "Pear"] });
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a drink"));
+  });
+
+  it("says Submit on a one-question call that only the transcript has described", async () => {
+    // The watcher's reading is withdrawn the moment the call's record lands,
+    // and the transcript records no commit row, so until the first reply the
+    // card has only the call's shape to label its button from. The CLI draws
+    // "Submit" under the last question (2.1.280), and this is the call Viktor
+    // reported from.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => null);
+    const fruit = { ...called("Fruit", "Pick fruits", "Apple", "Pear"), multiSelect: true };
+    const v = mount([ask("tool-a", [fruit])], onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-next")).toBe("Submit"));
+    expect(v.text(".tl-qcard-hint")).toContain("then press Submit");
+  });
+
+  it("types free text into a multi-select's own row and stays on the question", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) =>
+      reply(paneAt(fruitHolding(["Apple"], { typed: "Mango", typedChecked: true }), 1)),
+    );
+    const v = mount(
+      [ask("tool-a", twoQuestions), asking(paneAt(fruitHolding(["Apple"]), 1))],
+      onAnswer,
+    );
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a fruit"));
+
+    v.option("Type something")!.click();
+    const field = v.container.querySelector<HTMLInputElement>(".tl-qcard-other")!;
+    field.value = "Mango";
+    field.dispatchEvent(new Event("input", { bubbles: true }));
+    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Type something"],
+      text: "Mango",
+      stay: true,
+    });
+    await waitFor(() => expect(v.option("Mango")!.dataset.chosen).toBe("true"));
+  });
+
+  it("reads the free-text pick and the commit label off the watcher's reading too", async () => {
+    // The watcher's `asking` event goes through canonicalize, which rebuilds
+    // each question field by field. Dropping `typed` there would make a
+    // reader who opens the page onto a half-answered question see an empty
+    // row, and their first click would ask the server to clear the words
+    // they typed in the Terminal.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => reply(paneAt(fruitHolding([]), 1)));
+    const pane = fruitHolding([], { typed: "Mango", typedChecked: true, commit: "Submit" });
+    const v = mount([ask("tool-a", twoQuestions), asking(paneAt(pane, 1))], onAnswer);
+    await waitFor(() => expect(v.option("Mango")!.dataset.chosen).toBe("true"));
+    expect(v.text(".tl-qcard-next")).toBe("Submit");
+
+    v.option("Apple")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Type something"],
+      text: "Mango",
+      stay: true,
+    });
   });
 
   it("walks back to an answered question from its chip", async () => {

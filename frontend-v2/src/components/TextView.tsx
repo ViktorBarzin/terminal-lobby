@@ -556,13 +556,27 @@ export const TextView: Component<{
   // the shorthand the contract defines rather than two code paths: the server
   // reads a lone `choice` as a set of one (sessionio/answerapi.go). Keeping
   // the single-select spelling is what leaves every existing client, and this
-  // package's own tests, sending exactly what they sent before.
-  const chooseOption = (header: string, choices: string[], text?: string): Promise<void> =>
+  // package's own tests, sending exactly what they sent before. An EMPTY set
+  // still goes as `choices: []`, which is how a toggle asks for a
+  // multi-select with nothing ticked.
+  //
+  // `stay` is the multi-select toggle: apply the set and stay on the
+  // question. Without it a multi-select request is the commit, and until
+  // 2026-09-23 every click was one, so the first click left the question.
+  const chooseOption = (
+    header: string,
+    choices: string[],
+    text?: string,
+    stay?: boolean,
+  ): Promise<void> =>
     put({
       header: header || callAddress(),
       ...(choices.length === 1 ? { choice: choices[0] } : { choices }),
       ...(text ? { text } : {}),
+      ...(stay ? { stay: true } : {}),
     });
+  const toggleOptions = (header: string, choices: string[], text?: string): Promise<void> =>
+    chooseOption(header, choices, text, true);
   const goBackTo = (header: string): Promise<void> => put({ back: header });
   const submitAnswers = (): Promise<void> => put({ submit: true });
   const pressKeys = (keys: string[]): Promise<void> => put({ keys });
@@ -731,6 +745,7 @@ export const TextView: Component<{
             review={review()}
             busy={answering()}
             onChoose={chooseOption}
+            onToggle={toggleOptions}
             onBack={goBackTo}
             onSubmit={submitAnswers}
             onKeys={pressKeys}

@@ -168,7 +168,10 @@ export const LABEL_MAX = 120;
  * setup, not the command), and cap the rest. The full input is one expand away.
  */
 export function oneLine(text: string): string {
-  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
   let first = lines[0] ?? "";
   const cd = /^cd\s+\S+\s*&&\s*/.exec(first);
   if (cd && first.length > cd[0].length) first = first.slice(cd[0].length);
@@ -212,10 +215,12 @@ export function diffHunks(result: unknown): Hunk[] {
     const newStart = Number((h as { newStart?: unknown }).newStart) || 0;
     out.push({
       header: `@@ -${oldStart} +${newStart} @@`,
-      lines: raw.filter((l): l is string => typeof l === "string").map((l) => ({
-        sign: l.startsWith("+") ? "+" : l.startsWith("-") ? "-" : " ",
-        text: l.slice(1),
-      })),
+      lines: raw
+        .filter((l): l is string => typeof l === "string")
+        .map((l) => ({
+          sign: l.startsWith("+") ? "+" : l.startsWith("-") ? "-" : " ",
+          text: l.slice(1),
+        })),
     });
   }
   return out;
@@ -278,6 +283,21 @@ export interface Question {
   header: string;
   multiSelect: boolean;
   options: QuestionOption[];
+  /**
+   * What a PANE reading says about the two rows the CLI appends to a
+   * multi-select: the commit row's label, and the words and box of the inline
+   * free-text row (`DialogQuestionView` in lib/answer-api has the detail).
+   * Never present from the transcript, for the reason `checked` above is not.
+   *
+   * Carried rather than dropped because the answer card builds every
+   * multi-select request from them. A reader who opens the page onto a
+   * question whose free-text row already holds words has only the watcher's
+   * reading to learn that from, and a request built without them asks the
+   * server to clear those words.
+   */
+  commit?: string;
+  typed?: string;
+  typedChecked?: boolean;
 }
 
 export function questions(input: unknown): Question[] {
@@ -298,6 +318,11 @@ export function questions(input: unknown): Question[] {
               checked: o.checked === true,
             }))
         : [],
+      // Spread only when present, so a transcript question keeps exactly the
+      // four fields the tool was called with.
+      ...(str(q.commit) ? { commit: str(q.commit) } : {}),
+      ...(str(q.typed) ? { typed: str(q.typed) } : {}),
+      ...(q.typedChecked === true ? { typedChecked: true } : {}),
     }));
 }
 

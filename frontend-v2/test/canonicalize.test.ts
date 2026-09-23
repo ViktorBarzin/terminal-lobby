@@ -42,13 +42,19 @@ describe("classifyToolItemType", () => {
 
 describe("describe", () => {
   it("labels a command with the command, not with 'Bash'", () => {
-    const d = describeTool("Bash", JSON.stringify({ command: "go test ./...", description: "run tests" }));
+    const d = describeTool(
+      "Bash",
+      JSON.stringify({ command: "go test ./...", description: "run tests" }),
+    );
     expect(d.label).toBe("go test ./...");
     expect(d.detail).toBe("run tests");
   });
 
   it("labels a file change with the path, and reports it changed", () => {
-    const d = describeTool("Edit", JSON.stringify({ file_path: "/home/w/code/x/sessionio/normalize.go" }));
+    const d = describeTool(
+      "Edit",
+      JSON.stringify({ file_path: "/home/w/code/x/sessionio/normalize.go" }),
+    );
     expect(d.label).toBe("sessionio/normalize.go");
     expect(d.changedFiles).toEqual(["/home/w/code/x/sessionio/normalize.go"]);
   });
@@ -56,7 +62,12 @@ describe("describe", () => {
   it("summarises a todo list by its progress", () => {
     const d = describeTool(
       "TodoWrite",
-      JSON.stringify({ todos: [{ content: "a", status: "completed" }, { content: "b", status: "pending" }] }),
+      JSON.stringify({
+        todos: [
+          { content: "a", status: "completed" },
+          { content: "b", status: "pending" },
+        ],
+      }),
     );
     expect(d.label).toBe("1/2 done");
   });
@@ -76,7 +87,9 @@ describe("describe", () => {
 
 describe("shortPath", () => {
   it("keeps enough of a path to recognise it", () => {
-    expect(shortPath("/home/wizard/code/terminal-lobby/sessionio/tail.go")).toBe("sessionio/tail.go");
+    expect(shortPath("/home/wizard/code/terminal-lobby/sessionio/tail.go")).toBe(
+      "sessionio/tail.go",
+    );
     expect(shortPath("README.md")).toBe("README.md");
   });
 });
@@ -84,7 +97,9 @@ describe("shortPath", () => {
 describe("structured payloads", () => {
   it("reads a diff out of structuredPatch", () => {
     const hunks = diffHunks({
-      structuredPatch: [{ oldStart: 10, newStart: 10, lines: ["-old line", "+new line", " context"] }],
+      structuredPatch: [
+        { oldStart: 10, newStart: 10, lines: ["-old line", "+new line", " context"] },
+      ],
     });
     expect(hunks).toHaveLength(1);
     expect(hunks[0]!.lines.map((l) => l.sign)).toEqual(["-", "+", " "]);
@@ -114,11 +129,44 @@ describe("structured payloads", () => {
           question: "Which?",
           header: "Pick",
           multiSelect: false,
-          options: [{ label: "A", description: "first" }, { label: "B", description: "second" }],
+          options: [
+            { label: "A", description: "first" },
+            { label: "B", description: "second" },
+          ],
         },
       ],
     });
     expect(qs[0]!.options.map((o) => o.label)).toEqual(["A", "B"]);
+  });
+
+  // A pane reading (sessionio.Dialog, via the watcher's `asking` event) says
+  // what the CLI's own appended rows hold, and the answer card builds every
+  // multi-select request from it: a set without the free-text row asks the
+  // server to clear the words out of it.
+  it("carries what a pane reading says about the free-text row and the commit row", () => {
+    const [q] = questions({
+      questions: [
+        {
+          question: "Pick fruits",
+          header: "Fruit",
+          multiSelect: true,
+          options: [{ label: "Apple", checked: true }],
+          commit: "Submit",
+          typed: "Mango",
+          typedChecked: true,
+        },
+      ],
+    });
+    expect(q).toMatchObject({ commit: "Submit", typed: "Mango", typedChecked: true });
+  });
+
+  it("adds none of them to a question the transcript recorded", () => {
+    const [q] = questions({
+      questions: [{ question: "Which?", header: "Pick", multiSelect: true, options: [] }],
+    });
+    expect(q).not.toHaveProperty("commit");
+    expect(q).not.toHaveProperty("typed");
+    expect(q).not.toHaveProperty("typedChecked");
   });
 
   it("returns null for a TodoWrite with no todos", () => {

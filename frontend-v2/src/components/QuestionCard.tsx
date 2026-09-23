@@ -1,4 +1,13 @@
-import { For, Show, createMemo, createSignal, type Component } from "solid-js";
+import {
+  For,
+  Index,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  untrack,
+  type Component,
+} from "solid-js";
 import {
   FREE_TEXT_LABEL,
   answerableOptions,
@@ -10,16 +19,31 @@ import {
 import { PaneKeypad } from "./PaneKeypad";
 
 /**
+ * One click on a multi-select that has not gone out yet, STAMPED WITH THE
+ * QUESTION IT WAS MADE FOR (`drawnKey` in the card).
+ *
+ * `flip` names an option row to toggle. `text` is what the free-text row
+ * should hold after the field's Add, "" to empty it. Neither is a set: the set
+ * a click asks for is worked out when it goes, against the reading the reply
+ * before it brought back, so two quick clicks cannot both be computed from the
+ * same stale screen.
+ */
+type Toggle = { of: string; flip: string } | { of: string; text: string };
+
+/** A multi-select request: the rows to leave ticked, and the free-text row's words. */
+type Wanted = { choices: string[]; text?: string };
+
+/**
  * The card that answers a blocking AskUserQuestion, docked above the composer.
  *
  * IT HOLDS NOTHING ABOUT THE DIALOG. One reading comes in, one question is
- * drawn, and a tap on an option is a request. There is no draft, no plan, no
- * Next and no local idea of where in the call the reader is — the reply to
- * every request is a fresh reading of the pane, and that is what gets drawn
- * next. The one exception is the free-text field's half-typed words, which
- * exist nowhere else until they are sent, and those are stamped with the
- * question they were typed for so they cannot be committed against another
- * one.
+ * drawn, and a click on an option is a request. There is no plan and no local
+ * idea of where in the call the reader is. The reply to every request is a
+ * fresh reading of the pane, and that is what gets drawn next. Two things are
+ * held, both because they exist nowhere else yet: the free-text field's
+ * half-typed words, and the multi-select clicks made faster than the pane can
+ * answer them. Both are stamped with the question they were made for, so
+ * neither can be spent on another one.
  *
  * WHY IT IS SHAPED THIS WAY. The card used to walk: four questions, a draft
  * per question, a review, and a Send that typed the lot while predicting what
@@ -30,10 +54,14 @@ import { PaneKeypad } from "./PaneKeypad";
  * prediction meant removing the state it was computed from, so what is left
  * here is a renderer.
  *
- * The consequence worth knowing: a choice commits when you make it. The CLI's
- * own review screen at the end is still where everything can be seen before
- * submitting, and the chips walk ← back to any question already answered,
- * where the CLI redraws the previous pick with a trailing tick.
+ * The consequence worth knowing: on a single-select, a choice commits when you
+ * make it. A multi-select works the way the CLI's own widget does: a click
+ * ticks or unticks one row and stays, and the commit button, labelled with the
+ * CLI's own commit row ("Next", or "Submit" on the last question), is what
+ * leaves the question. The CLI's review screen at the end is still where
+ * everything can be seen before submitting, and the chips walk ← back to any
+ * question already answered, where the CLI redraws the previous pick with a
+ * trailing tick.
  *
  * It docks rather than sitting in the timeline because on a phone the timeline
  * scrolls and the keyboard covers it; the permanent record of what was asked
@@ -49,11 +77,16 @@ export const QuestionCard: Component<{
   review?: boolean;
   /** A request is in flight. */
   busy: boolean;
-  /** Answer the question `header` names with the labels it should be left
-   *  holding, plus free text for the CLI's "Type something" row. One label
-   *  for a single-select; for a multi-select it is the DESIRED FINAL STATE,
-   *  which is what makes a second pick add rather than replace. */
+  /** Answer the question `header` names and LEAVE it, with the labels it
+   *  should be left holding, plus free text for the CLI's "Type something"
+   *  row. One label for a single-select. For a multi-select this is the
+   *  commit button: the set is the DESIRED FINAL STATE the card shows, and
+   *  the server applies it and then presses the CLI's commit row. */
   onChoose: (header: string, choices: string[], text?: string) => Promise<void>;
+  /** Apply a desired final state to the multi-select on screen and STAY on
+   *  it. One click is one of these. An empty `choices` is a question with
+   *  nothing ticked, which is what unticking the last row asks for. */
+  onToggle: (header: string, choices: string[], text?: string) => Promise<void>;
   /** Walk ← back to an already-answered question. */
   onBack: (header: string) => Promise<void>;
   /** Press the review screen's Submit. */
@@ -70,8 +103,26 @@ export const QuestionCard: Component<{
    *  this is for the reader who wants the whole of all of them at once, which
    *  choosing each in turn is a poor way to get. */
   const [full, setFull] = createSignal(false);
-  /** The label of the row whose request is in flight, or null. */
+  /**
+   * The mark of a request in flight that MOVES the dialog, or null: the row
+   * label of a single-select answer, "commit", "submit", or `back:<header>`.
+   * A multi-select toggle is not one of these. It stays on the question, so
+   * it is held in `flying` below and leaves the rows clickable.
+   */
   const [sending, setSending] = createSignal<string | null>(null);
+  /**
+   * Multi-select clicks waiting for the reply ahead of them, oldest first.
+   *
+   * They have to wait. TextView's `put` drops a request while another is in
+   * flight, and each click is worked out against the reading the previous
+   * reply brought back (`toggled` below), so sending it early would either be
+   * dropped or computed from a screen that is about to change. A click is
+   * never dropped for being early; it is dropped only when the question it
+   * was made for is no longer the one on screen.
+   */
+  const [queue, setQueue] = createSignal<Toggle[]>([]);
+  /** The multi-select toggle in flight, or null. */
+  const [flying, setFlying] = createSignal<Toggle | null>(null);
   /**
    * The free-text row's field and what has been typed into it, STAMPED WITH
    * THE QUESTION IT WAS TYPED FOR.
@@ -148,7 +199,8 @@ export const QuestionCard: Component<{
   );
 
   /**
-   * The question the free-text field belongs to, as its content identifies it.
+   * The question the free-text field, and every waiting multi-select click,
+   * belongs to, as its content identifies it.
    *
    * The header alone is not enough: a call whose question is redrawn under the
    * same chip after `←` is the same question, and two calls can reuse a chip
@@ -185,6 +237,12 @@ export const QuestionCard: Component<{
    * dialog-single.txt numbers it 3 after Sans and Serif, dialog-multi.txt
    * numbers it 4 after Apple, Pear and Plum.
    *
+   * On a multi-select that row is an inline field, and once it holds words
+   * the CLI draws them in place of its label ("[✔] Mango"). The row keeps
+   * FREE_TEXT_LABEL as its identity here all the same; the words and the box
+   * come from the reading's `typed` and `typedChecked`, and the row shows
+   * them.
+   *
    * `answerableOptions` runs anyway rather than being assumed unnecessary, so
    * a server that starts sending the chat row cannot put it in front of a
    * reader as an answer.
@@ -216,17 +274,28 @@ export const QuestionCard: Component<{
     return at >= 0 ? `question ${at + 1} of ${n}` : `${answered()} of ${n} answered`;
   };
 
+  /** The question on screen is a multi-select, where a click toggles and stays. */
+  const multi = (): boolean => question()?.multiSelect === true;
+
+  /** Anything in flight: a request of this card's, or one TextView is holding. */
+  const busy = (): boolean => props.busy || sending() !== null || flying() !== null;
+  /** The clicks still waiting that were made for the question on screen. */
+  const waiting = createMemo(() => queue().filter((t) => t.of === drawnKey()));
+  /** Nothing in flight and nothing waiting to go, so the ticks on screen are final. */
+  const settled = (): boolean => !busy() && waiting().length === 0;
+
   /**
-   * Run one request, marking the row it belongs to while it is in flight.
+   * Run one request that moves the dialog, marking the row it belongs to
+   * while it is in flight.
    *
-   * The mark is local because only the card knows WHICH row was tapped;
+   * The mark is local because only the card knows WHICH row was clicked;
    * `props.busy` says only that something is in flight. A failure clears the
    * mark and nothing else: the caller reports it, and the card stays usable,
    * because there is no half-typed sequence left behind to protect the reader
    * from.
    */
   const run = (mark: string, go: () => Promise<void>) => {
-    if (props.busy || sending() !== null) return;
+    if (busy()) return;
     setSending(mark);
     void go()
       .catch(() => {})
@@ -234,8 +303,9 @@ export const QuestionCard: Component<{
   };
 
   /**
-   * The labels the READING says the question is holding, in the order the CLI
-   * drew them.
+   * The option labels the READING says the question is holding, in the order
+   * the CLI drew them. The free-text row is not among them: its box is
+   * `typedPick` below.
    *
    * Read off the pane on every render rather than counted here. A card that
    * kept its own set would drift from the terminal the moment anything else
@@ -244,47 +314,211 @@ export const QuestionCard: Component<{
    */
   const held = createMemo<string[]>(() =>
     optionRows()
-      .filter((o) => o.checked === true)
+      .filter((o) => o.checked === true && !isFreeText(o.label))
       .map((o) => o.label),
   );
 
+  /** The words the pane shows in a multi-select's free-text row, "" while it reads "Type something". */
+  const typedText = (): string => (question()?.typed ?? "").trim();
   /**
-   * What a tap on a multi-select row asks the question to END UP holding.
+   * The free-text row as a PICK: its words when its box is ticked, else "".
    *
-   * Adding, because the reading says what is already ticked: tap a second
-   * fruit and both go, so the server's diff toggles only the new one. Until
-   * 2026-09-11 a request carried one label and this was a replacement —
-   * measured with Apple ticked and the cursor on its row, the plan for Pear
-   * opened with a Space on Apple and deleted it.
-   *
-   * Tapping a ticked row removes it, EXCEPT when it is the only one left.
-   * That is the CLI's constraint rather than a choice made here: a
-   * multi-select cannot be left with nothing ticked, because Enter is what
-   * leaves the question and it does not fire on an empty question
-   * (sessionio/answerplan.go, measured). So the last pick re-confirms itself
-   * and the question is answered with it, which is what tapping your own
-   * answer has always done here.
+   * Both halves, because the CLI lets them part. Enter on that row toggles
+   * the box and keeps the words ("[ ] Mango"), and Enter on the EMPTY row
+   * ticks "[✔] Type something", which the CLI then drops at commit (CLI
+   * 2.1.280, measured). Neither is an answer, and the request contract has
+   * no way to say "words, unticked": a set that names the row carries its
+   * words, and one that does not asks the server to clear them.
    */
-  const nextSet = (label: string): string[] => {
-    const on = held();
-    if (!on.includes(label)) return [...on, label];
-    const without = on.filter((l) => l !== label);
-    return without.length > 0 ? without : [label];
+  const typedPick = (): string => (question()?.typedChecked === true ? typedText() : "");
+
+  /** A set for the wire: the options named, and the free-text row when it has words. */
+  const wanted = (options: string[], words: string): Wanted =>
+    words ? { choices: [...options, FREE_TEXT_LABEL], text: words } : { choices: options };
+
+  /**
+   * The set a queued click asks for, worked out NOW against the reading on
+   * screen, or null when the click has nothing left to act on.
+   *
+   * A row click flips that one row and keeps every other box, the free-text
+   * row included, as the reading shows it: the request is the question's
+   * whole desired state, so leaving the free-text row out would ask the
+   * server to clear its words. The field's Add keeps the ticked options and
+   * sets the free-text row to what the field said.
+   *
+   * NOW rather than when clicked is the point. Two quick clicks computed at
+   * click time would both be built from the screen before either landed, so
+   * the second would ask for "Pear" alone and untick the Apple the first had
+   * just ticked. That is not hypothetical: measured 2026-09-11, a request for
+   * Pear alone against a question holding Apple planned a Space on Apple.
+   */
+  const toggled = (t: Toggle): Wanted | null => {
+    if ("text" in t) return wanted(held(), t.text);
+    const options = optionRows().filter((o) => !isFreeText(o.label));
+    if (!options.some((o) => o.label === t.flip)) return null;
+    const ticked = options
+      .filter((o) => (o.label === t.flip ? o.checked !== true : o.checked === true))
+      .map((o) => o.label);
+    return wanted(ticked, typedPick());
+  };
+
+  /** A multi-select click for this row is in flight or waiting, so the row pulses. */
+  const toggling = (label: string): boolean => {
+    const mine = (t: Toggle | null): boolean =>
+      t !== null && t.of === drawnKey() && ("flip" in t ? t.flip === label : isFreeText(label));
+    return mine(flying()) || waiting().some(mine);
+  };
+
+  /**
+   * Send one toggle and hold the next until its reply has landed.
+   *
+   * When it lands after the field's Add, the field closes if the pane now
+   * holds exactly what was sent and the reader has not typed on since. Words
+   * the pane did not take stay in the field, since retyping them is not the
+   * reader's job.
+   */
+  const sendToggle = (t: Toggle) => {
+    const want = toggled(t);
+    if (!want) return;
+    setFlying(t);
+    void props
+      .onToggle(header(), want.choices, want.text)
+      .catch(() => {})
+      .finally(() => {
+        if ("text" in t && typing() && text().trim() === t.text && typedPick() === t.text) {
+          setDraft(null);
+        }
+        setFlying(null);
+      });
+  };
+
+  /**
+   * The queue's pump: whenever nothing is in flight, send the oldest click
+   * made for the question on screen.
+   *
+   * An effect rather than a loop in the click handler, because a click can
+   * arrive while a request the card did not start is still in flight. The
+   * card is rebuilt per call (TextView keys it), so `props.busy` can outlive
+   * the card that raised it, and only watching it can tell when TextView's
+   * `put` will take a request again. A reply lowers `props.busy` BEFORE it
+   * hands over its reading, and `flying` clears only after, so this cannot
+   * fire between the two and compute a click from the screen being replaced.
+   *
+   * Clicks stamped for another question are dropped here, all at once. The
+   * pane moved under them, by a reply or by a keystroke in the Terminal, and
+   * a click on "Apple" is not a click on whatever row carries that label now.
+   */
+  createEffect(() => {
+    if (busy()) return;
+    const all = queue();
+    if (all.length === 0) return;
+    const key = drawnKey();
+    const [next, ...rest] = all.filter((t) => t.of === key);
+    setQueue(rest);
+    if (next) untrack(() => sendToggle(next));
+  });
+
+  /** Hold a multi-select click until the pump can send it. */
+  const enqueue = (t: Toggle) => {
+    // A commit or a step back is in flight, and a toggle made now would land
+    // on whatever screen that leaves. The rows are disabled for the same
+    // reason; this covers the field's Enter.
+    if (sending() !== null) return;
+    setQueue((q) => [...q, t]);
   };
 
   const choose = (label: string) => {
     if (isFreeText(label)) {
-      setDraft({ of: drawnKey(), typed: "" });
+      if (!multi()) {
+        setDraft({ of: drawnKey(), typed: "" });
+        return;
+      }
+      // A multi-select's row may already hold words, and the field opens on
+      // them so they can be changed or cleared. An open field is left alone:
+      // a second click on the row must not wipe what is half-typed.
+      if (!typing()) setDraft({ of: drawnKey(), typed: typedText() });
       return;
     }
-    const want = question()?.multiSelect ? nextSet(label) : [label];
-    run(label, () => props.onChoose(header(), want));
+    if (multi()) {
+      enqueue({ of: drawnKey(), flip: label });
+      return;
+    }
+    run(label, () => props.onChoose(header(), [label]));
   };
 
   const sendText = () => {
     const typed = text().trim();
     if (!typed) return;
     run(FREE_TEXT_LABEL, () => props.onChoose(header(), [FREE_TEXT_LABEL], typed));
+  };
+
+  /**
+   * The field's Add, or Update: put its words into the CLI's inline row, or
+   * take them out when it has been emptied. Either way it is one more toggle.
+   * It presses no Enter; the commit button commits the words with the rest.
+   *
+   * Nothing to do when the field says what the pane already holds, and
+   * nothing more to do while a change to that row is still on its way.
+   */
+  const canApplyText = (): boolean =>
+    typing() && sending() === null && !toggling(FREE_TEXT_LABEL) && text().trim() !== typedPick();
+  const applyText = () => {
+    if (!canApplyText()) return;
+    enqueue({ of: drawnKey(), text: text().trim() });
+  };
+
+  /**
+   * The commit button's label: the text of the CLI's own commit row, since
+   * pressing that row is what the button does.
+   *
+   * When there is no row to read, the call's shape stands in for it. That is
+   * the usual state of a fresh question, not a corner: the watcher's reading
+   * is withdrawn the moment the call's record lands, and the transcript
+   * records no commit row, so until the first reply the card draws the
+   * transcript's question. The CLI says "Next" on every question but the last
+   * and "Submit" on the last (2.1.280, measured 2026-09-23), and a
+   * one-question call's only question is its last. A plain "Next" fallback
+   * labelled that call's button "Next" and then turned it into "Submit" under
+   * the reader's first click, on the very call Viktor reported the bug from.
+   */
+  const commitLabel = (): string => {
+    const drawn = (question()?.commit ?? "").trim();
+    if (drawn) return drawn;
+    const last = count() === 1 || (drawnAt() >= 0 && drawnAt() === count() - 1);
+    return last ? "Submit" : "Next";
+  };
+
+  /**
+   * What the commit button commits: the ticks the pane shows, and the
+   * free-text words.
+   *
+   * The words are the OPEN FIELD's when it is open, and the pane's pick
+   * otherwise. Typing and then pressing the commit button without Add is the
+   * obvious slip, and a commit that ignored the field would send the answer
+   * without the words while the reader watched them sit there. The server
+   * applies whatever this differs from the pane by before it presses the
+   * commit row, so nothing extra has to happen first.
+   */
+  const commitSet = (): Wanted => wanted(held(), typing() ? text().trim() : typedPick());
+
+  /**
+   * Nothing to commit, or the pane is still catching up.
+   *
+   * The CLI itself would take a commit with nothing ticked, and the question
+   * would go unanswered: its review screen warns "You have not answered all
+   * questions" and Claude reads "The user did not answer the questions."
+   * (CLI 2.1.280, measured). A button that does that on purpose belongs in
+   * the Terminal, not here, and the server refuses an empty commit anyway.
+   *
+   * While a click is in flight or waiting, the ticks on screen are not the
+   * ones the reader asked for yet, and committing them would commit a set
+   * that nobody chose.
+   */
+  const canCommit = (): boolean => settled() && commitSet().choices.length > 0;
+  const commit = () => {
+    if (!canCommit()) return;
+    const want = commitSet();
+    run("commit", () => props.onChoose(header(), want.choices, want.text));
   };
 
   const goBack = (name: string) => run(`back:${name}`, () => props.onBack(name));
@@ -322,7 +556,12 @@ export const QuestionCard: Component<{
                 behind the walk (answerplan.go), answerBack replies
                 AnswerNotDrawn with the same reading, and TextView reports
                 nothing because the CALL succeeded — so the reader tapped a
-                chip and the screen did not move, with no way to tell why. */}
+                chip and the screen did not move, with no way to tell why.
+
+                A chip also waits for every multi-select click to land. ←
+                leaves the question, so a click still waiting would be dropped
+                with it, and one in flight would land on the question the chip
+                walks back to. */}
             <Show when={headers().length > 1 || answered() > 0}>
               <div class="tl-qcard-tabs">
                 <For each={headers()}>
@@ -336,7 +575,7 @@ export const QuestionCard: Component<{
                         class="tl-qcard-tab"
                         data-done={done() ? "true" : undefined}
                         data-current={current() ? "true" : undefined}
-                        disabled={!reachable() || props.busy || sending() !== null}
+                        disabled={!reachable() || !settled()}
                         // `.tl-qcard-tab` was written for a <span>, so it sets
                         // no background and no cursor. These two keep a chip
                         // looking like a chip now that it is a button, rather
@@ -375,36 +614,44 @@ export const QuestionCard: Component<{
             </Show>
 
             <Show when={!props.review && optionRows().length > 0}>
-              <Show when={question()?.multiSelect}>
-                {/* What actually happens, which the previous wording had
-                    backwards. A tap still answers the question and the CLI
-                    still moves on — the Enter is what leaves a multi-select —
-                    so a second fruit means coming back. What changed on
-                    2026-09-11 is that coming back now ADDS: the request
-                    carries every label the question should hold, so the ticks
-                    already on screen survive it. The old hint promised that
-                    and the wire could not deliver it. */}
+              <Show when={multi()}>
+                {/* One sentence, naming the button by the label the pane gave
+                    it. The wording it replaces, "Each tap answers the
+                    question. Come back to add another pick", described the
+                    bug: until 2026-09-23 every click committed, and a
+                    one-question call reached the review screen on its first
+                    click. */}
                 <div class="tl-qcard-hint">
-                  Each tap answers the question. Come back to add another pick; the ticked ones
-                  stay.
+                  Tick every answer that applies, then press {commitLabel()}.
                 </div>
               </Show>
               <div class="tl-qcard-options" data-full={full() ? "true" : undefined}>
-                <For each={optionRows()}>
+                {/* <Index>, not <For>: a row is its POSITION, since the digit is
+                    the key the CLI listens for, and every reply brings new
+                    option objects. <For> keys on the object, so it rebuilt
+                    every button on every reply, and a toggle, which leaves the
+                    question on screen, took the reader's keyboard focus with
+                    it. */}
+                <Index each={optionRows()}>
                   {(option, i) => {
-                    /* THE TICK IS THE PANE'S, not the card's. A row reads as
-                       chosen when the reading says its box is filled, when
-                       its request is in flight, or when it is the free-text
-                       row with the field open. The first of those is what a
-                       reader needs to see before tapping a second option:
-                       the set that goes to the server is built from it, so
-                       showing it is showing what will be kept. */
-                    const multi = () => question()?.multiSelect === true;
-                    const ticked = () => multi() && option.checked === true;
+                    const label = () => option().label;
+                    const free = () => isFreeText(label());
+                    /* THE TICK IS THE PANE'S, not the card's. On a
+                       multi-select a row is ticked only when the reading says
+                       its box is filled: a click in flight or waiting pulses
+                       the row and draws no tick, because what the pane will
+                       draw is not known until it has drawn it. The set the
+                       next click sends is built from these ticks, so showing
+                       them is showing what will be kept.
+
+                       A single-select row reads as chosen while its request is
+                       in flight, and the free-text row while its field is
+                       open, since there the click IS the answer. */
+                    const ticked = () =>
+                      multi() && (free() ? typedPick() !== "" : option().checked === true);
                     const marked = () =>
-                      ticked() ||
-                      sending() === option.label ||
-                      (typing() && isFreeText(option.label));
+                      multi() ? ticked() : sending() === label() || (typing() && free());
+                    const inFlight = () => (multi() ? toggling(label()) : sending() === label());
                     return (
                       <button
                         type="button"
@@ -412,9 +659,12 @@ export const QuestionCard: Component<{
                         data-multi={multi() ? "true" : undefined}
                         data-chosen={marked() ? "true" : undefined}
                         aria-pressed={multi() ? ticked() : undefined}
-                        aria-busy={sending() === option.label ? "true" : undefined}
-                        disabled={props.busy || sending() !== null}
-                        onClick={() => choose(option.label)}
+                        aria-busy={inFlight() ? "true" : undefined}
+                        // A multi-select row stays clickable while a toggle is
+                        // in flight, because a click then waits its turn in the
+                        // queue. Only a request that moves the dialog holds it.
+                        disabled={multi() ? sending() !== null : busy()}
+                        onClick={() => choose(label())}
                       >
                         {/* The DIALOG's number. The keystroke is the server's
                             to press now, but it is still the key the CLI is
@@ -426,41 +676,68 @@ export const QuestionCard: Component<{
                           style={{
                             // The app's existing "work is happening" grammar,
                             // borrowed from .tl-working-dot rather than given
-                            // a rule of its own: the row that was tapped is
-                            // the one that pulses.
-                            animation:
-                              sending() === option.label
-                                ? "tl-pulse 1.1s ease-in-out infinite"
-                                : "none",
+                            // a rule of its own: every row with a click on its
+                            // way pulses, the waiting ones included.
+                            animation: inFlight() ? "tl-pulse 1.1s ease-in-out infinite" : "none",
                           }}
                         >
-                          {i() + 1}
+                          {i + 1}
                         </span>
-                        <span class="tl-qcard-label">{option.label}</span>
-                        <Show when={option.description}>
+                        {/* A multi-select's free-text row shows the words it
+                            holds, the way the CLI redraws "Type something" as
+                            "[✔] Mango". */}
+                        <span class="tl-qcard-label">
+                          {multi() && free() && typedText() ? typedText() : label()}
+                        </span>
+                        <Show when={option().description}>
                           {/* Clamped to two lines, and the marked row expands
                               (see app.css). Every description stays on screen
                               because the difference between two options
                               usually lives in them, not in the labels. */}
-                          <span class="tl-qcard-desc">{option.description}</span>
+                          <span class="tl-qcard-desc">{option().description}</span>
                         </Show>
                       </button>
                     );
                   }}
-                </For>
+                </Index>
               </div>
               <Show when={typing()}>
-                <input
-                  class="tl-qcard-other"
-                  type="text"
-                  placeholder={FREE_TEXT_LABEL}
-                  aria-label="Your own answer"
-                  value={text()}
-                  onInput={(e) => setDraft({ of: drawnKey(), typed: e.currentTarget.value })}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") sendText();
-                  }}
-                />
+                {/* The field, and on a multi-select its own Add beside it. That
+                    Add sits here rather than in the actions row because the
+                    commit button owns the right end of that row, and two
+                    buttons there, one that adds words and one that leaves the
+                    question, is a mis-click waiting to happen.
+
+                    `.tl-qcard-back` is the card's neutral outlined button, as
+                    Open Terminal uses it below. The inline styles lay out one
+                    row rather than adding a rule to app.css for it. */}
+                <div style={{ display: "flex", gap: "8px", "margin-top": "6px" }}>
+                  <input
+                    class="tl-qcard-other"
+                    style={{ "margin-top": "0", flex: "1", "min-width": "0" }}
+                    type="text"
+                    placeholder={FREE_TEXT_LABEL}
+                    aria-label="Your own answer"
+                    value={text()}
+                    onInput={(e) => setDraft({ of: drawnKey(), typed: e.currentTarget.value })}
+                    onKeyDown={(e) => {
+                      if (e.key !== "Enter") return;
+                      if (multi()) applyText();
+                      else sendText();
+                    }}
+                  />
+                  <Show when={multi()}>
+                    <button
+                      type="button"
+                      class="tl-qcard-back"
+                      style={{ "margin-right": "0", flex: "none" }}
+                      disabled={!canApplyText()}
+                      onClick={applyText}
+                    >
+                      {typedText() ? "Update" : "Add"}
+                    </button>
+                  </Show>
+                </div>
               </Show>
             </Show>
           </div>
@@ -495,15 +772,17 @@ export const QuestionCard: Component<{
               Open Terminal
             </button>
           </Show>
-          {/* `!props.review` as well as `typing()`, so the two Show blocks
-              here can never both be open. The review screen's only action is
+          {/* `!props.review` as well as `typing()`, so the Show blocks here
+              can never be open together. The review screen's only action is
               Submit, and an "Answer" beside it would be the free-text row of
-              some earlier question wearing the review screen's header. */}
-          <Show when={typing() && !props.review}>
+              some earlier question wearing the review screen's header. Not on
+              a multi-select either, where the field's words are one more pick
+              and the commit button below is what sends them. */}
+          <Show when={typing() && !props.review && !multi()}>
             <button
               type="button"
               class="tl-qcard-send"
-              disabled={!text().trim() || props.busy || sending() !== null}
+              disabled={!text().trim() || busy()}
               onClick={sendText}
             >
               {sending() === FREE_TEXT_LABEL ? "Answering…" : "Answer"}
@@ -513,10 +792,27 @@ export const QuestionCard: Component<{
             <button
               type="button"
               class="tl-qcard-send"
-              disabled={props.busy || sending() !== null}
+              disabled={busy()}
               onClick={() => run("submit", () => props.onSubmit())}
             >
               {sending() === "submit" ? "Submitting…" : "Submit"}
+            </button>
+          </Show>
+          {/* The multi-select commit, at the right end of the row where the
+              review screen's Submit sits. It presses the CLI's own commit row,
+              so it carries that row's label, and it is outlined in the accent
+              rather than filled: it moves through the dialog, and the filled
+              Submit on the review screen is still the act that answers
+              Claude. */}
+          <Show when={multi() && !props.review && optionRows().length > 0}>
+            <button
+              type="button"
+              class="tl-qcard-next"
+              disabled={!canCommit()}
+              aria-busy={sending() === "commit" ? "true" : undefined}
+              onClick={commit}
+            >
+              {commitLabel()}
             </button>
           </Show>
         </div>

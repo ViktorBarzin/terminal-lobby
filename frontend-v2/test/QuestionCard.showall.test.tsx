@@ -54,6 +54,7 @@ const card = (dialog: DialogView) =>
       dialog={dialog}
       busy={false}
       onChoose={async () => {}}
+      onToggle={async () => {}}
       onBack={async () => {}}
       onSubmit={async () => {}}
       onKeys={async () => {}}
@@ -106,6 +107,7 @@ describe("the live card can show every description", () => {
         review
         busy={false}
         onChoose={async () => {}}
+        onToggle={async () => {}}
         onBack={async () => {}}
         onSubmit={async () => {}}
         onKeys={async () => {}}
@@ -131,7 +133,9 @@ describe("the recorded row shows its descriptions", () => {
   });
 
   it("stays collapsed to a line while the card below is asking it", () => {
-    const { container, queryByText } = render(() => <QuestionRowView row={row({ pending: true })} />);
+    const { container, queryByText } = render(() => (
+      <QuestionRowView row={row({ pending: true })} />
+    ));
     expect(container.querySelectorAll(".tl-option-desc").length).toBe(0);
     expect(queryByText(/show all/i)).toBeNull();
   });
