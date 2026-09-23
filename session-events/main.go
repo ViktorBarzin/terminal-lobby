@@ -633,7 +633,13 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 //
 // A multi-select toggle never comes here (handleAnswer). Its answer is the
 // commit that follows, so one multi-select answer counts once however many
-// clicks built it.
+// clicks built it. A commit whose set holds the free-text row carries the
+// row's words in Text, so it counts as free text, api-text with the words'
+// length, although the words normally went in on an earlier toggle and the
+// commit itself only walks and presses Enter. That is deliberate: the commit
+// is the one request that names the whole answer, words included, and the
+// toggle that typed them is never counted. The live check on 2026-09-23 saw
+// it as tl.count 4 for "Kiwi".
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {

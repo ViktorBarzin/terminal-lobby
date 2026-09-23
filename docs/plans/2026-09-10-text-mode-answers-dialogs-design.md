@@ -336,7 +336,9 @@ Apple, Pear, Plum), the same question committed with nothing ticked, two
 multi-select questions (`Fruit`, then `Toppings`), ticks removed one by one, and
 the free-text row on its own. A second probe the same day sent the keys the
 server sends, a bracketed paste and runs of `Backspace`, and moved the cursor
-back up from the free-text row.
+back up from the free-text row. The live check of the fix, later that day,
+cleared the field after a walk back onto it, and the table's last row is what
+it found.
 
 | behaviour | what the CLI did |
 |---|---|
@@ -348,6 +350,7 @@ back up from the free-text row.
 | `Enter` on the empty free-text row | ticks `[✔] Type something`, and the row is dropped at commit: Claude received `Apple` alone |
 | the tab bar's box | fills on the first tick and returns to `☐` once every box is unticked |
 | the footer | `↑/↓ to navigate` with one question and `Tab/Arrow keys to navigate` with two or more. `ctrl+g to edit in Vim` joins it while the cursor is on the free-text row or the commit row, and goes again when the cursor moves back up to an option |
+| the free-text row's text cursor | a walk back onto the row with `↑` or `↓` puts it at the start of the words: a typed `X` landed in front of `Kiwi`, and six `Backspace`s took nothing out. Straight after a paste it is at the end. `C-e` moves it to the end of the whole text, a wrapped one included: `C-e` and 170 `Backspace`s in one run cleared a 166-character field wrapped over two lines. `End` stops at the end of the first visual line, and `C-u` kills one visual line |
 
 The key-delivery findings of 0.50.1 and 0.50.2 still govern every walk: each
 cursor walk and each `Space` gets its own `send-keys` run with `keySettle`
@@ -416,7 +419,7 @@ carry exactly this. Single-select requests are unchanged.
 | field | on | meaning |
 |---|---|---|
 | `stay` | request | Multi-select only. Apply the desired set to the question on screen and do not leave it: no walk to the commit row, no `Enter`. Applied when a fresh reading shows every box as requested, the free-text row included, and `unverified` otherwise; the reply always carries the reading. An empty set is valid and unticks everything. On a single-select question it is refused as `unknown-option` with nothing typed |
-| `choices` naming `Type something` | request | The desired set covers the free-text row: `choices` may name it beside option labels, and `text` is then that row's content, which may not be empty. When `choices` leaves it out and the row holds text, the server clears the row with `Backspace`, never `Space` |
+| `choices` naming `Type something` | request | The desired set covers the free-text row: `choices` may name it beside option labels, and `text` is then that row's content, which may not be empty. When `choices` leaves it out and the row holds text, the server clears the row with `C-e` and then `Backspace`, never `Space` |
 | no `stay` | request | The commit: the same multi-select request, carrying the set the card displays. The server applies the diff (normally empty), verifies it, walks to the commit row and presses `Enter` in a batch of its own, then verifies the move as before: the review screen, another question, or the dialog gone. An empty set is refused as `unknown-option` with nothing typed |
 | `commit` | reading | The label of the commit row under a multi-select's free-text row, `Next` or `Submit`, and empty when none is drawn |
 | `typed` | reading | The text in a multi-select's free-text row, and empty while it reads `Type something` |
@@ -433,12 +436,14 @@ catch any of them" above notes.
 Two constraints shape how the server does this:
 
 - **Clearing the free-text row leaves the keys allowlist alone.** `answerKeys`
-  in `sessionio/tmux.go` carries no `BSpace`, and it is the whole security
-  boundary of the public `POST /keys` route. The server clears the row through
-  the internal raw-keys path the model picker already uses (`rawKeys` in
-  `sessionio/setmodel.go`), bounded by the characters the reading shows in the
-  row plus a small margin, and only while the pane draws that row with the
-  cursor on it.
+  in `sessionio/tmux.go` carries neither `C-e` nor `BSpace`, and it is the whole
+  security boundary of the public `POST /keys` route. The server clears the row
+  through the internal raw-keys path the model picker already uses (`rawKeys`
+  in `sessionio/setmodel.go`), bounded by the characters the reading shows in
+  the row plus a small margin, and only while the pane draws that row with the
+  cursor on it. The run opens with `C-e`, because the walk onto the row leaves
+  the text cursor at the start of the words, where a `Backspace` takes nothing
+  out.
 - **A toggle is verified by its boxes.** `answerMoved` in
   `sessionio/answerdrive.go` looks for three signals that a question was left,
   and a toggle that adds a second pick changes none of them, so it would come
