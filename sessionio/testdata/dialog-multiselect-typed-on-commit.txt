@@ -1,0 +1,21 @@
+▎ Using claude-opus-5-5 (from managed settings) · /model
+
+❯ Call the AskUserQuestion tool right now with exactly ONE question: header "Fruit", question "Pick fruits", options
+  "Apple","Pear","Plum", multiSelect true. Do not use any other tool and say nothing before the call.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruit  ✔ Submit  →
+
+Pick fruits
+
+  1. [ ] Apple
+         Apple
+  2. [✔] Pear
+         Pear
+  3. [ ] Plum
+         Plum
+  4. [✔] Kiwi fruit
+❯    Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel

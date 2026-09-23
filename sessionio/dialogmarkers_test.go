@@ -122,6 +122,39 @@ var markerCorpus = []markerCase{
 		fixture: "dialog-narrow-footer.txt",
 		lit:     "tabBar openBox footer numberedList freeText chatOption",
 	},
+
+	// CLI 2.1.280, captured 2026-09-23. A one-question call draws a tab bar
+	// now, and a multi-select draws an unnumbered commit row under its
+	// free-text row, which no marker names: it is read by position
+	// (shapeList), and a fingerprint of it would only repeat the parse.
+	{
+		name:    "one-question multi-select, CLI 2.1.280",
+		fixture: "dialog-multiselect-one.txt",
+		lit:     "tabBar openBox footer numberedList freeText chatOption",
+	},
+	{
+		name:    "multi-select with the cursor on its commit row",
+		fixture: "dialog-multiselect-on-commit.txt",
+		lit:     "tabBar answeredBox footer numberedList freeText chatOption",
+	},
+	{
+		// freeText is dark and nothing has drifted: the reader typed "Mango"
+		// into the inline field, and the row draws the words where the label
+		// was. The parser finds that row by position for exactly this reason,
+		// and the fingerprint is only ever taken on a parse that failed, so a
+		// healthy screen like this one never reports it.
+		name:    "multi-select with free text typed in",
+		fixture: "dialog-multiselect-typed.txt",
+		lit:     "tabBar answeredBox footer numberedList chatOption",
+	},
+	{
+		// A committed question with nothing ticked: the review warns instead
+		// of listing answers, its tab box is still ☐, and like every review
+		// screen it has no footer.
+		name:    "review screen, nothing answered",
+		fixture: "dialog-review-unanswered.txt",
+		lit:     "tabBar openBox reviewTitle readyPrompt numberedList",
+	},
 	{
 		name:    "an ordinary working pane",
 		fixture: "dialog-none.txt",

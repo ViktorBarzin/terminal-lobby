@@ -47,9 +47,12 @@ var knownEvents = map[string]bool{
 	// carries WHERE the sequence stopped and WHY, never what the pane held:
 	// a dialog can quote anything the session was working on.
 	// tl.reason, tl.step, tl.steps, tl.multi, tl.questions, tl.options,
-	// tl.source, tl.expect_len, tl.pane_read
+	// tl.source, tl.expect_len, tl.pane_read, and tl.action on the server's:
+	// choose | toggle | commit | back | submit | keys. A multi-select answer
+	// is several toggles and one commit, so these count requests; one answer
+	// is one claude.answered, sent at the commit.
 	"text.answer_failed": true,
-	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps
+	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps, tl.action
 	"session.detached":   true,
 	"session.renamed":    true,
 	// A title someone chose, replacing whatever the session had. Emitted

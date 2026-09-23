@@ -288,3 +288,168 @@ func TestParseDialogTicksNothingOnAnUntouchedQuestion(t *testing.T) {
 		}
 	}
 }
+
+// THE COMMIT ROW IS A LABEL, NOT A DESCRIPTION. A multi-select draws an
+// unnumbered row under its free-text row, and Enter there is what leaves the
+// question. Measured on CLI 2.1.280 on 2026-09-23: it reads "Next" on every
+// question but the last and "Submit" on the last, so a one-question call says
+// "Submit". The card labels its commit button with it, which is why the
+// reading carries the pane's own word rather than one the card makes up.
+//
+// dialog-multi.txt is the 2.1.250 capture, where the same row said "Next" and
+// the parser filed it as the free-text row's description.
+func TestParseDialogReadsTheCommitRowOfAMultiSelect(t *testing.T) {
+	for _, tc := range []struct {
+		fixture, question, commit string
+	}{
+		{"dialog-multi.txt", "Pick fruits", "Next"},
+		{"dialog-multiselect-one.txt", "Pick fruits", "Submit"},
+		{"dialog-multiselect-next.txt", "Pick fruits", "Next"},
+		{"dialog-multiselect-last.txt", "Pick toppings", "Submit"},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			d := ParseDialog(fixture(t, tc.fixture))
+			if d == nil {
+				t.Fatal("the multi-select did not parse")
+			}
+			q := d.Questions[0]
+			if q.Question != tc.question || !q.MultiSelect {
+				t.Fatalf("question = %q multi=%v", q.Question, q.MultiSelect)
+			}
+			if q.Commit != tc.commit {
+				t.Errorf("commit = %q, want %q", q.Commit, tc.commit)
+			}
+			if len(q.Options) != 3 {
+				t.Fatalf("options = %+v, want the three the caller offered", q.Options)
+			}
+			for _, o := range q.Options {
+				if o.Description == tc.commit || o.Label == tc.commit {
+					t.Errorf("the commit row leaked into an option: %+v", o)
+				}
+			}
+		})
+	}
+}
+
+// A single-select question commits with its digit and has no commit row to
+// report. dialog-multi-second.txt is the 2.1.250 capture where a "Submit" line
+// sits under the free-text row of a single-select question anyway; that line
+// is not the multi-select commit, and reporting it would give the card a
+// button that walks somewhere the question has no row for.
+func TestParseDialogReportsNoCommitRowOnASingleSelect(t *testing.T) {
+	for _, name := range []string{"dialog-single.txt", "dialog-multi-second.txt", "dialog-narrow-footer.txt"} {
+		d := ParseDialog(fixture(t, name))
+		if d == nil {
+			t.Fatalf("%s did not parse", name)
+		}
+		q := d.Questions[0]
+		if q.Commit != "" || q.Typed != "" || q.TypedChecked {
+			t.Errorf("%s: commit=%q typed=%q typedChecked=%v on a single-select", name, q.Commit, q.Typed, q.TypedChecked)
+		}
+	}
+}
+
+// THE CURSOR ON THE COMMIT ROW. The row carries no digit, so the CLI draws the
+// cursor as "❯    Submit", and until 2026-09-23 the parser's walk up from the
+// footer took that line for the top of the option list: it kept the chat row
+// alone, and one row is not a list, so the reading was nil. Every pane parked
+// on the commit row came back unreadable, which is exactly where a commit that
+// did not take leaves the cursor.
+func TestParseDialogReadsAMultiSelectWithTheCursorOnTheCommitRow(t *testing.T) {
+	d := ParseDialog(fixture(t, "dialog-multiselect-on-commit.txt"))
+	if d == nil {
+		t.Fatal("a multi-select with the cursor on its commit row did not parse")
+	}
+	q := d.Questions[0]
+	if q.Question != "Pick fruits" || q.Commit != "Submit" {
+		t.Fatalf("question = %q commit = %q", q.Question, q.Commit)
+	}
+	ticked := map[string]bool{}
+	for _, o := range q.Options {
+		ticked[o.Label] = o.Checked
+	}
+	if len(q.Options) != 3 || !ticked["Apple"] || !ticked["Pear"] || ticked["Plum"] {
+		t.Errorf("options = %+v, want Apple and Pear ticked out of three", q.Options)
+	}
+}
+
+// THE FREE-TEXT ROW IS FOUND BY WHERE IT IS, NOT BY WHAT IT SAYS. On a
+// multi-select it is an inline field: typing goes straight into it and the row
+// then reads "[✔] Mango" instead of "Type something" (measured on 2.1.280,
+// 2026-09-23). Matching the label would have handed the card "Mango" as a
+// fourth option the caller never offered. The row is the last numbered one
+// above the separator over "Chat about this", and its text and box come back
+// as typed and typedChecked.
+func TestParseDialogReadsWhatTheFreeTextRowHolds(t *testing.T) {
+	for _, tc := range []struct {
+		fixture      string
+		typed        string
+		typedChecked bool
+	}{
+		{"dialog-multiselect-one.txt", "", false},
+		{"dialog-multiselect-typed.txt", "Mango", true},
+		// Enter on the row toggles its box and keeps the text.
+		{"dialog-multiselect-typed-unticked.txt", "Mango", false},
+		// Enter on the EMPTY row ticks it, and the CLI drops that pick at
+		// commit, so there is still nothing typed.
+		{"dialog-multiselect-empty-ticked.txt", "", true},
+		// Space on the row types a literal space and ticks it. The capture
+		// trims the space, so the row draws a box and nothing after it.
+		{"dialog-multiselect-space-typed.txt", "", true},
+		{"dialog-multiselect-typed-on-commit.txt", "Kiwi fruit", true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			d := ParseDialog(fixture(t, tc.fixture))
+			if d == nil {
+				t.Fatal("the multi-select did not parse")
+			}
+			q := d.Questions[0]
+			if q.Typed != tc.typed || q.TypedChecked != tc.typedChecked {
+				t.Errorf("typed = %q checked = %v, want %q and %v", q.Typed, q.TypedChecked, tc.typed, tc.typedChecked)
+			}
+			if len(q.Options) != 3 {
+				t.Errorf("options = %+v: the free-text row belongs out of the list whatever it holds", q.Options)
+			}
+			if q.Commit != "Submit" {
+				t.Errorf("commit = %q, want Submit", q.Commit)
+			}
+		})
+	}
+}
+
+// The review screen of a call whose question was committed with nothing
+// ticked. The CLI allows that: the question stays unanswered, this screen
+// warns, and Claude is told "The user did not answer the questions." Measured
+// on 2.1.280 on 2026-09-23, and it is why the server refuses a commit with an
+// empty set. Like every review screen it has no footer, so it is read through
+// reviewTail.
+func TestTheReviewScreenReadsWhenNothingWasAnswered(t *testing.T) {
+	for _, tc := range []struct {
+		fixture  string
+		answered int
+	}{
+		{"dialog-review-unanswered.txt", 0},
+		{"dialog-review-one-question.txt", 1},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			lines := strings.Split(fixture(t, tc.fixture), "\n")
+			if footerAt(lines) >= 0 {
+				t.Fatal("this capture has a footer now; the review screen used to have none")
+			}
+			tail := reviewTail(lines)
+			if tail == nil || !reviewOnScreen(tail) {
+				t.Fatal("the review screen was not recognised")
+			}
+			d := ParseDialog(strings.Join(tail, "\n"))
+			if d == nil {
+				t.Fatal("the review tail did not parse")
+			}
+			if d.Count != 1 || d.Answered != tc.answered {
+				t.Errorf("answered %d of %d, want %d of 1", d.Answered, d.Count, tc.answered)
+			}
+			if len(d.Questions) != 1 || len(d.Questions[0].Options) != 0 {
+				t.Errorf("the review screen carried options: %+v", d.Questions)
+			}
+		})
+	}
+}

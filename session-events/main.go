@@ -527,6 +527,20 @@ const answerNoSession = "no-session"
 func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
+		// The body is read BEFORE the session is placed, so that the record of
+		// a session this box does not have can still say what was attempted
+		// (tl.action). Reading it first costs nothing: it is bounded, and
+		// nothing is typed until both checks have passed.
+		var req sessionio.AnswerRequest
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, answerBodyLimit)).Decode(&req) != nil {
+			// Over the cap and unparseable are one refusal on purpose: nothing
+			// reached a pane in either case, and a client can do nothing
+			// different about them. The cap is in the message because it is
+			// the one of the two a caller might be surprised by.
+			http.Error(w, "bad body (an AnswerRequest under "+strconv.Itoa(answerBodyLimit)+" bytes)",
+				http.StatusBadRequest)
+			return
+		}
 		fs, ok := rg.source(osUser, session)
 		if !ok {
 			http.Error(w, "session not registered", http.StatusNotFound)
@@ -540,17 +554,8 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 			// answer 2xx became `refused` (answer.logic.ts:330). Silence here
 			// would take that class to zero at the cutover and read as a
 			// failure that had stopped happening.
-			emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerNoSession})
-			return
-		}
-		var req sessionio.AnswerRequest
-		if json.NewDecoder(http.MaxBytesReader(w, r.Body, answerBodyLimit)).Decode(&req) != nil {
-			// Over the cap and unparseable are one refusal on purpose: nothing
-			// reached a pane in either case, and a client can do nothing
-			// different about them. The cap is in the message because it is
-			// the one of the two a caller might be surprised by.
-			http.Error(w, "bad body (an AnswerRequest under "+strconv.Itoa(answerBodyLimit)+" bytes)",
-				http.StatusBadRequest)
+			emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerNoSession},
+				sessionio.AnswerAction(req, nil, nil))
 			return
 		}
 		// The call's question list rides along because the pane cannot supply
@@ -574,12 +579,25 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 			// because a cancel can reach us as whatever the killed tmux
 			// subprocess reported rather than as context.Canceled.
 			if r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
-				emitAnswer(osUser, session, known, sessionio.AnswerResponse{Reason: answerUnreadable})
+				emitAnswer(osUser, session, known, sessionio.AnswerResponse{Reason: answerUnreadable},
+					sessionio.AnswerAction(req, nil, known))
 			}
 			return
 		}
-		emitAnswer(osUser, session, known, resp)
-		if resp.Applied {
+		// The driver names the action from the question it saw before typing,
+		// which is the only way to tell a one-pick commit from a single-select
+		// pick while the call's record has not landed. A driver that says
+		// nothing gets the same reading made from the request and the record.
+		action := resp.Action
+		if action == "" {
+			action = sessionio.AnswerAction(req, nil, known)
+		}
+		emitAnswer(osUser, session, known, resp, action)
+		// A TOGGLE IS NOT AN ANSWER. Since 2026-09-23 a multi-select is
+		// answered by several toggles and one commit, and ADR-0006's record
+		// counts blocking prompts answered, so it goes out once, at the
+		// commit. text.answer_sent above still records every toggle.
+		if resp.Applied && action != sessionio.ActionToggle {
 			emitAnswered(osUser, session, req)
 		}
 		writeJSON(w, resp)
@@ -612,6 +630,10 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 // tl.count is the answer's SIZE in the same unit each of those routes used —
 // characters for text, keys for the hatch. A choice is 1, which is also what
 // the walk's own single-select answer was: one digit.
+//
+// A multi-select toggle never comes here (handleAnswer). Its answer is the
+// commit that follows, so one multi-select answer counts once however many
+// clicks built it.
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
@@ -686,6 +708,12 @@ func pendingQuestions(fs *sessionio.FileSource) []sessionio.DialogQuestion {
 // could not be tied back to the transcript it came from; the design doc lists
 // that as the thing that would have made the investigation short.
 //
+// tl.action says what kind of request this was: choose, toggle, commit, back,
+// submit or keys (sessionio.AnswerAction). Since 2026-09-23 a multi-select
+// takes several requests, toggles and then one commit, so the series counts
+// requests rather than answers, and a query that means answers splits on this.
+// Every request records exactly one of the two names, whatever its action.
+//
 // The two NAMES are the browser's, so its records and these stay one series —
 // but tl.client has to be read in every query over them. The historical
 // failures are failures of the walk this route replaces, and 3 of the 5 were
@@ -718,7 +746,7 @@ func pendingQuestions(fs *sessionio.FileSource) []sessionio.DialogQuestion {
 // the dialog did not draw it. That is stricter than what came before, and a
 // panel spanning the cutover will show a step that is the parser changing, not
 // the CLI.
-func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp sessionio.AnswerResponse) {
+func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp sessionio.AnswerResponse, action string) {
 	// `event` rather than `name`: frontend-v2/test/docs.truth.test.ts checks
 	// every event name a Go service emits against the catalog in
 	// telemetry/events.go, which is a gate that drops an uncatalogued name
@@ -738,6 +766,9 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 	}
 	if source != "" {
 		attrs["tl.source"] = source
+	}
+	if action != "" {
+		attrs["tl.action"] = action
 	}
 	if resp.Reason != "" {
 		attrs["tl.reason"] = resp.Reason

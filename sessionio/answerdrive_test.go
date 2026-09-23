@@ -23,13 +23,16 @@ import (
 // an AskUserQuestion takes a real model call, which is the same cost that got a
 // nightly contract test declined in the design.
 //
-// The stand-in models three measured behaviours that the fixtures cannot show,
-// because a static capture has no keyboard:
+// The stand-in models measured behaviours that the fixtures cannot show,
+// because a static capture has no keyboard. The full list is above
+// fakeDialogPy; the ones these tests lean on hardest:
 //
-//   - a multi-select question's tab-bar box flips to ☒ on the FIRST Space,
-//     before the Enter that leaves the question;
-//   - a question revisited with ← draws its earlier pick as "2. Pear ✔" and
-//     opens the cursor on that row;
+//   - a multi-select question's tab-bar box flips to ☒ on the FIRST pick, so
+//     it says nothing about whether the question has been left;
+//   - on a multi-select, Enter on a numbered row toggles it, and only Enter on
+//     the unnumbered commit row leaves the question (CLI 2.1.280, 2026-09-23);
+//   - the free-text row of a multi-select is an inline field that a paste
+//     types into and ticks, and a Backspace clears;
 //   - the conversation above the dialog carries both questions' text and, on a
 //     line of its own, the review screen's wording. Both are what a whole-pane
 //     comparison matches on: dialog.go recognises the review screen by any
@@ -106,7 +109,8 @@ func TestAnswerWalksAMultiQuestionCallEndToEnd(t *testing.T) {
 	in, osUser := dialogSession(t)
 	ctx := context.Background()
 
-	// One toggle of a multi-select, then the Enter that leaves the question.
+	// A multi-select request without Stay is the commit: the set it names,
+	// then Enter on the question's own commit row.
 	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choice: "Pear"}, theCall)
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
@@ -144,7 +148,9 @@ func TestAnswerWalksAMultiQuestionCallEndToEnd(t *testing.T) {
 		t.Error("the reply still says review after walking back to a question")
 	}
 
-	// Changing the pick, from a cursor that is now sitting on the old one.
+	// Changing the pick. A multi-select drawn again opens its cursor on row
+	// one with the old pick still ticked (measured on 2.1.280, 2026-09-23),
+	// so the plan walks down to clear it.
 	res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choice: "Plum"}, theCall)
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
@@ -177,21 +183,20 @@ func TestAnswerWalksAMultiQuestionCallEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CapturePane: %v", err)
 	}
-	// Plum alone. A multi-select row is a TOGGLE and the CLI was holding Pear,
-	// so the plan cleared it on the way past: choosing again REPLACES the
-	// answer, which is what the design says going back is for. Adding to it
-	// would leave a reader who changed their mind having answered both.
+	// Plum alone. A request carries the whole set the question should hold,
+	// and the CLI was holding Pear, so the plan cleared it on the way past. A
+	// reader who changed their mind has not answered both.
 	if !strings.Contains(pane, "SUBMITTED Plum | Coffee") {
 		t.Errorf("the answers that reached the stand-in are not the ones chosen:\n%s", pane)
 	}
 }
 
-// Tapping the answer you already gave keeps it.
+// Committing the answer the question already holds keeps it.
 //
 // Space is a toggle, so the plan that pressed one per chosen row deleted the
-// pick it was asked for, left the question with nothing chosen — where the
-// Enter cannot leave it — and answered "the screen did not move". The reader's
-// own answer was the one option they could not choose.
+// pick it was asked for, left the question with nothing chosen, and answered
+// "the screen did not move". The reader's own answer was the one option they
+// could not choose.
 func TestRepickingAMultiSelectAnswerKeepsIt(t *testing.T) {
 	in, osUser := dialogSession(t)
 	ctx := context.Background()
@@ -219,19 +224,20 @@ func TestRepickingAMultiSelectAnswerKeepsIt(t *testing.T) {
 	}
 }
 
-// A SECOND PICK ADDS TO THE FIRST, end to end against a real tmux.
+// A SECOND PICK ADDS TO THE FIRST on a question the reader comes back to, end
+// to end against a real tmux.
 //
 // This is the gap the walk test above documents from the other side: it
 // submits "Plum | Coffee" because {Plum} alone is a replacement, and until
 // 2026-09-11 that was the only thing a request could say. AnswerRequest.Choice
-// was one label, so answerChoice planned from a one-element set and a reader
-// who came back to add a fruit lost the one they had — measured on a pane with
-// Apple ticked and the cursor on its row, where the plan for Pear opens with a
-// Space on Apple.
+// was one label, so a reader who came back to add a fruit lost the one they
+// had: measured on a pane with Apple ticked and the cursor on its row, the plan
+// for Pear opened with a Space on Apple.
 //
 // Choices carries the desired final state instead, so the same walk ends with
-// both fruits. The Enter is still what leaves the question, so adding a pick
-// is still a revisit: the card comes back with ← and sends what it wants held.
+// both fruits. Since 2026-09-23 a reader adds a pick with a toggle and never
+// leaves the question to do it (TestAToggleChangesThePicksAndStaysOnTheQuestion);
+// coming back with ← is still how an answer already committed is changed.
 func TestAnswerAddsAPickToAMultiSelectOnARevisit(t *testing.T) {
 	in, osUser := dialogSession(t)
 	ctx := context.Background()
@@ -437,13 +443,18 @@ func TestBackRefusesWhenItCannotPlaceTheWalk(t *testing.T) {
 	}
 }
 
-// The free-text row is focused by its digit, typed into, read back, and only
-// then committed. An Enter on a field the paste never reached answers the
-// question with nothing.
-func TestAnswerTypesTheFreeTextOptionAndCommitsIt(t *testing.T) {
+// FREE TEXT ON A MULTI-SELECT IS ONE MORE PICK, committed with the others.
+//
+// The row is an inline field there (measured on CLI 2.1.280, 2026-09-23): the
+// cursor is walked onto it, the text is pasted and read back, and the paste
+// ticks the row. No Enter goes to the field, because on that row Enter flips
+// the box it has just ticked. The commit then leaves the question with the
+// options and the text together.
+func TestAnswerCommitsFreeTextWithTheOtherPicks(t *testing.T) {
 	in, osUser := dialogSession(t)
-	res, err := in.Answer(context.Background(), osUser, "demo",
-		AnswerRequest{Header: "Fruit", Choice: "Type something", Text: "quince"}, theCall)
+	ctx := context.Background()
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple", "Type something"}, Text: "quince"}, theCall)
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -451,13 +462,44 @@ func TestAnswerTypesTheFreeTextOptionAndCommitsIt(t *testing.T) {
 		t.Fatalf("applied=%v reason=%q on a free-text answer", res.Applied, res.Reason)
 	}
 	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" {
-		t.Fatalf("the free-text answer did not leave the question: %+v", res.Dialog)
+		t.Fatalf("the commit did not leave the question: %+v", res.Dialog)
+	}
+	for _, step := range []AnswerRequest{{Header: "Drink", Choice: "Coffee"}, {Submit: true}} {
+		if res, err := in.Answer(ctx, osUser, "demo", step, theCall); err != nil || !res.Applied {
+			t.Fatalf("Answer(%+v): %+v %v", step, res, err)
+		}
 	}
 	pane, err := in.CapturePane(osUser, "demo")
 	if err != nil {
 		t.Fatalf("CapturePane: %v", err)
 	}
-	if !strings.Contains(pane, "● TYPED quince") {
+	if !strings.Contains(pane, "SUBMITTED Apple, quince | Coffee") {
+		t.Errorf("the typed pick did not go in with the option:\n%s", pane)
+	}
+}
+
+// Free text on a SINGLE-select is unchanged: the digit focuses the field, the
+// text is typed and read back, and only then does the Enter commit it. An
+// Enter on a field the paste never reached answers the question with nothing.
+func TestAnswerTypesSingleSelectFreeTextAndCommitsIt(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choice: "Pear"}, theCall); err != nil || !res.Applied {
+		t.Fatalf("committing the first question: %+v %v", res, err)
+	}
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Drink", Choice: "Type something", Text: "oolong"}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || !res.Review {
+		t.Fatalf("applied=%v review=%v, want the free-text answer to reach the review", res.Applied, res.Review)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "● TYPED oolong") {
 		t.Errorf("the text never reached the stand-in's field:\n%s", pane)
 	}
 }
@@ -657,10 +699,29 @@ func readingOf(t *testing.T, name string) answerReading {
 }
 
 // A stand-in for Claude Code's AskUserQuestion dialog. It is not a model of the
-// CLI; it is a model of the CONTRACT the driver relies on — a numbered list
-// answered by digit, a multi-select toggled with Space and left with Enter, a
-// free-text row focused by its digit, ← to an earlier question, and a review
-// screen that Submit closes.
+// CLI; it is a model of the CONTRACT the driver relies on, drawn the way CLI
+// 2.1.280 draws it and answering keys the way that build answers them, as
+// measured by driving real dialogs on 2026-09-23:
+//
+//   - a single-select question is answered by its digit, or by Enter on a row;
+//   - on a multi-select every numbered row is a toggle, by Space, by Enter or
+//     by its digit, and a digit leaves the cursor where it was;
+//   - an unnumbered commit row under the free-text row is what leaves a
+//     multi-select, "Next" on every question but the last and "Submit" on the
+//     last, so a one-question call says "Submit"; Enter there commits even
+//     with nothing ticked, and the question is left unanswered;
+//   - a multi-select's free-text row is an inline field: printable keys and a
+//     paste go into it and tick it, Space types a space, Backspace to empty
+//     clears the box, and Enter flips the box and keeps the text;
+//   - the tab box fills on the first pick and empties when none is left;
+//   - the review screen follows the last question, for a one-question call
+//     too, and is drawn with no footer;
+//   - ← to an answered question opens a single-select on its pick, drawn
+//     "2. Coffee ✔", and a multi-select on row one with its boxes kept.
+//
+// The one assumption: a digit typed with the cursor on the free-text field
+// goes into the field. Space does, measured, and nothing here presses a digit
+// on a multi-select.
 //
 // It lives here rather than in testdata/ because it is the other half of these
 // tests: the assertions above are meaningless without the exact key handling
@@ -670,6 +731,13 @@ const fakeDialogPy = `#!/usr/bin/env python3
 
 Raw mode from the first byte, so a bracketed paste (which is how the driver
 types free text) arrives as ordinary bytes rather than as line editing.
+
+It draws and answers keys the way Claude Code 2.1.280 does, as measured by
+driving real dialogs on 2026-09-23. On a multi-select every numbered row is a
+toggle, whether by Space, Enter or its digit, and none of them leaves the
+question; an unnumbered commit row under the free-text row does, saying
+"Next" on every question but the last and "Submit" on the last. The free-text
+row of a multi-select is an inline field.
 """
 
 import os
@@ -681,7 +749,7 @@ import tty
 DEAF = os.environ.get("FAKEDIALOG_DEAF") == "1"
 # A full-frame repaint: erase, then take a quarter of a second over the next
 # frame. Measured transitions are 63-154 ms on an idle box, so this is what a
-# loaded one looks like to capture-pane — a screen with nothing on it.
+# loaded one looks like to capture-pane: a screen with nothing on it.
 BLINK = os.environ.get("FAKEDIALOG_BLINK") == "1"
 
 QS = [
@@ -690,7 +758,12 @@ QS = [
     {"header": "Drink", "text": "Pick one drink", "multi": False,
      "opts": ["Tea", "Coffee"]},
 ]
-FOOTER = "Enter to select · Tab/Arrow keys to navigate · Esc to cancel"
+# A one-question call: the multi-select alone. Its commit row says "Submit",
+# and it still goes to the review screen.
+if os.environ.get("FAKEDIALOG_CALL") == "one":
+    QS = QS[:1]
+
+RULE = "─" * 60
 
 # The conversation above the dialog. A real capture carries the prompt that
 # asked for the questions and whatever the call before it left behind, so both
@@ -703,11 +776,13 @@ PREAMBLE = [
     "  before any of them is sent.",
 ]
 
-picks = [set(), set()]
-typed = []
-at = 0
+picks = [set() for _ in QS]      # the option labels ticked, per question
+field = ["" for _ in QS]         # a multi-select's inline free-text field
+field_on = [False for _ in QS]   # and its box
+typed = []                       # lines single-select free text leaves behind
+at = 0                           # the question on screen; len(QS) is the review
 cursor = 0
-typing = False
+typing = False                   # a single-select's free-text field is open
 buf = ""
 
 
@@ -716,13 +791,73 @@ def out(s):
     sys.stdout.flush()
 
 
+def multi():
+    return at < len(QS) and QS[at]["multi"]
+
+
+def nopts():
+    return len(QS[at]["opts"])
+
+
+def free_row():
+    return nopts()
+
+
+def commit_row():
+    # The commit row sits directly under a multi-select's free-text row. A
+    # single-select commits with its digit and draws none.
+    return nopts() + 1 if multi() else -1
+
+
+def rows():
+    # Where the cursor can stop: the options, the free-text row, the commit
+    # row on a multi-select, and the chat row.
+    if at >= len(QS):
+        return 2
+    return nopts() + (3 if multi() else 2)
+
+
+def answered(i):
+    # The tab box fills on the first tick and empties when every box is clear.
+    # A ticked free-text row with nothing typed does not fill it: the CLI
+    # drops that pick at commit.
+    if QS[i]["multi"]:
+        return bool(picks[i]) or (field_on[i] and field[i] != "")
+    return bool(picks[i])
+
+
 def tabbar():
     parts = ["←"]
     for i, q in enumerate(QS):
-        parts.append(("☒" if picks[i] else "☐") + " " + q["header"])
+        parts.append(("☒" if answered(i) else "☐") + " " + q["header"])
     parts.append("✔ Submit")
     parts.append("→")
     return "  ".join(parts)
+
+
+def footer():
+    parts = ["Enter to select"]
+    parts.append("↑/↓ to navigate" if len(QS) == 1 else "Tab/Arrow keys to navigate")
+    # Shown while the cursor is on the free-text or commit row of a
+    # multi-select, and gone again on the option rows.
+    if multi() and cursor in (free_row(), commit_row()):
+        parts.append("ctrl+g to edit in Vim")
+    parts.append("Esc to cancel")
+    return " · ".join(parts)
+
+
+def answer_of(i):
+    q = QS[i]
+    if not q["multi"]:
+        return sorted(picks[i])
+    got = [o for o in q["opts"] if o in picks[i]]
+    if field_on[i] and field[i].strip():
+        got.append(field[i].strip())
+    return got
+
+
+def mark(row):
+    return "❯" if (row == cursor and not typing) else " "
 
 
 def draw():
@@ -732,37 +867,44 @@ def draw():
     out("\r\n")
     out(tabbar() + "\r\n\r\n")
     if at >= len(QS):
+        # The review screen, which the CLI draws with NO footer.
         out("Review your answers\r\n\r\n")
-        out("Ready to submit your answers?\r\n\r\n")
-        out("❯ 1. Submit answers\r\n")
-        out("  2. Cancel\r\n\r\n")
-        out(FOOTER + "\r\n")
+        if all(answered(i) for i in range(len(QS))):
+            for i, q in enumerate(QS):
+                out(" ● " + q["text"] + "\r\n")
+                out("   → " + ", ".join(answer_of(i)) + "\r\n")
+        else:
+            out("⚠ You have not answered all questions\r\n")
+        out("\r\nReady to submit your answers?\r\n\r\n")
+        out(mark(0) + " 1. Submit answers\r\n")
+        out(mark(1) + " 2. Cancel\r\n")
         return
     q = QS[at]
     out(q["text"] + "\r\n\r\n")
-    n = 0
+    n = nopts()
     for i, o in enumerate(q["opts"]):
-        n = i + 1
-        mark = "❯" if (i == cursor and not typing) else " "
-        box = ""
         if q["multi"]:
             box = "[✔] " if o in picks[at] else "[ ] "
-        # A question revisited with ← draws its earlier pick with a tick.
-        tick = " ✔" if (not q["multi"] and o in picks[at]) else ""
-        out("%s %d. %s%s%s\r\n" % (mark, n, box, o, tick))
-    free = n + 1
-    mark = "❯" if (cursor == free - 1 and not typing) else " "
-    out("%s %d. Type something.\r\n" % (mark, free))
-    out("  %d. Chat about this\r\n" % (free + 1))
+            out("%s %d. %s%s\r\n" % (mark(i), i + 1, box, o))
+        else:
+            # A single-select revisited with the left arrow draws its earlier
+            # pick with a tick.
+            tick = " ✔" if o in picks[at] else ""
+            out("%s %d. %s%s\r\n" % (mark(i), i + 1, o, tick))
+    if q["multi"]:
+        box = "[✔]" if field_on[at] else "[ ]"
+        label = field[at] if field[at] != "" else "Type something"
+        # The terminal keeps no trailing spaces, so a field holding only a
+        # space reads "4. [✔]".
+        out(("%s %d. %s %s" % (mark(n), n + 1, box, label)).rstrip() + "\r\n")
+        out("%s    %s\r\n" % (mark(n + 1), "Submit" if at == len(QS) - 1 else "Next"))
+    else:
+        out("%s %d. Type something.\r\n" % (mark(n), n + 1))
+    out(RULE + "\r\n")
+    out("%s %d. Chat about this\r\n" % (mark(rows() - 1), n + 2))
     if typing:
         out("\r\n  > " + buf + "\r\n")
-    out("\r\n" + FOOTER + "\r\n")
-
-
-def rows():
-    if at >= len(QS):
-        return 2
-    return len(QS[at]["opts"]) + 2
+    out("\r\n" + footer() + "\r\n")
 
 
 def advance():
@@ -772,33 +914,65 @@ def advance():
     if BLINK:
         out("\x1b[2J\x1b[H")
         time.sleep(0.25)
-    if at < len(QS):
+    open_on_pick()
+
+
+def back():
+    global at, cursor, typing, buf
+    if at == 0:
+        return
+    at -= 1
+    typing = False
+    buf = ""
+    cursor = 0
+    open_on_pick()
+
+
+def open_on_pick():
+    # A single-select question drawn again opens on the pick it holds. A
+    # multi-select one opens on row one, its picks drawn as boxes.
+    global cursor
+    if at < len(QS) and not QS[at]["multi"]:
         chosen = [i for i, o in enumerate(QS[at]["opts"]) if o in picks[at]]
         if chosen:
             cursor = chosen[0]
 
 
-def back():
-    global at, cursor
-    if at == 0:
-        return
-    at -= 1
-    cursor = 0
-    chosen = [i for i, o in enumerate(QS[at]["opts"]) if o in picks[at]]
-    if chosen:
-        cursor = chosen[0]
+def toggle(i):
+    o = QS[at]["opts"][i]
+    if o in picks[at]:
+        picks[at].discard(o)
+    else:
+        picks[at].add(o)
+
+
+def type_into_field(s):
+    field[at] += s
+    field_on[at] = True
+
+
+def backspace_field():
+    if field[at]:
+        field[at] = field[at][:-1]
+        if field[at] == "":
+            field_on[at] = False
 
 
 def submitted():
     out("\x1b[2J\x1b[H")
     for line in PREAMBLE + typed:
         out(line + "\r\n")
-    out("\r\n● SUBMITTED " + " | ".join(", ".join(sorted(p)) for p in picks) + "\r\n")
+    out("\r\n● SUBMITTED " + " | ".join(", ".join(answer_of(i)) for i in range(len(QS))) + "\r\n")
 
 
 def read1():
     b = sys.stdin.buffer.read(1)
-    return b.decode("utf-8", "replace") if b else ""
+    if not b:
+        return ""
+    extra = 3 if b[0] >= 0xF0 else 2 if b[0] >= 0xE0 else 1 if b[0] >= 0xC0 else 0
+    if extra:
+        b += sys.stdin.buffer.read(extra)
+    return b.decode("utf-8", "replace")
 
 
 def skip_paste():
@@ -808,8 +982,94 @@ def skip_paste():
             return
 
 
+def multi_key(ch):
+    """One key on a multi-select question."""
+    global cursor
+    n = nopts()
+    on_field = cursor == free_row()
+    if ch in ("\x7f", "\x08"):
+        if on_field:
+            backspace_field()
+        return
+    if ch in ("\r", "\n"):
+        if cursor < n:
+            toggle(cursor)
+        elif on_field:
+            field_on[at] = not field_on[at]
+        elif cursor == commit_row():
+            # Commits even with nothing ticked: the question is left
+            # unanswered, and the review screen says so.
+            advance()
+        return
+    if on_field and ch.isprintable():
+        # The inline field takes every printable key, Space and digits
+        # included. Space typing a space is measured; a digit going into the
+        # field rather than toggling its row is assumed from that.
+        type_into_field(ch)
+        return
+    if ch == " ":
+        if cursor < n:
+            toggle(cursor)
+        return
+    if ch.isdigit() and ch != "0":
+        # A digit toggles its row and leaves the cursor where it is.
+        i = int(ch) - 1
+        if i < n:
+            toggle(i)
+        elif i == n:
+            field_on[at] = not field_on[at]
+        return
+    # Anything else with the cursor off the field goes nowhere, which is what
+    # a paste with the cursor on an option row does.
+
+
+def single_key(ch):
+    """One key on a single-select question."""
+    global cursor, typing, buf
+    q = QS[at]
+    n = nopts()
+    if typing:
+        if ch in ("\r", "\n"):
+            if buf.strip():
+                picks[at] = set([buf.strip()])
+                typed.append("● TYPED " + buf.strip())
+                typing = False
+                buf = ""
+                advance()
+            else:
+                typing = False
+                buf = ""
+        elif ch in ("\x7f", "\x08"):
+            buf = buf[:-1]
+        else:
+            buf += ch
+        return
+    if ch in ("\r", "\n"):
+        if cursor < n:
+            picks[at] = set([q["opts"][cursor]])
+            advance()
+        return
+    if ch.isdigit() and ch != "0":
+        i = int(ch) - 1
+        if i < n:
+            picks[at] = set([q["opts"][i]])
+            advance()
+        elif i == n:
+            cursor = i
+            typing = True
+            buf = ""
+
+
+def review_key(ch):
+    """One key on the review screen. True once the call is submitted."""
+    if (ch in ("\r", "\n") and cursor == 0) or ch == "1":
+        submitted()
+        return True
+    return False
+
+
 def main():
-    global at, cursor, typing, buf
+    global cursor
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
@@ -839,72 +1099,16 @@ def main():
                     back()
                 draw()
                 continue
-            if typing:
-                if ch in ("\r", "\n"):
-                    if buf.strip():
-                        picks[at] = set([buf.strip()])
-                        typed.append("● TYPED " + buf.strip())
-                        typing = False
-                        buf = ""
-                        advance()
-                    else:
-                        typing = False
-                        buf = ""
+            if at >= len(QS):
+                done = review_key(ch)
+                if not done:
                     draw()
-                    continue
-                buf += ch
-                draw()
                 continue
-            if ch == " ":
-                if at < len(QS) and QS[at]["multi"] and cursor < len(QS[at]["opts"]):
-                    o = QS[at]["opts"][cursor]
-                    if o in picks[at]:
-                        picks[at].discard(o)
-                    else:
-                        picks[at].add(o)
-                draw()
-                continue
-            if ch in ("\r", "\n"):
-                if at >= len(QS):
-                    if cursor == 0:
-                        submitted()
-                        done = True
-                        continue
-                    draw()
-                    continue
-                q = QS[at]
-                if q["multi"]:
-                    if picks[at]:
-                        advance()
-                elif cursor < len(q["opts"]):
-                    picks[at] = set([q["opts"][cursor]])
-                    advance()
-                draw()
-                continue
-            if ch.isdigit() and ch != "0":
-                i = int(ch) - 1
-                if at >= len(QS):
-                    if i == 0:
-                        submitted()
-                        done = True
-                        continue
-                    draw()
-                    continue
-                q = QS[at]
-                if i < len(q["opts"]):
-                    if q["multi"]:
-                        # On a multi-select list a digit moves the cursor; the
-                        # Space that follows is what toggles.
-                        cursor = i
-                    else:
-                        picks[at] = set([q["opts"][i]])
-                        advance()
-                elif i == len(q["opts"]):
-                    cursor = i
-                    typing = True
-                    buf = ""
-                draw()
-                continue
+            if multi():
+                multi_key(ch)
+            else:
+                single_key(ch)
+            draw()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
@@ -968,10 +1172,14 @@ func TestAnswerReportsRefusedTextAsRefused(t *testing.T) {
 	if res.Applied || res.Reason != AnswerRefused {
 		t.Fatalf("applied=%v reason=%q, want refused", res.Applied, res.Reason)
 	}
-	// The digit that focused the field went in, so the question is still the
-	// one on screen and the reader can try again against this reading.
+	// Refused before the cursor was walked anywhere: the question is still
+	// the one on screen, untouched, and the reader can try again against
+	// this reading.
 	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick fruits" {
 		t.Errorf("the refusal did not carry the question still on screen: %+v", res.Dialog)
+	}
+	if res.Dialog != nil && res.Dialog.Questions[0].Typed != "" {
+		t.Errorf("a refused text reached the field: %+v", res.Dialog.Questions[0])
 	}
 }
 
@@ -1008,5 +1216,308 @@ func TestAnswerErrorsWhenThePaneCannotBeRead(t *testing.T) {
 	}
 	if res.Dialog != nil || res.Pane != "" || res.Applied {
 		t.Errorf("an error carries no reading: %+v", res)
+	}
+}
+
+// oneCall is the question list of the stand-in's one-question variant.
+var oneCall = []DialogQuestion{{Header: "Fruit", Question: "Pick fruits", MultiSelect: true}}
+
+// ticksOf is which options a reading draws ticked.
+func ticksOf(t *testing.T, res AnswerResponse) map[string]bool {
+	t.Helper()
+	if res.Dialog == nil || len(res.Dialog.Questions) == 0 {
+		t.Fatalf("the reply carries no question: %+v", res)
+	}
+	ticked := map[string]bool{}
+	for _, o := range res.Dialog.Questions[0].Options {
+		if o.Checked {
+			ticked[o.Label] = true
+		}
+	}
+	return ticked
+}
+
+// sameTicks compares a reading's ticks with the labels a test expects.
+func sameTicks(got map[string]bool, want ...string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for _, w := range want {
+		if !got[w] {
+			return false
+		}
+	}
+	return true
+}
+
+// THE BUG THIS CHANGE FIXES, end to end. Viktor, 2026-09-23: "multi answer
+// questions now move on to the next step on the first selection and the user
+// can't select more than one answer." Every click on a multi-select option
+// sent the set AND walked to the commit row and pressed Enter.
+//
+// A toggle is a request with Stay: the set goes on the boxes and the cursor
+// stays on the question. Each reply is the reading the card redraws its ticks
+// from, so the card holds no model of the dialog. Clicking the last ticked row
+// unticks it like any checkbox, and an empty set is a valid thing to ask for.
+func TestAToggleChangesThePicksAndStaysOnTheQuestion(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, step := range []struct {
+		choices []string
+		want    []string
+	}{
+		{[]string{"Apple"}, []string{"Apple"}},
+		{[]string{"Apple", "Pear"}, []string{"Apple", "Pear"}},
+		{[]string{"Pear"}, []string{"Pear"}},
+		{nil, nil},
+		{[]string{"Plum", "Apple"}, []string{"Apple", "Plum"}},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo",
+			AnswerRequest{Header: "Fruit", Choices: step.choices, Stay: true}, theCall)
+		if err != nil {
+			t.Fatalf("Answer(%v): %v", step.choices, err)
+		}
+		if !res.Applied || res.Reason != "" {
+			t.Fatalf("toggle to %v: applied=%v reason=%q dialog=%+v", step.choices, res.Applied, res.Reason, res.Dialog)
+		}
+		if res.Review || res.Done {
+			t.Fatalf("toggle to %v left the question: %+v", step.choices, res)
+		}
+		if q := res.Dialog.Questions[0]; q.Question != "Pick fruits" || q.Commit != "Next" {
+			t.Fatalf("toggle to %v: the reply is %q with commit %q, want the same question", step.choices, q.Question, q.Commit)
+		}
+		if got := ticksOf(t, res); !sameTicks(got, step.want...) {
+			t.Errorf("toggle to %v: the reading ticks %v", step.choices, got)
+		}
+	}
+	// And only now does the question move: the commit carries the set the
+	// card is showing.
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple", "Plum"}}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" {
+		t.Fatalf("the commit did not move on: %+v", res)
+	}
+}
+
+// FREE TEXT IS ONE MORE PICK, and a toggle puts it in without leaving the
+// question. The paste lands in the inline field and ticks it, and nothing
+// presses Enter: on that row Enter flips the box off again. Replacing the text
+// clears the field with Backspace first, and leaving the pick out of the set
+// clears it altogether.
+func TestAToggleTypesFreeTextWithoutLeavingTheQuestion(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, step := range []struct {
+		name    string
+		choices []string
+		text    string
+		typed   string
+		checked bool
+	}{
+		{"typed in", []string{"Apple", "Type something"}, "Mango", "Mango", true},
+		{"replaced", []string{"Apple", "Type something"}, "Kiwi fruit", "Kiwi fruit", true},
+		{"left out of the set", []string{"Apple"}, "", "", false},
+		{"typed again, alone", []string{"Type something"}, "Quince", "Quince", true},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo",
+			AnswerRequest{Header: "Fruit", Choices: step.choices, Text: step.text, Stay: true}, theCall)
+		if err != nil {
+			t.Fatalf("%s: %v", step.name, err)
+		}
+		if !res.Applied || res.Reason != "" || res.Dialog == nil {
+			t.Fatalf("%s: applied=%v reason=%q dialog=%+v", step.name, res.Applied, res.Reason, res.Dialog)
+		}
+		q := res.Dialog.Questions[0]
+		if q.Question != "Pick fruits" {
+			t.Fatalf("%s: the toggle left the question for %q", step.name, q.Question)
+		}
+		if q.Typed != step.typed || q.TypedChecked != step.checked {
+			t.Errorf("%s: typed=%q checked=%v, want %q and %v", step.name, q.Typed, q.TypedChecked, step.typed, step.checked)
+		}
+		if len(q.Options) != 3 {
+			t.Errorf("%s: the typed text came back as an option: %+v", step.name, q.Options)
+		}
+	}
+}
+
+// Enter on the free-text row flips its box and keeps the text. A reader who
+// did that at the terminal has left words the card shows as not picked, and a
+// toggle that picks them again presses the Enter back rather than retyping.
+func TestAToggleTicksFreeTextTheTerminalUnticked(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit",
+		Choices: []string{"Type something"}, Text: "Mango", Stay: true}, theCall); err != nil || !res.Applied {
+		t.Fatalf("typing the text: %+v %v", res, err)
+	}
+	// The cursor is on the field after the paste, so a raw Enter is the
+	// reader's own keystroke at the terminal.
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: []string{"Enter"}}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if q := res.Dialog.Questions[0]; q.Typed != "Mango" || q.TypedChecked {
+		t.Fatalf("typed=%q checked=%v, want the text kept and the box cleared", q.Typed, q.TypedChecked)
+	}
+	res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit",
+		Choices: []string{"Type something"}, Text: "Mango", Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if q := res.Dialog.Questions[0]; !res.Applied || q.Typed != "Mango" || !q.TypedChecked {
+		t.Fatalf("applied=%v typed=%q checked=%v, want Mango picked again", res.Applied, q.Typed, q.TypedChecked)
+	}
+}
+
+// Space on the free-text row types a space rather than ticking it, which is
+// what a reader used to ticking boxes with Space does at the terminal. The
+// capture trims the space, so the row reads "[✔]" and the reading reports no
+// text; a toggle that leaves the pick out still clears it, with the Backspace
+// the reading cannot count.
+func TestAToggleClearsASpaceTypedIntoTheFreeTextRow(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, keys := range [][]string{{"Down", "Down", "Down"}, {"Space"}} {
+		if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: keys}, theCall); err != nil || !res.Applied {
+			t.Fatalf("keys %v: %+v %v", keys, res, err)
+		}
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "❯ 4. [✔]\n") {
+		t.Fatalf("the stand-in did not type the space into its field:\n%s", pane)
+	}
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}, Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Reason != "" {
+		t.Fatalf("applied=%v reason=%q", res.Applied, res.Reason)
+	}
+	if q := res.Dialog.Questions[0]; q.Typed != "" || q.TypedChecked {
+		t.Errorf("typed=%q checked=%v, want the field empty and clear", q.Typed, q.TypedChecked)
+	}
+	if got := ticksOf(t, res); !sameTicks(got, "Pear") {
+		t.Errorf("the reading ticks %v, want Pear", got)
+	}
+}
+
+// A single-select question has no boxes to hold, so a toggle there is refused
+// with nothing typed: its digit answers and moves on, which is the opposite of
+// what Stay asks for.
+func TestAToggleOnASingleSelectIsRefused(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choice: "Pear"}, theCall); err != nil || !res.Applied {
+		t.Fatalf("committing the first question: %+v %v", res, err)
+	}
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Drink", Choice: "Tea", Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Applied || res.Reason != AnswerUnknownOption {
+		t.Fatalf("applied=%v reason=%q, want unknown-option", res.Applied, res.Reason)
+	}
+	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" || res.Dialog.Answered != 1 {
+		t.Errorf("the refusal typed something: %+v", res.Dialog)
+	}
+}
+
+// A commit with nothing picked is refused with nothing typed. The CLI itself
+// would take it: Enter on the commit row with no box ticked leaves the question
+// unanswered, the review warns "You have not answered all questions", and
+// Claude is told "The user did not answer the questions." (measured on 2.1.280,
+// 2026-09-23). The card never asks for that, so the server does not do it for
+// a card that has gone wrong.
+func TestACommitWithNothingPickedIsRefused(t *testing.T) {
+	in, osUser := dialogSessionEnv(t, "FAKEDIALOG_CALL=one ")
+	ctx := context.Background()
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choices: []string{}}, oneCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Applied || res.Reason != AnswerUnknownOption {
+		t.Fatalf("applied=%v reason=%q, want unknown-option", res.Applied, res.Reason)
+	}
+	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick fruits" || res.Review {
+		t.Fatalf("the refusal moved the dialog: %+v", res)
+	}
+	// What the CLI would have done, by hand: walk to "Submit" and press
+	// Enter. The question goes to the review unanswered.
+	for _, keys := range [][]string{{"Down", "Down", "Down", "Down"}, {"Enter"}} {
+		if res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: keys}, oneCall); err != nil {
+			t.Fatalf("keys %v: %v", keys, err)
+		}
+	}
+	if !res.Review || res.Dialog == nil || res.Dialog.Answered != 0 {
+		t.Fatalf("an empty commit at the terminal: %+v, want the review with nothing answered", res)
+	}
+}
+
+// A ONE-QUESTION CALL goes to the review screen too. Its only question is the
+// last, so its commit row says "Submit", and Enter there opens the review,
+// drawn with no footer, where Submit is one more request.
+func TestACommitOnAOneQuestionCallGoesToTheReviewScreen(t *testing.T) {
+	in, osUser := dialogSessionEnv(t, "FAKEDIALOG_CALL=one ")
+	ctx := context.Background()
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple"}, Stay: true}, oneCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Dialog.Questions[0].Commit != "Submit" {
+		t.Fatalf("applied=%v commit=%q, want Submit on the only question", res.Applied, res.Dialog.Questions[0].Commit)
+	}
+	res, err = in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple", "Type something"}, Text: "Mango"}, oneCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || !res.Review {
+		t.Fatalf("applied=%v review=%v reason=%q, want the review screen", res.Applied, res.Review, res.Reason)
+	}
+	res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Submit: true}, oneCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || !res.Done {
+		t.Fatalf("Submit did not finish the call: %+v", res)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "SUBMITTED Apple, Mango") {
+		t.Errorf("the answer that reached the stand-in is not the one chosen:\n%s", pane)
+	}
+}
+
+// A cursor parked on the commit row, where a reader at the terminal can leave
+// it and where a commit that did not take does. The pane draws it as
+// "❯    Next", which until 2026-09-23 made the whole reading nil, so a toggle
+// from there came back no-dialog. Now it walks up to the row it toggles.
+func TestAToggleFromTheCommitRowWalksBackUp(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: []string{"Down", "Down", "Down", "Down"}}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Dialog == nil {
+		t.Fatalf("the cursor on the commit row left the pane unreadable: %+v", res)
+	}
+	res, err = in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}, Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || !sameTicks(ticksOf(t, res), "Pear") {
+		t.Fatalf("applied=%v reason=%q ticks=%v, want Pear", res.Applied, res.Reason, ticksOf(t, res))
 	}
 }

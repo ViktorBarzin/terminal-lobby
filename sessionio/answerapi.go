@@ -1,13 +1,21 @@
 package sessionio
 
+import "strings"
+
 // The wire contract for answering an AskUserQuestion from the text view.
 //
-// ONE QUESTION, ONE REQUEST. The reader picks, that goes to the server, the
-// server answers the question the pane is drawing and returns whatever the
-// pane draws next. Nothing is planned ahead of time. A multi-select answer
-// names every label the question should end up holding rather than one — see
-// Choices — which is still one request and still no prediction, because the
-// set is diffed against the boxes the pane is drawing at the time.
+// ONE ACTION, ONE REQUEST. The reader acts, that goes to the server, the
+// server applies it to the question the pane is drawing and returns whatever
+// the pane draws next. Nothing is planned ahead of time.
+//
+// A single-select question is one request: the pick answers it. A multi-select
+// is several. Each click is a TOGGLE, a request with Stay that names every
+// label the question should hold and leaves the cursor on the question, and a
+// COMMIT is the same request without Stay, which also presses the question's
+// own commit row. Until 2026-09-23 every multi-select request was a commit, so
+// the first click left the question and a reader could never pick two. Each is
+// still no prediction, because the set is diffed against the boxes the pane is
+// drawing at the time.
 //
 // The design this replaces planned the whole walk in the browser: each step's
 // expectation was the NEXT question's text, and the last step's was the review
@@ -57,11 +65,43 @@ type AnswerRequest struct {
 	// Choice and Choices may both be sent only when they say the same one
 	// thing. A request that fills in both and means two different things is
 	// refused, because there is no reading of it that is not a guess.
+	//
+	// ON A MULTI-SELECT THE SET COVERS THE FREE-TEXT ROW TOO. That row is an
+	// inline field there, which ticks itself as it is typed into (measured on
+	// CLI 2.1.280, 2026-09-23), so free text is one more pick: the set names
+	// "Type something" beside the option labels and Text carries the words.
+	// A set that leaves it out asks for the row to be emptied, and the server
+	// clears it with Backspace, never Space, which on that row types a space.
 	Choices []string `json:"choices,omitempty"`
-	// Text is what to type when Choice is the free-text option. The CLI labels
-	// that option "Type something" (optionOther); a client may also send the
-	// label "Other", which older builds used.
+	// Text is the free-text row's words, whenever the set names that row. The
+	// CLI labels it "Type something" (optionOther); a client may also send the
+	// label "Other", which older builds used. It must not be blank.
+	//
+	// On a single-select it is typed and committed with Enter. On a
+	// multi-select it is typed into the inline field, read back and left
+	// there with no Enter, because Enter on that row flips the box the typing
+	// has just ticked.
 	Text string `json:"text,omitempty"`
+	// Stay makes a multi-select request a TOGGLE: bring the question to the
+	// set and do not leave it. No walk to the commit row, no Enter.
+	//
+	// Applied means a fresh reading shows every option box as the set asks
+	// and the free-text row as the set asks; otherwise the reply is
+	// unverified. Either way it carries that reading, which is what the card
+	// redraws its ticks from. An empty set is a valid toggle: it unticks
+	// everything.
+	//
+	// Without Stay a multi-select request is the COMMIT, carrying the set the
+	// card shows: the same diff (normally nothing to do), checked the same
+	// way, then Enter on the commit row in a batch of its own, checked as any
+	// answer is (the review screen, another question, or the dialog gone). A
+	// commit with an empty set is refused as unknown-option with nothing
+	// typed. The CLI would take one and leave the question unanswered, and no
+	// card asks for that.
+	//
+	// Stay on a single-select is refused as unknown-option with nothing
+	// typed: its digit answers and moves on, which is the opposite.
+	Stay bool `json:"stay,omitempty"`
 	// Back navigates to the question with this header instead of answering
 	// anything, so a reader can revisit and change an earlier choice. The CLI
 	// shows the previous pick on that question as a trailing "✔".
@@ -88,7 +128,8 @@ const (
 	// AnswerRefused: tmux would not take the keys.
 	AnswerRefused = "refused"
 	// AnswerUnverified: the keys went in and the pane did not change the way
-	// answering that question changes it. Nothing further is typed.
+	// answering that question changes it, or, for a toggle, did not come to
+	// show the set it asked for. Nothing further is typed.
 	AnswerUnverified = "unverified"
 )
 
@@ -119,6 +160,65 @@ type AnswerResponse struct {
 	// read: which known markers were present. Structure only, never screen
 	// text, so it stays inside ADR-0008's content-free rule.
 	Markers *DialogMarkers `json:"markers,omitempty"`
+	// Action is what kind of request the driver took this to be, one of the
+	// Action* words, for the server's own records. It never goes on the wire.
+	//
+	// The driver fills it because it is the one that saw the question: a
+	// request naming one label is a single-select pick or a one-label
+	// multi-select commit, and only the drawn question, or the call's record
+	// when the transcript has one, says which.
+	Action string `json:"-"`
+}
+
+// The kinds of request, as the text.answer_* events record them in tl.action.
+//
+// Counting answers needs the difference between a toggle and a commit: a
+// multi-select answer is several toggles and one commit, and only the commit
+// is an answer (session-events emitAnswered).
+const (
+	ActionChoose = "choose" // a single-select question answered with one pick
+	ActionToggle = "toggle" // a multi-select's picks changed, question kept (Stay)
+	ActionCommit = "commit" // a multi-select committed with its picks
+	ActionBack   = "back"   // ← to an earlier question
+	ActionSubmit = "submit" // the review screen's Submit
+	ActionKeys   = "keys"   // the raw-key hatch
+)
+
+// AnswerAction names the kind of request, in the order Answer dispatches it.
+//
+// Choose and commit are the one pair the request cannot tell apart on its own.
+// The call's record wins when it has the question the request names, because
+// it describes that question whatever the pane is drawing. Otherwise the drawn
+// question says, and with neither a set of more than one label can only be a
+// multi-select. `drawn` and `known` may both be nil.
+func AnswerAction(req AnswerRequest, drawn *Dialog, known []DialogQuestion) string {
+	switch {
+	case len(req.Keys) > 0:
+		return ActionKeys
+	case req.Submit:
+		return ActionSubmit
+	case req.Back != "":
+		return ActionBack
+	case req.Stay:
+		return ActionToggle
+	}
+	header := strings.TrimSpace(req.Header)
+	for _, q := range known {
+		if header != "" && strings.EqualFold(strings.TrimSpace(q.Header), header) {
+			return chooseOrCommit(q.MultiSelect)
+		}
+	}
+	if drawn != nil && len(drawn.Questions) > 0 && len(drawn.Questions[0].Options) > 0 {
+		return chooseOrCommit(drawn.Questions[0].MultiSelect)
+	}
+	return chooseOrCommit(len(req.Choices) > 1)
+}
+
+func chooseOrCommit(multi bool) string {
+	if multi {
+		return ActionCommit
+	}
+	return ActionChoose
 }
 
 // DialogMarkers records which of the CLI's known landmarks a capture carried.

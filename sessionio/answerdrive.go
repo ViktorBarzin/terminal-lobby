@@ -2,8 +2,10 @@ package sessionio
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Applying ONE request to the dialog the pane is drawing.
@@ -16,10 +18,14 @@ import (
 // because the prediction missed
 // (docs/plans/2026-09-10-text-mode-answers-dialogs-design.md).
 //
-// What that leaves is three things a capture can prove locally: the dialog
-// went away, it became the review screen, or this question's box filled. Any
-// of those means the keys landed. None of them says what the NEXT question is,
-// which is exactly the claim that kept being wrong.
+// What that leaves is three things a capture can prove locally about an
+// answer: the dialog went away, it became the review screen, or this
+// question's box filled. Any of those means the keys landed. None of them says
+// what the NEXT question is, which is exactly the claim that kept being wrong.
+//
+// A multi-select toggle leaves the question where it is, so it proves a fourth
+// thing instead: the boxes on screen are the ones the request asked for
+// (applyMulti). A commit is proved the first way, once the fourth has held.
 //
 // A refusal is as useful as a success here, so it carries the same fresh
 // reading. A card that is handed "not this question, here is what is on
@@ -161,6 +167,15 @@ func (in *Injector) Answer(ctx context.Context, osUser, session string, req Answ
 	if err != nil {
 		return AnswerResponse{}, err
 	}
+	resp, err := in.answer(ctx, osUser, session, before, req, known)
+	// Stamped from the reading taken BEFORE the keys: the reply's own reading
+	// is of whatever came next, which for a commit is another question.
+	resp.Action = AnswerAction(req, before.dialog, known)
+	return resp, err
+}
+
+// answer dispatches one request against the reading taken before it.
+func (in *Injector) answer(ctx context.Context, osUser, session string, before answerReading, req AnswerRequest, known []DialogQuestion) (AnswerResponse, error) {
 	// The escape hatch goes first: raw keys are what the card offers for a
 	// screen the parser could not read, so they cannot require a parse.
 	if len(req.Keys) > 0 {
@@ -313,6 +328,14 @@ func (in *Injector) answerChoice(ctx context.Context, osUser, session string, be
 		// case only a malformed client can reach.
 		return before.reply(AnswerUnknownOption), nil
 	}
+	if q := before.dialog.Questions; len(q) > 0 && q[0].MultiSelect {
+		return in.answerMulti(ctx, osUser, session, before, choices, req.Text, req.Stay)
+	}
+	if req.Stay {
+		// Stay asks for the question to be held open, and a single-select
+		// has nothing to hold: its digit answers and moves on in one press.
+		return before.reply(AnswerUnknownOption), nil
+	}
 	plan, err := planChoice(before.dialog, before.region, choices, req.Text)
 	if err != nil {
 		return before.reply(AnswerUnknownOption), nil
@@ -368,6 +391,322 @@ func (in *Injector) answerChoice(ctx context.Context, osUser, session string, be
 		return after.replyDone(), nil
 	}
 	return after.reply(""), nil
+}
+
+// maxFreeSteps bounds settleFreeText. Getting the row from any state to any
+// other takes at most a walk, a clear, a paste and an Enter, each read back
+// before the next, so eight is room for one of them to be retried and no room
+// for a loop that has stopped making progress.
+const maxFreeSteps = 8
+
+// clearMargin is how many Backspaces beyond the characters a reading shows go
+// into clearing the free-text field. The capture trims trailing spaces, so a
+// field holding "Mango " shows five characters and a field holding a lone
+// space shows none. Measured on CLI 2.1.280 on 2026-09-23, a Backspace on the
+// empty field does nothing, so the extra presses cost nothing once it is clear.
+const clearMargin = 2
+
+// answerMulti applies one request to the multi-select question on screen: the
+// set it names, read back off the pane, and then, unless it is a toggle, the
+// commit.
+//
+// Everything that can refuse the request is checked against the reading taken
+// before any key goes in: a label the question does not offer, free text with
+// nothing in it or too much, a free-text pick on a question drawing no such
+// row, and a commit with nothing picked or no commit row to press. A refusal
+// types nothing.
+func (in *Injector) answerMulti(ctx context.Context, osUser, session string, before answerReading, choices []string, text string, stay bool) (AnswerResponse, error) {
+	want, err := wantOf(before.dialog.Questions[0], choices, text)
+	switch {
+	case errors.Is(err, errBadText):
+		return before.reply(AnswerRefused), nil
+	case err != nil:
+		return before.reply(AnswerUnknownOption), nil
+	}
+	rows := answerRows(before.region)
+	if want.free && freeIndex(rows) < 0 {
+		return before.reply(AnswerUnknownOption), nil
+	}
+	if !stay && (want.empty() || commitIndex(rows) < 0) {
+		return before.reply(AnswerUnknownOption), nil
+	}
+	cur, reason, err := in.applyMulti(ctx, osUser, session, before, want)
+	if err != nil {
+		return AnswerResponse{}, err
+	}
+	if reason != "" || stay {
+		return cur.reply(reason), nil
+	}
+	return in.commitMulti(ctx, osUser, session, cur)
+}
+
+// applyMulti brings a multi-select to the state `want` asks for and returns
+// the reading that shows it, or the reason it could not.
+//
+// AN ACTING KEY IS ONLY SENT AGAINST A READING THAT SHOWS THE CURSOR ON ITS
+// ROW. A Space that arrives on the free-text row types a space into the
+// reader's words, and an Enter on the commit row leaves the question, so a
+// walk that fell short must end the request rather than land its key on the
+// wrong row. Each walk is read back before the Space behind it; the free-text
+// row is changed one read-back step at a time (settleFreeText).
+//
+// THE CHECK IS THE BOXES THEMSELVES. A toggle that adds a second pick changes
+// none of the things answerMoved watches: the tab bar filled on the first pick
+// and the question on screen is the same one. So the verdict is a reading that
+// shows every box, and the free-text row, the way the set asks, polled until
+// it does or answerVerify runs out.
+func (in *Injector) applyMulti(ctx context.Context, osUser, session string, before answerReading, want multiWant) (answerReading, string, error) {
+	q := before.dialog.Questions[0]
+	rows := answerRows(before.region)
+	cur, sent := before, false
+	for _, step := range planToggles(q, rows, want) {
+		if sent {
+			if err := answerWait(ctx, keySettle); err != nil {
+				return answerReading{}, "", err
+			}
+		}
+		if len(step.walk) > 0 {
+			refused, err := in.press(ctx, osUser, session, step.walk)
+			if err != nil {
+				return answerReading{}, "", err
+			}
+			if refused {
+				return in.refusal(osUser, session)
+			}
+			if err := answerWait(ctx, keySettle); err != nil {
+				return answerReading{}, "", err
+			}
+			if cur, err = in.read(osUser, session); err != nil {
+				return answerReading{}, "", err
+			}
+			if !stillOn(before, cur) || !cursorOn(cur, rows[step.row].label) {
+				return cur, AnswerUnverified, nil
+			}
+		}
+		if err := in.Keys(osUser, session, []string{"Space"}); err != nil {
+			return in.refusal(osUser, session)
+		}
+		sent = true
+	}
+	if at := freeIndex(rows); at >= 0 && freeTextNext(rows[at], want) != freeNone {
+		var reason string
+		var err error
+		if cur, reason, err = in.settleFreeText(ctx, osUser, session, before, want); err != nil || reason != "" {
+			return cur, reason, err
+		}
+		sent = false // settleFreeText ends on a reading taken after its last key
+	}
+	if !sent && holdsWant(before, cur, want) {
+		return cur, "", nil
+	}
+	after, ok, err := in.awaitHolds(ctx, osUser, session, before, want)
+	if err != nil {
+		return answerReading{}, "", err
+	}
+	if !ok {
+		return after, AnswerUnverified, nil
+	}
+	return after, "", nil
+}
+
+// settleFreeText brings a multi-select's free-text row to what `want` asks,
+// one step at a time, each decided on a fresh reading: walk the cursor onto
+// the row, then Enter to flip its box, Backspace to clear it, or a paste to
+// fill it (freeTextNext says which).
+//
+// Clearing goes through rawKeys, never the keys route. BSpace is not in
+// answerKeys, and that allowlist is the whole security boundary of the public
+// POST /keys route, so it stays narrow. The count is bounded by what the
+// reading shows in the row plus clearMargin, and it is only sent while the
+// reading shows the cursor on that row. A run that takes nothing out ends the
+// request rather than sending another.
+func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, before answerReading, want multiWant) (answerReading, string, error) {
+	var cur answerReading
+	cleared, lastClear := false, ""
+	for step := 0; step < maxFreeSteps; step++ {
+		if err := answerWait(ctx, keySettle); err != nil {
+			return answerReading{}, "", err
+		}
+		next, err := in.read(osUser, session)
+		if err != nil {
+			return answerReading{}, "", err
+		}
+		cur = next
+		rows := answerRows(cur.region)
+		at := freeIndex(rows)
+		if !stillOn(before, cur) || at < 0 {
+			return cur, AnswerUnverified, nil
+		}
+		act := freeTextNext(rows[at], want)
+		if act == freeNone {
+			return cur, "", nil
+		}
+		if from := focusedRow(rows); from != at {
+			refused, err := in.press(ctx, osUser, session, chunkKeys(walkTo(from, at)))
+			if err != nil {
+				return answerReading{}, "", err
+			}
+			if refused {
+				return in.refusal(osUser, session)
+			}
+			continue // the next pass reads where the cursor landed
+		}
+		switch act {
+		case freeToggle:
+			if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
+				return in.refusal(osUser, session)
+			}
+		case freeClear:
+			shown := rows[at].text
+			if cleared && shown == lastClear {
+				return cur, AnswerUnverified, nil
+			}
+			cleared, lastClear = true, shown
+			if err := in.rawKeys(osUser, session, repeat("BSpace", utf8.RuneCountInString(shown)+clearMargin)...); err != nil {
+				return in.refusal(osUser, session)
+			}
+		case freeType:
+			// A bracketed paste, which lands in the inline field and ticks
+			// it: measured on 2.1.280 on 2026-09-23 with "Kiwi fruit", the
+			// space included. typeAnswer reads it back before anything else
+			// is pressed.
+			typed, reason, err := in.typeAnswer(ctx, osUser, session, want.text)
+			if err != nil || reason != "" {
+				return typed, reason, err
+			}
+		}
+	}
+	return cur, AnswerUnverified, nil
+}
+
+// commitMulti leaves a multi-select through its commit row: walk there, read
+// the pane to confirm the cursor arrived, and press Enter in a batch of its
+// own. On a multi-select Enter anywhere else is a toggle, or on the chat row
+// abandons the question, so an Enter without that reading is never sent.
+//
+// `cur` is the reading that showed the set in place, and it is what the move
+// is checked against. Checking against the reading from before the toggles
+// would let the first box filling on the tab bar pass for the commit landing.
+func (in *Injector) commitMulti(ctx context.Context, osUser, session string, cur answerReading) (AnswerResponse, error) {
+	walk, err := planCommit(answerRows(cur.region))
+	if err != nil {
+		return cur.reply(AnswerUnverified), nil
+	}
+	if len(walk) > 0 {
+		refused, err := in.press(ctx, osUser, session, walk)
+		if err != nil {
+			return AnswerResponse{}, err
+		}
+		if refused {
+			after, reason, err := in.refusal(osUser, session)
+			if err != nil {
+				return AnswerResponse{}, err
+			}
+			return after.reply(reason), nil
+		}
+		if err := answerWait(ctx, keySettle); err != nil {
+			return AnswerResponse{}, err
+		}
+		prev := cur
+		if cur, err = in.read(osUser, session); err != nil {
+			return AnswerResponse{}, err
+		}
+		rows := answerRows(cur.region)
+		if at := commitIndex(rows); !stillOn(prev, cur) || at < 0 || !rows[at].focused {
+			return cur.reply(AnswerUnverified), nil
+		}
+	}
+	if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
+		return cur.reply(AnswerRefused), nil
+	}
+	after, ok, err := in.awaitMoved(ctx, osUser, session, cur)
+	if err != nil {
+		return AnswerResponse{}, err
+	}
+	if !ok {
+		return after.reply(AnswerUnverified), nil
+	}
+	if after.gone() {
+		return after.replyDone(), nil
+	}
+	return after.reply(""), nil
+}
+
+// awaitHolds reads the pane until it shows the state `want` asks for on the
+// question `before` was drawing, or until the verify window runs out.
+func (in *Injector) awaitHolds(ctx context.Context, osUser, session string, before answerReading, want multiWant) (answerReading, bool, error) {
+	deadline := time.Now().Add(answerVerify)
+	for {
+		if err := answerWait(ctx, keySettle); err != nil {
+			return answerReading{}, false, err
+		}
+		cur, err := in.read(osUser, session)
+		if err != nil {
+			return answerReading{}, false, err
+		}
+		if holdsWant(before, cur, want) {
+			return cur, true, nil
+		}
+		if !time.Now().Before(deadline) {
+			return cur, false, nil
+		}
+	}
+}
+
+// holdsWant reports whether a reading shows the multi-select `before` was
+// drawing, still on screen, in the state `want` asks for. A reading of another
+// question, or of the review screen, never holds: boxes that happen to match on
+// a different question are not the request landing.
+func holdsWant(before, cur answerReading, want multiWant) bool {
+	if !stillOn(before, cur) {
+		return false
+	}
+	q := cur.dialog.Questions[0]
+	return q.MultiSelect && rowsHold(q, answerRows(cur.region), want)
+}
+
+// stillOn reports whether a reading is still drawing the question `before`
+// was, and not the review screen. A reader at the terminal can move the dialog
+// on while a request runs, and a key meant for one question must not land on
+// the next, where the same rows would take it.
+func stillOn(before, cur answerReading) bool {
+	return cur.dialog != nil && len(cur.dialog.Questions) > 0 && !reviewOnScreen(cur.region) &&
+		answerSameQuestion(drawnQuestion(before), drawnQuestion(cur))
+}
+
+// cursorOn reports whether a reading draws the cursor on the option row with
+// this label.
+func cursorOn(r answerReading, label string) bool {
+	rows := answerRows(r.region)
+	at := rowIndex(rows, label)
+	return at >= 0 && rows[at].focused
+}
+
+// press sends key runs in order with a settle between each two, so no run is
+// packed behind another. refused is tmux not taking a run; err is the request
+// being cancelled.
+func (in *Injector) press(ctx context.Context, osUser, session string, batches [][]string) (bool, error) {
+	for i, batch := range batches {
+		if i > 0 {
+			if err := answerWait(ctx, keySettle); err != nil {
+				return false, err
+			}
+		}
+		if err := in.Keys(osUser, session, batch); err != nil {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// refusal is the reply for keys tmux would not take: a fresh reading, since
+// some of the request's keys may already have landed.
+func (in *Injector) refusal(osUser, session string) (answerReading, string, error) {
+	cur, err := in.read(osUser, session)
+	if err != nil {
+		return answerReading{}, "", err
+	}
+	return cur, AnswerRefused, nil
 }
 
 // typeAnswer puts free text into the focused field and reads it back off the
@@ -500,6 +839,11 @@ func (in *Injector) stillGone(ctx context.Context, osUser, session string, first
 // question's text: that prediction is what failed in the field, and it is not
 // needed — the reply carries whatever came next, and the reader's next tap is
 // made against that reading.
+//
+// A multi-select toggle never comes here: adding a second pick changes none of
+// the three, so it is checked by its boxes instead (holdsWant). A commit does,
+// with `before` being the reading taken once its set was in place, right
+// before its Enter.
 func answerMoved(before, after answerReading) bool {
 	if after.gone() {
 		// The dialog is not on the pane any more. awaitMoved only hands a
@@ -516,11 +860,11 @@ func answerMoved(before, after answerReading) bool {
 		return true
 	}
 	if before.dialog != nil {
-		// The tab bar's box for this question filling in. For a multi-select
-		// this happens on the first Space rather than on the Enter that leaves
-		// the question — measured 2026-09-10 — so it proves the keys were
-		// taken, not that the question was left. The reading that comes back
-		// says which, and the card renders that.
+		// The tab bar's box for this question filling in. On a multi-select
+		// it fills on the first pick rather than on the commit that leaves
+		// the question, measured 2026-09-10 and again on 2.1.280. So a commit
+		// is checked against the reading taken once its picks were in place.
+		// By then the box has filled, and only the commit can move anything.
 		if after.dialog.Answered > before.dialog.Answered {
 			return true
 		}

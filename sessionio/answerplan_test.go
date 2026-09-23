@@ -68,6 +68,10 @@ func TestAnswerRegionRunsFromTheTopEdgeToTheFooter(t *testing.T) {
 		// read falls back to the whole capture — which is where a conversation
 		// that quotes "Review your answers" turns this question into a Submit.
 		{"dialog-narrow-footer.txt", "←  ☐ Gesture scope  ☐ CSS floor  ✔ Submit  →", "cancel"},
+		// The cursor on a multi-select's commit row, "❯    Submit". Until
+		// 2026-09-23 the walk up from the footer stopped there and the region
+		// began at the chat row, one row with nothing to parse.
+		{"dialog-multiselect-on-commit.txt", "←  ☒ Fruit  ✔ Submit  →", "Enter to select · ↑/↓ to navigate · ctrl+g to edit in Vim · Esc to cancel"},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			region := answerRegion(fixture(t, tc.fixture))
@@ -400,132 +404,149 @@ func TestPlanChoiceUsesTheDigitTheDialogDrew(t *testing.T) {
 	}
 }
 
-// Multi-select: walk to each chosen option in list order, Space to toggle, and
-// Enter to leave the question. The walk starts from the row the cursor is on,
-// read off the pane, rather than assuming it opens on row one.
+// flatToggles is a toggle plan as the batches the driver sends: each walk, and
+// then a Space in a batch of its own.
+func flatToggles(steps []toggleStep) [][]string {
+	var out [][]string
+	for _, s := range steps {
+		out = append(out, s.walk...)
+		out = append(out, []string{"Space"})
+	}
+	return out
+}
+
+// A multi-select toggle walks to each row whose box is not the way the request
+// wants it, in list order, and presses Space there. The walk starts from the
+// row the cursor is on, read off the pane, rather than assuming it opens on row
+// one.
 //
-// EVERY TOGGLE is a batch of its own, and so is the Enter, because a settle
+// AND NOTHING ELSE: no walk to the commit row and no Enter. Until 2026-09-23
+// every multi-select request ended with both, so the first click on an option
+// committed the question, and on a one-question call it went straight to the
+// review screen. Leaving the question is the commit request's job (planCommit),
+// planned from a reading taken after the toggles have landed.
+//
+// EVERY TOGGLE is a batch of its own, apart from its walk, because a settle
 // lands between batches. Two Spaces in one send-keys loses the second:
 // measured against CLI 2.1.268 on 2026-09-11 driving a real dialog, where
 // [Space Down Down Space] as one run ticked the first row and left the third
-// clear with the cursor on it. The model picker on this same TUI has waited
-// keySettle before every committing keystroke since it was written
-// (setmodel.go:177-182). An Enter that outruns its toggle leaves the question
-// with nothing chosen.
-func TestPlanChoiceWalksAMultiSelect(t *testing.T) {
+// clear with the cursor on it.
+func TestPlanTogglesWalksAMultiSelect(t *testing.T) {
 	pane := fixture(t, "dialog-multi.txt")
 	d, region := ParseDialog(pane), answerRegion(pane)
 	for _, tc := range []struct {
 		choices []string
 		want    [][]string
 	}{
-		{[]string{"Apple"}, [][]string{{"Space"}, {"Down", "Down", "Down", "Down"}, {"Enter"}}},
-		{[]string{"Pear"}, [][]string{{"Down"}, {"Space"}, {"Down", "Down", "Down"}, {"Enter"}}},
-		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}},
+		{[]string{"Apple"}, [][]string{{"Space"}}},
+		{[]string{"Pear"}, [][]string{{"Down"}, {"Space"}}},
+		{[]string{"Apple", "Plum"}, [][]string{{"Space"}, {"Down", "Down"}, {"Space"}}},
 		// Out of order in, list order out: the cursor only ever walks one way.
-		{[]string{"Plum", "Pear"}, [][]string{{"Down"}, {"Space"}, {"Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}},
+		{[]string{"Plum", "Pear"}, [][]string{{"Down"}, {"Space"}, {"Down"}, {"Space"}}},
+		// An empty set on a question with nothing ticked is nothing to do.
+		{nil, nil},
 	} {
 		t.Run(strings.Join(tc.choices, "+"), func(t *testing.T) {
-			plan, err := planChoice(d, region, tc.choices, "")
+			want, err := wantOf(d.Questions[0], tc.choices, "")
 			if err != nil {
-				t.Fatalf("planChoice: %v", err)
+				t.Fatalf("wantOf: %v", err)
 			}
-			if !sameKeys(plan.Batches, tc.want) {
-				t.Errorf("batches = %v, want %v", plan.Batches, tc.want)
+			got := flatToggles(planToggles(d.Questions[0], answerRows(region), want))
+			if !sameKeys(got, tc.want) {
+				t.Errorf("batches = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-// A question the reader is coming back to, which is where both halves of the
-// multi-select plan show: the cursor is wherever the pane says it is — a
-// revisited question opens on the row that was chosen — and the pick already
-// on screen is CLEARED, because choosing again replaces the answer rather than
-// adding to it.
-func TestPlanChoiceReplacesThePickAlreadyOnScreen(t *testing.T) {
+// A question the reader is coming back to: the cursor is wherever the pane
+// says it is, and a pick on screen that the request leaves out is CLEARED,
+// because the request is the whole set the question should hold rather than a
+// change to it.
+func TestPlanTogglesClearsAPickTheSetLeavesOut(t *testing.T) {
 	pane := strings.Replace(fixture(t, "dialog-multi.txt"),
 		"❯ 1. [ ] Apple", "  1. [✔] Apple", 1)
 	pane = strings.Replace(pane, "  2. [ ] Pear", "❯ 2. [ ] Pear", 1)
 	if !strings.Contains(pane, "❯ 2. [ ] Pear") {
 		t.Fatal("the fixture's option rows have moved; this test edits them by hand")
 	}
-	plan, err := planChoice(ParseDialog(pane), answerRegion(pane), []string{"Plum"}, "")
+	d := ParseDialog(pane)
+	want, err := wantOf(d.Questions[0], []string{"Plum"}, "")
 	if err != nil {
-		t.Fatalf("planChoice: %v", err)
+		t.Fatalf("wantOf: %v", err)
 	}
-	// Up from the cursor's row to Apple to clear it, then down to Plum, then
-	// on to the unnumbered "Next" row, which is what commits the question.
-	if !sameKeys(plan.Batches, [][]string{{"Up"}, {"Space"}, {"Down", "Down"}, {"Space"}, {"Down", "Down"}, {"Enter"}}) {
-		t.Errorf("batches = %v, want the old pick cleared and Plum toggled on", plan.Batches)
+	// Up from the cursor's row to Apple to clear it, then down to Plum.
+	got := flatToggles(planToggles(d.Questions[0], answerRows(answerRegion(pane)), want))
+	if !sameKeys(got, [][]string{{"Up"}, {"Space"}, {"Down", "Down"}, {"Space"}}) {
+		t.Errorf("batches = %v, want the old pick cleared and Plum toggled on", got)
 	}
 }
 
-// Re-picking the answer the question already carries types no toggle at all.
+// A set the question already holds types nothing at all.
 //
-// Space is a toggle, so a Space on a ticked row CLEARS it: the reader who taps
-// their own answer — the design's own revisit flow, "choosing again replaces
-// it" — had it deleted, the question was then left with nothing chosen so the
-// Enter could not leave it, and the reply said the screen had not moved. The
-// Enter still goes, because it is what leaves a multi-select question.
-func TestPlanChoiceLeavesAnAnswerItIsAskedForAgainAlone(t *testing.T) {
+// Space is a toggle, so a Space on a ticked row CLEARS it. The plan that
+// pressed one per named row regardless deleted the pick the reader was keeping.
+func TestPlanTogglesLeavesAPickItIsAskedForAgainAlone(t *testing.T) {
 	pane := strings.Replace(fixture(t, "dialog-multi.txt"),
 		"  2. [ ] Pear", "❯ 2. [✔] Pear", 1)
 	pane = strings.Replace(pane, "❯ 1. [ ] Apple", "  1. [ ] Apple", 1)
 	if !strings.Contains(pane, "❯ 2. [✔] Pear") {
 		t.Fatal("the fixture's option rows have moved; this test edits them by hand")
 	}
-	plan, err := planChoice(ParseDialog(pane), answerRegion(pane), []string{"Pear"}, "")
+	d := ParseDialog(pane)
+	want, err := wantOf(d.Questions[0], []string{"Pear"}, "")
 	if err != nil {
-		t.Fatalf("planChoice: %v", err)
+		t.Fatalf("wantOf: %v", err)
 	}
-	if !sameKeys(plan.Batches, [][]string{{"Down", "Down", "Down"}, {"Enter"}}) {
-		t.Errorf("batches = %v, want no toggle at all, just the walk to \"Next\" and its Enter", plan.Batches)
+	if got := planToggles(d.Questions[0], answerRows(answerRegion(pane)), want); len(got) != 0 {
+		t.Errorf("steps = %+v, want none: the question already holds Pear alone", got)
 	}
 }
 
-// The CLI's own free-text row carries a box in a multi-select list ("4. [ ]
-// Type something" on dialog-multi.txt), so a reader who typed an answer last
-// time is looking at a ticked row that is not one of the question's options.
-// It is left alone: Space there opens the field rather than clearing a pick.
-func TestPlanChoiceDoesNotToggleTheCLIsOwnRows(t *testing.T) {
-	pane := strings.Replace(fixture(t, "dialog-multi.txt"),
-		"  4. [ ] Type something", "  4. [✔] Type something", 1)
-	if !strings.Contains(pane, "4. [✔] Type something") {
-		t.Fatal("the fixture's free-text row has moved; this test edits it by hand")
-	}
-	plan, err := planChoice(ParseDialog(pane), answerRegion(pane), []string{"Apple"}, "")
-	if err != nil {
-		t.Fatalf("planChoice: %v", err)
-	}
-	if !sameKeys(plan.Batches, [][]string{{"Space"}, {"Down", "Down", "Down", "Down"}, {"Enter"}}) {
-		t.Errorf("batches = %v, want Apple toggled on and the free-text row untouched", plan.Batches)
+// Space is never planned on the CLI's own rows. On a multi-select the
+// free-text row is an inline field where Space TYPES a space (measured on
+// 2.1.280, 2026-09-23), so a toggle there would edit the reader's text. That
+// row is freeTextNext's to change, with Backspace or Enter.
+func TestPlanTogglesNeverPressesSpaceOnTheCLIsOwnRows(t *testing.T) {
+	pane := fixture(t, "dialog-multiselect-typed.txt")
+	d, region := ParseDialog(pane), answerRegion(pane)
+	rows := answerRows(region)
+	for _, choices := range [][]string{{"Apple", "Pear"}, {"Plum"}, nil} {
+		want, err := wantOf(d.Questions[0], choices, "")
+		if err != nil {
+			t.Fatalf("wantOf: %v", err)
+		}
+		for _, step := range planToggles(d.Questions[0], rows, want) {
+			if r := rows[step.row]; r.free || r.commit || !offers(d.Questions[0], r.label) {
+				t.Errorf("%v: a Space was planned on %+v", choices, r)
+			}
+		}
 	}
 }
 
 // One batch never exceeds what the keys route accepts. MaxKeys is the cap that
 // stops a browser typing a paragraph into somebody's shell, and a long walk is
 // no reason to widen it.
-func TestPlanChoiceChunksToMaxKeys(t *testing.T) {
+func TestPlanTogglesChunksToMaxKeys(t *testing.T) {
 	pane := manyOptionDialog(12, true)
 	d, region := ParseDialog(pane), answerRegion(pane)
 	if d == nil {
 		t.Fatalf("the synthetic dialog did not parse:\n%s", pane)
 	}
-	plan, err := planChoice(d, region, []string{"Option 11"}, "")
+	want, err := wantOf(d.Questions[0], []string{"Option 11"}, "")
 	if err != nil {
-		t.Fatalf("planChoice: %v", err)
+		t.Fatalf("wantOf: %v", err)
 	}
 	var keys int
-	for _, b := range plan.Batches {
+	for _, b := range flatToggles(planToggles(d.Questions[0], answerRows(region), want)) {
 		if len(b) > MaxKeys {
 			t.Errorf("a batch of %d keys exceeds the %d allowed: %v", len(b), MaxKeys, b)
 		}
 		keys += len(b)
 	}
-	// Ten Downs from row one to row eleven and a Space, then the walk on to
-	// the unnumbered "Next" row and the Enter there that commits.
-	if keys != 15 {
-		t.Errorf("%d keys in total, want 15", keys)
+	// Ten Downs from row one to row eleven, and the Space.
+	if keys != 11 {
+		t.Errorf("%d keys in total, want 11", keys)
 	}
 }
 
@@ -653,6 +674,10 @@ func TestPlanChoiceWalksPastTheNinthOption(t *testing.T) {
 // manyOptionDialog draws a dialog with n options, for the chunking bound. The
 // captures next door are all four rows or fewer, because a model writing a
 // question rarely offers more; the cap has to hold when one does.
+//
+// The multi-select variant is drawn the way CLI 2.1.280 draws one: a boxed
+// free-text row, the unnumbered commit row under it, and the separator over
+// the chat row.
 func manyOptionDialog(n int, multi bool) string {
 	var b strings.Builder
 	b.WriteString("● Some conversation above the dialog.\n\n ☐ Picks\n\nPick one\n\n")
@@ -667,7 +692,13 @@ func manyOptionDialog(n int, multi bool) string {
 		}
 		b.WriteString(cursor + " " + itoa(i) + ". " + box + "Option " + itoa(i) + "\n")
 	}
-	b.WriteString("  " + itoa(n+1) + ". Type something.\n")
+	if multi {
+		b.WriteString("  " + itoa(n+1) + ". [ ] Type something\n")
+		b.WriteString("     Submit\n")
+	} else {
+		b.WriteString("  " + itoa(n+1) + ". Type something.\n")
+	}
+	b.WriteString(strings.Repeat("─", 40) + "\n")
 	b.WriteString("  " + itoa(n+2) + ". Chat about this\n\n")
 	b.WriteString("Enter to select · ↑/↓ to navigate · Esc to cancel\n")
 	return b.String()
@@ -715,27 +746,26 @@ func TestReviewOnScreenTakesEitherWording(t *testing.T) {
 			t.Errorf("%q was not read as the review screen", title)
 		}
 	}
-	// A single-question call never reaches this screen, so a title with no tab
-	// bar over it is prose rather than a Submit.
+	// The CLI draws its tab bar over every review screen, a one-question
+	// call's included (2.1.280, 2026-09-23), so a title with no tab bar over
+	// it is prose rather than a Submit.
 	if reviewOnScreen([]string{"Review your answers", "❯ 1. Submit answers", "  2. Cancel"}) {
 		t.Error("a review title with no tab bar was read as the review screen")
 	}
 }
 
-// toggledRows replays a plan against the rows the pane drew and reports the
-// labels a Space landed on.
+// toggledRows replays toggle batches against the rows the pane drew and
+// reports the labels a Space landed on.
 //
 // A key list that looks right is not the claim worth pinning here. Space
 // toggles whatever row the cursor is on at the moment it is pressed, so "this
 // plan does not untick Apple" is a fact about the WALK, and the only honest
-// way to read it is to walk it. Enter and the digits are ignored: on a
-// multi-select list a digit moves the cursor without toggling anything
-// (fakeDialogPy models the same rule), and planChoice never mixes the two.
-func toggledRows(t *testing.T, rows []answerRow, plan choicePlan) []string {
+// way to read it is to walk it.
+func toggledRows(t *testing.T, rows []answerRow, batches [][]string) []string {
 	t.Helper()
 	at := focusedRow(rows)
 	var hit []string
-	for _, batch := range plan.Batches {
+	for _, batch := range batches {
 		for _, key := range batch {
 			switch key {
 			case "Down":
@@ -756,18 +786,12 @@ func toggledRows(t *testing.T, rows []answerRow, plan choicePlan) []string {
 // TWO PICKS ON ONE QUESTION, which is the whole reason a request carries a SET
 // of choices rather than one label.
 //
-// Measured 2026-09-11 on this exact pane — Apple ticked, the cursor on Apple's
-// row, the reader tapping Pear: a request naming Pear alone plans
-// [Space Down Space], and that first Space is on Apple. So the second pick
-// REPLACED the first, while the card printed "One pick per tap. Come back to
-// this question to add another", which promises the opposite. The wire was the
-// gap: AnswerRequest.Choice held one label, so the desired state could only
-// ever be one option wide.
-//
-// planChoice itself was already right. It computes the desired final state and
-// touches only the rows that differ, so {Apple, Pear} leaves Apple exactly as
-// it is and toggles Pear alone.
-func TestPlanChoiceAddsToAPickAlreadyOnScreen(t *testing.T) {
+// Measured 2026-09-11 on this exact pane, Apple ticked and the cursor on
+// Apple's row, the reader tapping Pear: a request naming Pear alone plans
+// [Space Down Space], and that first Space is on Apple. The set {Apple, Pear}
+// leaves Apple exactly as it is and toggles Pear alone, which is what a card
+// sends when a click adds a pick.
+func TestPlanTogglesAddsToAPickAlreadyOnScreen(t *testing.T) {
 	pane := strings.Replace(fixture(t, "dialog-multi.txt"),
 		"❯ 1. [ ] Apple", "❯ 1. [✔] Apple", 1)
 	if !strings.Contains(pane, "❯ 1. [✔] Apple") {
@@ -779,27 +803,26 @@ func TestPlanChoiceAddsToAPickAlreadyOnScreen(t *testing.T) {
 	}
 	rows := answerRows(region)
 
-	add, err := planChoice(d, region, []string{"Apple", "Pear"}, "")
+	add, err := wantOf(d.Questions[0], []string{"Apple", "Pear"}, "")
 	if err != nil {
-		t.Fatalf("planChoice: %v", err)
+		t.Fatalf("wantOf: %v", err)
 	}
-	if !sameKeys(add.Batches, [][]string{{"Down"}, {"Space"}, {"Down", "Down", "Down"}, {"Enter"}}) {
-		t.Errorf("batches = %v, want Pear toggled on and Apple left alone", add.Batches)
+	got := flatToggles(planToggles(d.Questions[0], rows, add))
+	if !sameKeys(got, [][]string{{"Down"}, {"Space"}}) {
+		t.Errorf("batches = %v, want Pear toggled on and Apple left alone", got)
 	}
-	if got := strings.Join(toggledRows(t, rows, add), ","); got != "Pear" {
-		t.Errorf("the plan toggled %q, want Pear alone: a Space on Apple's row unticks the pick being added to", got)
+	if hit := strings.Join(toggledRows(t, rows, got), ","); hit != "Pear" {
+		t.Errorf("the plan toggled %q, want Pear alone: a Space on Apple's row unticks the pick being added to", hit)
 	}
 
-	// The mirror, and a legitimate request rather than a bug: {Pear} on its own
-	// is "replace what is there", which is what the design's revisit flow is
-	// for, so Apple IS cleared on the way past. The difference between the two
-	// is the request, not the planner.
-	replace, err := planChoice(d, region, []string{"Pear"}, "")
+	// The mirror: {Pear} on its own is "Pear and nothing else", so Apple IS
+	// cleared on the way past. The difference is the request, not the planner.
+	only, err := wantOf(d.Questions[0], []string{"Pear"}, "")
 	if err != nil {
-		t.Fatalf("planChoice: %v", err)
+		t.Fatalf("wantOf: %v", err)
 	}
-	if got := strings.Join(toggledRows(t, rows, replace), ","); got != "Apple,Pear" {
-		t.Errorf("the plan toggled %q, want Apple cleared and Pear set", got)
+	if hit := strings.Join(toggledRows(t, rows, flatToggles(planToggles(d.Questions[0], rows, only))), ","); hit != "Apple,Pear" {
+		t.Errorf("the plan toggled %q, want Apple cleared and Pear set", hit)
 	}
 }
 
@@ -850,5 +873,256 @@ func TestRequestChoicesReadsBothSpellings(t *testing.T) {
 				t.Errorf("requestChoices accepted a request that says two things: %+v", tc.req)
 			}
 		})
+	}
+}
+
+// The rows a multi-select draws, in the order the cursor walks them: the
+// question's options, the free-text row, the unnumbered commit row, and the
+// chat row. The commit row goes in the list because walks are counted in rows
+// the cursor stops on, and it is one; leaving it out put every walk to the
+// chat row one short.
+func TestAnswerRowsCarryTheCommitRowWhereTheCursorStops(t *testing.T) {
+	rows := answerRows(answerRegion(fixture(t, "dialog-multiselect-on-commit.txt")))
+	var labels []string
+	for _, r := range rows {
+		labels = append(labels, r.label)
+	}
+	if got := strings.Join(labels, "|"); got != "Apple|Pear|Plum|Type something|Submit|Chat about this" {
+		t.Fatalf("rows = %s", got)
+	}
+	if !rows[3].free || !rows[4].commit || rows[4].digit != 0 {
+		t.Errorf("free=%v commit=%v digit=%d, want the free-text row and a commit row with no digit",
+			rows[3].free, rows[4].commit, rows[4].digit)
+	}
+	if at := focusedRow(rows); at != 4 {
+		t.Errorf("focusedRow = %d, want 4: the cursor is on the commit row", at)
+	}
+	// A commit row labelled like an option is still not that option.
+	if rowIndex(rows, "Submit") >= 0 {
+		t.Error("rowIndex found the commit row as if it were an option")
+	}
+}
+
+// What the free-text row holds, as the planner reads it. The whitespace case
+// is the one the wire cannot say: Space on the row types a space the capture
+// trims, so the row reads "[✔]" and Typed comes back empty, and yet a
+// Backspace is still what it takes to clear it.
+func TestAnswerRowsReadTheFreeTextField(t *testing.T) {
+	for _, tc := range []struct {
+		fixture   string
+		holdsText bool
+		text      string
+		checked   bool
+	}{
+		{"dialog-multiselect-one.txt", false, "", false},
+		{"dialog-multiselect-typed.txt", true, "Mango", true},
+		{"dialog-multiselect-typed-unticked.txt", true, "Mango", false},
+		{"dialog-multiselect-empty-ticked.txt", false, "", true},
+		{"dialog-multiselect-space-typed.txt", true, "", true},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			rows := answerRows(answerRegion(fixture(t, tc.fixture)))
+			at := freeIndex(rows)
+			if at < 0 {
+				t.Fatal("no free-text row found")
+			}
+			r := rows[at]
+			if r.holdsText != tc.holdsText || r.text != tc.text || r.checked != tc.checked {
+				t.Errorf("holdsText=%v text=%q checked=%v, want %v %q %v",
+					r.holdsText, r.text, r.checked, tc.holdsText, tc.text, tc.checked)
+			}
+		})
+	}
+}
+
+// Leaving a multi-select is a walk to its commit row. The Enter is not part of
+// the plan: the driver presses it in a batch of its own, and only once a
+// reading shows the cursor on that row, because Enter anywhere else is a
+// toggle, and on the chat row it abandons the question.
+func TestPlanCommitWalksToTheCommitRow(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pane string
+		want [][]string
+	}{
+		{"from the first option", fixture(t, "dialog-multiselect-one.txt"), [][]string{{"Down", "Down", "Down", "Down"}}},
+		{"from the free-text row", fixture(t, "dialog-multiselect-typed.txt"), [][]string{{"Down"}}},
+		{"already on it", fixture(t, "dialog-multiselect-on-commit.txt"), nil},
+		{"the 2.1.250 Next row", fixture(t, "dialog-multi.txt"), [][]string{{"Down", "Down", "Down", "Down"}}},
+		// Thirteen rows down, cut to what the keys route takes in one run.
+		{"a long list", manyOptionDialog(12, true), [][]string{
+			{"Down", "Down", "Down", "Down", "Down", "Down", "Down", "Down"},
+			{"Down", "Down", "Down", "Down", "Down"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			walk, err := planCommit(answerRows(answerRegion(tc.pane)))
+			if err != nil {
+				t.Fatalf("planCommit: %v", err)
+			}
+			if !sameKeys(walk, tc.want) {
+				t.Errorf("walk = %v, want %v", walk, tc.want)
+			}
+			for _, b := range walk {
+				for _, k := range b {
+					if k != "Down" && k != "Up" {
+						t.Errorf("the walk pressed %q; only the driver presses the Enter", k)
+					}
+				}
+			}
+		})
+	}
+	// A single-select has no commit row to walk to, and guessing where one
+	// might be would press Enter on whatever sits there.
+	if _, err := planCommit(answerRows(answerRegion(fixture(t, "dialog-single.txt")))); err == nil {
+		t.Error("planCommit found a commit row on a single-select")
+	}
+}
+
+// The next thing the free-text row needs, read off one capture. The row is an
+// inline field on a multi-select (measured on 2.1.280, 2026-09-23): typing goes
+// in and ticks it, Backspace to empty clears it and its box, and Enter flips
+// the box and keeps the text. Space is not in here at all: on that row it
+// types a space.
+func TestFreeTextNextReadsTheRowAgainstTheRequest(t *testing.T) {
+	none := multiWant{}
+	mango := multiWant{free: true, text: "Mango"}
+	kiwi := multiWant{free: true, text: "Kiwi"}
+	for _, tc := range []struct {
+		fixture string
+		want    multiWant
+		act     freeAction
+	}{
+		{"dialog-multiselect-one.txt", none, freeNone},
+		// Ticked with nothing typed, which the CLI drops at commit. Enter
+		// clears the box, so the pane shows what the card does.
+		{"dialog-multiselect-empty-ticked.txt", none, freeToggle},
+		{"dialog-multiselect-typed.txt", none, freeClear},
+		{"dialog-multiselect-typed-unticked.txt", none, freeClear},
+		{"dialog-multiselect-space-typed.txt", none, freeClear},
+		{"dialog-multiselect-one.txt", mango, freeType},
+		{"dialog-multiselect-empty-ticked.txt", mango, freeType},
+		{"dialog-multiselect-typed.txt", mango, freeNone},
+		{"dialog-multiselect-typed-unticked.txt", mango, freeToggle},
+		{"dialog-multiselect-typed.txt", kiwi, freeClear},
+		{"dialog-multiselect-space-typed.txt", mango, freeClear},
+	} {
+		t.Run(tc.fixture+"/"+tc.want.text, func(t *testing.T) {
+			rows := answerRows(answerRegion(fixture(t, tc.fixture)))
+			if got := freeTextNext(rows[freeIndex(rows)], tc.want); got != tc.act {
+				t.Errorf("freeTextNext = %v, want %v", got, tc.act)
+			}
+		})
+	}
+}
+
+// Whether a reading shows the question the way a request asked. This is the
+// whole of the verification for a toggle: the tab bar and the drawn question
+// do not change when a second pick is added, so the three signals a commit is
+// checked against would all say nothing happened.
+func TestRowsHoldTheRequestedState(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    multiWant
+		holds   bool
+	}{
+		{"dialog-multiselect-one.txt", multiWant{}, true},
+		{"dialog-multiselect-one.txt", multiWant{labels: []string{"Apple"}}, false},
+		{"dialog-multiselect-on-commit.txt", multiWant{labels: []string{"Apple", "Pear"}}, true},
+		{"dialog-multiselect-on-commit.txt", multiWant{labels: []string{"Pear", "Apple"}}, true},
+		{"dialog-multiselect-on-commit.txt", multiWant{labels: []string{"Apple"}}, false},
+		{"dialog-multiselect-typed.txt", multiWant{labels: []string{"Apple", "Pear"}, free: true, text: "Mango"}, true},
+		// The text on the row is a pick the request left out.
+		{"dialog-multiselect-typed.txt", multiWant{labels: []string{"Apple", "Pear"}}, false},
+		{"dialog-multiselect-typed.txt", multiWant{labels: []string{"Apple", "Pear"}, free: true, text: "Kiwi"}, false},
+		// The words are right and the box is not.
+		{"dialog-multiselect-typed-unticked.txt", multiWant{labels: []string{"Apple", "Pear"}, free: true, text: "Mango"}, false},
+		{"dialog-multiselect-empty-ticked.txt", multiWant{labels: []string{"Apple"}}, false},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			pane := fixture(t, tc.fixture)
+			d := ParseDialog(pane)
+			if got := rowsHold(d.Questions[0], answerRows(answerRegion(pane)), tc.want); got != tc.holds {
+				t.Errorf("rowsHold(%+v) = %v, want %v", tc.want, got, tc.holds)
+			}
+		})
+	}
+}
+
+// The desired state out of a request, refused before a key is typed when it
+// cannot be met.
+func TestWantOfReadsTheSetARequestAsksFor(t *testing.T) {
+	q := ParseDialog(fixture(t, "dialog-multiselect-one.txt")).Questions[0]
+	for _, tc := range []struct {
+		name    string
+		choices []string
+		text    string
+		want    multiWant
+	}{
+		{"options", []string{"Pear", "Apple"}, "", multiWant{labels: []string{"Pear", "Apple"}}},
+		{"a label named twice counts once", []string{"Pear", "Pear"}, "", multiWant{labels: []string{"Pear"}}},
+		{"nothing, which a toggle may ask for", nil, "", multiWant{}},
+		{"free text is one more pick", []string{"Apple", "Type something"}, "  Mango ", multiWant{labels: []string{"Apple"}, free: true, text: "Mango"}},
+		{"the legacy label means the same row", []string{"Other"}, "Mango", multiWant{free: true, text: "Mango"}},
+		// Text with no free-text pick is not a pick, and types nothing.
+		{"text without the row", []string{"Apple"}, "Mango", multiWant{labels: []string{"Apple"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := wantOf(q, tc.choices, tc.text)
+			if err != nil {
+				t.Fatalf("wantOf: %v", err)
+			}
+			if strings.Join(got.labels, ",") != strings.Join(tc.want.labels, ",") ||
+				got.free != tc.want.free || got.text != tc.want.text {
+				t.Errorf("wantOf = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name    string
+		choices []string
+		text    string
+		err     error
+	}{
+		{"an option from another question", []string{"Tea"}, "", errUnknownOption},
+		{"the chat row, which abandons the question", []string{"Chat about this"}, "", errUnknownOption},
+		{"an empty label", []string{""}, "", errUnknownOption},
+		{"the free-text row with nothing to type", []string{"Type something"}, "   ", errNoText},
+		{"text that would submit the field halfway", []string{"Type something"}, "one\ntwo", errBadText},
+		{"text longer than any answer", []string{"Type something"}, strings.Repeat("x", MaxAnswerText+1), errBadText},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := wantOf(q, tc.choices, tc.text); err != tc.err {
+				t.Errorf("wantOf error = %v, want %v", err, tc.err)
+			}
+		})
+	}
+}
+
+// Whether the text a row shows is the text a request asked for. The capture
+// trims and collapses whitespace, and a field narrower than the text may wrap
+// or cut it, so an exact string compare would call a landed answer missing.
+// None of the wrapping is measured yet; the rules are the loosest ones that
+// cannot accept different words.
+func TestTypedMatchesWhatTheRowShows(t *testing.T) {
+	for _, tc := range []struct {
+		shown, want string
+		match       bool
+	}{
+		{"Mango", "Mango", true},
+		{"Mango", "  Mango ", true},
+		{"Kiwi  fruit", "Kiwi fruit", true},
+		// A word the terminal broke across two lines, joined back with a space.
+		{"passion fru it", "passion fruit", true},
+		// Cut short with the CLI's ellipsis: enough of it to be evidence.
+		{"a long answer that ran o…", "a long answer that ran off the edge of the pane", true},
+		{"Mango", "Mangosteen", false},
+		{"mango", "Mango", false},
+		{"", "Mango", false},
+		{"Ma…", "Mango", false},
+	} {
+		if got := typedMatches(tc.shown, tc.want); got != tc.match {
+			t.Errorf("typedMatches(%q, %q) = %v, want %v", tc.shown, tc.want, got, tc.match)
+		}
 	}
 }

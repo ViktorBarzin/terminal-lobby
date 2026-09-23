@@ -392,6 +392,21 @@ const MaxAnswerText = 2000
 // through the answer, and silently sending a different answer than the one asked
 // for is worse than refusing.
 func (in *Injector) AnswerText(osUser, session, text string) error {
+	if err := checkAnswerText(text); err != nil {
+		return err
+	}
+	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+		return err
+	}
+	// -p = bracketed paste, -d = delete the buffer afterwards. No Enter.
+	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+}
+
+// checkAnswerText is AnswerText's refusal, on its own so a caller can ask it
+// before walking the cursor anywhere. The multi-select path does (wantOf): by
+// the time the text is pasted the cursor is on the free-text row, and a
+// refusal there would have moved it for nothing.
+func checkAnswerText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return fmt.Errorf("answer text: nothing to type")
 	}
@@ -401,11 +416,7 @@ func (in *Injector) AnswerText(osUser, session, text string) error {
 	if strings.ContainsAny(text, "\r\n") {
 		return fmt.Errorf("answer text: a line break would submit the field mid-answer")
 	}
-	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
-		return err
-	}
-	// -p = bracketed paste, -d = delete the buffer afterwards. No Enter.
-	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+	return nil
 }
 
 // Keys types an answer into the session's pane — the downward half of ADR-0010,

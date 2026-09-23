@@ -344,7 +344,7 @@ func answerSameQuestion(drawn, known string) bool {
 //
 // IT NEVER READS THE ANSWERED COUNT. Measured against CLI 2.1.267 on
 // 2026-09-10: a multi-select question's tab-bar box flips to ☒ on the FIRST
-// Space, before the Enter that leaves the question, so `☒ Fruit  ☐ Drink` is
+// Space, before the commit that leaves the question, so `☒ Fruit  ☐ Drink` is
 // what the pane shows while it is still drawing "Pick fruits". Answered is a
 // progress signal and one ahead of the position whenever a multi-select is
 // half-answered or a reader has walked back with ←. Using it as an index is
@@ -495,7 +495,8 @@ func tabBoxes(region []string) map[string]bool {
 }
 
 // reviewOnScreen reports whether the dialog region is the review screen at the
-// end of a multi-question call: every question answered, waiting for a Submit.
+// end of a call: every question committed, waiting for a Submit. On CLI 2.1.280
+// a one-question call shows it as well, tab bar included.
 //
 // Region-scoped on purpose. Both wordings are ordinary English that a session
 // discussing this feature puts on the pane — this repository's own design doc
@@ -582,10 +583,12 @@ func leftPresses(headers []string, from int, header string) (int, bool) {
 	return from - to, true
 }
 
-// answerRow is one numbered row as the dialog DREW it, which is not the same
-// list ParseDialog reports: the parser drops the CLI's own free-text and chat
-// rows, and the digit we press has to be the digit on screen.
+// answerRow is one row as the dialog DREW it, which is not the same list
+// ParseDialog reports: the parser drops the CLI's own free-text and chat rows,
+// and the digit we press has to be the digit on screen.
 type answerRow struct {
+	// digit is the number the widget drew, and 0 on the commit row, which it
+	// draws without one.
 	digit   int
 	label   string
 	focused bool
@@ -593,21 +596,41 @@ type answerRow struct {
 	// It is the state the CLI is holding for this question, and the only way
 	// to know whether a Space on this row would set a pick or clear one.
 	checked bool
+	// free marks the CLI's free-text row, found by where it is rather than by
+	// what it says (shapeList).
+	free bool
+	// holdsText and text are that row's field on a multi-select, where it is
+	// an inline field. holdsText can be true with text empty: a field holding
+	// only spaces, which the capture trims to "4. [✔]".
+	holdsText bool
+	text      string
+	// commit marks the unnumbered row under a multi-select's free-text row,
+	// where Enter leaves the question.
+	commit bool
 }
 
-// answerRows reads the numbered rows out of the dialog region.
+// answerRows reads the rows out of the dialog region, in the order the cursor
+// walks them.
 //
 // The numbering has to be the widget's own — 1, 2, 3 in order — for the same
 // reason ParseDialog checks it: a line of prose that happens to start with a
 // digit is not an option, and counting it would shift every digit after it.
+//
+// A multi-select's commit row goes in the list at the position it is drawn,
+// between the free-text row and the chat row, although it has no digit. Walks
+// are counted in rows the cursor stops on, and the cursor stops on that one:
+// measured on CLI 2.1.280 on 2026-09-23, Down from the free-text row lands on
+// it, and a list without it put every walk past it one row short.
 func answerRows(region []string) []answerRow {
 	var rows []answerRow
-	for _, line := range region {
+	var list []listRow
+	for i, line := range region {
 		clean := stripDialogBorder(line)
 		m := reOption.FindStringSubmatch(clean)
 		if m == nil || atoi(m[1]) != len(rows)+1 {
 			continue
 		}
+		list = append(list, listRow{line: i, box: m[2], label: m[3]})
 		rows = append(rows, answerRow{
 			digit:   atoi(m[1]),
 			label:   trimLabel(m[3]),
@@ -619,7 +642,27 @@ func answerRows(region []string) []answerRow {
 			checked: strings.TrimSpace(m[2]) != "",
 		})
 	}
-	return rows
+	end := len(region)
+	if f := footerAt(region); f >= 0 {
+		end = f
+	}
+	s := shapeList(region, list, end)
+	if s.free < 0 {
+		return rows
+	}
+	rows[s.free].free = true
+	if !s.multi {
+		return rows
+	}
+	rows[s.free].checked = s.checked
+	rows[s.free].holdsText, rows[s.free].text = s.holdsText, s.typed
+	if s.commitLine < 0 {
+		return rows
+	}
+	out := make([]answerRow, 0, len(rows)+1)
+	out = append(out, rows[:s.free+1]...)
+	out = append(out, answerRow{label: s.commit, focused: s.commitFocused, commit: true})
+	return append(out, rows[s.free+1:]...)
 }
 
 // trimLabel puts an option label into the form labels are compared in.
@@ -664,6 +707,14 @@ var (
 	// different things. The driver turns it into AnswerUnknownOption, and
 	// nothing is typed.
 	errBothChoices = errors.New("choice and choices name different answers")
+	// errBadText: the free text is something AnswerText would refuse, too
+	// long or carrying a line break. The driver turns it into AnswerRefused
+	// before a key is typed, which is what a refusal of the text has always
+	// been reported as.
+	errBadText = errors.New("the free text is not something one answer can carry")
+	// errNoCommitRow: the multi-select on screen draws no commit row to walk
+	// to. Guessing where one sits would press Enter on whatever is there.
+	errNoCommitRow = errors.New("the question on screen draws no commit row")
 )
 
 // requestChoices is the set of labels a request wants the question left
@@ -693,7 +744,7 @@ func requestChoices(req AnswerRequest) ([]string, error) {
 	return nil, errBothChoices
 }
 
-// choicePlan is one question's worth of typing.
+// choicePlan is one single-select question's worth of typing.
 type choicePlan struct {
 	// Batches are key runs, each within MaxKeys, sent in order with a settle
 	// between them.
@@ -707,38 +758,30 @@ type choicePlan struct {
 	After []string
 }
 
-// planChoice turns a reader's picks into the keys that produce them, against
-// the question the pane is currently drawing.
+// planChoice turns a reader's pick into the keys that produce it, against the
+// SINGLE-SELECT question the pane is currently drawing. The digit selects and
+// moves on in one press, and the free-text row is focused by its digit, typed
+// into, read back and committed with Enter.
 //
-// Single-select uses the digit, which selects and moves on in one press.
-// Multi-select walks the cursor and presses Space, because the digit path and
-// the space path are not the same call inside the CLI and only the latter is a
-// toggle; the Enter that leaves the question follows.
-//
-// THE PICKS REPLACE WHAT THE QUESTION IS HOLDING. Space is a toggle, not a
-// set, so the keys depend on the boxes already ticked on screen: a row that is
-// wanted and unticked gets one, a row that is ticked and not wanted gets one to
-// clear it, and a row that is already how the reader wants it gets none. Only
-// "choosing again replaces it" (the design) survives a reader tapping their own
-// answer — planning a Space per chosen row regardless UNTICKED the pick they
-// tapped, left the question with nothing chosen so the Enter could not leave
-// it, and reported back that the screen had not moved.
-//
-// The walk starts from the row the pane says the cursor is on rather than
-// assuming row one: a question revisited with ← opens on the row that was
-// chosen, and walking from the top would toggle whatever sat that far down.
+// A multi-select is not planned here. Its picks are a set held on screen, so
+// it is brought to a desired state (planToggles, freeTextNext) and left by a
+// commit request of its own (planCommit); asked for one, this refuses rather
+// than guess which of the two the caller meant.
 func planChoice(d *Dialog, region []string, choices []string, text string) (choicePlan, error) {
 	if d == nil || len(d.Questions) == 0 || len(d.Questions[0].Options) == 0 {
 		return choicePlan{}, errUnknownOption
 	}
 	q := d.Questions[0]
+	if q.MultiSelect {
+		return choicePlan{}, errUnknownOption
+	}
 	rows := answerRows(region)
 	if len(rows) == 0 {
 		return choicePlan{}, errUnknownOption
 	}
 
 	if len(choices) == 1 && isFreeTextLabel(choices[0]) {
-		at := rowIndex(rows, optionOther)
+		at := freeIndex(rows)
 		if at < 0 {
 			return choicePlan{}, errUnknownOption
 		}
@@ -754,104 +797,264 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 		}, nil
 	}
 
-	wanted := make([]int, 0, len(choices))
-	for _, c := range choices {
-		if c == "" || !offers(q, c) {
-			return choicePlan{}, errUnknownOption
-		}
-		at := rowIndex(rows, c)
-		if at < 0 {
-			return choicePlan{}, errUnknownOption
-		}
-		wanted = append(wanted, at)
-	}
-	if len(wanted) == 0 {
+	if len(choices) != 1 || choices[0] == "" || !offers(q, choices[0]) {
 		return choicePlan{}, errUnknownOption
 	}
+	at := rowIndex(rows, choices[0])
+	if at < 0 {
+		return choicePlan{}, errUnknownOption
+	}
+	return choicePlan{Batches: selectRow(rows, at)}, nil
+}
 
-	if !q.MultiSelect {
-		if len(wanted) != 1 {
-			return choicePlan{}, errUnknownOption
+// multiWant is the state a multi-select request asks its question to be left
+// in: which of the question's own options are ticked, and what the free-text
+// row holds.
+//
+// IT IS THE WHOLE STATE, NOT A CHANGE. Space is a toggle, so the keys are a
+// diff against the boxes the pane is drawing at the time, and a request that
+// named only the row that changed would be ambiguous the moment anything else
+// moved the dialog. The card can send the whole set because every reading
+// tells it what the question holds.
+type multiWant struct {
+	labels []string // the question's own options to leave ticked
+	free   bool     // the free-text row is one of the picks
+	text   string   // what that row should hold, when free
+}
+
+func (w multiWant) has(label string) bool {
+	for _, l := range w.labels {
+		if sameLabel(l, label) {
+			return true
 		}
-		return choicePlan{Batches: selectRow(rows, wanted[0])}, nil
 	}
+	return false
+}
 
-	pick := make(map[int]bool, len(wanted))
-	for _, at := range wanted {
-		pick[at] = true
+// empty is a set with nothing in it, which a toggle may ask for (it unticks
+// everything) and a commit may not.
+func (w multiWant) empty() bool { return len(w.labels) == 0 && !w.free }
+
+// wantOf reads the desired state out of a request, refusing what the question
+// on screen cannot hold before a single key is typed.
+//
+// FREE TEXT IS ONE MORE PICK. On a multi-select the free-text row is an inline
+// field that ticks itself as it is typed into (measured on CLI 2.1.280,
+// 2026-09-23), and the CLI answers with it alongside the options it holds, so
+// a request names "Type something" among its choices and carries the words in
+// Text. Text without that name is not a pick and types nothing.
+//
+// The text is checked against AnswerText's own rules here rather than when it
+// is pasted, because by then the cursor has been walked to the row. A refusal
+// of the text types nothing.
+func wantOf(q DialogQuestion, choices []string, text string) (multiWant, error) {
+	var w multiWant
+	for _, c := range choices {
+		switch {
+		case isFreeTextLabel(c):
+			w.free = true
+		case c == "" || !offers(q, c):
+			return multiWant{}, errUnknownOption
+		case !w.has(c):
+			w.labels = append(w.labels, c)
+		}
 	}
-	// Ascending, so each hop is the distance between two rows and after the
-	// first the cursor only walks down. The first can go up: a revisited
-	// question opens the cursor on the row it already holds, which may sit
-	// below a row that has to be cleared.
+	if !w.free {
+		return w, nil
+	}
+	w.text = strings.TrimSpace(text)
+	if w.text == "" {
+		return multiWant{}, errNoText
+	}
+	if checkAnswerText(w.text) != nil {
+		return multiWant{}, errBadText
+	}
+	return w, nil
+}
+
+// toggleStep is one option row to toggle: the walk that puts the cursor on
+// it, and the row, as an index into the rows the plan was made from.
+type toggleStep struct {
+	walk [][]string
+	row  int
+}
+
+// planToggles is the Spaces that bring a multi-select's own option rows to the
+// state `want` asks for, against one reading.
+//
+// ONLY THE ROWS THAT DIFFER. A row that is wanted and unticked gets a Space, a
+// row that is ticked and not wanted gets one to clear it, and a row that is
+// already right gets none. Planning a Space per named row regardless UNTICKED
+// the pick a reader was keeping.
+//
+// NEVER THE CLI'S OWN ROWS. On the free-text row Space types a literal space
+// into the field (measured on 2.1.280, 2026-09-23), so that row is
+// freeTextNext's to change. The commit and chat rows are not picks at all.
+//
+// NO COMMIT. Until 2026-09-23 this plan ended with a walk to the commit row and
+// an Enter there, so the first click on a multi-select option left the question
+// and a reader could never hold two picks. Leaving is a request of its own now
+// (planCommit), made once a reading shows the boxes are right.
+//
+// The walk starts from the row the pane says the cursor is on rather than
+// assuming row one, and runs in list order, so after the first hop the cursor
+// only walks down. The first can go up: the cursor rests wherever the last
+// request left it.
+func planToggles(q DialogQuestion, rows []answerRow, want multiWant) []toggleStep {
 	at := focusedRow(rows)
-	// ONE BATCH PER TOGGLE, so the settle between batches falls between two
-	// Spaces. Packing them into one send-keys loses all but the first toggle:
-	// measured against CLI 2.1.268 on 2026-09-11, asking for Nuts and Cream on
-	// a three-row question sent [Space Down Down Space] as a single run, and
-	// the pane came back `1. [✔] Nuts` / `3. [ ] Cream` with the cursor sitting
-	// on Cream. Every key was delivered — the cursor had moved two rows — and
-	// the second toggle still did not take. The unit tests could not see it:
-	// their stand-in reads its input as a stream and records both.
-	var batches [][]string
-	for i := range rows {
-		if rows[i].checked == pick[i] {
-			continue // already how the reader wants it
-		}
-		if !pick[i] && !offers(q, rows[i].label) {
-			// A ticked row that is not one of the question's own options is
-			// the CLI's free-text row, which carries a box in a multi-select
-			// list. Space there opens the field rather than clearing a pick,
-			// so it is left exactly as it is.
+	var steps []toggleStep
+	for i, r := range rows {
+		if r.free || r.commit || !offers(q, r.label) {
 			continue
 		}
-		// The walk and the toggle are SEPARATE runs, so a settle lands
-		// between the last cursor move and the Space. Measured against CLI
-		// 2.1.268 on 2026-09-11 driving a real dialog: [Space] then
-		// [Down Down Space] ticked the first row and left the third clear with
-		// the cursor on it, while one Up and a Space in the same run did tick.
-		// The difference is how much the widget repaints before the Space
-		// arrives, so the number of navigation keys decides whether it
-		// survives — which is not a thing to leave to the shape of the list.
-		if walk := walkTo(at, i); len(walk) > 0 {
-			batches = append(batches, chunkKeys(walk)...)
+		if r.checked == want.has(r.label) {
+			continue // already how the reader wants it
 		}
-		batches = append(batches, []string{"Space"})
+		// The walk and the Space are SEPARATE runs, so a settle lands between
+		// the last cursor move and the toggle. Measured against CLI 2.1.268 on
+		// 2026-09-11 driving a real dialog: [Space] then [Down Down Space]
+		// ticked the first row and left the third clear with the cursor on it,
+		// while one Up and a Space in the same run did tick. How much the
+		// widget repaints before the Space arrives decides whether it
+		// survives, which is not a thing to leave to the shape of the list.
+		steps = append(steps, toggleStep{walk: chunkKeys(walkTo(at, i)), row: i})
 		at = i
 	}
-	// Space only toggles. Enter is what leaves a multi-select question, and it
-	// goes in a batch of its own so a settle lands between the last toggle and
-	// the commit — the model picker on this same TUI has done that since it was
-	// written (setmodel.go:173-183, keySettle before the key that commits) and
-	// the answer path allowed nothing, which is one of the four candidates the
-	// field data could not rule out. An Enter that outruns its toggle leaves the
-	// question with no pick at all.
-	// LEAVING a multi-select question is its own row, not an Enter on the
-	// option you just ticked.
-	//
-	// Measured against CLI 2.1.268 on 2026-09-11 by filming the pane during a
-	// real request: the Space ticked Cream at 418ms and something UNTICKED it
-	// at 549ms. That something was the Enter this used to append. The widget's
-	// own footer says "Enter to select", and on a multi-select every numbered
-	// row is a toggle, so an Enter on the focused row toggles it back off.
-	//
-	// Below the free-text row the widget draws an UNNUMBERED row labelled
-	// "Next", and Enter THERE commits the question and advances. Confirmed on
-	// the same dialog: walking onto it and pressing Enter moved to the
-	// following question with both picks kept. It carries no digit, so it can
-	// only be reached by walking one row past the free-text row.
-	free := rowIndex(rows, optionOther)
-	if free < 0 {
-		// No free-text row means a shape we have not seen, and guessing how
-		// far down the commit sits would press Enter on whatever is there.
-		// The toggles stand, and the reader finishes the question with one
-		// more tap once the pane has been re-read.
-		return choicePlan{Batches: batches}, nil
+	return steps
+}
+
+// freeAction is the next thing a multi-select's free-text row needs.
+type freeAction int
+
+const (
+	freeNone   freeAction = iota // the row is how the request wants it
+	freeToggle                   // Enter on the row: flip its box, keep its text
+	freeClear                    // Backspace the field empty, which clears its box too
+	freeType                     // paste the wanted text into the empty field
+)
+
+// freeTextNext reads the free-text row against the request and says what it
+// needs next. It is asked again after every step, against a fresh reading, so
+// nothing about the row is predicted.
+//
+// The row's behaviour, measured on CLI 2.1.280 on 2026-09-23: typing or a paste
+// goes into the field and ticks the box; Backspace down to empty unticks it,
+// and Backspace on an empty field does nothing; Enter flips the box and keeps
+// the text, and on the empty row ticks "[✔] Type something", a pick the CLI
+// drops at commit. Space is not used on this row at all: it types a space.
+//
+// Not a pick means empty AND unticked. The ticked empty row carries no answer,
+// but a card cannot show a pick with no words, so the pane is made to match
+// what the card draws.
+func freeTextNext(r answerRow, want multiWant) freeAction {
+	switch {
+	case !want.free && r.holdsText:
+		return freeClear
+	case !want.free && r.checked:
+		return freeToggle
+	case !want.free:
+		return freeNone
+	case r.holdsText && typedMatches(r.text, want.text):
+		if !r.checked {
+			return freeToggle
+		}
+		return freeNone
+	case r.holdsText:
+		return freeClear
 	}
-	if walk := walkTo(at, free+1); len(walk) > 0 {
-		batches = append(batches, chunkKeys(walk)...)
+	return freeType
+}
+
+// planCommit is the walk that puts the cursor on a multi-select's commit row.
+//
+// THE ENTER IS NOT IN IT. On a multi-select every numbered row is a toggle,
+// and the chat row abandons the question, so the driver presses Enter in a
+// batch of its own and only once a reading shows the cursor on the commit row.
+// A walk that fell short must not become an Enter on the free-text row, which
+// would flip the reader's typed pick off on the way out.
+//
+// The row is unnumbered, so walking is the only way onto it. It says "Next"
+// on every question but the last and "Submit" on the last (measured on
+// 2.1.280, 2026-09-23); Enter there commits the question and moves on, to the
+// next question or to the review screen, which a one-question call also shows.
+func planCommit(rows []answerRow) ([][]string, error) {
+	at := commitIndex(rows)
+	if at < 0 {
+		return nil, errNoCommitRow
 	}
-	return choicePlan{Batches: append(batches, []string{"Enter"})}, nil
+	return chunkKeys(walkTo(focusedRow(rows), at)), nil
+}
+
+// rowsHold reports whether the rows a reading drew are the state `want` asks
+// for: every option ticked or not as asked, and the free-text row holding the
+// asked-for text with its box ticked, or empty and unticked.
+//
+// It is the whole of the verification for a toggle. Adding a second pick moves
+// none of the things answerMoved watches: the tab bar's box filled on the
+// first, and the question on screen is the same one.
+func rowsHold(q DialogQuestion, rows []answerRow, want multiWant) bool {
+	matched, freeSeen := 0, false
+	for _, r := range rows {
+		switch {
+		case r.commit:
+		case r.free:
+			freeSeen = true
+			if freeTextNext(r, want) != freeNone {
+				return false
+			}
+		case offers(q, r.label):
+			wanted := want.has(r.label)
+			if r.checked != wanted {
+				return false
+			}
+			if wanted {
+				matched++
+			}
+		}
+	}
+	return matched == len(want.labels) && (freeSeen || !want.free)
+}
+
+// typedMatches reports whether the text a free-text row shows is the text a
+// request asked for.
+//
+// The capture trims and collapses whitespace, and a field narrower than its
+// text may wrap it or cut it short. Whitespace is compared collapsed; a word
+// the terminal broke across two lines comes back with a space in it, so a
+// match with every space removed also counts; and a row ending in the CLI's
+// ellipsis matches on a prefix long enough to be evidence. None of the wrapping
+// is measured yet. Case is compared exactly: "mango" is not what was typed.
+func typedMatches(shown, want string) bool {
+	s, w := strings.Join(strings.Fields(shown), " "), strings.Join(strings.Fields(want), " ")
+	if s == "" || w == "" {
+		return false
+	}
+	if s == w || strings.ReplaceAll(s, " ", "") == strings.ReplaceAll(w, " ", "") {
+		return true
+	}
+	head, cut := strings.CutSuffix(s, "…")
+	head = strings.TrimSpace(head)
+	return cut && len([]rune(head)) >= minPrefixMatch && strings.HasPrefix(w, head)
+}
+
+// freeIndex is the index of the free-text row among the rows, or -1.
+func freeIndex(rows []answerRow) int {
+	for i := range rows {
+		if rows[i].free {
+			return i
+		}
+	}
+	return -1
+}
+
+// commitIndex is the index of the commit row among the rows, or -1.
+func commitIndex(rows []answerRow) int {
+	for i := range rows {
+		if rows[i].commit {
+			return i
+		}
+	}
+	return -1
 }
 
 // selectRow is how to act on one row: its digit when the widget has one to
@@ -894,10 +1097,12 @@ func focusedRow(rows []answerRow) int {
 	return 0
 }
 
-// rowIndex finds a label among the rows the dialog drew.
+// rowIndex finds a label among the rows the dialog drew. The commit row is
+// never a match: "Next" and "Submit" are words a caller can offer as options
+// too, and the commit row is not one of them.
 func rowIndex(rows []answerRow, label string) int {
 	for i := range rows {
-		if sameLabel(rows[i].label, label) {
+		if !rows[i].commit && sameLabel(rows[i].label, label) {
 			return i
 		}
 	}

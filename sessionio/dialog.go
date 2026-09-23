@@ -42,11 +42,39 @@ type Dialog struct {
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.
+//
+// The last three fields are the pane's alone: the tool's recorded input never
+// carries them, so a question read out of the transcript leaves them empty.
 type DialogQuestion struct {
 	Question    string         `json:"question"`
 	Header      string         `json:"header,omitempty"`
 	MultiSelect bool           `json:"multiSelect,omitempty"`
 	Options     []DialogOption `json:"options"`
+	// Commit is the label of the unnumbered row a multi-select draws under
+	// its free-text row, "Next" or "Submit", and empty when none is drawn.
+	//
+	// Enter on that row is what leaves a multi-select question: on every
+	// numbered row Enter is a toggle. Measured on CLI 2.1.280 on 2026-09-23,
+	// it reads "Next" on every question but the last and "Submit" on the
+	// last, so a one-question call says "Submit". The card labels its commit
+	// button with this rather than a word of its own, because the pane's word
+	// is the one that says whether the next screen is another question or the
+	// review.
+	Commit string `json:"commit,omitempty"`
+	// Typed is the text in a multi-select's free-text row, empty while the
+	// row reads "Type something".
+	//
+	// That row is an inline field on a multi-select: keys go straight into it,
+	// typing ticks it, and the row then draws the text where the label was
+	// ("4. [✔] Mango", measured 2026-09-23). Free text is one more pick on
+	// such a question, so the card needs to see what the row holds in order
+	// to show it, and the server needs to in order to replace or clear it.
+	Typed string `json:"typed,omitempty"`
+	// TypedChecked is the free-text row's box. It is separate from Typed
+	// because the two move apart: Enter toggles the box and keeps the text,
+	// and Enter on the empty row ticks it with nothing typed, a pick the CLI
+	// drops at commit.
+	TypedChecked bool `json:"typedChecked,omitempty"`
 }
 
 // DialogOption is one answer the question offers.
@@ -98,6 +126,18 @@ var (
 	// parse live?" into fragments that match nothing — and a line carrying only
 	// the border reads as a line of text rather than as the blank it looks like.
 	reBorder = regexp.MustCompile(`[│┃|┆┊╎╏║]`)
+	// An unnumbered row with the cursor on it. The one the CLI draws is the
+	// commit row under a multi-select's free-text row: "❯    Submit", the
+	// cursor and then the indent the label column sits at. Three spaces or
+	// more is what separates it from "❯ Call the tool…", the composer's echo
+	// of a prompt, which has one.
+	reCursorRow = regexp.MustCompile(`^[❯>] {3,}\S`)
+	// A free-text row whose field holds only whitespace, "4. [✔]". Space on a
+	// multi-select's free-text row types a literal space and ticks the box,
+	// and the capture trims the space, so what is left is a box with nothing
+	// after it. reOption then reads the box as the label, because it wants
+	// whitespace between the box and a label.
+	reBoxOnly = regexp.MustCompile(`^\[([^\]]*)\]$`)
 )
 
 // How many wrapped lines of question to accept. A question is prose written by
@@ -174,11 +214,9 @@ func ParseDialog(pane string) *Dialog {
 	}
 
 	type parsed struct {
-		n     int
-		box   string
-		label string
-		desc  string
-		line  int
+		listRow
+		n    int
+		desc string
 	}
 	var opts []parsed
 	first := end
@@ -202,7 +240,7 @@ func ParseDialog(pane string) *Dialog {
 			}
 			continue
 		}
-		opts = append(opts, parsed{n: atoi(m[1]), box: m[2], label: m[3], line: i})
+		opts = append(opts, parsed{listRow: listRow{line: i, box: m[2], label: m[3]}, n: atoi(m[1])})
 		first = i
 	}
 	if len(opts) < 2 {
@@ -236,18 +274,25 @@ func ParseDialog(pane string) *Dialog {
 		opts[i].desc = strings.Join(desc, " ")
 	}
 
+	rows := make([]listRow, len(opts))
+	for i, o := range opts {
+		rows[i] = o.listRow
+	}
+	shape := shapeList(lines, rows, end)
+
 	// The CLI's own options identify the widget, and are then dropped: the card
 	// offers its own free-text and chat rows, so carrying these would double
-	// them.
+	// them. The free-text row is dropped by POSITION as well as by label,
+	// because on a multi-select typing replaces its label (shapeList).
 	var kept []DialogOption
 	sawChat, sawOther, multi := false, false, false
-	for _, o := range opts {
+	for i, o := range opts {
 		label := strings.TrimRight(o.label, ".")
-		switch label {
-		case optionChat:
+		switch {
+		case i == shape.chat || label == optionChat:
 			sawChat = true
 			continue
-		case optionOther:
+		case i == shape.free || label == optionOther:
 			sawOther = true
 			continue
 		}
@@ -270,7 +315,10 @@ func ParseDialog(pane string) *Dialog {
 	if len(kept) == 0 {
 		return nil
 	}
-	// "Next" is the multi-select widget's own advance row, not an answer.
+	// "Next" is the multi-select widget's own advance row, not an answer. The
+	// row as 2.1.250 and 2.1.280 draw it, unnumbered under the free-text row,
+	// is read by shapeList and never reaches here; these two catch it drawn
+	// any other way.
 	if n := len(kept); n > 0 && kept[n-1].Label == "Next" {
 		kept = kept[:n-1]
 	}
@@ -282,6 +330,9 @@ func ParseDialog(pane string) *Dialog {
 
 	d := &Dialog{Count: 1}
 	q := DialogQuestion{MultiSelect: multi, Options: kept}
+	if multi {
+		q.Commit, q.Typed, q.TypedChecked = shape.commit, shape.typed, shape.checked
+	}
 
 	// Above the options: the question, a blank, and above that either a tab bar
 	// (several questions) or the header of the only one.
@@ -335,7 +386,7 @@ func ParseDialog(pane string) *Dialog {
 	if q.Question == "" {
 		return nil
 	}
-	// The review screen at the end of a multi-question walk is not a question.
+	// The review screen at the end of a call is not a question.
 	if strings.HasPrefix(q.Question, "Ready to submit") || strings.HasPrefix(q.Question, "Review your answers") {
 		return nil
 	}
@@ -348,8 +399,9 @@ func ParseDialog(pane string) *Dialog {
 	return d
 }
 
-// reviewScreen recognises the last step of a multi-question walk: every question
-// answered, waiting for a Submit.
+// reviewScreen recognises the last step of a call: every question committed,
+// waiting for a Submit. A one-question call reaches it too on CLI 2.1.280
+// (measured 2026-09-23), where a multi-select's "Submit" row leads here.
 //
 // It is not a question — mirroring its "Submit answers / Cancel" as one would
 // offer an answer nobody asked for — but the session IS blocked on it, and
@@ -382,8 +434,158 @@ func reviewScreen(lines []string) *Dialog {
 
 // numbered reports whether the line is a description belonging to an option —
 // i.e. it sits inside the option list rather than above it.
+//
+// An unnumbered row with the cursor on it is inside the list too. The CLI draws
+// the cursor over a multi-select's commit row as "❯    Submit", which does not
+// start with the two spaces a description does, and until 2026-09-23 this read
+// it as the top of the list: the walk up from the footer kept the chat row
+// alone, one row is not a list, and every pane parked on the commit row came
+// back unreadable. That is where the cursor sits after a commit that did not
+// take.
 func numbered(lines []string, i int) bool {
-	return i > 0 && !reTabBar.MatchString(lines[i]) && strings.HasPrefix(lines[i], "  ")
+	if i <= 0 || reTabBar.MatchString(lines[i]) {
+		return false
+	}
+	return strings.HasPrefix(lines[i], "  ") || reCursorRow.MatchString(lines[i])
+}
+
+// listRow is one numbered row of an option list as the widget drew it. It is
+// the part ParseDialog and answerRows share, so the two cannot disagree about
+// which row is the CLI's own.
+type listRow struct {
+	line  int    // index into the lines the row was read from
+	box   string // between the brackets, "" when the row draws no box
+	label string // the rest of the row
+}
+
+// listShape says where the CLI's own rows sit in an option list, and what the
+// free-text and commit rows are showing.
+type listShape struct {
+	chat  int  // index of "Chat about this" in the rows, -1 when absent
+	free  int  // index of the free-text row, -1 when absent
+	multi bool // the question's own rows draw boxes
+
+	// The free-text row on a multi-select, where it is an inline field.
+	typed     string // what it holds, "" while it reads "Type something"
+	holdsText bool   // it holds text, which may be whitespace the capture trimmed
+	checked   bool   // its box
+
+	// The commit row under the free-text row, on a multi-select only.
+	commitLine    int    // index into the lines, -1 when none is drawn
+	commit        string // its label, "Next" or "Submit"
+	commitFocused bool   // the cursor is on it
+}
+
+// shapeList finds the CLI's own rows in an option list. `end` bounds the last
+// row's lines: the footer, or the end of what was read.
+//
+// THE FREE-TEXT ROW IS FOUND BY POSITION. On a multi-select it is an inline
+// field, and typing replaces its label: measured on CLI 2.1.280 on 2026-09-23,
+// "4. [ ] Type something" becomes "4. [✔] Mango" as the reader types. Matching
+// on the label handed the card "Mango" as an option the caller never offered,
+// with the commit row under it as its description. What does not move is where
+// the row is: the last numbered row above the separator the CLI draws over
+// "Chat about this". The label is the fallback for a list drawn without that
+// separator, which nothing captured here does.
+//
+// THE COMMIT ROW is the last line under the free-text row before that
+// separator. It carries no digit, so reOption never sees it. Any lines between
+// the two are the typed text running on, which no capture shows yet; they are
+// joined back onto the text the way a wrapped description is.
+func shapeList(lines []string, rows []listRow, end int) listShape {
+	s := listShape{chat: -1, free: -1, commitLine: -1}
+	for i, r := range rows {
+		if strings.TrimRight(strings.TrimSpace(r.label), ".") == optionChat {
+			s.chat = i
+		}
+	}
+	s.free = freeTextRow(lines, rows, s.chat)
+	for i, r := range rows {
+		if i != s.chat && i != s.free && r.box != "" {
+			s.multi = true
+		}
+	}
+	if s.free < 0 || !s.multi {
+		return s
+	}
+
+	next := end
+	if s.free+1 < len(rows) {
+		next = rows[s.free+1].line
+	}
+	var below []int
+	for i := rows[s.free].line + 1; i < next && i < len(lines); i++ {
+		if strings.TrimSpace(stripDialogBorder(lines[i])) == "" || reRule.MatchString(lines[i]) {
+			continue
+		}
+		below = append(below, i)
+	}
+	if n := len(below); n > 0 {
+		s.commitLine = below[n-1]
+		text := strings.TrimSpace(stripDialogBorder(lines[s.commitLine]))
+		for _, mark := range []string{"❯", ">"} {
+			if strings.HasPrefix(text, mark) {
+				s.commitFocused = true
+				text = strings.TrimSpace(strings.TrimPrefix(text, mark))
+			}
+		}
+		s.commit = text
+		below = below[:n-1]
+	}
+
+	fr := rows[s.free]
+	s.checked = strings.TrimSpace(fr.box) != ""
+	label := strings.TrimSpace(fr.label)
+	switch m := reBoxOnly.FindStringSubmatch(label); {
+	case fr.box == "" && m != nil:
+		// "4. [✔]": the field holds whitespace the capture trimmed. It is
+		// still text, and a Backspace is what takes it out; reading it as the
+		// placeholder would leave it there.
+		s.checked = strings.TrimSpace(m[1]) != ""
+		s.holdsText = true
+	case placeholderLabel(label):
+	default:
+		parts := []string{label}
+		for _, i := range below {
+			parts = append(parts, strings.TrimSpace(stripDialogBorder(lines[i])))
+		}
+		s.typed = strings.Join(parts, " ")
+		s.holdsText = true
+	}
+	return s
+}
+
+// freeTextRow is the index of the CLI's free-text row among rows, or -1.
+func freeTextRow(lines []string, rows []listRow, chat int) int {
+	if chat > 0 {
+		prev := rows[chat-1]
+		if placeholderLabel(prev.label) || ruleBetween(lines, prev.line, rows[chat].line) {
+			return chat - 1
+		}
+	}
+	for i, r := range rows {
+		if i != chat && placeholderLabel(r.label) {
+			return i
+		}
+	}
+	return -1
+}
+
+// placeholderLabel reports whether a row reads the free-text row's own label:
+// "Type something." on a single-select, "Type something" on a multi-select.
+func placeholderLabel(label string) bool {
+	return strings.TrimRight(strings.TrimSpace(label), ".") == optionOther
+}
+
+// ruleBetween reports whether a separator is drawn between two lines. A
+// whitespace-only line matches reRule as well, and is not one.
+func ruleBetween(lines []string, from, to int) bool {
+	for i := from + 1; i < to && i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != "" && reRule.MatchString(lines[i]) {
+			return true
+		}
+	}
+	return false
 }
 
 // tabAnswered counts the questions a tab bar marks answered.

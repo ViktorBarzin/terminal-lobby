@@ -1,0 +1,16 @@
+
+❯ Call the AskUserQuestion tool right now with exactly ONE question: header "Fruit", question "Pick fruits", options
+  "Apple","Pear","Plum", multiSelect true. Do not use any other tool and say nothing before the call.
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruit  ✔ Submit  →
+
+Review your answers
+
+ ● Pick fruits
+   → Apple, Pear
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

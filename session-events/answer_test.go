@@ -662,6 +662,23 @@ func TestAnswerRecordsTheBlockingPromptAsAnswered(t *testing.T) {
 		})
 	}
 
+	// A toggle answered nothing yet. A multi-select answer is several toggles
+	// and one commit, and counting the toggles would count one answer as many.
+	// text.answer_sent still records the attempt, with tl.action=toggle.
+	t.Run("a toggle records no answer", func(t *testing.T) {
+		sink := captureEvents(t)
+		drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{
+			Applied: true, Dialog: fixtureDialog(t, "dialog-multi.txt"),
+		}}
+		h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+		postAnswer(t, h, "demo", `{"header":"Fruit","choices":["Pear"],"stay":true}`)
+
+		if got := sink.names(t); len(got) != 1 || got[0] != "text.answer_sent" {
+			t.Fatalf("a toggle recorded %v, want text.answer_sent alone", got)
+		}
+	})
+
 	// A refusal answered nothing. Counting one would inflate the series the
 	// /keys route has fed since ADR-0006, and this route's own
 	// text.answer_failed already records that the attempt happened.
@@ -879,5 +896,128 @@ func TestDarkMarkersNamesEveryLandmarkTheStructCarries(t *testing.T) {
 	if len(dark) != markerCount {
 		t.Errorf("markerCount is %d and darkMarkers names %d; the guard uses the "+
 			"first to recognise an all-dark reading", markerCount, len(dark))
+	}
+}
+
+// EVERY ANSWER EVENT SAYS WHAT KIND OF REQUEST IT WAS, in tl.action.
+//
+// Since 2026-09-23 a multi-select is answered in several requests, toggles and
+// then one commit, where it used to be one. Without the attribute a panel over
+// text.answer_sent would read that as the text view suddenly being used five
+// times as much, and a failure rate would mix a toggle that did not verify
+// with an answer that did not land.
+//
+// The fake driver here reports no action of its own, so what these rows pin is
+// the route's reading of the request against the call's record: Fruit is the
+// multi-select and Drink the single-select in answerAskLine.
+func TestAnswerEventNamesTheAction(t *testing.T) {
+	for _, tc := range []struct{ name, body, action string }{
+		{"a single-select pick", `{"header":"Drink","choice":"Tea"}`, sessionio.ActionChoose},
+		{"a multi-select commit of one pick", `{"header":"Fruit","choice":"Pear"}`, sessionio.ActionCommit},
+		{"a multi-select commit of several", `{"header":"Fruit","choices":["Pear","Plum"]}`, sessionio.ActionCommit},
+		{"a toggle", `{"header":"Fruit","choices":["Pear"],"stay":true}`, sessionio.ActionToggle},
+		{"back", `{"back":"Fruit"}`, sessionio.ActionBack},
+		{"submit", `{"submit":true}`, sessionio.ActionSubmit},
+		{"the raw-key hatch", `{"keys":["Down"]}`, sessionio.ActionKeys},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := captureEvents(t)
+			drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{Applied: true}}
+			h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+			postAnswer(t, h, "demo", tc.body)
+
+			if got := sink.only(t, "text.answer_sent")["tl.action"]; got != tc.action {
+				t.Errorf("tl.action = %v, want %q", got, tc.action)
+			}
+		})
+	}
+}
+
+// The driver's word wins, because it saw the question. Before Claude Code has
+// written the call's record (measured 2026-08-28 at up to 112 s), a request
+// naming one label could be a single-select pick or a one-pick commit, and the
+// route has nothing to tell them apart with. The driver read the drawn
+// question's boxes before it typed anything.
+func TestAnswerEventTakesTheDriversAction(t *testing.T) {
+	sink := captureEvents(t)
+	drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{
+		Applied: true, Action: sessionio.ActionCommit, Dialog: fixtureDialog(t, "dialog-multi-second.txt"),
+	}}
+	h := answerEnv(t, drv, answerUserLine) // no AskUserQuestion recorded yet
+
+	postAnswer(t, h, "demo", `{"header":"Fruit","choice":"Pear"}`)
+
+	if got := sink.only(t, "text.answer_sent")["tl.action"]; got != sessionio.ActionCommit {
+		t.Errorf("tl.action = %v, want the driver's %q", got, sessionio.ActionCommit)
+	}
+}
+
+// Failures say what was attempted as well, including the two that never reach
+// a dialog: a session this box does not have, and a pane that cannot be read.
+// A toggle that failed and a commit that failed are different problems.
+func TestAFailedAnswerNamesItsActionToo(t *testing.T) {
+	t.Run("a refusal", func(t *testing.T) {
+		sink := captureEvents(t)
+		drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{
+			Reason: sessionio.AnswerUnverified, Dialog: fixtureDialog(t, "dialog-multi.txt"),
+		}}
+		h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+		postAnswer(t, h, "demo", `{"header":"Fruit","choices":["Pear"],"stay":true}`)
+
+		if got := sink.only(t, "text.answer_failed")["tl.action"]; got != sessionio.ActionToggle {
+			t.Errorf("tl.action = %v, want toggle", got)
+		}
+	})
+	t.Run("a session this box does not have", func(t *testing.T) {
+		sink := captureEvents(t)
+		h := answerEnv(t, &fakeAnswerDriver{}, answerUserLine, answerAskLine)
+
+		postAnswer(t, h, "ghost", `{"header":"Fruit","choices":["Pear"],"stay":true}`)
+
+		attrs := sink.only(t, "text.answer_failed")
+		if attrs["tl.reason"] != answerNoSession || attrs["tl.action"] != sessionio.ActionToggle {
+			t.Errorf("tl.reason=%v tl.action=%v, want %s and toggle", attrs["tl.reason"], attrs["tl.action"], answerNoSession)
+		}
+	})
+	t.Run("a pane that cannot be read", func(t *testing.T) {
+		sink := captureEvents(t)
+		drv := &fakeAnswerDriver{err: errors.New("no server running on /tmp/tmux-1000/default")}
+		h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+		postAnswer(t, h, "demo", `{"header":"Fruit","choices":["Pear","Plum"]}`)
+
+		attrs := sink.only(t, "text.answer_failed")
+		if attrs["tl.reason"] != answerUnreadable || attrs["tl.action"] != sessionio.ActionCommit {
+			t.Errorf("tl.reason=%v tl.action=%v, want unreadable and commit", attrs["tl.reason"], attrs["tl.action"])
+		}
+	})
+}
+
+// ONE MULTI-SELECT ANSWER COUNTS ONCE, at its commit. Two toggles and the
+// commit are three requests and three text.answer_sent records, and exactly
+// one claude.answered.
+func TestAMultiSelectAnswerCountsOnceAtItsCommit(t *testing.T) {
+	sink := captureEvents(t)
+	drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{
+		Applied: true, Dialog: fixtureDialog(t, "dialog-multi.txt"),
+	}}
+	h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+	for _, body := range []string{
+		`{"header":"Fruit","choices":["Pear"],"stay":true}`,
+		`{"header":"Fruit","choices":["Pear","Plum"],"stay":true}`,
+		`{"header":"Fruit","choices":["Pear","Plum"]}`,
+	} {
+		postAnswer(t, h, "demo", body)
+	}
+
+	counts := map[string]int{}
+	for _, name := range sink.names(t) {
+		counts[name]++
+	}
+	if counts["text.answer_sent"] != 3 || counts["claude.answered"] != 1 {
+		t.Errorf("recorded %v, want three text.answer_sent and one claude.answered", counts)
 	}
 }

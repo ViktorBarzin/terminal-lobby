@@ -2,7 +2,7 @@ package sessionio
 
 import "strings"
 
-// The two lines the review screen draws at the end of a multi-question call.
+// The two lines the review screen draws at the end of a call.
 //
 // reviewScreen() in dialog.go holds the same two strings inline and matches
 // them for exact equality on a trimmed line; these are a second reference to
