@@ -705,10 +705,15 @@ src/
                          Nothing runs the command — no reading, no chip
     QuestionCard.tsx     The docked answer card. It draws the ONE question the
                          pane is showing, the tab bar as chips that walk ←
-                         back to an answered one, and nothing else — a tap is a
-                         request, the reply is a fresh reading, and that is
-                         what gets drawn next. So a choice commits when you
-                         make it, and the CLI's own review screen is where
+                         back to an answered one, and nothing else. A tap is a
+                         request and the reply is a fresh reading, which is
+                         what gets drawn next. A single-select tap answers. A
+                         multi-select tap toggles one row, ticked once the
+                         pane shows it, and a tap made while one is in flight
+                         waits its turn, pulsing. The button at the right of
+                         the actions row, labelled with the pane's own Next or
+                         Submit, is what leaves a multi-select; every tap did
+                         until 2026-09-23. The CLI's own review screen is where
                          everything is seen before Submit. It held a whole
                          four-question draft until 2026-09-10, and predicting
                          each next screen is what failed 4 of those 5 answers

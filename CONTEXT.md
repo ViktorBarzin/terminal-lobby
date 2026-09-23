@@ -828,6 +828,22 @@ How many of a call's questions the tab bar marks `☒`. A progress signal, not a
 position: a multi-select question's box fills on its first toggle, before the
 question is left, so the tally can run one ahead of the **drawn question**.
 
+**Free-text row**:
+The CLI's own numbered row under an `AskUserQuestion` question's options, where
+the reader types an answer of their own; it reads `Type something` until
+something is typed. On a multi-select question it is an inline field and one
+more pick: typing ticks it and replaces the label with the text.
+_Avoid_: Other, free-text option (it is the CLI's row, not one of the options
+Claude offered)
+
+**Commit row**:
+The unnumbered row a multi-select question draws directly under its
+**free-text row**, labelled `Next` on every question but the last and `Submit`
+on the last. `Enter` on it leaves the question; `Enter` on a numbered row only
+toggles that row. The answer card's commit button presses it.
+_Avoid_: Next button, submit row (the review screen's `Submit answers` is a
+different control)
+
 **Marker fingerprint**:
 Which of the CLI's known landmarks a capture carried — the tab bar, the box
 glyphs, the two review wordings, the footer, the free-text and chat rows.

@@ -108,3 +108,57 @@ option having become `Type something` while the frontend still called it
 `Other`. A synthetic nightly check was considered and declined, because making
 the CLI draw an `AskUserQuestion` needs a real model call and that is recurring
 spend. The fingerprint rides on dialogs that happen anyway.
+
+## Amended 2026-09-23: a multi-select tap toggles, and a button leaves the question
+
+Key injection and one request per reader action both stand. What changes is
+which action leaves a multi-select question.
+
+**What prompted the amendment.** Viktor reported on 2026-09-23 that "multi
+answer questions now move on to the next step on the first selection and the
+user can't select more than one answer." Since the one-tap design shipped on
+2026-09-11 (`c319f82d`), a tap on a multi-select row sent the desired set, and
+the server then walked to the CLI's commit row and pressed `Enter` (`planChoice`
+in `sessionio/answerplan.go`). The first tap therefore committed the question,
+and on a one-question call it landed on the review screen. A second pick could
+still be added by walking back to the question, which the 2026-09-11
+verification run did once, but every extra pick cost a walk back.
+
+**The decision.** A tap on a multi-select row toggles that row and nothing else.
+It is still one request carrying the set the question should hold, now with
+`stay`, which applies the set and keeps the question on screen, and the card
+draws the ticks from the reading that comes back. Leaving the question is a
+request of its own, sent by a commit button that carries the pane's own label
+for the commit row, `Next` or `Submit`. Free text on a multi-select is one more
+pick, typed into the CLI's inline row with no `Enter`. Single-select is
+unchanged: one tap answers, through the digit.
+
+The button mirrors the terminal rather than adding a step to it. Measured on CLI
+2.1.280, `Enter` on a numbered multi-select row toggles it and never leaves the
+question. What leaves is an unnumbered row under the free-text row, `Next` on
+every question but the last and `Submit` on the last, so a reader at the
+terminal already ticks and then commits. The card now asks for the same two
+gestures.
+
+- *Was:* "A multi-select one sends the desired final set, because its rows are
+  toggles the CLI is already holding … so a second pick adds rather than
+  replacing the first." *Now:* it still sends the desired final set, and a
+  second pick still adds, but a tap no longer leaves the question. The commit
+  button sends the set the card shows without `stay`, and an empty set is
+  refused with nothing typed. The CLI would accept an empty commit, and Claude
+  would receive "The user did not answer the questions."
+- *Was:* the tab bar's box fills "on the first `Space`, before the `Enter` that
+  leaves the question." *Now:* the `Enter` that leaves is the one on the commit
+  row, and measured on 2.1.280 the box empties again once every tick is removed,
+  so the tally can fall as well as run ahead. The conclusion holds: the drawn
+  question decides position.
+
+**What it costs.** A one-pick answer now takes two requests, the tick and the
+commit, where it took one. A tap made while a request is in flight waits rather
+than being dropped, and goes out computed against the reading that request's
+reply returned, so the card holds the reader's pending taps and still no model
+of the dialog. Every request still records one `text.answer_sent` or
+`text.answer_failed`, now with `tl.action`, and `claude.answered` skips toggles,
+so one multi-select answer counts once, at its commit (ADR-0006). The 2.1.280
+measurements and the wire additions are in
+`docs/plans/2026-09-10-text-mode-answers-dialogs-design.md`.

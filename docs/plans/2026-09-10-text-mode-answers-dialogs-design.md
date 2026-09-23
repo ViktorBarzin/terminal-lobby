@@ -2,6 +2,8 @@
 
 **Status:** shipped 2026-09-11 and verified against the deployed service, v0.50.4.
 See "What production found" below. Designed 2026-09-10 through `/grill-with-docs`.
+**Amended 2026-09-23:** a multi-select tap now toggles one row, and a commit
+button leaves the question. See "Amended 2026-09-23" below.
 **Reported by:** Viktor. **Author:** Claude (measurement + design).
 **Scope:** `frontend-v2/`, `session-events/`, `sessionio/`, `docs/adr/0010`.
 
@@ -133,11 +135,13 @@ answer nobody picked can be committed.
 **Every choice is a request.** The reader picks an option, that goes to the
 server, the server answers the question the pane is drawing and returns whatever
 the pane draws next. There is no plan computed ahead of time, no local
-multi-question form, and no index to misalign.
+multi-question form, and no index to misalign. On a multi-select question each
+choice is one toggle, and the card's commit button is the request that leaves
+the question (amended 2026-09-23, below).
 
 ```mermaid
 flowchart TD
-    A["reader taps an option"]
+    A["reader taps an option,<br/>or the commit button"]
     B["POST /answer/&lt;session&gt;<br/>header + choice"]
     C{"is this the question<br/>the pane is drawing?"}
     D["refuse, and return<br/>what IS on screen"]
@@ -170,8 +174,10 @@ list. Not the tab-bar count.
 Measured 2026-09-10: for a multi-select question the tab bar flips to `☒` on the
 **first Space**, before the question has been left. `←  ☐ Picks  ☐ Drink` became
 `←  ☒ Picks  ☐ Drink` with a single toggle sent and no Enter. So `answered` runs
-one ahead for multi-select and cannot be a position index. The tab bar still
-supplies the count and the headers, which it reports reliably.
+one ahead for multi-select and cannot be a position index. A re-measurement on
+2.1.280 (2026-09-23) found that the box also empties again once every tick is
+removed, so the tally can fall as well. The tab bar still supplies the count
+and the headers, which it reports reliably.
 
 ### Going back
 
@@ -186,9 +192,11 @@ request carries the desired final set and the server changes only the rows whose
 state differs. Sending one label there would have unticked the first pick, which
 is what the first build did until it was measured on 2026-09-11.
 
-There is no local draft to revise, so a choice commits when you make it. The
-CLI's own review screen at the end is still the place to see everything before
-submitting, and `←` from there still works.
+There is no local draft to revise. A single-select choice commits when you make
+it. A multi-select tap did too until 2026-09-23, when ticking and leaving became
+separate requests (see "Amended 2026-09-23" below). The CLI's own review screen
+at the end is still the place to see everything before submitting, and `←` from
+there still works.
 
 ### A screen we cannot read
 
@@ -280,7 +288,7 @@ because the pattern is the lesson, not the individual bugs.
 |---|---|---|
 | 0.50.1 | two toggles packed into one `send-keys` run lose all but the first | asked for two toppings, got one |
 | 0.50.2 | a `Space` behind two navigation keys is eaten by the repaint; one navigation key survives, so the shape of the option list decided whether an answer landed | same symptom, narrower |
-| 0.50.3 | `Enter` on a multi-select row **toggles it back off**. The widget's footer says `Enter to select`, and the commit is an unnumbered `Next` row below the free-text option | filming the pane: the pick appeared at 418 ms and vanished at 549 ms |
+| 0.50.3 | `Enter` on a multi-select row **toggles it back off**. The widget's footer says `Enter to select`, and the commit is an unnumbered `Next` row below the free-text option (`Submit` on the last question, measured on 2.1.280) | filming the pane: the pick appeared at 418 ms and vanished at 549 ms |
 | 0.50.4 | the review screen carries **no footer**, and the reader refused to parse anything footerless, so the last answer of every multi-question call reported `done` while the session sat waiting on Submit | the card would have gone quiet on a blocked session |
 
 **Why the tests could not catch any of them.** The Go tests drive a stand-in TUI
@@ -298,7 +306,157 @@ four were only legible that way.
 deployed text view at 414px, including a multi-select built up to two picks
 across a tap on an answered chip to go back, then Submit. Claude received
 `Fruit → Pear`, `Picks → Nuts, Cream`, `Drink → Coffee`, `Size → Large`. No
-Terminal hand-off at any point.
+Terminal hand-off at any point. The second pick needed that walk back because
+every multi-select tap committed its question at the time; the 2026-09-23
+amendment below removes the walk.
+
+## Amended 2026-09-23: a multi-select tap toggles, a button commits
+
+> multi answer questions now move on to the next step on the first selection and
+> the user can't select more than one answer.
+
+Viktor, 2026-09-23, in a desktop browser. The fix below was decided with him
+through `/grill-me` the same day.
+
+**What was happening.** The design applied one rule to both kinds of question: a
+choice commits when you make it. That fits a single-select question, where one
+choice is the whole answer. On a multi-select question every tap sent the
+desired set and the server then walked to the commit row and pressed `Enter`
+(`planChoice` in `sessionio/answerplan.go`), so the first tap left the question,
+and on a one-question call the next screen was the review screen. The card's
+hint said to come back for another pick, and the verification run above did
+build a two-pick answer that way, but every extra pick cost a walk back.
+
+### What CLI 2.1.280 does, measured 2026-09-23
+
+A scratch Claude Code session in tmux, driven one `send-keys` run per key with a
+settle after each and captured after every step, with the tool results read back
+from the session's transcript. Five runs: one multi-select question (`Fruit`:
+Apple, Pear, Plum), the same question committed with nothing ticked, two
+multi-select questions (`Fruit`, then `Toppings`), ticks removed one by one, and
+the free-text row on its own. A second probe the same day sent the keys the
+server sends, a bracketed paste and runs of `Backspace`, and moved the cursor
+back up from the free-text row.
+
+| behaviour | what the CLI did |
+|---|---|
+| leaving a multi-select question | an unnumbered row directly under the free-text row, where `Enter` commits. It reads `Next` on every question but the last and `Submit` on the last, so a one-question call's only question shows `Submit` |
+| `Enter` on a numbered row | toggles that row and stays on the question |
+| after `Submit` | the review screen, which a one-question multi-select call shows too. It still has no footer, as 0.50.4 found |
+| committing with nothing ticked | allowed. The question stays unanswered, the review screen warns `⚠ You have not answered all questions`, and the tool result reads `The user did not answer the questions.` |
+| the free-text row | an inline field. Typing goes straight in and ticks it, and the row then reads `[✔] Mango` in place of `Type something`. A bracketed paste lands the same way, spaces kept. `Space` types a literal space and ticks it, and `Enter` toggles the box and keeps the text. `Backspace` down to empty unticks it; three in one run are all taken, and one on the empty field does nothing. Committed beside two ticked options, Claude received `Apple, Pear, Mango` |
+| `Enter` on the empty free-text row | ticks `[✔] Type something`, and the row is dropped at commit: Claude received `Apple` alone |
+| the tab bar's box | fills on the first tick and returns to `☐` once every box is unticked |
+| the footer | `↑/↓ to navigate` with one question and `Tab/Arrow keys to navigate` with two or more. `ctrl+g to edit in Vim` joins it while the cursor is on the free-text row or the commit row, and goes again when the cursor moves back up to an option |
+
+The key-delivery findings of 0.50.1 and 0.50.2 still govern every walk: each
+cursor walk and each `Space` gets its own `send-keys` run with `keySettle`
+between, which is how `planChoice` already batches and why the probe sent one
+key per run.
+
+### What changes
+
+1. **A tap toggles one row.** It is one request carrying the set the question
+   should hold, with `stay`. The server applies it without leaving the question,
+   and the card draws the ticks from the reading that comes back, so a tick
+   appears only once the pane shows it. The card still holds no model of the
+   dialog.
+2. **Taps wait their turn.** A tap made while a request is in flight waits for
+   that request's reply, then goes out computed against the reply's reading.
+   Its row pulses with the existing `tl-pulse` animation until then, and no tap
+   is lost.
+3. **A commit button leaves the question.** It sits at the right end of the
+   card's bottom actions row, where the review screen's Submit sits, and carries
+   the pane's own commit-row label, `Next` or `Submit`. It is disabled while
+   nothing is ticked, while a tap is queued, and while a request is in flight.
+   Tapping the last ticked row unticks it like any checkbox. The old rule that
+   the last pick re-confirmed itself is gone, because a tap no longer has to
+   leave the question.
+4. **Free text is one more pick.** Tapping the free-text row opens the card's
+   field. Its Add action types the text into the CLI's inline row, which ticks
+   it, reads it back, and presses no `Enter`. The pick shows as a ticked row and
+   the commit button sends it with the others. Clearing the field removes the
+   pick.
+5. **An answer counts once.** Every request keeps its one `text.answer_sent` or
+   `text.answer_failed`, with a new attribute `tl.action` = `choose`, `toggle`,
+   `commit`, `back`, `submit` or `keys`. `claude.answered` is not emitted for a
+   toggle, so one multi-select answer counts once, at its commit. Back, submit
+   and raw keys count as before.
+6. **Single-select is unchanged.** One tap answers, through the digit.
+
+The live check runs in desktop Chromium, where Viktor met the bug.
+
+```mermaid
+sequenceDiagram
+    participant R as reader
+    participant C as answer card
+    participant S as session-events
+    participant P as CLI pane
+    Note over R,P: one question, commit row reads Submit
+    R->>C: taps Apple
+    C->>S: Apple, stay
+    R->>C: taps Pear
+    Note over C: Pear queues, pulsing
+    S->>P: walk, Space
+    S-->>C: Apple ticked
+    C->>S: Apple, Pear, stay
+    S->>P: walk, Space
+    S-->>C: both ticked
+    R->>C: taps Submit
+    C->>S: Apple, Pear, no stay
+    S->>P: commit row, Enter
+    S-->>C: the review screen
+```
+
+### The wire additions
+
+`frontend-v2/src/lib/answer-api.ts` mirrors `sessionio/answerapi.go`, and both
+carry exactly this. Single-select requests are unchanged.
+
+| field | on | meaning |
+|---|---|---|
+| `stay` | request | Multi-select only. Apply the desired set to the question on screen and do not leave it: no walk to the commit row, no `Enter`. Applied when a fresh reading shows every box as requested, the free-text row included, and `unverified` otherwise; the reply always carries the reading. An empty set is valid and unticks everything. On a single-select question it is refused as `unknown-option` with nothing typed |
+| `choices` naming `Type something` | request | The desired set covers the free-text row: `choices` may name it beside option labels, and `text` is then that row's content, which may not be empty. When `choices` leaves it out and the row holds text, the server clears the row with `Backspace`, never `Space` |
+| no `stay` | request | The commit: the same multi-select request, carrying the set the card displays. The server applies the diff (normally empty), verifies it, walks to the commit row and presses `Enter` in a batch of its own, then verifies the move as before: the review screen, another question, or the dialog gone. An empty set is refused as `unknown-option` with nothing typed |
+| `commit` | reading | The label of the commit row under a multi-select's free-text row, `Next` or `Submit`, and empty when none is drawn |
+| `typed` | reading | The text in a multi-select's free-text row, and empty while it reads `Type something` |
+| `typedChecked` | reading | That row's box |
+
+The free-text row stays out of `options`, as `Type something` always has, and is
+found by position: the last numbered row before the separator above
+`Chat about this`, which on a multi-select sits directly above the commit row.
+Position is the only reliable handle, because typing replaces the label. The
+commit row is never again read as an option's description, which is how the
+`Next` line in `dialog-multi.txt` had been parsed, as "Why the tests could not
+catch any of them" above notes.
+
+Two constraints shape how the server does this:
+
+- **Clearing the free-text row leaves the keys allowlist alone.** `answerKeys`
+  in `sessionio/tmux.go` carries no `BSpace`, and it is the whole security
+  boundary of the public `POST /keys` route. The server clears the row through
+  the internal raw-keys path the model picker already uses (`rawKeys` in
+  `sessionio/setmodel.go`), bounded by the characters the reading shows in the
+  row plus a small margin, and only while the pane draws that row with the
+  cursor on it.
+- **A toggle is verified by its boxes.** `answerMoved` in
+  `sessionio/answerdrive.go` looks for three signals that a question was left,
+  and a toggle that adds a second pick changes none of them, so it would come
+  back `unverified`. A `stay` request is checked against the fresh reading's
+  boxes and free-text row instead.
+
+**The empty commit.** The CLI accepts a commit with nothing ticked, and the card
+and the server do not. The button is disabled in that state and the server
+refuses an empty commit, so a stray press cannot send Claude "The user did not
+answer the questions." A reader who means to skip the question can still do it
+in the Terminal.
+
+**The button's label before the first reply.** The watcher's reading is
+withdrawn once the call's record lands, and the transcript records no commit
+row, so a fresh question is usually drawn without one. Until the first reply
+brings a reading, the card takes the label from the call's shape instead:
+`Submit` on the call's last question and `Next` on the others, which is what
+the CLI draws.
 
 ## Open questions
 
@@ -313,7 +471,31 @@ Terminal hand-off at any point.
   calls rests on 5 attempts, of which 1 succeeded.
 - **The event carries no session name**, only `user.id` and `tl.device`, so a
   failure cannot be tied back to the transcript it came from. Adding the session
-  to the event would make the next investigation much shorter.
+  to the event would make the next investigation much shorter. Addressed on
+  2026-09-11: the events now come from `session-events`, which adds
+  `tl.session` to each.
 - **Per-choice latency on a phone.** Server-side work measured at 63–154 ms; a
   cellular round trip adds perhaps 200–400 ms on top. That should feel fine with
-  a spinner on the tapped row, but it is unmeasured on a real phone.
+  a spinner on the tapped row, but it is unmeasured on a real phone. Since
+  2026-09-23 a multi-select answer is one request per tick plus the commit, sent
+  one after another through the queue, so it matters most there.
+- **Bracketed paste into the multi-select inline field, through the deployed
+  route.** The first probe typed with `tmux send-keys -l`, and the server's
+  `AnswerText` uses bracketed paste. The second probe sent that paste the way
+  `AnswerText` does (`set-buffer`, then `paste-buffer -p`) on a private tmux
+  socket, and `Kiwi fruit` landed in the field and ticked it. It has not yet
+  gone through the deployed service, so the live check still has to show the
+  text ticked in the row after an Add, with no `Enter` pressed.
+- **Words left in the field when the commit button is pressed.** The decisions
+  above cover words that went in through Add. For a reader who types into the
+  field and presses the commit button without Add, the card commits the words
+  with the ticked rows rather than dropping them, and it enables the button on
+  those words alone. That keeps what the reader can see on screen, and in that
+  one case it departs from "disabled while nothing is ticked". Keeping to the
+  letter of that decision is a one-line change in `commitSet`
+  (`QuestionCard.tsx`).
+- **A tap racing a keystroke in the Terminal.** A tap is computed against the
+  last reading the card holds and applied as a desired final state, so a box
+  toggled in the Terminal between that reading and the request is set back to
+  what the card last saw. This follows from the contract rather than from
+  anything observed, and the 2026-09-11 design had the same window.
