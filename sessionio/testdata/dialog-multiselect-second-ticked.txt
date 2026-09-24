@@ -1,0 +1,21 @@
+
+❯ Call the AskUserQuestion tool right now with exactly TWO questions: (1) header "Fruit", question "Pick fruits",
+  options "Apple","Pear","Plum", multiSelect true; (2) header "Toppings", question "Pick toppings", options
+  "Nuts","Cream","Sprinkles", multiSelect true. Do not use any other tool and say nothing before the call.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruit  ☒ Toppings  ✔ Submit  →
+
+Pick toppings
+
+❯ 1. [✔] Nuts
+         Nuts
+  2. [ ] Cream
+         Cream
+  3. [ ] Sprinkles
+         Sprinkles
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel

@@ -153,8 +153,10 @@ func (r answerReading) replyDone() AnswerResponse {
 // one the drawn question offers. A client holding the previous question's
 // reading is caught by the second — that question has an answer, so the dialog
 // is not waiting on it — and by the third whenever the two questions offer
-// different labels. Going back is refused outright, because arrival cannot be
-// proved without the list.
+// different labels. The second lets through the one ticked box that is the
+// drawn multi-select's own, filled by the ticks the reader is still making
+// (ownBox). Going back is refused outright, because arrival cannot be proved
+// without the list.
 //
 // The error return is for a pane that could not be read at all, which is a
 // session that has gone away. Every other outcome, refusals included, is a

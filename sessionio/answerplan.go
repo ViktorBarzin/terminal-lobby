@@ -443,7 +443,10 @@ func drawnHeader(d *Dialog, region []string, header string, known []DialogQuesti
 		// to be drawn. Reaching this question again means walking back to it
 		// with ←, which needs the call's question list, and with that list this
 		// branch is not reached at all.
-		if tabBoxes(region)[strings.ToLower(header)] {
+		//
+		// The exception is a ☒ that is the drawn multi-select's own, filled by
+		// the ticks the reader is still making (ownBox).
+		if tabBoxes(region)[strings.ToLower(header)] && !ownBox(d, region, header) {
 			return drawnElsewhere
 		}
 		return drawnUnsure
@@ -452,6 +455,56 @@ func drawnHeader(d *Dialog, region []string, header string, known []DialogQuesti
 		return drawnElsewhere
 	}
 	return drawnUnsure
+}
+
+// ownBox reports whether this header's ☒ is the drawn question's own, filled
+// by picks the reader is still making, rather than an answer left behind.
+//
+// A multi-select's box fills on its FIRST tick while the question is still on
+// screen, and empties again once the last tick is taken back (CLI 2.1.280,
+// measured 2026-09-23). Until that day every multi-select tap committed, so a
+// ☒ always meant a question already left and drawnHeader refused it. Once a
+// tap only toggled, that refused the question the reader was in the middle
+// of: the live check on a real one-question call with no record in the
+// transcript saw the first tick apply, and the second tick, the commit and an
+// untick-all each come back not-drawn with nothing typed.
+//
+// Two things have to hold. The drawn question is a multi-select holding a pick
+// that fills a box (fillsBox). And this header's box is the LAST ☒ on the bar:
+// the CLI reaches questions in order, so every question after the drawn one is
+// still ☐ and the drawn one is ☒ by its own pick, which leaves every other ☒
+// to a question behind it. A card naming one of those is the card that has
+// fallen behind, and it is still refused.
+//
+// The one walk out of that order is ← pressed at the terminal, since the
+// server refuses ← without the call's question list. There the drawn question
+// can sit in front of a ☒ it does not own: a request naming it is refused, and
+// one naming that later question goes on to the option check, as a request
+// naming a ☐ question always has. Either reply carries the reading.
+func ownBox(d *Dialog, region []string, header string) bool {
+	if q := d.Questions[0]; !q.MultiSelect || !fillsBox(q) {
+		return false
+	}
+	boxes := tabBoxes(region)
+	for i := len(d.Headers) - 1; i >= 0; i-- {
+		if boxes[strings.ToLower(d.Headers[i])] {
+			return strings.EqualFold(d.Headers[i], header)
+		}
+	}
+	return false
+}
+
+// fillsBox reports whether a multi-select question holds a pick that fills its
+// tab-bar box: an option ticked, or the free-text row ticked with words in it.
+// The row ticked with nothing in it, "[✔] Type something", fills nothing, and
+// the CLI drops that pick at commit (both measured on 2.1.280, 2026-09-23).
+func fillsBox(q DialogQuestion) bool {
+	for _, o := range q.Options {
+		if o.Checked {
+			return true
+		}
+	}
+	return q.TypedChecked && q.Typed != ""
 }
 
 // tabBoxes pairs each tab-bar header with its box: true for ☒, false for ☐,

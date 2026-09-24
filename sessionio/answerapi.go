@@ -35,9 +35,12 @@ import "strings"
 // 2026-08-28 at 3-8 s for some calls and not until the answer for others — the
 // pane cannot be placed, and three weaker checks stand in: the header must be
 // one the tab bar carries, its box there must not already be ticked, and the
-// drawn question must offer the label. Refusing instead would make every tap in
-// that window come back not-drawn, on exactly the call shape the field data says
-// fails most, so the looser rule is deliberate (TextView.tsx callAddress).
+// drawn question must offer the label. A ticked box that the drawn multi-select
+// filled with its own picks does not count, since the box fills on the first
+// tick while the question is still on screen (answerplan.go ownBox). Refusing
+// instead would make every tap in that window come back not-drawn, on exactly
+// the call shape the field data says fails most, so the looser rule is
+// deliberate (TextView.tsx callAddress).
 type AnswerRequest struct {
 	// Header of the question this choice belongs to, as the tab bar draws it.
 	// Required for Choice; ignored for Submit.

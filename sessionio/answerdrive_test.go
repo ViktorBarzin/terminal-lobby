@@ -1640,3 +1640,105 @@ func TestAToggleFromTheCommitRowWalksBackUp(t *testing.T) {
 		t.Fatalf("applied=%v reason=%q ticks=%v, want Pear", res.Applied, res.Reason, ticksOf(t, res))
 	}
 }
+
+// THE WINDOW BEFORE THE RECORD, with toggles. Claude Code does not always write
+// the AskUserQuestion record while its dialog is up (measured 2026-08-28: two
+// records of five were written only once the question was answered), and
+// without it the driver cannot place the pane and falls back to the tab bar.
+// A multi-select's box fills on its first tick while the question is still on
+// screen, and until the fix the fallback read that box as a question already
+// answered.
+//
+// The live check replayed it on a real one-question call on CLI 2.1.280 on
+// 2026-09-23: the first tick applied, then the second tick, the commit and an
+// untick-all each came back not-drawn with nothing typed. The stand-in fills
+// the box the same way, so this is that replay with every request sent with no
+// question list.
+func TestAMultiSelectAnswersWithNoQuestionList(t *testing.T) {
+	in, osUser := dialogSessionEnv(t, "FAKEDIALOG_CALL=one ")
+	ctx := context.Background()
+	for _, step := range []struct {
+		choices []string
+		want    []string
+	}{
+		{[]string{"Apple"}, []string{"Apple"}},
+		{[]string{"Apple", "Pear"}, []string{"Apple", "Pear"}},
+		{nil, nil},
+		{[]string{"Pear"}, []string{"Pear"}},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo",
+			AnswerRequest{Header: "Fruit", Choices: step.choices, Stay: true}, nil)
+		if err != nil {
+			t.Fatalf("Answer(%v): %v", step.choices, err)
+		}
+		if !res.Applied || res.Reason != "" || res.Review {
+			t.Fatalf("toggle to %v with no list: applied=%v reason=%q review=%v", step.choices, res.Applied, res.Reason, res.Review)
+		}
+		if got := ticksOf(t, res); !sameTicks(got, step.want...) {
+			t.Fatalf("toggle to %v: the reading ticks %v", step.choices, got)
+		}
+	}
+	res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}}, nil)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || !res.Review {
+		t.Fatalf("the commit with no list: applied=%v review=%v reason=%q, want the review screen", res.Applied, res.Review, res.Reason)
+	}
+	if res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Submit: true}, nil); err != nil || !res.Done {
+		t.Fatalf("Submit: %+v, %v", res, err)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "SUBMITTED Pear") {
+		t.Errorf("the answer that reached the stand-in is not the one chosen:\n%s", pane)
+	}
+}
+
+// And the refusal the ☒ rule exists for still holds with no list: once the
+// multi-select is committed, a card still holding it is refused as not-drawn
+// with nothing typed, rather than having its request tried against the
+// question the pane moved to.
+func TestAStaleCardIsRefusedWithNoQuestionList(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, req := range []AnswerRequest{
+		{Header: "Fruit", Choices: []string{"Apple"}, Stay: true},
+		{Header: "Fruit", Choices: []string{"Apple", "Pear"}, Stay: true},
+		{Header: "Fruit", Choices: []string{"Apple", "Pear"}},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo", req, nil)
+		if err != nil {
+			t.Fatalf("Answer(%+v): %v", req, err)
+		}
+		if !res.Applied || res.Reason != "" {
+			t.Fatalf("%+v with no list: applied=%v reason=%q", req, res.Applied, res.Reason)
+		}
+	}
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple", "Pear", "Plum"}, Stay: true}, nil)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Applied || res.Reason != AnswerNotDrawn {
+		t.Fatalf("applied=%v reason=%q, want the stale card refused as not-drawn", res.Applied, res.Reason)
+	}
+	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" || res.Dialog.Answered != 1 {
+		t.Fatalf("the refusal did not carry the untouched second question: %+v", res.Dialog)
+	}
+	if res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Drink", Choice: "Coffee"}, nil); err != nil || !res.Review {
+		t.Fatalf("Coffee with no list: %+v, %v", res, err)
+	}
+	if res, err = in.Answer(ctx, osUser, "demo", AnswerRequest{Submit: true}, nil); err != nil || !res.Done {
+		t.Fatalf("Submit: %+v, %v", res, err)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "SUBMITTED Apple, Pear | Coffee") {
+		t.Errorf("the answer that reached the stand-in is not the one chosen:\n%s", pane)
+	}
+}

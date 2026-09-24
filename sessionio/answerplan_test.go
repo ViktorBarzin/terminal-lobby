@@ -13,16 +13,39 @@ var multiKnown = []DialogQuestion{
 	{Header: "Drink", Question: "Pick one drink"},
 }
 
-// midToggle is the state a multi-select question is in between the first Space
-// and the Enter that leaves it: the tab bar has already flipped to ☒ while the
-// pane is still drawing the question. Measured against CLI 2.1.267 on
-// 2026-09-10, which is why Answered cannot be a position index.
+// midToggle is the state a multi-select question is in between the first tick
+// and the commit that leaves it: Apple ticked, and the tab bar already flipped
+// to ☒ while the pane is still drawing the question. Measured against CLI
+// 2.1.267 on 2026-09-10, which is why Answered cannot be a position index. On
+// 2.1.280 the box fills on the first tick and empties again once the last one
+// is taken back (2026-09-23), so the tick is drawn here as well as the box.
 func midToggle(t *testing.T) string {
 	t.Helper()
-	pane := fixture(t, "dialog-multi.txt")
-	out := strings.Replace(pane, "←  ☐ Fruit  ☐ Drink  ✔ Submit  →", "←  ☒ Fruit  ☐ Drink  ✔ Submit  →", 1)
+	pane := boxOnly(t)
+	out := strings.Replace(pane, "❯ 1. [ ] Apple", "❯ 1. [✔] Apple", 1)
 	if out == pane {
-		t.Fatal("the fixture's tab bar has moved; this test edits it by hand")
+		t.Fatal("the fixture's Apple row has moved; this test edits it by hand")
+	}
+	return out
+}
+
+// boxOnly is dialog-multi.txt with Fruit's tab-bar box ticked and NO pick
+// drawn on the question: a ☒ that the question on screen does not account for,
+// because its box would be ☐ with nothing ticked. It is what the pane shows a
+// card that has fallen behind, one holding a question already answered.
+func boxOnly(t *testing.T) string {
+	t.Helper()
+	return edited(t, "dialog-multi.txt", "←  ☐ Fruit  ☐ Drink  ✔ Submit  →", "←  ☒ Fruit  ☐ Drink  ✔ Submit  →")
+}
+
+// edited is a fixture with one line changed by hand, failing the test when the
+// line is no longer there to change.
+func edited(t *testing.T, name, from, to string) string {
+	t.Helper()
+	pane := fixture(t, name)
+	out := strings.Replace(pane, from, to, 1)
+	if out == pane {
+		t.Fatalf("%s no longer draws %q; this test edits it by hand", name, from)
 	}
 	return out
 }
@@ -286,9 +309,14 @@ func TestDrawnHeader(t *testing.T) {
 		{"in the tab bar, nothing known: the capture cannot say", fixture(t, "dialog-multi.txt"), "Drink", nil, drawnUnsure},
 		{"a single-question call draws its own header", fixture(t, "dialog-single.txt"), "Font", nil, drawnHere},
 		{"and refuses another", fixture(t, "dialog-single.txt"), "Colour", nil, drawnElsewhere},
-		// Nothing known and the question already answered: the box says so,
-		// and a request naming it is a card that has fallen behind.
-		{"a question the tab bar has already ticked, nothing known", midToggle(t), "Fruit", nil, drawnElsewhere},
+		// Nothing known and a box ticked that the drawn question's picks do
+		// not account for: the question has an answer, and a request naming
+		// it is a card that has fallen behind.
+		{"a box no pick on screen accounts for, nothing known", boxOnly(t), "Fruit", nil, drawnElsewhere},
+		// Nothing known and the box filled by the drawn multi-select's own
+		// first tick. That is the question the reader is in the middle of,
+		// and refusing it refused every tick after the first.
+		{"the drawn multi-select's own tick, nothing known", midToggle(t), "Fruit", nil, drawnUnsure},
 		{"the question still open beside it", midToggle(t), "Drink", nil, drawnUnsure},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -338,6 +366,58 @@ func TestDrawnHeaderRefusesAnAnsweredQuestionWhenLabelsOverlap(t *testing.T) {
 	// would have cost the reader the call.
 	if got := drawnHeader(d, region, "Worker", nil); got == drawnElsewhere {
 		t.Error("the open question was refused as well")
+	}
+}
+
+// A TICKED BOX IS NOT ALWAYS AN ANSWER LEFT BEHIND. A multi-select's box fills
+// on its first tick while the question is still on screen (CLI 2.1.280,
+// measured 2026-09-23), and since a tap toggles rather than commits, a reader
+// sends several requests naming a question whose box is already ☒.
+//
+// The live check found it on a real one-question call with no record in the
+// transcript: the first tick applied, and the second tick, the commit and an
+// untick-all all came back not-drawn with nothing typed. The refusal of a card
+// that has fallen behind still has to hold, so every capture here is a real
+// 2.1.280 screen and each side of the line is pinned.
+func TestDrawnHeaderTakesATickedBoxThatIsTheDrawnMultiSelectsOwn(t *testing.T) {
+	// dialog-multiselect-last.txt with its free-text row ticked and empty,
+	// "[✔] Type something". Enter on the empty row does that, and it fills no
+	// box: the CLI drops the pick at commit (measured 2026-09-23).
+	emptyTicked := edited(t, "dialog-multiselect-last.txt", "4. [ ] Type something", "4. [✔] Type something")
+	// dialog-multiselect-typed-on-commit.txt with Pear unticked, so the only
+	// pick is the words in the free-text row. Typed words tick the row, and
+	// clearing them sends the box back to ☐ (measured 2026-09-23), so the
+	// words fill it.
+	wordsOnly := edited(t, "dialog-multiselect-typed-on-commit.txt", "2. [✔] Pear", "2. [ ] Pear")
+	for _, tc := range []struct {
+		name   string
+		pane   string
+		header string
+		want   answerDrawn
+	}{
+		// One question: its box can only be filled by the picks on screen.
+		{"a one-question call holding its picks", fixture(t, "dialog-multiselect-typed.txt"), "Fruit", drawnUnsure},
+		{"and holding only its free text", wordsOnly, "Fruit", drawnUnsure},
+		// Two questions, the first committed and the second holding a tick.
+		// Questions are reached in order, so the drawn one owns the LAST ☒.
+		{"the second question, holding a tick", fixture(t, "dialog-multiselect-second-ticked.txt"), "Toppings", drawnUnsure},
+		{"the committed question behind it", fixture(t, "dialog-multiselect-second-ticked.txt"), "Fruit", drawnElsewhere},
+		// A ticked empty free-text row fills no box, so the ☒ is Fruit's
+		// answer and not the drawn question's.
+		{"a ☒ the drawn question's empty free-text tick cannot own", emptyTicked, "Fruit", drawnElsewhere},
+		{"and the drawn question beside it, still ☐", emptyTicked, "Toppings", drawnUnsure},
+		// The review screen draws no question at all.
+		{"the review screen", fixture(t, "dialog-review-one-question.txt"), "Fruit", drawnElsewhere},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := ParseDialog(tc.pane)
+			if d == nil {
+				t.Fatal("the capture must parse for this to prove anything")
+			}
+			if got := drawnHeader(d, answerRegion(tc.pane), tc.header, nil); got != tc.want {
+				t.Errorf("drawnHeader(%s) = %v, want %v", tc.header, got, tc.want)
+			}
+		})
 	}
 }
 

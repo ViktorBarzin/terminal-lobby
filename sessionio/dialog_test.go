@@ -306,6 +306,7 @@ func TestParseDialogReadsTheCommitRowOfAMultiSelect(t *testing.T) {
 		{"dialog-multiselect-one.txt", "Pick fruits", "Submit"},
 		{"dialog-multiselect-next.txt", "Pick fruits", "Next"},
 		{"dialog-multiselect-last.txt", "Pick toppings", "Submit"},
+		{"dialog-multiselect-second-ticked.txt", "Pick toppings", "Submit"},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			d := ParseDialog(fixture(t, tc.fixture))
