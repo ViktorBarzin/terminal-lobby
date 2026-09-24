@@ -252,8 +252,12 @@ IngressRoute, which allow-lists `session-events` paths one by one.
 
 **Worth checking, because it fails without an error.** `Emit` drops a name the
 catalog does not list and writes nothing. `claude.model_set`, which
-`POST /model/{session}` emits for a model change, was not in
-`telemetry/events.go` on 2026-09-24, and `session-events.service` had written
-none in the seven days before. Whichever event carries the mode request needs a
-catalog entry for `mode` to be seen at all, and a new event name means the
-three edits in one commit that Consequences describes.
+`POST /model/{session}` emits for a model change, is one of three names that
+`frontend-v2/test/docs.truth.test.ts` lists as emitted but left out of the
+catalog on purpose, until someone decides on their volume; unlike `api.served`
+and `api.rollup` it is not per-request. `session-events.service` wrote none in
+the seven days before 2026-09-24. So if the mode request rides
+`claude.model_set`, `mode` is dropped with it and that test stays green; it
+needs the catalog entry first. A new event name means the three edits in one
+commit that Consequences describes, and the same test fails until the catalog
+carries it.

@@ -398,7 +398,7 @@ about 6 s from the key to the new view.
 
 - `text.answer_sent` and `text.answer_failed` carry `tl.action` = `plan-approve` or `plan-feedback`, and `tl.reason` on a failure. Neither carries the feedback text or a label, per ADR-0008's content-free rule.
 - `claude.answered` fires once per applied plan answer.
-- A mode request on `POST /model/{session}` carries `tl.action` = `mode`. The event that same route emits for a model change, `claude.model_set`, is not in the catalog (`telemetry/events.go`), so `Emit` drops it: `session-events.service` wrote none in the 7 days before 2026-09-24. Whichever event carries the mode request needs a catalog entry to be counted.
+- A mode request on `POST /model/{session}` carries `tl.action` = `mode`. The event that same route emits for a model change, `claude.model_set`, is left out of the catalog on purpose (`frontend-v2/test/docs.truth.test.ts` lists it, pending a decision on volume), so `Emit` drops it: `session-events.service` wrote none in the 7 days before 2026-09-24. If the mode request rides that event, it needs the catalog entry first, or `mode` is never counted.
 - The plan spec proposes a `claude.prompt_refused` event for the prompt guard (`tl.reason` = `plan-open`, `tl.count` the prompt's length). A new event means the Go catalog, the TS union and ADR-0006's table change in one commit.
 
 ADR-0006 records the new `tl.action` values.
