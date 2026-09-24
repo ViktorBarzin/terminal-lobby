@@ -688,6 +688,30 @@ func TestAnswerMovedIsLocalEvidenceOnly(t *testing.T) {
 	}
 }
 
+// The two read-backs typeAnswer takes, against the captures. On a multi-select
+// the paste replaces the row's placeholder, so words that are part of "Type
+// something" leave the region's count where it was, and only the row itself
+// can say they landed.
+func TestRowShowsTheWordsWhereTheRegionGainsNothing(t *testing.T) {
+	before := readingOf(t, "dialog-multiselect-one.txt")
+	pane := edited(t, "dialog-multiselect-typed.txt", "❯ 4. [✔] Mango", "❯ 4. [✔] Something")
+	after := answerReading{pane: pane, region: answerRegion(pane), dialog: ParseDialog(pane)}
+	if gainedText("Something")(before, after) {
+		t.Fatal("the region gained the words; this test no longer shows why the row is the read-back")
+	}
+	if !rowShows(before, "Something")(before, after) {
+		t.Error("rowShows missed the words in the row")
+	}
+	if rowShows(before, "Kiwi")(before, after) {
+		t.Error("rowShows took other words for the ones typed")
+	}
+	// A row holding the words on another question is not this paste landing.
+	elsewhere := readingOf(t, "dialog-multi-second.txt")
+	if rowShows(elsewhere, "Something")(elsewhere, after) {
+		t.Error("rowShows accepted a reading of a different question")
+	}
+}
+
 // readingOf is a capture as the driver holds one.
 func readingOf(t *testing.T, name string) answerReading {
 	t.Helper()
@@ -757,6 +781,9 @@ DEAF = os.environ.get("FAKEDIALOG_DEAF") == "1"
 # frame. Measured transitions are 63-154 ms on an idle box, so this is what a
 # loaded one looks like to capture-pane: a screen with nothing on it.
 BLINK = os.environ.get("FAKEDIALOG_BLINK") == "1"
+# The cursor moves as ever and is drawn nowhere, so no reading can say which
+# row it is on.
+BLIND = os.environ.get("FAKEDIALOG_BLIND") == "1"
 
 QS = [
     {"header": "Fruit", "text": "Pick fruits", "multi": True,
@@ -768,6 +795,10 @@ QS = [
 # and it still goes to the review screen.
 if os.environ.get("FAKEDIALOG_CALL") == "one":
     QS = QS[:1]
+# The multi-select's options, comma-separated, for a test whose labels carry
+# something the parser has to read around.
+if os.environ.get("FAKEDIALOG_FRUIT"):
+    QS[0]["opts"] = os.environ["FAKEDIALOG_FRUIT"].split(",")
 
 RULE = "─" * 60
 
@@ -864,7 +895,7 @@ def answer_of(i):
 
 
 def mark(row):
-    return "❯" if (row == cursor and not typing) else " "
+    return "❯" if (row == cursor and not typing and not BLIND) else " "
 
 
 def draw():
@@ -1371,6 +1402,45 @@ func TestAToggleTypesFreeTextWithoutLeavingTheQuestion(t *testing.T) {
 	}
 }
 
+// WORDS THAT ARE PART OF THE PLACEHOLDER land like any others. The paste
+// REPLACES "Type something" in the row, so a read-back that counted the words
+// across the dialog's region saw no gain for "Something", "Some", "Type" or a
+// single "e", since the count stays level as the placeholder goes. The review of
+// 2026-09-24 had each come back unverified while the same reply's reading
+// showed the words in the row and ticked, and a commit carrying them pressed
+// no Enter on its first attempt. The row's own field is the read-back now.
+func TestAToggleTypesWordsThatArePartOfThePlaceholder(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	for _, words := range []string{"Something", "Some", "Type", "e"} {
+		res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Header: "Fruit",
+			Choices: []string{"Type something"}, Text: words, Stay: true}, theCall)
+		if err != nil {
+			t.Fatalf("%q: %v", words, err)
+		}
+		if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick fruits" {
+			t.Fatalf("%q: the toggle left the question: %+v", words, res)
+		}
+		if q := res.Dialog.Questions[0]; !res.Applied || res.Reason != "" || q.Typed != words || !q.TypedChecked {
+			t.Errorf("%q: applied=%v reason=%q typed=%q checked=%v", words, res.Applied, res.Reason, q.Typed, q.TypedChecked)
+		}
+	}
+}
+
+// The same words in a commit, sent straight onto a fresh question: typed,
+// read back off the row, and committed on the first attempt.
+func TestACommitCarriesWordsThatArePartOfThePlaceholder(t *testing.T) {
+	in, osUser := dialogSession(t)
+	res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{Header: "Fruit",
+		Choices: []string{"Apple", "Type something"}, Text: "Something"}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Reason != "" || res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" {
+		t.Fatalf("applied=%v reason=%q dialog=%+v, want the commit to land on the drink", res.Applied, res.Reason, res.Dialog)
+	}
+}
+
 // Enter on the free-text row flips its box and keeps the text. A reader who
 // did that at the terminal has left words the card shows as not picked, and a
 // toggle that picks them again presses the Enter back rather than retyping.
@@ -1638,6 +1708,99 @@ func TestAToggleFromTheCommitRowWalksBackUp(t *testing.T) {
 	}
 	if !res.Applied || !sameTicks(ticksOf(t, res), "Pear") {
 		t.Fatalf("applied=%v reason=%q ticks=%v, want Pear", res.Applied, res.Reason, ticksOf(t, res))
+	}
+}
+
+// A LABEL CARRYING THE CURSOR'S GLYPH. The widget draws "❯" in front of the
+// row the cursor is on, and until the review of 2026-09-24 a "❯" anywhere in a
+// row counted as the cursor. With Plum ticked and the cursor on it, a click on
+// "Use ❯ only" planned no walk, since the cursor seemed to be there already,
+// and its Space landed on Plum. The reply came back unverified with nothing
+// ticked. The free-text Add after it walked from the wrong row on every pass.
+func TestAToggleFindsTheCursorPastALabelCarryingItsGlyph(t *testing.T) {
+	in, osUser := dialogSessionEnv(t, "FAKEDIALOG_FRUIT='Apple,Use ❯ only,Plum' ")
+	ctx := context.Background()
+	for _, step := range []struct {
+		choices []string
+		text    string
+		ticks   []string
+		typed   string
+	}{
+		{[]string{"Plum"}, "", []string{"Plum"}, ""},
+		{[]string{"Use ❯ only", "Plum"}, "", []string{"Use ❯ only", "Plum"}, ""},
+		{[]string{"Use ❯ only", "Plum", "Type something"}, "Mango", []string{"Use ❯ only", "Plum"}, "Mango"},
+	} {
+		res, err := in.Answer(ctx, osUser, "demo",
+			AnswerRequest{Header: "Fruit", Choices: step.choices, Text: step.text, Stay: true}, theCall)
+		if err != nil {
+			t.Fatalf("Answer(%v): %v", step.choices, err)
+		}
+		if !res.Applied || res.Reason != "" {
+			t.Fatalf("toggle to %v: applied=%v reason=%q dialog=%+v", step.choices, res.Applied, res.Reason, res.Dialog)
+		}
+		if got := ticksOf(t, res); !sameTicks(got, step.ticks...) {
+			t.Errorf("toggle to %v: the reading ticks %v, want %v", step.choices, got, step.ticks)
+		}
+		if q := res.Dialog.Questions[0]; q.Typed != step.typed {
+			t.Errorf("toggle to %v: typed=%q, want %q", step.choices, q.Typed, step.typed)
+		}
+	}
+}
+
+// EVERY SPACE WAITS FOR A READING THAT SHOWS THE CURSOR ON ITS ROW, the first
+// one included. A plan whose first walk is empty is claiming the cursor is on
+// the row already, and when a capture draws no cursor at all focusedRow falls
+// back to row one. So a click on Apple with the cursor moved to Pear and drawn
+// nowhere planned no walk, and the Space ticked Pear. It is refused now, with
+// nothing typed.
+func TestAToggleSendsNoSpaceWithoutSeeingTheCursor(t *testing.T) {
+	in, osUser := dialogSessionEnv(t, "FAKEDIALOG_BLIND=1 ")
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: []string{"Down"}}, theCall); err != nil || !res.Applied {
+		t.Fatalf("moving the cursor: %+v %v", res, err)
+	}
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple"}, Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Applied || res.Reason != AnswerUnverified {
+		t.Fatalf("applied=%v reason=%q, want unverified", res.Applied, res.Reason)
+	}
+	if got := ticksOf(t, res); len(got) != 0 {
+		t.Errorf("a Space went out on a row nobody could see the cursor on: the reading ticks %v", got)
+	}
+}
+
+// TYPED WORDS CARRYING THE CURSOR'S GLYPH, with the cursor below them. The
+// reader typed "a❯b" through the card, then unticked the row with Enter at the
+// terminal and moved down onto the commit row, where the cursor also rests
+// after a commit whose Enter did not take. The card's Add of the same words
+// asks for the box back. Reading "❯" anywhere as the cursor put it on the
+// free-text row, so the Enter went out with no walk and landed on the commit
+// row. A request that asked to stay committed the question, unanswered.
+func TestAToggleDoesNotReadTypedWordsAsTheCursor(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	add := AnswerRequest{Header: "Fruit", Choices: []string{"Type something"}, Text: "a❯b", Stay: true}
+	if res, err := in.Answer(ctx, osUser, "demo", add, theCall); err != nil || !res.Applied {
+		t.Fatalf("typing the words: %+v %v", res, err)
+	}
+	for _, keys := range [][]string{{"Enter"}, {"Down"}} {
+		if res, err := in.Answer(ctx, osUser, "demo", AnswerRequest{Keys: keys}, theCall); err != nil || !res.Applied {
+			t.Fatalf("keys %v: %+v %v", keys, res, err)
+		}
+	}
+	res, err := in.Answer(ctx, osUser, "demo", add, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick fruits" {
+		t.Fatalf("the toggle left the question: %+v", res)
+	}
+	if q := res.Dialog.Questions[0]; !res.Applied || q.Typed != "a❯b" || !q.TypedChecked {
+		t.Errorf("applied=%v reason=%q typed=%q checked=%v, want the words ticked again",
+			res.Applied, res.Reason, q.Typed, q.TypedChecked)
 	}
 }
 

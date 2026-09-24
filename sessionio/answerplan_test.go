@@ -983,6 +983,56 @@ func TestAnswerRowsCarryTheCommitRowWhereTheCursorStops(t *testing.T) {
 	}
 }
 
+// THE CURSOR IS THE MARK IN FRONT OF A ROW, not the glyph anywhere in it. The
+// widget draws "❯ 3. [✔] Plum" for the row the cursor is on, and a label or
+// the reader's typed words can carry the same glyph, since sessions in this
+// very repository talk about it. Reading "❯ anywhere in the row" as the cursor put
+// it on the first such row, so a toggle's Space went out with no walk onto
+// whichever row the cursor really held, and an Enter meant for the free-text
+// row landed on the commit row and left the question (the review of
+// 2026-09-24 reproduced both against the stand-in).
+func TestAnswerRowsFindTheCursorByTheMarkInFrontOfTheRow(t *testing.T) {
+	label := edited(t, "dialog-multiselect-one.txt", "❯ 1. [ ] Apple", "  1. [ ] Apple")
+	label = strings.Replace(label, "  2. [ ] Pear", "  2. [ ] Use ❯ only", 1)
+	label = strings.Replace(label, "  3. [ ] Plum", "❯ 3. [✔] Plum", 1)
+	typed := edited(t, "dialog-multiselect-typed-on-commit.txt", "  4. [✔] Kiwi fruit", "  4. [ ] a❯b")
+	for _, tc := range []struct {
+		name string
+		pane string
+		at   int // the row the cursor is drawn on
+	}{
+		{"an option label carrying the glyph", label, 2},
+		{"typed words carrying the glyph", typed, 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := answerRows(answerRegion(tc.pane))
+			var on []int
+			for i, r := range rows {
+				if r.focused {
+					on = append(on, i)
+				}
+			}
+			if len(on) != 1 || on[0] != tc.at {
+				t.Fatalf("rows read as focused: %v, want only row %d", on, tc.at)
+			}
+			if got := focusedRow(rows); got != tc.at {
+				t.Errorf("focusedRow = %d, want %d", got, tc.at)
+			}
+		})
+	}
+	// And what the planner makes of the first pane: a walk up onto the row
+	// the reader clicked, rather than a Space with no walk at all.
+	d := ParseDialog(label)
+	want, err := wantOf(d.Questions[0], []string{"Use ❯ only", "Plum"}, "")
+	if err != nil {
+		t.Fatalf("wantOf: %v", err)
+	}
+	got := flatToggles(planToggles(d.Questions[0], answerRows(answerRegion(label)), want))
+	if !sameKeys(got, [][]string{{"Up"}, {"Space"}}) {
+		t.Errorf("batches = %v, want one Up onto the clicked row and its Space", got)
+	}
+}
+
 // What the free-text row holds, as the planner reads it. The whitespace case
 // is the one the wire cannot say: Space on the row types a space the capture
 // trims, so the row reads "[✔]" and Typed comes back empty, and yet a

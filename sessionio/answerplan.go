@@ -684,10 +684,13 @@ func answerRows(region []string) []answerRow {
 			continue
 		}
 		list = append(list, listRow{line: i, box: m[2], label: m[3]})
+		_, focused := cutCursor(clean)
 		rows = append(rows, answerRow{
-			digit:   atoi(m[1]),
-			label:   trimLabel(m[3]),
-			focused: strings.ContainsRune(clean, '❯'),
+			digit: atoi(m[1]),
+			label: trimLabel(m[3]),
+			// The mark in FRONT of the row, never the glyph inside a label
+			// or typed words (cutCursor).
+			focused: focused,
 			// Anything inside the brackets but blank is a filled box. The CLI
 			// draws "✔" today; matching on the glyph would make a restyle to
 			// "x" or "*" read as "nothing picked", which plans a toggle that

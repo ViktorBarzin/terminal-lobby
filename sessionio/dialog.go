@@ -522,14 +522,7 @@ func shapeList(lines []string, rows []listRow, end int) listShape {
 	}
 	if n := len(below); n > 0 {
 		s.commitLine = below[n-1]
-		text := strings.TrimSpace(stripDialogBorder(lines[s.commitLine]))
-		for _, mark := range []string{"❯", ">"} {
-			if strings.HasPrefix(text, mark) {
-				s.commitFocused = true
-				text = strings.TrimSpace(strings.TrimPrefix(text, mark))
-			}
-		}
-		s.commit = text
+		s.commit, s.commitFocused = cutCursor(stripDialogBorder(lines[s.commitLine]))
 		below = below[:n-1]
 	}
 
@@ -553,6 +546,31 @@ func shapeList(lines []string, rows []listRow, end int) listShape {
 		s.holdsText = true
 	}
 	return s
+}
+
+// cutCursor takes the cursor mark off the front of a row and reports whether
+// it was there, returning the rest trimmed.
+//
+// THE MARK COUNTS ONLY IN FRONT. The widget draws it before the row the cursor
+// is on, "❯ 3. [✔] Plum" and "❯    Submit", and the same glyph further along is
+// the row's own text: an option label, or the words a reader typed into the
+// free-text row. Sessions in this repository talk about the glyph, so neither
+// is far-fetched. Until 2026-09-24 a numbered row counted as the cursor's
+// whenever the glyph appeared anywhere in it. The first such row won, so a
+// click on "Use ❯ only" sent its Space to the row the cursor really held, and
+// words reading "a❯b" drew an Enter meant for their row onto the commit row
+// under it, which left the question (both reproduced against the stand-in in
+// the review that day).
+//
+// ">" is the fallback reOption also accepts in that position.
+func cutCursor(row string) (string, bool) {
+	t := strings.TrimSpace(row)
+	for _, mark := range []string{"❯", ">"} {
+		if rest, ok := strings.CutPrefix(t, mark); ok {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return t, false
 }
 
 // freeTextRow is the index of the CLI's free-text row among rows, or -1.

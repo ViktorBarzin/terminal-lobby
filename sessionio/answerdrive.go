@@ -367,7 +367,7 @@ func (in *Injector) answerChoice(ctx context.Context, osUser, session string, be
 	}
 
 	if plan.Text != "" {
-		typed, reason, err := in.typeAnswer(ctx, osUser, session, plan.Text)
+		typed, reason, err := in.typeAnswer(ctx, osUser, session, plan.Text, gainedText(plan.Text))
 		if err != nil {
 			return AnswerResponse{}, err
 		}
@@ -468,8 +468,10 @@ func (in *Injector) answerMulti(ctx context.Context, osUser, session string, bef
 // ROW. A Space that arrives on the free-text row types a space into the
 // reader's words, and an Enter on the commit row leaves the question, so a
 // walk that fell short must end the request rather than land its key on the
-// wrong row. Each walk is read back before the Space behind it; the free-text
-// row is changed one read-back step at a time (settleFreeText).
+// wrong row. Each walk is read back, and every Space, the first included,
+// waits for a reading that draws the cursor on its row; the free-text row is
+// changed one read-back step at a time (settleFreeText). Where the cursor is
+// comes from the mark drawn in front of a row and nowhere else (cutCursor).
 //
 // THE CHECK IS THE BOXES THEMSELVES. A toggle that adds a second pick changes
 // none of the things answerMoved watches: the tab bar filled on the first pick
@@ -500,9 +502,17 @@ func (in *Injector) applyMulti(ctx context.Context, osUser, session string, befo
 			if cur, err = in.read(osUser, session); err != nil {
 				return answerReading{}, "", err
 			}
-			if !stillOn(before, cur) || !cursorOn(cur, rows[step.row].label) {
+			if !stillOn(before, cur) {
 				return cur, AnswerUnverified, nil
 			}
+		}
+		// Every step, the first included. A walk of no keys is the plan
+		// saying the cursor is on the row already, and that is only as good
+		// as the reading it was made from. One that draws no cursor at all
+		// puts focusedRow on row one, and a Space sent on that claim ticked
+		// whichever row the cursor really held.
+		if !cursorOn(cur, rows[step.row].label) {
+			return cur, AnswerUnverified, nil
 		}
 		if err := in.Keys(osUser, session, []string{"Space"}); err != nil {
 			return in.refusal(osUser, session)
@@ -562,8 +572,11 @@ func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, 
 		if act == freeNone {
 			return cur, "", nil
 		}
-		if from := focusedRow(rows); from != at {
-			refused, err := in.press(ctx, osUser, session, chunkKeys(walkTo(from, at)))
+		// The row's own cursor mark, rather than "the first focused row is
+		// this one". The key below goes to whatever row really holds the
+		// cursor, so it waits for a reading that draws the cursor here.
+		if !rows[at].focused {
+			refused, err := in.press(ctx, osUser, session, chunkKeys(walkTo(focusedRow(rows), at)))
 			if err != nil {
 				return answerReading{}, "", err
 			}
@@ -589,9 +602,9 @@ func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, 
 		case freeType:
 			// A bracketed paste, which lands in the inline field and ticks
 			// it: measured on 2.1.280 on 2026-09-23 with "Kiwi fruit", the
-			// space included. typeAnswer reads it back before anything else
-			// is pressed.
-			typed, reason, err := in.typeAnswer(ctx, osUser, session, want.text)
+			// space included. typeAnswer reads it back off the row itself
+			// (rowShows) before anything else is pressed.
+			typed, reason, err := in.typeAnswer(ctx, osUser, session, want.text, rowShows(before, want.text))
 			if err != nil || reason != "" {
 				return typed, reason, err
 			}
@@ -731,19 +744,14 @@ func (in *Injector) refusal(osUser, session string) (answerReading, string, erro
 }
 
 // typeAnswer puts free text into the focused field and reads it back off the
-// pane before anybody presses Enter on it.
+// pane before anybody presses anything else, polling until `landed` holds for
+// a reading or answerVerify runs out. `landed` is handed the reading taken
+// just before the paste and the one being checked.
 //
-// The read-back is scoped to the dialog region, and it asks whether the region
-// GAINED the text rather than whether it holds it. Presence on its own confirms
-// anything the dialog already drew: the region is where the question, every
-// option label and every description live, so a reader answering in the
-// question's own words — "Include apples." is option one's description on
-// dialog-multi.txt — read back as landed against a field the paste never
-// reached, and the Enter that follows answers the question with an empty one.
-// The comparison is against a reading taken after the digit focused the field
-// and before anything was typed, which is the only reading that can say what
-// was already there.
-func (in *Injector) typeAnswer(ctx context.Context, osUser, session, text string) (answerReading, string, error) {
+// WHAT COUNTS AS LANDED DEPENDS ON THE FIELD, which is why the caller says:
+// gainedText for a single-select's field, rowShows for a multi-select's
+// inline row.
+func (in *Injector) typeAnswer(ctx context.Context, osUser, session, text string, landed func(beforeTyping, cur answerReading) bool) (answerReading, string, error) {
 	if err := answerWait(ctx, keySettle); err != nil {
 		return answerReading{}, "", err
 	}
@@ -769,12 +777,53 @@ func (in *Injector) typeAnswer(ctx context.Context, osUser, session, text string
 		if err != nil {
 			return answerReading{}, "", err
 		}
-		if answerRegionGained(beforeTyping.region, cur.region, text) {
+		if landed(beforeTyping, cur) {
 			return cur, "", nil
 		}
 		if !time.Now().Before(deadline) {
 			return cur, AnswerUnverified, nil
 		}
+	}
+}
+
+// gainedText is typeAnswer's read-back for a single-select's free-text field,
+// which the digit opens below the options.
+//
+// It asks whether the dialog region GAINED the text rather than whether it
+// holds it. Presence on its own confirms anything the dialog already drew,
+// since the region is where the question, every option label and every
+// description live. A reader answering in the question's own words ("Include
+// apples." is option one's description on dialog-multi.txt) read back as
+// landed against a field the paste never reached, and the Enter that follows
+// answers the question with an empty one. The comparison is against the
+// reading taken after the digit focused the field and before anything was
+// typed, which is the only reading that can say what was already there.
+func gainedText(text string) func(beforeTyping, cur answerReading) bool {
+	return func(beforeTyping, cur answerReading) bool {
+		return answerRegionGained(beforeTyping.region, cur.region, text)
+	}
+}
+
+// rowShows is typeAnswer's read-back for a multi-select's free-text row: the
+// question `before` was drawing is still on screen, and its row's field holds
+// the words.
+//
+// NOT gainedText. On a multi-select the paste goes into the row itself and
+// REPLACES its placeholder, "4. [ ] Type something" becoming "4. [✔] Mango"
+// (CLI 2.1.280, 2026-09-23), so the region does not gain the words when they
+// are part of "type something": "Something", "Some", "Type", a lone "e". The
+// count held level as the placeholder went, and the review of 2026-09-24 had
+// each of those come back unverified while the same reply drew them in the
+// row and ticked. The row is exact where the region count is not, and it is
+// the check freeTextNext makes of the row on the next pass anyway.
+func rowShows(before answerReading, text string) func(beforeTyping, cur answerReading) bool {
+	return func(_, cur answerReading) bool {
+		if !stillOn(before, cur) {
+			return false
+		}
+		rows := answerRows(cur.region)
+		at := freeIndex(rows)
+		return at >= 0 && rows[at].holdsText && typedMatches(rows[at].text, text)
 	}
 }
 
