@@ -61,6 +61,14 @@ func dialogSession(t *testing.T) (*Injector, string) {
 // variant that ignores every key.
 func dialogSessionEnv(t *testing.T, env string) (*Injector, string) {
 	t.Helper()
+	return standIn(t, env, "Pick fruits")
+}
+
+// standIn starts the stand-in with an environment prefix and waits until the
+// pane shows `ready`: the first question, the plan approval's question, or the
+// input box's status line.
+func standIn(t *testing.T, env, ready string) (*Injector, string) {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -92,11 +100,11 @@ func dialogSessionEnv(t *testing.T, env string) (*Injector, string) {
 	deadline := time.Now().Add(20 * time.Second)
 	for {
 		pane, err := in.CapturePane(u.Username, "demo")
-		if err == nil && strings.Contains(pane, "Pick fruits") {
+		if err == nil && strings.Contains(pane, ready) {
 			return in, u.Username
 		}
 		if !time.Now().Before(deadline) {
-			t.Fatalf("the stand-in never drew its dialog; pane:\n%s", pane)
+			t.Fatalf("the stand-in never drew %q; pane:\n%s", ready, pane)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -762,6 +770,12 @@ func readingOf(t *testing.T, name string) answerReading {
 // It lives here rather than in testdata/ because it is the other half of these
 // tests: the assertions above are meaningless without the exact key handling
 // below, and a reader should not have to open two files to check one claim.
+//
+// Since 2026-09-24 it also draws Claude Code's plan approval
+// (FAKEDIALOG_CALL=plan, for plandrive_test.go) and the idle input box with its
+// permission mode (FAKEDIALOG_CALL=composer, for setmode_test.go), each as CLI
+// 2.1.281 drew it that day. What each models is listed in the script, beside
+// the code that models it.
 const fakeDialogPy = `#!/usr/bin/env python3
 """A stand-in AskUserQuestion dialog for answerdrive_test.go.
 
@@ -801,9 +815,13 @@ QS = [
     {"header": "Drink", "text": "Pick one drink", "multi": False,
      "opts": ["Tea", "Coffee"]},
 ]
+# Which screen to draw: a two-question call by default, "one" for the
+# multi-select alone, "plan" for the plan approval and "composer" for the idle
+# input box with its permission mode.
+CALL = os.environ.get("FAKEDIALOG_CALL", "")
 # A one-question call: the multi-select alone. Its commit row says "Submit",
 # and it still goes to the review screen.
-if os.environ.get("FAKEDIALOG_CALL") == "one":
+if CALL == "one":
     QS = QS[:1]
 # The multi-select's options, comma-separated, for a test whose labels carry
 # something the parser has to read around.
@@ -1035,7 +1053,7 @@ def byte():
         if not data:
             return None
         run = bytearray(data)
-        run_on_chat = multi() and cursor == chat_row()
+        run_on_chat = CALL not in ("plan", "composer") and multi() and cursor == chat_row()
     b = run[0]
     del run[0]
     return b
@@ -1056,10 +1074,14 @@ def read1():
 
 
 def skip_paste():
+    """Consume a bracketed-paste marker. Returns True for the one that opens a
+    paste, ESC [ 200 ~, and False for the one that closes it."""
+    code = ""
     while True:
         c = read1()
         if c in ("~", ""):
-            return
+            return code == "00"
+        code += c
 
 
 def multi_key(ch):
@@ -1153,8 +1175,287 @@ def review_key(ch):
     return False
 
 
+# ---- The plan approval and the idle input box ------------------------------
+#
+# FAKEDIALOG_CALL=plan draws the dialog ExitPlanMode puts up, the way CLI
+# 2.1.281 draws it in its fullscreen renderer (testdata/plan-first.txt), and
+# answers keys the way that build answers them, measured on 2026-09-24:
+#
+#   - digits 1-3 approve with that option at once. The digit of the feedback
+#     row focuses it while its field is empty, and while the field holds words
+#     it SENDS them, as Enter on the row would: "abc words" typed, ↑ to row 2,
+#     then 3, and the plan came back rejected with "the user said: abc words";
+#   - the feedback row is an inline field: typing and a paste replace its
+#     label, and while it has the cursor a digit goes INTO it ("4. 7");
+#   - walking onto the field leaves its text cursor mid-text, not at the end
+#     (a typed X landed as "byte couXnt"); C-e takes it to the end of the whole
+#     text, and Backspace takes out the character before it;
+#   - Enter on the field sends its words back as feedback, and on an EMPTY
+#     field acts as Esc, a plain rejection; Shift+Tab on it approves with the
+#     words;
+#   - once answered, the dialog gives way to the input box, whose status line
+#     says the mode the option picked.
+#
+# Shift+Tab on an empty field or on an approve row does nothing here. What the
+# CLI does there is not measured, and nothing in the driver presses it.
+#
+# FAKEDIALOG_CALL=composer draws the idle input box alone, for the mode
+# driver. Shift+Tab walks FAKEDIALOG_MODES one stop per press, starting from
+# FAKEDIALOG_MODE; a start that is off the cycle, dontAsk, gives way to the
+# cycle's first stop and never comes back, as measured. Every stop the box has
+# shown is listed above it, so a test can say what a walk passed through.
+
+PLAN_OPTS = os.environ.get(
+    "FAKEDIALOG_PLAN_OPTS",
+    "Yes, clear context (6% used) and use auto mode|Yes, and use auto mode|Yes, manually approve edits",
+).split("|")
+# Keys inside a bracketed paste are dropped, for the test that proves no Enter
+# follows words that never reached the field.
+DROP_PASTE = os.environ.get("FAKEDIALOG_DROP_PASTE") == "1"
+# An approve that does not take: the screen blanks for a moment and the same
+# dialog comes back, which is what a repaint the key did not answer looks like
+# to capture-pane.
+STUBBORN = os.environ.get("FAKEDIALOG_PLAN_STUBBORN") == "1"
+MODE_LINES = {
+    "manual": "⏸ manual mode on · ← for agents",
+    "acceptEdits": "⏵⏵ accept edits on (shift+tab to cycle) · ← for agents",
+    "plan": "⏸ plan mode on (shift+tab to cycle) · ← for agents",
+    "auto": "⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",
+    "bypassPermissions": "⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents",
+    "dontAsk": "⏵⏵ don't ask on (shift+tab to cycle) · ← for agents",
+}
+MODES = os.environ.get("FAKEDIALOG_MODES", "manual,acceptEdits,plan,auto").split(",")
+# How long the status line takes to repaint after Shift+Tab, for a loaded box.
+MODE_LAG = float(os.environ.get("FAKEDIALOG_MODE_LAG", "0"))
+WIDTH = 100
+PLAN_PREAMBLE = [
+    # The conversation above the dialog quotes it, so a check against the
+    # whole capture finds its words before the dialog draws them.
+    "❯ Plan hello.txt. The dialog will ask: Would you like to proceed?",
+    "  1. Yes, and use auto mode",
+    "  ⎿  /plan to preview",
+]
+PLAN_BODY = [
+    # Numbered lines of its own, which are never the options.
+    "   Create hello.txt",
+    "",
+    "   1. Write hello.txt containing hi.",
+    "   2. Check it with cat hello.txt.",
+]
+
+mode = os.environ.get("FAKEDIALOG_MODE", MODES[0])
+visited = [mode]        # every mode the input box has shown, in order
+plan_up = CALL == "plan"
+plan_cursor = 1         # the row the ❯ is on
+plan_field = ""         # the feedback row's words
+plan_caret = 0          # the text cursor in them
+outcome = ""            # what answered the dialog, drawn above the input box
+in_paste = False
+
+
+def feedback_row():
+    return len(PLAN_OPTS) + 1
+
+
+def wrap_words(text, width):
+    lines, cur = [], ""
+    for w in text.split(" "):
+        if cur and len(cur) + 1 + len(w) > width:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = w if cur == "" else cur + " " + w
+    lines.append(cur)
+    return lines
+
+
+def draw_plan():
+    out("\x1b[2J\x1b[H")
+    for line in PLAN_PREAMBLE:
+        out(line + "\r\n")
+    out("▔" * WIDTH + "\r\n\r\n")
+    out("  " + "─" * (WIDTH - 4) + "\r\n")
+    out("   Ready to code?\r\n\r\n")
+    out("   Here is Claude's plan:\r\n")
+    out("  " + "╌" * (WIDTH - 4) + "\r\n")
+    for line in PLAN_BODY:
+        out(line + "\r\n")
+    out("  " + "╌" * (WIDTH - 4) + "\r\n\r\n")
+    out("  " + "─" * (WIDTH - 4) + "\r\n")
+    out("   Claude has written up a plan and is ready to execute. Would you like to proceed?\r\n\r\n")
+    for i, label in enumerate(PLAN_OPTS, 1):
+        out("   %s %d. %s\r\n" % ("❯" if plan_cursor == i else " ", i, label))
+    n = feedback_row()
+    text = plan_field if plan_field != "" else "Tell Claude what to change"
+    parts = wrap_words(text, WIDTH - 12)
+    # The terminal keeps no trailing spaces, so a field holding only spaces
+    # reads "4.".
+    out(("   %s %d. %s" % ("❯" if plan_cursor == n else " ", n, parts[0])).rstrip() + "\r\n")
+    for p in parts[1:]:
+        out("        " + p + "\r\n")
+    out("        shift+tab to approve with this feedback\r\n\r\n")
+    out("   ctrl+g to edit in Vim · ~/.claude/plans/fake-plan.md\r\n")
+
+
+def draw_composer():
+    out("\x1b[2J\x1b[H")
+    out("❯ Plan hello.txt.\r\n")
+    if outcome:
+        out("● " + outcome + "\r\n")
+    out("  visited: " + " ".join(visited) + "\r\n\r\n")
+    out("─" * WIDTH + "\r\n")
+    out("❯ \r\n")
+    out("─" * WIDTH + "\r\n")
+    out("  ~/fake | statusline\r\n")
+    out("  " + MODE_LINES[mode] + "\r\n")
+
+
+def redraw():
+    if plan_up:
+        draw_plan()
+    else:
+        draw_composer()
+
+
+def set_mode(m):
+    global mode
+    mode = m
+    visited.append(m)
+
+
+def next_mode():
+    if mode in MODES:
+        set_mode(MODES[(MODES.index(mode) + 1) % len(MODES)])
+    else:
+        set_mode(MODES[0])
+
+
+def close_plan(what, m):
+    global plan_up, outcome
+    plan_up = False
+    outcome = what
+    if m:
+        set_mode(m)
+
+
+def approve(n):
+    if STUBBORN:
+        out("\x1b[2J\x1b[H")
+        time.sleep(0.15)
+        return
+    label = PLAN_OPTS[n - 1]
+    m = "manual"
+    if "auto mode" in label:
+        m = "auto"
+    elif "auto-accept" in label:
+        m = "acceptEdits"
+    close_plan("PLAN APPROVED %d" % n, m)
+
+
+def focus_field():
+    global plan_cursor, plan_caret
+    plan_cursor = feedback_row()
+    # Not at the end of the words: after ↑ out and ↓ back in, a typed X
+    # landed mid-text (measured). Halfway is where a driver that forgets C-e
+    # goes wrong.
+    plan_caret = len(plan_field) // 2
+
+
+def plan_arrow(code):
+    global plan_cursor
+    if code == "A":
+        plan_cursor = max(1, plan_cursor - 1)
+    elif code == "B":
+        if plan_cursor + 1 == feedback_row():
+            focus_field()
+        else:
+            plan_cursor = min(feedback_row(), plan_cursor + 1)
+    elif code == "Z":
+        if plan_cursor == feedback_row() and plan_field.strip():
+            close_plan("PLAN APPROVED WITH FEEDBACK " + plan_field.strip(), "auto")
+
+
+def plan_key(ch):
+    global plan_field, plan_caret
+    n = feedback_row()
+    on_field = plan_cursor == n
+    if in_paste and DROP_PASTE:
+        return
+    if ch == "\x05":
+        if on_field:
+            plan_caret = len(plan_field)
+        return
+    if ch in ("\x7f", "\x08"):
+        if on_field and plan_caret > 0:
+            plan_field = plan_field[:plan_caret - 1] + plan_field[plan_caret:]
+            plan_caret -= 1
+        return
+    if ch in ("\r", "\n"):
+        if not on_field:
+            approve(plan_cursor)
+        elif plan_field.strip():
+            close_plan("PLAN FEEDBACK " + plan_field.strip(), "")
+        else:
+            close_plan("PLAN REJECTED", "")
+        return
+    if on_field and ch.isprintable():
+        plan_field = plan_field[:plan_caret] + ch + plan_field[plan_caret:]
+        plan_caret += 1
+        return
+    if ch.isdigit() and ch != "0":
+        d = int(ch)
+        if d < n:
+            approve(d)
+        elif d == n and plan_field.strip():
+            close_plan("PLAN FEEDBACK " + plan_field.strip(), "")
+        elif d == n:
+            focus_field()
+
+
+def plan_main():
+    """The plan approval, then the input box; or the input box alone."""
+    global in_paste
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    tty.setraw(fd)
+    # Ask for bracketed paste, as the CLI does, so a paste is marked.
+    out("\x1b[?2004h")
+    try:
+        redraw()
+        while True:
+            ch = read1()
+            if ch == "":
+                return
+            if DEAF:
+                continue
+            if ch == "\x1b":
+                nxt = read1()
+                if nxt != "[":
+                    continue
+                code = read1()
+                if code.isdigit():
+                    in_paste = skip_paste()
+                    continue
+                if plan_up:
+                    plan_arrow(code)
+                elif code == "Z":
+                    next_mode()
+                    if MODE_LAG:
+                        time.sleep(MODE_LAG)
+                redraw()
+                continue
+            if plan_up:
+                plan_key(ch)
+            redraw()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+
+
 def main():
     global cursor, fpos
+    if CALL in ("plan", "composer"):
+        plan_main()
+        return
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)

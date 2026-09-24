@@ -117,6 +117,40 @@ type AnswerRequest struct {
 	// names, sent as-is, subject to the same allowlist and MaxKeys cap as
 	// POST /keys. The card offers this when it can only show the pane itself.
 	Keys []string `json:"keys,omitempty"`
+	// Plan answers Claude Code's plan approval rather than a question
+	// (plandialog.go). A request carrying it carries nothing else but Keys:
+	// one naming a question as well is refused as unknown-option with nothing
+	// typed, because there is no reading of it that is not a guess.
+	Plan *PlanAnswer `json:"plan,omitempty"`
+}
+
+// PlanAnswer is one answer to the plan approval: an approve row, or words for
+// the feedback row. Exactly one of Option and Feedback.
+//
+// ONE REQUEST, ONE ACTION, AS FOR A QUESTION. The server reads the dialog
+// before any key, refuses what the drawn dialog does not offer with nothing
+// typed, and reports what the pane shows afterwards. The dialog going away is
+// the evidence an answer landed; for feedback, Claude goes on planning and
+// draws a new dialog some seconds later (about 8 s on 2.1.281), which the
+// pane watcher then reports like any other.
+type PlanAnswer struct {
+	// Option is the number of an approve row, the digit that selects it, and
+	// Label the label the reader saw on it. The labels change between
+	// sessions and while one runs ("(6% used)" climbs), so a label that is
+	// not the one drawn now is refused as unknown-option with nothing typed,
+	// rather than approving with whatever row carries that number today. The
+	// feedback row is not an approve option.
+	Option int    `json:"option,omitempty"`
+	Label  string `json:"label,omitempty"`
+	// Feedback is typed into the feedback row: its digit focuses the row,
+	// whatever the field already holds is cleared, the words are pasted and
+	// read back off the row, and only then does the committing key go in.
+	// Approve false presses Enter, which sends the words back and Claude keeps
+	// planning; Approve true presses Shift+Tab, the CLI's "approve with this
+	// feedback". The words must not be blank, and nothing presses Enter on an
+	// empty feedback row, where it rejects the plan outright.
+	Feedback string `json:"feedback,omitempty"`
+	Approve  bool   `json:"approve,omitempty"`
 }
 
 // AnswerResult reasons. Empty means the request was applied.
@@ -186,6 +220,15 @@ const (
 	ActionBack   = "back"   // ← to an earlier question
 	ActionSubmit = "submit" // the review screen's Submit
 	ActionKeys   = "keys"   // the raw-key hatch
+	// The plan approval. An approve option is plan-approve; words typed into
+	// the feedback row are plan-feedback, whether they go back for more
+	// planning or approve the plan with them (docs/adr/0006, the 2026-09-24
+	// amendment). Each is one answer.
+	ActionPlanApprove  = "plan-approve"
+	ActionPlanFeedback = "plan-feedback"
+	// The mode dial (setmode.go), which session-events records into the same
+	// two event names. Answer never returns it.
+	ActionMode = "mode"
 )
 
 // AnswerAction names the kind of request, in the order Answer dispatches it.
@@ -199,6 +242,10 @@ func AnswerAction(req AnswerRequest, drawn *Dialog, known []DialogQuestion) stri
 	switch {
 	case len(req.Keys) > 0:
 		return ActionKeys
+	case req.Plan != nil && req.Plan.Option != 0:
+		return ActionPlanApprove
+	case req.Plan != nil:
+		return ActionPlanFeedback
 	case req.Submit:
 		return ActionSubmit
 	case req.Back != "":

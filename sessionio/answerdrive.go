@@ -46,6 +46,10 @@ type answerReading struct {
 	pane   string
 	region []string
 	dialog *Dialog
+	// plan is the whole reading of a plan approval, set whenever dialog is
+	// one: where the cursor is and what the feedback row holds, which the
+	// driver needs and the wire does not carry.
+	plan *planScreen
 }
 
 // read takes a reading. Every step of every request goes through here, so
@@ -69,10 +73,20 @@ type answerReading struct {
 // was filed from. answerRegion now carries the footer's continuation lines, so
 // the region parses on its own and a region that will not parse is a screen we
 // honestly could not read: the reply shows the pane itself.
+//
+// THE PLAN APPROVAL IS READ FIRST. It has a footer of its own, anchored to the
+// bottom of the pane, where footerAt finds the LAST select-widget footer
+// anywhere in the capture. A conversation that quotes a question's footer, on
+// the default renderer that keeps the conversation above the dialog, would
+// otherwise be read as a question drawn over the plan.
 func (in *Injector) read(osUser, session string) (answerReading, error) {
 	pane, err := in.CapturePane(osUser, session)
 	if err != nil {
 		return answerReading{}, err
+	}
+	lines := strings.Split(pane, "\n")
+	if s, ok := parsePlan(lines); ok {
+		return answerReading{pane: pane, region: lines[s.top:s.end], dialog: s.dialog, plan: &s}, nil
 	}
 	r := answerReading{pane: pane, region: answerRegion(pane)}
 	// No footer, no dialog to drive. The select widget draws one under every
@@ -165,6 +179,15 @@ func (in *Injector) Answer(ctx context.Context, osUser, session string, req Answ
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// A plan answer takes its turn with any other plan answer or mode walk on
+	// the same session, and reads the pane only once it has it (plandrive.go).
+	if req.Plan != nil {
+		unlock, err := in.lockSession(ctx, osUser, session)
+		if err != nil {
+			return AnswerResponse{}, err
+		}
+		defer unlock()
+	}
 	before, err := in.read(osUser, session)
 	if err != nil {
 		return AnswerResponse{}, err
@@ -185,6 +208,18 @@ func (in *Injector) answer(ctx context.Context, osUser, session string, before a
 	}
 	if before.dialog == nil {
 		return before.reply(AnswerNoDialog), nil
+	}
+	// The plan approval and a question are different dialogs with different
+	// keys, and a request for the one that is not drawn is refused with the
+	// reading of the one that is, so the card re-renders as the right one.
+	onPlan := before.dialog.Kind == DialogKindPlan
+	switch {
+	case req.Plan != nil && !onPlan:
+		return before.reply(AnswerNotDrawn), nil
+	case req.Plan != nil:
+		return in.answerPlan(ctx, osUser, session, before, req)
+	case onPlan:
+		return before.reply(AnswerNotDrawn), nil
 	}
 	switch {
 	case req.Submit:
