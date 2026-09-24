@@ -658,11 +658,18 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 // is the one request that names the whole answer, words included, and the
 // toggle that typed them is never counted. The live check on 2026-09-23 saw
 // it as tl.count 4 for "Kiwi".
+//
+// The plan approval, since 2026-09-24, counts the same way: an approve option
+// is one digit, and words typed into its feedback row are free text, api-text
+// with their length, whether they went back for more planning or approved the
+// plan with them. Either is one answer.
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
 	case len(req.Keys) > 0:
 		count = len(req.Keys)
+	case req.Plan != nil && req.Plan.Feedback != "":
+		client, count = "api-text", len(req.Plan.Feedback)
 	case req.Text != "":
 		client, count = "api-text", len(req.Text)
 	}
@@ -733,10 +740,14 @@ func pendingQuestions(fs *sessionio.FileSource) []sessionio.DialogQuestion {
 // that as the thing that would have made the investigation short.
 //
 // tl.action says what kind of request this was: choose, toggle, commit, back,
-// submit or keys (sessionio.AnswerAction). Since 2026-09-23 a multi-select
+// submit or keys (sessionio.AnswerAction), and since 2026-09-24 plan-approve
+// or plan-feedback for the plan approval, which carry no tl.questions or
+// tl.multi because they answered no question. Since 2026-09-23 a multi-select
 // takes several requests, toggles and then one commit, so the series counts
 // requests rather than answers, and a query that means answers splits on this.
-// Every request records exactly one of the two names, whatever its action.
+// Every request records exactly one of the two names, whatever its action. The
+// mode dial records into the same two names with tl.action mode and tl.client
+// api-mode (emitMode), so a query over answers reads tl.client api-answer.
 //
 // The two NAMES are the browser's, so its records and these stay one series —
 // but tl.client has to be read in every query over them. The historical
@@ -783,13 +794,17 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 	if !resp.Applied {
 		event = "text.answer_failed"
 	}
-	count, multi, source := answerShape(known, resp)
-	attrs := telemetry.Attrs{
-		"tl.session": session, "tl.client": "api-answer",
-		"tl.questions": count, "tl.multi": multi,
-	}
-	if source != "" {
-		attrs["tl.source"] = source
+	attrs := telemetry.Attrs{"tl.session": session, "tl.client": "api-answer"}
+	// A plan answer carries no question shape. It answered no question, and
+	// `known` is whatever AskUserQuestion the transcript still holds open, an
+	// abandoned call's included, which says nothing about the plan.
+	plan := action == sessionio.ActionPlanApprove || action == sessionio.ActionPlanFeedback
+	if !plan {
+		count, multi, source := answerShape(known, resp)
+		attrs["tl.questions"], attrs["tl.multi"] = count, multi
+		if source != "" {
+			attrs["tl.source"] = source
+		}
 	}
 	if action != "" {
 		attrs["tl.action"] = action
@@ -835,7 +850,7 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 	// drive the screen anyway. None dark is every landmark present and the
 	// parse still failing, which is a parser bug that tl.reason already
 	// names. Neither is a landmark going missing.
-	if resp.Markers != nil && len(known) > 0 {
+	if !plan && resp.Markers != nil && len(known) > 0 {
 		if dark := darkMarkers(*resp.Markers); len(dark) > 0 && len(dark) < markerCount {
 			attrs["tl.markers_missing"] = strings.Join(dark, ",")
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -590,6 +591,63 @@ func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
 	}
 	if last != "" {
 		t.Fatalf("the dialog going away left %q behind", last)
+	}
+}
+
+// The plan approval is published the way a question is: the reading goes out
+// as the body of an `asking` event, and its kind says which dialog it is. The
+// capture is a real one (CLI 2.1.281), so this is the reading of a screen the
+// CLI drew rather than a Dialog assembled by hand.
+func TestRegistryPublishesThePlanApproval(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-plan"
+	)
+	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "plan-first.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-PLAN")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	pane := &fakePane{text: string(raw)}
+	rg.panes = pane
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve")
+	}
+	waitForMarker(t, fs, "MARKER-PLAN")
+	ch, release := fs.Subscribe()
+	defer release()
+	go func() {
+		for range ch {
+		}
+	}()
+
+	rg.watchPanes()
+
+	body := ""
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
+			body = e.Body
+		}
+	}
+	var got sessionio.Dialog
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("the plan approval was not reported (%v): %q", err, body)
+	}
+	if got.Kind != sessionio.DialogKindPlan || got.FeedbackRow != 4 || len(got.Options) != 3 ||
+		got.PlanPath != "~/.claude/plans/plan-how-to-create-calm-starfish.md" {
+		t.Fatalf("asking event = %s", body)
+	}
+	if got.Options[2] != (sessionio.PlanOption{Number: 3, Label: "Yes, manually approve edits"}) {
+		t.Errorf("option 3 = %+v", got.Options[2])
 	}
 }
 

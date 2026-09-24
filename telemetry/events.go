@@ -51,6 +51,12 @@ var knownEvents = map[string]bool{
 	// choose | toggle | commit | back | submit | keys. A multi-select answer
 	// is several toggles and one commit, so these count requests; one answer
 	// is one claude.answered, sent at the commit.
+	//
+	// Since 2026-09-24 the same two names carry the plan approval, tl.action
+	// plan-approve | plan-feedback with no tl.questions or tl.multi, and the
+	// mode dial, tl.client api-mode and tl.action mode with tl.from, tl.to and
+	// tl.count (the Shift+Tab presses). A query over answers reads tl.client
+	// api-answer; the mode dial answers no prompt and sends no claude.answered.
 	"text.answer_failed": true,
 	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps, tl.action
 	"session.detached":   true,

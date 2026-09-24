@@ -634,6 +634,11 @@ func TestAnswerRecordsTheBlockingPromptAsAnswered(t *testing.T) {
 		{"the raw-key hatch", `{"keys":["Down","Enter"]}`, "api", 2},
 		// The Enter on the review screen, which the walk also sent as one key.
 		{"submit", `{"submit":true}`, "api", 1},
+		// The plan approval: one digit, or words typed into its feedback row,
+		// counted in characters like any other free text.
+		{"a plan approval", `{"plan":{"option":2,"label":"Yes, and use auto mode"}}`, "api", 1},
+		{"plan feedback", `{"plan":{"feedback":"kiwi"}}`, "api-text", 4},
+		{"an approval with feedback", `{"plan":{"feedback":"kiwi","approve":true}}`, "api-text", 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sink := captureEvents(t)
@@ -919,6 +924,11 @@ func TestAnswerEventNamesTheAction(t *testing.T) {
 		{"back", `{"back":"Fruit"}`, sessionio.ActionBack},
 		{"submit", `{"submit":true}`, sessionio.ActionSubmit},
 		{"the raw-key hatch", `{"keys":["Down"]}`, sessionio.ActionKeys},
+		// The plan approval: an approve option, and words through the
+		// feedback row, sent back or approved with.
+		{"a plan approval", `{"plan":{"option":2,"label":"Yes, and use auto mode"}}`, sessionio.ActionPlanApprove},
+		{"plan feedback", `{"plan":{"feedback":"smaller steps"}}`, sessionio.ActionPlanFeedback},
+		{"an approval with feedback", `{"plan":{"feedback":"smaller steps","approve":true}}`, sessionio.ActionPlanFeedback},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sink := captureEvents(t)
@@ -1019,5 +1029,53 @@ func TestAMultiSelectAnswerCountsOnceAtItsCommit(t *testing.T) {
 	}
 	if counts["text.answer_sent"] != 3 || counts["claude.answered"] != 1 {
 		t.Errorf("recorded %v, want three text.answer_sent and one claude.answered", counts)
+	}
+}
+
+// A plan answer is recorded like a question's, with the action saying which
+// dialog it was, and with nothing of the plan's: not the feedback, and not the
+// shape of some AskUserQuestion the transcript still holds open, which is not
+// the dialog that was answered. The reply carries the plan reading as its
+// dialog, kind and all, which is how the card knows it is still a plan card.
+func TestAPlanAnswerIsRecordedWithoutTheQuestionShape(t *testing.T) {
+	sink := captureEvents(t)
+	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "plan-first.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := sessionio.ParsePlanDialog(string(raw))
+	if plan == nil {
+		t.Fatal("plan-first.txt no longer parses")
+	}
+	drv := &fakeAnswerDriver{resp: sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified, Dialog: plan}}
+	// An AskUserQuestion still open in the transcript, as a call Claude Code
+	// abandoned would leave it.
+	h := answerEnv(t, drv, answerUserLine, answerAskLine)
+
+	rec := postAnswer(t, h, "demo", `{"plan":{"feedback":"a secret of mine"}}`)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
+	}
+	if drv.req.Plan == nil || drv.req.Plan.Feedback != "a secret of mine" {
+		t.Fatalf("the driver got %+v, want the plan answer that was posted", drv.req)
+	}
+	got := decodeAnswer(t, rec)
+	if got.Dialog == nil || got.Dialog.Kind != sessionio.DialogKindPlan || got.Dialog.FeedbackRow != 4 {
+		t.Fatalf("the reply must carry the plan reading: %s", rec.Body.String())
+	}
+	attrs := sink.only(t, "text.answer_failed")
+	if attrs["tl.action"] != sessionio.ActionPlanFeedback || attrs["tl.reason"] != sessionio.AnswerUnverified {
+		t.Errorf("tl.action=%v tl.reason=%v", attrs["tl.action"], attrs["tl.reason"])
+	}
+	for _, k := range []string{"tl.questions", "tl.multi", "tl.source", "tl.markers_missing"} {
+		if _, ok := attrs[k]; ok {
+			t.Errorf("%s = %v on a plan answer, which answered no question", k, attrs[k])
+		}
+	}
+	for k, v := range attrs {
+		if s, ok := v.(string); ok && strings.Contains(s, "secret") {
+			t.Errorf("%s = %q carries what was typed", k, s)
+		}
 	}
 }

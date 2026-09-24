@@ -289,13 +289,16 @@ func (rg *registry) sweepEvery(ctx context.Context, every time.Duration) {
 const PaneWatchInterval = 2 * time.Second
 
 // watchPanes reads the pane of every session worth watching and records what it
-// says about a blocking question.
+// says about a blocking dialog: a question, or since 2026-09-24 the plan
+// approval (paneDialog).
 //
 // It exists because Claude Code does not always write the AskUserQuestion record
 // while its dialog is up: measured 2026-08-28, two of five consecutive calls in
 // one session were written only when the question was ANSWERED, one of them 112
 // seconds later. Through that window the Text view has nothing to render and the
-// reader sees "Working…" while the terminal sits on a dialog.
+// reader sees "Working…" while the terminal sits on a dialog. The plan approval
+// needs the pane for a second reason: its options, "(6% used)" and all, exist
+// only there, since the transcript records the plan and not the menu.
 //
 // FileSource.WorthWatching bounds the cost to sessions somebody has open and
 // whose turn is still running — a tmux subprocess per session per tick, and a
@@ -342,13 +345,38 @@ func (rg *registry) watchPanes() {
 			continue // the session may have gone; the sweep deals with that
 		}
 		body := ""
-		if d := sessionio.ParseDialog(text); d != nil {
+		if d := paneDialog(text); d != nil {
 			if b, err := json.Marshal(d); err == nil {
 				body = string(b)
 			}
 		}
 		t.fs.SetAsking(body)
 	}
+}
+
+// paneDialog is the blocking dialog a pane shows: Claude Code's plan approval,
+// or an AskUserQuestion, or nil.
+//
+// THE PLAN APPROVAL IS ASKED FIRST, and not for speed. Since 2026-09-24 the
+// Text view answers it too (sessionio/plandialog.go), and the watcher is what
+// docks its card: the transcript does not always hold a blocking call while
+// its dialog is up, for the reason this file's watchPanes gives. Its parser is
+// anchored to the bottom of the pane, where the dialog replaces the input box,
+// whereas ParseDialog takes the last select-widget footer anywhere in the
+// capture. On the default renderer the conversation stays above the dialog,
+// and one that quotes a question's footer would otherwise publish a question
+// over the plan.
+//
+// The reading goes out in the same event either way, and its Kind says which
+// dialog it is. A client from before the plan existed parses a plan reading as
+// a question with no questions in it and docks nothing (timeline.logic.ts
+// askingFromPane returns null for an empty list), which is the behaviour it
+// had for this dialog before.
+func paneDialog(pane string) *sessionio.Dialog {
+	if d := sessionio.ParsePlanDialog(pane); d != nil {
+		return d
+	}
+	return sessionio.ParseDialog(pane)
 }
 
 // watchPanesEvery runs watchPanes on a ticker until ctx is done.
