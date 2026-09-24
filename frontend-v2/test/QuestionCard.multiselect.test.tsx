@@ -512,6 +512,64 @@ describe("free text on a multi-select is one more pick", () => {
   });
 });
 
+/**
+ * Each question opens at the top of the card's body.
+ *
+ * The body is the card's only scroller, and it is ONE element for the whole
+ * call. TextView keys the card per call and the rows are <Index>ed by
+ * position, so nothing rebuilds it between questions, and the browser only
+ * clamps its scrollTop to the next question's height. Seen in desktop
+ * Chromium on 2026-09-24. At 414x896, reaching Plum scrolled the 130px body
+ * to 149, and Next opened the drink question at 73, its maximum, with the
+ * question text above the body's top edge and the first row's label cut. At
+ * 1280x800 the free-text field left the body at 63, and the next question
+ * opened at 43 with its chips hidden and a blank band under the head.
+ *
+ * jsdom has no layout. It keeps whatever scrollTop is written and clamps
+ * nothing, so what this pins is the decision of which change of screen puts
+ * the scroll back and which leaves it where the reader put it.
+ */
+describe("each question opens at the top of the card's body", () => {
+  const body = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-qcard-body")!;
+  const singleSelect: DialogView = {
+    ...multi,
+    questions: [{ ...multi.questions[0]!, multiSelect: false }],
+  };
+  const chip = (c: HTMLElement, name: string) =>
+    Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-qcard-tab")).find(
+      (b) => b.textContent === name,
+    )!;
+
+  it.each([
+    ["a multi-select's commit", holding("Plum"), (c) => fireEvent.click(commitButton(c)!), drink],
+    ["a single-select answer", singleSelect, (c) => fireEvent.click(row(c, "Plum")), drink],
+    ["a chip's walk back", drink, (c) => fireEvent.click(chip(c, "Fruit")), holding("Apple")],
+  ] as [string, DialogView, (c: HTMLElement) => void, DialogView][])(
+    "puts the scroll back when %s draws another question",
+    async (_what, first, act, next) => {
+      const v = mount(first);
+      const scroller = body(v.container);
+      scroller.scrollTop = 149;
+      act(v.container);
+      await v.land(next);
+      expect(body(v.container), "one body for the whole call").toBe(scroller);
+      expect(scroller.scrollTop).toBe(0);
+    },
+  );
+
+  it("leaves the scroll where the reader put it while the question stays on screen", async () => {
+    // A toggle's reply is a new reading of the same question. Putting the
+    // scroll back on every reading would pull the rows out from under the
+    // pointer after each tick.
+    const v = mount();
+    const scroller = body(v.container);
+    scroller.scrollTop = 149;
+    fireEvent.click(row(v.container, "Plum"));
+    await v.land(holding("Plum"));
+    expect(scroller.scrollTop).toBe(149);
+  });
+});
+
 describe("no decoration is bigger than the thing it decorates", () => {
   const css = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8").replace(
     /\/\*[\s\S]*?\*\//g,

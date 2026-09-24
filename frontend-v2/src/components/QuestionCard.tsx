@@ -5,6 +5,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   untrack,
   type Component,
 } from "solid-js";
@@ -239,6 +240,42 @@ export const QuestionCard: Component<{
   });
   /** What is in that field, and "" whenever the field is not this question's. */
   const text = (): string => (typing() ? draft()!.typed : "");
+
+  /**
+   * The card's body, the one part of it that scrolls, and the effect that
+   * opens every new question at its top.
+   *
+   * The body is ONE element for the whole call. TextView keys the card per
+   * call and the rows are <Index>ed by position, so nothing rebuilds it
+   * between questions, and the browser only clamps its scrollTop to the next
+   * question's height. Seen in desktop Chromium on 2026-09-24. At 414x896,
+   * reaching Plum, the last fruit, scrolled the 130px body to 149, and Next
+   * opened the drink question at 73, its maximum, with the question text above
+   * the body's top edge and the Tea label cut. At 1280x800 the free-text field
+   * left the body at 63, and the next question opened at 43 with its chips
+   * hidden and a blank band under the head. A single-select answer given low
+   * in a list carries its scroll over the same way, and did before the toggle
+   * change. Ticking and leaving became two presses on 2026-09-23, which made
+   * it routine, since the reader scrolls down to tick and then presses the
+   * commit button. The review screen counts as a new question here too, so
+   * its chips, the way back, open in view.
+   *
+   * Keyed on the QUESTION, which `drawnKey` names, and not on the reading.
+   * Every toggle's reply is a fresh reading of the same question, and putting
+   * the scroll back on each one would pull the rows out from under the
+   * pointer after every tick. Deferred, because a body built a moment ago is
+   * at its top already.
+   */
+  let bodyEl: HTMLDivElement | undefined;
+  createEffect(
+    on(
+      drawnKey,
+      () => {
+        if (bodyEl) bodyEl.scrollTop = 0;
+      },
+      { defer: true },
+    ),
+  );
 
   /**
    * The rows this question offers, in the order and at the numbers the CLI
@@ -572,7 +609,7 @@ export const QuestionCard: Component<{
           when={props.dialog}
           fallback={<PaneKeypad pane={props.pane ?? ""} busy={props.busy} onKeys={props.onKeys} />}
         >
-          <div class="tl-qcard-body">
+          <div class="tl-qcard-body" ref={bodyEl}>
             {/* The tab bar, as chips. A ticked one is a box the pane draws as
                 ☒, and tapping a chip BEHIND the drawn question sends ← until
                 that question is back on screen. One ahead of it is not a way
