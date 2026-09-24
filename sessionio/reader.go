@@ -3,7 +3,9 @@ package sessionio
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -38,7 +40,32 @@ type Reader interface {
 	// readable and returns only the matches — a search that shipped the
 	// transcript across this boundary to grep it would defeat the split.
 	SearchResults(path, q string, limit int) ([]ResultMatch, error)
+	// ImageBlock scans the transcript for one picture block and returns its
+	// decoded bytes. Like FullResult it runs where the file is readable, and
+	// only the one picture crosses back.
+	ImageBlock(path string, addr ImageAddr) (ImageData, error)
 }
+
+// ImageAddr names one picture block in a transcript: the N-th image block
+// (from 0, counting every image block, as ImageRef.N does) of the tool result
+// for ToolID, or of the user record whose uuid is Record. Exactly one of the two
+// ids is set.
+type ImageAddr struct {
+	ToolID string
+	Record string
+	N      int
+}
+
+// ImageData is one picture read back from a transcript. MediaType is what the
+// block declared, which a caller serving the bytes should not trust.
+type ImageData struct {
+	MediaType string
+	Data      []byte
+}
+
+// ErrNoImage says the transcript holds no picture at that address: no such
+// result or record, no block N, or a block whose bytes are not in the file.
+var ErrNoImage = errors.New("no such picture in this transcript")
 
 // ResultMatch is one tool result whose FULL body matched a search — the part
 // past MaxInlineResult that the in-memory log does not hold. It carries the tool
@@ -66,6 +93,16 @@ func (LocalReader) FullResult(path, toolID string) (string, json.RawMessage, err
 	}
 	defer file.Close()
 	return ScanToolResult(file, toolID)
+}
+
+// ImageBlock opens the transcript locally and scans it in this process.
+func (LocalReader) ImageBlock(path string, addr ImageAddr) (ImageData, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return ImageData{}, err
+	}
+	defer file.Close()
+	return ScanImageBlock(file, addr)
 }
 
 // SearchResults implements Reader through this process's own file access.
@@ -167,7 +204,14 @@ func ScanToolResult(r io.Reader, toolID string) (string, json.RawMessage, error)
 		}
 		for _, bl := range rec.Blocks() {
 			if bl.Type == "tool_result" && bl.ToolUseID == toolID {
-				return decodeToolResult(bl.Content), rec.ToolUseResult, nil
+				text, _, pictures := decodeToolContent(bl.Content)
+				// A result holding pictures has no structured form to offer: a
+				// Read's toolUseResult is a second copy of the picture's base64,
+				// and the normalizer drops it on the wire for the same reason.
+				if pictures > 0 {
+					return text, nil, nil
+				}
+				return text, rec.ToolUseResult, nil
 			}
 		}
 	}
@@ -175,4 +219,91 @@ func ScanToolResult(r io.Reader, toolID string) (string, json.RawMessage, error)
 		return "", nil, err
 	}
 	return "", nil, fmt.Errorf("full result: no result for tool %q in this transcript", toolID)
+}
+
+// pictureBlock is an image block decoded WITH its bytes, which Block's
+// ImageSource deliberately leaves behind. Only ScanImageBlock pays for this,
+// once, for the one block a browser asked for.
+type pictureBlock struct {
+	Type   string `json:"type"`
+	Source *struct {
+		Type      string `json:"type"`
+		MediaType string `json:"media_type"`
+		Data      string `json:"data"`
+	} `json:"source"`
+}
+
+// ScanImageBlock finds one picture block in a transcript stream and decodes
+// it. Exported so the privileged child runs exactly this scan, the way it runs
+// ScanToolResult.
+//
+// A tool id matches only the tool_result block answering it, never the
+// tool_use line that also carries the id. A record id matches only the record
+// whose own uuid it is, never the next one naming it as parentUuid. The bytes
+// come back as the transcript holds them; the caller sniffs them, because a
+// block's media_type is the harness's word, not a check.
+func ScanImageBlock(r io.Reader, addr ImageAddr) (ImageData, error) {
+	id := addr.ToolID
+	if id == "" {
+		id = addr.Record
+	}
+	if id == "" || (addr.ToolID != "" && addr.Record != "") || addr.N < 0 {
+		return ImageData{}, fmt.Errorf("image block: need exactly one of a tool id or a record id")
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64<<10), maxTranscriptLine)
+	for sc.Scan() {
+		line := sc.Bytes()
+		// Cheap reject before the JSON decode, as in ScanToolResult. Picture
+		// lines are the longest in a transcript, so this matters here most.
+		if !bytes.Contains(line, []byte(id)) {
+			continue
+		}
+		rec, ok := DecodeRecord(line)
+		if !ok {
+			continue
+		}
+		if addr.Record != "" {
+			if rec.UUID != addr.Record {
+				continue
+			}
+			return nthPicture(rec.Message.Content, addr.N)
+		}
+		for _, bl := range rec.Blocks() {
+			if bl.Type == "tool_result" && bl.ToolUseID == addr.ToolID {
+				return nthPicture(bl.Content, addr.N)
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return ImageData{}, err
+	}
+	return ImageData{}, fmt.Errorf("%w: no record or result carries that id", ErrNoImage)
+}
+
+// nthPicture decodes the n-th image block of a content array.
+func nthPicture(content json.RawMessage, n int) (ImageData, error) {
+	var blocks []pictureBlock
+	if json.Unmarshal(content, &blocks) != nil {
+		return ImageData{}, fmt.Errorf("%w: the content holds no blocks", ErrNoImage)
+	}
+	i := 0
+	for _, b := range blocks {
+		if b.Type != "image" {
+			continue
+		}
+		if i < n {
+			i++
+			continue
+		}
+		if b.Source == nil || b.Source.Type != "base64" {
+			return ImageData{}, fmt.Errorf("%w: block %d carries no bytes", ErrNoImage, n)
+		}
+		data, err := base64.StdEncoding.DecodeString(b.Source.Data)
+		if err != nil {
+			return ImageData{}, fmt.Errorf("image block %d: %w", n, err)
+		}
+		return ImageData{MediaType: b.Source.MediaType, Data: data}, nil
+	}
+	return ImageData{}, fmt.Errorf("%w: block %d of %d", ErrNoImage, n, i)
 }

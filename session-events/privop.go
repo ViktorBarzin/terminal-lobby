@@ -43,6 +43,10 @@ type privRequest struct {
 	CWD    string `json:"cwd,omitempty"`
 	Query  string `json:"query,omitempty"`
 	Limit  int    `json:"limit,omitempty"`
+	// Record and N address one picture for the image op: the n-th image block
+	// of the prompt whose uuid is Record, or of the result for ToolID.
+	Record string `json:"record,omitempty"`
+	N      int    `json:"n,omitempty"`
 }
 
 // privResponse is the child's answer. Err carries the reason on refusal; the
@@ -51,10 +55,13 @@ type privResponse struct {
 	OK  bool   `json:"ok"`
 	Err string `json:"err,omitempty"`
 	// Blob carries a readfrom answer: the raw bytes of the complete lines, which
-	// encoding/json ships as base64 and the parent splits. Lines is the older
-	// per-line form, kept because nothing but readfrom set it and a child from a
-	// previous build may still be answering that way mid-deploy.
+	// encoding/json ships as base64 and the parent splits. It carries an image
+	// answer too, the decoded picture, with Media the type its block declared.
+	// Lines is the older per-line form, kept because nothing but readfrom set
+	// it and a child from a previous build may still be answering that way
+	// mid-deploy.
 	Blob     []byte                  `json:"blob,omitempty"`
+	Media    string                  `json:"media,omitempty"`
 	Lines    []string                `json:"lines,omitempty"`
 	Next     int64                   `json:"next,omitempty"`
 	Body     string                  `json:"body,omitempty"`
@@ -158,6 +165,25 @@ func handlePrivop(req privRequest, home, root string) privResponse {
 			return fail("%v", err)
 		}
 		return privResponse{OK: true, Matches: matches}
+
+	case "image":
+		// One picture out of the transcript: the child scans, decodes the one
+		// block and sends back only it, the same shape fullresult has. A child
+		// from the previous build answers "unknown op" here, which the route
+		// turns into a 404 until the restart replaces it.
+		if err := transcriptWithin(root, req.Path); err != nil {
+			return fail("%v", err)
+		}
+		f, err := os.Open(req.Path)
+		if err != nil {
+			return fail("%v", err)
+		}
+		defer f.Close()
+		img, err := sessionio.ScanImageBlock(f, sessionio.ImageAddr{ToolID: req.ToolID, Record: req.Record, N: req.N})
+		if err != nil {
+			return fail("%v", err)
+		}
+		return privResponse{OK: true, Blob: img.Data, Media: img.MediaType}
 
 	case "catalogue":
 		// The cwd is bounded like every other path here. Discover joins it with

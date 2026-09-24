@@ -110,6 +110,34 @@ type Event struct {
 	Context *ContextReading `json:"context,omitempty"`
 	// Model is the model and effort on a MetaModel event (see above).
 	Model *ModelState `json:"model,omitempty"`
+	// Images names the pictures a prompt or a tool result carried, by
+	// position. The bytes are never on the wire: a client asks the image-block
+	// routes for the one it scrolls to (see ImageRef).
+	Images []ImageRef `json:"images,omitempty"`
+	// RecordID is the transcript uuid of the user record a prompt's Images
+	// belong to, which is how the route finds them again. Set only beside
+	// Images.
+	RecordID string `json:"record,omitempty"`
+	// Files are the absolute paths of the pictures a screenshot tool wrote,
+	// resolved on this side because the link the tool prints is relative to a
+	// directory the browser never learns (see shotFiles).
+	Files []string `json:"files,omitempty"`
+}
+
+// ImageRef is one picture block a user prompt or a tool result carried. The
+// bytes stay in the transcript and are read back by N through the image-block
+// routes, so a phone opening a session never downloads a picture it does not
+// scroll to, and the 8 KiB wire cap never cuts one.
+type ImageRef struct {
+	// N is the block's index among the record's (or the result's) image
+	// blocks, counting from 0 and counting every image block.
+	N int `json:"n"`
+	// MediaType is what the block declared. Advisory: the route sniffs.
+	MediaType string `json:"mediaType,omitempty"`
+	// Bytes is the decoded size, read off the base64 length.
+	Bytes int64 `json:"bytes,omitempty"`
+	// Paste is the terminal paste id the prompt's text calls "[Image #N]".
+	Paste int `json:"paste,omitempty"`
 }
 
 // JSON returns the compact wire encoding of the event.

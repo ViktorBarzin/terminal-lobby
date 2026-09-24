@@ -179,6 +179,18 @@ func main() {
 			Result json.RawMessage `json:"result,omitempty"`
 		}{body, result})
 	})
+	// One picture out of a transcript, by position: the n-th image block of a
+	// tool result (a Read of an image) or of a prompt (a picture pasted into
+	// the terminal). Events name these by reference and never carry the bytes.
+	// Under /result/ because the ingress already routes that prefix here; the
+	// two patterns have five and six segments, so they overlap neither each
+	// other nor the route above. See images.go.
+	web.HandleFunc("GET /result/{session}/{toolId}/image/{n}", func(w http.ResponseWriter, r *http.Request) {
+		serveImageBlock(w, r, rg, false)
+	})
+	web.HandleFunc("GET /result/{session}/user/{record}/image/{n}", func(w http.ResponseWriter, r *http.Request) {
+		serveImageBlock(w, r, rg, true)
+	})
 	// Finding something in a session that has scrolled past. The view opens on a
 	// 20-turn window, so most of a long session is not in the browser and a
 	// client-side find would answer "no matches" for the part most worth

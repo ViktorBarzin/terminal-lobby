@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"os/user"
@@ -204,5 +205,47 @@ func TestCataloguRefusesACwdThatSymlinksOutOfTheHome(t *testing.T) {
 	}
 	if res := handlePrivop(privRequest{Op: "catalogue", CWD: link}, home, root); res.OK {
 		t.Error("a cwd that resolves outside the home must be refused")
+	}
+}
+
+// imageResultLine is a Read of an image as the transcript holds it.
+func imageResultLine(toolID string, pic []byte) string {
+	return `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"` + toolID + `","content":[` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"` +
+		base64.StdEncoding.EncodeToString(pic) + `"}}]}]}}`
+}
+
+// The child decodes the one picture and sends back only it: the transcript
+// never crosses the pipe.
+func TestPrivopServesAnImageBlock(t *testing.T) {
+	pic := pngOf(t)
+	home, p := mkHome(t, imageResultLine("toolu_01readabcd", pic))
+
+	resp := ask(t, home, privRequest{Op: "image", Path: p, ToolID: "toolu_01readabcd", N: 0})
+	if !resp.OK {
+		t.Fatalf("refused: %s", resp.Err)
+	}
+	if !bytes.Equal(resp.Blob, pic) || resp.Media != "image/png" {
+		t.Fatalf("got %d bytes of %q, want the %d-byte PNG", len(resp.Blob), resp.Media, len(pic))
+	}
+	if resp := ask(t, home, privRequest{Op: "image", Path: p, ToolID: "toolu_01readabcd", N: 1}); resp.OK {
+		t.Fatal("a block that is not there was answered")
+	}
+}
+
+// Bounded like every other op here: the child reads a transcript under its own
+// projects root and nothing else, whoever asked.
+func TestPrivopImageRefusesAPathOutsideItsProjectsRoot(t *testing.T) {
+	pic := pngOf(t)
+	home, _ := mkHome(t, `{}`)
+	outside := filepath.Join(home, "elsewhere.jsonl")
+	if err := os.WriteFile(outside, []byte(imageResultLine("toolu_01readabcd", pic)+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []string{"/etc/passwd", outside,
+		filepath.Join(home, ".claude", "projects", "..", "..", "elsewhere.jsonl")} {
+		if resp := ask(t, home, privRequest{Op: "image", Path: bad, ToolID: "toolu_01readabcd"}); resp.OK {
+			t.Fatalf("child read a picture out of %q", bad)
+		}
 	}
 }

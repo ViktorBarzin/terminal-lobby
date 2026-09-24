@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // inProcessChild runs the real child loop over pipes, so these tests exercise
@@ -113,6 +115,46 @@ func TestPrivReaderFullResult(t *testing.T) {
 	}
 	if body != "big output" {
 		t.Fatalf("body: %q", body)
+	}
+}
+
+// One picture is one scan of the whole transcript, and it ships up to about
+// half a megabyte back (Read blocks: p95 547k base64 characters). On the shared
+// child that would hold every 200 ms tail poll for this user behind it, so each
+// picture takes a child of its own, the way the bulk first read does.
+func TestPrivReaderImageBlockRunsOnAChildOfItsOwn(t *testing.T) {
+	pic := pngOf(t)
+	home, p := mkHome(t, imageResultLine("toolu_01readabcd", pic))
+	var starts int32
+	pr := &privReader{osUser: "bob", spawn: inProcessChild(t, home, &starts)}
+	t.Cleanup(pr.close)
+
+	for i := 0; i < 2; i++ {
+		got, err := pr.ImageBlock(p, sessionio.ImageAddr{ToolID: "toolu_01readabcd", N: 0})
+		if err != nil {
+			t.Fatalf("ImageBlock: %v", err)
+		}
+		if string(got.Data) != string(pic) || got.MediaType != "image/png" {
+			t.Fatalf("got %d bytes of %q", len(got.Data), got.MediaType)
+		}
+	}
+	if starts != 2 {
+		t.Fatalf("%d child(ren) started for two pictures, want one each", starts)
+	}
+	pr.mu.Lock()
+	shared := pr.child
+	pr.mu.Unlock()
+	if shared != nil {
+		t.Fatal("a picture started the shared child, which the tail polls queue behind")
+	}
+}
+
+func TestPrivReaderImageBlockSurfacesARefusal(t *testing.T) {
+	home, _ := mkHome(t, `{}`)
+	pr := &privReader{osUser: "bob", spawn: inProcessChild(t, home, nil)}
+	t.Cleanup(pr.close)
+	if _, err := pr.ImageBlock("/etc/passwd", sessionio.ImageAddr{ToolID: "toolu_01readabcd"}); err == nil {
+		t.Fatal("a refused read must be an error, not an empty picture")
 	}
 }
 
