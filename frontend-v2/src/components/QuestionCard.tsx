@@ -177,7 +177,7 @@ export const QuestionCard: Component<{
    * `capture-pane -p` carries no colour — so the caller places the drawn
    * question against the call the transcript recorded and fills it in. The
    * fallback covers the one case placement is unnecessary for: a call with a
-   * single chip has only one question the pane could be drawing.
+   * single header has only one question the pane could be drawing.
    *
    * If it is empty the server refuses the request and returns what IS on
    * screen, which the card then draws. That is a wasted round trip, not a dead
@@ -630,8 +630,19 @@ export const QuestionCard: Component<{
                 A chip also waits for every multi-select click to land. ←
                 leaves the question, so a click still waiting would be dropped
                 with it, and one in flight would land on the question the chip
-                walks back to. */}
-            <Show when={headers().length > 1 || answered() > 0}>
+                walks back to.
+
+                A ONE-QUESTION CALL DRAWS NO CHIPS until its review screen. On
+                its question the lone chip names the question already on
+                screen, and ← has nowhere to go from a call's first question.
+                The row was gated on `answered` until 2026-09-24, and the CLI
+                fills a multi-select's box on the first tick, so the chip
+                appeared at that tick. Seen in desktop Chromium at 1280x800, it
+                grew the card by 21px and moved every row about 6px down, under
+                the pointer of a reader on the way to the next tick. On the
+                review screen the chip is the only way back to the question,
+                answered or not, so it is drawn there. */}
+            <Show when={props.review ? headers().length > 0 : headers().length > 1}>
               <div class="tl-qcard-tabs">
                 <For each={headers()}>
                   {(name, i) => {

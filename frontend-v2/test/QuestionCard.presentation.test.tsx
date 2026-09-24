@@ -287,6 +287,48 @@ describe("<QuestionCard> — the tab bar as chips", () => {
     fireEvent.click(chips(container)[1]!);
     expect(onBack).toHaveBeenCalledWith("Drink");
   });
+
+  /**
+   * A one-question call draws no chips on its question screen.
+   *
+   * The CLI fills a multi-select's box on the first tick, so `answered` goes
+   * to 1 with the question still on screen, and the chip row used to appear
+   * at that moment. Seen in desktop Chromium on 2026-09-24 at 1280x800, a
+   * "✓ Fruit" chip grew the card by 21px and moved every row about 6px down,
+   * under the pointer of a reader on the way to their next tick. The lone
+   * chip names the question the card is already showing, and ← has nowhere
+   * to go from a call's first question.
+   */
+  it("draws no chips on a one-question call's question, before or after its first tick", () => {
+    const one: DialogView = { ...multi, headers: ["Fruit"], count: 1, partial: false };
+    for (const answered of [0, 1]) {
+      const { container } = mount({ dialog: { ...one, answered } });
+      expect(container.querySelector(".tl-qcard-tabs"), `answered ${answered}`).toBeNull();
+    }
+  });
+
+  /**
+   * The CLI shows a one-question multi-select call a review screen as well
+   * (2.1.280), and there the chip is the card's only way back to the
+   * question. Nothing answered is the review a commit with no ticks reaches,
+   * which the Terminal can make and the card cannot. The CLI warns "You have
+   * not answered all questions" there, and the chip is how the reader goes
+   * back to tick something instead of submitting nothing.
+   */
+  it.each([1, 0])(
+    "keeps a one-question call's chip on its review screen, with %i answered, as the way back",
+    (answered) => {
+      const onBack = vi.fn(async () => {});
+      const { container } = mount({
+        dialog: { ...review, headers: ["Fruit"], count: 1, partial: false, answered },
+        review: true,
+        onBack,
+      });
+      expect(chips(container).map((c) => c.textContent)).toEqual(["Fruit"]);
+      fireEvent.click(chips(container)[0]!);
+      expect(onBack).toHaveBeenCalledWith("Fruit");
+    },
+  );
 });
 
 describe("<QuestionCard> — the review screen", () => {
