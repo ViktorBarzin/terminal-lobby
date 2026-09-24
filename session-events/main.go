@@ -142,6 +142,15 @@ func main() {
 			http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
 			return
 		}
+		// The plan approval is the one screen a prompt must never reach: the
+		// Enter at its end would select the menu's highlighted row, which
+		// approves the plan (plan.go). The Text view sends feedback there
+		// through POST /answer instead; this refuses everything else, with
+		// the reason, so the sender keeps its text.
+		if planOpen(rg, injector, osUser, session) {
+			writePlanOpen(w)
+			return
+		}
 		if err := injector.Prompt(osUser, session, body.Text); err != nil {
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return

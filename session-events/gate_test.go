@@ -14,10 +14,13 @@ import (
 // by reflex: a prompt that arrives mid-turn belongs in Claude's own queue, and
 // answering 409 instead loses it with no way for the composer to say why.
 //
-// The TURN STATE is what must not be read here. One 409 does live in the
-// handler — a session the idle sweep suspended, which has no Claude to queue
-// anything (TestPromptRefusesASuspendedSession) — so this asks about the state
-// rather than about the status code.
+// The TURN STATE is what must not be read here. Two 409s do live in the
+// handler, a session the idle sweep suspended, which has no Claude to queue
+// anything (TestPromptRefusesASuspendedSession), and the plan approval, where a
+// prompt is not queued but typed into a menu (TestPromptRefusesWhileThePlanIsOpen,
+// plan.go), so this asks about the state rather than about the status code.
+// The plan guard reads OptionAsk inside planOpen, and only to name that one
+// dialog: a question on the pane, or a running turn, refuses nothing.
 func TestPromptDoesNotGateOnTheTurnState(t *testing.T) {
 	raw, err := os.ReadFile("main.go")
 	if err != nil {
