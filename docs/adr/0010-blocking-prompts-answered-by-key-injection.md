@@ -162,3 +162,81 @@ of the dialog. Every request still records one `text.answer_sent` or
 so one multi-select answer counts once, at its commit (ADR-0006). The 2.1.280
 measurements and the wire additions are in
 `docs/plans/2026-09-10-text-mode-answers-dialogs-design.md`.
+
+## Amended 2026-09-24: the plan-approval dialog is answered the same way
+
+Key injection and one request per reader action both stand. What changes is
+that a third blocking prompt, the dialog Claude Code draws when an
+`ExitPlanMode` call presents a plan, is now answered through them.
+
+**What prompted the amendment.** On 2026-09-24 Viktor asked for text mode to
+handle the plan review and the clear-context start, which it could not do. The
+plan dialog lists the ways to approve the plan, usually including one that
+clears context first, and a row for telling Claude what to change. `ParseDialog`
+requires the question widget's "Enter to select … Esc to cancel" footer and a
+free-text or chat row, and the plan dialog draws neither, so the pane watcher
+published no reading, no card docked, `POST /answer` refused with `no-dialog`,
+and the plan row in the timeline read "awaiting approval" for as long as the
+dialog stood. Reviewing and starting a plan meant switching to the Terminal.
+
+**The decision.** The plan dialog is answered by key injection, like a question.
+
+- The pane watcher reads it with a parser of its own and publishes a plan
+  reading on the same `asking` meta, told apart from a question reading by
+  `"kind": "plan"`. The reading carries the approve options exactly as drawn,
+  because their labels vary by session ("(6% used)", whether auto mode exists),
+  plus the feedback row's number and the plan file's path.
+- `POST /answer/{session}` gains a `plan` field. An approve names the option's
+  number and its drawn label, and is refused with nothing typed when the label
+  on the pane differs. Feedback is pasted into the feedback row and read back,
+  then committed with `Enter`, which sends it back to planning, or `BTab`, which
+  approves the plan with it.
+- Each key is its own send-keys run, and each step is proved by a fresh reading
+  before the next key. `Esc` is never sent, and `Enter` is never pressed on an
+  empty feedback row, because both reject the plan.
+- The plan's text comes from the transcript, as the input of the `ExitPlanMode`
+  call, and never from the pane: the dialog clips a long plan, and on a 58x20
+  pane it draws no plan lines at all.
+
+**Where the dialog is read.** The parse is anchored at the bottom of the
+capture. The dialog takes the input box's place, so its footer,
+`ctrl+g to edit in <editor> · <path>`, is the last line on the pane, while a
+copy of the dialog quoted in the conversation always has the input box and the
+CLI's status line under it. The landmarks the parser requires are the question
+("Would you like to proceed?"), the numbered rows, the hint under the feedback
+row and that footer. The heading lines above the plan help find the dialog's
+top when they are drawn and are not required, because PgDn and a narrow pane
+both remove them.
+
+**A prompt no longer lands in the menu.** `POST /prompt/{session}` refuses with
+`plan-open` while the dialog is on the pane, and the client keeps the text. The
+prompt path sends C-e, C-u, a paste and Enter into whatever has focus, and on
+this menu a digit selects an option, so a prompt such as "1. do X" could clear
+context and start executing. While the plan card is docked the composer routes
+Send as feedback, so the refusal is there for a stale client and for the moment
+before the reading arrives.
+
+- *Was (2026-09-10):* a capture the parser cannot fully read is shown as the
+  pane itself, with the lines that look like numbered rows made tappable.
+  *Now:* that still holds for questions. For a plan the card points to the
+  Terminal and offers no tappable rows, because a misread digit on this menu can
+  clear context and start execution.
+- *Was:* "the transcript confirms the outcome either way." *Now:* an approval
+  that clears context writes the same rejection as `Esc` into the old
+  transcript, and the CLI starts a new transcript about 1 s after the key whose
+  first user record carries the plan. That record is the confirmation. The
+  SessionStart hook restamps `@claude_transcript`, and the Text view moves to
+  the new conversation within about 6 s, opening it with a "Context cleared ·
+  carrying out the plan" marker.
+
+**What it costs.** We are coupled to a second dialog's wording and keys,
+measured on Claude Code 2.1.281 on 2026-09-24 and pinned by the captures in
+`sessionio/testdata/plan-*.txt`. A capture that stops parsing leaves a session
+as it was before this change: no card, and the Terminal still answers. The
+composer's new mode list drives Shift+Tab from the server, and `BTab` on the
+plan dialog's feedback row approves the plan, so the composer holds the mode
+dial while any dialog is drawn. Each plan answer records one `text.answer_sent`
+or `text.answer_failed` with `tl.action` = `plan-approve` or `plan-feedback`,
+and one `claude.answered` when it lands (ADR-0006). The measurements, the wire
+contracts and the key sequences are in
+`docs/plans/2026-09-24-text-composer-redesign.md`.

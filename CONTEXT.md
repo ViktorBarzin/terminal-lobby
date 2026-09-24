@@ -653,7 +653,7 @@ absolute path on send. A layer behind the field paints it; an image is
 painted as the picture itself, which the token is padded out to the
 width of, and pressing that picture opens it full size. Deleting the
 token deletes the attachment.
-It replaced a strip of chips above the input on 2026-09-13 (a **tray**,
+It replaced a strip of chips above the input on 2026-09-13 (a tray,
 the old name): a screenshot pasted half-way through a sentence is about
 that half of the sentence, and the tray could only put every path at the
 front. The chip and the unsent text persist per (session, browser), so a
@@ -661,7 +661,8 @@ reload does not lose a half-written message. In the **New-session
 composer** only the text persists: its files are still `File` objects in
 the tab, which JSON cannot carry, so a reloaded tab shows the prose with
 the orphaned tokens cut out of it.
-_Avoid_: tray, attachment bar, dropzone (the drop target is the whole window)
+_Avoid_: tray (the old strip; the **+ tray** is the menu behind "+"),
+attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
 
@@ -744,18 +745,46 @@ _Avoid_: input box, message box
 
 **Composer**:
 The prompt field for a LIVE Session, with the things that only mean something
-once there is a session to talk to around it — the permission panel, the
-prompts Claude has queued, the permission-mode chip, the context meter and
-Stop.
+once there is a session to talk to around it: the permission panel, and the
+**status line** above the field, with Stop and the **dials**. The field sits in
+a pill between the "+" that opens the **+ tray** and Send. Since 2026-09-24 the
+prompts Claude has queued are drawn as dashed ghost bubbles at the end of the
+conversation instead, and the permission-mode chip and the context meter are
+dials.
 _Avoid_: chat box, prompt bar
+
+**Status line**:
+The thin line along the top of the **Composer**. Its left side shows the
+**Working row** while a turn is open, and otherwise that Claude is still
+working in the background, or why this device only watches; its right side
+holds the **dials**. Not Claude Code's own status line in the pane, where the
+permission mode is read, nor its statusLine setting, where the **Recorder**
+sits.
+_Avoid_: status bar, status row (the timeline row it took over from), footer
+
+**Dial**:
+A labelled control on the **status line** that shows one setting and opens the
+list that changes it: mode, model with effort, and context in the **Composer**;
+project, command, and model with effort in the **New-session composer**. With a
+mouse each dial opens its own popover; on a phone every dial opens one sheet
+with a tab per dial.
+_Avoid_: chip (the old mode and model chips), picker (the list a dial opens)
+
+**+ tray**:
+The menu behind the "+" at the start of a composer's pill: attach a file, add a
+photo, a `/` command, and in a live **Composer** an `@` file path. It took over
+from the Attach button on 2026-09-24.
+_Avoid_: tray on its own (the strip of chips that **Inline chips** replaced),
+attach menu, plus menu
 
 **New-session composer**:
 The prompt field for a session that does not exist yet, shown wherever nothing
 is selected and on a phone as the landing view. You type what you want to do,
 press Enter, and the session is created with your text as its first prompt.
-Four choices sit under it: which **project** it lands in, which command runs,
-which model, and how hard it thinks. Choosing a plain shell turns it back into
-a name box, because a shell has no prompt to receive. Either shape has to have
+Four choices sit on **dials** on the line above it: which **project** it lands
+in, which command runs, and which model and how hard it thinks, those two
+sharing one dial. Choosing a plain shell turns the field into a name box,
+because a shell has no prompt to receive. Either shape has to have
 something in it — an empty box created a session with nothing in it to
 summarise until 2026-09-12, and Send is now drawn unavailable until you type.
 A held file counts as what was typed, since it leaves as the path it uploaded
@@ -803,17 +832,19 @@ _Avoid_: activity feed, events (Event is the wire type)
 **Working row**:
 The live row standing for a turn in flight: the tool currently running, an
 elapsed timer, and the step count so far. It exists only while a turn is
-unsettled, and is what the view shows in place of streaming text.
+unsettled, and is what the view shows in place of streaming text. It was the
+timeline's last row until 2026-09-24; since then it is drawn on the left of the
+**status line**.
 
 **Blocking prompt**:
 Something the CLI is waiting on a human for, which the transcript does not
-report while it is pending — a permission prompt, or an `AskUserQuestion`
-menu. The text view mirrors it as a card; `session-events` answers it by
-injecting keys into the pty (ADR-0010). Distinct from **Session state**
-*awaiting input*, which is the sidebar's coarser signal that some prompt exists.
-The two kinds the hooks can see as they are drawn — an `AskUserQuestion` and an
-`ExitPlanMode` — hold the session at *awaiting input* for as long as the menu
-stands, rather than for the instant the notification about it arrives
+report while it is pending: a permission prompt, an `AskUserQuestion` menu, or
+a **plan approval**. The text view mirrors it as a card; `session-events`
+answers it by injecting keys into the pty (ADR-0010). Distinct from **Session
+state** *awaiting input*, which is the sidebar's coarser signal that some prompt
+exists. The two kinds the hooks can see as they are drawn, an `AskUserQuestion`
+and an `ExitPlanMode`, hold the session at *awaiting input* for as long as the
+menu stands, rather than for the instant the notification about it arrives
 (ADR-0001).
 
 **Drawn question**:
@@ -843,6 +874,25 @@ on the last. `Enter` on it leaves the question; `Enter` on a numbered row only
 toggles that row. The answer card's commit button presses it.
 _Avoid_: Next button, submit row (the review screen's `Submit answers` is a
 different control)
+
+**Plan approval**:
+The **blocking prompt** Claude Code draws when an `ExitPlanMode` call presents
+a plan: the plan, a numbered list of ways to approve it, and the **feedback
+row**. The approve options differ between sessions (one may clear context
+first, auto mode may not be offered, the context figure moves), so they are
+read off the pane as drawn. Approving with a clear starts a new conversation
+whose first message carries the plan. The text view docks it as the plan card,
+above the composer.
+_Avoid_: plan on its own (a **Plan** is a vendor account tier, under Agent
+spend), plan mode (the permission mode a plan is written in)
+
+**Feedback row**:
+The last numbered row of a **plan approval**, reading `Tell Claude what to
+change` until something is typed into it. It is an inline field: `Enter` sends
+its text back to Claude as feedback and the planning goes on, shift+tab
+approves the plan with the text, and `Enter` on the empty row rejects the plan.
+The text view fills it from the composer rather than from a box of its own.
+_Avoid_: reject row, row 4 (its number follows the options above it)
 
 **Marker fingerprint**:
 Which of the CLI's known landmarks a capture carried — the tab bar, the box
