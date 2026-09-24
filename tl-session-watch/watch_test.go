@@ -216,6 +216,7 @@ func TestStampWithNoClaudeIsADeath(t *testing.T) {
 	dead := live("typeahead")
 	dead.ClaudeAlive = false
 
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("typeahead"))})
 	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
 	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 	if f.Session != "typeahead" {
@@ -256,9 +257,39 @@ func TestClaudeDeathIsReportedOnce(t *testing.T) {
 	dead := live("typeahead")
 	dead.ClaudeAlive = false
 
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("typeahead"))})
 	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
 	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+}
+
+// A claude already dead when the watcher starts died while nobody was
+// watching, and the watcher has no way to say when. Before this, every restart
+// announced it again 30 seconds in: 5 of the 6 claude_died lines in the 72 hours
+// to 2026-09-24 came exactly one tick after a restart, all for ny-reibursment
+// and polarized-sunglasses-with-photoc, whose claudes had been gone for hours,
+// and every terminal-lobby deploy restarts this watcher.
+func TestADeadClaudeFoundAtStartIsNotANewDeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	dead := live("ny-reibursment")
+	dead.ClaudeAlive = false
+
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+}
+
+// Seeding must not blind the watcher to the same session later. Once that
+// claude is running again, dying again is a death this watcher saw.
+func TestAClaudeRevivedAfterStartIsWatchedAgain(t *testing.T) {
+	w := NewWatcher(cfg())
+	dead := live("ny-reibursment")
+	dead.ClaudeAlive = false
+
+	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("ny-reibursment"))})
+	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
+	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 }
 
 // The prewarm pool slot holds a claude nobody is talking to. Its death costs no

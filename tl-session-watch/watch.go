@@ -176,7 +176,7 @@ func (w *Watcher) Tick(snaps []Snapshot) []Finding {
 		if seen && !rebooted {
 			out = append(out, w.vanished(prev, cur)...)
 		}
-		out = append(out, w.standing(cur)...)
+		out = append(out, w.standing(cur, !seen)...)
 	}
 	return out
 }
@@ -223,7 +223,14 @@ func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 }
 
 // standing reports the two conditions read off a session that is still there.
-func (w *Watcher) standing(cur Snapshot) []Finding {
+//
+// first is true on this watcher's first snapshot of the user. A claude already
+// dead then died while nobody was watching, so it is recorded as known rather
+// than reported. Without this every restart re-announced the same long-dead
+// claudes one tick in (5 of 6 claude_died lines in the 72 hours to 2026-09-24),
+// and every terminal-lobby deploy restarts the watcher. It clears the moment
+// that claude runs again, so a later death in the same session still reports.
+func (w *Watcher) standing(cur Snapshot, first bool) []Finding {
 	var out []Finding
 	for name, s := range cur.Sessions {
 		if w.skip(name) {
@@ -231,6 +238,9 @@ func (w *Watcher) standing(cur Snapshot) []Finding {
 		}
 		key := cur.User + "/" + name
 
+		if first && s.ClaudeState != "" && !s.ClaudeAlive {
+			w.raise(KindClaudeDied, key)
+		}
 		if s.ClaudeState != "" && !s.ClaudeAlive {
 			w.streak[key]++
 			if w.streak[key] >= w.cfg.ConfirmTicks && w.raise(KindClaudeDied, key) {
