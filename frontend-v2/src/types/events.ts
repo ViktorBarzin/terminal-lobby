@@ -69,6 +69,40 @@ export interface Event {
    * marker per turn would say nothing (sessionio MetaModel).
    */
   model?: ModelState;
+  /**
+   * The pictures a `user` prompt (pasted into the terminal) or a `tool_result`
+   * (a Read of an image, a screenshot handed back as a block) carried. The
+   * bytes stay in the transcript and are read back by index through the
+   * image-block routes (`promptImageUrl`, `toolImageUrl`), so the base64 never
+   * crosses the stream and never meets its 8 KiB cap.
+   */
+  images?: ImageRef[];
+  /** The uuid of the user record that carried `images`, which is how the
+   *  prompt route finds the record again. Set only alongside `images`. */
+  record?: string;
+  /**
+   * The files a screenshot tool wrote, as absolute paths, on its `tool_result`.
+   * The tool links them relative to the directory Claude was started in, and
+   * the server resolves them, because the browser never learns that directory.
+   */
+  files?: string[];
+}
+
+/**
+ * One picture block a user prompt or a tool result carried (sessionio
+ * `ImageRef`). A reference, never the bytes.
+ */
+export interface ImageRef {
+  /** The block's index among the record's (or the result's) image blocks,
+   *  counting from 0, and the index the image-block route takes. */
+  n: number;
+  /** What the block declared. Advisory: the route sniffs the bytes. */
+  mediaType?: string;
+  /** The decoded size in bytes. */
+  bytes?: number;
+  /** The terminal paste id the prompt's text calls `[Image #N]`. Absent when
+   *  the record's paste ids did not line up one to one with its blocks. */
+  paste?: number;
 }
 
 /** The model a session answers on, and the effort it answers at. */

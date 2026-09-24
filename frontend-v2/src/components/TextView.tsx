@@ -800,6 +800,7 @@ export const TextView: Component<{
         onPinned={props.onPinned}
         pinned={props.pinned}
         me={props.me}
+        session={props.session}
       />
       {/* The transcript closes the turn when the main thread stops talking, so
           the working row goes with it — while a background agent or a workflow

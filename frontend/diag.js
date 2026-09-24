@@ -230,6 +230,12 @@ globalThis.tlDiag = (function () {
     // the rest of clipboard-upload's surface is ordinary API chatter.
     if (p.indexOf("/clipboard/img/") === 0 || p.indexOf("/clipboard/upload") === 0) return "files";
     if (p.indexOf("/clipboard/") === 0) return "api";
+    // A picture the transcript itself carries (a terminal paste, a Read of an
+    // image), read back by index from session-events. It is a picture people
+    // see, so it counts with the files; the full text of a capped result
+    // beside it under /result/ stays api. The route ends in the index, not an
+    // extension, so the app rule below cannot claim it.
+    if (/^\/result\/[^/]+\/(user\/)?[^/]+\/image\/\d+$/.test(p)) return "files";
     if (p.indexOf("/skills") === 0) return "api";
     if (p.indexOf("/api/") === 0) return "api";
     // The app itself: the two documents, their fingerprints, and the assets

@@ -38,6 +38,7 @@ import {
 import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
 import { MessageSegments } from "./Attachment";
+import { collapseSegments, segmentPrompt } from "../lib/attachments";
 import {
   MetaRowView,
   PlanRowView,
@@ -56,14 +57,19 @@ const UserRowView: Component<{
   row: UserRow;
   /** effective OS user — decides whether a store path is ours to fetch. */
   me?: string;
+  /** the session, whose transcript holds the prompt's pasted pictures. */
+  session?: string;
   onOpenPreview?: (path: string) => void;
 }> = (props) => {
-  const long = () => props.row.body.length > USER_COLLAPSE_CHARS;
+  // The collapse works on segments rather than on the body, so it can never
+  // end halfway through a path or a `[Image #N]` placeholder: slicing the body
+  // at character 600 turned a store path across that point into a broken
+  // fragment of text where its picture belonged.
+  const segments = createMemo(() => segmentPrompt(props.row.body, props.row.images));
+  const collapsed = createMemo(() => collapseSegments(segments(), USER_COLLAPSE_CHARS));
+  const long = () => collapsed().cut;
   const [open, setOpen] = createSignal(false);
-  const shown = () =>
-    long() && !open()
-      ? props.row.body.slice(0, USER_COLLAPSE_CHARS) + "…"
-      : props.row.body;
+  const shown = () => (long() && !open() ? collapsed().segments : segments());
   return (
     <div class="tl-row tl-row-user" data-eid={props.row.id}>
       <div class="tl-bubble-user">
@@ -72,10 +78,13 @@ const UserRowView: Component<{
             costs the surrounding text nothing. */}
         <pre class="tl-user-text">
           <MessageSegments
-            text={shown()}
+            segments={shown()}
             me={props.me ?? ""}
+            session={props.session}
+            record={props.row.record}
             onOpen={props.onOpenPreview}
           />
+          {long() && !open() ? "…" : ""}
         </pre>
         <Show when={long()}>
           <button
@@ -95,8 +104,9 @@ const UserRowView: Component<{
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
   <div class="tl-row tl-row-message" data-eid={props.row.id}>
     <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
-      {/* `me` turns bare absolute paths in Claude's prose into attachments too
-          (design 2026-08-17 decision 8), skipping code — see Markdown.tsx. */}
+      {/* `me` makes this a conversation: a picture Claude names by its path is
+          drawn under the text naming it, and fenced code stays code — see
+          Markdown.tsx (2026-09-24, revising design 2026-08-17 decision 8). */}
       <Markdown text={props.row.body} attachAs={props.me} />
     </Show>
   </div>
@@ -267,6 +277,13 @@ export const MessagesTimeline: Component<{
    * did before attachments rendered at all.
    */
   me?: string;
+  /**
+   * The session these events belong to. A picture the transcript itself
+   * carries (one pasted into the terminal, or a Read of an image) has no file,
+   * so its bytes are read back from the session's transcript by index; without
+   * the session those pictures stay text.
+   */
+  session?: string;
   /** the opening window has not arrived yet — this is "not yet", not "none". */
   opening?: boolean;
   /** FALSE while this timeline belongs to a session the lobby is keeping
@@ -491,7 +508,16 @@ export const MessagesTimeline: Component<{
         // marker saying which skill is now in force. Its own card, keyed on the
         // item type so nothing here branches on a tool's name.
         if (row.itemType === "skill") return <SkillRowView row={row} />;
-        return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} onLoadFull={props.onLoadFull} renderChild={renderLeaf} />;
+        return (
+          <ToolRowView
+            row={row}
+            session={props.session}
+            me={props.me}
+            onOpenPreview={props.onOpenPreview}
+            onLoadFull={props.onLoadFull}
+            renderChild={renderLeaf}
+          />
+        );
       case "todo":
         return <TodoRowView row={row} />;
       case "question":
@@ -505,7 +531,14 @@ export const MessagesTimeline: Component<{
       case "status":
         return <StatusRowView row={row} />;
       case "user":
-        return <UserRowView row={row} me={props.me} onOpenPreview={props.onOpenPreview} />;
+        return (
+          <UserRowView
+            row={row}
+            me={props.me}
+            session={props.session}
+            onOpenPreview={props.onOpenPreview}
+          />
+        );
       case "permission":
         return <PermissionRowView row={row} />;
     }
@@ -521,6 +554,7 @@ export const MessagesTimeline: Component<{
           <UserRowView
             row={row() as UserRow}
             me={props.me}
+            session={props.session}
             onOpenPreview={props.onOpenPreview}
           />
         );
@@ -535,6 +569,8 @@ export const MessagesTimeline: Component<{
         return (
           <ToolRowView
             row={row() as ToolRow}
+            session={props.session}
+            me={props.me}
             onOpenPreview={props.onOpenPreview}
             onLoadFull={props.onLoadFull}
             renderChild={renderLeaf}

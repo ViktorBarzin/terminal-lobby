@@ -9,6 +9,9 @@ import {
   eventsUrl,
   promptUrl,
   cancelUrl,
+  pictureUrl,
+  toolImageUrl,
+  promptImageUrl,
   PREFS_PATH,
 } from "../src/lib/config";
 
@@ -81,3 +84,34 @@ describe("config — fileListUrl carries the dotfile opt-in", () => {
   });
 });
 
+
+// The Text view's pictures (2026-09-24). A picture on disk goes to the file-api's
+// picture-only route, which reads any path the caller's OS user can read; a
+// picture the transcript itself carries (a terminal paste, a Read of an image)
+// has no file, so session-events reads its bytes back out of the transcript by
+// block index. The byte routes end in the index and never in an extension:
+// frontend/diag.js files any path ending in .png under "app".
+describe("config — picture URLs", () => {
+  it("sends a picture on disk to file-api's picture route, path encoded", () => {
+    expect(pictureUrl("/tmp/claude-1000/x/scratchpad/a b.png")).toBe(
+      "/files/image?path=%2Ftmp%2Fclaude-1000%2Fx%2Fscratchpad%2Fa%20b.png",
+    );
+  });
+
+  it("reads a tool result's n-th image block back from session-events", () => {
+    expect(toolImageUrl("deploy-the-thing", "toolu_01EaDF17CdmXP8Wc3ctiXaL2", 0)).toBe(
+      "/result/deploy-the-thing/toolu_01EaDF17CdmXP8Wc3ctiXaL2/image/0",
+    );
+  });
+
+  it("reads a prompt's n-th image block back by the user record's uuid", () => {
+    expect(promptImageUrl("s", "1ecbc9e7-ef70-4213-bd81-82c2dfcb5169", 2)).toBe(
+      "/result/s/user/1ecbc9e7-ef70-4213-bd81-82c2dfcb5169/image/2",
+    );
+  });
+
+  it("encodes the session and the ids, which go into path segments", () => {
+    expect(toolImageUrl("a/b", "t?1", 1)).toBe("/result/a%2Fb/t%3F1/image/1");
+    expect(promptImageUrl("a b", "r#1", 0)).toBe("/result/a%20b/user/r%231/image/0");
+  });
+});

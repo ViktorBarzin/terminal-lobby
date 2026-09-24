@@ -92,6 +92,7 @@ import { createNotificationSystem } from "../notify/notifications";
 import type { TitleSession } from "../notify/title";
 import { createGalleryStore } from "../store/gallery";
 import { Gallery } from "./Gallery";
+import { PictureLightbox } from "./PictureLightbox";
 import { createDeployHealer } from "../deploy/healer";
 import { createStatusStore, type ConnectionControl } from "../diagnostics/status-store";
 import { buildProbes } from "../diagnostics/probes";
@@ -3052,6 +3053,12 @@ export const App: Component = () => {
       <Show when={gallery.view() !== "closed"}>
         <Gallery store={gallery} />
       </Show>
+
+      {/* The Text view's pictures, full size. Once for the whole app rather
+          than once per timeline: a workspace shows several sessions, and the
+          lobby keeps sessions mounted while hidden, so a per-timeline overlay
+          would be several overlays for one picture. */}
+      <PictureLightbox />
 
       {/* No update UI, by design (ADR-0007): a new build applies itself at the
           next open. Nothing to tap, nothing to dismiss. */}
