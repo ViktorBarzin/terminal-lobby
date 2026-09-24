@@ -366,9 +366,27 @@ func main() {
 			// the same reason POST /prompt has it: a session that has just been
 			// created accepts keys seconds before its TUI reads any.
 			AwaitReady bool `json:"awaitReady"`
+			// Mode is the permission mode for the Text view's mode dial, by the
+			// CLI's identifier, and a request carrying it is that and nothing
+			// else (mode.go). It is walked with Shift+Tab rather than a picker,
+			// so it takes no tool, and it is for a session somebody has open,
+			// so AwaitReady does not apply.
+			Mode string `json:"mode"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil {
 			http.Error(w, "bad body (need tool, and a model or an effort)", http.StatusBadRequest)
+			return
+		}
+		// BEFORE the two refusals below. The mode walk runs while Claude
+		// works, which is what the safety rule in sessionio/setmode.go is
+		// for, and it checks for a dialog itself; refusing either outright
+		// would make the dial a 409 for every working session.
+		if body.Mode != "" {
+			if body.Model != "" || body.Effort != "" {
+				http.Error(w, "bad body (a mode, or a model and an effort, not both)", http.StatusBadRequest)
+				return
+			}
+			serveMode(w, r, injector, osUser, session, body.Mode)
 			return
 		}
 		h := sessionio.Harness(body.Tool)
