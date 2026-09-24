@@ -299,6 +299,15 @@ export const TextView: Component<{
       .map((q) => `${q.header}|${q.question}|${q.options.map((o) => o.label).join(",")}`)
       .join("~"),
   );
+  /**
+   * WHICH RECORD is being answered: the key of the transcript's question row,
+   * or "" while only the pane describes the call.
+   *
+   * Content keys the card, for the handover above. It cannot tell a call
+   * from the next one asking the same thing, and the record can, so every
+   * stored reply carries both (`replied` below).
+   */
+  const callKey = createMemo(() => recorded()?.key ?? "");
   const [answering, setAnswering] = createSignal(false);
 
   /**
@@ -310,10 +319,22 @@ export const TextView: Component<{
    * than convenient — `asking()` is what the card is keyed on, so a reading
    * lives exactly as long as the card that asked for it, and a reply arriving
    * after the session has moved to another call renders on nothing.
+   *
+   * CONTENT IS NOT ENOUGH ON ITS OWN, so `call` stamps the record as well: the
+   * key of the transcript's question row the reply was sent for, "" while
+   * only the pane described the call. Two calls asking the same thing have
+   * the same content key, and seen live on 2026-09-23 (CLI 2.1.280) the fifth
+   * call of a session repeated the fourth and docked no card for over a
+   * minute. The fourth call's last reply was its Submit's, `done` with no
+   * dialog, and it still matched: the new call's record had withdrawn the
+   * watcher's reading, so the watcher was back to saying nothing, as it had
+   * been when that reply was stored. The new card drew that reply, a dialog
+   * that had gone, and stayed empty until a reload.
    */
   const [replied, setReplied] = createSignal<{
     at: string;
     pane: string;
+    call: string;
     resp: AnswerResponse;
   } | null>(null);
   const reading = createMemo((): AnswerResponse | null => {
@@ -338,13 +359,17 @@ export const TextView: Component<{
     // reason the comment below gives: it was captured milliseconds after the
     // keys went in and the watcher ticks every 2s.
     if (!r.resp.dialog && paneKey() !== r.pane) return null;
-    if (r.at === asking()) return r.resp;
-    // The HANDOVER is the exception. The same dialog arrives first from the
-    // pane and then from the transcript, which changes the key without
-    // changing what is on screen — the pane's reading has no per-question
-    // header and the record does. A reading whose drawn question is one of
-    // the call's own still describes the call, so it survives that; anything
-    // else is a reading of a call nobody is being asked any more.
+    if (r.at === asking() && r.call === callKey()) return r.resp;
+    // A reply sent for one record is over once another record is asking, or
+    // none is, whatever the two asked.
+    if (r.call !== "") return null;
+    // The HANDOVER is the exception, for a reply sent before the call had a
+    // record. The same dialog arrives first from the pane and then from the
+    // transcript, which changes both keys without changing what is on screen.
+    // The pane's reading has no per-question header and the record does. A
+    // reading whose drawn question is one of the call's own still describes
+    // the call, so it survives that; anything else is a reading of a call
+    // nobody is being asked any more.
     const q = r.resp.dialog?.questions[0];
     return q && placeQuestion(q, asked()) ? r.resp : null;
   });
@@ -498,6 +523,7 @@ export const TextView: Component<{
     // lands after the session has moved to another call describes neither, and
     // pairing it with the key it was sent under is what drops it.
     const at = asking();
+    const call = callKey();
     setAnswering(true);
     let resp: AnswerResponse | null;
     try {
@@ -517,7 +543,7 @@ export const TextView: Component<{
     // last word as of the reply landing. A tick that fired while the request
     // was in flight was captured before the keys went in, and counting it as
     // news would hand the card back the question that has just been answered.
-    setReplied({ at, pane: paneKey(), resp });
+    setReplied({ at, pane: paneKey(), call, resp });
   };
 
   /**

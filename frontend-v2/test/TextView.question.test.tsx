@@ -647,3 +647,55 @@ describe("a question the transcript has not caught up with", () => {
     expect(v.text(".tl-qcard-question")).toBe("Which way for Handover?");
   });
 });
+
+/**
+ * A call that asks exactly what the call before it asked.
+ *
+ * The card is keyed on the call's CONTENT, and so is the reply it stores, so
+ * two identical calls in a row look like one to both. Seen live on 2026-09-23
+ * on CLI 2.1.280: the fifth call of a session repeated the fourth, and no
+ * card docked for over a minute while the transcript said "answering below…"
+ * and the pane sat on the dialog. A reload showed it at once. The fourth
+ * call's last reply was the Submit's, `done` with no dialog, and nothing had
+ * cleared it, so the fifth call's card drew that reply: a dialog that had
+ * gone.
+ */
+describe("a call that asks exactly what the last one asked", () => {
+  const fruit = [called("Fruit", "Pick a fruit", "Apple", "Pear")];
+  const finished = async (): Promise<AnswerResponse> => ({ applied: true, done: true });
+
+  /** tool-a asked and answered from the card, its result in the transcript. */
+  const answeredFromTheCard = async () => {
+    const onAnswer = vi.fn(finished);
+    const v = mount([ask("tool-a", fruit)], onAnswer);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    v.option("Apple")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(v.card()).toBeNull());
+    v.setEvents((cur) => [...cur, answered("tool-a", ["Apple"])]);
+    return v;
+  };
+
+  it("docks the card when the record lands before the pane is read", async () => {
+    const v = await answeredFromTheCard();
+    v.setEvents((cur) => [...cur, ask("tool-b", fruit)]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.text(".tl-qcard-question")).toBe("Pick a fruit");
+  });
+
+  it("keeps the card when the record lands after the pane was read", async () => {
+    // The order the live session hit. The watcher's reading docks the card,
+    // then the record withdraws that reading, which put the watcher back to
+    // saying nothing, as it had when the old reply was stored.
+    const v = await answeredFromTheCard();
+    v.setEvents((cur) => [
+      ...cur,
+      asking({ questions: [drawn("Pick a fruit", "Apple", "Pear")], headers: ["Fruit"], count: 1 }),
+    ]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    v.setEvents((cur) => [...cur, ask("tool-b", fruit)]);
+    await Promise.resolve();
+    expect(v.card()).not.toBeNull();
+    expect(v.text(".tl-qcard-question")).toBe("Pick a fruit");
+  });
+});
