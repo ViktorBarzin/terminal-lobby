@@ -146,6 +146,21 @@ export const QuestionCard: Component<{
    * still there, which is the question they were typed for.
    */
   const [draft, setDraft] = createSignal<{ of: string; typed: string } | null>(null);
+  /**
+   * The field while it is open, and the row whose click opened it.
+   *
+   * Opening the field FOCUSES it. The field sits under the option list,
+   * inside the body that scrolls, and seen in desktop Chromium on 2026-09-23
+   * at 1280x800 a four-row multi-select opened it below the part of the body
+   * in view: focus stayed on the row, the row gets no mark on a multi-select,
+   * and the click changed nothing the reader could see. The browser scrolls a
+   * focused field into view, and the reader can type at once.
+   *
+   * The row is kept so the focus can go back to it when the field closes
+   * under the caret (`closeField`), rather than falling to the page.
+   */
+  let fieldEl: HTMLInputElement | undefined;
+  let opener: HTMLElement | undefined;
 
   const question = (): DialogQuestionView | null => props.dialog?.questions[0] ?? null;
   const headers = (): string[] => props.dialog?.headers ?? [];
@@ -370,6 +385,18 @@ export const QuestionCard: Component<{
   };
 
   /**
+   * Close the free-text field. When the caret is in it, the focus goes back
+   * to the row that opened it: left in the field, it would fall to the page
+   * as the field goes, and a keyboard reader would start again from the top
+   * of the view.
+   */
+  const closeField = () => {
+    const held = fieldEl !== undefined && document.activeElement === fieldEl;
+    setDraft(null);
+    if (held && opener?.isConnected) opener.focus();
+  };
+
+  /**
    * Send one toggle and hold the next until its reply has landed.
    *
    * When it lands after the field's Add, the field closes if the pane now
@@ -386,7 +413,7 @@ export const QuestionCard: Component<{
       .catch(() => {})
       .finally(() => {
         if ("text" in t && typing() && text().trim() === t.text && typedPick() === t.text) {
-          setDraft(null);
+          closeField();
         }
         setFlying(null);
       });
@@ -427,16 +454,21 @@ export const QuestionCard: Component<{
     setQueue((q) => [...q, t]);
   };
 
-  const choose = (label: string) => {
+  const choose = (label: string, row?: HTMLElement) => {
     if (isFreeText(label)) {
       if (!multi()) {
         setDraft({ of: drawnKey(), typed: "" });
-        return;
+      } else if (!typing()) {
+        // A multi-select's row may already hold words, and the field opens
+        // on them so they can be changed or cleared. An open field is left
+        // alone: a second click on the row must not wipe what is half-typed.
+        setDraft({ of: drawnKey(), typed: typedText() });
       }
-      // A multi-select's row may already hold words, and the field opens on
-      // them so they can be changed or cleared. An open field is left alone:
-      // a second click on the row must not wipe what is half-typed.
-      if (!typing()) setDraft({ of: drawnKey(), typed: typedText() });
+      // Solid renders the field as the draft is set, so it is there to focus
+      // before this click handler returns. That matters on a phone, where
+      // only a focus made inside the tap itself raises the keyboard.
+      opener = row;
+      fieldEl?.focus();
       return;
     }
     if (multi()) {
@@ -664,7 +696,7 @@ export const QuestionCard: Component<{
                         // in flight, because a click then waits its turn in the
                         // queue. Only a request that moves the dialog holds it.
                         disabled={multi() ? sending() !== null : busy()}
-                        onClick={() => choose(label())}
+                        onClick={(e) => choose(label(), e.currentTarget)}
                       >
                         {/* The DIALOG's number. The keystroke is the server's
                             to press now, but it is still the key the CLI is
@@ -713,6 +745,7 @@ export const QuestionCard: Component<{
                     row rather than adding a rule to app.css for it. */}
                 <div style={{ display: "flex", gap: "8px", "margin-top": "6px" }}>
                   <input
+                    ref={fieldEl}
                     class="tl-qcard-other"
                     style={{ "margin-top": "0", flex: "1", "min-width": "0" }}
                     type="text"

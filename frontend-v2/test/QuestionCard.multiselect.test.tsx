@@ -409,6 +409,40 @@ describe("free text on a multi-select is one more pick", () => {
     expect(v.onToggle).not.toHaveBeenCalled();
   });
 
+  it("puts the caret in the field it opens", () => {
+    // Seen in desktop Chromium on 2026-09-23 at 1280x800: the field and its
+    // Add opened under the option list, below the part of the card's body in
+    // view, and focus stayed on the row, so the click changed nothing the
+    // reader could see. A focused field is scrolled into view by the browser,
+    // and the reader can type at once.
+    const v = mount(holding("Apple"));
+    open(v.container);
+    expect(document.activeElement).toBe(field(v.container));
+  });
+
+  it("puts the caret back in the open field on another click, words kept", () => {
+    const v = mount();
+    open(v.container);
+    type(v.container, "Ki");
+    row(v.container, FREE_TEXT_LABEL).focus();
+    open(v.container);
+    expect(field(v.container)!.value).toBe("Ki");
+    expect(document.activeElement).toBe(field(v.container));
+  });
+
+  it("hands the focus back to the row when the field closes under it", async () => {
+    // The field closes once the pane holds its words. Focus left inside it
+    // would fall to the page, and a keyboard reader would start again from
+    // the top of the view.
+    const v = mount();
+    open(v.container);
+    type(v.container, "Kiwi");
+    fireEvent.keyDown(field(v.container)!, { key: "Enter" });
+    await v.land(drawnWith(holding(), { typed: "Kiwi", typedChecked: true }));
+    expect(field(v.container)).toBeNull();
+    expect(document.activeElement).toBe(row(v.container, "Kiwi"));
+  });
+
   it("types the words into the CLI's row with the other ticks, and presses no Enter", () => {
     const v = mount(holding("Apple"));
     open(v.container);

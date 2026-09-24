@@ -321,6 +321,15 @@ describe("<QuestionCard> — the free-text row", () => {
     expect(container.querySelector(".tl-qcard-other")).not.toBeNull();
   });
 
+  it("puts the caret in the field it opens", () => {
+    // The field opens under the option list, inside the card's own scroller,
+    // and on a long list that is below the part in view. Focusing it is what
+    // brings it on screen.
+    const { container } = mount();
+    fireEvent.click(rows(container)[2]!);
+    expect(document.activeElement).toBe(container.querySelector(".tl-qcard-other"));
+  });
+
   it("sends the typed text with the free-text label", () => {
     const onChoose = vi.fn(async () => {});
     const { container } = mount({ onChoose });
