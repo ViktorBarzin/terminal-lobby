@@ -463,6 +463,37 @@ brings a reading, the card takes the label from the call's shape instead:
 `Submit` on the call's last question and `Next` on the others, which is what
 the CLI draws.
 
+### What the live check of the fix found
+
+The live check drove the branch against real 2.1.280 dialogs, through a scratch
+`session-events` and the text view in desktop Chromium. Every scripted scenario
+passed, and three defects turned up beside them.
+
+| what was wrong | how it showed | the fix |
+|---|---|---|
+| Without the call's question list, the server refused any header whose tab-bar box is `☒`, reading it as a question already answered. A multi-select's box fills on its first tick | on a one-question call whose record was missing, the first tick applied, and the second tick, the commit and an untick-all each came back `not-drawn` | a `☒` counts as the drawn question's own when the drawn question is a multi-select holding a pick that fills a box and the header's box is the last `☒` on the bar (`ownBox` in `sessionio/answerplan.go`). A card naming an earlier committed question is still refused |
+| The multi-select free-text field opened under the option list, below the part of the card's body in view, and focus stayed on the row | at 1280x800 and at 414x896 the click changed nothing on screen | opening the field focuses it, which scrolls it into view, and focus goes back to the row when the field closes |
+| A stored reply was keyed by the call's content, so a call asking exactly what the previous call asked matched that call's last reply, `done` with no dialog | no card for over a minute, until a reload | each reply also carries the key of the transcript record it was sent for |
+
+The first was latent in the field. On 2.1.280 the record landed 8 ms after the
+dialog drew in the one measurement taken, and all 42 field answers from
+2026-09-11 to 2026-09-23 had the list. The stand-in already filled the box on
+the first tick; every toggle test passed the call list, so none reached the fallback.
+The third came in with the 2026-09-11 design rather than this amendment.
+
+Replayed against a real 2.1.280 dialog after the fixes, at 1280x800:
+
+- Opening the free-text row put the caret in the field, and the card's body
+  scrolled so the field and Add sat at y 581 to 616, inside a body ending at
+  616. Before the fix they sat at y 622 to 657.
+- A third call identical to the second, whose Submit had gone through the card,
+  docked its card 13 ms after its record arrived and 1.13 s before the
+  watcher's reading.
+- With the session pointed at a transcript holding no pending call, five
+  toggles and a commit all applied, each recorded with `tl.source=pane`, and a
+  stale toggle on the review screen was refused with the pane unchanged. Claude
+  received `Pear, Plum`.
+
 ## Open questions
 
 - **Which of the four candidates fired was never isolated, and no longer can
