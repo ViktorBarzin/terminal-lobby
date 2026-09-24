@@ -2,6 +2,9 @@
 
 **Status:** Shipped — deployed and verified 2026-08-17
 **Date:** 2026-08-17 · **Owner:** wizard
+**Revised:** 2026-09-13 and 2026-09-16 for the composer, and 2026-09-24, when
+decision 8 was reversed and tool rows began to show pictures. Each revision has
+its own section near the end.
 **Grilled from:** *"let's work on the uploading of files in text mode. right now
 it seems to still use the old upload then share path but the path is copied to
 the terminal view not text view. uploading photos and docs in the text view
@@ -379,6 +382,45 @@ stop a click handler on a bare image. And opening the picture blurs the field,
 because on a phone the keyboard covers half of what the press asked to see;
 the caret survives a blur, so closing hands focus back and typing carries on
 where it was. A field nobody was typing in gets nothing back.
+
+## Revised 2026-09-24: tool rows show pictures too
+
+Decision 8 has been reversed, and tool rows no longer stay path-only. A Read of
+a picture, a browser screenshot and any tool result that carries an image block
+now show a small thumbnail, about 96px tall, which opens full size. The same
+picture may therefore show twice, in your bubble and in Claude's Read of it
+right after, and that is accepted.
+
+Viktor, 2026-09-24: "in text mode i would want to be able to view images
+natively. we can distinguish them by file name/path. agent communicating back
+with images should also render the same way." Claude sends pictures back
+through tool rows far more often than through its prose. Over 143 recent
+transcripts, 134 Read results carried a picture and 85 screenshots linked one,
+and each showed as text: the Read as up to 8 KiB of base64 JSON, the screenshot
+as a relative link. In the same sample Claude named a picture in its own words
+in 11 text blocks, and none of the six absolute paths it wrote outside fenced
+code were files on the box. Keeping tool rows path-only would have left most of
+what the agent sends back as text, which is the part of the request about the
+agent. The cost decision 8 guarded against, a second copy of a picture already
+in the bubble, comes to one 96px thumbnail.
+
+Other parts of this doc move with it:
+
+- Decision 7's fallback no longer covers a picture outside the home. A PNG,
+  JPEG, GIF, WebP or SVG is served from any path the caller's OS user can read,
+  `/tmp` included, through a picture-only route, `GET /files/image`. A document
+  or a rarer image type outside the home still shows its path.
+- Decision 13's 320px cap now also covers pictures in Claude's prose, which had
+  no height cap, and pictures pasted into the terminal, which showed as the
+  placeholder `[Image #1]`.
+- A picture in a bubble opens the shared `.tl-lightbox` rather than the file
+  preview. A document chip still opens the preview.
+- The consequence "the rehype pass must skip code" now holds for fenced code
+  only. A path in inline code keeps its text and its picture draws under the
+  block, because inline backticks are where Claude named a picture in 10 of
+  those 11 text blocks.
+
+The design is `docs/plans/2026-09-24-text-view-native-images.md`.
 
 ## Open questions
 
