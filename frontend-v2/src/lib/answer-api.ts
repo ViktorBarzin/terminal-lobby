@@ -193,6 +193,41 @@ export function isFreeText(label: string): boolean {
 }
 
 /**
+ * A question the pane drew and one from elsewhere, as the same question.
+ *
+ * Mirrors sessionio's `answerSameQuestion`, numbers included, because they are
+ * measured rather than chosen: the drawn side loses a trailing ellipsis (the
+ * CLI's mark for "there was more of this"), and a question too long for the
+ * dialog is compared on its first 40 characters, of which at least 12 have to
+ * be on screen for the comparison to mean anything. Containment either way
+ * round is a match, which is what lets the pane's last paragraph of a question
+ * match the whole of it.
+ */
+export function sameDrawnQuestion(drawn: string, known: string): boolean {
+  const d = normalizeDrawn(drawn).replace(/[…. ]+$/, "");
+  const k = normalizeDrawn(known);
+  if (!d || !k) return false;
+  if (k.includes(d) || d.includes(k)) return true;
+  const dh = comparablePrefix(d);
+  return dh !== "" && dh === comparablePrefix(k);
+}
+
+/** Lower-cased, with the terminal's own drawing and every run of space gone. */
+function normalizeDrawn(s: string): string {
+  return s
+    .replace(/[─-╿❯|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/** The first 40 characters, or "" when fewer than 12 are there to compare. */
+function comparablePrefix(s: string): string {
+  const runes = [...s];
+  return runes.length < 12 ? "" : runes.slice(0, 40).join("");
+}
+
+/**
  * What the CARD offers as an answer: the dialog's list without the chat escape.
  *
  * "Chat about this" is not an answer — it abandons the question and hands the

@@ -186,6 +186,95 @@ describe("a reply that could not read the screen", () => {
     expect(v.container.querySelector(".tl-code")).toBeNull();
   });
 
+  it("gives way to a watcher reading of the same question whose ticks moved", async () => {
+    // A multi-select toggle stays on the question, so after the first tick a
+    // reading of the question with another box ticked has the same count, the
+    // same tally, the same question and the same labels. The watcher's news
+    // was told apart by those alone until 2026-09-24, so a toggle whose reply
+    // could not read the screen kept the capture up for the rest of the
+    // question, with the Terminal the only way out.
+    const multiCall = [{ ...called("Fruit", "Pick a fruit", "Apple", "Pear"), multiSelect: true }];
+    const fruit = (...ticked: string[]): DialogView => ({
+      questions: [
+        {
+          ...drawn("Pick a fruit", "Apple", "Pear"),
+          multiSelect: true,
+          options: ["Apple", "Pear"].map((label) => ({
+            label,
+            description: "",
+            ...(ticked.includes(label) ? { checked: true } : {}),
+          })),
+        },
+      ],
+      headers: ["Fruit"],
+      count: 1,
+      answered: ticked.length > 0 ? 1 : 0,
+    });
+    const onAnswer = vi.fn(
+      async (_req: AnswerRequest): Promise<AnswerResponse> => ({
+        applied: false,
+        reason: "unverified",
+        pane: halfDrawn,
+      }),
+    );
+    const v = mount([ask("tool-a", multiCall), asking(fruit("Apple"))], onAnswer);
+    await waitFor(() => expect(v.option("Apple")?.dataset.chosen).toBe("true"));
+
+    v.option("Pear")!.click();
+    await waitFor(() => expect(v.text(".tl-code")).toContain("Pick a d"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    v.setEvents((cur) => [...cur, asking(fruit("Apple", "Pear"))]);
+    await waitFor(() => expect(v.option("Pear")?.dataset.chosen).toBe("true"));
+    expect(v.container.querySelector(".tl-code")).toBeNull();
+  });
+
+  it("sends a click that was waiting once a reading says the question is still up", async () => {
+    // The click behind a toggle whose reply could not read the screen. An
+    // unreadable capture says nothing about which question is up, so the
+    // click waits for a reading that does, and goes out against it.
+    const multiCall = [{ ...called("Fruit", "Pick a fruit", "Apple", "Pear"), multiSelect: true }];
+    const replies: Array<(r: AnswerResponse | null) => void> = [];
+    const onAnswer = vi.fn(
+      (_req: AnswerRequest) => new Promise<AnswerResponse | null>((res) => replies.push(res)),
+    );
+    const v = mount([ask("tool-a", multiCall)], onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeDefined());
+    v.option("Apple")!.click();
+    v.option("Pear")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+
+    replies.shift()!({ applied: false, reason: "unverified", pane: halfDrawn });
+    await waitFor(() => expect(v.text(".tl-code")).toContain("Pick a d"));
+    // The watcher's reading is a task of its own in a browser, so it cannot
+    // land inside the reply's chain of microtasks. Let that chain finish.
+    await new Promise((r) => setTimeout(r, 0));
+    v.setEvents((cur) => [
+      ...cur,
+      asking({
+        questions: [
+          {
+            ...drawn("Pick a fruit", "Apple", "Pear"),
+            multiSelect: true,
+            options: [
+              { label: "Apple", description: "", checked: true },
+              { label: "Pear", description: "" },
+            ],
+          },
+        ],
+        headers: ["Fruit"],
+        count: 1,
+        answered: 1,
+      }),
+    ]);
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(2));
+    expect(onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+  });
+
   it("keeps showing the capture while the watcher says nothing new", async () => {
     // The other half of the rule. A reading the watcher has already reported
     // is not new, so it does not displace a capture taken milliseconds ago —

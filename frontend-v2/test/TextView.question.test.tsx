@@ -649,6 +649,185 @@ describe("a question the transcript has not caught up with", () => {
 });
 
 /**
+ * A toggle in flight while the card's source changes under it.
+ *
+ * Claude Code writes the AskUserQuestion record when it gets round to it, so
+ * the card often starts on the pane watcher's reading and the record lands
+ * while the reader is clicking (3-8 s after the dialog in two calls of five,
+ * measured 2026-08-28). A multi-question call's reading names no question,
+ * since the tab bar marks the current one in colour, and the record names all
+ * of them, so the two describe the call differently. Until 2026-09-24 TextView
+ * keyed the card on that description and built a new card at the handover.
+ * Clicks waiting in the old card went with it, and the new card had no toggle
+ * of its own in flight to wait on, so its first click was worked out against
+ * the record, before the reply it was queued behind had been stored, and asked
+ * the server to untick what that reply had just ticked. The same happened on a
+ * call the record never reached, each time the watcher first reported the next
+ * question.
+ */
+describe("a toggle in flight while the card's source changes", () => {
+  const multiCall = [
+    { ...called("Fruit", "Pick a fruit", "Apple", "Pear"), multiSelect: true },
+    { ...called("Drink", "Pick a drink", "Tea", "Coffee"), multiSelect: true },
+  ];
+  /** A server whose replies the test hands back one at a time. */
+  const held = () => {
+    const replies: Array<(r: AnswerResponse | null) => void> = [];
+    const onAnswer = vi.fn(
+      (_req: AnswerRequest) => new Promise<AnswerResponse | null>((res) => replies.push(res)),
+    );
+    return { onAnswer, answer: (r: AnswerResponse | null) => replies.shift()!(r) };
+  };
+  const drinkHolding = (ticked: string[]) => ({
+    question: "Pick a drink",
+    header: "",
+    multiSelect: true,
+    options: ["Tea", "Coffee"].map((label) => ({
+      label,
+      description: "",
+      ...(ticked.includes(label) ? { checked: true } : {}),
+    })),
+    commit: "Submit",
+  });
+
+  it("works a click made after the record landed out against the reply it waited for", async () => {
+    const s = held();
+    const v = mount([asking(paneAt(fruitHolding([]), 0))], s.onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeDefined());
+    v.option("Apple")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(1));
+    expect(s.onAnswer.mock.calls[0]![0]).toEqual({ header: "Fruit", choice: "Apple", stay: true });
+
+    v.setEvents((cur) => [...cur, ask("tool-a", multiCall)]);
+    await waitFor(() => expect(v.container.textContent).toContain("about Apple"));
+    v.option("Pear")!.click();
+    expect(s.onAnswer, "Pear waits for Apple's reply").toHaveBeenCalledTimes(1);
+
+    s.answer(reply(paneAt(fruitHolding(["Apple"]), 1)));
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(2));
+    expect(s.onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+  });
+
+  it("still sends a click that was waiting when the record landed", async () => {
+    const s = held();
+    const v = mount([asking(paneAt(fruitHolding([]), 0))], s.onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeDefined());
+    v.option("Apple")!.click();
+    v.option("Pear")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(1));
+
+    v.setEvents((cur) => [...cur, ask("tool-a", multiCall)]);
+    await waitFor(() => expect(v.container.textContent).toContain("about Apple"));
+    expect(v.option("Pear")!.getAttribute("aria-busy"), "Pear is still waiting").toBe("true");
+
+    s.answer(reply(paneAt(fruitHolding(["Apple"]), 1)));
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(2));
+    expect(s.onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+  });
+
+  it("works a click out against the reply when the watcher first reports the next question", async () => {
+    // No record at all. The pane is the only source, and its reading of
+    // question 2 arrives while a toggle on question 2 is in flight.
+    const s = held();
+    const v = mount([asking(paneAt(fruitHolding(["Apple"], { commit: "Next" }), 1))], s.onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-next")).toBe("Next"));
+    v.container.querySelector<HTMLElement>(".tl-qcard-next")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(1));
+    s.answer(reply(paneAt(drinkHolding([]), 1)));
+    await waitFor(() => expect(v.option("Tea")).toBeDefined());
+    await waitFor(() => expect((v.option("Tea") as HTMLButtonElement).disabled).toBe(false));
+
+    v.option("Tea")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(2));
+    v.setEvents((cur) => [...cur, asking(paneAt(drinkHolding([]), 1))]);
+    await waitFor(() => expect(v.option("Coffee")).toBeDefined());
+    v.option("Coffee")!.click();
+
+    s.answer(reply(paneAt(drinkHolding(["Tea"]), 2)));
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(3));
+    expect(s.onAnswer.mock.calls[2]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Tea", "Coffee"],
+      stay: true,
+    });
+  });
+
+  it("works a click in a card built mid-flight out against the reply it waited for", async () => {
+    // A call the record has not reached loses its card whenever the watcher
+    // reads the pane mid-repaint. The reading is withdrawn, and the card goes
+    // until the next one. On a slow toggle that can happen while it is in
+    // flight, and the card built after has no toggle of its own to wait on.
+    // Its click has to be worked out against the reply stored when the
+    // request ends, never against the screen from before it.
+    const s = held();
+    const v = mount([asking(paneAt(fruitHolding([]), 0))], s.onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeDefined());
+    v.option("Apple")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(1));
+
+    v.setEvents((cur) => [...cur, asking("")]);
+    await waitFor(() => expect(v.card()).toBeNull());
+    v.setEvents((cur) => [...cur, asking(paneAt(fruitHolding([]), 0))]);
+    await waitFor(() => expect(v.option("Pear")).toBeDefined());
+    v.option("Pear")!.click();
+    expect(s.onAnswer, "Pear waits for the request in flight").toHaveBeenCalledTimes(1);
+
+    s.answer(reply(paneAt(fruitHolding(["Apple"]), 1)));
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(2));
+    expect(s.onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+  });
+
+  it("keeps the record's words for a question the pane draws differently", async () => {
+    // The record's question can say more than the pane parses back. The CLI
+    // draws a blank line inside a question as a line the parser reads as the
+    // question's top, so the reply names only the last paragraph (measured on
+    // CLI 2.1.280, 2026-09-24). The card drew the record's words until the
+    // first reply and the reply's after it, and that change of words read as
+    // a change of question. The click waiting behind the first toggle was
+    // dropped, and the body scrolled back to its top.
+    const recorded = {
+      ...called("Fruit", "Only fruit in season.\n\nPick a fruit", "Apple", "Pear"),
+      multiSelect: true,
+    };
+    const pane = (ticked: string[]): DialogView => ({
+      questions: [fruitHolding(ticked, { commit: "Submit" })],
+      headers: ["Fruit"],
+      count: 1,
+      answered: ticked.length > 0 ? 1 : 0,
+    });
+    const s = held();
+    const v = mount([asking(pane([])), ask("tool-a", [recorded])], s.onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toContain("Only fruit in season."));
+    v.option("Apple")!.click();
+    v.option("Pear")!.click();
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(1));
+
+    s.answer(reply(pane(["Apple"])));
+    await waitFor(() => expect(s.onAnswer).toHaveBeenCalledTimes(2));
+    expect(s.onAnswer.mock.calls[1]![0]).toEqual({
+      header: "Fruit",
+      choices: ["Apple", "Pear"],
+      stay: true,
+    });
+    expect(v.text(".tl-qcard-question"), "the record's words, not the pane's").toContain(
+      "Only fruit in season.",
+    );
+  });
+});
+
+/**
  * A call that asks exactly what the call before it asked.
  *
  * The card is keyed on the call's CONTENT, and so is the reply it stores, so

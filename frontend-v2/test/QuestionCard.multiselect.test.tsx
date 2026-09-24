@@ -48,7 +48,7 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { render, fireEvent } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { QuestionCard } from "../src/components/QuestionCard";
 import { FREE_TEXT_LABEL, type DialogQuestionView, type DialogView } from "../src/lib/answer-api";
 
@@ -130,13 +130,18 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 /**
  * The card as TextView drives it.
  *
- * `busy` is up while a request is in flight, and a reply lands in the order
- * TextView's `put` lands it: `busy` drops, the card is handed the reading the
- * reply carried, and only then does the request's promise settle. The order is
- * what makes "worked out against the previous reply" testable here.
+ * `busy` is up while a request is in flight, and a reply lands the way
+ * TextView's `put` lands it. The card is handed the reading the reply carried
+ * and `busy` drops in the same batch, and only then does the request's promise
+ * settle. The order is what makes "worked out against the previous reply"
+ * testable here.
+ *
+ * A reading of `null` is a capture the parser could not read, which the card
+ * shows as the raw pane.
  */
 function mount(first: DialogView = multi) {
-  const [dialog, setDialog] = createSignal(first);
+  const [dialog, setDialog] = createSignal<DialogView | null>(first);
+  const [pane, setPane] = createSignal<string | undefined>(undefined);
   const [busy, setBusy] = createSignal(false);
   const replies: Array<() => void> = [];
   const request = () => {
@@ -145,26 +150,39 @@ function mount(first: DialogView = multi) {
   };
   const onToggle = vi.fn((_h: string, _c: string[], _t?: string) => request());
   const onChoose = vi.fn((_h: string, _c: string[], _t?: string) => request());
+  const onKeys = vi.fn((_k: string[]) => request());
   const r = render(() => (
     <QuestionCard
       dialog={dialog()}
+      pane={pane()}
       busy={busy()}
       onChoose={onChoose}
       onToggle={onToggle}
       onBack={async () => {}}
       onSubmit={async () => {}}
-      onKeys={async () => {}}
+      onKeys={onKeys}
       onChat={() => {}}
     />
   ));
+  /** Draw a reading no request asked for: the pane watcher's next tick. */
+  const redraw = async (reading: DialogView | null, capture?: string) => {
+    batch(() => {
+      setDialog(reading);
+      setPane(reading ? undefined : capture);
+    });
+    await settle();
+  };
   /** Land the oldest request in flight, carrying `reading`. */
-  const land = async (reading: DialogView) => {
-    setBusy(false);
-    setDialog(reading);
+  const land = async (reading: DialogView | null, capture?: string) => {
+    batch(() => {
+      setDialog(reading);
+      setPane(reading ? undefined : capture);
+      setBusy(false);
+    });
     replies.shift()?.();
     await settle();
   };
-  return { ...r, onToggle, onChoose, land, inFlight: () => replies.length };
+  return { ...r, onToggle, onChoose, onKeys, land, redraw, inFlight: () => replies.length };
 }
 
 describe("a click on a multi-select row toggles that row and stays", () => {
@@ -308,6 +326,109 @@ describe("clicks made while a toggle is in flight queue", () => {
     await settle();
     expect(v.onToggle).toHaveBeenCalledTimes(1);
     expect(v.inFlight(), "nothing was sent for the question that went").toBe(0);
+  });
+
+  it("keeps a queued click through a reply the parser could not read", async () => {
+    // The server answers with a mid-repaint capture when its 600 ms window
+    // runs out, and TextView hands the card that capture and no question. An
+    // unreadable screen is not a different question, so the click waits for
+    // a reading that says which question is up. Until 2026-09-24 the pump
+    // read "no question" as "another question" and dropped it.
+    const v = mount();
+    fireEvent.click(row(v.container, "Apple"));
+    fireEvent.click(row(v.container, "Pear"));
+    await v.land(null, "│ Pick fr");
+    expect(v.onToggle, "nothing goes out on an unreadable screen").toHaveBeenCalledTimes(1);
+
+    await v.redraw(holding("Apple"));
+    expect(v.onToggle).toHaveBeenCalledTimes(2);
+    expect(v.onToggle.mock.calls[1]).toEqual(["Fruit", ["Apple", "Pear"], undefined]);
+  });
+
+  it("drops the waiting clicks once a key goes out from the raw screen", async () => {
+    // Pressing a row on the raw capture toggles it at the terminal, and a
+    // click still waiting was worked out before that press. Sent afterwards,
+    // a waiting Pear would untick the Pear the reader just pressed.
+    const v = mount();
+    fireEvent.click(row(v.container, "Apple"));
+    fireEvent.click(row(v.container, "Pear"));
+    const capture = [
+      "│ Pick fruits",
+      "│ 1. [✔] Apple",
+      "│ 2. [ ] Pear",
+      "│ 3. [ ] Plum",
+      "│ Enter to select · Esc to cancel",
+    ].join("\n");
+    await v.land(null, capture);
+    fireEvent.click(row(v.container, "Pear"));
+    expect(v.onKeys.mock.calls[0]).toEqual([["2"]]);
+    await v.land(holding("Apple", "Pear"));
+    await settle();
+    expect(v.onToggle, "the waiting Pear was not sent").toHaveBeenCalledTimes(1);
+    expect(row(v.container, "Pear").dataset.chosen).toBe("true");
+  });
+});
+
+/**
+ * The same question, named more fully by a later reading.
+ *
+ * Before the call's record lands the card draws the pane watcher's reading, and
+ * a question of a multi-question call carries no header there, because the tab
+ * bar marks the current one in colour and `capture-pane -p` does not keep it. Once
+ * the record is in, TextView places the drawn question against it and hands the
+ * card the record's header and words. A reading can therefore name the
+ * question on screen differently from the one before it, "" then "Fruit", or
+ * the pane's last paragraph then the whole question, and it is still the same
+ * question. Clicks, the open field and the scroll all belong to the question,
+ * so none of them may go on a change of name.
+ */
+describe("the same question, named more fully", () => {
+  const bare = (text: string): DialogView => ({
+    ...multi,
+    questions: [{ ...multi.questions[0]!, header: "", question: text }],
+  });
+  const named = (text: string, ...ticked: string[]): DialogView => ({
+    ...holding(...ticked),
+    questions: [{ ...holding(...ticked).questions[0]!, question: text }],
+  });
+
+  it.each([
+    ["a header where there was none", "Which do you want?", "Which do you want?"],
+    [
+      "the whole question where the pane kept its last paragraph",
+      "Which do you want?",
+      "Only fruit in season.\n\nWhich do you want?",
+    ],
+  ])("keeps a queued click when the reply gives %s", async (_what, before, after) => {
+    const v = mount(bare(before));
+    fireEvent.click(row(v.container, "Apple"));
+    fireEvent.click(row(v.container, "Pear"));
+    await v.land(named(after, "Apple"));
+    expect(v.onToggle).toHaveBeenCalledTimes(2);
+    expect(v.onToggle.mock.calls[1]![1]).toEqual(["Apple", "Pear"]);
+  });
+
+  it("keeps the open field and the scroll across the renaming", async () => {
+    const v = mount(bare("Which do you want?"));
+    const body = v.container.querySelector<HTMLElement>(".tl-qcard-body")!;
+    fireEvent.click(row(v.container, "Apple"));
+    fireEvent.click(row(v.container, FREE_TEXT_LABEL));
+    fireEvent.input(field(v.container)!, { target: { value: "Ki" } });
+    body.scrollTop = 120;
+    await v.land(named("Only fruit in season.\n\nWhich do you want?", "Apple"));
+    expect(field(v.container)?.value, "the half-typed words stay").toBe("Ki");
+    expect(body.scrollTop).toBe(120);
+  });
+
+  it("still counts two chips as two questions, however alike their words", async () => {
+    // Two questions of one call can be worded alike and offer the same rows,
+    // and the chip is then the only thing that tells them apart.
+    const v = mount(holding());
+    fireEvent.click(row(v.container, "Apple"));
+    fireEvent.click(row(v.container, "Pear"));
+    const twin = holding("Apple");
+    await v.land({ ...twin, questions: [{ ...twin.questions[0]!, header: "Drink" }] });
+    expect(v.onToggle, "another chip is another question").toHaveBeenCalledTimes(1);
   });
 });
 

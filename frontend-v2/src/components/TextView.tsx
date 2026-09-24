@@ -1,4 +1,5 @@
 import {
+  batch,
   createEffect,
   createMemo,
   createSignal,
@@ -23,12 +24,13 @@ import {
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "../logic/compose.logic";
 import type { Catalogue } from "../store/catalogue";
 import { contextState } from "./context.logic";
-import type {
-  AnswerRequest,
-  AnswerResponse,
-  DialogOptionView,
-  DialogQuestionView,
-  DialogView,
+import {
+  sameDrawnQuestion,
+  type AnswerRequest,
+  type AnswerResponse,
+  type DialogOptionView,
+  type DialogQuestionView,
+  type DialogView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
 import { QuestionCard } from "./QuestionCard";
@@ -266,13 +268,29 @@ export const TextView: Component<{
    * so the content of the last one it reported is the whole of its identity —
    * there is no sequence number on the wire to use instead, and the event id
    * moves for reasons that have nothing to do with the dialog.
+   *
+   * THE TICKS ARE PART OF IT, and so is the free-text row. A multi-select
+   * toggle leaves the question on screen, so after its first tick a reading
+   * with one more box ticked has the same count, the same tally, the same
+   * question and the same labels. Without the boxes in the key that reading
+   * was no news, and a toggle whose reply could not read the screen kept its
+   * capture up for the rest of the question (found in review, 2026-09-24).
+   * Until the toggle change every multi-select click left the question, so
+   * the next reading always differed somewhere else.
    */
   const paneKey = createMemo(() => {
     const p = fromPane();
     if (!p) return "";
     const q = p.questions[0];
-    const labels = q?.options.map((o) => o.label).join(",") ?? "";
-    return [p.count, p.answered, q?.header ?? "", q?.question ?? "", labels].join("|");
+    return JSON.stringify([
+      p.count,
+      p.answered,
+      q?.header ?? "",
+      q?.question ?? "",
+      q?.options.map((o) => [o.label, o.checked === true]) ?? [],
+      q?.typed ?? "",
+      q?.typedChecked === true,
+    ]);
   });
   /** The transcript wins wherever it has the call, for CONTENT: it carries
    *  every question of a multi-question call, the descriptions and the
@@ -284,15 +302,15 @@ export const TextView: Component<{
   const blocking = createMemo(() => recorded() ?? fromPane());
   const asked = createMemo(() => blocking()?.questions ?? []);
   /**
-   * WHICH CALL is being answered, keyed by its CONTENT rather than by the
-   * transcript's tool id.
+   * WHAT is being asked, as the call's CONTENT rather than the transcript's
+   * tool id.
    *
-   * It tells one call from the next, which is what the card and the reading
-   * below both hang off: neither may outlive the call it describes. Content is
-   * what makes that survive the HANDOVER — the same question arrives first
-   * from the pane and then from the transcript, and keying on the tool id
-   * would throw both away at that moment for no reason, since the pane's
-   * reading has no tool id at all.
+   * A stored reply is stamped with it (`replied` below), so no reading
+   * outlives the call it describes, and an empty one means nothing is asking.
+   * Content is what lets a reply survive the HANDOVER. The same question
+   * arrives first from the pane and then from the transcript, and the pane's
+   * reading has no tool id at all. It does not key the card, because it
+   * changes within a call (`callSerial` below).
    */
   const asking = createMemo(() =>
     asked()
@@ -308,17 +326,58 @@ export const TextView: Component<{
    * stored reply carries both (`replied` below).
    */
   const callKey = createMemo(() => recorded()?.key ?? "");
+  /**
+   * WHICH CALL the card belongs to, as a count that moves only when a
+   * different call takes over: something starts asking after nothing was, or
+   * the record being answered gives way to another one. This, and not the
+   * content above, keys the card.
+   *
+   * The card holds state that belongs to the call: the multi-select clicks
+   * waiting behind a toggle in flight, the toggle itself, the half-typed
+   * free-text words. Content changes WITHIN a call, and keying the card on it
+   * built a new card at each change and dropped all of that. It changes at the
+   * handover, because the pane's reading carries only the drawn question, and
+   * with no header on a multi-question call, while the record carries every
+   * question with its header. And it changes each time the watcher first
+   * reports the next question of a call the record has not reached. The review
+   * of 2026-09-24 found a click waiting when the record landed never sent, and
+   * the new card, with no toggle of its own to wait on, working its first
+   * click out against the record and unticking what the reply it was queued
+   * behind had just ticked.
+   *
+   * What still separates two calls is the moment between them when nothing is
+   * asking. A call's result, or anything else that happens in the session,
+   * withdraws both the record's question and the watcher's reading. Two calls
+   * whose records follow each other with no such moment are told apart by the
+   * record. The same moment can fall inside a call the record has not reached,
+   * when the watcher reads the pane mid-repaint and withdraws its reading until
+   * the next tick, and the card built after it starts empty; `put` storing its
+   * reply and ending the request together is what keeps that card's first
+   * click honest. Within a call, the card's state is stamped with the question
+   * it belongs to (QuestionCard), so nothing made for one question is spent on
+   * another.
+   */
+  const callSerial = createMemo<{ n: number; asking: boolean; record: string }>(
+    (was) => {
+      const asks = asking() !== "";
+      const record = asks ? callKey() : "";
+      const another = asks && (!was.asking || (was.record !== "" && record !== was.record));
+      return { n: another ? was.n + 1 : was.n, asking: asks, record };
+    },
+    { n: 0, asking: false, record: "" },
+  );
   const [answering, setAnswering] = createSignal(false);
 
   /**
-   * The newest reading the server sent back, and the card it was taken for.
+   * The newest reading the server sent back, and what was being asked when
+   * it was sent.
    *
    * The same pairing the mode and model chips above use: a reading is stored
    * with the value it was taken against and stops counting the moment that
-   * value moves, so nothing has to expire it. Here the pair is exact rather
-   * than convenient — `asking()` is what the card is keyed on, so a reading
-   * lives exactly as long as the card that asked for it, and a reply arriving
-   * after the session has moved to another call renders on nothing.
+   * value moves, so nothing has to expire it. Here the value is `asking()`, so
+   * a reply arriving after the session has moved to another call renders on
+   * nothing. Content moves within a call too, and the exception below, for a
+   * reply sent before the call had a record, is how a reply survives that.
    *
    * CONTENT IS NOT ENOUGH ON ITS OWN, so `call` stamps the record as well: the
    * key of the transcript's question row the reply was sent for, "" while
@@ -528,10 +587,12 @@ export const TextView: Component<{
     let resp: AnswerResponse | null;
     try {
       resp = await props.onAnswer(req);
-    } finally {
+    } catch (err) {
       setAnswering(false);
+      throw err;
     }
     if (!resp) {
+      setAnswering(false);
       // The CALL failed — no reply, so there is nothing to render and no way
       // to know whether the keys landed. Deliberately not "nothing was typed":
       // a dropped reply cannot tell us that, and the next request re-reads the
@@ -543,7 +604,18 @@ export const TextView: Component<{
     // last word as of the reply landing. A tick that fired while the request
     // was in flight was captured before the keys went in, and counting it as
     // news would hand the card back the question that has just been answered.
-    setReplied({ at, pane: paneKey(), call, resp });
+    const pane = paneKey();
+    // The reading and the end of the request land TOGETHER. Lowering
+    // `answering` first ran every effect watching it inside that one write,
+    // while the reading on screen was still the one from before the request.
+    // The card's queue of multi-select clicks is such an effect, and a card
+    // with no toggle of its own in flight worked its next click out against
+    // that stale reading and asked the server to untick what the reply had
+    // just ticked (found in review, 2026-09-24).
+    batch(() => {
+      setReplied({ at, pane, call, resp });
+      setAnswering(false);
+    });
   };
 
   /**
@@ -747,24 +819,23 @@ export const TextView: Component<{
           covers it, and a walk that slides out from under a thumb mid-answer is
           worse than no walk. The permanent record is the inline row, which
           appears the moment the transcript carries the result. */}
-      {/* KEYED on the question's CONTENT, which is how one CALL is told from
-          the next. The card holds state of its own — a half-typed free-text
-          answer, which row is being tapped — and reusing it across two calls
-          carried that over: a fresh single question opened showing what had
-          been chosen for something nobody was being asked any more.
+      {/* KEYED on the CALL (`callSerial`), which is how one call is told from
+          the next. The card holds state of its own: a half-typed free-text
+          answer, which row is being tapped, the multi-select clicks waiting
+          their turn. Reusing it across two calls carried that over, and a
+          fresh single question opened showing what had been chosen for
+          something nobody was being asked any more.
 
-          Content-keying is also what carries the card through the HANDOVER,
-          where the same question arrives first from the pane and then from the
-          transcript; keying on the tool id would rebuild it at that moment for
-          no reason. It costs a rebuild each time a PANE-read call draws its
-          next question, which is the same moment `reading()` stops matching,
-          so the card and its reading begin and end together.
+          Not on the call's content, which this was keyed on until 2026-09-24.
+          Content moves within a call, at the handover from the pane to the
+          transcript and at each next question of a pane-read call, and every
+          move built a new card, dropping the clicks waiting in the old one.
 
           The child MUST take an argument: Solid only calls a `keyed` child as a
           factory when its arity is above zero, and a zero-arg one is cached as a
           static child — which is the reuse this exists to prevent. */}
-      <Show when={props.onAnswer ? asking() : ""} keyed>
-        {(_asking) => (
+      <Show when={props.onAnswer && asking() ? callSerial().n : 0} keyed>
+        {(_call) => (
           <QuestionCard
             dialog={view()}
             pane={reading()?.pane}
@@ -859,6 +930,17 @@ function drawnQuestions(d: DialogView): DialogQuestionView[] {
  * answering the wrong one (sessionio/answerapi.go) — so without this merge a
  * multi-question call would not be answerable from here at all.
  *
+ * THE WORDS ARE THE RECORD'S too, once it has placed the question. The pane
+ * parses back less than the tool was called with whenever the CLI draws the
+ * question in pieces. A blank line inside it reads as the question's top, so
+ * only the last paragraph comes back (measured on CLI 2.1.280, 2026-09-24),
+ * and a long one keeps its last twelve lines (dialog.go maxQuestionLines).
+ * Until the first reply the card draws the record, whose words are whole, and
+ * handing it the pane's after that changed the question under the reader. The
+ * card took it for another question, dropped the click waiting behind the
+ * first toggle, and scrolled back to the top. The reader gets the whole
+ * question throughout instead.
+ *
  * Nothing is invented: a question that cannot be placed is returned exactly as
  * it was drawn, and the reader still gets the screen and its options.
  */
@@ -867,6 +949,7 @@ function withCallContent(drawn: DialogQuestionView, known: Question[]): DialogQu
   if (!from) return drawn;
   return {
     ...drawn,
+    question: from.question || drawn.question,
     header: drawn.header || from.header,
     multiSelect: drawn.multiSelect || from.multiSelect,
     options: drawn.options.map((o) => ({
@@ -910,37 +993,4 @@ function placeQuestion(drawn: DialogQuestionView, known: Question[]): Question |
 function onlyOne<T>(xs: T[], is: (x: T) => boolean): T | undefined {
   const hits = xs.filter(is);
   return hits.length === 1 ? hits[0] : undefined;
-}
-
-/**
- * The question the pane drew and one from the call, as the same question.
- *
- * Mirrors sessionio's `answerSameQuestion`, numbers included, because they are
- * measured rather than chosen: the drawn side loses a trailing ellipsis (the
- * CLI's mark for "there was more of this"), and a question too long for the
- * dialog is compared on its first 40 characters, of which at least 12 have to
- * be on screen for the comparison to mean anything.
- */
-function sameDrawnQuestion(drawn: string, known: string): boolean {
-  const d = normalizeDrawn(drawn).replace(/[…. ]+$/, "");
-  const k = normalizeDrawn(known);
-  if (!d || !k) return false;
-  if (k.includes(d) || d.includes(k)) return true;
-  const dh = comparablePrefix(d);
-  return dh !== "" && dh === comparablePrefix(k);
-}
-
-/** Lower-cased, with the terminal's own drawing and every run of space gone. */
-function normalizeDrawn(s: string): string {
-  return s
-    .replace(/[─-╿❯|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-/** The first 40 characters, or "" when fewer than 12 are there to compare. */
-function comparablePrefix(s: string): string {
-  const runes = [...s];
-  return runes.length < 12 ? "" : runes.slice(0, 40).join("");
 }

@@ -5,7 +5,6 @@ import {
   createEffect,
   createMemo,
   createSignal,
-  on,
   untrack,
   type Component,
 } from "solid-js";
@@ -13,6 +12,7 @@ import {
   FREE_TEXT_LABEL,
   answerableOptions,
   isFreeText,
+  sameDrawnQuestion,
   type DialogOptionView,
   type DialogQuestionView,
   type DialogView,
@@ -20,8 +20,14 @@ import {
 import { PaneKeypad } from "./PaneKeypad";
 
 /**
+ * A question as the card recognises it again: the header it was drawn under,
+ * and its words. `sameDrawn` decides when two of them are one question.
+ */
+type Drawn = { header: string; question: string };
+
+/**
  * One click on a multi-select that has not gone out yet, STAMPED WITH THE
- * QUESTION IT WAS MADE FOR (`drawnKey` in the card).
+ * QUESTION IT WAS MADE FOR.
  *
  * `flip` names an option row to toggle. `text` is what the free-text row
  * should hold after the field's Add, "" to empty it. Neither is a set: the set
@@ -29,7 +35,7 @@ import { PaneKeypad } from "./PaneKeypad";
  * before it brought back, so two quick clicks cannot both be computed from the
  * same stale screen.
  */
-type Toggle = { of: string; flip: string } | { of: string; text: string };
+type Toggle = { of: Drawn; flip: string } | { of: Drawn; text: string };
 
 /** A multi-select request: the rows to leave ticked, and the free-text row's words. */
 type Wanted = { choices: string[]; text?: string };
@@ -118,8 +124,9 @@ export const QuestionCard: Component<{
    * flight, and each click is worked out against the reading the previous
    * reply brought back (`toggled` below), so sending it early would either be
    * dropped or computed from a screen that is about to change. A click is
-   * never dropped for being early; it is dropped only when the question it
-   * was made for is no longer the one on screen.
+   * never dropped for being early, or for a reply that could not read the
+   * screen; it is dropped only when a reading shows another question, or when
+   * a key goes out from the raw screen (`pressRaw`).
    */
   const [queue, setQueue] = createSignal<Toggle[]>([]);
   /** The multi-select toggle in flight, or null. */
@@ -146,7 +153,7 @@ export const QuestionCard: Component<{
    * walking away with ← and coming back to the same question finds the words
    * still there, which is the question they were typed for.
    */
-  const [draft, setDraft] = createSignal<{ of: string; typed: string } | null>(null);
+  const [draft, setDraft] = createSignal<{ of: Drawn; typed: string } | null>(null);
   /**
    * The field while it is open, and the row whose click opened it.
    *
@@ -215,28 +222,49 @@ export const QuestionCard: Component<{
   );
 
   /**
-   * The question the free-text field, and every waiting multi-select click,
-   * belongs to, as its content identifies it.
+   * The question on screen as the card recognises it, which the free-text
+   * field and every waiting multi-select click are stamped with, or null
+   * while the reading draws no question.
    *
    * The header alone is not enough: a call whose question is redrawn under the
    * same chip after `←` is the same question, and two calls can reuse a chip
-   * name like "Scope".
+   * name like "Scope". The words alone are not enough either, since two
+   * questions of one call can be worded alike.
    *
-   * The join is `\0` rather than a visible character because the CLI can draw
-   * either half with anything it likes: a header of "a" with a question of
-   * "b|c" and a header of "a|b" with a question of "c" are different questions
-   * and have to key differently, and no pane text can contain a NUL.
+   * A stamp is compared with `sameDrawn` rather than for equality, because
+   * one question can be named two ways by two readings. The pane watcher's
+   * reading of a multi-question call carries no header, and once the call's
+   * record lands TextView hands the card the record's header and words for
+   * the same question.
    */
-  const drawnKey = createMemo(() => {
-    const q = question();
-    if (!q) return "";
-    return `${(q.header ?? "").trim()}\0${q.question.trim()}`;
-  });
+  const drawn = createMemo<Drawn | null>(
+    () => {
+      const q = question();
+      return q ? { header: (q.header ?? "").trim(), question: q.question.trim() } : null;
+    },
+    null,
+    {
+      equals: (a, b) =>
+        a === b || (a !== null && b !== null && a.header === b.header && a.question === b.question),
+    },
+  );
+
+  /**
+   * Whether a stamp names the question on screen.
+   *
+   * False while no question is drawn, which is a capture the parser could not
+   * read. That says nothing about which question is up, so a caller that must
+   * not drop anything on it checks `drawn()` first, as the queue's pump does.
+   */
+  const onScreen = (of: Drawn): boolean => {
+    const d = drawn();
+    return d !== null && sameDrawn(of, d);
+  };
 
   /** The free-text field is open for the question on screen. */
   const typing = createMemo(() => {
     const d = draft();
-    return d !== null && drawnKey() !== "" && d.of === drawnKey();
+    return d !== null && onScreen(d.of);
   });
   /** What is in that field, and "" whenever the field is not this question's. */
   const text = (): string => (typing() ? draft()!.typed : "");
@@ -260,22 +288,24 @@ export const QuestionCard: Component<{
    * commit button. The review screen counts as a new question here too, so
    * its chips, the way back, open in view.
    *
-   * Keyed on the QUESTION, which `drawnKey` names, and not on the reading.
-   * Every toggle's reply is a fresh reading of the same question, and putting
-   * the scroll back on each one would pull the rows out from under the
-   * pointer after every tick. Deferred, because a body built a moment ago is
-   * at its top already.
+   * Keyed on the QUESTION, which `drawn` names, and not on the reading. Every
+   * toggle's reply is a fresh reading of the same question, and putting the
+   * scroll back on each one would pull the rows out from under the pointer
+   * after every tick. A reading that names the same question more fully is
+   * the same question too (`sameDrawn`). The first reply after the call's
+   * record landed used to scroll the body back to its top. The first question
+   * drawn is left alone, because a body built a moment ago is at its top
+   * already.
    */
   let bodyEl: HTMLDivElement | undefined;
-  createEffect(
-    on(
-      drawnKey,
-      () => {
-        if (bodyEl) bodyEl.scrollTop = 0;
-      },
-      { defer: true },
-    ),
-  );
+  let lastDrawn: Drawn | null = null;
+  createEffect(() => {
+    const d = drawn();
+    if (!d) return;
+    const was = lastDrawn;
+    lastDrawn = d;
+    if (was && !sameDrawn(was, d) && bodyEl) bodyEl.scrollTop = 0;
+  });
 
   /**
    * The rows this question offers, in the order and at the numbers the CLI
@@ -332,7 +362,7 @@ export const QuestionCard: Component<{
   /** Anything in flight: a request of this card's, or one TextView is holding. */
   const busy = (): boolean => props.busy || sending() !== null || flying() !== null;
   /** The clicks still waiting that were made for the question on screen. */
-  const waiting = createMemo(() => queue().filter((t) => t.of === drawnKey()));
+  const waiting = createMemo(() => queue().filter((t) => onScreen(t.of)));
   /** Nothing in flight and nothing waiting to go, so the ticks on screen are final. */
   const settled = (): boolean => !busy() && waiting().length === 0;
 
@@ -417,7 +447,7 @@ export const QuestionCard: Component<{
   /** A multi-select click for this row is in flight or waiting, so the row pulses. */
   const toggling = (label: string): boolean => {
     const mine = (t: Toggle | null): boolean =>
-      t !== null && t.of === drawnKey() && ("flip" in t ? t.flip === label : isFreeText(label));
+      t !== null && onScreen(t.of) && ("flip" in t ? t.flip === label : isFreeText(label));
     return mine(flying()) || waiting().some(mine);
   };
 
@@ -462,11 +492,18 @@ export const QuestionCard: Component<{
    *
    * An effect rather than a loop in the click handler, because a click can
    * arrive while a request the card did not start is still in flight. The
-   * card is rebuilt per call (TextView keys it), so `props.busy` can outlive
-   * the card that raised it, and only watching it can tell when TextView's
-   * `put` will take a request again. A reply lowers `props.busy` BEFORE it
-   * hands over its reading, and `flying` clears only after, so this cannot
-   * fire between the two and compute a click from the screen being replaced.
+   * card is rebuilt when another call takes over (TextView keys it), so
+   * `props.busy` can outlive the card that raised it, and only watching it can
+   * tell when TextView's `put` will take a request again. `put` stores the
+   * reply's reading and lowers `props.busy` in one batch, and in the card that
+   * sent the toggle `flying` clears only after both, so no click is worked out
+   * against the screen a reply is replacing.
+   *
+   * NOTHING GOES OUT WHILE NO QUESTION IS DRAWN. That is a capture the parser
+   * could not read, which the server sends when its 600 ms window runs out
+   * mid-repaint, and it says nothing about which question is up. Until
+   * 2026-09-24 the pump took it for another question and dropped every click
+   * waiting; they now wait for a reading that says.
    *
    * Clicks stamped for another question are dropped here, all at once. The
    * pane moved under them, by a reply or by a keystroke in the Terminal, and
@@ -476,8 +513,9 @@ export const QuestionCard: Component<{
     if (busy()) return;
     const all = queue();
     if (all.length === 0) return;
-    const key = drawnKey();
-    const [next, ...rest] = all.filter((t) => t.of === key);
+    const d = drawn();
+    if (!d) return;
+    const [next, ...rest] = all.filter((t) => sameDrawn(t.of, d));
     setQueue(rest);
     if (next) untrack(() => sendToggle(next));
   });
@@ -491,15 +529,30 @@ export const QuestionCard: Component<{
     setQueue((q) => [...q, t]);
   };
 
+  /**
+   * Keys pressed on the raw capture of a screen the parser could not read.
+   *
+   * They drop every click still waiting. A row pressed there toggles at the
+   * terminal, and a waiting click was worked out before that press. Sent once
+   * the question is readable again, a waiting Pear would untick the Pear the
+   * reader has just pressed.
+   */
+  const pressRaw = (keys: string[]): Promise<void> => {
+    setQueue([]);
+    return props.onKeys(keys);
+  };
+
   const choose = (label: string, row?: HTMLElement) => {
+    const d = drawn();
+    if (!d) return;
     if (isFreeText(label)) {
       if (!multi()) {
-        setDraft({ of: drawnKey(), typed: "" });
+        setDraft({ of: d, typed: "" });
       } else if (!typing()) {
         // A multi-select's row may already hold words, and the field opens
         // on them so they can be changed or cleared. An open field is left
         // alone: a second click on the row must not wipe what is half-typed.
-        setDraft({ of: drawnKey(), typed: typedText() });
+        setDraft({ of: d, typed: typedText() });
       }
       // Solid renders the field as the draft is set, so it is there to focus
       // before this click handler returns. That matters on a phone, where
@@ -509,7 +562,7 @@ export const QuestionCard: Component<{
       return;
     }
     if (multi()) {
-      enqueue({ of: drawnKey(), flip: label });
+      enqueue({ of: d, flip: label });
       return;
     }
     run(label, () => props.onChoose(header(), [label]));
@@ -532,8 +585,9 @@ export const QuestionCard: Component<{
   const canApplyText = (): boolean =>
     typing() && sending() === null && !toggling(FREE_TEXT_LABEL) && text().trim() !== typedPick();
   const applyText = () => {
-    if (!canApplyText()) return;
-    enqueue({ of: drawnKey(), text: text().trim() });
+    const d = drawn();
+    if (!d || !canApplyText()) return;
+    enqueue({ of: d, text: text().trim() });
   };
 
   /**
@@ -607,7 +661,7 @@ export const QuestionCard: Component<{
 
         <Show
           when={props.dialog}
-          fallback={<PaneKeypad pane={props.pane ?? ""} busy={props.busy} onKeys={props.onKeys} />}
+          fallback={<PaneKeypad pane={props.pane ?? ""} busy={props.busy} onKeys={pressRaw} />}
         >
           <div class="tl-qcard-body" ref={bodyEl}>
             {/* The tab bar, as chips. A ticked one is a box the pane draws as
@@ -800,7 +854,10 @@ export const QuestionCard: Component<{
                     placeholder={FREE_TEXT_LABEL}
                     aria-label="Your own answer"
                     value={text()}
-                    onInput={(e) => setDraft({ of: drawnKey(), typed: e.currentTarget.value })}
+                    onInput={(e) => {
+                      const d = drawn();
+                      if (d) setDraft({ of: d, typed: e.currentTarget.value });
+                    }}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter") return;
                       if (multi()) applyText();
@@ -901,6 +958,37 @@ export const QuestionCard: Component<{
     </Show>
   );
 };
+
+/**
+ * Two readings' questions as ONE question, however each reading named it.
+ *
+ * Found in review on 2026-09-24. The card compared its stamps for equality,
+ * and one question can be named two ways. The pane watcher's reading of a
+ * multi-question call carries no header, and the record the transcript lands
+ * names the same question with one. The record also keeps a question's words
+ * whole where the pane parses back only its last paragraph, or its last twelve
+ * lines. At each such renaming the clicks waiting behind a toggle were
+ * dropped, an open free-text field closed on its words, and the body scrolled
+ * back to its top.
+ *
+ * So the rules are these. Two headers that are both there and differ are two
+ * questions, however alike the words, because the chip is what tells such
+ * questions apart. Words that are equal are one question. Where one reading
+ * names a header and the other does not, the words are compared the way
+ * TextView places a drawn question against the record (`sameDrawnQuestion`),
+ * so the pane's last paragraph matches the whole. Where neither names one,
+ * both are the pane's own parse, which reads a question back the same way
+ * while the pane keeps its size. Nothing looser than equality is taken there,
+ * since two questions of one call can be worded one inside the other.
+ */
+function sameDrawn(a: Drawn, b: Drawn): boolean {
+  const ha = a.header.toLowerCase();
+  const hb = b.header.toLowerCase();
+  if (ha && hb && ha !== hb) return false;
+  if (a.question === b.question) return true;
+  if (!ha && !hb) return false;
+  return sameDrawnQuestion(a.question, b.question) || sameDrawnQuestion(b.question, a.question);
+}
 
 /** Two headers naming the same question. Empty never matches. */
 function sameHeader(a: string, b: string): boolean {
