@@ -12,6 +12,12 @@ import (
 // Session is one tmux session as one tick saw it.
 type Session struct {
 	Name string
+	// ID is tmux's identity for the session as "$<session_id>:<session_created>",
+	// empty when the row did not carry one. A rename leaves both halves alone,
+	// which is what lets vanished() tell a renamed session from a lost one.
+	// session_id alone is not enough: tmux numbers from zero again when its
+	// server restarts, and the creation time is what a reused number lacks.
+	ID string
 	// Background is the session's @claude_bg stamp: space-separated
 	// `<kind>:<id>` tokens for background work it launched that has not
 	// reported back (a=agent, w=workflow, t=teammate). Empty when it owes
@@ -179,12 +185,26 @@ func (w *Watcher) Tick(snaps []Snapshot) []Finding {
 // recent tombstone explains the disappearance.
 func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 	cutoff := cur.Taken.Add(-w.cfg.TombstoneGrace).Unix()
+	// Identities present now, whatever they are called. A name that left while
+	// its identity stayed was renamed: autotitle does it seconds after a session
+	// starts and a backfill does it to old ones, and before this every one of
+	// them read as a death (8 of 8 session_died lines in the 40 hours to
+	// 2026-09-24 08:00).
+	present := map[string]bool{}
+	for _, s := range cur.Sessions {
+		if s.ID != "" {
+			present[s.ID] = true
+		}
+	}
 	var out []Finding
 	for name, was := range prev.Sessions {
 		if w.skip(name) {
 			continue
 		}
 		if _, still := cur.Sessions[name]; still {
+			continue
+		}
+		if was.ID != "" && present[was.ID] {
 			continue
 		}
 		kind := KindSessionDied

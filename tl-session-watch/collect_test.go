@@ -58,6 +58,30 @@ func TestParseSessionList(t *testing.T) {
 	}
 }
 
+// The identity a rename leaves alone, "$<session_id>:<session_created>", rides
+// FIRST: the options are peeled off the right because a name can hold a tab, so
+// the left is the only end left for a field that must not be confused with it.
+func TestParseSessionListReadsTheSessionIdentity(t *testing.T) {
+	got, origins := parseSessionList("$5:1790143332\tbooks\trunning\t\tuser\n$7:1790150000\twith\tname\tdone\t\t\n")
+
+	if got["books"].ID != "$5:1790143332" || got["books"].ClaudeState != "running" || origins["books"] != "user" {
+		t.Errorf("books: got %+v, origin %q", got["books"], origins["books"])
+	}
+	if s, ok := got["with\tname"]; !ok || s.ID != "$7:1790150000" || s.ClaudeState != "done" {
+		t.Errorf("a tab in the name must stay in the name once the identity is peeled off the left, got %+v", got)
+	}
+}
+
+// Rows without the identity, like every row before it was added, still parse,
+// with an empty ID.
+func TestParseSessionListWithoutAnIdentityLeavesIDEmpty(t *testing.T) {
+	got, _ := parseSessionList("alerts\trunning\ta:a1\tuser\n")
+
+	if got["alerts"].ID != "" || got["alerts"].ClaudeState != "running" {
+		t.Errorf("old-shape row: got %+v", got["alerts"])
+	}
+}
+
 // A row from a tmux that predates the second option carries one separator, and
 // the watcher's whole job is noticing sessions going away — so a shape it does
 // not recognise must still yield the session and its state rather than

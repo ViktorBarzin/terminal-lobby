@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -120,6 +121,13 @@ func parseSessionList(in string) (map[string]Session, map[string]string) {
 		if line == "" {
 			continue
 		}
+		// The identity comes off the LEFT, because the right is where the
+		// options are peeled from and a name may hold a tab. A row that does not
+		// start with one parses exactly as it did before the identity existed.
+		id := ""
+		if i := strings.Index(line, "\t"); i > 0 && sessionIdentityRe.MatchString(line[:i]) {
+			id, line = line[:i], line[i+1:]
+		}
 		// Peel at most three option fields off the right-hand end, so a tab
 		// inside the name stays inside the name.
 		name := line
@@ -135,7 +143,7 @@ func parseSessionList(in string) (map[string]Session, map[string]string) {
 		if len(fields) == 0 {
 			continue
 		}
-		s := Session{Name: name, ClaudeState: fields[0]}
+		s := Session{Name: name, ID: id, ClaudeState: fields[0]}
 		if len(fields) > 1 {
 			s.Background = fields[1]
 		}
@@ -160,6 +168,10 @@ const originUser = "user"
 // tmux-api and there is no shared package the services agree through. Both
 // dropped `t3e2e-` when the T3 bridge that owned it was removed (ADR-0029).
 var systemPrefixes = []string{"qa-", "tlp-t", "__terminal_lobby_prewarmed_pool_slot_"}
+
+// sessionIdentityRe matches the "#{session_id}:#{session_created}" field that
+// leads each list-sessions row, e.g. "$5:1790143332".
+var sessionIdentityRe = regexp.MustCompile(`^\$[0-9]+:[0-9]+$`)
 
 // isSystemSession reports whether a session belongs to tooling rather than to a
 // person, and is the local twin of tmux-api's isSystemSession
@@ -289,7 +301,7 @@ func collectUser(user, bootID string) Snapshot {
 	}
 
 	sessOut, err := asUser(user, tmuxBinary, "list-sessions", "-F",
-		"#{session_name}\t#{@claude_state}\t#{@claude_bg}\t#{@tl_origin}")
+		"#{session_id}:#{session_created}\t#{session_name}\t#{@claude_state}\t#{@claude_bg}\t#{@tl_origin}")
 	if err != nil {
 		// No server, or no sessions. Either way there is nothing to compare.
 		return snap

@@ -127,6 +127,50 @@ func TestVanishedWithAStaleTombstoneIsStillADeath(t *testing.T) {
 	none(t, got, KindSessionKilled)
 }
 
+// ided gives a session the identity tmux keeps across a rename: session_id and
+// session_created, which collect.go reads as "$<id>:<created>".
+func ided(s Session, id string) Session {
+	s.ID = id
+	return s
+}
+
+// Autotitle renames a new session a few seconds after it starts, and a backfill
+// renames old ones, so the old name leaves tmux with no tombstone. That read as
+// a death: all 8 session_died lines in the 40 hours to 2026-09-24 08:00 were
+// renames, bw8k5gt9v314 becoming books-sent-to-anca-s-kindle among them. The
+// session is still there under its new name, and its identity says so.
+func TestVanishedByRenameIsNotADeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("bw8k5gt9v314"), "$5:1790143332"), live("f1"))})
+
+	got := w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("books-sent-to-anca-s-kindle"), "$5:1790143332"), live("f1"))})
+	none(t, got, KindSessionDied)
+	none(t, got, KindSessionKilled)
+}
+
+// tmux numbers sessions afresh when its server restarts, so a $N on its own can
+// belong to an unrelated session later. The creation time is what separates a
+// rename from a reused number, and a reused number must not hide a real death.
+func TestAReusedTmuxNumberIsStillADeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("immich"), "$5:1790143332"))})
+
+	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("other"), "$5:1790150000"))}), KindSessionDied)
+	if f.Session != "immich" {
+		t.Fatalf("want immich reported, got %s", f.Session)
+	}
+}
+
+// A session with no identity, from a row that did not carry one, keeps the old
+// rule. Two empty identities are not a match, or every vanished session with an
+// empty ID would be written off as a rename of any other.
+func TestVanishedWithNoIdentityKeepsTheOldRule(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"))})
+
+	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", live("other"))}), KindSessionDied)
+}
+
 // A tombstone for a session that is still running says nothing about it: the
 // name was killed in an earlier life and created again.
 func TestATombstoneForALiveSessionSaysNothing(t *testing.T) {
