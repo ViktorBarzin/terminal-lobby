@@ -1,0 +1,40 @@
+
+ ▐▛███▛█   Claude Code v2.1.281
+▝▜██████▀  claude-opus-5-5 · Claude API
+  ▝▝ ▝▝    /…/0cb0c1af-35ca-4f73-a21d-210448319df1/scratchpad/wf2/build-server/measure/dir-modeC
+
+▎ Using claude-opus-5-5 (from managed settings) · /model
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────── ↯ ─
+❯ 
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  /tmp/claude-1000/-home-wizard-code-terminal-lobby/0cb0c1af-35ca-4f73-a21d-210448319df1/scratchpad/wf2/build-server/…
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
