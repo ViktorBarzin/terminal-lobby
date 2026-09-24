@@ -1,0 +1,20 @@
+
+  ⎿  /plan to preview
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  ──────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:                               ↓
+  ──────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to
+   execute. Would you like to proceed?
+
+   ❯ 1. Yes, clear context (6% used) and use auto mode
+     2. Yes, and use auto mode
+     3. Yes, manually approve edits
+     4. Tell Claude what to change
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in Vim ·
+   ~/.claude/plans/plan-do-not-execute-binary-kazoo.md

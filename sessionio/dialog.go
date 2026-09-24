@@ -19,14 +19,27 @@ import (
 // holds the call, the client prefers it (options, descriptions and multi-select
 // flags come back exactly as the tool was called). This only fills the window
 // where the alternative is showing nothing at all.
+//
+// ONE TYPE, TWO DIALOGS. Since 2026-09-24 a reading can also be Claude Code's
+// plan approval (plandialog.go), which Kind names. The two travel in the same
+// two places, the body of an `asking` event and the `dialog` of an answer
+// reply, so a client tells them apart by Kind rather than by where they came
+// from. A question reading carries no Kind and none of the plan's fields, and
+// its JSON is what it was before the plan fields existed; a plan reading
+// carries no questions. That is why Questions and Count are omitempty: a
+// question reading always has one question and a count of at least one, and a
+// plan reading has neither.
 type Dialog struct {
+	// Kind is DialogKindPlan for the plan approval, and empty for an
+	// AskUserQuestion, which is every reading taken before plans were read.
+	Kind string `json:"kind,omitempty"`
 	// Questions the pane can actually see: the one on screen. Shaped like the
 	// tool's own input so a client renders it with no special case.
-	Questions []DialogQuestion `json:"questions"`
+	Questions []DialogQuestion `json:"questions,omitempty"`
 	// Headers of every question in the call, from the dialog's tab bar.
 	Headers []string `json:"headers,omitempty"`
 	// Count is how many questions the call carries.
-	Count int `json:"count"`
+	Count int `json:"count,omitempty"`
 	// Partial says the pane cannot show the whole call — a multi-question
 	// dialog shows one question at a time, so the call is answered one question
 	// at a time, each drawn only once the one before it is answered.
@@ -39,6 +52,20 @@ type Dialog struct {
 	// keystroke in the terminal, an Esc, a re-ask — whereas this is read from
 	// what the terminal is showing at the moment of the read.
 	Answered int `json:"answered,omitempty"`
+
+	// The plan approval's own reading, set only when Kind is DialogKindPlan.
+	//
+	// Options are the approve rows, with their numbers and their labels
+	// exactly as drawn. The labels change from session to session, "(6%
+	// used)" and whether auto mode or the clear context option exists among
+	// them, so a client shows these rather than words of its own.
+	Options []PlanOption `json:"options,omitempty"`
+	// FeedbackRow is the number of the "Tell Claude what to change" row, the
+	// last one: 4 when there are three approve options, 3 when there are two.
+	FeedbackRow int `json:"feedbackRow,omitempty"`
+	// PlanPath is the plan file the footer names, "~/.claude/plans/<slug>.md",
+	// empty when the footer names none.
+	PlanPath string `json:"planPath,omitempty"`
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.

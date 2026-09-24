@@ -1,0 +1,50 @@
+
+  Ran 1 shell command
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Ready to code?
+
+   Here is Claude's plan:
+  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+   1. Create f01.txt containing 1
+   2. Create f02.txt containing 2
+   3. Create f03.txt containing 3
+   4. Create f04.txt containing 4
+   5. Create f05.txt containing 5
+   6. Create f06.txt containing 6
+   7. Create f07.txt containing 7
+   8. Create f08.txt containing 8
+   9. Create f09.txt containing 9
+   10. Create f10.txt containing 10
+   11. Create f11.txt containing 11
+   12. Create f12.txt containing 12
+   13. Create f13.txt containing 13
+   14. Create f14.txt containing 14
+   15. Create f15.txt containing 15
+   16. Create f16.txt containing 16
+   17. Create f17.txt containing 17
+   18. Create f18.txt containing 18
+   19. Create f19.txt containing 19
+   20. Create f20.txt containing 20
+   21. Create f21.txt containing 21
+   22. Create f22.txt containing 22
+   23. Create f23.txt containing 23
+   24. Create f24.txt containing 24
+   25. Create f25.txt containing 25
+   26. Create f26.txt containing 26
+   27. Create f27.txt containing 27
+   28. Create f28.txt containing 28
+   29. Create f29.txt containing 29
+   30. Create f30.txt containing 30
+   31. Create f31.txt containing 31                                                                                   ↓
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+   Claude has written up a plan and is ready to execute. Would you like to proceed?
+
+   ❯ 1. Yes, clear context (6% used) and use auto mode
+     2. Yes, and use auto mode
+     3. Yes, manually approve edits
+     4. Tell Claude what to change
+        shift+tab to approve with this feedback
+
+   ctrl+g to edit in Vim · ~/.claude/plans/plan-how-to-create-velvety-pearl.md
