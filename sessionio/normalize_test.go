@@ -2,6 +2,7 @@ package sessionio
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -746,5 +747,64 @@ func TestNormalizeDropsAResultThatCannotBePrunedSmallEnough(t *testing.T) {
 	}
 	if !e.Truncated {
 		t.Fatal("dropping must be reported")
+	}
+}
+
+// The conversation the plan approval's clear context starts opens with a user
+// record the CLI wrote, not the reader: "Implement the following plan: …" and
+// the plan, with the plan itself in planContent and origin {kind:
+// "auto-continuation"} (CLI 2.1.281, measured 2026-09-24). The Text view draws
+// it as a marker and a plan row rather than as a long message the reader never
+// typed, so the event carries both, and Body keeps the whole text for a client
+// from before the marker. The capture is the real record.
+func TestNormalizeMarksTheConversationAPlanStarted(t *testing.T) {
+	raw, err := os.ReadFile("testdata/plan-continuation.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.SplitN(string(raw), "\n", 2)[0]
+	out := NewNormalizer("demo").Line([]byte(line))
+	if len(out) != 1 || out[0].Kind != KindUser {
+		t.Fatalf("want one user event, got %+v", out)
+	}
+	e := out[0]
+	if e.Origin != OriginAutoContinuation {
+		t.Errorf("origin = %q, want %q", e.Origin, OriginAutoContinuation)
+	}
+	if !strings.HasPrefix(e.Plan, "# Create hello.txt\n\n## Context") || strings.Contains(e.Plan, "Implement the following plan") {
+		t.Errorf("plan = %q, want planContent", e.Plan)
+	}
+	if !strings.HasPrefix(e.Body, "Implement the following plan:") || !strings.Contains(e.Body, "read the full transcript at:") {
+		t.Errorf("body = %q, want the whole text", e.Body)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(e.JSON(), &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire["origin"] != "auto-continuation" || wire["plan"] != e.Plan {
+		t.Errorf("wire = %v", wire)
+	}
+}
+
+// Only that record. A prompt the reader typed carries origin {kind: "human"}
+// on this CLI, and neither field goes on its event.
+func TestNormalizeLeavesATypedPromptWithoutAnOrigin(t *testing.T) {
+	out := NewNormalizer("demo").Line([]byte(`{"type":"user","message":{"role":"user","content":"say ok"},` +
+		`"origin":{"kind":"human"},"timestamp":"2026-09-24T07:20:00Z"}`))
+	if len(out) != 1 || out[0].Origin != "" || out[0].Plan != "" {
+		t.Fatalf("got %+v", out)
+	}
+	if b := string(out[0].JSON()); strings.Contains(b, "origin") || strings.Contains(b, "plan") {
+		t.Errorf("wire = %s", b)
+	}
+}
+
+// An origin in a shape the CLI has not used is ignored rather than losing the
+// record: a string there must not make the line undecodable.
+func TestNormalizeSurvivesAnOriginOfAnotherShape(t *testing.T) {
+	out := NewNormalizer("demo").Line([]byte(`{"type":"user","message":{"role":"user","content":"say ok"},` +
+		`"origin":"somewhere","timestamp":"2026-09-24T07:20:00Z"}`))
+	if len(out) != 1 || out[0].Body != "say ok" || out[0].Origin != "" {
+		t.Fatalf("got %+v", out)
 	}
 }

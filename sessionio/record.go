@@ -74,9 +74,23 @@ type Record struct {
 	// carries one. SessionIDAlt is the "session_id" spelling newer Claude Code
 	// versions ALSO write. Measured 2026-08-15 over 19,938 assistant/user
 	// records: camelCase on all of them, snake_case on 17,759, identical
-	// wherever both appeared. Read them through ClaudeID.
+	// wherever both appeared. They can differ, though: the conversation the
+	// plan approval's clear context starts writes sessionId as the NEW
+	// conversation and session_id as the one it came from (CLI 2.1.281,
+	// measured 2026-09-24). sessionId is the file's own conversation, which is
+	// why ClaudeID reads it first. Read them through ClaudeID.
 	SessionID    string `json:"sessionId"`
 	SessionIDAlt string `json:"session_id"`
+
+	// PlanContent and Origin mark the first user record of a conversation the
+	// plan approval started by clearing the context: the approved plan, and
+	// {kind: "auto-continuation"} (CLI 2.1.281, measured 2026-09-24). A typed
+	// prompt carries {kind: "human"} and a background task's notice
+	// {kind: "task-notification"}. Origin stays raw so a shape the CLI has not
+	// used yet cannot make the whole line undecodable; read it through
+	// OriginKind.
+	PlanContent string          `json:"planContent"`
+	Origin      json.RawMessage `json:"origin"`
 
 	// ToolUseResult is the structured result the harness recorded for a tool
 	// call, alongside the tool_result block's flattened text. Shapes differ per
@@ -150,6 +164,18 @@ func (r Record) ClaudeID() string {
 		return r.SessionID
 	}
 	return r.SessionIDAlt
+}
+
+// OriginKind is the record's origin.kind, or "" when it has none or carries
+// it in another shape.
+func (r Record) OriginKind() string {
+	var o struct {
+		Kind string `json:"kind"`
+	}
+	if len(r.Origin) == 0 || json.Unmarshal(r.Origin, &o) != nil {
+		return ""
+	}
+	return o.Kind
 }
 
 // Role is the message role, falling back to the record type for the older

@@ -110,7 +110,20 @@ type Event struct {
 	Context *ContextReading `json:"context,omitempty"`
 	// Model is the model and effort on a MetaModel event (see above).
 	Model *ModelState `json:"model,omitempty"`
+	// Origin and Plan are set on ONE event: the user event of the record that
+	// opens a conversation the plan approval started by clearing the context.
+	// Origin is OriginAutoContinuation and Plan the approved plan, so the Text
+	// view can draw a marker and a plan row instead of the long "Implement the
+	// following plan: …" message the reader never typed. Body keeps that whole
+	// text, so a client from before the marker renders what it always did.
+	Origin string `json:"origin,omitempty"`
+	Plan   string `json:"plan,omitempty"`
 }
+
+// OriginAutoContinuation is Event.Origin on the record that opens a
+// conversation after the plan approval cleared the context: the transcript's
+// origin.kind for it, measured on CLI 2.1.281 on 2026-09-24.
+const OriginAutoContinuation = "auto-continuation"
 
 // JSON returns the compact wire encoding of the event.
 func (e Event) JSON() []byte { b, _ := json.Marshal(e); return b }

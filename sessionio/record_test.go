@@ -102,12 +102,19 @@ func TestRecordKeepsTheMessageObjectVerbatim(t *testing.T) {
 // 17,759, and identical wherever both were present. The camelCase one is
 // therefore the authority and the snake_case one is the fallback for whichever
 // record types only carry it.
+//
+// They are NOT always identical. The conversation the plan approval's clear
+// context starts writes its records with "sessionId" naming the new
+// conversation and "session_id" the one it came from (CLI 2.1.281, measured
+// 2026-09-24; the second line of testdata/plan-continuation.jsonl is one). The
+// camelCase one is the file's own conversation, which is what ClaudeID means.
 func TestRecordClaudeIDPrefersCamelCaseAndFallsBack(t *testing.T) {
 	for _, tc := range []struct{ line, want string }{
 		{`{"type":"assistant","sessionId":"camel","session_id":"camel"}`, "camel"},
 		{`{"type":"assistant","sessionId":"camel"}`, "camel"},
 		{`{"type":"system","session_id":"snake"}`, "snake"},
 		{`{"type":"assistant"}`, ""},
+		{`{"type":"attachment","sessionId":"new-conversation","session_id":"old-conversation"}`, "new-conversation"},
 	} {
 		rec, ok := DecodeRecord([]byte(tc.line))
 		if !ok {

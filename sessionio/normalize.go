@@ -339,6 +339,11 @@ func (n *Normalizer) conversation(rec Record) []Event {
 			}
 			e := n.emit(k, at)
 			e.Body = plainText(body)
+			// The record the plan approval's clear context opens a
+			// conversation with (see Event.Origin).
+			if isPrompt && rec.OriginKind() == OriginAutoContinuation && rec.PlanContent != "" {
+				e.Origin, e.Plan = OriginAutoContinuation, rec.PlanContent
+			}
 			out = append(out, e)
 		case "thinking":
 			// A thinking block whose text is empty has nothing to render, and
