@@ -467,11 +467,12 @@ func (in *Injector) answerMulti(ctx context.Context, osUser, session string, bef
 // AN ACTING KEY IS ONLY SENT AGAINST A READING THAT SHOWS THE CURSOR ON ITS
 // ROW. A Space that arrives on the free-text row types a space into the
 // reader's words, and an Enter on the commit row leaves the question, so a
-// walk that fell short must end the request rather than land its key on the
-// wrong row. Each walk is read back, and every Space, the first included,
-// waits for a reading that draws the cursor on its row; the free-text row is
-// changed one read-back step at a time (settleFreeText). Where the cursor is
-// comes from the mark drawn in front of a row and nowhere else (cutCursor).
+// walk must never have its key land on the wrong row. Every walk goes through
+// walkOnto, which hands back either a reading that draws the cursor on the row
+// or a reason, and every Space, the first included, goes out on such a
+// reading. The free-text row is changed one read-back step at a time
+// (settleFreeText). Where the cursor is comes from the mark drawn in front of
+// a row and nowhere else (cutCursor).
 //
 // THE CHECK IS THE BOXES THEMSELVES. A toggle that adds a second pick changes
 // none of the things answerMoved watches: the tab bar filled on the first pick
@@ -488,33 +489,20 @@ func (in *Injector) applyMulti(ctx context.Context, osUser, session string, befo
 				return answerReading{}, "", err
 			}
 		}
-		if len(step.walk) > 0 {
-			refused, err := in.press(ctx, osUser, session, step.walk)
-			if err != nil {
-				return answerReading{}, "", err
-			}
-			if refused {
-				return in.refusal(osUser, session)
-			}
-			if err := answerWait(ctx, keySettle); err != nil {
-				return answerReading{}, "", err
-			}
-			if cur, err = in.read(osUser, session); err != nil {
-				return answerReading{}, "", err
-			}
-			if !stillOn(before, cur) {
-				return cur, AnswerUnverified, nil
-			}
-		}
 		// Every step, the first included. A walk of no keys is the plan
 		// saying the cursor is on the row already, and that is only as good
 		// as the reading it was made from. One that draws no cursor at all
 		// puts focusedRow on row one, and a Space sent on that claim ticked
-		// whichever row the cursor really held.
-		if !cursorOn(cur, rows[step.row].label) {
-			return cur, AnswerUnverified, nil
+		// whichever row the cursor really held; walkOnto refuses it.
+		label := rows[step.row].label
+		walked, reason, err := in.walkOnto(ctx, osUser, session, before, cur, step.walk, func(rs []answerRow) int {
+			return rowIndex(rs, label)
+		})
+		if err != nil || reason != "" {
+			return walked, reason, err
 		}
-		if err := in.Keys(osUser, session, []string{"Space"}); err != nil {
+		cur = walked
+		if err = in.Keys(osUser, session, []string{"Space"}); err != nil {
 			return in.refusal(osUser, session)
 		}
 		sent = true
@@ -542,8 +530,8 @@ func (in *Injector) applyMulti(ctx context.Context, osUser, session string, befo
 
 // settleFreeText brings a multi-select's free-text row to what `want` asks,
 // one step at a time, each decided on a fresh reading: walk the cursor onto
-// the row, then Enter to flip its box, C-e and Backspaces to clear it, or a
-// paste to fill it (freeTextNext says which).
+// the row (walkOnto), then Enter to flip its box, C-e and Backspaces to clear
+// it, or a paste to fill it (freeTextNext says which).
 //
 // Clearing goes through rawKeys, never the keys route. Neither C-e nor BSpace
 // is in answerKeys, and that allowlist is the whole security boundary of the
@@ -554,15 +542,19 @@ func (in *Injector) applyMulti(ctx context.Context, osUser, session string, befo
 func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, before answerReading, want multiWant) (answerReading, string, error) {
 	var cur answerReading
 	cleared, lastClear := false, ""
+	walked := false // cur is walkOnto's reading, and no key has gone in since
 	for step := 0; step < maxFreeSteps; step++ {
-		if err := answerWait(ctx, keySettle); err != nil {
-			return answerReading{}, "", err
+		if !walked {
+			if err := answerWait(ctx, keySettle); err != nil {
+				return answerReading{}, "", err
+			}
+			next, err := in.read(osUser, session)
+			if err != nil {
+				return answerReading{}, "", err
+			}
+			cur = next
 		}
-		next, err := in.read(osUser, session)
-		if err != nil {
-			return answerReading{}, "", err
-		}
-		cur = next
+		walked = false
 		rows := answerRows(cur.region)
 		at := freeIndex(rows)
 		if !stillOn(before, cur) || at < 0 {
@@ -576,14 +568,14 @@ func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, 
 		// this one". The key below goes to whatever row really holds the
 		// cursor, so it waits for a reading that draws the cursor here.
 		if !rows[at].focused {
-			refused, err := in.press(ctx, osUser, session, chunkKeys(walkTo(focusedRow(rows), at)))
-			if err != nil {
-				return answerReading{}, "", err
+			on, reason, err := in.walkOnto(ctx, osUser, session, before, cur, chunkKeys(walkTo(focusedRow(rows), at)), freeIndex)
+			if err != nil || reason != "" {
+				return on, reason, err
 			}
-			if refused {
-				return in.refusal(osUser, session)
-			}
-			continue // the next pass reads where the cursor landed
+			// walkOnto read the pane after the walk, so the next pass decides
+			// on that reading rather than taking another.
+			cur, walked = on, true
+			continue
 		}
 		switch act {
 		case freeToggle:
@@ -613,47 +605,32 @@ func (in *Injector) settleFreeText(ctx context.Context, osUser, session string, 
 	return cur, AnswerUnverified, nil
 }
 
-// commitMulti leaves a multi-select through its commit row: walk there, read
-// the pane to confirm the cursor arrived, and press Enter in a batch of its
-// own. On a multi-select Enter anywhere else is a toggle, or on the chat row
-// abandons the question, so an Enter without that reading is never sent.
+// commitMulti leaves a multi-select through its commit row: walk there
+// (walkOnto), and press Enter in a batch of its own once a reading draws the
+// cursor on that row. On a multi-select Enter anywhere else is a toggle, or on
+// the chat row abandons the question, so an Enter without that reading is
+// never sent.
 //
-// `cur` is the reading that showed the set in place, and it is what the move
-// is checked against. Checking against the reading from before the toggles
-// would let the first box filling on the tab bar pass for the commit landing.
+// `cur` is the reading that showed the set in place, and the move is checked
+// against the one walkOnto hands back, taken after it with the cursor on the
+// commit row. Checking against the reading from before the toggles would let
+// the first box filling on the tab bar pass for the commit landing.
 func (in *Injector) commitMulti(ctx context.Context, osUser, session string, cur answerReading) (AnswerResponse, error) {
 	walk, err := planCommit(answerRows(cur.region))
 	if err != nil {
 		return cur.reply(AnswerUnverified), nil
 	}
-	if len(walk) > 0 {
-		refused, err := in.press(ctx, osUser, session, walk)
-		if err != nil {
-			return AnswerResponse{}, err
-		}
-		if refused {
-			after, reason, err := in.refusal(osUser, session)
-			if err != nil {
-				return AnswerResponse{}, err
-			}
-			return after.reply(reason), nil
-		}
-		if err := answerWait(ctx, keySettle); err != nil {
-			return AnswerResponse{}, err
-		}
-		prev := cur
-		if cur, err = in.read(osUser, session); err != nil {
-			return AnswerResponse{}, err
-		}
-		rows := answerRows(cur.region)
-		if at := commitIndex(rows); !stillOn(prev, cur) || at < 0 || !rows[at].focused {
-			return cur.reply(AnswerUnverified), nil
-		}
+	on, reason, err := in.walkOnto(ctx, osUser, session, cur, cur, walk, commitIndex)
+	if err != nil {
+		return AnswerResponse{}, err
+	}
+	if reason != "" {
+		return on.reply(reason), nil
 	}
 	if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
-		return cur.reply(AnswerRefused), nil
+		return on.reply(AnswerRefused), nil
 	}
-	after, ok, err := in.awaitMoved(ctx, osUser, session, cur)
+	after, ok, err := in.awaitMoved(ctx, osUser, session, on)
 	if err != nil {
 		return AnswerResponse{}, err
 	}
@@ -664,6 +641,100 @@ func (in *Injector) commitMulti(ctx context.Context, osUser, session string, cur
 		return after.replyDone(), nil
 	}
 	return after.reply(""), nil
+}
+
+// maxWalkRuns bounds walkOnto: the planned run of arrows and up to two more
+// from wherever the cursor stopped. The chat row costs one more; the second is
+// room for one retry. A run only follows one that stopped part of the way
+// (short), so a widget that has stopped taking keys ends the walk after the
+// first.
+const maxWalkRuns = 3
+
+// walkOnto moves the cursor onto the row `find` picks out of a reading's rows,
+// starting with the planned run `walk`, and returns a reading that draws the
+// cursor on that row, or the reason it could not. `cur` is the reading the
+// walk was planned from, and `before` the one the request started on. An
+// empty walk is the plan saying the cursor is there already, which only a
+// reading can confirm.
+//
+// A WALK THAT STOPPED PART OF THE WAY GOES ON FROM WHERE IT STOPPED. The CLI's
+// chat row keeps one key of a run: with the cursor on "Chat about this", one
+// send-keys run of three ↑ moved it a single row, onto the commit row, and the
+// rest was lost (CLI 2.1.280, four times out of four in the live check of
+// 2026-09-24). A toggle walked to its row in one run, so a click made while
+// the cursor sat on the chat row came back unverified with no box changed, and
+// only a second click worked. A run from the commit row, or any row above it,
+// goes the whole way, measured the same day.
+//
+// NEVER ON ONE READING. A run the widget has not finished drawing looks just
+// like one that stopped, and walking on from it stacks a second run on the
+// first: the cursor overshoots, and a reading taken between the two draws it
+// on the row just before the rest arrives, so the acting key lands a row or
+// two further on. awaitCursor waits for the cursor to reach the row or to hold
+// still over two readings, the same second look the model picker's walk takes
+// before it presses again (setmodel.go), and only a cursor that has stopped
+// part of the way is walked on from (short).
+func (in *Injector) walkOnto(ctx context.Context, osUser, session string, before, cur answerReading, walk [][]string, find func([]answerRow) int) (answerReading, string, error) {
+	for runs := 0; ; runs++ {
+		rows := answerRows(cur.region)
+		from, to := cursorRow(rows), find(rows)
+		switch {
+		case to < 0:
+			return cur, AnswerUnverified, nil
+		case from == to:
+			return cur, "", nil
+		case len(walk) == 0 || runs == maxWalkRuns:
+			return cur, AnswerUnverified, nil
+		}
+		refused, err := in.press(ctx, osUser, session, walk)
+		if err != nil {
+			return answerReading{}, "", err
+		}
+		if refused {
+			return in.refusal(osUser, session)
+		}
+		if cur, err = in.awaitCursor(ctx, osUser, session, before, find); err != nil {
+			return answerReading{}, "", err
+		}
+		if !stillOn(before, cur) {
+			return cur, AnswerUnverified, nil
+		}
+		walk = nil
+		rows = answerRows(cur.region)
+		if at := cursorRow(rows); find(rows) == to && short(from, at, to) {
+			walk = chunkKeys(walkTo(at, to))
+		}
+	}
+}
+
+// awaitCursor reads the pane after a run of arrows until the cursor is on the
+// row `find` picks out, or has held still over two readings in a row, or the
+// verify window runs out, and returns the last reading. A reading that is no
+// longer of the question `before` was drawing ends it at once.
+func (in *Injector) awaitCursor(ctx context.Context, osUser, session string, before answerReading, find func([]answerRow) int) (answerReading, error) {
+	deadline := time.Now().Add(answerVerify)
+	last, seen := 0, false
+	for {
+		if err := answerWait(ctx, keySettle); err != nil {
+			return answerReading{}, err
+		}
+		cur, err := in.read(osUser, session)
+		if err != nil {
+			return answerReading{}, err
+		}
+		if !stillOn(before, cur) {
+			return cur, nil
+		}
+		rows := answerRows(cur.region)
+		at := cursorRow(rows)
+		if at >= 0 && at == find(rows) {
+			return cur, nil
+		}
+		if (seen && at == last) || !time.Now().Before(deadline) {
+			return cur, nil
+		}
+		last, seen = at, true
+	}
 }
 
 // awaitHolds reads the pane until it shows the state `want` asks for on the
@@ -706,14 +777,6 @@ func holdsWant(before, cur answerReading, want multiWant) bool {
 func stillOn(before, cur answerReading) bool {
 	return cur.dialog != nil && len(cur.dialog.Questions) > 0 && !reviewOnScreen(cur.region) &&
 		answerSameQuestion(drawnQuestion(before), drawnQuestion(cur))
-}
-
-// cursorOn reports whether a reading draws the cursor on the option row with
-// this label.
-func cursorOn(r answerReading, label string) bool {
-	rows := answerRows(r.region)
-	at := rowIndex(rows, label)
-	return at >= 0 && rows[at].focused
 }
 
 // press sends key runs in order with a settle between each two, so no run is

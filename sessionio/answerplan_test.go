@@ -1033,6 +1033,55 @@ func TestAnswerRowsFindTheCursorByTheMarkInFrontOfTheRow(t *testing.T) {
 	}
 }
 
+// WHERE A WALK FROM THE CHAT ROW STOPS, on real captures. CLI 2.1.280 draws
+// the cursor on "Chat about this" as the last row the cursor stops on, one
+// below the commit row (captured in the live check of 2026-09-24). The walk
+// from there to Plum is three ↑ in one run, and the CLI took the first of
+// them only: the next capture drew the cursor on the commit row. short is
+// what tells the driver that row is part of the way, worth walking on from,
+// and not a cursor that stayed put, went past, went the other way, or cannot
+// be seen at all.
+func TestAWalkFromTheChatRowStopsPartOfTheWay(t *testing.T) {
+	chat := answerRows(answerRegion(fixture(t, "dialog-multiselect-on-chat.txt")))
+	from, to := cursorRow(chat), rowIndex(chat, "Plum")
+	if from != 5 || to != 2 {
+		t.Fatalf("the cursor reads on row %d and Plum on row %d, want 5 and 2", from, to)
+	}
+	if got := chunkKeys(walkTo(from, to)); !sameKeys(got, [][]string{{"Up", "Up", "Up"}}) {
+		t.Errorf("walk = %v, want three ↑ in one run", got)
+	}
+	stopped := cursorRow(answerRows(answerRegion(fixture(t, "dialog-multiselect-on-commit.txt"))))
+	if stopped != 4 || !short(from, stopped, to) {
+		t.Errorf("the cursor stopped on row %d and short = %v, want the commit row, 4, to be part of the way",
+			stopped, short(from, stopped, to))
+	}
+	// A capture that draws no cursor has no row to walk on from. focusedRow
+	// still says row one, which is what a fresh question opens on and all a
+	// planner needs; a check has to know the difference.
+	blind := answerRows(answerRegion(edited(t, "dialog-multiselect-on-chat.txt",
+		"❯ 5. Chat about this", "  5. Chat about this")))
+	if cursorRow(blind) != -1 || focusedRow(blind) != 0 {
+		t.Errorf("no cursor drawn: cursorRow = %d and focusedRow = %d, want -1 and 0", cursorRow(blind), focusedRow(blind))
+	}
+	for _, tc := range []struct {
+		name         string
+		from, at, to int
+		want         bool
+	}{
+		{"down, stopped halfway", 0, 1, 3, true},
+		{"did not move", 5, 5, 2, false},
+		{"arrived", 5, 2, 2, false},
+		{"went past the row", 5, 1, 2, false},
+		{"went the other way", 3, 4, 1, false},
+		{"no cursor drawn after the walk", 5, -1, 2, false},
+		{"no cursor drawn before it", -1, 1, 2, false},
+	} {
+		if got := short(tc.from, tc.at, tc.to); got != tc.want {
+			t.Errorf("%s: short(%d, %d, %d) = %v, want %v", tc.name, tc.from, tc.at, tc.to, got, tc.want)
+		}
+	}
+}
+
 // What the free-text row holds, as the planner reads it. The whitespace case
 // is the one the wire cannot say: Space on the row types a space the capture
 // trims, so the row reads "[✔]" and Typed comes back empty, and yet a

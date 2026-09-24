@@ -337,8 +337,9 @@ multi-select questions (`Fruit`, then `Toppings`), ticks removed one by one, and
 the free-text row on its own. A second probe the same day sent the keys the
 server sends, a bracketed paste and runs of `Backspace`, and moved the cursor
 back up from the free-text row. The live check of the fix, later that day,
-cleared the field after a walk back onto it, and the table's last row is what
-it found.
+cleared the field after a walk back onto it, and the table's second-to-last row
+is what it found. Its last row comes from a later round of that check, on
+2026-09-24, which moved the cursor up from the chat row.
 
 | behaviour | what the CLI did |
 |---|---|
@@ -351,11 +352,14 @@ it found.
 | the tab bar's box | fills on the first tick and returns to `☐` once every box is unticked |
 | the footer | `↑/↓ to navigate` with one question and `Tab/Arrow keys to navigate` with two or more. `ctrl+g to edit in Vim` joins it while the cursor is on the free-text row or the commit row, and goes again when the cursor moves back up to an option |
 | the free-text row's text cursor | a walk back onto the row with `↑` or `↓` puts it at the start of the words: a typed `X` landed in front of `Kiwi`, and six `Backspace`s took nothing out. Straight after a paste it is at the end. `C-e` moves it to the end of the whole text, a wrapped one included: `C-e` and 170 `Backspace`s in one run cleared a 166-character field wrapped over two lines. `End` stops at the end of the first visual line, and `C-u` kills one visual line |
+| a run of `↑` from `Chat about this` | moves the cursor one row, onto the commit row, and the rest of the run is lost. One `send-keys` run of `↑ ↑ ↑` or `↑ ↑` from that row reached the commit row and no further, four times out of four; three runs of one `↑` each reached `Plum`. One run of three or four `↑` from the commit row or any row above it goes the whole way |
 
 The key-delivery findings of 0.50.1 and 0.50.2 still govern every walk: each
 cursor walk and each `Space` gets its own `send-keys` run with `keySettle`
 between, which is how `planChoice` already batches and why the probe sent one
-key per run.
+key per run. A run that starts on the chat row moves the cursor one row
+whatever its length, so the server reads every walk back and sends the rest
+from where the cursor stopped.
 
 ### What changes
 
@@ -493,6 +497,20 @@ Replayed against a real 2.1.280 dialog after the fixes, at 1280x800:
   toggles and a commit all applied, each recorded with `tl.source=pane`, and a
   stale toggle on the review screen was refused with the pane unchanged. Claude
   received `Pear, Plum`.
+
+A later round, on 2026-09-24, passed every scripted scenario and found one more
+case by putting the cursor on `Chat about this` at the terminal before a
+toggle. The CLI takes one key of a run that starts on that row, so the toggle's
+walk stopped on the commit row, and the request came back `unverified` with no
+box changed; the same request from the commit row applied. It failed safe,
+since the server sends a `Space` only on a reading that draws the cursor on its
+row. The walk itself predates this change: `master` plans it the same way and
+sends its `Space` without that check. A walk that stops part of the way now
+goes on from where the cursor stopped, once two readings agree it has stopped
+(`walkOnto` in `sessionio/answerdrive.go`). The
+free-text row's walk and the commit's walk use the same code, and the stand-in
+TUI in `answerdrive_test.go` now drops the rest of a run that starts on the chat
+row, so the case runs in the unit tests.
 
 ## Open questions
 

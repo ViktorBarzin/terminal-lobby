@@ -747,7 +747,13 @@ func readingOf(t *testing.T, name string) answerReading {
 //   - the review screen follows the last question, for a one-question call
 //     too, and is drawn with no footer;
 //   - ← to an answered question opens a single-select on its pick, drawn
-//     "2. Coffee ✔", and a multi-select on row one with its boxes kept.
+//     "2. Coffee ✔", and a multi-select on row one with its boxes kept;
+//   - a run of arrows that arrives with the cursor on a multi-select's chat
+//     row moves it one row, onto the commit row, and the rest of the run is
+//     lost. One send-keys run of ↑ ↑ ↑ from there reached the commit row and
+//     no further, four times out of four in the live check of 2026-09-24,
+//     while three runs of one ↑ each reached Plum. A run from any other row
+//     goes the whole way.
 //
 // The one assumption: a digit typed with the cursor on the free-text field
 // goes into the field. Space does, measured, and nothing here presses a digit
@@ -767,7 +773,11 @@ driving real dialogs on 2026-09-23. On a multi-select every numbered row is a
 toggle, whether by Space, Enter or its digit, and none of them leaves the
 question; an unnumbered commit row under the free-text row does, saying
 "Next" on every question but the last and "Submit" on the last. The free-text
-row of a multi-select is an inline field.
+row of a multi-select is an inline field. A run of arrows that arrives with
+the cursor on a multi-select's chat row moves it one row and loses the rest.
+
+Input is read a send-keys run at a time: tmux writes one run to the pty in one
+go, so one read takes it whole, and that is what lets a run lose its tail.
 """
 
 import os
@@ -822,6 +832,8 @@ at = 0                           # the question on screen; len(QS) is the review
 cursor = 0
 typing = False                   # a single-select's free-text field is open
 buf = ""
+run = bytearray()                # what is left of the send-keys run being read
+run_on_chat = False              # that run arrived with the cursor on the chat row
 
 
 def out(s):
@@ -853,6 +865,10 @@ def rows():
     if at >= len(QS):
         return 2
     return nopts() + (3 if multi() else 2)
+
+
+def chat_row():
+    return rows() - 1
 
 
 def answered(i):
@@ -1011,14 +1027,32 @@ def submitted():
     out("\r\n● SUBMITTED " + " | ".join(", ".join(answer_of(i)) for i in range(len(QS))) + "\r\n")
 
 
+def byte():
+    """The next byte of input, or None once there is no more."""
+    global run, run_on_chat
+    if not run:
+        data = os.read(sys.stdin.fileno(), 4096)
+        if not data:
+            return None
+        run = bytearray(data)
+        run_on_chat = multi() and cursor == chat_row()
+    b = run[0]
+    del run[0]
+    return b
+
+
 def read1():
-    b = sys.stdin.buffer.read(1)
-    if not b:
+    b = byte()
+    if b is None:
         return ""
-    extra = 3 if b[0] >= 0xF0 else 2 if b[0] >= 0xE0 else 1 if b[0] >= 0xC0 else 0
-    if extra:
-        b += sys.stdin.buffer.read(extra)
-    return b.decode("utf-8", "replace")
+    extra = 3 if b >= 0xF0 else 2 if b >= 0xE0 else 1 if b >= 0xC0 else 0
+    raw = bytes([b])
+    for _ in range(extra):
+        nb = byte()
+        if nb is None:
+            break
+        raw += bytes([nb])
+    return raw.decode("utf-8", "replace")
 
 
 def skip_paste():
@@ -1152,6 +1186,10 @@ def main():
                         # Arriving on the inline field puts its text cursor
                         # at the start of the text, not the end.
                         fpos = 0
+                    if run_on_chat:
+                        # A run that arrived on the chat row moves the
+                        # cursor this one row and loses the rest.
+                        run.clear()
                 elif code == "D":
                     back()
                 draw()
@@ -1708,6 +1746,121 @@ func TestAToggleFromTheCommitRowWalksBackUp(t *testing.T) {
 	}
 	if !res.Applied || !sameTicks(ticksOf(t, res), "Pear") {
 		t.Fatalf("applied=%v reason=%q ticks=%v, want Pear", res.Applied, res.Reason, ticksOf(t, res))
+	}
+}
+
+// keysTo is the reader at the terminal: one run of raw keys, and then a check
+// that the pane draws `line`, which is how these tests put the cursor where
+// they need it.
+func keysTo(t *testing.T, in *Injector, osUser, line string, keys ...string) {
+	t.Helper()
+	res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{Keys: keys}, theCall)
+	if err != nil || !res.Applied {
+		t.Fatalf("keys %v: %+v %v", keys, res, err)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, line+"\n") {
+		t.Fatalf("after keys %v the pane does not draw %q:\n%s", keys, line, pane)
+	}
+}
+
+// THE CHAT ROW KEEPS ONE KEY OF A RUN. With the cursor on "Chat about this",
+// below the separator, a send-keys run of several ↑ moves it one row, onto the
+// commit row, and the rest of the run is lost (CLI 2.1.280, four times out of
+// four in the live check of 2026-09-24). A toggle walked to its row in one run,
+// so a click made while the cursor sat there came back unverified with no box
+// changed. The reading drew the cursor on the commit row, short of the option,
+// and the Space was rightly withheld; only a second click worked, because the
+// first had left the cursor on the commit row. Both of that check's requests
+// failed that way: Pear and Plum over Pear, then all three.
+//
+// The walk now goes the rest of the way from where the cursor stopped.
+func TestAToggleFromTheChatRowWalksTheRestOfTheWay(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}, Stay: true}, theCall); err != nil || !res.Applied {
+		t.Fatalf("ticking Pear: %+v %v", res, err)
+	}
+	// From Pear down to the chat row, and the stand-in's own behaviour there:
+	// one run of three ↑ stops on the commit row.
+	keysTo(t, in, osUser, "❯ 5. Chat about this", "Down", "Down", "Down", "Down")
+	keysTo(t, in, osUser, "❯    Next", "Up", "Up", "Up")
+	keysTo(t, in, osUser, "❯ 5. Chat about this", "Down")
+
+	res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear", "Plum"}, Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Reason != "" || !sameTicks(ticksOf(t, res), "Pear", "Plum") {
+		t.Fatalf("Pear and Plum from the chat row: applied=%v reason=%q ticks=%v", res.Applied, res.Reason, ticksOf(t, res))
+	}
+
+	// From Plum back to the chat row, and all three: the walk to Apple is the
+	// longest one a toggle makes from there.
+	keysTo(t, in, osUser, "❯ 5. Chat about this", "Down", "Down", "Down")
+	res, err = in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Apple", "Pear", "Plum"}, Stay: true}, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Reason != "" || !sameTicks(ticksOf(t, res), "Apple", "Pear", "Plum") {
+		t.Fatalf("all three from the chat row: applied=%v reason=%q ticks=%v", res.Applied, res.Reason, ticksOf(t, res))
+	}
+	if res.Review || res.Dialog.Questions[0].Question != "Pick fruits" {
+		t.Errorf("a toggle from the chat row left the question: %+v", res)
+	}
+}
+
+// Free text and a commit from the chat row, which the same live check found
+// landing: the free-text walk and the commit's single ↑ both start from where
+// the cursor is. They share the toggle's walk now, so this holds them to it.
+func TestFreeTextAndACommitFromTheChatRowLand(t *testing.T) {
+	in, osUser := dialogSession(t)
+	ctx := context.Background()
+	if res, err := in.Answer(ctx, osUser, "demo",
+		AnswerRequest{Header: "Fruit", Choices: []string{"Pear"}, Stay: true}, theCall); err != nil || !res.Applied {
+		t.Fatalf("ticking Pear: %+v %v", res, err)
+	}
+	keysTo(t, in, osUser, "❯ 5. Chat about this", "Down", "Down", "Down", "Down")
+	add := AnswerRequest{Header: "Fruit", Choices: []string{"Pear", "Type something"}, Text: "Fig", Stay: true}
+	res, err := in.Answer(ctx, osUser, "demo", add, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if res.Dialog == nil {
+		t.Fatalf("free text from the chat row read no dialog: %+v", res)
+	}
+	if q := res.Dialog.Questions[0]; !res.Applied || res.Reason != "" || q.Typed != "Fig" || !q.TypedChecked {
+		t.Fatalf("free text from the chat row: applied=%v reason=%q typed=%q checked=%v", res.Applied, res.Reason, q.Typed, q.TypedChecked)
+	}
+
+	// From the free-text row back to the chat row, and the commit.
+	keysTo(t, in, osUser, "❯ 5. Chat about this", "Down", "Down")
+	commit := add
+	commit.Stay = false
+	res, err = in.Answer(ctx, osUser, "demo", commit, theCall)
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if !res.Applied || res.Dialog == nil || res.Dialog.Questions[0].Question != "Pick one drink" {
+		t.Fatalf("the commit from the chat row did not move on: %+v", res)
+	}
+	for _, req := range []AnswerRequest{{Header: "Drink", Choice: "Coffee"}, {Submit: true}} {
+		if res, err = in.Answer(ctx, osUser, "demo", req, theCall); err != nil || !res.Applied {
+			t.Fatalf("Answer(%+v): %+v %v", req, res, err)
+		}
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	if !strings.Contains(pane, "SUBMITTED Pear, Fig | Coffee") {
+		t.Errorf("the answer that reached the stand-in is not the one chosen:\n%s", pane)
 	}
 }
 

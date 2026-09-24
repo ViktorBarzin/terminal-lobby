@@ -955,7 +955,9 @@ type toggleStep struct {
 // The walk starts from the row the pane says the cursor is on rather than
 // assuming row one, and runs in list order, so after the first hop the cursor
 // only walks down. The first can go up: the cursor rests wherever the last
-// request left it.
+// request left it. Each walk is the run the driver sends first; it reads the
+// run back and walks the rest of the way when the cursor stopped short, which
+// a run from the chat row always does (walkOnto).
 func planToggles(q DialogQuestion, rows []answerRow, want multiWant) []toggleStep {
 	at := focusedRow(rows)
 	var steps []toggleStep
@@ -1144,13 +1146,43 @@ func walkTo(from, to int) []string {
 	return keys
 }
 
-// focusedRow is the row the cursor is on, and 0 when the capture does not show
-// a cursor — the row a freshly drawn question opens on.
-func focusedRow(rows []answerRow) int {
+// short reports whether a walk from row `from` towards row `to` stopped at row
+// `at` part of the way there: past where it started, and not yet on the row.
+// -1, a reading that draws no cursor, is never part of the way.
+//
+// It is the one shape of a walk that falls short which is worth walking on
+// from. The CLI's chat row makes it: a run of three ↑ from "Chat about this"
+// to Plum stopped on the commit row, one row up, and the rest of the run was
+// lost (CLI 2.1.280, the live check of 2026-09-24). A cursor that did not move
+// at all is keys the widget is not taking, and one that went past the row or
+// the other way is somebody else moving it; walking on from either would be
+// guessing.
+func short(from, at, to int) bool {
+	if from < 0 || at < 0 {
+		return false
+	}
+	if from < to {
+		return from < at && at < to
+	}
+	return to < at && at < from
+}
+
+// cursorRow is the row a reading draws the cursor on, and -1 when it draws
+// none. A check needs the difference; a planner does not (focusedRow).
+func cursorRow(rows []answerRow) int {
 	for i := range rows {
 		if rows[i].focused {
 			return i
 		}
+	}
+	return -1
+}
+
+// focusedRow is the row the cursor is on, and 0 when the capture does not show
+// a cursor — the row a freshly drawn question opens on.
+func focusedRow(rows []answerRow) int {
+	if at := cursorRow(rows); at >= 0 {
+		return at
 	}
 	return 0
 }
