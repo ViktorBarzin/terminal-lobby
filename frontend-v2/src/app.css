@@ -1926,9 +1926,16 @@ label.tl-set-row-label {
   .tl-new-composer .tl-bar-right {
     margin-left: auto;
   }
-  /* The codebase's own touch floor, which these selects were half of. */
+  /* The codebase's own touch floor, which these selects were half of.
+     The width cap is for pi: its model references run to 96 characters
+     (openrouter/meta-llama/…:free), and measured at 412px a select showing one
+     was 519px wide and ran off the right of the box, arrow and all. Capped at
+     the bar, the select keeps its row and the browser truncates the shown
+     value; the full reference is still what the menu lists. */
   .tl-new-composer .tl-new-cmd {
     min-height: 40px;
+    min-width: 0;
+    max-width: 100%;
   }
   /* Room to write in. A single line under a placeholder read as a caption on
      the card rather than the thing the screen is for. */
