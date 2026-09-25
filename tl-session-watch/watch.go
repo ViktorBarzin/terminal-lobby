@@ -34,6 +34,10 @@ type Session struct {
 	// SessionEnd clears it on an orderly exit and a SIGKILL cannot run that
 	// hook, so a stamp with no claude behind it is evidence of a death.
 	ClaudeState string
+	// ClaudeAlive is whether the process that owns that stamp is alive under
+	// the pane: a claude, or a pi, whose lobby extension stamps the same option
+	// and clears it on quit. The name and the claude_died event keep Claude's
+	// word, because they are what the alert and the dashboards already read.
 	ClaudeAlive bool
 	// PaneBytes and PaneLimit come from the pane scope's cgroup:
 	// memory.current and memory.max. PaneLimit is 0 when the pane is uncapped.
