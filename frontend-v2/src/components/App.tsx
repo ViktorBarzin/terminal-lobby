@@ -2803,6 +2803,18 @@ export const App: Component = () => {
                       newCommand={newCommand}
                       newLaunch={newLaunch}
                       tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
+                      // What a pi session stamped about its model, which is
+                      // all its chip has to read. By key, like the size above.
+                      piStamp={() => {
+                        const s = tileSession();
+                        return (
+                          s && {
+                            piModel: s.piModel,
+                            piThinking: s.piThinking,
+                            piLevels: s.piLevels,
+                          }
+                        );
+                      }}
                       prefs={prefs}
                       notify={notify}
                       overlayOpen={overlayOpen}

@@ -1,7 +1,9 @@
 import { For, Show, createSignal, type Accessor, type Component, type JSX } from "solid-js";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import {
+  chipName,
   DEFAULT_CHOICE,
+  fieldHeading,
   isCurrentModel,
   labelFor,
   optionsFor,
@@ -9,6 +11,7 @@ import {
   type ModelField,
   type ModelHarness,
   type ModelState,
+  type PiOffer,
 } from "../lib/models";
 
 /**
@@ -21,11 +24,16 @@ import {
  * than this one. The mode chip next door already established the shape: what is
  * in force, one tap from changing it, in the row you are typing in.
  *
- * WHAT IT SHOWS. The live pair, off the session's own transcript for Claude and
- * off its pane for codex (lib/models.ts). A session that has not answered yet
- * has said nothing about either, so the chip reads "model" rather than
- * inventing a value — showing the composer's stored preference here would be
- * showing what the NEXT session will start on, which is a different question.
+ * WHAT IT SHOWS. The live pair, off the session's own transcript for Claude,
+ * off its pane for codex (lib/models.ts), and off what the lobby's extension
+ * stamped for pi. A session that has not answered yet has said nothing about
+ * either, so the chip reads "model" rather than inventing a value — showing
+ * the composer's stored preference here would be showing what the NEXT
+ * session will start on, which is a different question.
+ *
+ * WHAT IT OFFERS. Claude's and codex's written-down lists, or for pi the
+ * models pi lists for this user and the levels the session's current model
+ * supports, handed in as `offer` because neither is known in advance.
  *
  * `default` is not offered. It means "leave it alone", which is a real answer
  * for a session that does not exist yet and nothing at all for one already
@@ -38,6 +46,8 @@ export const ModelMenu: Component<{
   /** A change is in flight — the picker is being driven, which takes ~1s. */
   busy: Accessor<boolean>;
   onPick: (field: ModelField, id: string) => void;
+  /** Pi's rows, which only the caller can know (lib/models.ts, PiOffer). */
+  offer?: Accessor<PiOffer | undefined>;
   /** Watching: the chip shows the pair but changes nothing. */
   inertReason?: string;
 }> = (props) => {
@@ -80,7 +90,8 @@ export const ModelMenu: Component<{
   };
 
   const options = (field: ModelField) =>
-    optionsFor(props.harness, field).filter((o) => o.id !== DEFAULT_CHOICE);
+    optionsFor(props.harness, field, props.offer?.()).filter((o) => o.id !== DEFAULT_CHOICE);
+  const name = (): string => chipName(props.harness);
 
   return (
     <span class="tl-model" ref={menu.anchor}>
@@ -90,14 +101,12 @@ export const ModelMenu: Component<{
         class="tl-model-chip"
         aria-haspopup="menu"
         aria-expanded={menu.open()}
-        aria-label="Model and effort"
+        aria-label={name()}
         data-busy={props.busy() ? "" : undefined}
         disabled={!!props.inertReason || props.busy()}
         title={
           props.inertReason ||
-          (summary()
-            ? `Model and effort: ${summary()}`
-            : "Model and effort — the session has not answered yet")
+          (summary() ? `${name()}: ${summary()}` : `${name()} — the session has not answered yet`)
         }
         onClick={toggle}
       >
@@ -113,8 +122,10 @@ export const ModelMenu: Component<{
         >
           <For each={["model", "effort"] as ModelField[]}>
             {(field) => (
-              <>
-                <div class="tl-menu-label">{field === "model" ? "Model" : "Effort"}</div>
+              // A heading over no rows reads like a broken menu, which is what
+              // pi's model section is before its list arrives.
+              <Show when={options(field).length > 0}>
+                <div class="tl-menu-label">{fieldHeading(props.harness, field)}</div>
                 <For each={options(field)}>
                   {(o) => (
                     <button
@@ -133,7 +144,7 @@ export const ModelMenu: Component<{
                     </button>
                   )}
                 </For>
-              </>
+              </Show>
             )}
           </For>
           {/* Codex's picker writes ~/.codex/config.toml — it has no "this
