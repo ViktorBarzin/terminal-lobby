@@ -28,13 +28,18 @@ import (
 // 0.144.3 on 2026-09-05, and the fixtures under testdata/picker-*.txt are
 // `capture-pane -p` of the real dialogs.
 
-// Harness is which CLI a session runs. Only the two that have a model to pick
-// appear here; a plain shell has none, and callers are expected not to ask.
+// Harness is which CLI a session runs. Only the three that have a model to
+// pick appear here; a plain shell has none, and callers are expected not to ask.
+//
+// Every switch over a Harness names all three, so adding a fourth is a compile-
+// visible list of places to decide rather than a silent default to Claude's
+// behaviour (pi.go holds pi's half).
 type Harness string
 
 const (
 	HarnessClaude Harness = "claude"
 	HarnessCodex  Harness = "codex"
+	HarnessPi     Harness = "pi"
 )
 
 // ModelState is what a session is on: the model, and the effort level it

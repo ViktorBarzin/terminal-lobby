@@ -61,6 +61,8 @@ func (in *Injector) SetModel(ctx context.Context, osUser, session string, h Harn
 		return in.setClaudeModel(ctx, osUser, session, want)
 	case HarnessCodex:
 		return in.setCodexModel(ctx, osUser, session, want)
+	case HarnessPi:
+		return in.setPiModel(ctx, osUser, session, want)
 	}
 	return ModelState{}, fmt.Errorf("set model: %q has no model to pick", h)
 }
