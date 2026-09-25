@@ -694,7 +694,7 @@ export const App: Component = () => {
   // What the Skills group needs to say which sessions still run an older skill
   // set: the live list, name and Claude state only.
   const skillSessions = createMemo(() =>
-    store.sessions.map((s) => ({ name: s.name, state: s.state || "" })),
+    store.sessions.map((s) => ({ name: s.name, state: s.state || "", tool: s.tool })),
   );
   // What the Agent spend page needs to name a row: a session's title, keyed by
   // the name the spend store recorded it under. A name is an id and nobody

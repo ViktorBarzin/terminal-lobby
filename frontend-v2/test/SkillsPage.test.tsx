@@ -212,8 +212,11 @@ function stubStore(over: Partial<SkillsStore> = {}) {
 }
 
 const sessions = () => [
-  { name: "infra-work", state: "running" },
-  { name: "notes", state: "done" },
+  { name: "infra-work", state: "running", tool: "claude" as const },
+  { name: "notes", state: "done", tool: "claude" as const },
+  // Idle and not Claude: the restart respawns `claude --continue`, so this
+  // row is not offered one, and not listed at all.
+  { name: "pie", state: "done", tool: "pi" as const },
 ];
 
 function fakePrefs(): PrefsStore {
@@ -439,6 +442,14 @@ describe("the Plugins and Sessions tabs", () => {
     expect(getAllByText("Restart")).toHaveLength(1);
     fireEvent.click(getByText("Restart"));
     await waitFor(() => expect(calls).toContain("restart:notes"));
+  });
+
+  it("offers no restart for a pi session, which a Claude respawn would replace", () => {
+    const { tab, queryByText, getAllByText } = open({}, { sessions: true });
+    tab("Sessions");
+    expect(queryByText("pie")).toBeNull();
+    // Still the one idle Claude session's button, and no second one for pi.
+    expect(getAllByText("Restart")).toHaveLength(1);
   });
 
   it("drops the Sessions tab when there are none", () => {

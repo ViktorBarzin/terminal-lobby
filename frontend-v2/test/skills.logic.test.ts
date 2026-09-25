@@ -137,9 +137,9 @@ describe("peersWorthShowing", () => {
 describe("restartTargets", () => {
   it("marks a mid-turn session unrestartable and lists it first", () => {
     const rows = restartTargets([
-      { name: "notes", state: "done" },
-      { name: "infra-work", state: "running" },
-      { name: "tripit", state: "awaiting" },
+      { name: "notes", state: "done", tool: "claude" },
+      { name: "infra-work", state: "running", tool: "claude" },
+      { name: "tripit", state: "awaiting", tool: "claude" },
     ]);
     expect(rows.map((r) => r.name)).toEqual(["infra-work", "notes", "tripit"]);
     expect(rows[0]!.restartable).toBe(false);
@@ -147,13 +147,28 @@ describe("restartTargets", () => {
   });
 
   it("treats a session with no recorded state as idle", () => {
-    const [row] = restartTargets([{ name: "plain" }]);
+    const [row] = restartTargets([{ name: "plain", tool: "claude" }]);
     expect(row!.state).toBe("idle");
     expect(row!.restartable).toBe(true);
   });
 
   it("is empty when there are no sessions", () => {
     expect(restartTargets([])).toEqual([]);
+  });
+
+  // The restart respawns `claude --continue`. In a pi, codex or shell session
+  // that would replace whatever runs there with a Claude, and none of them
+  // reads the skills this page manages anyway. A session whose tool nobody
+  // reported is left out for the same reason: it cannot be vouched for.
+  it("lists Claude sessions only, since the restart starts Claude", () => {
+    const rows = restartTargets([
+      { name: "agent", state: "done", tool: "claude" },
+      { name: "pie", state: "done", tool: "pi" },
+      { name: "cdx", state: "", tool: "codex" },
+      { name: "plain", tool: "shell" },
+      { name: "unknown", state: "done" },
+    ]);
+    expect(rows.map((r) => r.name)).toEqual(["agent"]);
   });
 });
 
