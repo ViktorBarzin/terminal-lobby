@@ -257,10 +257,7 @@ export const SettingsPanel: Component<{
                 <TerminalPage prefs={props.prefs} />
               </Match>
               <Match when={current() === "sessions"}>
-                <SessionsPage
-                  prefs={props.prefs}
-                  availableCommands={props.availableCommands}
-                />
+                <SessionsPage prefs={props.prefs} availableCommands={props.availableCommands} />
               </Match>
               <Match when={current() === "keyboard"}>
                 <Show
