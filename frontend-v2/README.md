@@ -257,7 +257,9 @@ src/
                          can take it (503 while it cannot), on top of the
                          700/1600/3000/6000 ladder, resuming at the line that
                          did not land. The last rung asks for no hold, so a pane
-                         that never draws a prompt still gets the text
+                         that never draws a prompt still gets the text. Claude
+                         and pi ask for the hold; pi's prompt also says "tool":
+                         "pi", because the server waits for pi's `π - ` title
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
