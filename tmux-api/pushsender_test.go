@@ -77,6 +77,7 @@ type stubStater struct {
 	titles map[string]string
 	act    map[string]int64
 	system map[string]bool
+	tools  map[string]string
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -91,7 +92,7 @@ func (s *stubStater) setTitles(m map[string]string) {
 	s.titles = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool) {
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
@@ -110,7 +111,11 @@ func (s *stubStater) read(string) (map[string]string, map[string]string, map[str
 	for k, v := range s.system {
 		system[k] = v
 	}
-	return cp, titles, act, system
+	tools := make(map[string]string, len(s.tools))
+	for k, v := range s.tools {
+		tools[k] = v
+	}
+	return cp, titles, act, system, tools
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
@@ -897,7 +902,7 @@ func TestPushLabel(t *testing.T) {
 // The sender reads titles off the same list build it reads states from, so a
 // title stamped by the auto-title rule is on the very next push.
 func TestStatesAndTitles(t *testing.T) {
-	states, titles := statesAndTitles([]Session{
+	states, titles, _ := statesTitlesAndTools([]Session{
 		{Name: "k7m2q9x4tp0v", State: stateAwaiting, Title: "Tashkent trip planning"},
 		{Name: "q4m8vwx2rt5n", State: stateRunning},
 	})
