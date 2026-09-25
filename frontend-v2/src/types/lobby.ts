@@ -68,9 +68,10 @@ export interface BackgroundWork {
  * Which command a session is running (tmux-api `tool`, resolved from the
  * pane's process tree — NOT from pane_current_command, which reads "bash" for
  * both wrapper-launched agents). Absent when the server predates the field or
- * its /proc scan failed.
+ * its /proc scan failed. `pi` is the third harness (docs/plans/
+ * 2026-09-25-pi-harness-design.md).
  */
-export type SessionTool = "claude" | "codex" | "shell";
+export type SessionTool = "claude" | "codex" | "pi" | "shell";
 
 /** One session as returned by GET /api/sessions. */
 export interface Session {
