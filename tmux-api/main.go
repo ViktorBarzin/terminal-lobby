@@ -74,11 +74,14 @@ const (
 		"#{" + createdStampOption + "}" + listSep +
 		"#{" + originOption + "}" + listSep +
 		"#{window_width}" + listSep + "#{window_height}" + listSep +
-		"#{" + suspendedOption + "}" + listSep + "#{pane_title}"
+		"#{" + suspendedOption + "}" + listSep +
+		"#{" + sessionio.OptionPiModel + "}" + listSep +
+		"#{" + sessionio.OptionPiThinking + "}" + listSep +
+		"#{" + sessionio.OptionPiLevels + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 18
+	listFields = 21
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -134,6 +137,18 @@ const (
 	// Only the row builders in the tests address it by name; parseSessions
 	// reads it positionally like every other field.
 	suspendedColumn = 16
+
+	// piModelColumn, piThinkingColumn and piLevelsColumn are the three pane
+	// options the lobby's pi extension stamps (sessionio.OptionPiModel and its
+	// neighbours): what a pi session is on, and the levels its model offers.
+	// They ride this format the way @claude_state does, so the sidebar's model
+	// chip costs no call of its own, and they sit before pane_title, which stays
+	// last for the reason bgColumn gives. Only the row builders in the tests
+	// address them by name; parseSessions reads them positionally like every
+	// other field.
+	piModelColumn    = 17
+	piThinkingColumn = 18
+	piLevelsColumn   = 19
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service and anything else

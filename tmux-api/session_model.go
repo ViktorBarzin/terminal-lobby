@@ -58,10 +58,11 @@ type Session struct {
 	// before any poll has listed it, and a browser holding the name it minted
 	// has nothing else to match on. Empty for a session that never moved.
 	BornAs string `json:"bornAs,omitempty"`
-	// Tool is WHICH command the session runs — "claude", "codex" or "shell"
-	// — resolved from the pane's process tree (proc.go), never from Command:
-	// both agents launch through non-exec wrapper scripts, so the pane's
-	// foreground pgroup leader is a shell while the agent runs underneath.
+	// Tool is WHICH command the session runs — "claude", "codex", "pi" or
+	// "shell" — resolved from the pane's process tree (proc.go), never from
+	// Command: the agents launch through non-exec wrapper scripts or login
+	// shells, so the pane's foreground pgroup leader is a shell while the agent
+	// runs underneath.
 	// The lobby renders it as a brand mark beside the state dot. Empty when
 	// the /proc scan failed (no mark) — omitempty keeps the old wire shape.
 	Tool string `json:"tool,omitempty"`
@@ -126,6 +127,20 @@ type Session struct {
 	// omitempty keeps the old wire shape for the overwhelming majority of
 	// sessions, which are live, and for consumers that predate the field.
 	SuspendedAt int64 `json:"suspendedAt,omitempty"`
+	// PiModel, PiThinking and PiLevels are what a pi session is on, as the
+	// lobby's pi extension stamped them on the pane (sessionio.OptionPiModel):
+	// the model as provider/id, the thinking level, and the comma-separated
+	// levels that model supports, which is what the in-session picker offers.
+	// The session's running/done state is not here; it is State, stamped by the
+	// same extension through the same script Claude's hooks use.
+	//
+	// Values outside the shapes the extension writes are dropped at parse, and
+	// all three go once the process tree says the pane runs something other
+	// than pi (dropStalePiFields). omitempty keeps every other session's wire
+	// shape exactly as it was.
+	PiModel    string `json:"piModel,omitempty"`
+	PiThinking string `json:"piThinking,omitempty"`
+	PiLevels   string `json:"piLevels,omitempty"`
 	// PanePID is the session's active-pane process — internal input to
 	// the claude-liveness backstop (proc.go), never serialized.
 	PanePID int `json:"-"`
