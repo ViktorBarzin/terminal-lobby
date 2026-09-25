@@ -440,6 +440,10 @@ func registerRoutes(mux *http.ServeMux) {
 	// Registered ahead of "/sessions/" so the more specific path wins: Go's mux
 	// prefers the longer pattern, but stating the order makes the intent plain.
 	mux.HandleFunc("/new-commands", handleNewCommands)
+	// Beside /new-commands because it is the same kind of question, asked the
+	// same way: what this user's box can start, answered in their own shell
+	// (pimodels.go).
+	mux.HandleFunc("/pi-models", handlePiModels)
 	mux.HandleFunc("/sessions/prewarm", handlePrewarm)
 	mux.HandleFunc("/sessions/", handleSessionByName)
 	mux.HandleFunc("/whoami", handleWhoami)

@@ -236,6 +236,51 @@ if [[ "${1:-}" == "--probe" ]]; then
     exec "$user_shell" -lic "$probe" 2>/dev/null
 fi
 
+# --pi-models: the models this user's pi can run, for the new-session picker
+# (docs/adr/0031-pi-lists-its-own-models-per-user.md). tmux-api serves the
+# answer as GET /pi-models.
+#
+# `pi --list-models` answers from the user's own sign-in and pi's catalogue
+# without starting a session, and it has to run as the user: tmux-api cannot
+# read another user's ~/.pi, and a sign-in is per account. It runs in the same
+# login+interactive shell a session gets, for the reason --probe gives: that is
+# where the user's PATH and any rc-file wrapper live.
+#
+# The user's enabledModels setting rides along, because --list-models ignores
+# it and tmux-api applies it. The settings file is printed whole and tmux-api
+# parses it; this script has no JSON parser it can count on. PI_CODING_AGENT_DIR
+# is read inside the login shell, where a user who relocated pi's directory set
+# it, and not from this process, whose environment sudo reset.
+#
+# Every section is framed by a marker line, because the shell's stdout is not
+# ours alone: an rc file may print a banner before the snippet runs and a logout
+# file may print after it. tmux-api reads only what sits between the markers,
+# the same filtering --probe's caller does by shape. A pi that hangs is cut off
+# by `timeout` inside the shell, and tmux-api bounds the whole call on top.
+if [[ "${1:-}" == "--pi-models" ]]; then
+    snippet='cd "$HOME" 2>/dev/null || cd /
+if ! command -v pi >/dev/null 2>&1; then
+    printf "%s\n" "@@terminal-lobby:pi-missing@@"
+    exit 0
+fi
+printf "%s\n" "@@terminal-lobby:pi-models@@"
+if command -v timeout >/dev/null 2>&1; then
+    timeout 12 pi --list-models </dev/null 2>/dev/null
+else
+    pi --list-models </dev/null 2>/dev/null
+fi
+d="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+case "$d" in
+"~") d="$HOME" ;;
+"~/"*) d="$HOME/${d#"~/"}" ;;
+esac
+printf "%s\n" "@@terminal-lobby:pi-settings@@"
+cat -- "$d/settings.json" 2>/dev/null
+printf "\n%s\n" "@@terminal-lobby:pi-end@@"
+exit 0'
+    exec "$user_shell" -lic "$snippet" 2>/dev/null
+fi
+
 cmd_key="${3:-}"
 [[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
 
