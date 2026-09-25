@@ -229,9 +229,12 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
-    models.ts            The model and effort catalogue, per harness: Claude
-                         and codex share no vocabulary, and their effort
-                         ladders differ at the top step (ultracode / ultra).
+    models.ts            The model and effort catalogue, per harness: Claude,
+                         codex and pi share no vocabulary, and their effort
+                         ladders differ at the ends (ultracode / ultra at the
+                         top, pi's off / minimal at the bottom). Pi's models
+                         are not written down: they come from pi-models.ts and
+                         are checked by the shape of a `provider/id` reference.
                          Neither setting is a launch flag — a per-model command
                          key would miss the pre-warm pool and give up Claude's
                          ~2.4s boot on every model but the default

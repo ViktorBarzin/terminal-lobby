@@ -272,6 +272,8 @@ describe("terminal prefs — a write never disturbs the neighbours", () => {
         newEffort: "default",
         newCodexModel: "default",
         newCodexEffort: "default",
+        newPiModel: "default",
+        newPiEffort: "default",
       },
       sidebar: { showLastActive: false, order: PREF_DEFAULTS.sidebar.order },
     });

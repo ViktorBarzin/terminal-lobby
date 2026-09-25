@@ -125,12 +125,14 @@ export interface Prefs {
    * (it is also the one the terminal attach reads) and `newProject` is the
    * project a create lands in, "" for Ungrouped.
    *
-   * The model and the effort are held PER HARNESS, because the two CLIs share
+   * The model and the effort are held PER HARNESS, because the CLIs share
    * no vocabulary: `opus` means nothing to codex, `gpt-5.6-terra` means nothing
    * to Claude, and their effort ladders agree on every step but the top one
    * (`ultracode` / `ultra`). One key for both would have made switching command
    * silently ask for a model the other cannot run. Claude's keeps the original
-   * `newModel` name so a doc written before this still applies.
+   * `newModel` name so a doc written before this still applies. Pi's pair is
+   * the third: its models are `provider/id` references from pi's own list, and
+   * its thinking ladder starts at `off` and `minimal`, below the other two.
    *
    * All of them roam: none changes when a person picks up a different device.
    */
@@ -141,6 +143,8 @@ export interface Prefs {
     newEffort: string;
     newCodexModel: string;
     newCodexEffort: string;
+    newPiModel: string;
+    newPiEffort: string;
   };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
@@ -161,19 +165,34 @@ export interface ModelChoice {
   effort: string;
 }
 
-/** What a new session of this harness should start on. */
+/**
+ * What a new session of this harness should start on.
+ *
+ * A switch with no fallthrough to Claude's keys, on purpose: when this was a
+ * ternary, every harness that was not codex read Claude's pair, which is how a
+ * third harness would have started on a Claude slug nobody picked for it.
+ */
 export function modelChoiceFor(p: Prefs, h: ModelHarness): ModelChoice {
-  return h === "codex"
-    ? { model: p.session.newCodexModel, effort: p.session.newCodexEffort }
-    : { model: p.session.newModel, effort: p.session.newEffort };
+  switch (h) {
+    case "claude":
+      return { model: p.session.newModel, effort: p.session.newEffort };
+    case "codex":
+      return { model: p.session.newCodexModel, effort: p.session.newCodexEffort };
+    case "pi":
+      return { model: p.session.newPiModel, effort: p.session.newPiEffort };
+  }
 }
 
 /** The patch that records one of those choices, under the right harness's key. */
 export function modelChoicePatch(h: ModelHarness, f: ModelField, id: string): PrefsPatch {
-  if (h === "codex") {
-    return { session: f === "model" ? { newCodexModel: id } : { newCodexEffort: id } };
+  switch (h) {
+    case "claude":
+      return { session: f === "model" ? { newModel: id } : { newEffort: id } };
+    case "codex":
+      return { session: f === "model" ? { newCodexModel: id } : { newCodexEffort: id } };
+    case "pi":
+      return { session: f === "model" ? { newPiModel: id } : { newPiEffort: id } };
   }
-  return { session: f === "model" ? { newModel: id } : { newEffort: id } };
 }
 
 export interface PrefsPatch {
@@ -239,6 +258,8 @@ export const PREF_DEFAULTS: Prefs = {
     newEffort: DEFAULT_CHOICE,
     newCodexModel: DEFAULT_CHOICE,
     newCodexEffort: DEFAULT_CHOICE,
+    newPiModel: DEFAULT_CHOICE,
+    newPiEffort: DEFAULT_CHOICE,
   },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
@@ -350,6 +371,14 @@ export function coercePrefs(raw: unknown): Prefs {
       newCodexEffort: isEffortFor("codex", session.newCodexEffort)
         ? (session.newCodexEffort as string)
         : DEFAULT_CHOICE,
+      // Pi's models are pi's own list, fetched per user, so no catalogue here
+      // can vouch for one. The check is the shape the attach accepts instead
+      // (isPiModelRef): checked against a catalogue, every pick would be
+      // dropped on the next load.
+      newPiModel: adoptModelId("pi", session.newPiModel) ?? DEFAULT_CHOICE,
+      newPiEffort: isEffortFor("pi", session.newPiEffort)
+        ? (session.newPiEffort as string)
+        : DEFAULT_CHOICE,
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
@@ -423,6 +452,8 @@ export function composeDoc(raw: unknown, prefs: Prefs): Record<string, unknown> 
       newEffort: prefs.session.newEffort,
       newCodexModel: prefs.session.newCodexModel,
       newCodexEffort: prefs.session.newCodexEffort,
+      newPiModel: prefs.session.newPiModel,
+      newPiEffort: prefs.session.newPiEffort,
     },
     notify: {
       ...notify,
@@ -489,6 +520,8 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newEffort", prev.session.newEffort, next.session.newEffort);
   diff("session.newCodexModel", prev.session.newCodexModel, next.session.newCodexModel);
   diff("session.newCodexEffort", prev.session.newCodexEffort, next.session.newCodexEffort);
+  diff("session.newPiModel", prev.session.newPiModel, next.session.newPiModel);
+  diff("session.newPiEffort", prev.session.newPiEffort, next.session.newPiEffort);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
   diff("sidebar.showLastActive", prev.sidebar.showLastActive, next.sidebar.showLastActive);
