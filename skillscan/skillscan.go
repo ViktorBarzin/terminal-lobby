@@ -344,7 +344,9 @@ func description(body []byte) string {
 // copy has drifted from what was installed. A home without a skills directory
 // scans empty rather than failing — a user who has never had one is not an
 // error condition.
-func Scan(home string) ([]Skill, error) {
+func Scan(home string) ([]Skill, error) { return scan(home, InClaude) }
+
+func scan(home string, l Layout) ([]Skill, error) {
 	root := Root(home)
 	dirents, err := os.ReadDir(root)
 	if err != nil {
@@ -383,7 +385,9 @@ func Scan(home string) ([]Skill, error) {
 			Bytes:       st.Bytes,
 			Hash:        st.Hash,
 			Enabled:     enabled.on(name + "@skills-dir"),
-			Symlink:     d.Type()&fs.ModeSymlink != 0,
+			// In the InAgents layout a link to the user's own ~/.agents/skills
+			// entry is the skill itself, not a link to someone else's.
+			Symlink: d.Type()&fs.ModeSymlink != 0 && !(l == InAgents && linksToOwn(home, name)),
 		}
 		if p, ok := man.Installed[name]; ok {
 			s.From, s.SourceHash, s.InstalledAt = p.From, p.SourceHash, p.InstalledAt

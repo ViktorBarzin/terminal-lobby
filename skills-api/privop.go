@@ -132,7 +132,7 @@ type statRow struct {
 // through sudo otherwise.
 func run(osUser, op string, req request) result {
 	if inline(osUser) {
-		return perform(op, userHome(osUser), req)
+		return perform(op, osUser, userHome(osUser), req)
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -192,35 +192,36 @@ func runPrivopChild(op string) {
 		json.NewEncoder(os.Stdout).Encode(result{Status: 400, Error: "bad request"})
 		return
 	}
-	home, err := ownHome()
+	osUser, home, err := ownUser()
 	if err != nil {
 		json.NewEncoder(os.Stdout).Encode(result{Status: 500, Error: err.Error()})
 		return
 	}
-	json.NewEncoder(os.Stdout).Encode(perform(op, home, req))
+	json.NewEncoder(os.Stdout).Encode(perform(op, osUser, home, req))
 }
 
-// ownHome reads this process's home from the password database. Not $HOME: sudo
-// may or may not reset it, and a wrong answer here would mean touching the
-// wrong user's skills.
-func ownHome() (string, error) {
+// ownUser reads this process's user and home from the password database. Not
+// $HOME: sudo may or may not reset it, and a wrong answer here would mean
+// touching the wrong user's skills.
+func ownUser() (string, string, error) {
 	u, err := user.LookupId(strconv.Itoa(os.Getuid()))
 	if err != nil {
-		return "", fmt.Errorf("cannot resolve uid %d: %w", os.Getuid(), err)
+		return "", "", fmt.Errorf("cannot resolve uid %d: %w", os.Getuid(), err)
 	}
 	if u.HomeDir == "" {
-		return "", fmt.Errorf("user %s has no home directory", u.Username)
+		return "", "", fmt.Errorf("user %s has no home directory", u.Username)
 	}
-	return u.HomeDir, nil
+	return u.Username, u.HomeDir, nil
 }
 
 // perform is the whole privileged surface, running in whichever user's context
 // the process is already in. Shared by the inline path and the sudo child so
-// each op has exactly one implementation.
-func perform(op, home string, req request) result {
+// each op has exactly one implementation. osUser picks the layout from the
+// machine's skills policy (layout.go): where this user's skill files live.
+func perform(op, osUser, home string, req request) result {
 	switch op {
 	case opInventory:
-		skills, err := skillscan.Scan(home)
+		skills, err := skillscan.ScanIn(home, layoutFor(osUser))
 		if err != nil {
 			return fail(err)
 		}
@@ -271,7 +272,7 @@ func perform(op, home string, req request) result {
 		if err != nil {
 			return result{Status: 400, Error: "bad timestamp"}
 		}
-		backup, err := skillscan.Unpack(home, req.Name, req.From, req.Blobs, req.Hash, req.Replace, at)
+		backup, err := skillscan.UnpackIn(layoutFor(osUser), home, req.Name, req.From, req.Blobs, req.Hash, req.Replace, at)
 		if err != nil {
 			if err == skillscan.ErrExists {
 				return result{Status: 409, Error: err.Error()}
@@ -291,14 +292,14 @@ func perform(op, home string, req request) result {
 		if err != nil {
 			return result{Status: 400, Error: "bad timestamp"}
 		}
-		backup, err := skillscan.Remove(home, req.Name, at)
+		backup, err := skillscan.RemoveIn(layoutFor(osUser), home, req.Name, at)
 		if err != nil {
 			return notFoundOr(err)
 		}
 		return result{Status: 200, Backup: backup}
 
 	case opDelete:
-		res, err := skillscan.Delete(home, req.Name)
+		res, err := skillscan.DeleteIn(layoutFor(osUser), home, req.Name)
 		if err != nil {
 			return notFoundOr(err)
 		}
@@ -325,7 +326,7 @@ func perform(op, home string, req request) result {
 		if err := validSource(req.Owner, req.Repo); err != nil {
 			return result{Status: 400, Error: err.Error()}
 		}
-		out, err := installFromSource(home, req.Owner, req.Repo, req.Kind, req.Names)
+		out, err := installFromSource(home, osUser, req.Owner, req.Repo, req.Kind, req.Names)
 		if err != nil {
 			return result{Status: 502, Error: err.Error(), Output: out}
 		}

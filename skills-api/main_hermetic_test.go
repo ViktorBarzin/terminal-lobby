@@ -22,6 +22,9 @@ func TestMain(m *testing.M) {
 		Config:     authuser.Config{MultiUser: "on"},
 	}
 	mapPath = actAsGate.MapPath
+	// The skills policy exists on a deployed box (wizard's lists codex) and not in
+	// CI; no policy is the default layout. withPolicy sets one per test.
+	policyDir = filepath.Join(dir, "no-skills-policy")
 	code := m.Run()
 	_ = os.RemoveAll(dir)
 	os.Exit(code)

@@ -309,7 +309,7 @@ func TestInstallingSkillsHandsTheCLIExactlyTheChosenNames(t *testing.T) {
 	log := withStubInstaller(t)
 	home := t.TempDir()
 
-	out, err := installFromSource(home, "mattpocock", "skills", "skills", []string{"a", "c"})
+	out, err := installFromSource(home, "tester", "mattpocock", "skills", "skills", []string{"a", "c"})
 	if err != nil {
 		t.Fatalf("install: %v (%s)", err, out)
 	}
@@ -329,7 +329,7 @@ func TestInstallingRefusesANameTheRepoDoesNotOffer(t *testing.T) {
 	// what the inspection actually found.
 	fakeGitHub(t, []string{"skills/a/SKILL.md"}, nil, 200)
 	log := withStubInstaller(t)
-	_, err := installFromSource(t.TempDir(), "o", "r", "skills", []string{"a", "not-there"})
+	_, err := installFromSource(t.TempDir(), "tester", "o", "r", "skills", []string{"a", "not-there"})
 	if err == nil {
 		t.Fatal("want a refusal for a name the repo does not offer")
 	}
@@ -352,7 +352,7 @@ func TestInstallingRefusesNonsenseBeforeRunningAnything(t *testing.T) {
 		{"skills", []string{"../etc/passwd"}}, // not a skill name
 		{"skills", []string{"a; rm -rf ~"}},   // not a skill name
 	} {
-		if _, err := installFromSource(home, "o", "r", c.kind, c.names); err == nil {
+		if _, err := installFromSource(home, "tester", "o", "r", c.kind, c.names); err == nil {
 			t.Errorf("installFromSource(%q, %v) must be refused", c.kind, c.names)
 		}
 	}
@@ -382,7 +382,7 @@ func TestInstallingAPluginUsesTheManifestsOwnMarketplaceName(t *testing.T) {
 		t.Skipf("cannot place a stub claude for this test: %v", err)
 	}
 
-	if _, err := installFromSource(home, "anthropics", "claude-plugins-official", "plugins", []string{"demo"}); err != nil {
+	if _, err := installFromSource(home, "tester", "anthropics", "claude-plugins-official", "plugins", []string{"demo"}); err != nil {
 		t.Fatal(err)
 	}
 	argv := readLog(t, log)
@@ -520,7 +520,7 @@ func TestInstallingRecordsWhereItCameFrom(t *testing.T) {
 	npxBinary = stub
 	defer func() { npxBinary = old }()
 
-	if _, err := installFromSource(home, "mattpocock", "skills", "skills", []string{"handoff"}); err != nil {
+	if _, err := installFromSource(home, "tester", "mattpocock", "skills", "skills", []string{"handoff"}); err != nil {
 		t.Fatal(err)
 	}
 	man, err := skillscan.LoadManifest(home)

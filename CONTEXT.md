@@ -674,8 +674,13 @@ need a tab each.
 **Skill**:
 A named bundle of instructions a Claude session can invoke, usually a directory
 containing a `SKILL.md`. Most live under a user's `~/.claude/skills/` and belong
-to exactly one OS user, who a second user gets a copy from by **installing** it;
-a **bundled** skill ships with the CLI and belongs to nobody, so it is invoked
+to exactly one OS user, who a second user gets a copy from by **installing** it.
+A user whose skills are shared between harnesses (the machine's skills policy
+lists more than claude-code) keeps each real directory in
+`~/.agents/skills/<name>`, which Codex reads, with a relative link to it in
+`~/.claude/skills/<name>`; the manager treats that pair as one skill (ADR-0031).
+A **bundled** skill is different:
+it ships with the CLI and belongs to nobody, so it is invoked
 the same way but is not on disk under that path and cannot be installed, edited
 or removed. A skill may carry more than prose — scripts, agents, templates —
 which is why installing one is an act of trust.
@@ -696,7 +701,8 @@ _Avoid_: skill, extension
 
 **Install** (a skill):
 Copying another user's skill into your own `~/.claude/skills/<name>` as a real
-directory, recording where it came from and the source's hash in
+directory (or, for a shared-harness user, into `~/.agents/skills/<name>` with the
+link beside it), recording where it came from and the source's hash in
 `.manager.json`. Always initiated by the recipient. A copy, so it never changes
 under you: divergence later shows as **update available** (the owner's changed)
 or **locally modified** (yours has).
@@ -715,14 +721,17 @@ running ones keep the text they loaded.
 _Avoid_: update (that one takes the owner's newer copy)
 
 **Remove** (a skill):
-Copying the directory to `.backup/<name>-<timestamp>/` and deleting it. The row
-goes; the bytes do not. Recoverable by hand.
+Copying the directory to `.backup/<name>-<timestamp>/` and deleting it; for a
+shared-harness user, both halves of the pair. The row goes; the bytes do not.
+Recoverable by hand.
 _Avoid_: delete, uninstall
 
 **Delete** (a skill):
 The permanent one: the directory, **every backup of it**, its enabled state and
 its provenance. Nothing is left to recover from. A symlinked entry loses the
-link only — what it points at belongs to whatever put it there.
+link only — what it points at belongs to whatever put it there — except a
+shared-harness user's link to their own `~/.agents/skills/<name>`, which is the
+skill itself and goes with it.
 _Avoid_: remove (that one keeps a copy)
 
 **Uninstall** (a plugin):

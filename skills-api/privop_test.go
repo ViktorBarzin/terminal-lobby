@@ -76,7 +76,7 @@ func TestRunReportsAFailedChildAsAnInternalErrorRatherThanEmptyData(t *testing.T
 }
 
 func TestPerformRejectsAnUnknownOp(t *testing.T) {
-	if res := perform("rm-rf", t.TempDir(), request{}); res.Status != 500 || res.Error != "unknown op" {
+	if res := perform("rm-rf", "tester", t.TempDir(), request{}); res.Status != 500 || res.Error != "unknown op" {
 		t.Fatalf("unknown op = %+v", res)
 	}
 }
@@ -87,7 +87,7 @@ func TestPerformValidatesNamesEvenThoughTheParentAlreadyDid(t *testing.T) {
 	home := t.TempDir()
 	for _, op := range []string{opPack, opRead} {
 		for _, name := range []string{"../etc", "a/b", "", ".hidden"} {
-			if res := perform(op, home, request{Name: name}); res.Status != 400 {
+			if res := perform(op, "tester", home, request{Name: name}); res.Status != 400 {
 				t.Errorf("%s(%q) = %d, want 400", op, name, res.Status)
 			}
 		}
@@ -97,7 +97,7 @@ func TestPerformValidatesNamesEvenThoughTheParentAlreadyDid(t *testing.T) {
 func TestPerformRefusesAnUnparseableTimestamp(t *testing.T) {
 	home := t.TempDir()
 	for _, op := range []string{opUnpack, opRemove} {
-		if res := perform(op, home, request{Name: "x", At: "yesterday"}); res.Status != 400 {
+		if res := perform(op, "tester", home, request{Name: "x", At: "yesterday"}); res.Status != 400 {
 			t.Errorf("%s with a bad timestamp = %d, want 400", op, res.Status)
 		}
 	}
@@ -115,12 +115,12 @@ func TestPerformRoundTripsAnInstallBetweenTwoHomes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	packed := perform(opPack, ownerHome, request{Name: "diagnose"})
+	packed := perform(opPack, "tester", ownerHome, request{Name: "diagnose"})
 	if packed.Status != 200 || len(packed.Blobs) != 1 || packed.Hash == "" {
 		t.Fatalf("pack = %+v", packed)
 	}
 	at := time.Date(2026, 8, 19, 9, 12, 0, 0, time.UTC).Format(time.RFC3339)
-	res := perform(opUnpack, mineHome, request{
+	res := perform(opUnpack, "tester", mineHome, request{
 		Name: "diagnose", From: "owner", Hash: packed.Hash, At: at, Blobs: packed.Blobs,
 	})
 	if res.Status != 200 {
@@ -131,7 +131,7 @@ func TestPerformRoundTripsAnInstallBetweenTwoHomes(t *testing.T) {
 	}
 
 	// A second unpack of the same name is a conflict, not a silent overwrite.
-	if res := perform(opUnpack, mineHome, request{
+	if res := perform(opUnpack, "tester", mineHome, request{
 		Name: "diagnose", From: "owner", Hash: packed.Hash, At: at, Blobs: packed.Blobs,
 	}); res.Status != 409 {
 		t.Fatalf("second unpack = %d, want 409", res.Status)
@@ -139,7 +139,7 @@ func TestPerformRoundTripsAnInstallBetweenTwoHomes(t *testing.T) {
 }
 
 func TestPerformReadsInventoryOfAHomeWithNothingInIt(t *testing.T) {
-	res := perform(opInventory, filepath.Join(t.TempDir(), "fresh"), request{})
+	res := perform(opInventory, "tester", filepath.Join(t.TempDir(), "fresh"), request{})
 	if res.Status != 200 {
 		t.Fatalf("a fresh account is not an error: %+v", res)
 	}
@@ -225,7 +225,7 @@ func TestPrivopChildRevalidatesOwnerAndRepo(t *testing.T) {
 		{Owner: "matt pocock", Repo: "skills"},
 	} {
 		for _, op := range []string{opInspect, opSource} {
-			res := perform(op, home, req)
+			res := perform(op, "tester", home, req)
 			// The message matters as much as the status: inspectSource also
 			// answers 400 when GitHub refuses, and that answer means the
 			// request already left the box.

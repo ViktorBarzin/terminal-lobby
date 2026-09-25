@@ -69,24 +69,18 @@ func Delete(home, name string) (DeleteResult, error) {
 		res.Bytes += size
 	}
 
-	purged, freed, err := purgeBackups(root, name)
+	return res, purgeAndForget(home, name, &res)
+}
+
+// purgeAndForget is the end of every delete: the skill's backups go, counted
+// into res, then its enabled marker and provenance.
+func purgeAndForget(home, name string, res *DeleteResult) error {
+	purged, freed, err := purgeBackups(Root(home), name)
 	if err != nil {
-		return res, err
+		return err
 	}
 	res.PurgedBackups, res.Bytes = purged, res.Bytes+freed
-
-	if err := ClearEnabled(home, name+"@skills-dir"); err != nil {
-		return res, err
-	}
-	man, err := LoadManifest(home)
-	if err != nil {
-		return res, err
-	}
-	if _, ok := man.Installed[name]; !ok {
-		return res, nil
-	}
-	man.Forget(name)
-	return res, man.Save(home)
+	return forgetState(home, name)
 }
 
 // purgeBackups drops every .backup/<name>-<stamp> directory for one skill.
