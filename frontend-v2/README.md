@@ -243,6 +243,12 @@ src/
                          reply is what the session reports afterwards rather
                          than an echo, because an effort change can be refused
                          without anything failing
+    pi-models.ts         The models a pi session can start on, per OS user:
+                         GET /pi-models is `pi --list-models` run as the user,
+                         filtered by their enabledModels (ADR-0031). One copy
+                         per page, read again when the composer opens with pi
+                         chosen; callers asking at once share one read, and a
+                         failed read keeps the last answer
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
