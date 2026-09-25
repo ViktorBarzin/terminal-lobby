@@ -126,9 +126,7 @@ async function post(
  * text is better sent there than dropped, and it is the operator who can see
  * both.
  */
-export async function deliverFirstPrompt(
-  o: DeliverFirstPromptOptions,
-): Promise<boolean> {
+export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<boolean> {
   const lines = o.lines.filter((l) => l !== "");
   if (lines.length === 0) return true;
 

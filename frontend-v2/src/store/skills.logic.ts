@@ -43,7 +43,8 @@ export function skillStatus(s: Skill): RowStatus {
     };
   }
   if (s.from) return { label: `from ${s.from}`, tone: "muted" };
-  if (s.symlink) return { label: "own · linked", tone: "muted", detail: "This entry is a symlink." };
+  if (s.symlink)
+    return { label: "own · linked", tone: "muted", detail: "This entry is a symlink." };
   return { label: "own", tone: "muted" };
 }
 
@@ -51,7 +52,11 @@ export function skillStatus(s: Skill): RowStatus {
  *  advertised by the marketplace it came from. */
 export function pluginStatus(p: Plugin): RowStatus {
   if (p.stale && p.latest) {
-    return { label: `${p.version} · ${p.latest}`, tone: "accent", detail: `Version ${p.latest} is available.` };
+    return {
+      label: `${p.version} · ${p.latest}`,
+      tone: "accent",
+      detail: `Version ${p.latest} is available.`,
+    };
   }
   return { label: p.version || "unknown", tone: "muted" };
 }

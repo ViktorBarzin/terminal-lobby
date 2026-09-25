@@ -1,9 +1,5 @@
 import { createSignal, type Accessor } from "solid-js";
-import {
-  DEFAULT_SESSION_ORDER,
-  isSessionOrder,
-  type SessionOrder,
-} from "../logic/order.logic";
+import { DEFAULT_SESSION_ORDER, isSessionOrder, type SessionOrder } from "../logic/order.logic";
 import { apiUrl, PREFS_PATH } from "../lib/config";
 import { track } from "../telemetry/track";
 import { fetchWithDeadline } from "../lib/http";
@@ -44,12 +40,7 @@ import { lsGet, lsSet } from "../lib/storage";
  */
 
 export type NewCommand = "default" | "claude" | "codex" | "shell";
-export const NEW_COMMANDS: readonly NewCommand[] = [
-  "claude",
-  "codex",
-  "shell",
-  "default",
-];
+export const NEW_COMMANDS: readonly NewCommand[] = ["claude", "codex", "shell", "default"];
 export const DEFAULT_NEW_COMMAND: NewCommand = "claude";
 
 /** xterm cursor shapes the terminal page accepts (vanilla PREF_VALID). */
@@ -260,12 +251,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isValidFontSize(v: unknown): v is number {
-  return (
-    typeof v === "number" &&
-    Number.isInteger(v) &&
-    v >= FONT_SIZE_MIN &&
-    v <= FONT_SIZE_MAX
-  );
+  return typeof v === "number" && Number.isInteger(v) && v >= FONT_SIZE_MIN && v <= FONT_SIZE_MAX;
 }
 
 /** Finite number inside an inclusive range — the vanilla PREF_VALID shape for
@@ -280,9 +266,7 @@ function oneOf<T extends string | number>(v: unknown, allowed: readonly T[]): v 
 }
 
 function isNewCommand(v: unknown): v is NewCommand {
-  return (
-    v === "default" || v === "claude" || v === "codex" || v === "shell"
-  );
+  return v === "default" || v === "claude" || v === "codex" || v === "shell";
 }
 
 /** Clamp any input to a valid integer font size (invalid → default). */
@@ -312,14 +296,12 @@ export function coercePrefs(raw: unknown): Prefs {
     cursorStyle: oneOf(src.cursorStyle, CURSOR_STYLES)
       ? src.cursorStyle
       : PREF_DEFAULTS.cursorStyle,
-    cursorBlink:
-      typeof src.cursorBlink === "boolean" ? src.cursorBlink : PREF_DEFAULTS.cursorBlink,
+    cursorBlink: typeof src.cursorBlink === "boolean" ? src.cursorBlink : PREF_DEFAULTS.cursorBlink,
     fontWeightBold: oneOf(src.fontWeightBold, BOLD_WEIGHTS)
       ? src.fontWeightBold
       : PREF_DEFAULTS.fontWeightBold,
     links: {
-      copyChip:
-        typeof links.copyChip === "boolean" ? links.copyChip : PREF_DEFAULTS.links.copyChip,
+      copyChip: typeof links.copyChip === "boolean" ? links.copyChip : PREF_DEFAULTS.links.copyChip,
     },
     gestures: {
       wheelSmooth:
@@ -348,9 +330,7 @@ export function coercePrefs(raw: unknown): Prefs {
         : PREF_DEFAULTS.input.tapFocus,
     },
     session: {
-      newCommand: isNewCommand(session.newCommand)
-        ? session.newCommand
-        : DEFAULT_NEW_COMMAND,
+      newCommand: isNewCommand(session.newCommand) ? session.newCommand : DEFAULT_NEW_COMMAND,
       // A project is named by a person, so anything is a legal name; only the
       // TYPE is checked. A name whose project has since been deleted resolves
       // to Ungrouped in the composer rather than being rewritten here, so
@@ -373,8 +353,7 @@ export function coercePrefs(raw: unknown): Prefs {
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
-      onAwaiting:
-        typeof notify.onAwaiting === "boolean" ? notify.onAwaiting : true,
+      onAwaiting: typeof notify.onAwaiting === "boolean" ? notify.onAwaiting : true,
     },
     sidebar: {
       // Anything that is not literally `true` is off — including a stored
@@ -406,10 +385,7 @@ export function coercePrefs(raw: unknown): Prefs {
  * subkey typed here whose default differs from term.html's, which is why every
  * default in PREF_DEFAULTS names its line.
  */
-export function composeDoc(
-  raw: unknown,
-  prefs: Prefs,
-): Record<string, unknown> {
+export function composeDoc(raw: unknown, prefs: Prefs): Record<string, unknown> {
   const base = isPlainObject(raw) ? { ...raw } : {};
   const session = isPlainObject(base.session) ? base.session : {};
   const notify = isPlainObject(base.notify) ? base.notify : {};
@@ -467,21 +443,11 @@ export function composeDoc(
  * deep-merged one level (a server namespace missing a subkey must not reset the
  * local subkey — matches the vanilla adoptPrefs posture).
  */
-export function mergeAdopt(
-  localRaw: unknown,
-  serverRaw: unknown,
-): Record<string, unknown> {
+export function mergeAdopt(localRaw: unknown, serverRaw: unknown): Record<string, unknown> {
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of [
-    "session",
-    "notify",
-    "sidebar",
-    "links",
-    "gestures",
-    "input",
-  ] as const) {
+  for (const k of ["session", "notify", "sidebar", "links", "gestures", "input"] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -514,16 +480,8 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("links.copyChip", prev.links.copyChip, next.links.copyChip);
   diff("gestures.wheelSmooth", prev.gestures.wheelSmooth, next.gestures.wheelSmooth);
   diff("gestures.wheelSpeed", prev.gestures.wheelSpeed, next.gestures.wheelSpeed);
-  diff(
-    "gestures.scrollSpeedV2",
-    prev.gestures.scrollSpeedV2,
-    next.gestures.scrollSpeedV2,
-  );
-  diff(
-    "gestures.scrollMomentum",
-    prev.gestures.scrollMomentum,
-    next.gestures.scrollMomentum,
-  );
+  diff("gestures.scrollSpeedV2", prev.gestures.scrollSpeedV2, next.gestures.scrollSpeedV2);
+  diff("gestures.scrollMomentum", prev.gestures.scrollMomentum, next.gestures.scrollMomentum);
   diff("input.tapFocus", prev.input.tapFocus, next.input.tapFocus);
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("session.newProject", prev.session.newProject, next.session.newProject);
@@ -533,11 +491,7 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newCodexEffort", prev.session.newCodexEffort, next.session.newCodexEffort);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
-  diff(
-    "sidebar.showLastActive",
-    prev.sidebar.showLastActive,
-    next.sidebar.showLastActive,
-  );
+  diff("sidebar.showLastActive", prev.sidebar.showLastActive, next.sidebar.showLastActive);
   diff("sidebar.order", prev.sidebar.order, next.sidebar.order);
   return out;
 }
@@ -653,9 +607,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   const putDebounceMs = opts.putDebounceMs ?? 400;
   const fetchImpl: FetchLike | undefined =
     opts.fetchImpl ??
-    (typeof fetch !== "undefined"
-      ? (input, init) => fetchWithDeadline(input, init)
-      : undefined);
+    (typeof fetch !== "undefined" ? (input, init) => fetchWithDeadline(input, init) : undefined);
 
   // rawDoc is the canonical persisted document (unknown keys preserved). The
   // signal is the typed, validated VIEW derived from it.
@@ -663,7 +615,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   const seeded = seedFontSize(rawDoc);
   rawDoc = composeDoc(rawDoc, { ...coercePrefs(rawDoc), fontSize: seeded });
   const [prefs, setPrefsSignal] = createSignal<Prefs>(coercePrefs(rawDoc));
-
 
   let dirty = false;
   let putTimer: ReturnType<typeof setTimeout> | undefined;
@@ -761,8 +712,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     if (!fetchImpl) return;
     let doc: unknown;
     try {
-      const resp = await fetchImpl(apiUrl(PREFS_PATH), {
-      });
+      const resp = await fetchImpl(apiUrl(PREFS_PATH), {});
       if (!resp.ok) return; // keep local; next boot retries
       doc = await resp.json();
     } catch {

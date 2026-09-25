@@ -76,9 +76,9 @@ describe("the model catalogue", () => {
   // Both sides are slugs now, so the ordinary answer is the string comparison.
   it("ticks the row whose slug the session reported", () => {
     expect(isCurrentModel("claude", "claude-opus-5", "claude-opus-5")).toBe(true);
-    expect(
-      isCurrentModel("claude", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
-    ).toBe(true);
+    expect(isCurrentModel("claude", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001")).toBe(
+      true,
+    );
     expect(isCurrentModel("claude", "claude-opus-5", "claude-sonnet-5")).toBe(false);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-terra")).toBe(true);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-luna")).toBe(false);
@@ -192,12 +192,8 @@ describe("the model catalogue", () => {
  */
 describe("the chip's summary", () => {
   it("names the model and the effort together", () => {
-    expect(summarise({ model: "claude-opus-5", effort: "max" })).toBe(
-      "claude-opus-5 · max",
-    );
-    expect(summarise({ model: "gpt-5.6-terra", effort: "medium" })).toBe(
-      "gpt-5.6-terra · medium",
-    );
+    expect(summarise({ model: "claude-opus-5", effort: "max" })).toBe("claude-opus-5 · max");
+    expect(summarise({ model: "gpt-5.6-terra", effort: "medium" })).toBe("gpt-5.6-terra · medium");
   });
 
   // The EXACT slug, not the family name. `claude-opus-5` and
@@ -205,9 +201,7 @@ describe("the chip's summary", () => {
   // and the version is the half that a shortened `opus` throws away.
   it("shows the slug the session reported, verbatim", () => {
     expect(summarise({ model: "claude-sonnet-5" })).toBe("claude-sonnet-5");
-    expect(summarise({ model: "claude-haiku-4-5-20251001" })).toBe(
-      "claude-haiku-4-5-20251001",
-    );
+    expect(summarise({ model: "claude-haiku-4-5-20251001" })).toBe("claude-haiku-4-5-20251001");
     expect(summarise({ model: "gpt-5.4-mini" })).toBe("gpt-5.4-mini");
   });
 
@@ -266,7 +260,10 @@ describe("the model a session is on", () => {
   // a reverse open the window arrives newest-first, which would land on the
   // OLDEST of them.
   it("prefers the state frame over a window it already accounts for", () => {
-    const got = currentModel([meta(2, "claude-opus-5"), meta(1, "claude-haiku-4-5")], seed(5, "claude-sonnet-5"));
+    const got = currentModel(
+      [meta(2, "claude-opus-5"), meta(1, "claude-haiku-4-5")],
+      seed(5, "claude-sonnet-5"),
+    );
     expect(got?.model).toBe("claude-sonnet-5");
   });
 

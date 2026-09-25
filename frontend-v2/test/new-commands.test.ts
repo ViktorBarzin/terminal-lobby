@@ -38,9 +38,9 @@ describe("effectiveCommand — a preference outlives the tool it names", () => {
   });
 
   it("skips past every unavailable one", () => {
-    expect(
-      effectiveCommand("claude", { claude: false, codex: false, shell: true }, OFFERED),
-    ).toBe("shell");
+    expect(effectiveCommand("claude", { claude: false, codex: false, shell: true }, OFFERED)).toBe(
+      "shell",
+    );
   });
 
   // `default` is a valid stored value for launcher accounts and is not one of
@@ -70,9 +70,7 @@ describe("COMMAND_PHRASES", () => {
     for (const k of NEW_SESSION_COMMANDS) {
       expect(COMMAND_PHRASES[k], `no phrase for ${k}`).toBeTruthy();
       // A verb or a noun, but never the bare product name the label already is.
-      expect(COMMAND_PHRASES[k], `${k} is still a bare label`).not.toBe(
-        COMMAND_LABELS[k],
-      );
+      expect(COMMAND_PHRASES[k], `${k} is still a bare label`).not.toBe(COMMAND_LABELS[k]);
     }
   });
 

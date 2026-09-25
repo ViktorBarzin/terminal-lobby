@@ -406,15 +406,15 @@ describe("the native terminal's three prefs — through the store", () => {
 
   it("names each as its own dotted path, with the value it moved to", () => {
     const prev = PREF_DEFAULTS;
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollSpeedV2: 2 } })),
-    ).toEqual([["gestures.scrollSpeedV2", "2"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollSpeedV2: 2 } }))).toEqual([
+      ["gestures.scrollSpeedV2", "2"],
+    ]);
     expect(
       changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollMomentum: false } })),
     ).toEqual([["gestures.scrollMomentum", "false"]]);
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { input: { tapFocus: "terminal" } })),
-    ).toEqual([["input.tapFocus", "terminal"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { input: { tapFocus: "terminal" } }))).toEqual([
+      ["input.tapFocus", "terminal"],
+    ]);
   });
 
   it("actually persists a change to one, rather than no-opping in the signal", () => {
@@ -563,9 +563,7 @@ describe("the composer's roamed choices", () => {
   // still says `opus`, and dropping it would quietly reset the choice of
   // everyone who had made one.
   it("carries a family word forward to the row it means now", () => {
-    expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe(
-      "claude-opus-5-5",
-    );
+    expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe("claude-opus-5-5");
     expect(coercePrefs({ session: { newModel: "haiku" } }).session.newModel).toBe(
       "claude-haiku-4-5-20251001",
     );
@@ -588,9 +586,9 @@ describe("the composer's roamed choices", () => {
 
   it("reports each as its own changed path", () => {
     const prev = coercePrefs({});
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } })),
-    ).toEqual([["session.newProject", "code"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } }))).toEqual([
+      ["session.newProject", "code"],
+    ]);
     expect(
       changedPrefPaths(prev, applyPatch(prev, { session: { newModel: "claude-opus-5" } })),
     ).toEqual([["session.newModel", "claude-opus-5"]]);

@@ -257,9 +257,8 @@ export function modelFamily(h: ModelHarness, model: string): string {
  * word means — the plain slug, never the `[1m]` variant or last generation.
  */
 function canonicalFor(h: ModelHarness, family: string): string | undefined {
-  return CATALOGUE[h].model.find(
-    (o) => o.id !== DEFAULT_CHOICE && modelFamily(h, o.id) === family,
-  )?.id;
+  return CATALOGUE[h].model.find((o) => o.id !== DEFAULT_CHOICE && modelFamily(h, o.id) === family)
+    ?.id;
 }
 
 /**
@@ -274,11 +273,7 @@ function canonicalFor(h: ModelHarness, family: string): string | undefined {
  * canonical row and nothing else, so `claude-opus-5` and `claude-opus-5[1m]`
  * are never both marked current.
  */
-export function isCurrentModel(
-  h: ModelHarness,
-  id: string,
-  reported: string | undefined,
-): boolean {
+export function isCurrentModel(h: ModelHarness, id: string, reported: string | undefined): boolean {
   if (!reported) return false;
   if (reported.toLowerCase() === id.toLowerCase()) return true;
   if (h === "codex") return false;

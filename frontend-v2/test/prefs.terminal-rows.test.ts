@@ -128,9 +128,7 @@ describe("the native terminal's three prefs — the page's defaults, pinned", ()
   it("keeps momentum ON for a doc that never mentions it", () => {
     expect(coercePrefs({}).gestures.scrollMomentum).toBe(true);
     expect(coercePrefs({ gestures: {} }).gestures.scrollMomentum).toBe(true);
-    expect(coercePrefs({ gestures: { scrollMomentum: "off" } }).gestures.scrollMomentum).toBe(
-      true,
-    );
+    expect(coercePrefs({ gestures: { scrollMomentum: "off" } }).gestures.scrollMomentum).toBe(true);
     // ...and an explicit false is a setting, not an absence.
     expect(coercePrefs({ gestures: { scrollMomentum: false } }).gestures.scrollMomentum).toBe(
       false,
@@ -322,9 +320,7 @@ describe("terminal prefs — a write never disturbs the neighbours", () => {
     expect(paths({ cursorBlink: false })).toEqual(["cursorBlink"]);
     expect(paths({ fontWeightBold: "600" })).toEqual(["fontWeightBold"]);
     expect(paths({ links: { copyChip: false } })).toEqual(["links.copyChip"]);
-    expect(paths({ gestures: { wheelSmooth: false } })).toEqual([
-      "gestures.wheelSmooth",
-    ]);
+    expect(paths({ gestures: { wheelSmooth: false } })).toEqual(["gestures.wheelSmooth"]);
     expect(paths({ gestures: { wheelSpeed: 2 } })).toEqual(["gestures.wheelSpeed"]);
   });
 });

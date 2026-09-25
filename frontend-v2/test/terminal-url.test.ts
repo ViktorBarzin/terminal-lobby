@@ -7,18 +7,12 @@ describe("buildTerminalArgs — ttyd positional ?arg= contract", () => {
   it("own session, defaults: only arg1 (name)", () => {
     expect(buildTerminalArgs("foo")).toBe("arg=foo");
     // an explicit 'default' command adds no arg2 (matches the vanilla shape)
-    expect(buildTerminalArgs("foo", { cmd: "default" })).toBe(
-      "arg=foo",
-    );
+    expect(buildTerminalArgs("foo", { cmd: "default" })).toBe("arg=foo");
   });
 
   it("own session, non-default command: arg2", () => {
-    expect(buildTerminalArgs("foo", { cmd: "claude" })).toBe(
-      "arg=foo&arg=claude",
-    );
-    expect(buildTerminalArgs("foo", { cmd: "shell" })).toBe(
-      "arg=foo&arg=shell",
-    );
+    expect(buildTerminalArgs("foo", { cmd: "claude" })).toBe("arg=foo&arg=claude");
+    expect(buildTerminalArgs("foo", { cmd: "shell" })).toBe("arg=foo&arg=shell");
   });
 
   it("own session with dir: dir lands at arg3, command placeholder at arg2", () => {
@@ -27,16 +21,16 @@ describe("buildTerminalArgs — ttyd positional ?arg= contract", () => {
       "arg=foo&arg=default&arg=%2Fhome%2Fx",
     );
     // explicit command kept at arg2
-    expect(
-      buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p" }),
-    ).toBe("arg=foo&arg=claude&arg=%2Fsrv%2Fp");
+    expect(buildTerminalArgs("foo", { cmd: "claude", dir: "/srv/p" })).toBe(
+      "arg=foo&arg=claude&arg=%2Fsrv%2Fp",
+    );
   });
 
   it("foreign attach: owner MUST reach arg4, with command+dir placeholders ahead", () => {
     // owner, no dir → dir becomes the inert 'default' placeholder at arg3
-    expect(
-      buildTerminalArgs("foo", { cmd: "claude", owner: "bob" }),
-    ).toBe("arg=foo&arg=claude&arg=default&arg=bob");
+    expect(buildTerminalArgs("foo", { cmd: "claude", owner: "bob" })).toBe(
+      "arg=foo&arg=claude&arg=default&arg=bob",
+    );
     // owner + dir → real dir at arg3
     expect(
       buildTerminalArgs("foo", {
@@ -60,15 +54,13 @@ describe("buildTerminalArgs — ttyd positional ?arg= contract", () => {
 
   it("encodeURIComponent is applied to every arg value", () => {
     expect(buildTerminalArgs("a b")).toBe("arg=a%20b");
-    expect(
-      buildTerminalArgs("n", { cmd: "c", dir: "/a b/c&d" }),
-    ).toBe("arg=n&arg=c&arg=%2Fa%20b%2Fc%26d");
+    expect(buildTerminalArgs("n", { cmd: "c", dir: "/a b/c&d" })).toBe(
+      "arg=n&arg=c&arg=%2Fa%20b%2Fc%26d",
+    );
   });
 
   it("empty-string opts are treated as absent", () => {
-    expect(
-      buildTerminalArgs("foo", { cmd: "", dir: "", owner: "" }),
-    ).toBe("arg=foo");
+    expect(buildTerminalArgs("foo", { cmd: "", dir: "", owner: "" })).toBe("arg=foo");
   });
 });
 
@@ -125,9 +117,7 @@ describe("buildTerminalArgs — arg5 (Watch mode)", () => {
   it("the mode value is the literal the attach script matches on", () => {
     // tmux-attach.sh validates arg5 against ^(ro|rw)$ and only acts on "ro";
     // anything else falls through to the server's ceiling.
-    const args = new URLSearchParams(buildTerminalArgs("foo", { watch: true })).getAll(
-      "arg",
-    );
+    const args = new URLSearchParams(buildTerminalArgs("foo", { watch: true })).getAll("arg");
     expect(args[4]).toBe("ro");
   });
 });
@@ -204,9 +194,7 @@ describe("buildTerminalArgs — the model and effort a new session starts on", (
       model: "gpt-5.6-terra",
       effort: "high",
     });
-    expect(u).toBe(
-      "arg=foo&arg=codex&arg=%2Fsrv%2Fp&arg=&arg=ro&arg=gpt-5.6-terra&arg=high",
-    );
+    expect(u).toBe("arg=foo&arg=codex&arg=%2Fsrv%2Fp&arg=&arg=ro&arg=gpt-5.6-terra&arg=high");
   });
 
   // The one model name that is not plain alphanumerics. It has to reach the
@@ -357,7 +345,10 @@ describe("buildTerminalArgs — arg5 is drive | watch | preload", () => {
   // first hover is cheaper than that, and it cannot be mistaken for working.
   it.each([
     { label: "on its own", opts: { watch: true, preload: true } },
-    { label: "down the model/effort branch", opts: { watch: true, preload: true, model: "claude-opus-5" } },
+    {
+      label: "down the model/effort branch",
+      opts: { watch: true, preload: true, model: "claude-opus-5" },
+    },
     { label: "with an owner", opts: { watch: true, preload: true, owner: "bob" } },
   ])("throws when a caller asks for a watch and a preload at once ($label)", ({ opts }) => {
     expect(() => buildTerminalArgs("foo", opts)).toThrow(/mutually exclusive/i);
