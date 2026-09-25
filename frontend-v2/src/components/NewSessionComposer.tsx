@@ -213,6 +213,11 @@ export const NewSessionComposer: Component<{
   // start in $HOME, and warming $HOME would spend a slot on the one directory
   // that is never specific to a project.
   //
+  // And only while the command is Claude. The pool claims a slot for the
+  // `claude` key alone (devvm/tmux-user-attach), so a slot warmed for pi,
+  // codex or a shell is a Claude nobody will adopt, held until the server's
+  // TTL collects it. Moving the command off Claude hands it back.
+  //
   // Held separately from the project name because a project's dir can change
   // under us, and releasing a different directory would leave the warmed slot
   // behind and collect one nobody asked about.
@@ -232,7 +237,7 @@ export const NewSessionComposer: Component<{
     warmedDir = null;
   };
   createEffect(() => {
-    const dir = dirFor(props.project());
+    const dir = cmd() === "claude" ? dirFor(props.project()) : undefined;
     if (handedOff) return;
     if (dir === warmedDir || (dir === undefined && warmedDir === null)) return;
     // Changing project hands the old guess back rather than leaving ~530MB for

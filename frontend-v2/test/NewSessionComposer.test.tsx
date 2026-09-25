@@ -441,6 +441,44 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     m.store.dispose();
   });
 
+  // The pool only ever claims a slot for the `claude` key (tmux-user-attach),
+  // so a slot warmed for any other command is a ~530MB Claude that sits until
+  // the server's TTL collects it.
+  it("warms nothing when the command is not Claude", async () => {
+    for (const newCommand of ["pi", "codex", "shell"]) {
+      localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({ session: { newProject: "alpha", newCommand } }),
+      );
+      const api = new FakeApi();
+      withProjects(api);
+      const m = mount(api);
+      await m.store.refresh();
+      await Promise.resolve();
+      expect(api.prewarmed, newCommand).toEqual([]);
+      m.store.dispose();
+      m.unmount();
+    }
+  });
+
+  it("hands the slot back when the command moves off Claude, and warms again on the way back", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
+
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "pi" } });
+    await waitFor(() => expect(api.released).toEqual(["/home/wizard/code/alpha"]));
+
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "claude" } });
+    await waitFor(() =>
+      expect(api.prewarmed).toEqual(["/home/wizard/code/alpha", "/home/wizard/code/alpha"]),
+    );
+    m.store.dispose();
+  });
+
   it("does not warm a project with no dir, since that would warm $HOME", async () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "nodir" } }));
     const api = new FakeApi();
