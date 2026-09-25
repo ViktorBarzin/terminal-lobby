@@ -765,6 +765,8 @@ export const App: Component = () => {
       title: s.title,
       state: s.state,
       pane_current_command: s.pane_current_command,
+      // Which harness, so a page-fired banner names pi as pi.
+      tool: s.tool,
       // Only set for a session shared with you. The badge leaves those out.
       owner: s.owner,
     })),
