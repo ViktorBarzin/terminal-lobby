@@ -20,6 +20,7 @@ import {
   type AgentSpend,
   type ClaudeSpend,
   type CodexSpend,
+  type PiSpend,
   type SpendPeriod,
 } from "../../../lib/agent-spend";
 import { Group, Readout } from "../controls";
@@ -30,11 +31,12 @@ import { Group, Readout } from "../controls";
  *
  * Claude Code computes dollars and reports rate-limit windows only on a Pro or
  * Max seat, so its section leads with spend and shows windows when there are
- * any. A ChatGPT plan reports no cost at all, so the Codex section leads with
- * the two windows OpenAI names — the "5-hour limit" and the "weekly limit" —
- * and counts tokens underneath. Neither section is drawn at all unless the
- * server sent it, which is what keeps a Claude-only box from being shown an
- * empty Codex heading.
+ * any. Pi computes dollars too, from its own price list, and its section has
+ * the same shape, so it is drawn by the same code. A ChatGPT plan reports no
+ * cost at all, so the Codex section leads with the two windows OpenAI names —
+ * the "5-hour limit" and the "weekly limit" — and counts tokens underneath. No
+ * section is drawn at all unless the server sent it, which is what keeps a
+ * Claude-only box from being shown an empty Codex or Pi heading.
  *
  * The bars borrow the Network page's meter grammar rather than inventing a
  * second one; the CSS rules list both class names.
@@ -114,7 +116,8 @@ export const AgentSpendPage: Component<{
 
   const claude = (): ClaudeSpend | undefined => doc()?.claude;
   const codex = (): CodexSpend | undefined => doc()?.codex;
-  const nothingYet = (): boolean => !!doc() && !claude() && !codex();
+  const pi = (): PiSpend | undefined => doc()?.pi;
+  const nothingYet = (): boolean => !!doc() && !claude() && !codex() && !pi();
 
   return (
     <div class="tl-spend">
@@ -149,90 +152,22 @@ export const AgentSpendPage: Component<{
 
       <Show when={nothingYet()}>
         <div class="tl-set-hint tl-set-hint-static">
-          Nothing has reported yet. Figures appear once a Claude Code or Codex session has run a
+          Nothing has reported yet. Figures appear once a Claude Code, Codex or pi session has run a
           turn.
         </div>
       </Show>
 
       <Show when={claude()}>
         {(c) => (
-          <Group title="Claude Code">
-            {/* The spend for the period, as the heading figure: the one number
-                someone opens this page for. */}
-            <div class="tl-spend-figure">
-              <b>{formatUsd(c().costUsd)}</b>
-              <span class="tl-spend-figure-note">
-                {periodNote(period())} · <ApproxTokens n={c().tokens.input + c().tokens.output} />
-              </span>
-            </div>
-
-            <Show when={liveWindows(c().windows, nowMs()).length > 0}>
-              <div class="tl-spend-meters">
-                <For each={liveWindows(c().windows, nowMs())}>
-                  {(w) => (
-                    <Meter
-                      label={claudeWindowLabel(w.name)}
-                      percent={w.usedPercent}
-                      note={formatResetsIn(w.resetsAtSec, nowMs())}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
-
-            <Show when={c().models.length > 0}>
-              <div class="tl-set-subhead">By model</div>
-              <div class="tl-spend-rows">
-                <For each={c().models}>
-                  {(m) => (
-                    <SpendRow
-                      name={m.model}
-                      meta={<ApproxTokens n={m.tokens.input + m.tokens.output} />}
-                      value={formatUsd(m.costUsd)}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
-
-            <div class="tl-set-subhead">Sessions</div>
-            <Show
-              when={c().sessions.length > 0}
-              fallback={
-                <div class="tl-set-hint tl-set-hint-static">
-                  No Claude session ran in this period.
-                </div>
-              }
-            >
-              <div class="tl-spend-rows">
-                <For each={c().sessions}>
-                  {(s) => (
-                    <SpendRow
-                      session
-                      name={sessionLabel(s.session)}
-                      meta={
-                        <>
-                          {s.model ? `${s.model} · ` : ""}
-                          {formatTokens(s.tokens.input + s.tokens.output)} tokens in context
-                        </>
-                      }
-                      value={formatUsd(s.costUsd)}
-                    />
-                  )}
-                </For>
-              </div>
-            </Show>
-            {/* Three different questions sit close together here, and each
-                answer is worth one clause: the dollars are Claude Code's, a
-                session's figure is its whole life rather than the period's, and
-                the token totals are a sum of differences that a compaction
-                takes a bite out of. */}
-            <div class="tl-set-hint tl-set-hint-static">
-              A session's figure is what it has cost since it started, so it can be larger than the
-              period above it. Claude Code computes these. Token counts are approximate: they are
-              read from the context a session is carrying, which drops when it is compacted.
-            </div>
-          </Group>
+          <DollarSection
+            title="Claude Code"
+            spend={c()}
+            period={period()}
+            nowMs={nowMs()}
+            sessionLabel={sessionLabel}
+            noSessions="No Claude session ran in this period."
+            source="Claude Code computes these. Token counts are approximate: they are read from the context a session is carrying, which drops when it is compacted."
+          />
         )}
       </Show>
 
@@ -295,9 +230,117 @@ export const AgentSpendPage: Component<{
           </Group>
         )}
       </Show>
+
+      {/* Pi prices every message itself, and the lobby's pi extension posts
+          each session's running total to the same store, so its section has
+          the Claude section's shape and is drawn by the same code. What is
+          worth one clause is where the dollars come from. */}
+      <Show when={pi()}>
+        {(p) => (
+          <DollarSection
+            title="Pi"
+            spend={p()}
+            period={period()}
+            nowMs={nowMs()}
+            sessionLabel={sessionLabel}
+            noSessions="No pi session ran in this period."
+            source="Pi computes these from its own price list, so they are its estimate rather than a bill. Token counts are approximate."
+          />
+        )}
+      </Show>
     </div>
   );
 };
+
+/**
+ * One section for a harness that computes its own dollars: Claude Code, and
+ * pi, whose section the server sends in exactly the same shape.
+ *
+ * Three different questions sit close together here, and each answer is worth
+ * one clause: the dollars are the harness's own (`source` says whose), a
+ * session's figure is its whole life rather than the period's, and the token
+ * totals are approximate.
+ */
+const DollarSection: Component<{
+  title: string;
+  spend: ClaudeSpend;
+  period: SpendPeriod;
+  nowMs: number;
+  sessionLabel: (name: string) => string;
+  /** What the sessions list says when nothing ran in the period. */
+  noSessions: string;
+  /** Who computed the dollars, and how far to trust the tokens. */
+  source: string;
+}> = (props) => (
+  <Group title={props.title}>
+    {/* The spend for the period, as the heading figure: the one number
+        someone opens this page for. */}
+    <div class="tl-spend-figure">
+      <b>{formatUsd(props.spend.costUsd)}</b>
+      <span class="tl-spend-figure-note">
+        {periodNote(props.period)} ·{" "}
+        <ApproxTokens n={props.spend.tokens.input + props.spend.tokens.output} />
+      </span>
+    </div>
+
+    <Show when={liveWindows(props.spend.windows, props.nowMs).length > 0}>
+      <div class="tl-spend-meters">
+        <For each={liveWindows(props.spend.windows, props.nowMs)}>
+          {(w) => (
+            <Meter
+              label={claudeWindowLabel(w.name)}
+              percent={w.usedPercent}
+              note={formatResetsIn(w.resetsAtSec, props.nowMs)}
+            />
+          )}
+        </For>
+      </div>
+    </Show>
+
+    <Show when={props.spend.models.length > 0}>
+      <div class="tl-set-subhead">By model</div>
+      <div class="tl-spend-rows">
+        <For each={props.spend.models}>
+          {(m) => (
+            <SpendRow
+              name={m.model}
+              meta={<ApproxTokens n={m.tokens.input + m.tokens.output} />}
+              value={formatUsd(m.costUsd)}
+            />
+          )}
+        </For>
+      </div>
+    </Show>
+
+    <div class="tl-set-subhead">Sessions</div>
+    <Show
+      when={props.spend.sessions.length > 0}
+      fallback={<div class="tl-set-hint tl-set-hint-static">{props.noSessions}</div>}
+    >
+      <div class="tl-spend-rows">
+        <For each={props.spend.sessions}>
+          {(s) => (
+            <SpendRow
+              session
+              name={props.sessionLabel(s.session)}
+              meta={
+                <>
+                  {s.model ? `${s.model} · ` : ""}
+                  {formatTokens(s.tokens.input + s.tokens.output)} tokens in context
+                </>
+              }
+              value={formatUsd(s.costUsd)}
+            />
+          )}
+        </For>
+      </div>
+    </Show>
+    <div class="tl-set-hint tl-set-hint-static">
+      A session's figure is what it has cost since it started, so it can be larger than the period
+      above it. {props.source}
+    </div>
+  </Group>
+);
 
 /** One percentage bar. Same grammar as the Network page's byte bars. */
 const Meter: Component<{ label: string; percent: number; note?: string }> = (props) => (

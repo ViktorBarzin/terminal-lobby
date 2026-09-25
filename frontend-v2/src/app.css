@@ -975,8 +975,8 @@ label.tl-set-row-label {
   overflow-wrap: anywhere;
 }
 
-/* Agent spend — what Claude Code and Codex have consumed. The period rows and
-   the percentage bars share their rules with Data used above rather than
+/* Agent spend — what Claude Code, Codex and pi have consumed. The period rows
+   and the percentage bars share their rules with Data used above rather than
    restating them: the two pages read the same way, and one set of rules cannot
    drift from itself. Only what is particular to this page lives here. */
 .tl-spend-period {

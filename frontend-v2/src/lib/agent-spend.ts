@@ -1,15 +1,16 @@
 /**
- * The agent-spend client: what the user's Claude Code and Codex sessions have
- * consumed. Shapes mirror tmux-api/agentspend.go.
+ * The agent-spend client: what the user's Claude Code, Codex and pi sessions
+ * have consumed. Shapes mirror tmux-api/agentspend.go.
  *
- * The two tools are kept apart all the way down rather than flattened into one
- * shape, because they answer different questions. Claude Code computes dollars
- * and the store keeps them; a ChatGPT plan reports no cost anywhere, so Codex
- * is rate-limit windows and tokens. A section is ABSENT, not empty, when the
- * user has never run that tool, which is what lets the page leave a heading out
- * rather than draw one full of zeroes.
+ * The tools are kept apart all the way down rather than flattened into one
+ * shape, because they answer different questions. Claude Code and pi compute
+ * dollars and the store keeps them; a ChatGPT plan reports no cost anywhere,
+ * so Codex is rate-limit windows and tokens. A section is ABSENT, not empty,
+ * when the user has never run that tool, which is what lets the page leave a
+ * heading out rather than draw one full of zeroes.
  *
- * Design: docs/plans/2026-09-06-agent-spend-panel-design.md.
+ * Design: docs/plans/2026-09-06-agent-spend-panel-design.md, and for pi
+ * docs/plans/2026-09-25-pi-harness-design.md.
  */
 import { agentSpendUrl } from "./config";
 import { fetchWithDeadline } from "./http";
@@ -114,20 +115,29 @@ export interface CodexSpend {
   sessions: CodexSpendSession[];
 }
 
+/**
+ * Pi's section, which has exactly the Claude section's shape: pi prices every
+ * message itself, and the lobby's pi extension posts each session's running
+ * total to the same store Claude Code's recorder feeds (POST /hooks/pi-usage).
+ * The dollars are pi's estimate from its own price list, not a bill.
+ */
+export type PiSpend = ClaudeSpend;
+
 export interface AgentSpend {
   period: string;
   claude?: ClaudeSpend;
   codex?: CodexSpend;
+  pi?: PiSpend;
 }
 
 /**
  * Read what the tools have consumed over one period.
  *
  * `tool` asks for one section only. The sidebar figure follows the attached
- * session's tool and shows one number, and the two halves cost different things
- * to build — the Codex half walks rollout files and asks tmux for panes — so
- * naming the tool is what keeps a Claude figure from paying for a Codex read on
- * every poll. The Settings page omits it and gets both.
+ * session's tool and shows one number, and the sections cost different things
+ * to build — the Codex one walks rollout files and asks tmux for panes — so
+ * naming the tool is what keeps a Claude or pi figure from paying for a Codex
+ * read on every poll. The Settings page omits it and gets every section.
  */
 export async function fetchAgentSpend(
   period: SpendPeriod,
@@ -200,11 +210,12 @@ export function formatTokens(n: number): string {
 /**
  * The one figure the sidebar footer has room for, or "" for nothing to show.
  *
- * It follows the ATTACHED session's tool rather than summing the two, because
- * they are not the same kind of number: Claude Code computes dollars and a
- * ChatGPT plan reports none, so the honest figure for a Codex session is how
+ * It follows the ATTACHED session's tool rather than summing them, because
+ * they are not the same kind of number: Claude Code and pi compute dollars and
+ * a ChatGPT plan reports none, so the honest figure for a Codex session is how
  * much of a limit is gone. The tighter of the two Codex windows is the one that
- * will stop you first, which is what makes it the one worth a single slot.
+ * will stop you first, which is what makes it the one worth a single slot. Each
+ * dollar figure comes from its own tool's section, never the other's.
  *
  * `doc` is today's document. Anything else — a shell session, no session, a
  * tool the server has never seen report — is "": the footer draws nothing at
@@ -215,14 +226,26 @@ export function sidebarFigure(
   doc: AgentSpend | null,
   nowMs: number,
 ): string {
-  if (tool === "claude" && doc?.claude) return formatUsd(doc.claude.costUsd);
-  if (tool === "codex" && doc?.codex) {
-    const live = liveWindows(doc.codex.windows, nowMs);
-    if (live.length === 0) return "";
-    const tightest = live.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
-    return `${Math.round(tightest.usedPercent)}%`;
+  switch (tool) {
+    case "claude":
+      return doc?.claude ? formatUsd(doc.claude.costUsd) : "";
+    case "pi":
+      return doc?.pi ? formatUsd(doc.pi.costUsd) : "";
+    case "codex": {
+      if (!doc?.codex) return "";
+      const live = liveWindows(doc.codex.windows, nowMs);
+      if (live.length === 0) return "";
+      const tightest = live.reduce((a, b) => (b.usedPercent > a.usedPercent ? b : a));
+      return `${Math.round(tightest.usedPercent)}%`;
+    }
+    default:
+      return "";
   }
-  return "";
+}
+
+/** Whether a tool has a section of its own to read a figure from. */
+export function spendsMeasurably(tool: SessionTool | undefined): tool is "claude" | "codex" | "pi" {
+  return tool === "claude" || tool === "codex" || tool === "pi";
 }
 
 /**

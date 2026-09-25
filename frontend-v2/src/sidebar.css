@@ -361,9 +361,9 @@
   background: var(--bg-card-hover);
 }
 /* What the attached session has consumed, beside the gear: today's dollars for
-   Claude Code, the tighter limit for Codex. It reads as a fact rather than a
-   control, so it carries no border of its own and only lights up under the
-   pointer, the way the other footer icons do.
+   Claude Code or pi, the tighter limit for Codex. It reads as a fact rather
+   than a control, so it carries no border of its own and only lights up under
+   the pointer, the way the other footer icons do.
 
    Tabular numerals for the same reason Data used sets them: a figure that
    changes while you look at it must not shift the row it sits in. It never

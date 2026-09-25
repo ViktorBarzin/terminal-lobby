@@ -87,6 +87,16 @@ const codexNow = (): AgentSpend => ({
   },
 });
 
+const piToday = (costUsd: number): AgentSpend => ({
+  period: "today",
+  pi: {
+    costUsd,
+    tokens: { input: 1200, output: 80, cacheRead: 0, cacheCreation: 0 },
+    models: [],
+    sessions: [],
+  },
+});
+
 /** Answer /agent-spend with one document; every URL asked for is recorded. */
 function stubSpend(doc: AgentSpend): string[] {
   const urls: string[] = [];
@@ -179,6 +189,16 @@ describe("the sidebar spend figure", () => {
     await waitFor(() => expect(codex.urls.length).toBe(1));
     expect(codex.urls[0]).toContain("tool=codex");
     codex.store.dispose();
+  });
+
+  // Pi computes its own dollars and posts them to the same store, so a pi
+  // session gets the same kind of figure a Claude one does, from pi's section.
+  it("shows today's pi dollars while a pi session is attached", async () => {
+    const { container, urls, store } = await attached("pi", piToday(1.23));
+    await waitFor(() => expect(figure(container)?.textContent).toBe("$1.23"));
+    expect(urls[0]).toContain("tool=pi");
+    expect(figure(container)!.getAttribute("title")).toMatch(/pi/);
+    store.dispose();
   });
 
   it("shows nothing, and asks nothing, for a plain shell", async () => {
