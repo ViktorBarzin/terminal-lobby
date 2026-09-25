@@ -39,8 +39,8 @@ import { lsGet, lsSet } from "../lib/storage";
  * any other client's boot GET.
  */
 
-export type NewCommand = "default" | "claude" | "codex" | "shell";
-export const NEW_COMMANDS: readonly NewCommand[] = ["claude", "codex", "shell", "default"];
+export type NewCommand = "default" | "claude" | "codex" | "pi" | "shell";
+export const NEW_COMMANDS: readonly NewCommand[] = ["claude", "codex", "pi", "shell", "default"];
 export const DEFAULT_NEW_COMMAND: NewCommand = "claude";
 
 /** xterm cursor shapes the terminal page accepts (vanilla PREF_VALID). */
@@ -287,7 +287,7 @@ function oneOf<T extends string | number>(v: unknown, allowed: readonly T[]): v 
 }
 
 function isNewCommand(v: unknown): v is NewCommand {
-  return v === "default" || v === "claude" || v === "codex" || v === "shell";
+  return oneOf(v, NEW_COMMANDS);
 }
 
 /** Clamp any input to a valid integer font size (invalid → default). */

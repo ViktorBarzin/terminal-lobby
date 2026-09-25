@@ -6,7 +6,7 @@
  * shared attach (memory #9926 — the 4th arg dying at the iframe boundary).
  *
  *   arg1  session name        (always)
- *   arg2  new-session command KEY (whitelisted: default|claude|codex|shell)
+ *   arg2  new-session command KEY (whitelisted: default|claude|codex|pi|shell)
  *   arg3  base directory for a NEW session (a project's dir; absolute)
  *   arg4  session OWNER for a SHARED/foreign attach (a different OS user)
  *   arg5  ATTACH MODE, one question with three answers: absent to drive,
@@ -14,8 +14,10 @@
  *         sources `-r` from its own answer), "pre" to preload (read-write but
  *         carrying tmux's ignore-size flag, so a hover cannot move the
  *         session's window — ADR-0026)
- *   arg6  model a NEW session launches on ("opus", "gpt-5.6-terra", …)
- *   arg7  effort a NEW session launches at ("max", "xhigh", …)
+ *   arg6  model a NEW session launches on ("claude-opus-5", "gpt-5.6-terra",
+ *         or a pi reference such as "anthropic/claude-opus-5", …)
+ *   arg7  effort a NEW session launches at ("max", "xhigh", or one of pi's
+ *         thinking levels, off|minimal|low|medium|high|xhigh|max)
  *
  * A dir must land at arg3, an owner at arg4 and an attach mode at arg5, so
  * whenever a later arg is sent the earlier ones are emitted too ('default' as
@@ -69,6 +71,11 @@ export interface TerminalUrlOpts {
    * Empty is the absence of a choice, and it is what every attach that is not a
    * fresh create sends: `tmux new-session -A` ignores the command entirely for
    * a session that already exists, so these only ever take effect on a create.
+   *
+   * For pi the attach passes them on as TL_PI_MODEL and TL_PI_THINKING rather
+   * than as flags, because `pi --model` with a model the account no longer
+   * lists exits at once. The model is then a `provider/id` reference, which
+   * the attach checks against the pattern lib/models.ts `isPiModelRef` holds.
    */
   model?: string;
   effort?: string;

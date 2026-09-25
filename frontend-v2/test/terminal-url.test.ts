@@ -209,6 +209,35 @@ describe("buildTerminalArgs — the model and effort a new session starts on", (
     expect(u).toBe("arg=foo&arg=claude&arg=default&arg=bob&arg=&arg=claude-sonnet-5");
   });
 
+  // Pi's model is a `provider/id` reference and its effort a thinking level.
+  // The attach turns them into TL_PI_MODEL and TL_PI_THINKING rather than
+  // flags, but the slots are the same ones, and the slash has to arrive
+  // percent-encoded like the bracket above.
+  it("carries a pi reference and a thinking level on the same two slots", () => {
+    const u = buildTerminalArgs("foo", {
+      cmd: "pi",
+      dir: "/srv/p",
+      model: "anthropic/claude-opus-5",
+      effort: "minimal",
+    });
+    expect(u).toBe(
+      "arg=foo&arg=pi&arg=%2Fsrv%2Fp&arg=&arg=&arg=anthropic%2Fclaude-opus-5&arg=minimal",
+    );
+  });
+
+  it("encodes every character a pi reference may carry", () => {
+    const ref = "openrouter/meta-llama/llama-4:free@q4~k";
+    const u = buildTerminalArgs("foo", { cmd: "pi", model: ref });
+    expect(u).toBe(`arg=foo&arg=pi&arg=default&arg=&arg=&arg=${encodeURIComponent(ref)}`);
+    expect(decodeURIComponent(u.split("&arg=")[5]!)).toBe(ref);
+  });
+
+  // `off` is a choice, not the absence of one: it asks pi not to think at all.
+  it("sends a thinking level of off, which is not the default", () => {
+    const u = buildTerminalArgs("foo", { cmd: "pi", effort: "off" });
+    expect(u).toBe("arg=foo&arg=pi&arg=default&arg=&arg=&arg=&arg=off");
+  });
+
   // The default IS the absence of a choice, and the shallow shapes above have
   // to stay byte-identical: every existing attach in the app builds one.
   it("emits nothing extra when neither is chosen", () => {

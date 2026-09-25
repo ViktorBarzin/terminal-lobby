@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createSignal,
   For,
   onCleanup,
@@ -35,7 +36,8 @@ import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
-import { deliverFirstPrompt } from "../lib/first-prompt";
+import { deliverFirstPrompt, firstPromptDelivery } from "../lib/first-prompt";
+import { piModels, refreshPiModels } from "../lib/pi-models";
 import { uploadAttachments } from "../clipboard/attach-files";
 import { composeMessage } from "../logic/compose.logic";
 import { attachmentKind, dropToken } from "../lib/attachments";
@@ -90,8 +92,11 @@ function objectUrl(f: File): string | undefined {
  * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
  * same roamed `session.newCommand` the terminal attach reads, so what is picked
  * here is what starts. The MODEL and the EFFORT belong to whichever CLI the
- * command names — the two share no vocabulary — and leave as `--model` and
- * `--effort` flags on the process the attach starts (lib/terminal-url.ts).
+ * command names — no two share a vocabulary — and leave as launch arguments
+ * on the process the attach starts (lib/terminal-url.ts). Pi's models are the
+ * one list not written down: they are pi's own, read from GET /pi-models each
+ * time this opens with pi chosen (ADR-0031), and its effort is pi's thinking
+ * level.
  *
  * The model is the one value in that sentence with no noun after it. A slug is
  * already unmistakably a model, where "Max" beside "claude-opus-5" would be
@@ -136,9 +141,38 @@ export const NewSessionComposer: Component<{
   const avail = (): CommandAvailability => props.available?.() ?? {};
   const cmd = (): NewCommand =>
     effectiveCommand(props.prefs.prefs().session.newCommand, avail(), COMMANDS);
-  /** Which of the two CLIs is starting, or null for a shell, which has none. */
+  /** Which CLI is starting, or null for a shell, which has none. */
   const harness = (): ModelHarness | null => modelHarness(cmd() as SessionTool);
   const choice = (h: ModelHarness) => modelChoiceFor(props.prefs.prefs(), h);
+
+  // ---- pi's models ---------------------------------------------------------
+  // Read again whenever this opens with pi chosen, and whenever pi becomes the
+  // choice: that is the moment somebody is about to pick, and a provider
+  // signed into since the page loaded should be there. A memo, so the read
+  // follows the command and nothing else — picking a model writes a
+  // preference, and that is no reason to run pi on the server again.
+  const choosingPi = createMemo(() => harness() === "pi");
+  createEffect(() => {
+    if (choosingPi()) void refreshPiModels();
+  });
+  /**
+   * The model rows pi offers: its own list, and the stored pick when that list
+   * does not carry it. The attach launches on the stored pick whatever the
+   * menu shows, so a menu that dropped it would disagree with what starts —
+   * before the list arrives, and after pi stops listing a model somebody
+   * chose. Pi applies a launch model it no longer lists as best it can, which
+   * is why it is sent as an environment variable rather than a flag that
+   * would end the session on the spot (design doc, "terminal-lobby").
+   */
+  const piModelRows = (): string[] => [
+    ...(piModels()?.models ?? []).map((m) => m.ref),
+    choice("pi").model,
+  ];
+  /** Nothing listed, nothing failed, nobody signed in: pi needs a `/login`. */
+  const piSignedOut = (): boolean => {
+    const a = piModels();
+    return choosingPi() && !!a && !a.signedIn && !a.error && a.models.length === 0;
+  };
   /** A shell has no prompt to receive, so the box asks for a name instead. */
   const naming = (): boolean => cmd() === "shell";
   const projects = () => props.store.layout().projects;
@@ -314,7 +348,9 @@ export const NewSessionComposer: Component<{
     warmedDir = null; // claimed by the attach; not ours to hand back
     const shell = naming();
     const store = props.store;
-    const key = cmd();
+    // Whether the server should wait for the pane, and for which harness —
+    // decided now, while the command is still on screen to read.
+    const delivery = firstPromptDelivery(harness());
     // Nothing about the model or the effort happens here any more. Both are
     // FLAGS on the process the attach starts (lib/terminal-url.ts), read out of
     // the same preference this row writes — so by the time the create selects
@@ -350,7 +386,7 @@ export const NewSessionComposer: Component<{
       text,
       files: picked.map((p) => p.file),
       tokens: picked.map((p) => p.token),
-      claude: key === "claude",
+      ...delivery,
       deliver,
       upload,
     });
@@ -435,6 +471,16 @@ export const NewSessionComposer: Component<{
             leftExtra={controls()}
           />
         </Show>
+        {/* Under the box rather than in its row of controls, which has no
+            room for a sentence on a phone. Only when the answer really is
+            "nobody signed in": a list that could not be read says so on the
+            model menu's own title instead. */}
+        <Show when={piSignedOut()}>
+          <p class="tl-new-hint">
+            Pi is not signed in yet. Run <code>/login</code> in a pi session, and its models appear
+            here.
+          </p>
+        </Show>
       </div>
 
       {/* The same overlay the session view raises, saying what a drop here
@@ -486,8 +532,9 @@ export const NewSessionComposer: Component<{
         </select>
         {/* A shell has no model and no effort, so it gets neither picker. The
             two that remain are the CHOSEN CLI's own: `opus` means nothing to
-            codex and `gpt-5.6-terra` means nothing to Claude, so switching
-            command swaps both lists and each keeps its own remembered pick. */}
+            codex and `gpt-5.6-terra` means nothing to Claude or pi, so
+            switching command swaps both lists and each keeps its own
+            remembered pick. */}
         <Show when={harness()}>
           {(h) => (
             <>
@@ -502,15 +549,32 @@ export const NewSessionComposer: Component<{
 
   /** One of the two choices, bound to its harness's own roamed key. */
   function picker(h: ModelHarness, field: ModelField, label: string): JSX.Element {
+    const rows = () =>
+      optionsFor(h, field, h === "pi" && field === "model" ? { models: piModelRows() } : undefined);
+    // Said on the menu it explains, not as a banner: the list could not be
+    // read, and the default is what pi will start on.
+    const why = () => {
+      const err = h === "pi" && field === "model" ? piModels()?.error : undefined;
+      return err ? `Pi's model list could not be read: ${err}` : undefined;
+    };
+    // Each row says whether it is the choice, rather than the select being
+    // given a value once. Pi's rows are rebuilt when its list arrives, and a
+    // select whose chosen option is replaced falls back to its first row, so a
+    // `value` set before the rebuild would leave the menu reading "default"
+    // while the attach launches on the stored pick.
     return (
       <select
         class="tl-new-cmd"
         aria-label={label}
-        value={choice(h)[field]}
+        title={why()}
         onChange={(e) => props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))}
       >
-        <For each={optionsFor(h, field)}>
-          {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
+        <For each={rows()}>
+          {(o) => (
+            <option value={o.id} selected={o.id === choice(h)[field]}>
+              {phraseFor(h, field, o.id)}
+            </option>
+          )}
         </For>
       </select>
     );
@@ -541,7 +605,9 @@ async function sendFirstPrompt(o: {
   files: readonly File[];
   /** Each file's token in `text`, by the same index — see `tokenFor`. */
   tokens: readonly (string | undefined)[];
-  claude: boolean;
+  /** How the server should deliver it (lib/first-prompt.ts, firstPromptDelivery). */
+  awaitReady: boolean;
+  tool?: "pi";
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
 }): Promise<void> {
@@ -562,7 +628,8 @@ async function sendFirstPrompt(o: {
   const ok = await o.deliver({
     session: o.session,
     lines,
-    awaitReady: o.claude,
+    awaitReady: o.awaitReady,
+    ...(o.tool ? { tool: o.tool } : {}),
   });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text

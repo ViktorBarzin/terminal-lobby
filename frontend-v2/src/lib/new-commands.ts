@@ -19,14 +19,16 @@ export type CommandAvailability = Record<string, boolean>;
 /** The commands the new-session row offers, in the order it shows them. Shared
  *  with App, which resolves the same list down to the one the terminal is told
  *  to run — the row and the attach must not disagree about that. `default` is
- *  storable but not offered: it means "whatever the box does by default". */
-export const NEW_SESSION_COMMANDS: readonly NewCommand[] = ["claude", "codex", "shell"];
+ *  storable but not offered: it means "whatever the box does by default".
+ *  The three harnesses come first and the plain shell, which is not one, last. */
+export const NEW_SESSION_COMMANDS: readonly NewCommand[] = ["claude", "codex", "pi", "shell"];
 
 /** The dropdown labels, here rather than in one of the two pickers that show
  *  them, so the sidebar's row and the Settings page cannot disagree. */
 export const COMMAND_LABELS: Record<NewCommand, string> = {
   claude: "Claude",
   codex: "Codex",
+  pi: "Pi",
   shell: "Plain shell",
   default: "Default",
 };
@@ -47,6 +49,8 @@ export const COMMAND_LABELS: Record<NewCommand, string> = {
 export const COMMAND_PHRASES: Record<NewCommand, string> = {
   claude: "run Claude",
   codex: "run Codex",
+  // Lowercase inside the sentence, the way pi writes its own name.
+  pi: "run pi",
   // Already a noun phrase, and "run plain shell" reads worse than the thing
   // it describes.
   shell: "plain shell",

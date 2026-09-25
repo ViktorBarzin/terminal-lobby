@@ -1857,6 +1857,16 @@ label.tl-set-row-label {
   height: 40px;
   resize: none;
 }
+/* One line under the box, for what the chosen command needs before its
+   controls can mean anything: today, pi with no provider signed in. */
+.tl-new-hint {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  color: var(--text-muted);
+}
 /* The box centres itself with `margin: 0 auto`, and an auto cross-axis margin
    turns OFF a flex item's stretch — so without this it shrank to fit its own
    content and sat 385px wide in a 1180px pane, measured at 1440x900. */

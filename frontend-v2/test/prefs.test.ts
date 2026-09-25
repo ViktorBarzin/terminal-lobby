@@ -619,6 +619,10 @@ describe("pi's roamed choices", () => {
     expect(PREF_DEFAULTS.session.newPiEffort).toBe("default");
   });
 
+  it("keeps pi as the command a new session runs", () => {
+    expect(coercePrefs({ session: { newCommand: "pi" } }).session.newCommand).toBe("pi");
+  });
+
   it("keeps a pi reference across a load, though no catalogue here has heard of it", () => {
     const p = coercePrefs({ session: { newPiModel: OPUS, newPiEffort: "minimal" } });
     expect(p.session.newPiModel).toBe(OPUS);
