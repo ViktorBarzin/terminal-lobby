@@ -289,7 +289,17 @@ func main() {
 	if d := strings.TrimSpace(os.Getenv("TL_SPEND_DIR")); d != "" {
 		spendDir = d
 	}
-	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(spendstore.New(spendDir)))))
+	//
+	// ONE store for both spend routes. Its mutex is what serialises writers to a
+	// user's document inside this process, and a Claude reading and a pi reading
+	// for the same user can arrive together; two stores would each hold their
+	// own lock and the later write would drop the earlier one's change.
+	spend := spendstore.New(spendDir)
+	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(spend))))
+	// What a pi conversation has spent, posted by the lobby's pi extension when a
+	// turn settles (piusage.go). The same two gates as its neighbour, and the
+	// same store: a reading is tool "pi" beside Claude's.
+	root.HandleFunc("POST /hooks/pi-usage", localhostOnly(peerOwnsClaim(handlePiUsage(spend))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {
