@@ -625,3 +625,17 @@ func TestALivePiSessionIsNotReportedDead(t *testing.T) {
 		t.Fatal("a pi killed under its stamp was not reported, and should be, as claude_died")
 	}
 }
+
+// The pids of the pane's claudes are what a kernel kill record is matched
+// against, so every claude is kept, not just the largest process.
+func TestPaneFactsRecordsEveryClaudePid(t *testing.T) {
+	samples := []procSample{
+		{Pid: 10, RSSBytes: 2 << 30, IsClaude: false},
+		{Pid: 11, RSSBytes: 400 << 20, IsClaude: true},
+		{Pid: 12, RSSBytes: 100 << 20, IsPi: true},
+	}
+	got := paneFacts(Session{}, samples, func(int) (uint64, uint64, uint64) { return 0, 0, 0 })
+	if len(got.ClaudePIDs) != 1 || got.ClaudePIDs[0] != 11 {
+		t.Fatalf("want [11], got %v", got.ClaudePIDs)
+	}
+}

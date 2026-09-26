@@ -36,6 +36,9 @@ func Line(f Finding) string {
 	if f.Background != "" {
 		fields = append(fields, "bg="+logfmtValue(f.Background))
 	}
+	if f.Error != "" {
+		fields = append(fields, "error="+logfmtValue(f.Error))
+	}
 	if f.Kind == KindRebooted {
 		fields = append(fields,
 			"before="+strconv.Itoa(f.Before),

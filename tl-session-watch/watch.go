@@ -58,6 +58,9 @@ type Session struct {
 	// TopIsClaude says whether the highest-RSS process in the pane is a claude.
 	// Exported as a metric only.
 	TopIsClaude bool
+	// ClaudePIDs are the claude processes in the session's panes, which is what
+	// a kernel kill record is matched against (autoresume.go).
+	ClaudePIDs []int
 }
 
 // Snapshot is one user's world at one tick.
@@ -91,6 +94,15 @@ const (
 	KindClaudeDied Kind = "claude_died"
 	// KindRebooted: the box restarted, carrying how many sessions came back.
 	KindRebooted Kind = "rebooted"
+	// KindSessionResumed: a session the pane memory cap killed was brought back
+	// with `claude --resume` (autoresume.go). Logged, never alerted.
+	KindSessionResumed Kind = "session_resumed"
+	// KindResumeSkipped: a cap kill within the hour of the last resume of the
+	// same session, left dead so a pane that refills cannot loop.
+	KindResumeSkipped Kind = "resume_skipped"
+	// KindResumeFailed: the resume was attempted and tmux-persist refused or
+	// failed. Error says why.
+	KindResumeFailed Kind = "resume_failed"
 )
 
 // Finding is one thing worth a journal line.
@@ -100,8 +112,10 @@ type Finding struct {
 	Session    string
 	State      string
 	Background string
-	Before     int
-	After      int
+	// Error is the reason on a resume_skipped or resume_failed line.
+	Error  string
+	Before int
+	After  int
 }
 
 type Config struct {
