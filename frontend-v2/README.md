@@ -698,7 +698,9 @@ src/
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     plan.logic.ts        PURE when the plan-approval card docks: the pane's
-                         plan reading against the newest ExitPlanMode call
+                         plan reading against the newest ExitPlanMode call.
+                         Also what the card says after a reply, and the
+                         composer's text as one line of feedback
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / question / …),
                          with Claude's queued prompts drawn after the last row
                          as dashed ghost bubbles. The working row is the
@@ -773,6 +775,13 @@ src/
                          is a guess and only ever runs on screens we do not
                          understand; it replaced sending the reader to the
                          Terminal, which was 22.4% of this box's calls
+    PlanCard.tsx         The docked card for Claude Code's plan approval: the
+                         plan from the transcript as markdown, clamped behind
+                         "Show all", and the approve rows as the pane draws
+                         them. It renders the answer in flight and the last
+                         reply's notice, which its caller holds. No digit
+                         shortcuts, no raw keypad and no Reject button, since
+                         a stray 1 would clear context
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns

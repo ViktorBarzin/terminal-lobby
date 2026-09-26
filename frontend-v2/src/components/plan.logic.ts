@@ -9,6 +9,7 @@
  * `decidePlanDock` turns those facts, and this client's own last answer, into
  * docked or not.
  */
+import type { AnswerResponse } from "../lib/answer-api";
 import type { Event } from "../types/events";
 import { planFromPane, type PlanReading } from "./timeline.logic";
 
@@ -128,4 +129,60 @@ export function decidePlanDock(facts: PlanDockFacts, answered?: AnsweredPlan | n
   if (call.state === "resolved" && call.afterReading) return { docked: false };
   if (answered?.settling && answered.key === planReadingKey(reading)) return { docked: false };
   return { docked: true, reading, call: call.state === "pending" ? call.toolId : null };
+}
+
+/** A plan answer this client has in flight: an approve row, or feedback. */
+export type PlanSending = { kind: "option"; number: number } | { kind: "feedback" };
+
+/**
+ * One line the plan card shows under its choices
+ * (docs/plans/2026-09-24-text-composer-redesign.md, "When the card docks, and
+ * what it shows").
+ *
+ * - `busy`: Send was pressed while an answer is still in flight, and ignored.
+ * - `changed`: the reply was `unknown-option`; the card draws the reply's rows.
+ * - `gone`: the reply was `not-drawn` or `no-dialog`; the plan is not on the pane.
+ * - `unverified`: the answer may or may not have landed.
+ * - `too-long`: the feedback was over 2,000 bytes and was not sent.
+ */
+export type PlanNotice = "busy" | "changed" | "gone" | "unverified" | "too-long";
+
+/**
+ * What the card says after a reply to a plan answer, or null when it was
+ * applied.
+ *
+ * `refused` reads as unverified rather than as nothing typed: it is tmux not
+ * taking a key, and an earlier key of the same answer may already have gone
+ * in. A failed call (null) reads the same way, since the request may have
+ * timed out after the server pressed its keys.
+ */
+export function planReplyNotice(reply: AnswerResponse | null): PlanNotice | null {
+  if (!reply) return "unverified";
+  if (reply.applied) return null;
+  switch (reply.reason) {
+    case "unknown-option":
+      return "changed";
+    case "not-drawn":
+    case "no-dialog":
+      return "gone";
+    default:
+      return "unverified";
+  }
+}
+
+/** The CLI's feedback field is one line of at most this many bytes (contract 3). */
+const PLAN_FEEDBACK_MAX_BYTES = 2000;
+
+/**
+ * The composer's text as it goes out as plan feedback: line breaks become
+ * spaces, since the CLI's feedback field is a single line, and the ends are
+ * trimmed. `joined` says a line break was replaced, so the card can say so;
+ * `tooLong` says the result is over 2,000 bytes in UTF-8, which the server
+ * refuses with nothing typed, so the caller does not send it.
+ */
+export function planFeedback(raw: string): { text: string; joined: boolean; tooLong: boolean } {
+  const trimmed = raw.trim();
+  const text = trimmed.replace(/\s*\n\s*/g, " ");
+  const tooLong = new TextEncoder().encode(text).length > PLAN_FEEDBACK_MAX_BYTES;
+  return { text, joined: /\n/.test(trimmed), tooLong };
 }

@@ -5425,6 +5425,78 @@ body.tl-kb-up {
   margin-right: auto;
 }
 
+/* The plan-approval card (PlanCard). It is a `.tl-qcard`, so it shares the
+   question card's cap of min(62%, 460px), its pinned head and actions, and its
+   phone rules; these rules add the plan and the lines under it. */
+/* About six lines of plan, then "Show all". Six leaves the three choices and
+   the actions in view on a 616px desktop pane, where the card's cap is 382px;
+   the card's body scrolls, so an expanded plan pushes the choices down rather
+   than off the card. */
+.tl-plancard-plan {
+  max-height: calc(13px * 1.45 * 6 * var(--tl-text-scale, 1));
+  overflow: hidden;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.tl-plancard-plan[data-full="true"] {
+  max-height: none;
+  overflow: visible;
+}
+/* A clamped plan fades out rather than cutting a line in half. */
+.tl-plancard-plan[data-clamped="true"] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+/* The timeline's heading sizes would spend the clamp on the title alone: an
+   h1 took two lines of a 390px phone's width at its own size. */
+.tl-plancard-plan h1,
+.tl-plancard-plan h2 {
+  font-size: 1.1em;
+}
+.tl-plancard-plan h3,
+.tl-plancard-plan h4 {
+  font-size: 1em;
+}
+/* Five lines on a phone, where the card has about 290px of a 465px pane once
+   the keyboard is up, and the three choices need 140px of it. */
+@media (pointer: coarse) {
+  .tl-plancard-plan {
+    max-height: calc(13px * 1.45 * 5 * var(--tl-text-scale, 1));
+  }
+}
+.tl-plancard-loading,
+.tl-plancard-stale,
+.tl-plancard-lines {
+  flex: none;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+}
+.tl-plancard-flight {
+  grid-column: 2;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-style: italic;
+}
+/* Mounted empty so a screen reader hears each change; an empty one takes no
+   room. */
+.tl-plancard-notice {
+  flex: none;
+  margin-top: 8px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+}
+.tl-plancard-notice:empty {
+  margin-top: 0;
+}
+/* Open Terminal sits with the other actions rather than pinning left as Back
+   does in the question card. */
+.tl-plancard-actions .tl-qcard-back {
+  margin-right: 0;
+}
+
 /* Find in session. Shares the palette's overlay shell, so it reads as the same
    surface; the rows differ because a hit is two lines — what it is and when,
    then the matched text. */
