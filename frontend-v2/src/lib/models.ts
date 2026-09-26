@@ -185,6 +185,34 @@ export const isModelFor = (h: ModelHarness, id: unknown): boolean => has(h, "mod
 export const isEffortFor = (h: ModelHarness, id: unknown): boolean => has(h, "effort", id);
 
 /**
+ * Efforts a NEW session may not start at, per harness.
+ *
+ * The new-session pick roams and sticks (store/prefs.ts), so any row offered
+ * there can quietly become every later session's default. Viktor's rule since
+ * 2026-09-25 is Claude at high by default and nobody on max by default, so
+ * Claude's new-session ladder stops at xhigh. A running session's own chip
+ * (ModelMenu) still offers the full ladder, and so does `/effort max`.
+ * devvm/tmux-user-attach drops the same two, for any client that still sends
+ * them.
+ */
+const ABOVE_NEW_SESSION_CEILING: Record<ModelHarness, ReadonlySet<string>> = {
+  claude: new Set(["max", "ultracode"]),
+  codex: new Set(),
+};
+
+/** What the new-session composer offers: the catalogue minus the ceiling. */
+export const newSessionOptionsFor = (
+  h: ModelHarness,
+  f: ModelField,
+): readonly ModelOption[] =>
+  f === "effort"
+    ? CATALOGUE[h].effort.filter((o) => !ABOVE_NEW_SESSION_CEILING[h].has(o.id))
+    : CATALOGUE[h][f];
+
+export const isNewSessionEffortFor = (h: ModelHarness, id: unknown): boolean =>
+  typeof id === "string" && newSessionOptionsFor(h, "effort").some((o) => o.id === id);
+
+/**
  * A stored model id, carried forward to the row it means today.
  *
  * The Claude rows were family words until 2026-09-06, so a preference written

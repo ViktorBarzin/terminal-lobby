@@ -10,7 +10,7 @@ import { fetchWithDeadline } from "../lib/http";
 import {
   adoptModelId,
   DEFAULT_CHOICE,
-  isEffortFor,
+  isNewSessionEffortFor,
   type ModelField,
   type ModelHarness,
 } from "../lib/models";
@@ -363,11 +363,15 @@ export function coercePrefs(raw: unknown): Prefs {
       // words until 2026-09-06 and a doc written then says `opus`
       // (adoptModelId).
       newModel: adoptModelId("claude", session.newModel) ?? DEFAULT_CHOICE,
-      newEffort: isEffortFor("claude", session.newEffort)
+      // A new session's effort goes through the new-session ladder, not the
+      // full one: a Claude max saved before the composer stopped offering it
+      // reads as no choice, so it cannot keep starting sessions at max
+      // (lib/models.ts, ABOVE_NEW_SESSION_CEILING).
+      newEffort: isNewSessionEffortFor("claude", session.newEffort)
         ? (session.newEffort as string)
         : DEFAULT_CHOICE,
       newCodexModel: adoptModelId("codex", session.newCodexModel) ?? DEFAULT_CHOICE,
-      newCodexEffort: isEffortFor("codex", session.newCodexEffort)
+      newCodexEffort: isNewSessionEffortFor("codex", session.newCodexEffort)
         ? (session.newCodexEffort as string)
         : DEFAULT_CHOICE,
     },

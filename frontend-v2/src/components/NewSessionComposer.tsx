@@ -26,7 +26,7 @@ import {
 } from "../lib/new-commands";
 import {
   modelHarness,
-  optionsFor,
+  newSessionOptionsFor,
   phraseFor,
   type ModelField,
   type ModelHarness,
@@ -509,7 +509,7 @@ export const NewSessionComposer: Component<{
         value={choice(h)[field]}
         onChange={(e) => props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))}
       >
-        <For each={optionsFor(h, field)}>
+        <For each={newSessionOptionsFor(h, field)}>
           {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
         </For>
       </select>

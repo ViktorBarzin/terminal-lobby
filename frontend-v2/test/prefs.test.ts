@@ -58,6 +58,18 @@ describe("coercePrefs — validate-or-default", () => {
     expect(p.notify.onAwaiting).toBe(true);
   });
 
+  // A max saved before the composer stopped offering it would otherwise keep
+  // starting every new Claude session at max. It reads as no choice, which
+  // lands on the managed default (high). Codex keeps its own max.
+  it("a saved Claude max or ultracode reads as no choice", () => {
+    for (const effort of ["max", "ultracode"]) {
+      const p = coercePrefs({ session: { newEffort: effort, newCodexEffort: "max" } });
+      expect(p.session.newEffort).toBe("default");
+      expect(p.session.newCodexEffort).toBe("max");
+    }
+    expect(coercePrefs({ session: { newEffort: "xhigh" } }).session.newEffort).toBe("xhigh");
+  });
+
   it("valid values pass through; a valid false notify survives", () => {
     const p = coercePrefs({
       fontSize: 18,

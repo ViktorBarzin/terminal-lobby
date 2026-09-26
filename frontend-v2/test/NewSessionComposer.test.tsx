@@ -663,7 +663,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     m.store.dispose();
   });
 
-  it("offers Claude's effort ladder beside it", async () => {
+  it("offers Claude's effort ladder beside it, stopping below max", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     const sel = pick(m.container, "Effort for new session");
@@ -673,8 +673,6 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       "medium",
       "high",
       "xhigh",
-      "max",
-      "ultracode",
     ]);
     fireEvent.change(sel, { target: { value: "xhigh" } });
     expect(m.prefs.prefs().session.newEffort).toBe("xhigh");

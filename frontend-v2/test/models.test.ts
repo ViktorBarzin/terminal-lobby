@@ -6,11 +6,13 @@ import {
   DEFAULT_CHOICE,
   effortsFor,
   isEffortFor,
+  isNewSessionEffortFor,
   isCurrentModel,
   isModelFor,
   labelFor,
   modelsFor,
   modelHarness,
+  newSessionOptionsFor,
   phraseFor,
   summarise,
   type ModelHarness,
@@ -71,6 +73,26 @@ describe("the model catalogue", () => {
       "max",
       "ultra",
     ]);
+  });
+
+  // A new session's effort is a sticky pick that roams, so whatever sits in
+  // this list can become every session's default. Claude's stops at xhigh
+  // (Viktor, 2026-09-25: nobody on max by default); max and ultracode stay on
+  // a running session's own chip. Codex's ladder is its own and unchanged.
+  it("stops a new Claude session's ladder below max", () => {
+    expect(newSessionOptionsFor("claude", "effort").map((e) => e.id)).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]);
+    expect(newSessionOptionsFor("codex", "effort")).toEqual(effortsFor("codex"));
+    expect(newSessionOptionsFor("claude", "model")).toEqual(modelsFor("claude"));
+    expect(isNewSessionEffortFor("claude", "xhigh")).toBe(true);
+    expect(isNewSessionEffortFor("claude", "max")).toBe(false);
+    expect(isNewSessionEffortFor("claude", "ultracode")).toBe(false);
+    expect(isNewSessionEffortFor("codex", "max")).toBe(true);
   });
 
   // Both sides are slugs now, so the ordinary answer is the string comparison.

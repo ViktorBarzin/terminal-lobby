@@ -92,8 +92,8 @@ func fileExists(p string) bool { _, err := os.Stat(p); return err == nil }
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
-	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5", "max")
-	for _, want := range []string{"--model 'claude-opus-5'", "--effort 'max'"} {
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5", "xhigh")
+	for _, want := range []string{"--model 'claude-opus-5'", "--effort 'xhigh'"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("command line is missing %q:\n%s", want, got)
 		}
@@ -106,7 +106,7 @@ func TestAttachPassesTheModelAndEffortAsFlags(t *testing.T) {
 // glob. A bare `--model claude-opus-5[1m]` expands away the moment a file in
 // the start directory matches, which is why the flag is quoted.
 func TestAttachCarriesTheContextWindowSuffix(t *testing.T) {
-	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5[1m]", "max")
+	got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5[1m]", "xhigh")
 	if !strings.Contains(got, "--model 'claude-opus-5[1m]'") {
 		t.Errorf("the 1M suffix did not reach the command line:\n%s", got)
 	}
@@ -157,13 +157,13 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		"claude-opus-5[1m]x",
 		"claude-opus-5[$(id)]",
 	} {
-		got := runAttach(t, "flagcase", "/tmp", "claude", bad, "max")
+		got := runAttach(t, "flagcase", "/tmp", "claude", bad, "xhigh")
 		if strings.Contains(got, "--model") {
 			t.Errorf("model %q reached the command line:\n%s", bad, got)
 		}
 		// The rest of the line still has to be built: a refused model is "no
 		// choice", not a refused session.
-		if !strings.Contains(got, "--effort 'max'") {
+		if !strings.Contains(got, "--effort 'xhigh'") {
 			t.Errorf("model %q took the effort with it:\n%s", bad, got)
 		}
 		if strings.Contains(got, "tl-pwned") {
@@ -175,6 +175,30 @@ func TestAttachRefusesAnythingOutsideTheWhitelist(t *testing.T) {
 		if strings.Contains(got, "--effort") {
 			t.Errorf("effort %q reached the command line:\n%s", bad, got)
 		}
+	}
+}
+
+// A new Claude session never starts above high by default (Viktor, 2026-09-25:
+// "nobody should be using max by default"). The lobby's effort pick roams and
+// sticks, so a max chosen once used to ride along on every session after it.
+// The composer no longer offers it; this is the same line held here, for a
+// cached page or any other client that still sends it. Max stays one
+// `/effort max` away inside a running session. Codex has its own ladder and
+// is left alone.
+func TestAttachNeverStartsClaudeAboveTheDefaultCeiling(t *testing.T) {
+	for _, effort := range []string{"max", "ultracode"} {
+		got := runAttach(t, "flagcase", "/tmp", "claude", "claude-opus-5-5", effort)
+		if strings.Contains(got, "--effort") {
+			t.Errorf("effort %q reached a new Claude session:\n%s", effort, got)
+		}
+		// Dropping the effort is "no choice", not a refused session.
+		if !strings.Contains(got, "--model 'claude-opus-5-5'") {
+			t.Errorf("effort %q took the model with it:\n%s", effort, got)
+		}
+	}
+	got := runAttach(t, "flagcase", "/tmp", "codex", "gpt-5.6-terra", "max")
+	if !strings.Contains(got, "-c model_reasoning_effort='max'") {
+		t.Errorf("codex lost its own max:\n%s", got)
 	}
 }
 
