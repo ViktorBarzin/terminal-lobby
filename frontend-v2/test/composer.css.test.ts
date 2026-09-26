@@ -113,3 +113,20 @@ describe("no container queries", () => {
     expect(css).toMatch(/\.tl-statusline\[data-room="tight"\]/);
   });
 });
+
+describe("the new-session line", () => {
+  // The dials sit right-aligned with nothing on their left, as the live
+  // composer's do; left-aligned they would read as a sentence (open point 8).
+  it("right-aligns its dials, and is what their popover hangs from", () => {
+    const line = rule(".tl-new-line");
+    expect(line).toMatch(/justify-content:\s*flex-end/);
+    expect(line).toMatch(/position:\s*relative/);
+  });
+
+  // The phone's field keeps room to write in, so that pill is taller at rest
+  // than the live composer's (open point 9).
+  it("keeps the phone field's 76px minimum", () => {
+    const coarse = blocks("(pointer: coarse)").join("\n");
+    expect(rule(".tl-new-composer .tl-composer-input", coarse)).toMatch(/min-height:\s*76px/);
+  });
+});

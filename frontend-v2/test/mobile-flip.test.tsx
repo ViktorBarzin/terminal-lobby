@@ -8,12 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { createRoot } from "solid-js";
 import { render } from "@solidjs/testing-library";
-import {
-  FLIP_QUERY,
-  isMobileFlip,
-  createMobileFlip,
-  isCoarsePointer,
-} from "../src/mobile/pointer";
+import { FLIP_QUERY, isMobileFlip, createMobileFlip, isCoarsePointer } from "../src/mobile/pointer";
 import { Sidebar } from "../src/components/Sidebar";
 import { createLobbyStore } from "../src/store/lobby";
 import { createPrefsStore } from "../src/store/prefs";
@@ -176,9 +171,7 @@ describe("phone flip — the TS query and the CSS block agree", () => {
     expect(block).toMatch(
       /\.tl-shell:not\(\.tl-shell-collapsed\)\s+\.tl-shell-content\s*\{\s*display:\s*none/,
     );
-    expect(block).toMatch(
-      /\.tl-shell-collapsed\s+\.tl-shell-sidebar\s*\{\s*display:\s*none/,
-    );
+    expect(block).toMatch(/\.tl-shell-collapsed\s+\.tl-shell-sidebar\s*\{\s*display:\s*none/);
   });
 
   it("pins the shell to --app-vh rather than a CSS viewport unit", () => {
@@ -191,14 +184,11 @@ describe("phone flip — the TS query and the CSS block agree", () => {
 });
 
 describe("Sidebar — the Settings route the phone needs", () => {
-  const mkStore = () =>
-    createLobbyStore({ initialSelected: null, notify: () => {} });
+  const mkStore = () => createLobbyStore({ initialSelected: null, notify: () => {} });
 
   it("shows no gear on a desktop, where the shell bar carries one", () => {
     stubViewport({ width: 1920, height: 1080, coarse: false });
-    const { container } = render(() => (
-      <Sidebar store={mkStore()} prefs={createPrefsStore()} />
-    ));
+    const { container } = render(() => <Sidebar store={mkStore()} prefs={createPrefsStore()} />);
     expect(container.querySelector(".tl-foot-settings")).toBeNull();
   });
 
@@ -206,11 +196,7 @@ describe("Sidebar — the Settings route the phone needs", () => {
     stubViewport({ width: 390, height: 844, coarse: true });
     const onOpenSettings = vi.fn();
     const { container } = render(() => (
-      <Sidebar
-        store={mkStore()}
-        prefs={createPrefsStore()}
-        onOpenSettings={onOpenSettings}
-      />
+      <Sidebar store={mkStore()} prefs={createPrefsStore()} onOpenSettings={onOpenSettings} />
     ));
     const gear = container.querySelector<HTMLButtonElement>(".tl-foot-settings");
     expect(gear).not.toBeNull();
@@ -279,16 +265,14 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
     const at = block.indexOf(".tl-card {");
     expect(at, ".tl-card in the touch block").toBeGreaterThan(-1);
     const rule = block.slice(at, block.indexOf("}", at));
-    expect(rule, "no vertical padding on top of the target").toMatch(
-      /padding:\s*0\s+8px/,
-    );
+    expect(rule, "no vertical padding on top of the target").toMatch(/padding:\s*0\s+8px/);
   });
 
   it("sets 16px on every text input, or iOS zooms the page on focus", () => {
     // Safari zooms when a focused field is under 16px and does not zoom back
     // out, which on the phone layout leaves a list you have to pan sideways.
     const block = touchBlock();
-    for (const sel of [".tl-new-cmd", ".tl-add-input", ".tl-card-rename"]) {
+    for (const sel of [".tl-add-input", ".tl-card-rename"]) {
       expect(block, sel).toContain(sel);
     }
     expect(block).toMatch(/font-size:\s*16px/);
@@ -296,14 +280,11 @@ describe("touch ergonomics — sized for a finger, phone or tablet", () => {
 });
 
 describe("Sidebar — the Skills route the phone needs", () => {
-  const mkStore = () =>
-    createLobbyStore({ initialSelected: null, notify: () => {} });
+  const mkStore = () => createLobbyStore({ initialSelected: null, notify: () => {} });
 
   it("shows no Skills button on a desktop, where the shell bar carries one", () => {
     stubViewport({ width: 1920, height: 1080, coarse: false });
-    const { container } = render(() => (
-      <Sidebar store={mkStore()} prefs={createPrefsStore()} />
-    ));
+    const { container } = render(() => <Sidebar store={mkStore()} prefs={createPrefsStore()} />);
     expect(container.querySelector(".tl-foot-skills")).toBeNull();
   });
 

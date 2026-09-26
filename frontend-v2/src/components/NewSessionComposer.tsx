@@ -1,5 +1,6 @@
 import {
   createEffect,
+  createMemo,
   createSignal,
   For,
   onCleanup,
@@ -19,21 +20,24 @@ import type { NewCommand, PrefsStore } from "../store/prefs";
 import { MAX_TITLE_RUNES } from "../lib/title";
 import {
   canRun,
-  COMMAND_PHRASES,
+  COMMAND_LABELS,
   effectiveCommand,
   NEW_SESSION_COMMANDS as COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
 import {
+  DEFAULT_CHOICE,
+  isOneSessionEffort,
+  labelFor,
   modelHarness,
-  optionsFor,
-  phraseFor,
-  type ModelField,
+  modelName,
   type ModelHarness,
 } from "../lib/models";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
-import { SendArrowIcon } from "./Icons";
+import { DialBar, type DialSpec } from "./Dial";
+import { ModelPanel } from "./ModelPanel";
+import { CheckIcon, SendArrowIcon } from "./Icons";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
@@ -85,18 +89,20 @@ function objectUrl(f: File): string | undefined {
  * from Claude's own summary of the conversation a few seconds later. Until it
  * does, the card reads the first line of what was typed here.
  *
- * Four controls sit on a line above the field, and the line reads as one
- * sentence: "in code · run Claude · claude-opus-5 · max effort". The PROJECT is where the
- * session lands, defaulting to the last one created in and overridable for one
- * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
- * same roamed `session.newCommand` the terminal attach reads, so what is picked
- * here is what starts. The MODEL and the EFFORT belong to whichever CLI the
- * command names — the two share no vocabulary — and leave as `--model` and
- * `--effort` flags on the process the attach starts (lib/terminal-url.ts).
+ * Three dials sit on a line above the field, right-aligned the way the live
+ * composer's are, and built from the same component (Dial.tsx): "project code
+ * · command Claude · model Opus 5.5 · High". The PROJECT is where the session
+ * lands, defaulting to the last one created in and overridable for one create
+ * by the `+` on a sidebar group. The COMMAND is which tool runs, the same
+ * roamed `session.newCommand` the terminal attach reads, so what is picked here
+ * is what starts. The MODEL and the EFFORT share one dial, as they do on the
+ * live composer. Both belong to whichever CLI the command names (the two share
+ * no vocabulary) and leave as `--model` and `--effort` flags on the process the
+ * attach starts (lib/terminal-url.ts).
  *
- * The model is the one value in that sentence with no noun after it. A slug is
- * already unmistakably a model, where "Max" beside "claude-opus-5" would be
- * anybody's guess, so the effort keeps its noun and the model does not.
+ * On a phone the dials open one sheet with a tab each, and a pick leaves it
+ * open, so the project and the model take one visit rather than two. A
+ * popover on a desktop closes on a pick, as the live composer's does.
  *
  * Choosing `shell` turns the box back into a NAME box: a shell has no
  * conversation to prompt or to summarise, and it is the case where someone most
@@ -368,6 +374,140 @@ export const NewSessionComposer: Component<{
     void submit(n, []);
   };
 
+  // ---- the dials ------------------------------------------------------------
+  // Built once each and handed to the bar by reference, every value read
+  // through an accessor, so a pick updates a dial in place rather than
+  // rebuilding it under the reader's finger.
+
+  /** What a pick does to the float: a popover goes away, the phone's sheet
+   *  stays, so a second choice needs no second visit. */
+  const afterPick = (ctx: { close: () => void; sheet: boolean }): (() => void) | undefined =>
+    ctx.sheet ? undefined : ctx.close;
+
+  const projectName = (): string => props.project() || "Ungrouped";
+  const projectDial: DialSpec = {
+    id: "project",
+    label: "project",
+    tab: "Project",
+    title: "Project for new session",
+    value: () => <span class="tl-dial-value">{projectName()}</span>,
+    ariaLabel: () => `Project for new session: ${projectName()}`,
+    hint: () => `Project for the new session: ${projectName()}. ${whereItStarts(props.project())}`,
+    panel: (ctx) => (
+      <div role="radiogroup" aria-label="Project for new session">
+        <ChoiceRow
+          value=""
+          name="Ungrouped"
+          sub={whereItStarts("")}
+          checked={props.project() === ""}
+          onPick={() => pickProject("", ctx)}
+        />
+        <For each={projects()}>
+          {(p) => (
+            <ChoiceRow
+              value={p.name}
+              name={p.name}
+              sub={whereItStarts(p.name)}
+              checked={props.project() === p.name}
+              onPick={() => pickProject(p.name, ctx)}
+            />
+          )}
+        </For>
+      </div>
+    ),
+  };
+  /** A project's row says where its session would start. */
+  function whereItStarts(name: string): string {
+    const dir = dirFor(name);
+    return dir ? `Starts in ${dir}` : "Starts in your home directory";
+  }
+  function pickProject(name: string, ctx: { close: () => void; sheet: boolean }): void {
+    if (name !== props.project()) props.onProject(name);
+    afterPick(ctx)?.();
+  }
+
+  const commandDial: DialSpec = {
+    id: "command",
+    label: "command",
+    tab: "Command",
+    title: "Command for new session",
+    value: () => <span class="tl-dial-value">{COMMAND_LABELS[cmd()]}</span>,
+    ariaLabel: () => `Command for new session: ${COMMAND_LABELS[cmd()]}`,
+    hint: () => `What the new session runs: ${COMMAND_LABELS[cmd()]}`,
+    panel: (ctx) => (
+      <div role="radiogroup" aria-label="Command for new session">
+        <For each={COMMANDS}>
+          {(c) => (
+            <ChoiceRow
+              value={c}
+              name={COMMAND_LABELS[c]}
+              // Greyed out and saying why: a command with nothing behind it
+              // starts a session that closes the moment it opens.
+              sub={canRun(c, avail()) ? undefined : "Not installed on this box"}
+              disabled={!canRun(c, avail())}
+              checked={cmd() === c}
+              onPick={() => {
+                if (c !== cmd()) props.prefs.setPref({ session: { newCommand: c } });
+                afterPick(ctx)?.();
+              }}
+            />
+          )}
+        </For>
+      </div>
+    ),
+  };
+
+  /** The model by name and the effort by label, as the live dial words them.
+   *  An untouched effort is left out rather than read as "Default". */
+  const modelWords = (h: ModelHarness): string => {
+    const c = choice(h);
+    const m = c.model === DEFAULT_CHOICE ? "Default" : modelName(h, c.model);
+    const e = c.effort === DEFAULT_CHOICE ? "" : labelFor(h, "effort", c.effort);
+    return [m, e].filter((w) => w !== "").join(" · ");
+  };
+  /** Under the lists: what the choice does, and when it lasts one session. */
+  const modelNote = (h: ModelHarness): string => {
+    const effort = choice(h).effort;
+    return isOneSessionEffort(h, effort)
+      ? `${labelFor(h, "effort", effort)} lasts this one session. The next one starts on the default again.`
+      : "The new session starts on these.";
+  };
+  const modelDial: DialSpec = {
+    id: "model",
+    label: "model",
+    tab: "Model",
+    title: "Model and effort for new session",
+    value: () => <span class="tl-dial-value">{modelWords(harness() ?? "claude")}</span>,
+    ariaLabel: () => `Model for new session: ${modelWords(harness() ?? "claude")}`,
+    // The exact slug, which the name on the dial shortens.
+    hint: () => {
+      const c = choice(harness() ?? "claude");
+      return `Model and effort for the new session: ${c.model} · ${c.effort}`;
+    },
+    panel: (ctx) => (
+      <Show when={harness()}>
+        {(h) => (
+          <ModelPanel
+            harness={h()}
+            state={choice(h())}
+            busy={false}
+            offerDefault
+            names={{ model: "Model for new session", effort: "Effort for new session" }}
+            note={modelNote(h())}
+            onPick={(field, id) => props.prefs.setPref(modelChoicePatch(h(), field, id))}
+            onDone={afterPick(ctx)}
+          />
+        )}
+      </Show>
+    ),
+  };
+
+  /** A shell has no model and no effort, so it gets no model dial. */
+  const hasModel = createMemo(() => harness() !== null);
+  const dials = createMemo<DialSpec[]>(() =>
+    hasModel() ? [projectDial, commandDial, modelDial] : [projectDial, commandDial],
+  );
+
   return (
     <div class="tl-new-view">
       {/* The SAME bar the session view carries, not a lookalike: same class,
@@ -382,9 +522,10 @@ export const NewSessionComposer: Component<{
       </div>
       <div class="tl-new-composer">
         {/* The choices sit on a line above the box, where the live composer
-            keeps its dials (the Quiet line, 2026-09-24). They are still the
-            four selects here; the dials replace them on this screen next. */}
-        <div class="tl-new-line">{controls()}</div>
+            keeps its dials (the Quiet line, 2026-09-24). */}
+        <div class="tl-new-line">
+          <DialBar dials={dials()} sheetTitle="New session" />
+        </div>
         <Show
           when={!naming()}
           fallback={
@@ -456,75 +597,43 @@ export const NewSessionComposer: Component<{
       </Show>
     </div>
   );
-
-  /** The three choices, shared by both shapes of the box. */
-  function controls(): JSX.Element {
-    return (
-      <>
-        <select
-          class="tl-new-cmd"
-          aria-label="Project for new session"
-          value={props.project()}
-          onChange={(e) => props.onProject(e.currentTarget.value)}
-        >
-          {/* "in <project>" rather than the bare name, so the row reads as
-              one sentence and the name cannot be mistaken for the command or
-              the model beside it. Ungrouped is already a noun and needs no
-              preposition. */}
-          <option value="">Ungrouped</option>
-          <For each={projects()}>{(p) => <option value={p.name}>in {p.name}</option>}</For>
-        </select>
-        <select
-          class="tl-new-cmd"
-          aria-label="Command for new session"
-          value={cmd()}
-          onChange={(e) =>
-            props.prefs.setPref({
-              session: { newCommand: e.currentTarget.value as NewCommand },
-            })
-          }
-        >
-          <For each={COMMANDS}>
-            {(c) => (
-              <option value={c} disabled={!canRun(c, avail())}>
-                {COMMAND_PHRASES[c]}
-                {canRun(c, avail()) ? "" : " (not installed)"}
-              </option>
-            )}
-          </For>
-        </select>
-        {/* A shell has no model and no effort, so it gets neither picker. The
-            two that remain are the CHOSEN CLI's own: `opus` means nothing to
-            codex and `gpt-5.6-terra` means nothing to Claude, so switching
-            command swaps both lists and each keeps its own remembered pick. */}
-        <Show when={harness()}>
-          {(h) => (
-            <>
-              {picker(h(), "model", "Model for new session")}
-              {picker(h(), "effort", "Effort for new session")}
-            </>
-          )}
-        </Show>
-      </>
-    );
-  }
-
-  /** One of the two choices, bound to its harness's own roamed key. */
-  function picker(h: ModelHarness, field: ModelField, label: string): JSX.Element {
-    return (
-      <select
-        class="tl-new-cmd"
-        aria-label={label}
-        value={choice(h)[field]}
-        onChange={(e) => props.prefs.setPref(modelChoicePatch(h, field, e.currentTarget.value))}
-      >
-        <For each={optionsFor(h, field)}>
-          {(o) => <option value={o.id}>{phraseFor(h, field, o.id)}</option>}
-        </For>
-      </select>
-    );
-  }
 };
+
+/**
+ * One row in the project or the command list: a name, a line under it where
+ * there is something to say, and a tick on the chosen one. The model list is
+ * ModelPanel's own.
+ */
+const ChoiceRow: Component<{
+  value: string;
+  name: string;
+  sub?: string;
+  checked: boolean;
+  disabled?: boolean;
+  onPick: () => void;
+}> = (props) => (
+  <button
+    type="button"
+    role="radio"
+    class="tl-pick-row tl-pick-model"
+    data-value={props.value}
+    aria-checked={props.checked}
+    aria-disabled={props.disabled ? "true" : undefined}
+    onClick={() => {
+      if (!props.disabled) props.onPick();
+    }}
+  >
+    <span class="tl-pick-name">{props.name}</span>
+    <span class="tl-pick-tick" aria-hidden="true">
+      <Show when={props.checked}>
+        <CheckIcon />
+      </Show>
+    </span>
+    <Show when={props.sub}>
+      <span class="tl-pick-sub">{props.sub}</span>
+    </Show>
+  </button>
+);
 
 /**
  * Give a just-created session its first prompt.

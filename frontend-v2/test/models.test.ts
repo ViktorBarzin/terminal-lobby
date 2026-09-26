@@ -12,7 +12,6 @@ import {
   labelFor,
   modelsFor,
   modelHarness,
-  phraseFor,
   summarise,
   type ModelHarness,
 } from "../src/lib/models";
@@ -78,17 +77,20 @@ describe("the model catalogue", () => {
   // every later session's default. They stay in the picker and last one
   // session (store/prefs.ts, resetOneSessionEffort). Codex keeps its own.
   it("names the efforts that last one Claude session", () => {
-    expect(effortsFor("claude").filter((e) => isOneSessionEffort("claude", e.id)).map((e) => e.id))
-      .toEqual(["max", "ultracode"]);
+    expect(
+      effortsFor("claude")
+        .filter((e) => isOneSessionEffort("claude", e.id))
+        .map((e) => e.id),
+    ).toEqual(["max", "ultracode"]);
     expect(effortsFor("codex").some((e) => isOneSessionEffort("codex", e.id))).toBe(false);
   });
 
   // Both sides are slugs now, so the ordinary answer is the string comparison.
   it("ticks the row whose slug the session reported", () => {
     expect(isCurrentModel("claude", "claude-opus-5", "claude-opus-5")).toBe(true);
-    expect(
-      isCurrentModel("claude", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001"),
-    ).toBe(true);
+    expect(isCurrentModel("claude", "claude-haiku-4-5-20251001", "claude-haiku-4-5-20251001")).toBe(
+      true,
+    );
     expect(isCurrentModel("claude", "claude-opus-5", "claude-sonnet-5")).toBe(false);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-terra")).toBe(true);
     expect(isCurrentModel("codex", "gpt-5.6-terra", "gpt-5.6-luna")).toBe(false);
@@ -149,27 +151,17 @@ describe("the model catalogue", () => {
     }
   });
 
-  // A settings row sits under a heading that says what it sets. The composer's
-  // controls have no heading — they are a row of bare values read as one
-  // sentence — so an EFFORT carries its noun there and not here.
-  //
-  // A model carries none, in either place. `claude-opus-5` is unmistakably a
-  // model, and the word after it was doing no work.
-  it("says a slug once and gives an effort its noun", () => {
+  // A model's label is its slug: `claude-opus-5` is unmistakably a model.
+  it("says a slug once and an effort by its level", () => {
     expect(labelFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5");
-    expect(phraseFor("claude", "model", "claude-opus-5")).toBe("claude-opus-5");
-    expect(phraseFor("codex", "model", "gpt-5.6-terra")).toBe("gpt-5.6-terra");
     expect(labelFor("claude", "effort", "xhigh")).toBe("Extra high");
-    expect(phraseFor("claude", "effort", "xhigh")).toBe("Extra high effort");
   });
 
-  // The one row that keeps the noun: it has no slug to speak for it, and the
-  // two controls sit side by side. A bare "default" beside "default effort"
-  // does not say which of the two it is answering.
+  // The one row that keeps the noun: it has no slug to speak for it.
   it("keeps the noun on the row that has no slug", () => {
-    expect(phraseFor("claude", "model", "default")).toBe("default model");
-    expect(phraseFor("codex", "model", "default")).toBe("default model");
-    expect(phraseFor("claude", "effort", "default")).toBe("default effort");
+    expect(labelFor("claude", "model", "default")).toBe("Default model");
+    expect(labelFor("codex", "model", "default")).toBe("Default model");
+    expect(labelFor("claude", "effort", "default")).toBe("Default effort");
   });
 
   // Nothing is offered that the account cannot run. claude-fable-5 sat here for
@@ -202,12 +194,8 @@ describe("the model catalogue", () => {
  */
 describe("the chip's summary", () => {
   it("names the model and the effort together", () => {
-    expect(summarise({ model: "claude-opus-5", effort: "max" })).toBe(
-      "claude-opus-5 · max",
-    );
-    expect(summarise({ model: "gpt-5.6-terra", effort: "medium" })).toBe(
-      "gpt-5.6-terra · medium",
-    );
+    expect(summarise({ model: "claude-opus-5", effort: "max" })).toBe("claude-opus-5 · max");
+    expect(summarise({ model: "gpt-5.6-terra", effort: "medium" })).toBe("gpt-5.6-terra · medium");
   });
 
   // The EXACT slug, not the family name. `claude-opus-5` and
@@ -215,9 +203,7 @@ describe("the chip's summary", () => {
   // and the version is the half that a shortened `opus` throws away.
   it("shows the slug the session reported, verbatim", () => {
     expect(summarise({ model: "claude-sonnet-5" })).toBe("claude-sonnet-5");
-    expect(summarise({ model: "claude-haiku-4-5-20251001" })).toBe(
-      "claude-haiku-4-5-20251001",
-    );
+    expect(summarise({ model: "claude-haiku-4-5-20251001" })).toBe("claude-haiku-4-5-20251001");
     expect(summarise({ model: "gpt-5.4-mini" })).toBe("gpt-5.4-mini");
   });
 
@@ -276,7 +262,10 @@ describe("the model a session is on", () => {
   // a reverse open the window arrives newest-first, which would land on the
   // OLDEST of them.
   it("prefers the state frame over a window it already accounts for", () => {
-    const got = currentModel([meta(2, "claude-opus-5"), meta(1, "claude-haiku-4-5")], seed(5, "claude-sonnet-5"));
+    const got = currentModel(
+      [meta(2, "claude-opus-5"), meta(1, "claude-haiku-4-5")],
+      seed(5, "claude-sonnet-5"),
+    );
     expect(got?.model).toBe("claude-sonnet-5");
   });
 

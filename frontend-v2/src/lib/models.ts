@@ -57,38 +57,23 @@ export type ModelField = "model" | "effort";
 /** The id stored and sent for "leave it alone". */
 export const DEFAULT_CHOICE = "default";
 
-/** One option: what goes on the wire, and the two ways it is written. */
+/** One option: what goes on the wire, and how a settings row writes it. */
 export interface ModelOption {
   /** what the CLI's own picker calls it, which is what the driver matches on. */
   readonly id: string;
   /** for a settings row, which already sits under a heading saying what it sets. */
   readonly label: string;
-  /**
-   * for the composer's bare row of values, which has no heading. "code" beside
-   * "Claude" beside "Max" says nothing about which is the project, which is
-   * the command and which is the effort; reading the row as a sentence is what
-   * tells you — "in code · run Claude · claude-opus-5 · max effort".
-   *
-   * A MODEL needs no noun, because a slug is already unmistakably one. The
-   * effort rows do: "Max" beside "claude-opus-5" would be anybody's guess.
-   */
-  readonly phrase: string;
 }
 
-const opt = (id: string, label: string, noun: string): ModelOption => ({
-  id,
-  label,
-  phrase: `${label} ${noun}`,
-});
+const opt = (id: string, label: string): ModelOption => ({ id, label });
 
-/** A model row: the slug, said once, in all three places. */
-const slug = (id: string): ModelOption => ({ id, label: id, phrase: id });
+/** A model row: the slug, said once. */
+const slug = (id: string): ModelOption => ({ id, label: id });
 
-/** The choice that means "no choice", worded for both places it appears. */
+/** The choice that means "no choice". */
 const anyDefault = (noun: string): ModelOption => ({
   id: DEFAULT_CHOICE,
   label: `Default ${noun}`,
-  phrase: `default ${noun}`,
 });
 
 /**
@@ -142,12 +127,12 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
     ],
     effort: [
       anyDefault("effort"),
-      opt("low", "Low", "effort"),
-      opt("medium", "Medium", "effort"),
-      opt("high", "High", "effort"),
-      opt("xhigh", "Extra high", "effort"),
-      opt("max", "Max", "effort"),
-      opt("ultracode", "Ultracode", "effort"),
+      opt("low", "Low"),
+      opt("medium", "Medium"),
+      opt("high", "High"),
+      opt("xhigh", "Extra high"),
+      opt("max", "Max"),
+      opt("ultracode", "Ultracode"),
     ],
   },
   codex: {
@@ -162,12 +147,12 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
     ],
     effort: [
       anyDefault("effort"),
-      opt("low", "Low", "effort"),
-      opt("medium", "Medium", "effort"),
-      opt("high", "High", "effort"),
-      opt("xhigh", "Extra high", "effort"),
-      opt("max", "Max", "effort"),
-      opt("ultra", "Ultra", "effort"),
+      opt("low", "Low"),
+      opt("medium", "Medium"),
+      opt("high", "High"),
+      opt("xhigh", "Extra high"),
+      opt("max", "Max"),
+      opt("ultra", "Ultra"),
     ],
   },
 };
@@ -225,10 +210,6 @@ export function adoptModelId(h: ModelHarness, id: unknown): string | undefined {
  */
 export function labelFor(h: ModelHarness, f: ModelField, id: string): string {
   return CATALOGUE[h][f].find((o) => o.id === id)?.label ?? id;
-}
-
-export function phraseFor(h: ModelHarness, f: ModelField, id: string): string {
-  return CATALOGUE[h][f].find((o) => o.id === id)?.phrase ?? id;
 }
 
 /** Which harness a session's tool is, or null for one with no model to pick. */

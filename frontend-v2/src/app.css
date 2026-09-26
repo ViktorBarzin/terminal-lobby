@@ -1899,15 +1899,24 @@ label.tl-set-row-label {
   margin-left: auto;
   margin-right: auto;
 }
-/* The choices, on a line above the box where the live composer keeps its
-   dials, right-aligned the same way. Still the four selects until the dials
-   reach this screen. */
+/* The dials, on a line above the box where the live composer keeps its own,
+   right-aligned the same way with nothing on their left. The line is what a
+   dial's popover hangs from (Dial.tsx places it against its offsetParent). */
 .tl-new-line {
+  position: relative;
   display: flex;
-  flex-wrap: wrap;
   justify-content: flex-end;
   align-items: center;
-  gap: 6px;
+  min-height: 28px;
+}
+.tl-new-line .tl-dials {
+  min-width: 0;
+}
+/* A long project name gives way before the command and the model do. */
+.tl-new-line .tl-dial[data-dial="project"] .tl-dial-value {
+  max-width: 18ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ---- the new-session composer on a phone --------------------------------
@@ -1915,7 +1924,7 @@ label.tl-set-row-label {
    iPhone Viktor reported from: Attach, the project select, the command select,
    the model select and Send did not fit on one row, and 173px of controls sat
    off the end of a scroller with its scrollbar hidden. Since 2026-09-24 the
-   choices have a line of their own above the pill, which wraps, and Attach and
+   choices are dials on a line of their own above the pill, and Attach and
    Send are in the pill, so nothing shares a row it cannot fit in. */
 @media (pointer: coarse) {
   .tl-new-composer {
@@ -1937,10 +1946,6 @@ label.tl-set-row-label {
   }
   .tl-new-composer > .tl-new-line {
     margin-top: auto;
-  }
-  /* The codebase's own touch floor, which these selects were half of. */
-  .tl-new-composer .tl-new-cmd {
-    min-height: 40px;
   }
   /* Room to write in. A single line under a placeholder read as a caption on
      the card rather than the thing the screen is for. */
@@ -2720,6 +2725,13 @@ label.tl-set-row-label {
 .tl-dial-pop-model {
   width: 292px;
 }
+/* The new-session composer's two others. */
+.tl-dial-pop-project {
+  width: 292px;
+}
+.tl-dial-pop-command {
+  width: 240px;
+}
 .tl-dial-pop-ctx {
   width: 268px;
   padding: 10px 12px;
@@ -2809,6 +2821,11 @@ label.tl-set-row-label {
 .tl-pick-model .tl-pick-tick {
   grid-column: 2;
 }
+/* The line under a row with no icon: a project's directory, a command that is
+   not installed, the default model. */
+.tl-pick-model .tl-pick-sub {
+  grid-column: 1;
+}
 /* The rule before the two modes that ask nothing. */
 .tl-pick-gap {
   height: 1px;
@@ -2846,6 +2863,11 @@ label.tl-set-row-label {
   color: var(--text-primary);
   box-shadow: 0 0 0 1px var(--border-strong);
   font-weight: 560;
+}
+/* The new-session composer's "Default", on a row of its own above the six
+   levels. */
+.tl-effort-seg .tl-effort-default {
+  grid-column: 1 / -1;
 }
 .tl-effort-seg button[aria-disabled="true"] {
   opacity: 0.6;

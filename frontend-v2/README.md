@@ -662,12 +662,15 @@ src/
                          session-poll tick with a 30s floor between reads, and
                          opens Settings → Agent spend when tapped
     NewSessionComposer.tsx
-                         The new-session composer: a prompt field plus the three
-                         choices a create makes — project, command, model. What
-                         you type becomes the session's first prompt; the name
-                         is a minted id and the title is Claude's own summary of
-                         the conversation. Choosing `shell` turns it back into a
-                         name box, because a shell has no prompt to receive
+                         The new-session composer: three dials (project,
+                         command, model with effort) right-aligned on a line
+                         above the prompt pill, on the same DialBar the live
+                         composer uses. On a phone a pick keeps the sheet open,
+                         so two choices take one visit. What you type becomes
+                         the session's first prompt; the name is a minted id and
+                         the title is Claude's own summary of the conversation.
+                         Choosing `shell` swaps the pill for a naming pill and
+                         drops the model dial, since a shell has no prompt
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     menu.logic.ts        PURE placement for a fixed ⋯ popup: which side of the
@@ -728,9 +731,10 @@ src/
                          on the pane
     ModelPanel.tsx       The model dial's list: the running CLI's models by
                          name with the slug under each, and effort as a three
-                         by two control. `default` is not among them: "leave
-                         it alone" answers a question only a session that does
-                         not exist yet can be asked
+                         by two control. `default` is offered only by the
+                         new-session composer: "leave it alone" answers a
+                         question only a session that does not exist yet can
+                         be asked
     ContextPanel.tsx     What fills the context window, behind the context
                          dial. Figures are the CLI's own, because the ceiling
                          is not on the wire and is not a constant

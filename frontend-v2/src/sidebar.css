@@ -391,20 +391,9 @@
   padding: 4px 10px 8px;
   flex: 0 0 auto;
 }
-.tl-new-cmd:focus,
 .tl-add-input:focus {
   outline: 2px solid var(--ring);
   outline-offset: -1px;
-}
-.tl-new-cmd {
-  font: inherit;
-  font-size: 12px;
-  color: var(--text-primary);
-  background: var(--bg-card);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  padding: 0 4px;
-  cursor: pointer;
 }
 .tl-new-btn {
   font: inherit;
@@ -1447,7 +1436,6 @@
      the phone layout means a session list you then have to pan sideways to
      read. The size is the fix; nothing about the field changes visually beyond
      it. (.tl-composer-input already carries this in app.css.) */
-  .tl-new-cmd,
   .tl-add-input,
   .tl-card-rename {
     font-size: 16px;

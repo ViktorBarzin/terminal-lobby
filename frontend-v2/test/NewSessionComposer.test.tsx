@@ -11,7 +11,7 @@
  * with the row they tested; the behaviour they pin (a command with nothing
  * behind it hands back a session that dies on open) is unchanged.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import type { SlashCommand } from "../src/logic/compose.logic";
@@ -184,10 +184,36 @@ const field = (c: HTMLElement) =>
   c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
 const nameBox = (c: HTMLElement) =>
   c.querySelector<HTMLInputElement>('input[aria-label="Name for the new session"]');
-const pick = (c: HTMLElement, label: string) =>
-  c.querySelector<HTMLSelectElement>(`select[aria-label="${label}"]`)!;
-const option = (sel: HTMLSelectElement, value: string) =>
-  Array.from(sel.options).find((o) => o.value === value)!;
+/**
+ * The dial each choice sits on. The effort shares the model's dial, the way
+ * the live composer's model dial carries both.
+ */
+const DIAL_OF: Record<string, string> = {
+  "Project for new session": "project",
+  "Command for new session": "command",
+  "Model for new session": "model",
+  "Effort for new session": "model",
+};
+const dial = (c: HTMLElement, label: string) =>
+  c.querySelector<HTMLButtonElement>(`.tl-dial[data-dial="${DIAL_OF[label]}"]`);
+/** The list a choice is made from, opening its dial first when it is shut. */
+const pick = (c: HTMLElement, label: string): HTMLElement => {
+  const d = dial(c, label)!;
+  if (d.getAttribute("aria-expanded") !== "true") fireEvent.click(d);
+  return c.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${label}"]`)!;
+};
+const option = (list: HTMLElement, value: string) =>
+  list.querySelector<HTMLButtonElement>(`[role="radio"][data-value="${value}"]`)!;
+const values = (list: HTMLElement): (string | null)[] =>
+  Array.from(list.querySelectorAll('[role="radio"]')).map((r) => r.getAttribute("data-value"));
+/** The row the list marks as chosen, by its value. */
+const chosen = (list: HTMLElement): string | null | undefined =>
+  list.querySelector('[role="radio"][aria-checked="true"]')?.getAttribute("data-value");
+const unusable = (row: HTMLElement): boolean => row.getAttribute("aria-disabled") === "true";
+/** Pick a value from a choice's list, the way a click on its row does. */
+const choose = (c: HTMLElement, label: string, value: string): void => {
+  fireEvent.click(option(pick(c, label), value));
+};
 
 const type = (el: HTMLTextAreaElement | HTMLInputElement, text: string) => {
   el.value = text;
@@ -307,8 +333,8 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     await m.store.refresh();
 
     const sel = pick(m.container, "Project for new session");
-    await waitFor(() => expect(sel.value).toBe("beta"));
-    expect(Array.from(sel.options).map((o) => o.value)).toEqual(["", "alpha", "beta"]);
+    await waitFor(() => expect(chosen(sel)).toBe("beta"));
+    expect(values(sel)).toEqual(["", "alpha", "beta"]);
     m.store.dispose();
   });
 
@@ -321,7 +347,7 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     const m = mount(api);
     await m.store.refresh();
 
-    await waitFor(() => expect(pick(m.container, "Project for new session").value).toBe(""));
+    await waitFor(() => expect(chosen(pick(m.container, "Project for new session"))).toBe(""));
     expect(m.prefs.prefs().session.newProject).toBe("deleted");
     m.store.dispose();
   });
@@ -332,7 +358,7 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     const m = mount(api);
     await m.store.refresh();
 
-    fireEvent.change(pick(m.container, "Project for new session"), { target: { value: "alpha" } });
+    choose(m.container, "Project for new session", "alpha");
     expect(m.prefs.prefs().session.newProject).toBe("alpha");
 
     type(field(m.container)!, "Fix the deploy");
@@ -356,7 +382,7 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     await m.store.refresh();
 
     m.setPreset("beta");
-    await waitFor(() => expect(pick(m.container, "Project for new session").value).toBe("beta"));
+    await waitFor(() => expect(chosen(pick(m.container, "Project for new session"))).toBe("beta"));
 
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
@@ -375,7 +401,7 @@ describe("<NewSessionComposer> — the project it creates in", () => {
     await m.store.refresh();
 
     m.setPreset("beta");
-    await waitFor(() => expect(pick(m.container, "Project for new session").value).toBe("beta"));
+    await waitFor(() => expect(chosen(pick(m.container, "Project for new session"))).toBe("beta"));
     m.store.dispose();
   });
 });
@@ -422,7 +448,7 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     await m.store.refresh();
     await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
 
-    fireEvent.change(pick(m.container, "Project for new session"), { target: { value: "beta" } });
+    choose(m.container, "Project for new session", "beta");
     await waitFor(() =>
       expect(api.prewarmed).toEqual(["/home/wizard/code/alpha", "/home/wizard/code/beta"]),
     );
@@ -527,9 +553,12 @@ describe("<NewSessionComposer> — the command it runs", () => {
     const m = mount(new FakeApi(), { claude: true, codex: false, shell: true });
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
-    expect(option(sel, "codex").disabled).toBe(true);
-    expect(option(sel, "claude").disabled).toBe(false);
-    expect(option(sel, "shell").disabled).toBe(false);
+    expect(unusable(option(sel, "codex"))).toBe(true);
+    expect(unusable(option(sel, "claude"))).toBe(false);
+    expect(unusable(option(sel, "shell"))).toBe(false);
+    // And a press on it changes nothing.
+    fireEvent.click(option(sel, "codex"));
+    expect(m.prefs.prefs().session.newCommand).not.toBe("codex");
     m.store.dispose();
   });
 
@@ -538,10 +567,9 @@ describe("<NewSessionComposer> — the command it runs", () => {
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
     expect(option(sel, "codex").textContent).toMatch(/not installed/i);
-    // The runnable one says what it does and nothing more: the composer's
-    // controls carry their own noun (COMMAND_PHRASES), and a suffix here would
+    // The runnable one says what it is and nothing more: a suffix here would
     // mean the box was offering something it cannot start.
-    expect(option(sel, "claude").textContent).toBe("run Claude");
+    expect(option(sel, "claude").textContent).toBe("Claude");
     m.store.dispose();
   });
 
@@ -552,7 +580,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "claude" } }));
     const m = mount(new FakeApi(), { claude: false, codex: false, shell: true });
     await m.store.refresh();
-    await waitFor(() => expect(pick(m.container, "Command for new session").value).toBe("shell"));
+    await waitFor(() => expect(chosen(pick(m.container, "Command for new session"))).toBe("shell"));
     m.store.dispose();
   });
 
@@ -560,7 +588,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "codex" } }));
     const m = mount(new FakeApi(), { claude: true, codex: true, shell: true });
     await m.store.refresh();
-    await waitFor(() => expect(pick(m.container, "Command for new session").value).toBe("codex"));
+    await waitFor(() => expect(chosen(pick(m.container, "Command for new session"))).toBe("codex"));
     m.store.dispose();
   });
 
@@ -571,18 +599,16 @@ describe("<NewSessionComposer> — the command it runs", () => {
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
     for (const v of ["claude", "codex", "shell"]) {
-      expect(option(sel, v).disabled, `${v} disabled`).toBe(false);
+      expect(unusable(option(sel, v)), `${v} disabled`).toBe(false);
     }
-    expect(sel.value).toBe("claude");
+    expect(chosen(sel)).toBe("claude");
     m.store.dispose();
   });
 
-  it("binds the dropdown to the roamed pref", async () => {
+  it("binds the dial to the roamed pref", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Command for new session"), {
-      target: { value: "codex" },
-    });
+    choose(m.container, "Command for new session", "codex");
     expect(m.prefs.prefs().session.newCommand).toBe("codex");
     m.store.dispose();
   });
@@ -596,7 +622,7 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     expect(field(m.container)).toBeNull();
     // Nothing summarises a shell, so there is no model to choose either.
-    expect(m.container.querySelector('select[aria-label="Model for new session"]')).toBeNull();
+    expect(dial(m.container, "Model for new session")).toBeNull();
     m.store.dispose();
   });
 
@@ -648,7 +674,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     const m = mount(new FakeApi());
     await m.store.refresh();
     const sel = pick(m.container, "Model for new session");
-    expect(Array.from(sel.options).map((o) => o.value)).toEqual([
+    expect(values(sel)).toEqual([
       "default",
       "claude-opus-5-5",
       "claude-opus-5",
@@ -657,8 +683,8 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
       "claude-haiku-4-5-20251001",
       "claude-opus-4-8",
     ]);
-    expect(sel.value).toBe("default");
-    fireEvent.change(sel, { target: { value: "claude-sonnet-5" } });
+    expect(chosen(sel)).toBe("default");
+    fireEvent.click(option(sel, "claude-sonnet-5"));
     expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
     m.store.dispose();
   });
@@ -667,16 +693,8 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     const m = mount(new FakeApi());
     await m.store.refresh();
     const sel = pick(m.container, "Effort for new session");
-    expect(Array.from(sel.options).map((o) => o.value)).toEqual([
-      "default",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-      "max",
-      "ultracode",
-    ]);
-    fireEvent.change(sel, { target: { value: "xhigh" } });
+    expect(values(sel)).toEqual(["default", "low", "medium", "high", "xhigh", "max", "ultracode"]);
+    fireEvent.click(option(sel, "xhigh"));
     expect(m.prefs.prefs().session.newEffort).toBe("xhigh");
     m.store.dispose();
   });
@@ -686,13 +704,9 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
   it("swaps both lists for codex's own when the command changes", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Command for new session"), {
-      target: { value: "codex" },
-    });
+    choose(m.container, "Command for new session", "codex");
 
-    expect(
-      Array.from(pick(m.container, "Model for new session").options).map((o) => o.value),
-    ).toEqual([
+    expect(values(pick(m.container, "Model for new session"))).toEqual([
       "default",
       "gpt-6-astra",
       "gpt-5.6-sol",
@@ -703,9 +717,7 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
     ]);
     // The ladders differ at the top step alone: ultracode is Claude's, ultra
     // is codex's, and neither CLI accepts the other's.
-    const efforts = Array.from(pick(m.container, "Effort for new session").options).map(
-      (o) => o.value,
-    );
+    const efforts = values(pick(m.container, "Effort for new session"));
     expect(efforts).toContain("ultra");
     expect(efforts).not.toContain("ultracode");
     m.store.dispose();
@@ -716,21 +728,131 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
   it("keeps each harness's choice separately", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "claude-opus-5" },
-    });
-    fireEvent.change(pick(m.container, "Command for new session"), {
-      target: { value: "codex" },
-    });
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "gpt-5.5" },
-    });
-    fireEvent.change(pick(m.container, "Command for new session"), {
-      target: { value: "claude" },
-    });
+    choose(m.container, "Model for new session", "claude-opus-5");
+    choose(m.container, "Command for new session", "codex");
+    choose(m.container, "Model for new session", "gpt-5.5");
+    choose(m.container, "Command for new session", "claude");
 
-    expect(pick(m.container, "Model for new session").value).toBe("claude-opus-5");
+    expect(chosen(pick(m.container, "Model for new session"))).toBe("claude-opus-5");
     expect(m.prefs.prefs().session.newCodexModel).toBe("gpt-5.5");
+    m.store.dispose();
+  });
+});
+
+/**
+ * The choices sit on the same dials as the live composer's (Dial.tsx): a
+ * popover with a fine pointer, one sheet with a tab per dial on a phone. What
+ * is particular to this screen is where they sit and what a pick does to the
+ * sheet (docs/plans/2026-09-24-text-composer-redesign.md, open points 8 and 9).
+ */
+describe("<NewSessionComposer> — the dials", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A coarse pointer, as `(pointer: coarse)` answers on a phone. */
+  const coarse = (): void => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q.includes("coarse"),
+          media: q,
+          addEventListener() {},
+          removeEventListener() {},
+        }) as unknown as MediaQueryList,
+    );
+  };
+
+  // Right-aligned with nothing on their left, like the live composer's dials.
+  // Left-aligned they would read as a sentence, which is what the selects were.
+  it("puts the three dials alone on the line, project then command then model", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const line = m.container.querySelector(".tl-new-line")!;
+    expect(Array.from(line.children).map((el) => el.className)).toEqual(["tl-dials"]);
+    const ids = Array.from(line.querySelectorAll(".tl-dial")).map((d) =>
+      d.getAttribute("data-dial"),
+    );
+    expect(ids).toEqual(["project", "command", "model"]);
+    m.store.dispose();
+  });
+
+  it("keeps each dial's accessible name, followed by what it is set to", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Model for new session", "claude-opus-5-5");
+    choose(m.container, "Effort for new session", "high");
+    expect(dial(m.container, "Project for new session")!.getAttribute("aria-label")).toBe(
+      "Project for new session: Ungrouped",
+    );
+    expect(dial(m.container, "Command for new session")!.getAttribute("aria-label")).toBe(
+      "Command for new session: Claude",
+    );
+    const model = dial(m.container, "Model for new session")!;
+    expect(model.getAttribute("aria-label")).toBe("Model for new session: Opus 5.5 · High");
+    // The name on the dial, the exact slug in its title.
+    expect(model.textContent).toContain("Opus 5.5 · High");
+    expect(model.title).toContain("claude-opus-5-5");
+    m.store.dispose();
+  });
+
+  it("puts the popover away after a pick on a desktop", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Command for new session", "codex");
+    expect(m.container.querySelector(".tl-dial-pop")).toBeNull();
+    m.store.dispose();
+  });
+
+  // Two choices in one visit: the project and the model are usually picked
+  // together, and a sheet that closed after each would mean two trips.
+  it("keeps the phone's sheet open after a pick, so a second choice needs no second visit", async () => {
+    coarse();
+    const api = new FakeApi();
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" }],
+    };
+    const m = mount(api);
+    await m.store.refresh();
+
+    choose(m.container, "Project for new session", "alpha");
+    const sheet = m.container.querySelector(".tl-sheet")!;
+    expect(sheet).not.toBeNull();
+    const tabs = Array.from(sheet.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+    expect(tabs.map((t) => t.textContent)).toEqual(["Project", "Command", "Model"]);
+
+    fireEvent.click(tabs[2]!);
+    fireEvent.click(option(pick(m.container, "Model for new session"), "claude-sonnet-5"));
+    fireEvent.click(option(pick(m.container, "Effort for new session"), "low"));
+    expect(m.container.querySelector(".tl-sheet")).not.toBeNull();
+    expect(m.prefs.prefs().session.newProject).toBe("alpha");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
+    expect(m.prefs.prefs().session.newEffort).toBe("low");
+    m.store.dispose();
+  });
+
+  it("gives a shell's sheet no model tab", async () => {
+    coarse();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Command for new session", "shell");
+    const tabs = Array.from(
+      m.container.querySelectorAll<HTMLButtonElement>('.tl-sheet [role="tab"]'),
+    );
+    expect(tabs.map((t) => t.textContent)).toEqual(["Project", "Command"]);
+    m.store.dispose();
+  });
+
+  // Max is offered and lasts the one session it was picked for
+  // (resetOneSessionEffort in store/prefs.ts). The list says so before the
+  // pick rather than after the next session starts on high.
+  it("offers max for one session, and says so", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Effort for new session", "max");
+    expect(m.prefs.prefs().session.newEffort).toBe("max");
+    const pop = pick(m.container, "Effort for new session").closest(".tl-dial-pop")!;
+    expect(pop.querySelector(".tl-pick-note")?.textContent).toMatch(/this one session/i);
     m.store.dispose();
   });
 });
@@ -765,10 +887,8 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "claude-sonnet-5" },
-    });
-    fireEvent.change(pick(m.container, "Effort for new session"), { target: { value: "high" } });
+    choose(m.container, "Model for new session", "claude-sonnet-5");
+    choose(m.container, "Effort for new session", "high");
 
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
@@ -787,13 +907,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "claude-haiku-4-5-20251001" },
-    });
-    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
-    fireEvent.change(pick(m.container, "Model for new session"), {
-      target: { value: "gpt-5.6-luna" },
-    });
+    choose(m.container, "Model for new session", "claude-haiku-4-5-20251001");
+    choose(m.container, "Command for new session", "codex");
+    choose(m.container, "Model for new session", "gpt-5.6-luna");
 
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
@@ -810,7 +926,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "shell" } });
+    choose(m.container, "Command for new session", "shell");
 
     type(nameBox(m.container)!, "scratch");
     fireEvent.keyDown(nameBox(m.container)!, { key: "Enter" });
@@ -842,7 +958,7 @@ describe("<NewSessionComposer> — the first prompt", () => {
     const w = emptyWire();
     const m = mount(api, {}, w);
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "codex" } });
+    choose(m.container, "Command for new session", "codex");
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);
 
@@ -1028,9 +1144,7 @@ describe("<NewSessionComposer> — the / menu", () => {
     await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(0));
 
     const before = m.wire.catalogueDirs.length;
-    fireEvent.change(pick(m.container, "Project for new session"), {
-      target: { value: "alpha" },
-    });
+    choose(m.container, "Project for new session", "alpha");
     // A different project is a different .claude/skills, so it re-reads.
     await waitFor(() => expect(m.wire.catalogueDirs.length).toBeGreaterThan(before));
     m.store.dispose();
@@ -1152,9 +1266,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     const api = new FakeApi();
     const m = mount(api, {}, emptyWire());
     await m.store.refresh();
-    fireEvent.change(pick(m.container, "Command for new session"), {
-      target: { value: "shell" },
-    });
+    choose(m.container, "Command for new session", "shell");
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
 
     const e = pasteImage(aFile("pasted.png"));
