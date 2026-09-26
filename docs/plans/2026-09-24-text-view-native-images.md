@@ -177,6 +177,13 @@ if it reads wrong in use.
 - **No server-side resize.** A thumbnail loads the whole image. Lazy loading
   limits that to what is on screen, and Data used will show whether a resize
   step is worth building.
+- **A pasted file's source note leaves no row** (added 2026-09-26, from the
+  desktop check). When a file path is pasted into the terminal, Claude Code
+  attaches the picture to the prompt and then writes an isMeta record
+  `[Image: source: <path>]`. It rendered as a message from Claude, and with
+  paths drawing it showed the pasted picture a second time under the bubble.
+  The normalizer drops a meta record made only of such notes. 5 of the 24
+  transcripts on this box with a terminal paste carry one.
 
 ## How a picture reaches the page
 
