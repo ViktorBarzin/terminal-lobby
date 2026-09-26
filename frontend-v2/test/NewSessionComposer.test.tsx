@@ -444,8 +444,11 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
   // The pool only ever claims a slot for the `claude` key (tmux-user-attach),
   // so a slot warmed for any other command is a ~530MB Claude that sits until
   // the server's TTL collects it.
+  // Pi is not in this list because it cannot be stored as the command: a
+  // stored pi loads as Claude (store/prefs.ts). Moving onto pi in the composer
+  // is the next test.
   it("warms nothing when the command is not Claude", async () => {
-    for (const newCommand of ["pi", "codex", "shell"]) {
+    for (const newCommand of ["codex", "shell"]) {
       localStorage.setItem(
         PREFS_KEY,
         JSON.stringify({ session: { newProject: "alpha", newCommand } }),
@@ -1247,8 +1250,10 @@ describe("<NewSessionComposer> — pi", () => {
     return { asked: () => asked };
   }
 
-  const choosePi = () =>
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "pi" } }));
+  // Picked in the composer, as a person does. A stored pi is not a default any
+  // more (store/prefs.ts, oneSessionCleared): it loads as Claude.
+  const choosePi = (m: { container: HTMLElement }) =>
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "pi" } });
   const values = (sel: HTMLSelectElement) => Array.from(sel.options).map((o) => o.value);
   const hint = (c: HTMLElement) => c.querySelector(".tl-new-hint");
 
@@ -1273,8 +1278,8 @@ describe("<NewSessionComposer> — pi", () => {
 
   it("fills the model menu from pi's own list, after the default", async () => {
     servePiModels({ signedIn: true, models: [row(OPUS), row(MINI)] });
-    choosePi();
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     await waitFor(() =>
       expect(values(pick(m.container, "Model for new session"))).toEqual(["default", OPUS, MINI]),
@@ -1290,14 +1295,15 @@ describe("<NewSessionComposer> — pi", () => {
   // shows up without a reload.
   it("reads the list again each time it opens with pi chosen", async () => {
     const served = servePiModels({ signedIn: true, models: [row(OPUS)] });
-    choosePi();
     const first = mount(new FakeApi());
+    choosePi(first);
     await first.store.refresh();
     await waitFor(() => expect(served.asked()).toBe(1));
     first.store.dispose();
     first.unmount();
 
     const second = mount(new FakeApi());
+    choosePi(second);
     await second.store.refresh();
     await waitFor(() => expect(served.asked()).toBe(2));
     second.store.dispose();
@@ -1323,8 +1329,8 @@ describe("<NewSessionComposer> — pi", () => {
 
   it("offers only the default to someone who has not signed pi in, and says how", async () => {
     servePiModels({ signedIn: false, models: [] });
-    choosePi();
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     await waitFor(() => expect(hint(m.container)).not.toBeNull());
     expect(values(pick(m.container, "Model for new session"))).toEqual(["default"]);
@@ -1336,8 +1342,8 @@ describe("<NewSessionComposer> — pi", () => {
   // somebody off to /login for it would be a wild goose chase.
   it("does not blame the sign-in when the list could not be read", async () => {
     servePiModels({ signedIn: false, models: [], error: "pi --list-models timed out" });
-    choosePi();
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     await waitFor(() =>
       expect(pick(m.container, "Model for new session").getAttribute("title")).toMatch(/timed out/),
@@ -1348,8 +1354,8 @@ describe("<NewSessionComposer> — pi", () => {
 
   it("drops the hint once pi is no longer the command", async () => {
     servePiModels({ signedIn: false, models: [] });
-    choosePi();
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     await waitFor(() => expect(hint(m.container)).not.toBeNull());
     fireEvent.change(pick(m.container, "Command for new session"), {
@@ -1361,8 +1367,8 @@ describe("<NewSessionComposer> — pi", () => {
 
   it("offers pi's seven thinking levels, in pi's words", async () => {
     servePiModels({ signedIn: true, models: [] });
-    choosePi();
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     const sel = pick(m.container, "Effort for new session");
     expect(values(sel)).toEqual([
@@ -1412,11 +1418,9 @@ describe("<NewSessionComposer> — pi", () => {
   // with what starts.
   it("shows a stored pick that the list does not carry", async () => {
     servePiModels({ signedIn: true, models: [row(MINI)] });
-    localStorage.setItem(
-      PREFS_KEY,
-      JSON.stringify({ session: { newCommand: "pi", newPiModel: OPUS } }),
-    );
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newPiModel: OPUS } }));
     const m = mount(new FakeApi());
+    choosePi(m);
     await m.store.refresh();
     await waitFor(() => expect(values(pick(m.container, "Model for new session"))).toContain(MINI));
     const sel = pick(m.container, "Model for new session");
@@ -1427,10 +1431,10 @@ describe("<NewSessionComposer> — pi", () => {
 
   it("asks the server to wait for pi, and says it is pi", async () => {
     servePiModels({ signedIn: true, models: [] });
-    choosePi();
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
+    choosePi(m);
     await m.store.refresh();
     type(field(m.container)!, "Fix the deploy");
     enter(field(m.container)!);

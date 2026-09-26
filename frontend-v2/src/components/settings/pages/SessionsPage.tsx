@@ -3,6 +3,11 @@ import { NEW_COMMANDS, type NewCommand, type PrefsStore } from "../../../store/p
 import { canRun, COMMAND_LABELS, type CommandAvailability } from "../../../lib/new-commands";
 import { Group, Row, Toggle } from "../controls";
 
+// Every command but pi can be the default. Claude stays the default harness
+// (Viktor, 2026-09-26), and a pi pick in the composer lasts one session
+// (store/prefs.ts, oneSessionCleared), so pi offered here could never stick.
+const DEFAULT_COMMANDS = NEW_COMMANDS.filter((c) => c !== "pi");
+
 /** What a new session starts as, and what the sidebar tells you about the ones
  *  you already have.
  *
@@ -33,7 +38,7 @@ export const SessionsPage: Component<{
             })
           }
         >
-          <For each={NEW_COMMANDS}>
+          <For each={DEFAULT_COMMANDS}>
             {(c) => (
               <option value={c} disabled={!canRun(c, avail())}>
                 {COMMAND_LABELS[c]}

@@ -379,6 +379,68 @@ describe("resetOneSessionEffort — a max pick lasts one session", () => {
   });
 });
 
+// Claude stays the default harness (Viktor, 2026-09-26: "let's keep Claude as
+// default harness, don't change to pi"). Picking pi in the composer starts that
+// one session on pi, and the next new session is Claude again. Pi's max
+// thinking level follows the Claude max rule above.
+describe("resetOneSessionEffort — a pi pick lasts one session", () => {
+  beforeEach(() => localStorage.clear());
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  const mount = () =>
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      const [creating, setCreating] = createSignal(false);
+      resetOneSessionEffort(creating, store);
+      return {
+        store,
+        setCreating,
+        done: () => {
+          store.dispose();
+          dispose();
+        },
+      };
+    });
+
+  it("goes back to Claude once the pi session exists, and pi's max to default", () => {
+    const m = mount();
+    m.store.setPref({ session: { newCommand: "pi", newPiEffort: "max" } });
+    m.setCreating(true);
+    // The attach is still to read both.
+    expect(m.store.prefs().session.newCommand).toBe("pi");
+    expect(m.store.prefs().session.newPiEffort).toBe("max");
+    m.setCreating(false);
+    expect(m.store.prefs().session.newCommand).toBe("claude");
+    expect(m.store.prefs().session.newPiEffort).toBe("default");
+    m.done();
+  });
+
+  it("reads a saved pi command, and pi's max, as no choice when the doc is loaded", () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({
+        session: { newCommand: "pi", newPiEffort: "max", newPiModel: "anthropic/claude-opus-5-5" },
+      }),
+    );
+    const m = mount();
+    expect(m.store.prefs().session.newCommand).toBe("claude");
+    expect(m.store.prefs().session.newPiEffort).toBe("default");
+    // The model a person picked for pi is still theirs for the next pi session.
+    expect(m.store.prefs().session.newPiModel).toBe("anthropic/claude-opus-5-5");
+    m.done();
+  });
+
+  it.each(["codex", "shell"])("leaves %s sticky", (cmd) => {
+    const m = mount();
+    m.store.setPref({ session: { newCommand: cmd as "codex" | "shell", newPiEffort: "high" } });
+    m.setCreating(true);
+    m.setCreating(false);
+    expect(m.store.prefs().session.newCommand).toBe(cmd);
+    expect(m.store.prefs().session.newPiEffort).toBe("high");
+    m.done();
+  });
+});
+
 describe("createPrefsStore — persistence + local-wins adoption", () => {
   beforeEach(() => localStorage.clear());
 

@@ -16,7 +16,7 @@ code before any of it was written.
 | Install | Machine-wide npm global, latest release, refreshed by the daily agent updater. Pi's phone-home defaults (install report, version check, model catalogue) stay on. |
 | Org policy | The lobby extension appends `/etc/pi/org-policy.md`, the same text Claude and Codex receive, to pi's system prompt on every turn. |
 | Personal instructions | `~/.pi/agent/AGENTS.md` links to `~/.agents/AGENTS.md`. Skills load from `~/.agents/skills`, which pi reads without setup, and that folder already holds all of Viktor's skills. |
-| Lobby | Pi in the new-session composer with a first prompt, a π mark in the sidebar, a model and thinking picker, the running/idle dot, and its own section on Agent spend. |
+| Lobby | Pi in the new-session composer with a first prompt, a π mark in the sidebar, a model and thinking picker, the running/idle dot, and its own section on Agent spend. Claude stays the default harness (Viktor, 2026-09-26): picking pi in the composer applies to that one session, and Settings does not offer pi as the default. |
 | Hooks | None of Claude's hooks are ported (memory recall, unslop check, OTel telemetry). |
 | Same as Codex | No text view timeline, agent-api, pre-warm pool, idle suspend or restore after kill for pi. A pi session's title comes from its first prompt line. The container image does not ship pi. |
 
