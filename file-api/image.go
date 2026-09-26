@@ -69,8 +69,10 @@ func isSVGPath(p string) bool { return strings.EqualFold(filepath.Ext(p), ".svg"
 // handleImage serves one picture, inline for the service's own user and
 // through the privileged child for everyone else.
 func handleImage(w http.ResponseWriter, r *http.Request) {
+	// no-store goes on first, so every refusal carries it, the identity ones
+	// the shared gate writes included. writeImage replaces it on a picture.
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodGet {
-		w.Header().Set("Cache-Control", "no-store")
 		methodNotAllowed(w, http.MethodGet)
 		return
 	}

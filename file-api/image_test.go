@@ -312,18 +312,23 @@ func TestImageEmitsNoUsageEvent(t *testing.T) {
 	}
 }
 
+// Identity refusals are errors like any other, so they carry no-store too: the
+// contract says every error does, and a refusal cached while a login was
+// stale would keep the path showing as text after the login was fixed.
+// Measured live on 2026-09-26: the 401 and 403 went out without it.
 func TestImageGuardsMethodAndIdentity(t *testing.T) {
 	setupUser(t)
 	rec := httptest.NewRecorder()
 	handleImage(rec, req(t, http.MethodPost, "/files/image?path=/tmp/a.png", nil, true))
-	if rec.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("POST: status %d, want 405", rec.Code)
-	}
+	wantStatus(t, rec, http.StatusMethodNotAllowed, "POST")
 	rec = httptest.NewRecorder()
 	handleImage(rec, req(t, http.MethodGet, "/files/image?path=/tmp/a.png", nil, false))
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("no identity: status %d, want 401", rec.Code)
-	}
+	wantStatus(t, rec, http.StatusUnauthorized, "no identity")
+	r := req(t, http.MethodGet, "/files/image?path=/tmp/a.png", nil, false)
+	r.Header.Set(authHeader, "nobody-mapped")
+	rec = httptest.NewRecorder()
+	handleImage(rec, r)
+	wantStatus(t, rec, http.StatusForbidden, "unmapped identity")
 }
 
 // --- the privileged leg ------------------------------------------------------
