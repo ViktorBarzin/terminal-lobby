@@ -795,6 +795,37 @@ describe("<NewSessionComposer> — the dials", () => {
     m.store.dispose();
   });
 
+  // The composer scrolls (overflow-y: auto), so a popover taller than the room
+  // above its dial is cut off at the composer's top, under the session bar.
+  // Measured at 1280x800: the project list lost its Ungrouped row.
+  it("caps a popover at the room above its dial inside the composer", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const at =
+      (top: number) =>
+      (): DOMRect =>
+        ({ top, bottom: top + 28, left: 340, right: 1200, width: 860, height: 28 }) as DOMRect;
+    m.container.querySelector<HTMLElement>(".tl-new-view")!.getBoundingClientRect = at(0);
+    m.container.querySelector<HTMLElement>(".tl-new-composer")!.getBoundingClientRect = at(80);
+    const d = dial(m.container, "Model for new session")!;
+    d.getBoundingClientRect = at(402);
+    // jsdom lays nothing out, so every offsetParent is null and the popover
+    // would never be placed at all.
+    const parent = vi
+      .spyOn(HTMLElement.prototype, "offsetParent", "get")
+      .mockImplementation(function (this: HTMLElement) {
+        return this.parentElement;
+      });
+    fireEvent.click(d);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(m.container.querySelector<HTMLElement>(".tl-dial-pop")!.style.maxHeight).toBe(
+      `${402 - 80 - 12}px`,
+    );
+    parent.mockRestore();
+    m.store.dispose();
+  });
+
   it("puts the popover away after a pick on a desktop", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();

@@ -197,7 +197,8 @@ export const DialBar: Component<{
    *
    * Measured once it is in the document, which is the only time its width is
    * known. The cap matters in a workspace tile, where the pane above a dial can
-   * be shorter than the mode list's 386px.
+   * be shorter than the mode list's 386px, and in the new-session composer,
+   * whose own scroller would otherwise cut the list off under the session bar.
    */
   const placePop = (): void => {
     const d = open();
@@ -209,7 +210,7 @@ export const DialBar: Component<{
     const w = popEl.offsetWidth;
     let right = Math.max(0, box.right - at.right - 4);
     if (box.width - right - w < 0) right = Math.max(0, box.width - w);
-    const view = root?.closest(".tl-textview, .tl-new-view");
+    const view = root?.closest(".tl-textview, .tl-new-composer");
     const top = view ? view.getBoundingClientRect().top : 0;
     setPlace({ right: `${right}px`, "max-height": `${Math.max(160, at.top - top - 12)}px` });
   };
