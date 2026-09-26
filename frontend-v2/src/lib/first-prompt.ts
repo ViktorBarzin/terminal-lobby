@@ -1,5 +1,6 @@
 import { promptUrl } from "./config";
 import { fetchWithDeadline } from "./http";
+import type { ModelHarness } from "./models";
 
 /**
  * Delivering the first prompt of a session the composer just created.
@@ -68,18 +69,51 @@ export interface DeliverFirstPromptOptions {
    * pane drawing Claude's `❯` and then holding still — so it reads the input
    * line rather than guessing from anything the browser can see.
    *
-   * Only for a command that draws that prompt, which is Claude. Asking for it
-   * where nothing will ever draw one would spend every rung waiting and then
-   * give up with the text unsent, so a caller starting something else leaves
-   * this off and takes the ladder alone.
+   * Only for a command that draws something the server can wait on, which is
+   * Claude and pi (see `firstPromptDelivery`). Asking for it where nothing will
+   * ever draw one would spend every rung waiting and then give up with the text
+   * unsent, so a caller starting something else leaves this off and takes the
+   * ladder alone.
    */
   awaitReady?: boolean;
+  /**
+   * Which harness the session runs, for a server that has to know. Absent is
+   * Claude, which is what session-events has always assumed; pi says so,
+   * because the wait reads a different thing off its pane.
+   */
+  tool?: "pi";
   ladder?: readonly number[];
   gapMs?: number;
   /** injectable for tests; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
   /** injectable for tests; defaults to a deadlined same-origin fetch. */
   fetchImpl?: typeof fetch;
+}
+
+/**
+ * How the first prompt of a session running harness `h` asks to be delivered
+ * (null for a command that is not a harness).
+ *
+ * Claude and pi both draw something the server can wait for, so both ask for
+ * the wait. What they draw differs: Claude's input line shows its `❯`, and pi
+ * sets its pane title to `π - …` once startup and any "Trust project folder?"
+ * question are over. So pi's prompt names the harness, and Claude's leaves the
+ * field out, which the server has always read as Claude. Codex draws nothing
+ * the server waits on.
+ */
+export function firstPromptDelivery(h: ModelHarness | null): {
+  awaitReady: boolean;
+  tool?: "pi";
+} {
+  switch (h) {
+    case "claude":
+      return { awaitReady: true };
+    case "pi":
+      return { awaitReady: true, tool: "pi" };
+    case "codex":
+    case null:
+      return { awaitReady: false };
+  }
 }
 
 /** What one POST /prompt means for whether to try again. */
@@ -89,13 +123,14 @@ async function post(
   session: string,
   text: string,
   awaitReady: boolean,
+  tool: "pi" | undefined,
   fetchImpl: typeof fetch,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, awaitReady }),
+      body: JSON.stringify(tool ? { text, awaitReady, tool } : { text, awaitReady }),
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
@@ -126,9 +161,7 @@ async function post(
  * text is better sent there than dropped, and it is the operator who can see
  * both.
  */
-export async function deliverFirstPrompt(
-  o: DeliverFirstPromptOptions,
-): Promise<boolean> {
+export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<boolean> {
   const lines = o.lines.filter((l) => l !== "");
   if (lines.length === 0) return true;
 
@@ -147,7 +180,7 @@ export async function deliverFirstPrompt(
     await sleep(ladder[rung]!);
     const wait = (o.awaitReady ?? false) && rung < ladder.length - 1;
     while (sent < lines.length) {
-      const r = await post(o.session, lines[sent]!, wait, fetchImpl);
+      const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl);
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line
       sent += 1;

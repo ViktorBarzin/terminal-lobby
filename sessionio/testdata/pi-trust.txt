@@ -1,0 +1,28 @@
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+ Trust project folder?
+ /home/wizard/code/example
+
+ This allows pi to load .pi settings and resources, install missing project packages, and execute project
+ extensions.
+
+ → Trust
+   Trust parent folder (/home/wizard/code)
+   Trust (this session only)
+   Do not trust
+   Do not trust (this session only)
+
+ ↑↓ navigate  enter select  escape/ctrl+c cancel
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
+
+

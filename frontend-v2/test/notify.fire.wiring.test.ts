@@ -19,12 +19,12 @@ const h = vi.hoisted(() => {
     permission: "granted",
     requestPermission: () => Promise.resolve("granted"),
   });
-  return { fired: [] as { session: string; label: string; kind: string }[] };
+  return { fired: [] as { session: string; label: string; kind: string; tool?: string }[] };
 });
 
 vi.mock("../src/notify/fire", () => ({
-  fireNotification: (session: string, label: string, kind: string) => {
-    h.fired.push({ session, label, kind });
+  fireNotification: (session: string, label: string, kind: string, opts?: { tool?: string }) => {
+    h.fired.push({ session, label, kind, tool: opts?.tool });
     return Promise.resolve();
   },
 }));
@@ -94,8 +94,19 @@ describe("what a page-fired banner calls a session", () => {
     app.setSessions([{ name: "6j0wjvxxf7e5", title: "Restore feature", state: "done" }]);
     await settle();
 
+    expect(h.fired).toEqual([{ session: "6j0wjvxxf7e5", label: "Restore feature", kind: "done" }]);
+    app.dispose();
+  });
+
+  // The body names the harness, so the banner has to be told which one runs.
+  it("hands the banner the session's harness", async () => {
+    const app = mount([{ name: "p1p2p3p4p5p6", title: "Pi work", state: "running", tool: "pi" }]);
+    await settle();
+    app.setSessions([{ name: "p1p2p3p4p5p6", title: "Pi work", state: "done", tool: "pi" }]);
+    await settle();
+
     expect(h.fired).toEqual([
-      { session: "6j0wjvxxf7e5", label: "Restore feature", kind: "done" },
+      { session: "p1p2p3p4p5p6", label: "Pi work", kind: "done", tool: "pi" },
     ]);
     app.dispose();
   });
@@ -108,9 +119,7 @@ describe("what a page-fired banner calls a session", () => {
     app.setSessions([{ name: "4txnmy85ftja", state: "awaiting" }]);
     await settle();
 
-    expect(h.fired).toEqual([
-      { session: "4txnmy85ftja", label: "4txnmy85ftja", kind: "awaiting" },
-    ]);
+    expect(h.fired).toEqual([{ session: "4txnmy85ftja", label: "4txnmy85ftja", kind: "awaiting" }]);
     app.dispose();
   });
 });

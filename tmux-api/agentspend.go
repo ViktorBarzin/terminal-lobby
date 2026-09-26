@@ -18,14 +18,16 @@ import (
 // GET /agent-spend answers "what have my agents consumed", for the Settings
 // page and the figure beside the gear.
 //
-// The two tools report different things and the response says so rather than
+// The harnesses report different things and the response says so rather than
 // forcing them into one shape. Claude Code computes dollars and this service
 // reads them back from the store the statusLine recorder writes
-// (/var/lib/tmux-api/spend/<user>.json). Codex reports no cost on a ChatGPT
+// (/var/lib/tmux-api/spend/<user>.json). Pi computes dollars too, and the
+// lobby's pi extension posts them into the same store, so its section has
+// exactly the Claude section's shape. Codex reports no cost on a ChatGPT
 // plan, so its half is rate-limit windows and tokens, read straight out of the
-// rollout files the CLI already writes. A tool the user has never run has no
-// section at all, which is what lets the page leave a heading out rather than
-// draw one full of zeroes.
+// rollout files the CLI already writes. A harness the user has never run has
+// no section at all, which is what lets the page leave a heading out rather
+// than draw one full of zeroes.
 //
 // The two halves are also independent in failure: a codex read that goes wrong
 // is logged and its section omitted, because the Claude half is still worth
@@ -39,8 +41,8 @@ import (
 // the sidebar shows and the one most people open the page for.
 const spendPeriodParam = "period"
 
-// spendToolParam narrows the answer to one tool's section. Absent means both,
-// which is what the Settings page wants. The sidebar figure follows the
+// spendToolParam narrows the answer to one tool's section. Absent means all of
+// them, which is what the Settings page wants. The sidebar figure follows the
 // attached session's tool and reads a single number out of a single section, so
 // it names the tool and the other half is neither read nor sent — the Codex
 // half walks rollout files and shells out to tmux, and that figure is polled
@@ -97,11 +99,17 @@ type agentSpendBody struct {
 	Period string              `json:"period"`
 	Claude *claudeSpendSection `json:"claude,omitempty"`
 	Codex  *codexSpendSection  `json:"codex,omitempty"`
+	// Pi is the same shape as Claude, built from the store's pi rows. Pi prices
+	// tokens from its own catalogue, so the figure is pi's estimate rather than
+	// what a seat is billed.
+	Pi *claudeSpendSection `json:"pi,omitempty"`
 }
 
 // claudeSpendSection is spend, because that is the figure Claude Code computes
-// for itself. Windows are present only for a seat whose statusLine payload
-// carried rate_limits, which is Pro and Max and not enterprise.
+// for itself, and the figure pi computes for itself: the Pi section uses this
+// shape too. Windows are present only for a Claude seat whose statusLine
+// payload carried rate_limits, which is Pro and Max and not enterprise, and
+// never in the Pi section, since those windows describe the Claude seat.
 type claudeSpendSection struct {
 	CostUSD  float64              `json:"costUsd"`
 	Tokens   spendstore.Tokens    `json:"tokens"`
@@ -224,6 +232,9 @@ func handleAgentSpend(w http.ResponseWriter, r *http.Request) {
 	if tool == "" || tool == sessionio.HarnessCodex {
 		body.Codex = codexSpendFor(osUser, now)
 	}
+	if tool == "" || tool == sessionio.HarnessPi {
+		body.Pi = storeSpendFor(doc, sessionio.HarnessPi, period, now)
+	}
 
 	// Same no-store rationale as /prefs and /sessions: a figure the user just
 	// watched move must not be served from the browser's cache.
@@ -234,13 +245,13 @@ func handleAgentSpend(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// parseSpendTool reads the tool filter. "" is both sections. Anything the
+// parseSpendTool reads the tool filter. "" is every section. Anything the
 // panel cannot draw is a caller's mistake rather than a reason to answer with
 // everything, the same gate ParsePeriod is: a shell spends nothing, and
-// answering "shell" with both sections would be answering a different question.
+// answering "shell" with every section would be answering a different question.
 func parseSpendTool(raw string) (sessionio.Harness, bool) {
 	switch sessionio.Harness(raw) {
-	case "", sessionio.HarnessClaude, sessionio.HarnessCodex:
+	case "", sessionio.HarnessClaude, sessionio.HarnessCodex, sessionio.HarnessPi:
 		return sessionio.Harness(raw), true
 	}
 	return "", false
@@ -255,7 +266,18 @@ func parseSpendTool(raw string) (sessionio.Harness, bool) {
 // rather than watching the page disappear when they pick Today, which would
 // read as a bug rather than as an answer.
 func claudeSpendFor(doc spendstore.Doc, period spendstore.Period, now time.Time) *claudeSpendSection {
-	if !docHasTool(doc, sessionio.HarnessClaude) {
+	out := storeSpendFor(doc, sessionio.HarnessClaude, period, now)
+	if out != nil {
+		out.Windows = liveWindows(doc.Windows, now)
+	}
+	return out
+}
+
+// storeSpendFor builds a section from the store's rows for one harness, or nil
+// when the user has never run it: the Claude section's figures without its
+// windows, which is the whole of the Pi section.
+func storeSpendFor(doc spendstore.Doc, tool sessionio.Harness, period spendstore.Period, now time.Time) *claudeSpendSection {
+	if !docHasTool(doc, tool) {
 		return nil
 	}
 	out := &claudeSpendSection{
@@ -263,13 +285,13 @@ func claudeSpendFor(doc spendstore.Doc, period spendstore.Period, now time.Time)
 		Sessions: []claudeSpendSession{},
 	}
 	for _, t := range doc.TotalsFor(period, now) {
-		if t.Tool != sessionio.HarnessClaude {
+		if t.Tool != tool {
 			continue
 		}
 		out.CostUSD, out.Tokens = t.CostUSD, t.Tokens
 	}
 	for _, m := range doc.ModelsFor(period, now) {
-		if m.Tool != sessionio.HarnessClaude {
+		if m.Tool != tool {
 			continue
 		}
 		out.Models = append(out.Models, spendModelRow{Model: m.Model, Tokens: m.Tokens, CostUSD: m.CostUSD})
@@ -278,7 +300,7 @@ func claudeSpendFor(doc spendstore.Doc, period spendstore.Period, now time.Time)
 	// resumed conversation is differenced rather than counted twice, and those
 	// carry no name or model to show.
 	for _, s := range spendstore.LiveRows(doc.Sessions) {
-		if s.Tool != sessionio.HarnessClaude {
+		if s.Tool != tool {
 			continue
 		}
 		if !period.CoversTime(time.Unix(s.LastSeen, 0), now) {
@@ -304,7 +326,6 @@ func claudeSpendFor(doc spendstore.Doc, period spendstore.Period, now time.Time)
 		}
 		return out.Sessions[i].SessionID < out.Sessions[j].SessionID
 	})
-	out.Windows = liveWindows(doc.Windows, now)
 	return out
 }
 

@@ -52,7 +52,13 @@ import { isEditingTarget } from "../keybindings/editing";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
-import { isCurrentModel, type ModelField, type ModelHarness, type ModelState } from "../lib/models";
+import {
+  isCurrentModel,
+  type ModelField,
+  type ModelHarness,
+  type ModelState,
+  type PiOffer,
+} from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
 
 /**
@@ -177,6 +183,13 @@ export const TextView: Component<{
   harness?: ModelHarness | null;
   /** put the session on a model or an effort level, and say what happened. */
   onSetModel?: (choice: { model: string; effort: string }) => Promise<SetModelResult>;
+  /** what a pi session stamped about itself (the session list's `piModel` and
+   *  `piThinking`). Read when the transcript names no model, which for a pi
+   *  session is always: the lobby reads no pi transcript. */
+  stampedModel?: ModelState;
+  /** pi's rows for the chip: the models pi lists and the levels the session's
+   *  model supports. Absent for every other harness. */
+  modelOffer?: PiOffer;
   /** the effective OS user — decides which store paths render as attachments. */
   me?: string;
   /** upload files and return the ones that became attachable. */
@@ -877,8 +890,15 @@ export const TextView: Component<{
    * the session next answered. The APPLY reports what the session said about
    * itself immediately afterwards, and that reading holds until the transcript
    * reports a pair of its own.
+   *
+   * A pi session has no transcript here, so its STAMP stands in for one: the
+   * pair the lobby's pi extension writes on the pane whenever the model or the
+   * level changes. An apply holds until the stamp moves, exactly as it would
+   * wait for the transcript.
    */
-  const transcriptModel = createMemo(() => currentModel(props.events, props.sessionState));
+  const transcriptModel = createMemo(
+    () => currentModel(props.events, props.sessionState) ?? props.stampedModel,
+  );
   const [appliedModel, setAppliedModel] = createSignal<{
     state: ModelState;
     against: string;
@@ -1100,7 +1120,7 @@ export const TextView: Component<{
         {...(props.onKeys ? { mode: mode(), onCycleMode: cycleMode } : {})}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel
-          ? { harness: props.harness, onPickModel: pickModel }
+          ? { harness: props.harness, onPickModel: pickModel, modelOffer: props.modelOffer }
           : {})}
         {...(modelState() ? { model: modelState()! } : {})}
         modelBusy={modelBusy()}

@@ -27,7 +27,7 @@ import (
 
 // builtinCommandKeys mirrors BUILTIN_KEYS in devvm/tmux-user-attach. The script
 // is the source of truth; newcommands_test.go fails if the two drift.
-var builtinCommandKeys = []string{"claude", "codex", "shell"}
+var builtinCommandKeys = []string{"claude", "codex", "pi", "shell"}
 
 // attachScript is the probe's home. A var so a test can point it elsewhere.
 var attachScript = "/usr/local/bin/tmux-user-attach"

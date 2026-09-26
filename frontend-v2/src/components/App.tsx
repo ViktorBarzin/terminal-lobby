@@ -695,7 +695,7 @@ export const App: Component = () => {
   // What the Skills group needs to say which sessions still run an older skill
   // set: the live list, name and Claude state only.
   const skillSessions = createMemo(() =>
-    store.sessions.map((s) => ({ name: s.name, state: s.state || "" })),
+    store.sessions.map((s) => ({ name: s.name, state: s.state || "", tool: s.tool })),
   );
   // What the Agent spend page needs to name a row: a session's title, keyed by
   // the name the spend store recorded it under. A name is an id and nobody
@@ -766,6 +766,8 @@ export const App: Component = () => {
       title: s.title,
       state: s.state,
       pane_current_command: s.pane_current_command,
+      // Which harness, so a page-fired banner names pi as pi.
+      tool: s.tool,
       // Only set for a session shared with you. The badge leaves those out.
       owner: s.owner,
     })),
@@ -2807,6 +2809,18 @@ export const App: Component = () => {
                       newCommand={newCommand}
                       newLaunch={newLaunch}
                       tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
+                      // What a pi session stamped about its model, which is
+                      // all its chip has to read. By key, like the size above.
+                      piStamp={() => {
+                        const s = tileSession();
+                        return (
+                          s && {
+                            piModel: s.piModel,
+                            piThinking: s.piThinking,
+                            piLevels: s.piLevels,
+                          }
+                        );
+                      }}
                       prefs={prefs}
                       notify={notify}
                       overlayOpen={overlayOpen}

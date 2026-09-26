@@ -231,9 +231,12 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
-    models.ts            The model and effort catalogue, per harness: Claude
-                         and codex share no vocabulary, and their effort
-                         ladders differ at the top step (ultracode / ultra).
+    models.ts            The model and effort catalogue, per harness: Claude,
+                         codex and pi share no vocabulary, and their effort
+                         ladders differ at the ends (ultracode / ultra at the
+                         top, pi's off / minimal at the bottom). Pi's models
+                         are not written down: they come from pi-models.ts and
+                         are checked by the shape of a `provider/id` reference.
                          Neither setting is a launch flag — a per-model command
                          key would miss the pre-warm pool and give up Claude's
                          ~2.4s boot on every model but the default
@@ -242,6 +245,12 @@ src/
                          reply is what the session reports afterwards rather
                          than an echo, because an effort change can be refused
                          without anything failing
+    pi-models.ts         The models a pi session can start on, per OS user:
+                         GET /pi-models is `pi --list-models` run as the user,
+                         filtered by their enabledModels (ADR-0032). One copy
+                         per page, read again when the composer opens with pi
+                         chosen; callers asking at once share one read, and a
+                         failed read keeps the last answer
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
@@ -250,7 +259,9 @@ src/
                          can take it (503 while it cannot), on top of the
                          700/1600/3000/6000 ladder, resuming at the line that
                          did not land. The last rung asks for no hold, so a pane
-                         that never draws a prompt still gets the text
+                         that never draws a prompt still gets the text. Claude
+                         and pi ask for the hold; pi's prompt also says "tool":
+                         "pi", because the server waits for pi's `π - ` title
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing

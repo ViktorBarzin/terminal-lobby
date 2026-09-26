@@ -975,8 +975,8 @@ label.tl-set-row-label {
   overflow-wrap: anywhere;
 }
 
-/* Agent spend — what Claude Code and Codex have consumed. The period rows and
-   the percentage bars share their rules with Data used above rather than
+/* Agent spend — what Claude Code, Codex and pi have consumed. The period rows
+   and the percentage bars share their rules with Data used above rather than
    restating them: the two pages read the same way, and one set of rules cannot
    drift from itself. Only what is particular to this page lives here. */
 .tl-spend-period {
@@ -2496,6 +2496,16 @@ label.tl-set-row-label {
   height: 40px;
   resize: none;
 }
+/* One line under the box, for what the chosen command needs before its
+   controls can mean anything: today, pi with no provider signed in. */
+.tl-new-hint {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  color: var(--text-muted);
+}
 /* The box centres itself with `margin: 0 auto`, and an auto cross-axis margin
    turns OFF a flex item's stretch — so without this it shrank to fit its own
    content and sat 385px wide in a 1180px pane, measured at 1440x900. */
@@ -2555,9 +2565,16 @@ label.tl-set-row-label {
   .tl-new-composer .tl-bar-right {
     margin-left: auto;
   }
-  /* The codebase's own touch floor, which these selects were half of. */
+  /* The codebase's own touch floor, which these selects were half of.
+     The width cap is for pi: its model references run to 96 characters
+     (openrouter/meta-llama/…:free), and measured at 412px a select showing one
+     was 519px wide and ran off the right of the box, arrow and all. Capped at
+     the bar, the select keeps its row and the browser truncates the shown
+     value; the full reference is still what the menu lists. */
   .tl-new-composer .tl-new-cmd {
     min-height: 40px;
+    min-width: 0;
+    max-width: 100%;
   }
   /* Room to write in. A single line under a placeholder read as a caption on
      the card rather than the thing the screen is for. */

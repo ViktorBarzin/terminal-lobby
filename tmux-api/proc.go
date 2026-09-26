@@ -78,6 +78,27 @@ func (t procTree) hasClaudeUnder(pid int) bool {
 	return ok
 }
 
+// hasStateOwnerUnder reports whether pid or any descendant is a process that
+// stamps @claude_state: a claude, through its hooks, or a pi, through the
+// lobby's pi extension calling the same claude-tmux-state script. Codex is not
+// one; it never stamps the option. This, not hasClaudeUnder, is the liveness
+// question for the state backstop (clearDeadStates).
+func (t procTree) hasStateOwnerUnder(pid int) bool {
+	queue := []int{pid}
+	for len(queue) > 0 {
+		p := queue[0]
+		queue = queue[1:]
+		if stateOwnerComms[t.comm[p]] {
+			return true
+		}
+		queue = append(queue, t.children[p]...)
+	}
+	return false
+}
+
+// stateOwnerComms are the comms whose process writes @claude_state.
+var stateOwnerComms = map[string]bool{"claude": true, "pi": true}
+
 // claudeUnder is hasClaudeUnder with the pid, breadth-first so the answer is
 // the SHALLOWEST claude in the tree. That distinction is what suspend.go
 // signals: a session's own claude outranks any claude it spawned as a
@@ -101,6 +122,7 @@ func (t procTree) claudeUnder(pid int) (int, bool) {
 const (
 	toolClaude = "claude"
 	toolCodex  = "codex"
+	toolPi     = "pi"
 	toolShell  = "shell"
 )
 
@@ -108,9 +130,15 @@ const (
 // are listed: codex's own wrapper layers report "bash" (the /usr/local/bin
 // shell wrapper, which does not exec) and "MainThread" (its node shim), so
 // matching the vendored rust binary's comm is what actually identifies it.
+//
+// Pi is a node program that sets process.title, which is what puts `pi` in its
+// comm. For its first ~0.8 s the comm is still the runtime's (`node`, or
+// `MainThread`), so a pi that has just started reads as a shell for that long.
+// It stamps no state in that window either, since its extension has not run.
 var agentComms = map[string]string{
 	"claude": toolClaude,
 	"codex":  toolCodex,
+	"pi":     toolPi,
 }
 
 // toolUnder names the tool running under pid: the SHALLOWEST agent in the
@@ -144,12 +172,19 @@ func (t procTree) toolUnder(pid int) string {
 	return toolShell
 }
 
-// agentPrecedence breaks depth ties deterministically (lower wins).
+// agentPrecedence breaks depth ties deterministically (lower wins): claude,
+// then codex, then pi. Spelled out per tool so a fourth one cannot land in a
+// tie by default.
 func agentPrecedence(tool string) int {
-	if tool == toolClaude {
+	switch tool {
+	case toolClaude:
 		return 0
+	case toolCodex:
+		return 1
+	case toolPi:
+		return 2
 	}
-	return 1
+	return 3
 }
 
 // annotateTools stamps each session's Tool from the pane's process tree. An
@@ -172,6 +207,10 @@ func annotateTools(sessions []Session, t procTree) {
 // of the claude process alone) and the launcher fell back to a shell. An
 // empty tree (failed scan) fails OPEN: better a briefly stale dot than
 // blanking every user's indicators.
+//
+// A live pi keeps the state as well, because pi writes it too (the lobby's pi
+// extension, through claude-tmux-state). A codex does not: it never stamps the
+// option, so a state beside a codex alone was left by something that is gone.
 //
 // The outstanding-work count goes with the state, and for a stronger reason
 // than tidiness. Background tasks live INSIDE the claude process, so a claude
@@ -196,7 +235,7 @@ func clearDeadStates(sessions []Session, t procTree) {
 		if sessions[i].State == "" && sessions[i].Background == nil {
 			continue
 		}
-		if sessions[i].PanePID <= 0 || !t.hasClaudeUnder(sessions[i].PanePID) {
+		if sessions[i].PanePID <= 0 || !t.hasStateOwnerUnder(sessions[i].PanePID) {
 			sessions[i].State = ""
 			sessions[i].Background = nil
 		}

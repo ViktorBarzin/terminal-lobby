@@ -20,10 +20,18 @@ const promptMark = "❯"
 // before the model picker existed was already asking for.
 const codexPromptMark = "›"
 
-// PromptMark is the character a harness draws at its input line.
+// PromptMark is the character a harness draws at its input line, and "" for
+// pi, which draws no fixed one: pi's readiness is its pane title instead
+// (AwaitReady, pi.go). A caller that does not know the harness gets Claude's,
+// which is what every caller before the model picker existed was asking for.
 func PromptMark(h Harness) string {
-	if h == HarnessCodex {
+	switch h {
+	case HarnessClaude:
+		return promptMark
+	case HarnessCodex:
 		return codexPromptMark
+	case HarnessPi:
+		return ""
 	}
 	return promptMark
 }

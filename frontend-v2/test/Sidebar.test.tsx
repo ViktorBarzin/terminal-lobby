@@ -167,17 +167,26 @@ describe("<Sidebar>", () => {
       sess("cdx", { state: "", tool: "codex" }),
       sess("plain", { tool: "shell" }),
       sess("unknown"), // pre-tool server / failed proc scan
+      sess("pie", { state: "done", tool: "pi" }),
     ];
-    api.layoutVal = { ...emptyLayout(), ungrouped: ["agent", "cdx", "plain", "unknown"] };
+    api.layoutVal = {
+      ...emptyLayout(),
+      ungrouped: ["agent", "cdx", "plain", "unknown", "pie"],
+    };
     const { container, store } = mount(api);
     await store.refresh();
 
-    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(4));
+    await waitFor(() => expect(container.querySelectorAll(".tl-card").length).toBe(5));
     const cards = [...container.querySelectorAll(".tl-card")];
     expect(cards[0]!.querySelector(".tl-tool-claude")).not.toBeNull();
     expect(cards[1]!.querySelector(".tl-tool-codex")).not.toBeNull();
     expect(cards[2]!.querySelector(".tl-tool-shell")).not.toBeNull();
     expect(cards[3]!.querySelector(".tl-tool")).toBeNull();
+    // Pi's row carries its own mark, and its state dot works the way a
+    // Claude row's does: the state arrives in the same field.
+    expect(cards[4]!.querySelector(".tl-tool-pi")).not.toBeNull();
+    expect(cards[4]!.querySelector(".tl-state-done")).not.toBeNull();
+    expect(cards[4]!.getAttribute("aria-label")).toMatch(/\bpi\b/);
 
     // the state dot keeps the leftmost slot; the mark follows it
     const first = cards[0]!.querySelector(".tl-state-dot")!;

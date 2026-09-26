@@ -8,6 +8,8 @@ import {
   mergeAdopt,
   applyPatch,
   createPrefsStore,
+  modelChoiceFor,
+  modelChoicePatch,
   readPersistedPrefs,
   resetOneSessionEffort,
   PREF_DEFAULTS,
@@ -74,6 +76,8 @@ describe("coercePrefs — validate-or-default", () => {
         newEffort: "default",
         newCodexModel: "default",
         newCodexEffort: "default",
+        newPiModel: "default",
+        newPiEffort: "default",
       },
       notify: { onDone: false, onAwaiting: true },
       // Absent from the input, so these take their defaults. This assertion is
@@ -132,6 +136,8 @@ describe("composeDoc — write-back preserves unknown keys", () => {
       newEffort: "default",
       newCodexModel: "default",
       newCodexEffort: "default",
+      newPiModel: "default",
+      newPiEffort: "default",
     });
     // known fields written
     expect(doc.fontSize).toBe(FONT_SIZE_DEFAULT);
@@ -485,15 +491,15 @@ describe("the native terminal's three prefs — through the store", () => {
 
   it("names each as its own dotted path, with the value it moved to", () => {
     const prev = PREF_DEFAULTS;
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollSpeedV2: 2 } })),
-    ).toEqual([["gestures.scrollSpeedV2", "2"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollSpeedV2: 2 } }))).toEqual([
+      ["gestures.scrollSpeedV2", "2"],
+    ]);
     expect(
       changedPrefPaths(prev, applyPatch(prev, { gestures: { scrollMomentum: false } })),
     ).toEqual([["gestures.scrollMomentum", "false"]]);
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { input: { tapFocus: "terminal" } })),
-    ).toEqual([["input.tapFocus", "terminal"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { input: { tapFocus: "terminal" } }))).toEqual([
+      ["input.tapFocus", "terminal"],
+    ]);
   });
 
   it("actually persists a change to one, rather than no-opping in the signal", () => {
@@ -642,9 +648,7 @@ describe("the composer's roamed choices", () => {
   // still says `opus`, and dropping it would quietly reset the choice of
   // everyone who had made one.
   it("carries a family word forward to the row it means now", () => {
-    expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe(
-      "claude-opus-5-5",
-    );
+    expect(coercePrefs({ session: { newModel: "opus" } }).session.newModel).toBe("claude-opus-5-5");
     expect(coercePrefs({ session: { newModel: "haiku" } }).session.newModel).toBe(
       "claude-haiku-4-5-20251001",
     );
@@ -667,11 +671,100 @@ describe("the composer's roamed choices", () => {
 
   it("reports each as its own changed path", () => {
     const prev = coercePrefs({});
-    expect(
-      changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } })),
-    ).toEqual([["session.newProject", "code"]]);
+    expect(changedPrefPaths(prev, applyPatch(prev, { session: { newProject: "code" } }))).toEqual([
+      ["session.newProject", "code"],
+    ]);
     expect(
       changedPrefPaths(prev, applyPatch(prev, { session: { newModel: "claude-opus-5" } })),
     ).toEqual([["session.newModel", "claude-opus-5"]]);
+  });
+});
+
+/**
+ * Pi's pair, held under pi's own keys for the reason Claude's and codex's are
+ * kept apart: the three share no model vocabulary, and pi's thinking ladder
+ * starts two steps below theirs.
+ *
+ * Unlike the other two, pi's models are not a list this build carries. They
+ * come from pi itself (ADR-0032), so a stored pick is checked by the SHAPE of
+ * a reference rather than against a catalogue, or every load would drop it.
+ */
+describe("pi's roamed choices", () => {
+  const OPUS = "anthropic/claude-opus-5";
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  it("starts on pi's own default for both", () => {
+    expect(PREF_DEFAULTS.session.newPiModel).toBe("default");
+    expect(PREF_DEFAULTS.session.newPiEffort).toBe("default");
+  });
+
+  it("keeps pi as the command a new session runs", () => {
+    expect(coercePrefs({ session: { newCommand: "pi" } }).session.newCommand).toBe("pi");
+  });
+
+  it("keeps a pi reference across a load, though no catalogue here has heard of it", () => {
+    const p = coercePrefs({ session: { newPiModel: OPUS, newPiEffort: "minimal" } });
+    expect(p.session.newPiModel).toBe(OPUS);
+    expect(p.session.newPiEffort).toBe("minimal");
+  });
+
+  it("drops what is not a reference, and a level that is not pi's", () => {
+    const p = coercePrefs({ session: { newPiModel: "rm -rf ~", newPiEffort: "ultracode" } });
+    expect(p.session.newPiModel).toBe("default");
+    expect(p.session.newPiEffort).toBe("default");
+    expect(coercePrefs({ session: { newPiModel: 7 } }).session.newPiModel).toBe("default");
+    expect(coercePrefs({ session: { newPiEffort: "ultra" } }).session.newPiEffort).toBe("default");
+  });
+
+  // The failure this layout exists to prevent: a pi session asked for a model
+  // or a level somebody picked for a different CLI.
+  it("never hands pi what was picked for Claude or codex", () => {
+    const p = coercePrefs({
+      session: {
+        newModel: "claude-opus-5",
+        newEffort: "max",
+        newCodexModel: "gpt-5.5",
+        newCodexEffort: "ultra",
+      },
+    });
+    expect(modelChoiceFor(p, "pi")).toEqual({ model: "default", effort: "default" });
+    const q = coercePrefs({ session: { newPiModel: OPUS, newPiEffort: "off" } });
+    expect(modelChoiceFor(q, "claude")).toEqual({ model: "default", effort: "default" });
+    expect(modelChoiceFor(q, "codex")).toEqual({ model: "default", effort: "default" });
+    expect(modelChoiceFor(q, "pi")).toEqual({ model: OPUS, effort: "off" });
+  });
+
+  it("records a pi pick under pi's own keys", () => {
+    expect(modelChoicePatch("pi", "model", OPUS)).toEqual({ session: { newPiModel: OPUS } });
+    expect(modelChoicePatch("pi", "effort", "high")).toEqual({ session: { newPiEffort: "high" } });
+  });
+
+  it("writes both back into the shared doc and reports each as its own path", () => {
+    const next = coercePrefs({ session: { newPiModel: OPUS, newPiEffort: "high" } });
+    const doc = composeDoc({ session: { reopenLast: false } }, next) as {
+      session: Record<string, unknown>;
+    };
+    expect(doc.session.reopenLast).toBe(false);
+    expect(doc.session.newPiModel).toBe(OPUS);
+    expect(doc.session.newPiEffort).toBe("high");
+    expect(changedPrefPaths(coercePrefs({}), next)).toEqual([
+      ["session.newPiModel", OPUS],
+      ["session.newPiEffort", "high"],
+    ]);
+  });
+
+  // End to end through the store: the pick is written, and the next load of the
+  // persisted doc (a reload, a second tab) still has it.
+  it("survives the store's own round trip", () => {
+    localStorage.clear();
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}), putDebounceMs: 10_000 });
+      store.setPref(modelChoicePatch("pi", "model", OPUS));
+      store.setPref(modelChoicePatch("pi", "effort", "xhigh"));
+      store.dispose();
+      dispose();
+    });
+    expect(readPersistedPrefs().session.newPiModel).toBe(OPUS);
+    expect(readPersistedPrefs().session.newPiEffort).toBe("xhigh");
   });
 });

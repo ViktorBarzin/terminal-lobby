@@ -21,6 +21,10 @@ type procSample struct {
 	Pid      int
 	RSSBytes uint64
 	IsClaude bool
+	// IsPi marks a pi process. Pi owns @claude_state as Claude does (the lobby's
+	// pi extension stamps it through claude-tmux-state), so it counts toward
+	// ClaudeAlive; it is not a claude, so it does not count toward TopIsClaude.
+	IsPi bool
 }
 
 // A test seam, matching the pattern tmux-api uses for the same reason.
@@ -266,6 +270,14 @@ func isClaude(exe, comm string) bool {
 	return comm == "claude"
 }
 
+// isPi identifies a pi process by its comm, which pi sets through
+// process.title. Its exe is the node runtime and cannot tell pi from any other
+// node program, so there is no exe half to this test. For its first ~0.8 s a pi
+// still carries the runtime's comm, and it has stamped nothing by then either.
+func isPi(comm string) bool {
+	return comm == "pi"
+}
+
 // pickTop returns the largest sample, or a zero sample for a pane holding
 // nothing. Stale scopes with no processes exist on the box.
 func pickTop(in []procSample) procSample {
@@ -399,8 +411,12 @@ func realChildren(pid int) []int {
 // A session with several panes keeps the largest, since that is the one whose
 // cap bites first.
 func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, unreclaimable, max uint64)) Session {
+	// A live pi counts as the stamp's owner too: the lobby's pi extension writes
+	// @claude_state through the same script Claude's hooks do, so a pi session
+	// carries a stamp with no claude anywhere behind it, and reading that as a
+	// death paged ClaudeSessionDied a minute after every pi session's first turn.
 	for _, sm := range samples {
-		if sm.IsClaude {
+		if sm.IsClaude || sm.IsPi {
 			s.ClaudeAlive = true
 			break
 		}
@@ -447,10 +463,12 @@ func sampleTree(panePid int) []procSample {
 	for _, pid := range pids {
 		comm, _ := os.ReadFile(fmt.Sprintf("%s/%d/comm", procRoot, pid))
 		exe, _ := os.Readlink(fmt.Sprintf("%s/%d/exe", procRoot, pid))
+		c := strings.TrimSpace(string(comm))
 		out = append(out, procSample{
 			Pid:      pid,
 			RSSBytes: readRSS(pid),
-			IsClaude: isClaude(exe, strings.TrimSpace(string(comm))),
+			IsClaude: isClaude(exe, c),
+			IsPi:     isPi(c),
 		})
 	}
 	return out

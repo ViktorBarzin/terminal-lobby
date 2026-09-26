@@ -230,12 +230,25 @@ fi
 #
 # Like the command key, they are inert for a session that already exists:
 # `tmux new-session -A` ignores the command entirely when it attaches.
+#
+# The `pi` key has a vocabulary of its own: a provider/id model reference, whose
+# ids carry a second slash, colons, capitals and the odd @ or ~, and pi's seven
+# thinking levels. The same literals gate the same two values in
+# tmux-user-attach, which hands them to pi through the session's environment
+# rather than on its command line. Claude's and Codex's gate is unchanged.
 MODEL_ARG_RE='^[a-z0-9][a-z0-9._-]{0,31}(\[[a-z0-9]{1,4}\])?$'
 EFFORT_ARG_RE='^[a-z]{1,12}$'
+PI_MODEL_ARG_RE='^[A-Za-z0-9][A-Za-z0-9._:@/~-]{0,95}$'
+PI_EFFORT_ARG_RE='^(off|minimal|low|medium|high|xhigh|max)$'
 model_arg="${6:-}"
-[[ "$model_arg" =~ $MODEL_ARG_RE ]] || model_arg=""
 effort_arg="${7:-}"
-[[ "$effort_arg" =~ $EFFORT_ARG_RE ]] || effort_arg=""
+if [[ "$cmd_key" == pi ]]; then
+    [[ "$model_arg" =~ $PI_MODEL_ARG_RE ]] || model_arg=""
+    [[ "$effort_arg" =~ $PI_EFFORT_ARG_RE ]] || effort_arg=""
+else
+    [[ "$model_arg" =~ $MODEL_ARG_RE ]] || model_arg=""
+    [[ "$effort_arg" =~ $EFFORT_ARG_RE ]] || effort_arg=""
+fi
 
 # The server is consulted for a FOREIGN attach (as before) and now also for any
 # attach that asks to watch — including your own session, which is the

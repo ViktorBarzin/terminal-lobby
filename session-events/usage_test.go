@@ -335,7 +335,9 @@ func TestUsageRouteIsGated(t *testing.T) {
 	}
 	// The endpoint answered 204 while keeping nothing for one commit. It must
 	// not go back to that quietly, and nothing else in the suite would notice.
-	if !strings.Contains(line, "spendstore.New(") {
+	// The store is shared with /hooks/pi-usage, so the line names the shared
+	// one and the shared one has to be the on-disk store.
+	if !strings.Contains(line, "handleUsage(spend)") || !strings.Contains(string(raw), "spend := spendstore.New(") {
 		t.Errorf("POST /hooks/usage is not wired to the on-disk store:\n%s", line)
 	}
 }

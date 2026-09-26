@@ -10,13 +10,14 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { Composer } from "../src/components/Composer";
-import type { ModelField, ModelHarness, ModelState } from "../src/lib/models";
+import type { ModelField, ModelHarness, ModelState, PiOffer } from "../src/lib/models";
 
 afterEach(cleanup);
 
 function mount(o: {
   harness?: ModelHarness;
   model?: ModelState;
+  offer?: PiOffer;
   busy?: boolean;
   inertReason?: string;
   onPick?: (field: ModelField, id: string) => void;
@@ -32,6 +33,7 @@ function mount(o: {
       onResolve={() => {}}
       {...(o.harness ? { harness: o.harness } : {})}
       {...(o.model ? { model: o.model } : {})}
+      {...(o.offer ? { modelOffer: o.offer } : {})}
       modelBusy={o.busy === true}
       {...(o.inertReason ? { inertReason: o.inertReason } : {})}
       onPickModel={o.onPick ?? (() => {})}
@@ -144,5 +146,103 @@ describe("the model chip", () => {
     const claude = mount({ harness: "claude" });
     fireEvent.click(chip(claude)!);
     expect(claude.querySelector(".tl-menu-note")).toBeNull();
+  });
+});
+
+/**
+ * A pi session's chip. Pi's models are pi's own list (GET /pi-models) and its
+ * levels are the ones the session's model supports (the extension's
+ * `piLevels` stamp), so both arrive as an offer rather than from the
+ * written-down catalogue. The words are pi's: its setting is "thinking".
+ */
+describe("the model chip on a pi session", () => {
+  const OPUS = "anthropic/claude-opus-5";
+  const MINI = "openai/gpt-5.4-mini";
+  const headings = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll(".tl-model-menu .tl-menu-label")).map((h) => h.textContent);
+
+  it("offers pi's models and the levels the session's model supports", () => {
+    const c = mount({
+      harness: "pi",
+      model: { model: OPUS, effort: "high" },
+      offer: { models: [OPUS, MINI], levels: ["off", "low", "medium", "high"] },
+    });
+    fireEvent.click(chip(c)!);
+    expect(labels(c)).toEqual([OPUS, MINI, "Off", "Low", "Medium", "High"]);
+    expect(headings(c)).toEqual(["Model", "Thinking"]);
+  });
+
+  it("offers all seven levels when the session has stamped none", () => {
+    const c = mount({ harness: "pi", offer: { models: [OPUS] } });
+    fireEvent.click(chip(c)!);
+    expect(labels(c)).toEqual([
+      OPUS,
+      "Off",
+      "Minimal",
+      "Low",
+      "Medium",
+      "High",
+      "Extra high",
+      "Max",
+    ]);
+  });
+
+  it("calls itself what pi calls it", () => {
+    const c = mount({ harness: "pi", model: { model: OPUS, effort: "high" } });
+    expect(chip(c)!.textContent).toBe(`${OPUS} · high`);
+    expect(chip(c)!.getAttribute("title")).toBe(`Model and thinking: ${OPUS} · high`);
+    expect(chip(c)!.getAttribute("aria-label")).toBe("Model and thinking");
+  });
+
+  it("ticks the model and level the session stamped", () => {
+    const c = mount({
+      harness: "pi",
+      model: { model: OPUS, effort: "high" },
+      offer: { models: [MINI, OPUS] },
+    });
+    fireEvent.click(chip(c)!);
+    const ticked = items(c)
+      .filter((b) => b.getAttribute("aria-checked") === "true")
+      .map(label);
+    expect(ticked).toEqual([OPUS, "High"]);
+  });
+
+  it("applies what was picked, as pi's own values", () => {
+    const onPick = vi.fn();
+    const c = mount({
+      harness: "pi",
+      model: { model: OPUS, effort: "high" },
+      offer: { models: [OPUS, MINI] },
+      onPick,
+    });
+    fireEvent.click(chip(c)!);
+    fireEvent.click(row(c, MINI));
+    expect(onPick).toHaveBeenCalledWith("model", MINI);
+    fireEvent.click(chip(c)!);
+    fireEvent.click(row(c, "Minimal"));
+    expect(onPick).toHaveBeenCalledWith("effort", "minimal");
+  });
+
+  // The note is about codex writing its config file. Nothing tells us pi's
+  // picker does the same, so pi gets no claim either way.
+  it("does not carry codex's note about new sessions", () => {
+    const c = mount({ harness: "pi", offer: { models: [OPUS] } });
+    fireEvent.click(chip(c)!);
+    expect(c.querySelector(".tl-menu-note")).toBeNull();
+  });
+
+  // Before the list arrives, or for someone signed out, there are no model rows
+  // to show, and a heading over nothing reads like a broken menu.
+  it("leaves the model heading out while pi has listed nothing", () => {
+    const c = mount({ harness: "pi", model: { effort: "low" }, offer: { models: [] } });
+    fireEvent.click(chip(c)!);
+    expect(headings(c)).toEqual(["Thinking"]);
+  });
+
+  it("keeps Claude's chip in Claude's words", () => {
+    const c = mount({ harness: "claude" });
+    expect(chip(c)!.getAttribute("aria-label")).toBe("Model and effort");
+    fireEvent.click(chip(c)!);
+    expect(headings(c)).toEqual(["Model", "Effort"]);
   });
 });

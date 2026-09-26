@@ -94,71 +94,9 @@ func main() {
 	web.HandleFunc("GET /events/{session}/agents/{agent}", rg.handleDrillEvents(*hb))
 	web.HandleFunc("GET /events/{session}/agents/{agent}/earlier", rg.handleDrillEarlier())
 	web.HandleFunc("GET /events/{session}/agents/{agent}/result/{toolId}", rg.handleDrillResult())
-	web.HandleFunc("POST /prompt/{session}", func(w http.ResponseWriter, r *http.Request) {
-		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		var body struct {
-			Text string `json:"text"`
-			// AwaitReady asks this to wait until the pane can actually take the
-			// text, and to answer 503 rather than inject if it cannot.
-			//
-			// A session tmux has just created accepts send-keys immediately,
-			// while the Claude in its pane takes another ~2s to draw its input,
-			// and text sent into that window is lost with every layer reporting
-			// success. That is invisible to a caller and expensive to the person
-			// who typed it, so the FIRST prompt of a session asks for the wait
-			// (frontend-v2/src/lib/first-prompt.ts). Off by default, which is
-			// every other caller: a session someone is looking at is ready by
-			// definition, and the check costs a capture-pane.
-			AwaitReady bool `json:"awaitReady"`
-		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text == "" {
-			http.Error(w, "bad body (need text)", http.StatusBadRequest)
-			return
-		}
-		if body.AwaitReady {
-			// Not distinguished from "no such session": both mean the caller
-			// should come back, and the caller's retry ladder is what decides
-			// how long to keep coming back for.
-			if err := injector.AwaitInputReady(r.Context(), osUser, session,
-				PromptReadyWait, PromptReadyPoll); err != nil {
-				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
-				return
-			}
-		}
-		// No turn gate. Claude Code queues typed input itself — its
-		// queue-operation records are in the transcript — and the queued prompt
-		// stays visible in the pane, so a mid-turn send is a normal thing to do
-		// rather than an error (design decision 9). The 409 that used to live
-		// here also made the two surfaces disagree: the bridge pastes whatever
-		// T3 sends, so the same prompt at the same moment ran from one window
-		// and was refused from the other.
-		//
-		// A SUSPENDED session is the one thing that is refused, because there
-		// is no Claude in it to queue anything. The idle sweep killed it and
-		// froze the pane (tmux-api/suspend.go), and every layer below here
-		// reports success anyway: measured on tmux 3.4, 2026-09-19, send-keys
-		// into a dead pane exits 0 and the text vanishes, and a session whose
-		// wrapper shell outlived its Claude takes the prompt at a BASH PROMPT
-		// and runs it as a command. awaitReady does not catch either one — a
-		// frozen scrollback still shows a settled prompt.
-		//
-		// The lobby's composer holds its messages instead of sending them
-		// (frontend-v2/src/store/suspend-queue.ts); this is for every other
-		// caller, and it names the session so the answer says what to do.
-		if at, _ := injector.Option(osUser, session, sessionio.OptionSuspended); at != "" {
-			http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
-			return
-		}
-		if err := injector.Prompt(osUser, session, body.Text); err != nil {
-			http.Error(w, "inject failed", http.StatusBadGateway)
-			return
-		}
-		// tl.count is the prompt LENGTH; the text itself is never recorded.
-		events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
-			"tl.session": session, "tl.count": len(body.Text), "tl.client": "api",
-		})
-		w.WriteHeader(http.StatusNoContent)
-	})
+	// Typing a prompt into the session: the harness decides what "ready" means,
+	// and a suspended session or a pi trust question refuses (turn_routes.go).
+	web.HandleFunc("POST /prompt/{session}", handlePrompt(injector))
 	// One step further back — what a reader reaching the top of the transcript
 	// asks for (see OpenBackfillBytes).
 	web.HandleFunc("GET /earlier/{session}", func(w http.ResponseWriter, r *http.Request) {
@@ -343,94 +281,13 @@ func main() {
 	// to open the Terminal. Non-200 is kept for the two failures no reading
 	// can fix — a session nobody registered, and a pane that cannot be read.
 	web.HandleFunc("POST /answer/{session}", handleAnswer(rg, injector))
-	web.HandleFunc("POST /cancel/{session}", func(w http.ResponseWriter, r *http.Request) {
-		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		if err := injector.Cancel(osUser, session); err != nil {
-			http.Error(w, "cancel failed", http.StatusBadGateway)
-			return
-		}
-		// An interrupt that lands before Claude's first token is never written
-		// to the transcript, and the transcript is where every other settle
-		// rule lives — so the turn is settled here, on the stream, or the
-		// composer sits on "Working…" + Stop for the life of the session.
-		if fs, ok := rg.source(osUser, session); ok {
-			fs.Interrupt(time.Now().UnixMilli())
-		}
-		events.Emit("claude.cancelled", osUser, telemetry.Attrs{
-			"tl.session": session, "tl.client": "api",
-		})
-		w.WriteHeader(http.StatusNoContent)
-	})
+	// Interrupting the turn with the harness's own key, Escape for pi and Ctrl-C
+	// for the rest (turn_routes.go).
+	web.HandleFunc("POST /cancel/{session}", handleCancel(rg, injector))
 
-	// Which model the session answers on, and how hard it thinks.
-	//
-	// It is a POST rather than a flag because neither setting is one: the attach
-	// contract carries a command KEY, not a command line, so both are applied to
-	// a session that is already running by driving the CLI's own picker
-	// (sessionio/setmodel.go). The reply is what the session reports AFTERWARDS,
-	// not an echo of the request — a change can be refused silently, and the
-	// caller has to be able to see that it was.
-	web.HandleFunc("POST /model/{session}", func(w http.ResponseWriter, r *http.Request) {
-		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		var body struct {
-			// Tool is which CLI is running in the pane — the same value the
-			// session list carries. The two have different pickers and there is
-			// nothing on a pane that reliably says which is which, so the
-			// caller names it.
-			Tool string `json:"tool"`
-			// Either may be empty, meaning "leave this one alone".
-			Model  string `json:"model"`
-			Effort string `json:"effort"`
-			// AwaitReady waits for the pane to be able to take input first, for
-			// the same reason POST /prompt has it: a session that has just been
-			// created accepts keys seconds before its TUI reads any.
-			AwaitReady bool `json:"awaitReady"`
-		}
-		if json.NewDecoder(r.Body).Decode(&body) != nil {
-			http.Error(w, "bad body (need tool, and a model or an effort)", http.StatusBadRequest)
-			return
-		}
-		h := sessionio.Harness(body.Tool)
-		if h != sessionio.HarnessClaude && h != sessionio.HarnessCodex {
-			http.Error(w, "no model to pick in a "+body.Tool+" session", http.StatusBadRequest)
-			return
-		}
-		if body.AwaitReady {
-			if err := injector.AwaitPromptMark(r.Context(), osUser, session,
-				sessionio.PromptMark(h), PromptReadyWait, PromptReadyPoll); err != nil {
-				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
-				return
-			}
-		}
-		// A picker cannot open over a turn in flight: the command would sit in
-		// Claude's own queue and run when the turn ends, by which time the
-		// person who asked has gone. Said now, rather than eight seconds later
-		// as a timeout. An unstamped session — no Claude has run in it — is not
-		// a running one (ADR-0001).
-		if injector.State(osUser, session) == sessionio.StateRunning {
-			http.Error(w, "the session is working — stop it first", http.StatusConflict)
-			return
-		}
-		// Nor over a drawn dialog, where `/model` would be typed into the
-		// question rather than at the prompt. The state alone does not say so:
-		// a session sitting on a question reads `awaiting`, which is also what
-		// a session waiting at its prompt reads (ADR-0001).
-		if ask, _ := injector.Option(osUser, session, sessionio.OptionAsk); ask != "" {
-			http.Error(w, "the session is asking something — answer it first", http.StatusConflict)
-			return
-		}
-		state, err := injector.SetModel(r.Context(), osUser, session, h,
-			sessionio.ModelState{Model: body.Model, Effort: body.Effort})
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		events.Emit("claude.model_set", osUser, telemetry.Attrs{
-			"tl.session": session, "tl.tool": body.Tool,
-			"tl.model": state.Model, "tl.effort": state.Effort, "tl.client": "api",
-		})
-		writeJSON(w, state)
-	})
+	// Which model the session answers on, and how hard it thinks, applied to a
+	// running session through the harness's own commands (turn_routes.go).
+	web.HandleFunc("POST /model/{session}", handleModel(injector))
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	// The session-start hook runs as the OS user on THIS box, so it is hard-gated
@@ -451,7 +308,17 @@ func main() {
 	if d := strings.TrimSpace(os.Getenv("TL_SPEND_DIR")); d != "" {
 		spendDir = d
 	}
-	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(spendstore.New(spendDir)))))
+	//
+	// ONE store for both spend routes. Its mutex is what serialises writers to a
+	// user's document inside this process, and a Claude reading and a pi reading
+	// for the same user can arrive together; two stores would each hold their
+	// own lock and the later write would drop the earlier one's change.
+	spend := spendstore.New(spendDir)
+	root.HandleFunc("POST /hooks/usage", localhostOnly(peerOwnsClaim(handleUsage(spend))))
+	// What a pi conversation has spent, posted by the lobby's pi extension when a
+	// turn settles (piusage.go). The same two gates as its neighbour, and the
+	// same store: a reading is tool "pi" beside Claude's.
+	root.HandleFunc("POST /hooks/pi-usage", localhostOnly(peerOwnsClaim(handlePiUsage(spend))))
 	// TL_BIND narrows the listener; the gate's Configure reports the mode and
 	// warns when no proxy secret is set.
 	if b := strings.TrimSpace(os.Getenv("TL_BIND")); b != "" {

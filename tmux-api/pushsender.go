@@ -62,10 +62,14 @@ type sessionStater interface {
 	// being made, and asking for it separately would mean a second fork per
 	// user per tick to learn something the first one already said.
 	//
-	// One method rather than four because they all come out of the same tmux
+	// The fifth return is each session's tool (proc.go), which names the agent
+	// in the push's wording: "Pi is awaiting your input" rather than calling
+	// every harness Claude.
+	//
+	// One method rather than five because they all come out of the same tmux
 	// reads, and asking separately forked `list-clients` twice per user per
 	// tick.
-	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool)
+	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool, tools map[string]string)
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -81,10 +85,10 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool) {
+func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string) {
 	sessions, activity := userSessionsAndActivity(osUser)
-	states, titles := statesAndTitles(sessions)
-	return states, titles, activity, systemNames(sessions)
+	states, titles, tools := statesTitlesAndTools(sessions)
+	return states, titles, activity, systemNames(sessions), tools
 }
 
 // systemNames is the set of a user's sessions that belong to tooling rather
@@ -109,19 +113,22 @@ func systemNames(sessions []Session) map[string]bool {
 	return out
 }
 
-// statesAndTitles splits a parsed session list into the two maps the sender
+// statesTitlesAndTools splits a parsed session list into the maps the sender
 // diffs and reads wording from. A session nobody has titled is simply absent
-// from the second map, which is what pushLabel's fallback is for.
-func statesAndTitles(sessions []Session) (map[string]string, map[string]string) {
+// from the second map, which is what pushLabel's fallback is for; the third is
+// each session's tool, empty when the process scan failed.
+func statesTitlesAndTools(sessions []Session) (map[string]string, map[string]string, map[string]string) {
 	states := make(map[string]string, len(sessions))
 	titles := make(map[string]string, len(sessions))
+	tools := make(map[string]string, len(sessions))
 	for _, s := range sessions {
 		states[s.Name] = s.State
+		tools[s.Name] = s.Tool
 		if s.Title != "" {
 			titles[s.Name] = s.Title
 		}
 	}
-	return states, titles
+	return states, titles, tools
 }
 
 // vapidConfig is the VAPID keypair + subject the sender signs pushes with.
@@ -603,18 +610,43 @@ func marshalPayload(title, body, session string, badge int, waiting *waitList, o
 	return b
 }
 
-// buildPushPayload is the running→awaiting "needs input" wording. `label` is
-// what the person reads (pushLabel); `session` is the address, and `origin` the
-// subscription's own (marshalPayload).
+// buildPushPayload is the running→awaiting "needs input" wording for a Claude
+// session. `label` is what the person reads (pushLabel); `session` is the
+// address, and `origin` the subscription's own (marshalPayload).
 func buildPushPayload(label, session string, badge int, waiting *waitList, origin string) []byte {
-	return marshalPayload(label+" needs input", "Claude is awaiting your input.", session, badge, waiting, origin)
+	return buildPushPayloadFor(toolClaude, label, session, badge, waiting, origin)
+}
+
+// buildPushPayloadFor is buildPushPayload naming the session's own harness.
+func buildPushPayloadFor(tool, label, session string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label+" needs input", pushHarnessName(tool)+" is awaiting your input.", session, badge, waiting, origin)
 }
 
 // buildDonePayload is the running→done "finished" wording — the first-class
 // notification for a turn completing. Same tag as the awaiting payload (see
 // marshalPayload): a subsequent awaiting alert supersedes it.
 func buildDonePayload(label, session string, badge int, waiting *waitList, origin string) []byte {
-	return marshalPayload(label+" finished", "Claude finished its turn.", session, badge, waiting, origin)
+	return buildDonePayloadFor(toolClaude, label, session, badge, waiting, origin)
+}
+
+// buildDonePayloadFor is buildDonePayload naming the session's own harness.
+func buildDonePayloadFor(tool, label, session string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label+" finished", pushHarnessName(tool)+" finished its turn.", session, badge, waiting, origin)
+}
+
+// pushHarnessName is what a push calls the agent in a session, from the
+// session's tool (proc.go). A tool the scan could not name, or a shell, keeps
+// "Claude": only Claude and pi stamp the state a push reports, and Claude is
+// by far the likelier of the two, so that is the wording every push had before
+// pi existed.
+func pushHarnessName(tool string) string {
+	switch tool {
+	case toolPi:
+		return "Pi"
+	case toolCodex:
+		return "Codex"
+	}
+	return "Claude"
 }
 
 // tick runs one poll cycle: for every subscribed user, diff the current
@@ -643,7 +675,7 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur, titles, act, system := p.stater.read(u)
+		cur, titles, act, system, tools := p.stater.read(u)
 		p.absorbManualStates(u, cur)
 		p.forgetSystemSessions(u, system, cur, titles, act)
 		p.last[u] = cur
@@ -672,7 +704,7 @@ func (p *pushSender) tick() {
 					}
 					p.markPushed(u, name)
 					p.markSent(u, name)
-					p.notify(u, name, titles[name], kindAwaiting, badge, waiting)
+					p.notify(u, name, titles[name], tools[name], kindAwaiting, badge, waiting)
 				}
 			case st == stateDone && was == stateRunning:
 				// running→done ONLY. A session first seen already done
@@ -685,7 +717,7 @@ func (p *pushSender) tick() {
 					}
 					p.markPushed(u, name)
 					p.markSent(u, name)
-					p.notify(u, name, titles[name], kindDone, badge, waiting)
+					p.notify(u, name, titles[name], tools[name], kindDone, badge, waiting)
 				}
 			}
 		}
@@ -780,15 +812,16 @@ func (p *pushSender) markPushed(u, name string) {
 }
 
 // notify builds the payload for `session` of the given kind and fans it out
-// to the user's devices. The wording comes from the kind; the tag is shared
-// across kinds so a later push for the same session coalesces (send()).
-func (p *pushSender) notify(osUser, session, title, kind string, badge int, waiting *waitList) {
+// to the user's devices. The wording comes from the kind and names the
+// session's harness (tool); the tag is shared across kinds so a later push for
+// the same session coalesces (send()).
+func (p *pushSender) notify(osUser, session, title, tool, kind string, badge int, waiting *waitList) {
 	label := pushLabel(session, title)
 	build := func(origin string) []byte {
 		if kind == kindDone {
-			return buildDonePayload(label, session, badge, waiting, origin)
+			return buildDonePayloadFor(tool, label, session, badge, waiting, origin)
 		}
-		return buildPushPayload(label, session, badge, waiting, origin)
+		return buildPushPayloadFor(tool, label, session, badge, waiting, origin)
 	}
 	p.send(osUser, session, build, kind)
 }
