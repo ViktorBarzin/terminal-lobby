@@ -603,7 +603,7 @@ func TestPaneFactsCountsALivePiAsTheStateOwner(t *testing.T) {
 // The watcher, end to end on one pi session: stamped, pi alive, several ticks.
 // No claude_died, and the event keeps its name for when a pi does die.
 func TestALivePiSessionIsNotReportedDead(t *testing.T) {
-	w := NewWatcher(Config{ConfirmTicks: 2, PaneWarnBytes: 3 << 30})
+	w := NewWatcher(Config{ConfirmTicks: 2})
 	pi := paneFacts(Session{Name: "pi-work", ClaudeState: "done"},
 		[]procSample{{Pid: 21, RSSBytes: 180 << 20, IsPi: true}},
 		func(int) (uint64, uint64, uint64) { return 0, 0, 0 })
