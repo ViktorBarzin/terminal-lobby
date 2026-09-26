@@ -3,6 +3,7 @@ import { Markdown } from "./Markdown";
 import { Picture } from "./Attachment";
 import { contentUrlFor } from "../lib/attachments";
 import { toolImageUrl } from "../lib/config";
+import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import type {
   MetaRow,
@@ -228,6 +229,7 @@ export const SkillRowView: Component<{ row: ToolRow }> = (props) => (
 interface Thumb {
   src: string;
   alt: string;
+  kind: PictureKind;
 }
 
 export const ToolRowView: Component<{
@@ -280,12 +282,12 @@ export const ToolRowView: Component<{
     if (props.session && toolId) {
       const alt = basename(path()) || "Picture";
       for (const ref of props.row.images ?? []) {
-        out.push({ src: toolImageUrl(props.session, toolId, ref.n), alt });
+        out.push({ src: toolImageUrl(props.session, toolId, ref.n), alt, kind: "block" });
       }
     }
     for (const file of props.row.files ?? []) {
       const src = contentUrlFor(file, props.me ?? "");
-      if (src) out.push({ src, alt: basename(file) });
+      if (src) out.push({ src, alt: basename(file), kind: "file" });
     }
     return out;
   });
@@ -337,7 +339,7 @@ export const ToolRowView: Component<{
       <Show when={thumbs().length > 0}>
         <div class="tl-tool-thumbs">
           <For each={thumbs()}>
-            {(t) => <Picture src={t.src} alt={t.alt} size="thumb" />}
+            {(t) => <Picture src={t.src} alt={t.alt} size="thumb" source="tool" kind={t.kind} />}
           </For>
         </div>
       </Show>

@@ -2,6 +2,9 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { PictureLightbox } from "../src/components/PictureLightbox";
 import { closePicture, openPicture, picture } from "../src/store/picture";
+import { track } from "../src/telemetry/track";
+
+vi.mock("../src/telemetry/track", () => ({ track: vi.fn() }));
 
 /**
  * One lightbox for every picture in the Text view (2026-09-24): a picture in a
@@ -16,6 +19,7 @@ afterEach(() => {
   closePicture();
   cleanup();
   document.body.innerHTML = "";
+  vi.mocked(track).mockClear();
 });
 
 const PIC = { src: "/files/image?path=%2Ftmp%2Fa.png", alt: "a.png" };
@@ -28,7 +32,7 @@ describe("<PictureLightbox>", () => {
 
   it("shows the opened picture full size", () => {
     const { container } = render(() => <PictureLightbox />);
-    openPicture(PIC);
+    openPicture(PIC, "prose", "file");
     const img = container.querySelector(".tl-lightbox img");
     expect(img?.getAttribute("src")).toBe(PIC.src);
     expect(img?.getAttribute("alt")).toBe("a.png");
@@ -36,7 +40,7 @@ describe("<PictureLightbox>", () => {
 
   it("closes on a press anywhere on it", () => {
     const { container } = render(() => <PictureLightbox />);
-    openPicture(PIC);
+    openPicture(PIC, "tool", "block");
     fireEvent.click(container.querySelector(".tl-lightbox")!);
     expect(container.querySelector(".tl-lightbox")).toBeNull();
     expect(picture()).toBeNull();
@@ -44,7 +48,7 @@ describe("<PictureLightbox>", () => {
 
   it("closes on Escape, and the key goes no further", () => {
     const { container } = render(() => <PictureLightbox />);
-    openPicture(PIC);
+    openPicture(PIC, "bubble", "file");
     // Registered after the lightbox's own listener, the way the composer's and
     // the terminal's handlers sit under it.
     const later = vi.fn();
@@ -71,7 +75,7 @@ describe("<PictureLightbox>", () => {
     field.focus();
     expect(document.activeElement).toBe(field);
 
-    openPicture(PIC);
+    openPicture(PIC, "prose", "file");
     expect(document.activeElement).not.toBe(field);
 
     closePicture();
@@ -84,8 +88,20 @@ describe("<PictureLightbox>", () => {
     render(() => <PictureLightbox />);
     const field = document.createElement("input");
     document.body.appendChild(field);
-    openPicture(PIC);
+    openPicture(PIC, "prose", "file");
     closePicture();
     expect(document.activeElement).not.toBe(field);
+  });
+
+  it("says which kind of picture was opened, and from where, with no path", () => {
+    render(() => <PictureLightbox />);
+    openPicture(PIC, "tool", "block");
+    expect(vi.mocked(track)).toHaveBeenCalledWith("text.picture_opened", {
+      "tl.kind": "block",
+      "tl.source": "tool",
+    });
+    const attrs = JSON.stringify(vi.mocked(track).mock.calls);
+    expect(attrs).not.toContain("/tmp");
+    expect(attrs).not.toContain("a.png");
   });
 });

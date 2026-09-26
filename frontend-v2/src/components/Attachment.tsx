@@ -15,7 +15,7 @@ import {
   type Segment,
 } from "../lib/attachments";
 import { promptImageUrl } from "../lib/config";
-import { openPicture } from "../store/picture";
+import { openPicture, type PictureKind, type PictureSource } from "../store/picture";
 import { FileTextIcon } from "./Icons";
 
 /**
@@ -56,6 +56,9 @@ export const Picture: Component<{
   src: string;
   alt: string;
   size: "full" | "thumb";
+  /** where it is drawn, for the one usage event opening it emits. */
+  source: PictureSource;
+  kind: PictureKind;
   title?: string;
   fallback?: JSX.Element;
 }> = (props) => {
@@ -81,7 +84,7 @@ export const Picture: Component<{
         // it, and gives it back on close, so it has to find that field still
         // focused. The composer's picture chip does the same.
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => openPicture({ src: props.src, alt: props.alt })}
+        onClick={() => openPicture({ src: props.src, alt: props.alt }, props.source, props.kind)}
       >
         <img src={props.src} alt={props.alt} loading="lazy" onError={() => setBroken(true)} />
       </button>
@@ -126,7 +129,15 @@ export const AttachmentView: Component<{
             </button>
           }
         >
-          <Picture src={src()} alt={label()} title={props.path} size="full" fallback={asText()} />
+          <Picture
+            src={src()}
+            alt={label()}
+            title={props.path}
+            size="full"
+            source="bubble"
+            kind="file"
+            fallback={asText()}
+          />
         </Show>
       )}
     </Show>
@@ -226,6 +237,8 @@ export const MessageSegments: Component<{
                 src={promptImageUrl(session(), props.record ?? "", seg.ref.n)}
                 alt={`Pasted image ${seg.ref.paste ?? seg.ref.n + 1}`}
                 size="full"
+                source="bubble"
+                kind="block"
                 fallback={placeholder()}
               />
             )}

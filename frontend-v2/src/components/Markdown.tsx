@@ -125,6 +125,8 @@ const MarkdownImage: Component<{
           alt={props.alt || basename(props.src ?? "")}
           title={props.src}
           size="full"
+          source="prose"
+          kind="file"
           fallback={asText()}
         />
       </Show>
@@ -153,6 +155,8 @@ const imgFor =
           alt={props.alt ?? ""}
           title={path}
           size="full"
+          source="prose"
+          kind="file"
         />
       );
     }

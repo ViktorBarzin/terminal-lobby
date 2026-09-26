@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { track } from "../telemetry/track";
 
 /**
  * The picture the Text view is showing full size, if any (2026-09-24).
@@ -15,6 +16,13 @@ import { createSignal } from "solid-js";
  * All three share the `.tl-lightbox` class and the rule below about the
  * keyboard.
  */
+
+/** Where the picture was opened from. Reported, with no path. */
+export type PictureSource = "bubble" | "prose" | "tool";
+
+/** A picture on disk, or a block the transcript carries (a terminal paste, a
+ *  Read of an image), which has no file. */
+export type PictureKind = "file" | "block";
 
 export interface OpenPicture {
   src: string;
@@ -38,7 +46,7 @@ let refocus: HTMLTextAreaElement | HTMLInputElement | null = null;
  * picture buttons keep the press from moving the focus first (Attachment.tsx),
  * which is what lets this see the field at all.
  */
-export function openPicture(pic: OpenPicture): void {
+export function openPicture(pic: OpenPicture, source: PictureSource, kind: PictureKind): void {
   if (!current()) {
     const active = typeof document === "undefined" ? null : document.activeElement;
     refocus =
@@ -46,6 +54,9 @@ export function openPicture(pic: OpenPicture): void {
     refocus?.blur();
   }
   setCurrent({ src: pic.src, alt: pic.alt });
+  // Which kind of picture and which surface, never the path or the bytes
+  // (ADR-0008). It says whether people open pictures at all, and from where.
+  track("text.picture_opened", { "tl.kind": kind, "tl.source": source });
 }
 
 /**

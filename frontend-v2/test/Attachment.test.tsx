@@ -3,6 +3,9 @@ import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import { AttachmentView, MessageSegments, Picture } from "../src/components/Attachment";
 import { segmentMessage, segmentPrompt } from "../src/lib/attachments";
 import { closePicture, picture } from "../src/store/picture";
+import { track } from "../src/telemetry/track";
+
+vi.mock("../src/telemetry/track", () => ({ track: vi.fn() }));
 
 /**
  * How an attachment is drawn in the chat
@@ -16,6 +19,7 @@ import { closePicture, picture } from "../src/store/picture";
 afterEach(() => {
   closePicture();
   cleanup();
+  vi.mocked(track).mockClear();
 });
 
 const IMG = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-150232-a1.png";
@@ -157,13 +161,17 @@ describe("MessageSegments", () => {
     expect(container.textContent).toContain("what is wrong?");
   });
 
-  it("opens a terminal paste in the lightbox", () => {
+  it("opens a terminal paste in the lightbox as a block", () => {
     const segs = segmentPrompt("[Image #1]", [PASTE]);
     const { container } = render(() => (
       <MessageSegments segments={segs} me="wizard" session="s" record={RECORD} />
     ));
     fireEvent.click(container.querySelector("button")!);
     expect(picture()?.src).toBe(`/result/s/user/${RECORD}/image/0`);
+    expect(vi.mocked(track)).toHaveBeenCalledWith("text.picture_opened", {
+      "tl.kind": "block",
+      "tl.source": "bubble",
+    });
   });
 
   // A picture is drawn as a block, which ends its line by itself, so the
@@ -212,7 +220,7 @@ describe("Picture", () => {
 
   it("is a button around a lazily loaded image, named for what it opens", () => {
     const { container } = render(() => (
-      <Picture src={SRC} alt="a.png" size="full" />
+      <Picture src={SRC} alt="a.png" size="full" source="prose" kind="file" />
     ));
     const btn = container.querySelector("button")!;
     expect(btn.getAttribute("type")).toBe("button");
@@ -225,17 +233,21 @@ describe("Picture", () => {
 
   it("is a thumbnail at the tool-row size", () => {
     const { container } = render(() => (
-      <Picture src={SRC} alt="a.png" size="thumb" />
+      <Picture src={SRC} alt="a.png" size="thumb" source="tool" kind="file" />
     ));
     expect(container.querySelector("button")!.classList.contains("tl-tool-thumb")).toBe(true);
   });
 
-  it("opens the lightbox on the same picture", () => {
+  it("opens the lightbox on the same picture, and reports where from", () => {
     const { container } = render(() => (
-      <Picture src={SRC} alt="a.png" size="thumb" />
+      <Picture src={SRC} alt="a.png" size="thumb" source="tool" kind="file" />
     ));
     fireEvent.click(container.querySelector("button")!);
     expect(picture()).toEqual({ src: SRC, alt: "a.png" });
+    expect(vi.mocked(track)).toHaveBeenCalledWith("text.picture_opened", {
+      "tl.kind": "file",
+      "tl.source": "tool",
+    });
   });
 
   // The press must not take the focus from the composer on its way: opening
@@ -243,7 +255,7 @@ describe("Picture", () => {
   // that had it in order to give it back.
   it("keeps the focus where it was when pressed", () => {
     const { container } = render(() => (
-      <Picture src={SRC} alt="a.png" size="full" />
+      <Picture src={SRC} alt="a.png" size="full" source="prose" kind="file" />
     ));
     const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
     container.querySelector("button")!.dispatchEvent(down);
@@ -252,7 +264,7 @@ describe("Picture", () => {
 
   it("draws nothing once the image fails, unless given a fallback", () => {
     const { container } = render(() => (
-      <Picture src={SRC} alt="a.png" size="full" />
+      <Picture src={SRC} alt="a.png" size="full" source="prose" kind="file" />
     ));
     fireEvent.error(container.querySelector("img")!);
     expect(container.querySelector("button")).toBeNull();
@@ -265,6 +277,8 @@ describe("Picture", () => {
         src={SRC}
         alt="a.png"
         size="full"
+        source="prose"
+        kind="file"
         fallback={<span class="tl-attach-path">/tmp/a.png</span>}
       />
     ));
