@@ -46,14 +46,14 @@ type Session struct {
 	PaneBytes uint64
 	PaneLimit uint64
 	// PaneUnreclaimable is anon + shmem, which is the memory that actually forces
-	// a kill. The user slice sets memory.swap.max=0 and cgroup limits are
-	// hierarchical, so neither can be paged out. In the pane above this read 628
-	// MB against the same 6144 MB cap; forty minutes earlier, with /tmp 95% full,
-	// it read 4424 MB and the pane genuinely was at risk.
+	// a kill. In the pane above this read 628 MB against the same 6144 MB cap;
+	// forty minutes earlier, with /tmp 95% full, it read 4424 MB and the pane
+	// genuinely was at risk. Since 2026-09-02 panes may swap, within the user
+	// slice's 4 GiB, so anon is partly reclaimable and this is an upper bound.
 	PaneUnreclaimable uint64
-	// TopIsClaude says whether the highest-RSS process in the pane is a claude,
-	// which is the same ranking the kernel uses at the cap. It is the difference
-	// between the cap taking a build and the cap taking a conversation.
+	// TopIsClaude says whether the highest-RSS process in the pane is a claude.
+	// Exported as a metric only: it no longer gates the warning, because claude
+	// is the fattest process in nearly every pane it sits in.
 	TopIsClaude bool
 }
 
@@ -108,9 +108,12 @@ type Finding struct {
 
 type Config struct {
 	// PaneWarnBytes is where the pane pre-warning sits, compared against
-	// UNRECLAIMABLE memory rather than memory.current. Gated on the fattest
-	// process being a claude, which is what lets it sit well below the cap.
+	// UNRECLAIMABLE memory rather than memory.current, in panes with a claude.
 	PaneWarnBytes uint64
+	// PaneClearBytes is where a warned pane's episode ends. The gap below
+	// PaneWarnBytes keeps a pane hovering at the line to one warning. Zero, or
+	// anything above PaneWarnBytes, means PaneWarnBytes.
+	PaneClearBytes uint64
 	// ConfirmTicks is how many consecutive ticks a stamp-with-no-claude must
 	// hold. Restarting claude to load a new skill set leaves a tick that looks
 	// exactly like a death.
@@ -141,6 +144,9 @@ type Watcher struct {
 func NewWatcher(cfg Config) *Watcher {
 	if cfg.ConfirmTicks < 1 {
 		cfg.ConfirmTicks = 1
+	}
+	if cfg.PaneClearBytes == 0 || cfg.PaneClearBytes > cfg.PaneWarnBytes {
+		cfg.PaneClearBytes = cfg.PaneWarnBytes
 	}
 	if cfg.TombstoneGrace <= 0 {
 		cfg.TombstoneGrace = 90 * time.Second
@@ -261,8 +267,14 @@ func (w *Watcher) standing(cur Snapshot, first bool) []Finding {
 		// makes the kernel reclaim cache before it kills anything, so current
 		// sitting at the ceiling is normal rather than dangerous. An uncapped
 		// pane has nothing about to kill it either, so a warning there would
-		// name a risk that is not present.
-		if s.PaneLimit > 0 && s.PaneUnreclaimable >= w.cfg.PaneWarnBytes && s.TopIsClaude {
+		// name a risk that is not present. An open episode holds until the pane
+		// drops below the clear level, not just below the warn level.
+		atRisk := s.PaneLimit > 0 && s.ClaudeAlive
+		level := w.cfg.PaneWarnBytes
+		if w.isOpen(KindPaneNearCap, key) {
+			level = w.cfg.PaneClearBytes
+		}
+		if atRisk && s.PaneUnreclaimable >= level {
 			if w.raise(KindPaneNearCap, key) {
 				out = append(out, Finding{
 					Kind:              KindPaneNearCap,
@@ -291,6 +303,8 @@ func (w *Watcher) raise(k Kind, key string) bool {
 }
 
 func (w *Watcher) clear(k Kind, key string) { delete(w.open, string(k)+"/"+key) }
+
+func (w *Watcher) isOpen(k Kind, key string) bool { return w.open[string(k)+"/"+key] }
 
 func (w *Watcher) skip(name string) bool {
 	for _, p := range w.cfg.SkipPrefixes {
