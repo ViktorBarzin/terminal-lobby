@@ -75,7 +75,23 @@ export interface DialogQuestionView {
 }
 
 /**
+ * One approve row of Claude Code's plan approval: the digit that selects it,
+ * and its label exactly as drawn (`sessionio.PlanOption`).
+ */
+export interface PlanOptionView {
+  number: number;
+  label: string;
+}
+
+/**
  * A reading of the dialog, mirroring `sessionio.Dialog`.
+ *
+ * One type covers two dialogs. A question reading has no `kind` and carries
+ * `questions` and `count`; a plan reading has `kind: "plan"`, the approve
+ * `options`, the `feedbackRow` and the `planPath`, and no questions. The Go
+ * side omits whichever half is empty, which is why both halves are optional
+ * here. `planFromPane` (components/timeline.logic.ts) is the checked way to
+ * read the plan half.
  *
  * `answered` is how many boxes the tab bar marks `☒`. It is a PROGRESS signal
  * and not a position: measured 2026-09-10, a multi-select question's box fills
@@ -84,12 +100,34 @@ export interface DialogQuestionView {
  * which is what the pane is actually drawing.
  */
 export interface DialogView {
-  questions: DialogQuestionView[];
+  /** "plan" for the plan approval, absent for an AskUserQuestion. */
+  kind?: "plan";
+  questions?: DialogQuestionView[];
   headers?: string[];
-  count: number;
+  count?: number;
   partial?: boolean;
   answered?: number;
+  /**
+   * The plan approval's approve rows, as drawn. The labels change between
+   * sessions ("(6% used)" climbs, and auto mode or the clear context option
+   * may be missing), so a card shows these rather than words of its own.
+   */
+  options?: PlanOptionView[];
+  /** The "Tell Claude what to change" row: 4 with three approve rows, 3 with two. */
+  feedbackRow?: number;
+  /** The plan file the footer names, "~/.claude/plans/<slug>.md". */
+  planPath?: string;
 }
+
+/**
+ * A question reading as the card draws it: the questions always present.
+ *
+ * The wire type above leaves `questions` optional because a plan reading has
+ * none. The card only ever draws a question reading, and TextView builds this
+ * from whatever came in (`drawnQuestions` fills a missing list with an empty
+ * one), so the card reads `questions[0]` without guarding it.
+ */
+export type QuestionDialogView = DialogView & { questions: DialogQuestionView[] };
 
 /** Why a request was not applied. Empty means it was. */
 export type AnswerReason = "not-drawn" | "no-dialog" | "unknown-option" | "refused" | "unverified";
@@ -172,7 +210,27 @@ export interface AnswerRequest {
   back?: string;
   submit?: boolean;
   keys?: string[];
+  /**
+   * An answer to the plan approval rather than a question. A request carrying
+   * it carries nothing else: the server refuses one that also names a
+   * question as `unknown-option`, with nothing typed.
+   */
+  plan?: PlanAnswer;
 }
+
+/**
+ * One answer to the plan approval, mirroring `sessionio.PlanAnswer`.
+ *
+ * An approve row goes by its number AND the label the reader saw on it: the
+ * server refuses a label that is not the one drawn now as `unknown-option`,
+ * rather than approving with whatever row carries that number today.
+ *
+ * Feedback is typed into the feedback row and read back before the committing
+ * key: `approve: false` presses Enter, which sends the words back and Claude
+ * keeps planning; `approve: true` presses Shift+Tab, "approve with this
+ * feedback". It is one line of at most 2,000 bytes and must not be blank.
+ */
+export type PlanAnswer = { option: number; label: string } | { feedback: string; approve: boolean };
 
 /**
  * The label the CLI gives its free-text option.

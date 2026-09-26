@@ -69,7 +69,24 @@ export interface Event {
    * marker per turn would say nothing (sessionio MetaModel).
    */
   model?: ModelState;
+  /**
+   * Set on ONE event: the user event of the record that opens a conversation
+   * the plan approval started by clearing the context. `origin` is
+   * `ORIGIN_AUTO_CONTINUATION` and `plan` the approved plan, so the Text view
+   * can draw a marker and a plan row instead of the long "Implement the
+   * following plan: ..." message the reader never typed. `body` keeps that
+   * whole text (sessionio Event.Origin, Event.Plan).
+   */
+  origin?: string;
+  plan?: string;
 }
+
+/**
+ * `Event.origin` on the record that opens a conversation after the plan
+ * approval cleared the context: the transcript's `origin.kind` for it,
+ * measured on CLI 2.1.281 on 2026-09-24 (sessionio OriginAutoContinuation).
+ */
+export const ORIGIN_AUTO_CONTINUATION = "auto-continuation";
 
 /** The model a session answers on, and the effort it answers at. */
 export interface ModelState {
@@ -190,6 +207,8 @@ export function parseEvent(data: string): Event | null {
   if (o.model && typeof o.model === "object") {
     ev.model = o.model as ModelState;
   }
+  if (typeof o.origin === "string") ev.origin = o.origin;
+  if (typeof o.plan === "string") ev.plan = o.plan;
   return ev;
 }
 

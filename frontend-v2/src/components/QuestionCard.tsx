@@ -16,7 +16,7 @@ import {
   sameDrawnQuestion,
   type DialogOptionView,
   type DialogQuestionView,
-  type DialogView,
+  type QuestionDialogView,
 } from "../lib/answer-api";
 import { PaneKeypad } from "./PaneKeypad";
 
@@ -82,7 +82,7 @@ export type TypedAnswer = Wanted & { header: string };
  */
 export const QuestionCard: Component<{
   /** What the pane is drawing right now, or null when it could not be read. */
-  dialog: DialogView | null;
+  dialog: QuestionDialogView | null;
   /** The raw capture, present only when `dialog` is null. */
   pane?: string;
   /** The pane is on the review screen, where the only action left is Submit. */

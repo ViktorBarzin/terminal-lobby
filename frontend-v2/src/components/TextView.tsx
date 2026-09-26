@@ -33,6 +33,7 @@ import {
   type DialogOptionView,
   type DialogQuestionView,
   type DialogView,
+  type QuestionDialogView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
 import { QuestionCard, type TypedAnswer } from "./QuestionCard";
@@ -527,7 +528,7 @@ export const TextView: Component<{
     // reading whose drawn question is one of the call's own still describes
     // the call, so it survives that; anything else is a reading of a call
     // nobody is being asked any more.
-    const q = r.resp.dialog?.questions[0];
+    const q = r.resp.dialog?.questions?.[0];
     return q && placeQuestion(q, asked()) ? r.resp : null;
   });
 
@@ -572,7 +573,7 @@ export const TextView: Component<{
    * chip instead; the question keeps the empty header the pane gave it, so
    * nothing here claims a position it cannot see.
    */
-  const view = createMemo((): DialogView | null => {
+  const view = createMemo((): QuestionDialogView | null => {
     const known = asked();
     const seen = ((): DialogView | undefined => {
       const r = reading();
@@ -1115,7 +1116,7 @@ export const TextView: Component<{
  * have to hold an opinion about which fields the server omits.
  */
 function drawnQuestions(d: DialogView): DialogQuestionView[] {
-  const qs: DialogQuestionView[] | null = d.questions;
+  const qs: DialogQuestionView[] | null | undefined = d.questions;
   if (!qs) return [];
   return qs.map((q) => {
     const options: DialogOptionView[] | null = q.options;

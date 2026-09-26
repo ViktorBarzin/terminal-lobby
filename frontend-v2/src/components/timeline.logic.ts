@@ -7,6 +7,7 @@ import type {
   SessionState,
 } from "../types/events";
 import type { PendingPrompt } from "../logic/compose.logic";
+import type { DialogView, PlanOptionView } from "../lib/answer-api";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -1015,6 +1016,9 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     answered?: unknown;
     partial?: unknown;
   } | null;
+  // A plan reading shares the meta and is told apart by its kind (sessionio
+  // Dialog.Kind). It carries no questions, so this only states the rule.
+  if (raw && (raw as { kind?: unknown }).kind === DIALOG_KIND_PLAN) return null;
   const qs = questions(raw);
   if (qs.length === 0) return null;
   return {
@@ -1024,6 +1028,61 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     answered: typeof raw?.answered === "number" ? raw.answered : 0,
     partial: raw?.partial === true,
   };
+}
+
+/** `DialogView.kind` on a plan reading (sessionio DialogKindPlan). */
+const DIALOG_KIND_PLAN = "plan";
+
+/**
+ * Claude Code's plan approval as the pane draws it, or null when `reading` is
+ * not a plan reading that can be trusted.
+ *
+ * `reading` is either the body of an `asking` meta, still JSON, or the
+ * `dialog` of an answer reply, already decoded: the server puts the same
+ * reading in both places (sessionio/plandialog.go, contract 2 of
+ * docs/plans/2026-09-24-text-composer-redesign.md).
+ *
+ * Every approve row needs a whole number and a label, and the feedback row
+ * has to come after the last of them. A reading that fails any of that is
+ * refused whole rather than repaired: the card offers what this returns, and
+ * a row the pane does not draw, or a feedback row taken for an approve row,
+ * is how a tap approves something the reader did not choose.
+ *
+ * This reads one reading and nothing else. When the card docks, which also
+ * depends on the ExitPlanMode call in the transcript, is decided elsewhere.
+ */
+export function planFromPane(reading: string | DialogView | null | undefined): PlanReading | null {
+  const raw: unknown = typeof reading === "string" ? parseJSON(reading) : reading;
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as { kind?: unknown; options?: unknown; feedbackRow?: unknown; planPath?: unknown };
+  if (o.kind !== DIALOG_KIND_PLAN || !Array.isArray(o.options) || o.options.length === 0) {
+    return null;
+  }
+  const options: PlanOptionView[] = [];
+  for (const item of o.options as unknown[]) {
+    const opt = item as { number?: unknown; label?: unknown } | null;
+    if (!opt || !Number.isInteger(opt.number) || typeof opt.label !== "string" || !opt.label) {
+      return null;
+    }
+    options.push({ number: opt.number as number, label: opt.label });
+  }
+  const last = options[options.length - 1]!.number;
+  if (!Number.isInteger(o.feedbackRow) || (o.feedbackRow as number) <= last) return null;
+  return {
+    options,
+    feedbackRow: o.feedbackRow as number,
+    planPath: typeof o.planPath === "string" ? o.planPath : "",
+  };
+}
+
+/** The plan approval as the pane shows it (see planFromPane). */
+export interface PlanReading {
+  /** The approve rows, numbered from 1, with their labels exactly as drawn. */
+  options: PlanOptionView[];
+  /** The "Tell Claude what to change" row, the one after the last approve row. */
+  feedbackRow: number;
+  /** The plan file the footer names, or "" when it names none. */
+  planPath: string;
 }
 
 /** A blocking question as the pane shows it (see askingFromPane). */

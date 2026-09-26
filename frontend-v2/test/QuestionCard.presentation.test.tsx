@@ -25,10 +25,10 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import type { ComponentProps } from "solid-js";
 import { QuestionCard } from "../src/components/QuestionCard";
-import { FREE_TEXT_LABEL, type DialogView } from "../src/lib/answer-api";
+import { FREE_TEXT_LABEL, type QuestionDialogView } from "../src/lib/answer-api";
 
 /** dialog-single.txt, as ParseDialog reports it. */
-const single: DialogView = {
+const single: QuestionDialogView = {
   questions: [
     {
       header: "Font",
@@ -52,7 +52,7 @@ const single: DialogView = {
  * header as the identity of the question on screen and sends it with every
  * request; the server refuses anything that does not match what it can see.
  */
-const multi: DialogView = {
+const multi: QuestionDialogView = {
   questions: [
     {
       header: "Fruit",
@@ -72,7 +72,7 @@ const multi: DialogView = {
 };
 
 /** dialog-multi-review.txt: both boxes filled, waiting for a Submit. */
-const review: DialogView = {
+const review: QuestionDialogView = {
   questions: [{ question: "Ready to submit your answers?", options: [] }],
   headers: ["Fruit", "Drink"],
   count: 2,
@@ -160,7 +160,7 @@ describe("<QuestionCard> — one question, one request", () => {
     // it replaces, "Each tap answers the question. Come back to add another
     // pick", described the bug that sent a one-question call to the review
     // screen on its first click (2026-09-23).
-    const hint = (dialog: DialogView) =>
+    const hint = (dialog: QuestionDialogView) =>
       mount({ dialog }).container.querySelector(".tl-qcard-hint")?.textContent ?? "";
     expect(hint(multi)).toMatch(/tick every answer that applies, then press Next/i);
     const last = { ...multi, questions: [{ ...multi.questions[0]!, commit: "Submit" }] };
@@ -300,7 +300,7 @@ describe("<QuestionCard> — the tab bar as chips", () => {
    * to go from a call's first question.
    */
   it("draws no chips on a one-question call's question, before or after its first tick", () => {
-    const one: DialogView = { ...multi, headers: ["Fruit"], count: 1, partial: false };
+    const one: QuestionDialogView = { ...multi, headers: ["Fruit"], count: 1, partial: false };
     for (const answered of [0, 1]) {
       const { container } = mount({ dialog: { ...one, answered } });
       expect(container.querySelector(".tl-qcard-tabs"), `answered ${answered}`).toBeNull();

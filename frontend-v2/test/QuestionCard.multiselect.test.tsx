@@ -50,10 +50,14 @@ import { resolve } from "node:path";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { batch, createSignal } from "solid-js";
 import { QuestionCard } from "../src/components/QuestionCard";
-import { FREE_TEXT_LABEL, type DialogQuestionView, type DialogView } from "../src/lib/answer-api";
+import {
+  FREE_TEXT_LABEL,
+  type DialogQuestionView,
+  type QuestionDialogView,
+} from "../src/lib/answer-api";
 
 /** dialog-multi.txt's first question, as ParseDialog reports it. */
-const multi: DialogView = {
+const multi: QuestionDialogView = {
   questions: [
     {
       header: "Fruit",
@@ -72,7 +76,7 @@ const multi: DialogView = {
 };
 
 /** The same question with `ticked` filled, as the pane draws it after Space. */
-const holding = (...ticked: string[]): DialogView => ({
+const holding = (...ticked: string[]): QuestionDialogView => ({
   ...multi,
   questions: [
     {
@@ -87,13 +91,16 @@ const holding = (...ticked: string[]): DialogView => ({
 });
 
 /** `view` with more of its question read off the pane: the free-text row, the commit row. */
-const drawnWith = (view: DialogView, more: Partial<DialogQuestionView>): DialogView => ({
+const drawnWith = (
+  view: QuestionDialogView,
+  more: Partial<DialogQuestionView>,
+): QuestionDialogView => ({
   ...view,
   questions: [{ ...view.questions[0]!, ...more }],
 });
 
 /** Question 2 of the same call, which is what a commit on question 1 lands on. */
-const drink: DialogView = {
+const drink: QuestionDialogView = {
   questions: [
     {
       header: "Drink",
@@ -139,8 +146,8 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
  * A reading of `null` is a capture the parser could not read, which the card
  * shows as the raw pane.
  */
-function mount(first: DialogView = multi) {
-  const [dialog, setDialog] = createSignal<DialogView | null>(first);
+function mount(first: QuestionDialogView = multi) {
+  const [dialog, setDialog] = createSignal<QuestionDialogView | null>(first);
   const [pane, setPane] = createSignal<string | undefined>(undefined);
   const [busy, setBusy] = createSignal(false);
   const replies: Array<() => void> = [];
@@ -165,7 +172,7 @@ function mount(first: DialogView = multi) {
     />
   ));
   /** Draw a reading no request asked for: the pane watcher's next tick. */
-  const redraw = async (reading: DialogView | null, capture?: string) => {
+  const redraw = async (reading: QuestionDialogView | null, capture?: string) => {
     batch(() => {
       setDialog(reading);
       setPane(reading ? undefined : capture);
@@ -173,7 +180,7 @@ function mount(first: DialogView = multi) {
     await settle();
   };
   /** Land the oldest request in flight, carrying `reading`. */
-  const land = async (reading: DialogView | null, capture?: string) => {
+  const land = async (reading: QuestionDialogView | null, capture?: string) => {
     batch(() => {
       setDialog(reading);
       setPane(reading ? undefined : capture);
@@ -383,11 +390,11 @@ describe("clicks made while a toggle is in flight queue", () => {
  * so none of them may go on a change of name.
  */
 describe("the same question, named more fully", () => {
-  const bare = (text: string): DialogView => ({
+  const bare = (text: string): QuestionDialogView => ({
     ...multi,
     questions: [{ ...multi.questions[0]!, header: "", question: text }],
   });
-  const named = (text: string, ...ticked: string[]): DialogView => ({
+  const named = (text: string, ...ticked: string[]): QuestionDialogView => ({
     ...holding(...ticked),
     questions: [{ ...holding(...ticked).questions[0]!, question: text }],
   });
@@ -450,7 +457,8 @@ describe("the commit button", () => {
     // one-question call's only question is its last. That is the call Viktor
     // reported from, and a button reading "Next" there turned into "Submit"
     // under the reader's first click.
-    const label = (view: DialogView) => commitButton(mount(view).container)!.textContent!.trim();
+    const label = (view: QuestionDialogView) =>
+      commitButton(mount(view).container)!.textContent!.trim();
     expect(label({ ...multi, headers: ["Fruit"], count: 1 })).toBe("Submit");
     expect(label({ ...multi, headers: ["Drink", "Fruit"] }), "question 2 of 2").toBe("Submit");
     expect(label({ ...multi, headers: [], count: 1 }), "a call with no chips to place").toBe(
@@ -652,7 +660,7 @@ describe("free text on a multi-select is one more pick", () => {
  */
 describe("each question opens at the top of the card's body", () => {
   const body = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-qcard-body")!;
-  const singleSelect: DialogView = {
+  const singleSelect: QuestionDialogView = {
     ...multi,
     questions: [{ ...multi.questions[0]!, multiSelect: false }],
   };
@@ -665,7 +673,7 @@ describe("each question opens at the top of the card's body", () => {
     ["a multi-select's commit", holding("Plum"), (c) => fireEvent.click(commitButton(c)!), drink],
     ["a single-select answer", singleSelect, (c) => fireEvent.click(row(c, "Plum")), drink],
     ["a chip's walk back", drink, (c) => fireEvent.click(chip(c, "Fruit")), holding("Apple")],
-  ] as [string, DialogView, (c: HTMLElement) => void, DialogView][])(
+  ] as [string, QuestionDialogView, (c: HTMLElement) => void, QuestionDialogView][])(
     "puts the scroll back when %s draws another question",
     async (_what, first, act, next) => {
       const v = mount(first);

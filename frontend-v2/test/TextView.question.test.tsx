@@ -989,3 +989,31 @@ describe("a call that asks exactly what the last one asked", () => {
     expect(v.text(".tl-qcard-question")).toBe("Pick a fruit");
   });
 });
+
+describe("a plan reading on the asking meta", () => {
+  // The plan approval shares the question reading's `asking` meta, and a
+  // question reading is the only kind this card answers. What `sessionio`
+  // makes of `testdata/plan-no-auto.txt`, byte for byte.
+  const plan = {
+    kind: "plan",
+    options: [
+      { number: 1, label: "Yes, auto-accept edits" },
+      { number: 2, label: "Yes, manually approve edits" },
+    ],
+    feedbackRow: 3,
+    planPath: "~/.claude/plans/plan-do-not-execute-delightful-whisper.md",
+  };
+
+  it("does not dock the question card", async () => {
+    const v = mount([asking(plan)]);
+    await Promise.resolve();
+    expect(v.card()).toBeNull();
+  });
+
+  it("takes the question card down when it replaces a question reading", async () => {
+    const v = mount([asking(paneAt(drawn("Pick a fruit", "Apple", "Pear"), 0))]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    v.setEvents((es) => [...es, asking(plan)]);
+    await waitFor(() => expect(v.card()).toBeNull());
+  });
+});

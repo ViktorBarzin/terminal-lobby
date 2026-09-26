@@ -23,9 +23,9 @@ import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { createSignal, type Component } from "solid-js";
 import { QuestionCard } from "../src/components/QuestionCard";
-import type { DialogView } from "../src/lib/answer-api";
+import type { QuestionDialogView } from "../src/lib/answer-api";
 
-const colour: DialogView = {
+const colour: QuestionDialogView = {
   questions: [
     {
       header: "Colour",
@@ -107,8 +107,8 @@ describe("<QuestionCard> — a request that did not land", () => {
  * reading is simply the next thing to draw.
  */
 const Harness: Component<{
-  first: DialogView;
-  second: DialogView;
+  first: QuestionDialogView;
+  second: QuestionDialogView;
   /** The second reading is the CLI's review screen. */
   secondReview?: boolean;
   onChoose?: (h: string, c: string[], t?: string) => Promise<void>;
@@ -134,7 +134,7 @@ const Harness: Component<{
   );
 };
 
-const shape: DialogView = {
+const shape: QuestionDialogView = {
   questions: [
     {
       header: "Shape",
@@ -149,7 +149,7 @@ const shape: DialogView = {
 };
 
 /** dialog-multi-review.txt: every box filled, waiting for a Submit. */
-const review: DialogView = {
+const review: QuestionDialogView = {
   questions: [{ question: "Ready to submit your answers?", options: [] }],
   headers: ["Colour", "Shape"],
   count: 2,

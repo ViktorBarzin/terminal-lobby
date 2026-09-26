@@ -27,7 +27,7 @@ import { describe, it, expect } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { QuestionCard } from "../src/components/QuestionCard";
 import { QuestionRowView } from "../src/components/rows";
-import type { DialogView } from "../src/lib/answer-api";
+import type { QuestionDialogView } from "../src/lib/answer-api";
 import type { Question } from "../src/components/canonicalize";
 import type { QuestionRow } from "../src/components/timeline.logic";
 
@@ -46,9 +46,9 @@ const questions: Question[] = [
 ];
 
 /** The same question as the pane draws it back to the card. */
-const reading = (q: Question): DialogView => ({ questions: [q], count: 1 });
+const reading = (q: Question): QuestionDialogView => ({ questions: [q], count: 1 });
 
-const card = (dialog: DialogView) =>
+const card = (dialog: QuestionDialogView) =>
   render(() => (
     <QuestionCard
       dialog={dialog}
