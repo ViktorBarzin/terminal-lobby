@@ -8,6 +8,7 @@ import type {
 } from "../types/events";
 import type { PendingPrompt } from "../logic/compose.logic";
 import type { DialogView, PlanOptionView } from "../lib/answer-api";
+import { modeId, modeTitle } from "../logic/modes";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -133,11 +134,44 @@ export interface PlanRow {
   kind: "plan";
   key: string;
   id: number;
+  /**
+   * The plan as the reader should see it: the approved text once approved
+   * (`toolUseResult.plan`, which carries edits made in the CLI with ctrl+g),
+   * otherwise the call's input, corrected for a plan file written in the same
+   * message (see `stale`).
+   */
   body: string;
+  /** No result yet, and nothing has happened since. Same as outcome "pending". */
   pending: boolean;
+  outcome: PlanOutcome;
+  /**
+   * Claude changed the plan file while presenting it, in a way this row could
+   * not replay (an Edit whose old text does not occur exactly once), so `body`
+   * is the call's input and may be older than what the Terminal shows.
+   */
+  stale?: boolean;
   turnKey: string;
   at?: number;
 }
+
+/**
+ * What became of a plan put up for approval, as the transcript records it
+ * (docs/plans/2026-09-24-text-composer-redesign.md, "Outcomes in the
+ * timeline"). The first record of a new transcript after a clear is not a
+ * plan outcome: it draws its own row. "transient" never comes out of
+ * deriveRows; it is this client's own answer in flight (see shownPlanOutcome).
+ */
+export type PlanOutcome =
+  | { kind: "pending" }
+  /** `mode` is the next permission-mode record in the turn, once it arrives. */
+  | { kind: "approved"; mode?: string }
+  | { kind: "sent-back"; feedback: string }
+  | { kind: "rejected" }
+  | { kind: "superseded" }
+  | { kind: "transient"; action: PlanTransient };
+
+/** This client's plan answer, applied but not in the transcript yet. */
+export type PlanTransient = "approve" | "feedback" | "clear";
 export interface PermissionRow {
   kind: "permission";
   key: string;
@@ -304,6 +338,99 @@ function answersFrom(payload: unknown): string[] {
   return out;
 }
 
+/** A plan's text as the dialog draws it, tracked while the call is open. */
+interface PlanText {
+  /** The plan file the call names (`input.planFilePath`), or "". */
+  path: string;
+  text: string;
+  /** A write to the plan file could not be replayed onto `text`. */
+  stale: boolean;
+}
+
+/** What precedes the reader's words in a plan sent back with feedback. */
+const PLAN_FEEDBACK = "To tell you how to proceed, the user said:";
+
+/**
+ * Set a plan row's outcome and body from the tool_result that resolves it.
+ *
+ * The error flag decides between approved and not: every refusal measured
+ * carries it, and an approval never does, so a non-error result counts as an
+ * approval even if the CLI rewords "User has approved your plan". Among the
+ * errors, the feedback marker tells "sent back" from a bare rejection (Esc, an
+ * empty feedback row, or the old transcript's side of a clear context).
+ */
+function resolvePlan(row: PlanRow, e: Event, text: PlanText | undefined): void {
+  const fallback = text?.text ?? row.body;
+  if (!e.isError) {
+    const approved = (e.result as { plan?: unknown } | null | undefined)?.plan;
+    // The structured result is dropped whole past sessionio's MaxInlineResult
+    // (8 KiB), and the text then falls back to what the dialog showed.
+    row.outcome = { kind: "approved" };
+    if (typeof approved === "string") {
+      // What the approval carried is exact, whatever the input said.
+      row.body = approved;
+      delete row.stale;
+    } else {
+      row.body = fallback;
+    }
+    return;
+  }
+  row.body = fallback;
+  const said = [e.body, typeof e.result === "string" ? e.result : undefined].find(
+    (t): t is string => typeof t === "string" && t.includes(PLAN_FEEDBACK),
+  );
+  row.outcome =
+    said !== undefined
+      ? {
+          kind: "sent-back",
+          feedback: said.slice(said.indexOf(PLAN_FEEDBACK) + PLAN_FEEDBACK.length).trim(),
+        }
+      : { kind: "rejected" };
+}
+
+/**
+ * Replay a Write or Edit of an open plan's file onto its text.
+ *
+ * Measured once (plan-probe runE, 2026-09-24): when Claude writes the plan
+ * file and calls ExitPlanMode in the same message, the call's input holds the
+ * old file, while the dialog draws and the approval carries the new one. The
+ * transcript shows it as a write to the plan path whose result lands after the
+ * call, which is the only time this runs: the plan row is still open. A Write
+ * is replayed exactly. An Edit is applied when its old text occurs once (or
+ * at all, for replace_all); otherwise the row keeps what it has and is marked
+ * stale, so the card can say the Terminal holds the current version.
+ */
+function replayPlanWrite(row: PlanRow, call: ToolRow, text: PlanText | undefined): void {
+  if (!text?.path || (call.tool !== "Write" && call.tool !== "Edit")) return;
+  const input = parseJSON(call.input) as {
+    file_path?: unknown;
+    content?: unknown;
+    old_string?: unknown;
+    new_string?: unknown;
+    replace_all?: unknown;
+  } | null;
+  if (input?.file_path !== text.path) return;
+  if (call.tool === "Write") {
+    if (typeof input.content !== "string") return;
+    text.text = input.content;
+    text.stale = false;
+  } else {
+    const from = input.old_string;
+    const to = input.new_string;
+    if (typeof from !== "string" || typeof to !== "string" || from === "") {
+      text.stale = true;
+    } else {
+      const count = text.text.split(from).length - 1;
+      if (count === 1) text.text = text.text.replace(from, () => to);
+      else if (count > 1 && input.replace_all === true) text.text = text.text.split(from).join(to);
+      else text.stale = true;
+    }
+  }
+  row.body = text.text;
+  if (text.stale) row.stale = true;
+  else delete row.stale;
+}
+
 /**
  * Fold one turn's events into its rows: the user's message, and the work that
  * followed it. Every accumulator here is scoped to the turn, so they are locals
@@ -323,6 +450,12 @@ function collectTurnRows(turn: Turn): {
   // to the turn: deriveRows runs on every event and must be pure, so nothing
   // here may outlive one derivation.
   const pendingByTool = new Map<string, QuestionRow | PlanRow>();
+  // Each plan's text as the dialog shows it, which a Write or Edit to the plan
+  // file can change after the call (see replayPlanWrite).
+  const planText = new Map<PlanRow, PlanText>();
+  // The approved plan still waiting for the permission-mode record that says
+  // which mode the approval chose.
+  let awaitingMode: PlanRow | null = null;
   // Skill calls of this turn, by the skill they named, so the `meta:skill`
   // that follows can fold its size onto the call rather than adding a second
   // row for the same load.
@@ -411,16 +544,23 @@ function collectTurnRows(turn: Turn): {
           break;
         }
         if (d.type === "plan") {
-          const plan = parseJSON(e.body) as { plan?: string } | null;
+          const plan = parseJSON(e.body) as { plan?: unknown; planFilePath?: unknown } | null;
+          const text = typeof plan?.plan === "string" ? plan.plan : (e.body ?? "");
           const row: PlanRow = {
             kind: "plan",
             key: `plan-${e.toolId || e.id}`,
             id: e.id,
-            body: plan?.plan ?? e.body ?? "",
+            body: text,
             pending: true,
+            outcome: { kind: "pending" },
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
           };
+          planText.set(row, {
+            path: typeof plan?.planFilePath === "string" ? plan.planFilePath : "",
+            text,
+            stale: false,
+          });
           if (e.toolId) pendingByTool.set(e.toolId, row);
           add(row, e.sidechain);
           break;
@@ -461,6 +601,9 @@ function collectTurnRows(turn: Turn): {
           waiting.pending = false;
           if (waiting.kind === "question") {
             waiting.answers = answersFrom(e.result);
+          } else {
+            resolvePlan(waiting, e, planText.get(waiting));
+            if (waiting.outcome.kind === "approved") awaitingMode = waiting;
           }
           pendingByTool.delete(e.toolId!);
           // A subagent's result closes its host.
@@ -473,6 +616,11 @@ function collectTurnRows(turn: Turn): {
           existing.isError = !!e.isError;
           existing.done = true;
           existing.truncated = !!e.truncated;
+          if (!existing.isError) {
+            for (const open of pendingByTool.values()) {
+              if (open.kind === "plan") replayPlanWrite(open, existing, planText.get(open));
+            }
+          }
           if (existing.itemType === "collab_agent_tool_call" && host === existing) {
             host = null;
           }
@@ -512,6 +660,14 @@ function collectTurnRows(turn: Turn): {
         // currentMode() reads them for that dial; only the row is dropped, and dropped
         // outright rather than folded, since expanding a turn would put the
         // divider back.
+        //
+        // A permission-mode record still has one job here: the first one after
+        // an approval names the mode the approval chose. "plan" is skipped,
+        // since approving a plan always leaves plan mode.
+        if (meta === "permission-mode" && awaitingMode && e.body && e.body !== "plan") {
+          awaitingMode.outcome = { kind: "approved", mode: e.body };
+          awaitingMode = null;
+        }
         if (meta === "mode" || meta === "permission-mode") break;
         // A `/context` reading is state for the same reason, and the context
         // dial on the composer's line is where it shows. A reading also arrives as a
@@ -763,6 +919,9 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     const isLast = ti === turns.length - 1;
     const settled = turn.ended || !isLast;
     const { userRow, work } = collectTurnRows(turn);
+    // A plan left without a result in a turn that has settled was never
+    // answered: the session moved on without it.
+    if (settled) for (const r of work) if (r.kind === "plan" && r.pending) supersedePlan(r);
 
     if (userRow) out.push(userRow);
     for (const r of foldSettledTurn(turn, work, settled)) out.push(r);
@@ -794,7 +953,69 @@ function markSuperseded(out: TimelineRow[]): void {
         row.pending = false;
         row.superseded = true;
       }
+      if (row.kind === "plan" && row.pending && row !== newest) supersedePlan(row);
     }
+  }
+}
+
+function supersedePlan(row: PlanRow): void {
+  row.pending = false;
+  row.outcome = { kind: "superseded" };
+}
+
+/**
+ * The outcome a plan row shows, given this client's own answer in flight.
+ *
+ * The caller holds the transient state, since only the client that answered
+ * knows it answered. An approval or feedback shows until the transcript's
+ * result lands. A clear context also covers the rejection the old transcript
+ * records, since the approval that cleared it is carried out in a new one
+ * (the caller drops the transient after 20 s, or when the stream switches).
+ */
+export function shownPlanOutcome(row: PlanRow, transient: PlanTransient | undefined): PlanOutcome {
+  if (!transient) return row.outcome;
+  const k = row.outcome.kind;
+  const open = k === "pending" || k === "superseded";
+  if (open || (transient === "clear" && k === "rejected"))
+    return { kind: "transient", action: transient };
+  return row.outcome;
+}
+
+const TRANSIENT_HEADER: Record<PlanTransient, string> = {
+  approve: "Approving…",
+  feedback: "Sending back…",
+  clear: "Clearing context…",
+};
+
+/** The words a plan row's header says for an outcome. */
+export function planHeader(outcome: PlanOutcome): string {
+  switch (outcome.kind) {
+    case "pending":
+      return "Waiting for your approval";
+    case "approved":
+      return outcome.mode ? `Plan approved · ${approvedModePhrase(outcome.mode)}` : "Plan approved";
+    case "sent-back":
+      return "Sent back with feedback";
+    case "rejected":
+      return "Plan rejected";
+    case "superseded":
+      return "Plan not answered";
+    case "transient":
+      return TRANSIENT_HEADER[outcome.action];
+  }
+}
+
+/** How an approval's header names the mode it chose. */
+function approvedModePhrase(mode: string): string {
+  switch (modeId(mode)) {
+    case "auto":
+      return "auto mode";
+    case "manual":
+      return "you approve each edit";
+    case "acceptEdits":
+      return "accept edits";
+    default:
+      return `${modeTitle(mode).toLowerCase()} mode`;
   }
 }
 
