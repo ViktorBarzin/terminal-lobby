@@ -114,7 +114,7 @@ export interface SessionStore {
     decision: PermissionDecision,
   ) => Promise<boolean>;
   /** Send a prompt (provisional control endpoint — see blockers). Resolves
-   *  false when the session refused it (409 mid-turn, 5xx, unreachable) so the
+   *  false when the session refused it (409 plan-open, 5xx, unreachable) so the
    *  composer can hand the typed text back instead of destroying it. */
   send: (text: string) => Promise<boolean>;
   /** Interrupt the running turn (provisional control endpoint). */
@@ -276,6 +276,26 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
     }
   }
   return out;
+}
+
+/**
+ * Is this the prompt guard's refusal: 409 with `{"applied": false, "reason":
+ * "plan-open"}` (session-events plan.go)? A 409 with any other body, JSON or
+ * not, is not, and neither is a body that fails to read.
+ */
+async function isPlanOpenRefusal(res: Response): Promise<boolean> {
+  if (res.status !== 409) return false;
+  try {
+    const body: unknown = await res.json();
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      "reason" in body &&
+      body.reason === "plan-open"
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Toast severity forwarded to the app (subset of the toast ToastKind). */
@@ -881,12 +901,21 @@ export function createSessionStore(
         body: JSON.stringify({ text }),
       });
       if (!res.ok) {
-        // No 409 arm any more. It used to say "A turn is already running", from
-        // a gate session-events removed on 2026-08-15 — a mid-turn send is a
-        // normal thing to do now, and Claude queues it. What is left is 400 (an
-        // empty body) and 502 (the injection failed), which mean the same thing
-        // to a reader: it did not land.
-        opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
+        // The one 409 left is the prompt guard (design doc contract 4): the
+        // plan approval is on the pane, where a paste and Enter would pick a
+        // menu row, so session-events refused it. The text stays in the field
+        // and the reader is told where it goes now. The turn gate that also
+        // answered 409 was removed on 2026-08-15, so any other refusal (400 for
+        // an empty body, 502 for a failed injection) means one thing to a
+        // reader: it did not land.
+        if (await isPlanOpenRefusal(res)) {
+          opts.notify?.(
+            "The plan approval is up. The message box answers it now.",
+            "warning",
+          );
+        } else {
+          opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
+        }
       }
       if (res.ok) {
         pendingSeq += 1;

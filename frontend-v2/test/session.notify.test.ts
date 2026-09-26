@@ -43,10 +43,9 @@ describe("session store — control-channel error toasts", () => {
   });
 
   // 502 rather than 409. session-events removed the turn gate on 2026-08-15 —
-  // a mid-turn send queues in Claude now — so 409 is a status this endpoint can
-  // no longer answer, and a test asserting a toast for it was pinning a message
-  // no user could ever see. 502 ("inject failed") is what a real failure looks
-  // like, and it takes the generic arm.
+  // a mid-turn send queues in Claude now — and the only 409 left is the plan
+  // approval guard, which session.planopen.test.ts covers. 502 ("inject
+  // failed") is what a real failure looks like, and it takes the generic arm.
   it("toasts an error when a prompt send fails (502 from the injector)", async () => {
     g.fetch = respondWith(false, 502);
     const notes: Note[] = [];
