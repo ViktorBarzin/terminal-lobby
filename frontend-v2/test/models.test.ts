@@ -85,9 +85,21 @@ describe("the model catalogue", () => {
   // every later session's default. They stay in the picker and last one
   // session (store/prefs.ts, resetOneSessionEffort). Codex keeps its own.
   it("names the efforts that last one Claude session", () => {
-    expect(effortsFor("claude").filter((e) => isOneSessionEffort("claude", e.id)).map((e) => e.id))
-      .toEqual(["max", "ultracode"]);
+    expect(
+      effortsFor("claude")
+        .filter((e) => isOneSessionEffort("claude", e.id))
+        .map((e) => e.id),
+    ).toEqual(["max", "ultracode"]);
     expect(effortsFor("codex").some((e) => isOneSessionEffort("codex", e.id))).toBe(false);
+  });
+
+  // Nobody is on max by default, and pi has a max thinking level too.
+  it("names max as the one effort that lasts one pi session", () => {
+    expect(
+      effortsFor("pi")
+        .filter((e) => isOneSessionEffort("pi", e.id))
+        .map((e) => e.id),
+    ).toEqual(["max"]);
   });
 
   // Both sides are slugs now, so the ordinary answer is the string comparison.

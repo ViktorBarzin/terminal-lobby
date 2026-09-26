@@ -296,13 +296,15 @@ export const isEffortFor = (h: ModelHarness, id: unknown): boolean => has(h, "ef
  * The new-session pick roams and sticks (store/prefs.ts), so any row there can
  * quietly become every later session's default. Viktor's rule is Claude at
  * high by default and nobody on max by default (2026-09-25), with max still
- * offered in the picker (2026-09-26). So these two launch the session they
- * were picked for and then go back to default (resetOneSessionEffort), and a
- * saved one reads as no choice (coercePrefs).
+ * offered in the picker (2026-09-26). So these launch the session they were
+ * picked for and then go back to default (resetOneSessionEffort), and a saved
+ * one reads as no choice (coercePrefs). Pi's thinking levels include max, so
+ * the rule covers it too.
  */
 const ONE_SESSION_EFFORTS: Record<ModelHarness, ReadonlySet<string>> = {
   claude: new Set(["max", "ultracode"]),
   codex: new Set(),
+  pi: new Set(["max"]),
 };
 
 export const isOneSessionEffort = (h: ModelHarness, id: unknown): boolean =>
