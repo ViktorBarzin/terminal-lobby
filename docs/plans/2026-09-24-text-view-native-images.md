@@ -806,6 +806,30 @@ The tests show the code is what was intended. These steps show it works.
 Safari on the iPhone rig (`homelab ios`) is checked if its browser holds a lobby
 login. If it does not, the report says Safari is unverified.
 
+Safari is unverified as of 2026-09-26. `homelab ios doctor` at 20:28 UTC stopped
+at its first link:
+
+```
+iOS rig via viktorbarzin@mbp-london.viktorbarzin.lan, 2026-09-26T20:28:31Z
+  FAIL  ssh   cannot reach viktorbarzin@mbp-london.viktorbarzin.lan: exit status 255
+0 ok, 1 failing
+```
+
+The London gateway (192.168.8.1) answered ping from the devvm, so the site link
+was up. The Mac answered neither ping nor port 22 at its reserved address
+(192.168.8.168) or at the address the rig last cached for it (192.168.8.201),
+and the rig's hardware-address sweep of 192.168.8.0/24 had failed two minutes
+earlier (its cooldown marker read 20:26:46 UTC). ha-london, the usual vantage
+point for finding a host that moved on that LAN, also timed out on port 22. The
+Mac is most likely asleep, off the network, or parked at its FileVault prompt,
+and each of those needs someone in London. Two further limits apply once it is
+back: the branch is not deployed yet, and the rig cannot reach a 127.0.0.1
+preview on the devvm, so the Safari check runs against the deployed lobby after
+landing, and only if that Safari holds a lobby login. The Android emulator run
+in step 5 is the closest touch-device evidence meanwhile. It is Chrome, not
+WebKit, so it says nothing about Safari's own image decoding or its
+home-screen app viewport.
+
 ## Shipping
 
 One push ships both halves. The Debian package carries the services and the
