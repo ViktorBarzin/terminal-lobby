@@ -3,9 +3,11 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  on,
   onCleanup,
   onMount,
   Show,
+  untrack,
   useContext,
   type Component,
 } from "solid-js";
@@ -424,10 +426,34 @@ export const TextView: Component<{
   createEffect(() => {
     if (props.onScreen !== false) setEverShown(true);
   });
+  /**
+   * The pane is also read at the moments the mode can have moved without this
+   * view asking, which the transcript will not report until the next prompt.
+   * Each time the view comes back on screen: a Shift+Tab typed in the Terminal
+   * changes it there. And whenever a turn starts or ends: approving a plan
+   * switches mode mid-turn, as can a key pressed on another device. Measured
+   * 2026-09-26: after "Yes, manually approve edits" the dial read "Plan" at
+   * idle until a reload, and a Terminal Shift+Tab left it stale on return.
+   */
+  const onScreen = (): boolean => props.onScreen !== false;
+  // Not while a pick from the dial is walking: its reply is the reading that
+  // counts, and a read taken mid-walk could land after it.
+  const rereadMode = (): void => {
+    if (!untrack(modeBusy)) void readMode("");
+  };
   createEffect(() => {
-    if (!everShown()) return;
-    void readMode("");
+    if (onScreen()) rereadMode();
   });
+  const turnOpen = createMemo(() => live() !== undefined);
+  createEffect(
+    on(
+      turnOpen,
+      () => {
+        if (untrack(onScreen)) rereadMode();
+      },
+      { defer: true },
+    ),
+  );
 
   /**
    * The question the session is blocked on, if any.
@@ -1191,6 +1217,11 @@ export const TextView: Component<{
         clearTimeout(settleTimer);
         setPlanAnswered({ keys, toolId, action });
         settleTimer = setTimeout(endPlanAnswer, PLAN_SETTLE_MS);
+        // An approval leaves plan mode for the one its option names, and the
+        // turn it starts writes no mode record, so the pane is what says where
+        // it went. Without this the dial read "Plan" through a whole Bypass
+        // turn (2026-09-26).
+        if (action !== "feedback") void readMode(untrack(mode));
         return;
       }
       setPlanReply({ against, reading: planFromPane(resp?.dialog), notice });
