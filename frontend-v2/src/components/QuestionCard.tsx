@@ -5,6 +5,7 @@ import {
   createEffect,
   createMemo,
   createSignal,
+  onCleanup,
   untrack,
   type Component,
 } from "solid-js";
@@ -39,6 +40,10 @@ type Toggle = { of: Drawn; flip: string } | { of: Drawn; text: string };
 
 /** A multi-select request: the rows to leave ticked, and the free-text row's words. */
 type Wanted = { choices: string[]; text?: string };
+
+/** An answer the card has worked out for someone else to send: the question it
+ *  is addressed to, and the set it should be left holding. */
+export type TypedAnswer = Wanted & { header: string };
 
 /**
  * The card that answers a blocking AskUserQuestion, docked above the composer.
@@ -104,6 +109,14 @@ export const QuestionCard: Component<{
   onChat: () => void;
   /** Show the Terminal view. */
   onTerminal?: () => void;
+  /**
+   * Hand the caller a way to answer the question on screen with words typed
+   * somewhere else, which is the composer below the card. The function returns
+   * null when the screen cannot take words (the review screen, or nothing
+   * parsed). The card is rebuilt for every call, so it registers on mount and
+   * withdraws on cleanup.
+   */
+  register?: (answer: ((words: string) => TypedAnswer | null) | undefined) => void;
 }> = (props) => {
   /** Show every description in full rather than the two-line summary. The clamp
    *  is the default because choosing between four options wants four summaries;
@@ -645,6 +658,22 @@ export const QuestionCard: Component<{
   };
 
   const goBack = (name: string) => run(`back:${name}`, () => props.onBack(name));
+
+  /**
+   * Words from the composer, as the answer the card's own field would give.
+   *
+   * On a single-select that is the free-text row. On a multi-select it is a
+   * commit of the ticks the pane shows plus the words, the set the commit
+   * button sends with the field open.
+   */
+  const answerWith = (words: string): TypedAnswer | null => {
+    const q = question();
+    if (props.review || !q || q.options.length === 0) return null;
+    if (q.multiSelect) return { header: header(), ...wanted(held(), words) };
+    return { header: header(), choices: [FREE_TEXT_LABEL], text: words };
+  };
+  props.register?.(answerWith);
+  onCleanup(() => props.register?.(undefined));
 
   return (
     <Show when={props.dialog || props.pane}>

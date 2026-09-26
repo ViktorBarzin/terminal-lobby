@@ -5,13 +5,13 @@ import (
 	"time"
 )
 
-// cfg is the shape every test starts from: warn at 3 GiB, confirm a dead claude
-// over two consecutive ticks, and ignore the prewarm pool.
-const MiB = 1 << 20
-
+// cfg is the shape every test starts from: warn at 5 GiB and stand down below
+// 4.5 GiB, confirm a dead claude over two consecutive ticks, and ignore the
+// prewarm pool.
 func cfg() Config {
 	return Config{
-		PaneWarnBytes:  3 * GiB,
+		PaneWarnBytes:  5 * GiB,
+		PaneClearBytes: 4608 * MiB,
 		ConfirmTicks:   2,
 		SkipPrefixes:   []string{"__terminal_lobby_"},
 		TombstoneGrace: 90 * time.Second,
@@ -127,6 +127,50 @@ func TestVanishedWithAStaleTombstoneIsStillADeath(t *testing.T) {
 	none(t, got, KindSessionKilled)
 }
 
+// ided gives a session the identity tmux keeps across a rename: session_id and
+// session_created, which collect.go reads as "$<id>:<created>".
+func ided(s Session, id string) Session {
+	s.ID = id
+	return s
+}
+
+// Autotitle renames a new session a few seconds after it starts, and a backfill
+// renames old ones, so the old name leaves tmux with no tombstone. That read as
+// a death: all 8 session_died lines in the 40 hours to 2026-09-24 08:00 were
+// renames, bw8k5gt9v314 becoming books-sent-to-anca-s-kindle among them. The
+// session is still there under its new name, and its identity says so.
+func TestVanishedByRenameIsNotADeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("bw8k5gt9v314"), "$5:1790143332"), live("f1"))})
+
+	got := w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("books-sent-to-anca-s-kindle"), "$5:1790143332"), live("f1"))})
+	none(t, got, KindSessionDied)
+	none(t, got, KindSessionKilled)
+}
+
+// tmux numbers sessions afresh when its server restarts, so a $N on its own can
+// belong to an unrelated session later. The creation time is what separates a
+// rename from a reused number, and a reused number must not hide a real death.
+func TestAReusedTmuxNumberIsStillADeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("immich"), "$5:1790143332"))})
+
+	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", ided(live("other"), "$5:1790150000"))}), KindSessionDied)
+	if f.Session != "immich" {
+		t.Fatalf("want immich reported, got %s", f.Session)
+	}
+}
+
+// A session with no identity, from a row that did not carry one, keeps the old
+// rule. Two empty identities are not a match, or every vanished session with an
+// empty ID would be written off as a rename of any other.
+func TestVanishedWithNoIdentityKeepsTheOldRule(t *testing.T) {
+	w := NewWatcher(cfg())
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("immich"))})
+
+	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", live("other"))}), KindSessionDied)
+}
+
 // A tombstone for a session that is still running says nothing about it: the
 // name was killed in an earlier life and created again.
 func TestATombstoneForALiveSessionSaysNothing(t *testing.T) {
@@ -172,6 +216,7 @@ func TestStampWithNoClaudeIsADeath(t *testing.T) {
 	dead := live("typeahead")
 	dead.ClaudeAlive = false
 
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("typeahead"))})
 	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
 	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 	if f.Session != "typeahead" {
@@ -212,9 +257,39 @@ func TestClaudeDeathIsReportedOnce(t *testing.T) {
 	dead := live("typeahead")
 	dead.ClaudeAlive = false
 
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("typeahead"))})
 	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
 	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+}
+
+// A claude already dead when the watcher starts died while nobody was
+// watching, and the watcher has no way to say when. Before this, every restart
+// announced it again 30 seconds in: 5 of the 6 claude_died lines in the 72 hours
+// to 2026-09-24 came exactly one tick after a restart, all for ny-reibursment
+// and polarized-sunglasses-with-photoc, whose claudes had been gone for hours,
+// and every terminal-lobby deploy restarts this watcher.
+func TestADeadClaudeFoundAtStartIsNotANewDeath(t *testing.T) {
+	w := NewWatcher(cfg())
+	dead := live("ny-reibursment")
+	dead.ClaudeAlive = false
+
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
+}
+
+// Seeding must not blind the watcher to the same session later. Once that
+// claude is running again, dying again is a death this watcher saw.
+func TestAClaudeRevivedAfterStartIsWatchedAgain(t *testing.T) {
+	w := NewWatcher(cfg())
+	dead := live("ny-reibursment")
+	dead.ClaudeAlive = false
+
+	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("ny-reibursment"))})
+	w.Tick([]Snapshot{snap("wizard", "boot-1", dead)})
+	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", dead)}), KindClaudeDied)
 }
 
 // The prewarm pool slot holds a claude nobody is talking to. Its death costs no
@@ -252,29 +327,43 @@ func TestARebootIsOneFindingWithTheRestoreGap(t *testing.T) {
 
 // --- the pane pre-warning ------------------------------------------------
 
-// The gate is what makes a 3 GiB threshold safe: a claude at 3 GiB is ~6x its
-// normal size, and the cap will pick it next.
-func TestPaneOverThresholdWithClaudeFattestWarns(t *testing.T) {
+func TestPaneOverThresholdWarns(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
-	big.PaneBytes = 4 * GiB
-	big.PaneUnreclaimable = 4 * GiB
+	big.PaneBytes = 5500 * MiB
+	big.PaneUnreclaimable = 5500 * MiB
 
 	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-	if f.Session != "infra" || f.PaneBytes != 4*GiB || f.PaneLimit != 6*GiB {
-		t.Fatalf("want infra 4GiB/6GiB, got %s %d/%d", f.Session, f.PaneBytes, f.PaneLimit)
+	if f.Session != "infra" || f.PaneBytes != 5500*MiB || f.PaneLimit != 6*GiB {
+		t.Fatalf("want infra 5500MiB/6GiB, got %s %d/%d", f.Session, f.PaneBytes, f.PaneLimit)
 	}
 }
 
-// A test run or a build being the fattest process means the cap will eat the
-// build, which is the mechanism working as designed. 1 of the 3 kills in the 7
-// days before this was written was exactly that.
-func TestPaneOverThresholdWithABuildFattestStaysQuiet(t *testing.T) {
+// Claude is ~0.4 GB and is the largest single process in almost every pane it
+// sits in, so "claude is fattest" filtered nothing: 212 warnings in the 26 days
+// to 2026-09-26 against 5 claude kills. And when a build is fattest the cap
+// takes the build and then the claude: on 2026-09-24 it killed ~30 vitest
+// workers first and the conversation after them. A claude anywhere in a pane
+// this full is at risk.
+func TestPaneOverThresholdWarnsWhateverIsFattest(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
-	big.PaneBytes = 5 * GiB
-	big.PaneUnreclaimable = 5 * GiB
+	big.PaneBytes = 5500 * MiB
+	big.PaneUnreclaimable = 5500 * MiB
 	big.TopIsClaude = false
+
+	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
+}
+
+// A pane with no claude in it holds no conversation to lose.
+func TestPaneOverThresholdWithNoClaudeStaysQuiet(t *testing.T) {
+	w := NewWatcher(cfg())
+	big := live("infra")
+	big.ClaudeState = ""
+	big.ClaudeAlive = false
+	big.TopIsClaude = false
+	big.PaneBytes = 5500 * MiB
+	big.PaneUnreclaimable = 5500 * MiB
 
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
 }
@@ -289,8 +378,8 @@ func TestPaneUnderThresholdStaysQuiet(t *testing.T) {
 func TestUncappedPaneStaysQuiet(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
-	big.PaneBytes = 5 * GiB
-	big.PaneUnreclaimable = 5 * GiB
+	big.PaneBytes = 5500 * MiB
+	big.PaneUnreclaimable = 5500 * MiB
 	big.PaneLimit = 0
 
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
@@ -301,14 +390,51 @@ func TestUncappedPaneStaysQuiet(t *testing.T) {
 func TestPaneWarningIsPerEpisode(t *testing.T) {
 	w := NewWatcher(cfg())
 	big := live("infra")
-	big.PaneBytes = 4 * GiB
-	big.PaneUnreclaimable = 4 * GiB
+	big.PaneBytes = 5500 * MiB
+	big.PaneUnreclaimable = 5500 * MiB
 
 	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
 	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
 
 	w.Tick([]Snapshot{snap("wizard", "boot-1", live("infra"))}) // dropped back
 	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
+}
+
+// A pane hovering around the line is one episode. Without the gap between the
+// warn and clear levels, every dip and return was a fresh warning and a fresh
+// Slack post.
+func TestPaneHoveringAtTheLineWarnsOnce(t *testing.T) {
+	w := NewWatcher(cfg())
+	at := func(unreclaimable uint64) []Snapshot {
+		s := live("infra")
+		s.PaneBytes = unreclaimable
+		s.PaneUnreclaimable = unreclaimable
+		return []Snapshot{snap("wizard", "boot-1", s)}
+	}
+
+	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
+	none(t, w.Tick(at(4800*MiB)), KindPaneNearCap) // dipped, still above clear
+	none(t, w.Tick(at(5200*MiB)), KindPaneNearCap)
+
+	none(t, w.Tick(at(4*GiB)), KindPaneNearCap) // below clear: episode over
+	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
+}
+
+// A clear level left unset, or set above the warn level, collapses to the warn
+// level rather than leaving an episode open forever or never.
+func TestPaneClearLevelDefaultsToWarnLevel(t *testing.T) {
+	c := cfg()
+	c.PaneClearBytes = 0
+	w := NewWatcher(c)
+	at := func(unreclaimable uint64) []Snapshot {
+		s := live("infra")
+		s.PaneUnreclaimable = unreclaimable
+		return []Snapshot{snap("wizard", "boot-1", s)}
+	}
+
+	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
+	none(t, w.Tick(at(5*GiB-1)), KindPaneNearCap)
+	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
 }
 
 // --- users are independent ----------------------------------------------
@@ -342,8 +468,8 @@ func TestUsersDoNotShareState(t *testing.T) {
 //
 // So current riding at the cap is normal for any pane doing file I/O, and a
 // threshold on it fires on every busy pane forever. What forces a kill is the
-// memory that CANNOT be reclaimed: anon plus shmem, since the user slice sets
-// memory.swap.max=0 and neither can be paged out.
+// memory the cap cannot drop as cache: anon plus shmem. (Panes could not swap
+// when this was measured; since 2026-09-02 they can, within 4 GiB per user.)
 
 func TestPaneAtTheCapOnCacheAloneStaysQuiet(t *testing.T) {
 	// The "issues" pane exactly as measured 2026-09-01 19:10.
@@ -357,19 +483,20 @@ func TestPaneAtTheCapOnCacheAloneStaysQuiet(t *testing.T) {
 }
 
 func TestPaneWithUnreclaimablePastTheThresholdWarns(t *testing.T) {
-	// The same pane 40 minutes earlier, when /tmp was 95% full: anon 783 MB plus
-	// shmem 3641 MB, none of it reclaimable with swap disabled.
+	// Shaped like the same pane 40 minutes earlier, when /tmp was 95% full and
+	// shmem made up most of it, scaled past today's 5 GiB line. The measured
+	// 4424 MB now sits under it: that pane was never killed.
 	w := NewWatcher(cfg())
 	s := live("issues")
-	s.PaneBytes = 4627 * MiB
-	s.PaneUnreclaimable = 4424 * MiB
+	s.PaneBytes = 5400 * MiB
+	s.PaneUnreclaimable = 5200 * MiB
 	s.PaneLimit = 6144 * MiB
 
 	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
-	if f.PaneUnreclaimable != 4424*MiB {
+	if f.PaneUnreclaimable != 5200*MiB {
 		t.Errorf("want the unreclaimable figure carried into the finding, got %d", f.PaneUnreclaimable)
 	}
-	if f.PaneBytes != 4627*MiB {
+	if f.PaneBytes != 5400*MiB {
 		t.Errorf("want memory.current carried too, so the reader can see the split, got %d", f.PaneBytes)
 	}
 }

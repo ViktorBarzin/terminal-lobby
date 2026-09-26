@@ -185,6 +185,24 @@ export const isModelFor = (h: ModelHarness, id: unknown): boolean => has(h, "mod
 export const isEffortFor = (h: ModelHarness, id: unknown): boolean => has(h, "effort", id);
 
 /**
+ * Efforts that last ONE new session, per harness.
+ *
+ * The new-session pick roams and sticks (store/prefs.ts), so any row there can
+ * quietly become every later session's default. Viktor's rule is Claude at
+ * high by default and nobody on max by default (2026-09-25), with max still
+ * offered in the picker (2026-09-26). So these two launch the session they
+ * were picked for and then go back to default (resetOneSessionEffort), and a
+ * saved one reads as no choice (coercePrefs).
+ */
+const ONE_SESSION_EFFORTS: Record<ModelHarness, ReadonlySet<string>> = {
+  claude: new Set(["max", "ultracode"]),
+  codex: new Set(),
+};
+
+export const isOneSessionEffort = (h: ModelHarness, id: unknown): boolean =>
+  typeof id === "string" && ONE_SESSION_EFFORTS[h].has(id);
+
+/**
  * A stored model id, carried forward to the row it means today.
  *
  * The Claude rows were family words until 2026-09-06, so a preference written

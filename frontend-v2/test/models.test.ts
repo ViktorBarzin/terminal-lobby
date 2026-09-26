@@ -6,6 +6,7 @@ import {
   DEFAULT_CHOICE,
   effortsFor,
   isEffortFor,
+  isOneSessionEffort,
   isCurrentModel,
   isModelFor,
   labelFor,
@@ -71,6 +72,15 @@ describe("the model catalogue", () => {
       "max",
       "ultra",
     ]);
+  });
+
+  // A new session's effort pick roams and sticks, so these two would become
+  // every later session's default. They stay in the picker and last one
+  // session (store/prefs.ts, resetOneSessionEffort). Codex keeps its own.
+  it("names the efforts that last one Claude session", () => {
+    expect(effortsFor("claude").filter((e) => isOneSessionEffort("claude", e.id)).map((e) => e.id))
+      .toEqual(["max", "ultracode"]);
+    expect(effortsFor("codex").some((e) => isOneSessionEffort("codex", e.id))).toBe(false);
   });
 
   // Both sides are slugs now, so the ordinary answer is the string comparison.

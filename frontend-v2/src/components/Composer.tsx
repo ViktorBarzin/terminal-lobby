@@ -80,10 +80,9 @@ export const Composer: Component<{
   live?: WorkingRow;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
-  /** Claude is asking a blocking question right now. Sending a prompt takes the
-   *  dialog down and Claude re-asks, so Send says so — it does not refuse.
-   *  ADR-0010: whoever answers first wins; the pane and this view are two
-   *  windows onto one process. */
+  /** Claude is asking a blocking question right now. The text view sends what
+   *  is typed as the question's free-text answer then (TextView `send`), so
+   *  Send says so. */
   asking?: boolean;
   /**
    * The plan-approval dialog is on the pane. The field then answers the plan:
@@ -329,7 +328,7 @@ export const Composer: Component<{
     if (props.planOpen)
       return "Send (Enter). Tells Claude what to change in its plan, and it keeps planning";
     if (props.asking)
-      return "Send (Enter). Dismisses the question Claude is asking, and Claude asks again";
+      return "Send (Enter). Answers the question Claude is asking with what you typed";
     return undefined;
   };
 

@@ -3643,6 +3643,11 @@ body.tl-kb-up {
   .tl-tray-kbd-fine {
     display: none;
   }
+  /* The same floor for the palette's search field (15px on desktop), which is
+     where search in the text view opens. */
+  .tl-cp-input {
+    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  }
 }
 
 /* ---- Image gallery + lightbox + drop-target (Cat.8) -------------------- */
@@ -5187,6 +5192,14 @@ body.tl-kb-up {
   color: inherit;
   font: inherit;
   font-size: calc(13px * var(--tl-text-scale, 1));
+}
+/* 16px on a phone or iOS Safari zooms the page when the free-text answer takes
+   focus and leaves it zoomed (reported 2026-09-26). After the rule above so it
+   wins at equal specificity. */
+@media (pointer: coarse) {
+  .tl-qcard-other {
+    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  }
 }
 .tl-qcard-review {
   display: flex;
