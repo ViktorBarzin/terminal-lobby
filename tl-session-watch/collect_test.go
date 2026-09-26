@@ -561,3 +561,67 @@ func TestCollectUserExcludesSystemSessions(t *testing.T) {
 		t.Errorf("list-sessions must ask for @tl_origin, argv was: %s", raw)
 	}
 }
+
+// Pi sets process.title, which is what puts `pi` in its comm; its exe is the
+// node runtime and says nothing. For its first ~0.8 s the comm is still the
+// runtime's, and nothing has stamped a state by then either.
+func TestIsPi(t *testing.T) {
+	for comm, want := range map[string]bool{
+		"pi":         true,
+		"node":       false,
+		"MainThread": false,
+		"pip":        false,
+		"pi-mono":    false,
+		"claude":     false,
+		"":           false,
+	} {
+		if got := isPi(comm); got != want {
+			t.Errorf("isPi(%q) = %v, want %v", comm, got, want)
+		}
+	}
+}
+
+// A live pi owns its session's @claude_state: the lobby's pi extension stamps
+// it through the same claude-tmux-state script Claude's hooks use. Without this,
+// every pi session with a stamp reads as a dead claude a minute after its first
+// turn, and ClaudeSessionDied fires for a conversation that is running.
+func TestPaneFactsCountsALivePiAsTheStateOwner(t *testing.T) {
+	samples := []procSample{
+		{Pid: 20, RSSBytes: 3 << 20},               // the login shell
+		{Pid: 21, RSSBytes: 180 << 20, IsPi: true}, // pi
+		{Pid: 22, RSSBytes: 2 << 20},               // pi's bash tool
+	}
+	got := paneFacts(Session{}, samples, func(int) (uint64, uint64, uint64) { return 200 << 20, 190 << 20, 6 << 30 })
+	if !got.ClaudeAlive {
+		t.Error("a live pi did not count as the state's owner")
+	}
+	if got.TopIsClaude {
+		t.Error("a pi at the top of the pane was reported as a claude")
+	}
+}
+
+// The watcher, end to end on one pi session: stamped, pi alive, several ticks.
+// No claude_died, and the event keeps its name for when a pi does die.
+func TestALivePiSessionIsNotReportedDead(t *testing.T) {
+	w := NewWatcher(Config{ConfirmTicks: 2, PaneWarnBytes: 3 << 30})
+	pi := paneFacts(Session{Name: "pi-work", ClaudeState: "done"},
+		[]procSample{{Pid: 21, RSSBytes: 180 << 20, IsPi: true}},
+		func(int) (uint64, uint64, uint64) { return 0, 0, 0 })
+	for i := 0; i < 4; i++ {
+		for _, f := range w.Tick([]Snapshot{snap("wizard", "boot-1", pi)}) {
+			if f.Kind == KindClaudeDied {
+				t.Fatalf("tick %d reported a live pi session dead: %+v", i, f)
+			}
+		}
+	}
+	gone := pi
+	gone.ClaudeAlive = false
+	w.Tick([]Snapshot{snap("wizard", "boot-1", gone)})
+	var died bool
+	for _, f := range w.Tick([]Snapshot{snap("wizard", "boot-1", gone)}) {
+		died = died || f.Kind == KindClaudeDied
+	}
+	if !died {
+		t.Fatal("a pi killed under its stamp was not reported, and should be, as claude_died")
+	}
+}

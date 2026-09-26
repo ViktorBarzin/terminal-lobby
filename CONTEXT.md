@@ -12,10 +12,15 @@ authenticates and names the user works.
 
 **Session**:
 One tmux session belonging to one OS user, listed in the sidebar and
-rendered in the terminal pane. Usually runs a Claude Code conversation, but
-may be a plain shell. Carries a **name**, which nobody reads, and a
+rendered in the terminal pane. Usually runs a **harness**, most often Claude
+Code, but may be a plain shell. Carries a **name**, which nobody reads, and a
 **title**, which is what everybody reads.
 _Avoid_: terminal, tab, thread
+
+**Harness**:
+The agent CLI a session runs: Claude Code, Codex or pi. A plain shell is a
+command the lobby can start, but not a harness.
+_Avoid_: tool, CLI
 
 **Name** (of a session):
 The tmux session name. An opaque 12-character id, minted by the browser when
@@ -535,9 +540,9 @@ _Avoid_: snapshot (the record points AT one, which is tmux-persist's), backup,
 tombstone, undo token
 
 **Session state**:
-What the Claude conversation inside a session is doing: *running* (it is
-working and will produce more output), *awaiting input* (Claude asked
-something and is blocked on the user), or *completed* (finished, ready
+What the Claude or pi conversation inside a session is doing (Codex reports
+none): *running* (it is working and will produce more output), *awaiting
+input* (the harness asked something and is blocked on the user), or *completed* (finished, ready
 for the next prompt), or *suspended* (a **Suspended session**, whose Claude
 was killed to give its memory back and which a click resumes). A session
 with no live Claude has no state, with that one exception, which is why
@@ -967,13 +972,13 @@ enough to **Data used** to be worth keeping apart deliberately, so each entry
 says which side it is on.
 
 **Agent spend**:
-What one OS user's Claude Code and Codex conversations have consumed over a
+What one OS user's Claude Code, Codex and pi conversations have consumed over a
 period, kept server-side in `/var/lib/tmux-api/spend/<user>.json` and served by
 `GET /agent-spend`. Distinct from **Data used** in every respect worth naming:
 that is **wire bytes** a browser moved, counted per browser profile and never
 leaving the device; this is what the agents themselves cost, counted per OS
-user, and it follows the person to any browser they sign in from. The two tools
-are kept apart all the way down, because Claude Code reports dollars and a
+user, and it follows the person to any browser they sign in from. The harnesses
+are kept apart all the way down, because Claude Code and pi report dollars and a
 ChatGPT plan reports none.
 _Avoid_: usage (taken: **Data used** owns it, and Codex's rollout spends the
 same word on tokens alone, in `total_token_usage`), cost tracking, billing
@@ -985,8 +990,9 @@ Renaming them would mean changing the managed-settings entry in the infra repo
 in the same breath, so they stand — grep for `usage` and expect both meanings.
 
 **Spend**:
-Dollars, and only for Claude Code, which computes `total_cost_usd` itself and
-hands it to the **Recorder** on every render. Never derived here: pricing
+Dollars, and only from a harness that computes them itself: Claude Code, which
+hands `total_cost_usd` to the **Recorder** on every render, and pi, which writes
+a cost into every message of its session file. Never derived here: pricing
 tokens ourselves would mean a rate table with no signal when it went stale.
 A Codex session has no spend figure at all, so its rows carry tokens and stop
 there.
@@ -1021,7 +1027,9 @@ already had with the same JSON on stdin. It is the only place the CLI hands out
 its own cost arithmetic. Everything it does on the recording side is a silent
 no-op on failure and runs in a background subshell, because a statusline that
 breaks somebody's prompt is worse than no feature. Codex has no counterpart and
-needs none: its rollout files already carry what the panel reads.
+needs none: its rollout files already carry what the panel reads. Pi's
+counterpart is the lobby's pi extension, which posts each session's running
+totals to `POST /hooks/pi-usage` when a turn settles.
 _Avoid_: hook (no hook payload carries cost, which is the whole reason this
 exists), agent, collector
 

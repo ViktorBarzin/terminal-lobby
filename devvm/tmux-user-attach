@@ -94,7 +94,7 @@ speculative="${TL_POOL_SPECULATIVE:-}"
 #   1. ~/.config/terminal-lobby/commands — `key=command line` per line,
 #      user-editable, wins over builtins (lets wizard map claude to his
 #      --session-id wrapper, or anyone add their own keys later).
-#   2. Builtins: claude / codex (run through the user's login+interactive
+#   2. Builtins: claude / codex / pi (run through the user's login+interactive
 #      shell so rc functions, aliases and PATH behave like typing it),
 #      shell (an explicit plain login shell — bypasses tmux
 #      default-command, e.g. bob's auto-claude launcher).
@@ -102,7 +102,7 @@ speculative="${TL_POOL_SPECULATIVE:-}"
 # rules, exactly as before this feature.
 CMD_RE='^[a-z0-9_-]{1,16}$'
 COMMANDS_FILE="$home/.config/terminal-lobby/commands"
-BUILTIN_KEYS=(claude codex shell)
+BUILTIN_KEYS=(claude codex pi shell)
 
 user_shell="$(getent passwd "$(id -un)" | cut -d: -f7)"
 user_shell="${user_shell:-/bin/sh}"
@@ -126,6 +126,7 @@ resolve_cmd() {
         case "$key" in
             claude) cmd="claude" ;;
             codex)  cmd="codex --yolo" ;;
+            pi)     cmd="pi" ;;
             shell)  plain_shell=yes ;;
         esac
     fi
@@ -159,7 +160,37 @@ launch_flags() {
             # codex takes the reasoning level as config rather than a flag.
             [[ -n "$effort" ]] && cmd+=" -c model_reasoning_effort='$effort'"
             ;;
+        pi)
+            # Nothing, on purpose. `pi --model` with a model the account no
+            # longer lists exits 1 at once, and the session would close as it
+            # opened. The choice goes into the session's environment instead
+            # (pi_env, below) and the lobby's pi extension applies it once pi is
+            # up, where a model it cannot resolve is a notice rather than an exit.
+            ;;
     esac
+    return 0
+}
+
+# pi_env builds the `-e NAME=value` pairs that hand pi its launch choice.
+#
+# `tmux new-session -e` puts each pair in the new session's environment as one
+# argv element, so no shell ever parses the value: the model and level reach pi
+# as TL_PI_MODEL and TL_PI_THINKING byte for byte. PI_MODEL_RE and PI_EFFORT_RE
+# gate both anyway, the same belt-and-braces every launch value gets here.
+#
+# Only for the `pi` key and only when there is a command to configure. Like -c
+# and the command itself, -e is ignored by `new-session -A` for a session that
+# already exists, so a reconnect cannot re-point a running pi.
+pi_env() {
+    local key="$1"
+    tmux_env=()
+    [[ "$key" == pi && -n "$cmd" ]] || return 0
+    if [[ -n "$model" ]]; then
+        tmux_env+=(-e "TL_PI_MODEL=$model")
+    fi
+    if [[ -n "$effort" ]]; then
+        tmux_env+=(-e "TL_PI_THINKING=$effort")
+    fi
     return 0
 }
 
@@ -205,6 +236,51 @@ if [[ "${1:-}" == "--probe" ]]; then
     exec "$user_shell" -lic "$probe" 2>/dev/null
 fi
 
+# --pi-models: the models this user's pi can run, for the new-session picker
+# (docs/adr/0032-pi-lists-its-own-models-per-user.md). tmux-api serves the
+# answer as GET /pi-models.
+#
+# `pi --list-models` answers from the user's own sign-in and pi's catalogue
+# without starting a session, and it has to run as the user: tmux-api cannot
+# read another user's ~/.pi, and a sign-in is per account. It runs in the same
+# login+interactive shell a session gets, for the reason --probe gives: that is
+# where the user's PATH and any rc-file wrapper live.
+#
+# The user's enabledModels setting rides along, because --list-models ignores
+# it and tmux-api applies it. The settings file is printed whole and tmux-api
+# parses it; this script has no JSON parser it can count on. PI_CODING_AGENT_DIR
+# is read inside the login shell, where a user who relocated pi's directory set
+# it, and not from this process, whose environment sudo reset.
+#
+# Every section is framed by a marker line, because the shell's stdout is not
+# ours alone: an rc file may print a banner before the snippet runs and a logout
+# file may print after it. tmux-api reads only what sits between the markers,
+# the same filtering --probe's caller does by shape. A pi that hangs is cut off
+# by `timeout` inside the shell, and tmux-api bounds the whole call on top.
+if [[ "${1:-}" == "--pi-models" ]]; then
+    snippet='cd "$HOME" 2>/dev/null || cd /
+if ! command -v pi >/dev/null 2>&1; then
+    printf "%s\n" "@@terminal-lobby:pi-missing@@"
+    exit 0
+fi
+printf "%s\n" "@@terminal-lobby:pi-models@@"
+if command -v timeout >/dev/null 2>&1; then
+    timeout 12 pi --list-models </dev/null 2>/dev/null
+else
+    pi --list-models </dev/null 2>/dev/null
+fi
+d="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+case "$d" in
+"~") d="$HOME" ;;
+"~/"*) d="$HOME/${d#"~/"}" ;;
+esac
+printf "%s\n" "@@terminal-lobby:pi-settings@@"
+cat -- "$d/settings.json" 2>/dev/null
+printf "\n%s\n" "@@terminal-lobby:pi-end@@"
+exit 0'
+    exec "$user_shell" -lic "$snippet" 2>/dev/null
+fi
+
 cmd_key="${3:-}"
 [[ "$cmd_key" =~ $CMD_RE ]] || cmd_key=""
 
@@ -227,13 +303,27 @@ cmd_key="${3:-}"
 # below rather than pasted bare into the command line.
 MODEL_RE='^[a-z0-9][a-z0-9._-]{0,31}(\[[a-z0-9]{1,4}\])?$'
 EFFORT_RE='^[a-z]{1,12}$'
+# pi's own vocabulary, for the `pi` key alone. A pi model is a provider/id
+# reference, and a catalogue's ids carry more than Claude's: a second slash
+# (openrouter/anthropic/…), a colon (an ollama tag, an OpenRouter variant), the
+# odd @ or ~, and capitals. None of those is a quote, a space, a `$` or a `;`,
+# and the value never meets a shell anyway (pi_env). The level is one of pi's
+# seven words. tmux-attach.sh gates the same two values with the same literals.
+PI_MODEL_RE='^[A-Za-z0-9][A-Za-z0-9._:@/~-]{0,95}$'
+PI_EFFORT_RE='^(off|minimal|low|medium|high|xhigh|max)$'
 model="${4:-}"
-[[ "$model" =~ $MODEL_RE ]] || model=""
 effort="${5:-}"
-[[ "$effort" =~ $EFFORT_RE ]] || effort=""
+if [[ "$cmd_key" == pi ]]; then
+    [[ "$model" =~ $PI_MODEL_RE ]] || model=""
+    [[ "$effort" =~ $PI_EFFORT_RE ]] || effort=""
+else
+    [[ "$model" =~ $MODEL_RE ]] || model=""
+    [[ "$effort" =~ $EFFORT_RE ]] || effort=""
+fi
 
 resolve_cmd "$cmd_key"
 launch_flags "$cmd_key"
+pi_env "$cmd_key"
 # tmux args after the session flags: nothing (default-command decides),
 # an explicit plain login shell, or the mapped command via login+
 # interactive shell (-l loads profile/PATH, -i loads rc functions like
@@ -419,9 +509,9 @@ fi
 
 if [[ "$scope_ok" == yes ]]; then
     exec systemd-run --user --scope --quiet --collect \
-        tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}" \
+        tmux new-session -A -s "$name" -c "$start_dir" "${tmux_env[@]}" "${tmux_cmd[@]}" \
             "${stamp_origin[@]}"
 fi
 
-exec tmux new-session -A -s "$name" -c "$start_dir" "${tmux_cmd[@]}" \
+exec tmux new-session -A -s "$name" -c "$start_dir" "${tmux_env[@]}" "${tmux_cmd[@]}" \
     "${stamp_origin[@]}"

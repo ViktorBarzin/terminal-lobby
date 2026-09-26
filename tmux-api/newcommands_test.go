@@ -142,9 +142,12 @@ func TestBuiltinCommandKeysMatchTheScript(t *testing.T) {
 		t.Skipf("tmux-user-attach not readable: %v", err)
 	}
 	src := string(b)
-	if !strings.Contains(src, "BUILTIN_KEYS=(claude codex shell)") {
-		t.Fatalf("tmux-user-attach no longer declares BUILTIN_KEYS=(claude codex shell).\n" +
-			"Update builtinCommandKeys here and NEW_COMMANDS in the frontend to match.")
+	// Built from the Go list, so the two cannot drift in either direction: a key
+	// the script gained, lost or reordered fails here the same way.
+	want := "BUILTIN_KEYS=(" + strings.Join(builtinCommandKeys, " ") + ")"
+	if !strings.Contains(src, want) {
+		t.Fatalf("tmux-user-attach does not declare %s.\n"+
+			"Update builtinCommandKeys here and NEW_COMMANDS in the frontend to match.", want)
 	}
 	for _, k := range builtinCommandKeys {
 		if !strings.Contains(src, k+")") {
