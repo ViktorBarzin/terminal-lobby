@@ -424,3 +424,38 @@ func TestAnOddPasteListDoesNotDropThePrompt(t *testing.T) {
 		}
 	}
 }
+
+// A path pasted into the terminal is attached as a picture, and Claude Code
+// follows the prompt with an isMeta record naming where the file came from,
+// "[Image: source: <path>]". The desktop check on 2026-09-26 found it rendered
+// as a message from Claude, with the same picture drawn a second time under
+// it, right below the bubble that already shows it. The note is the harness's
+// bookkeeping, like a skill body, so it leaves no row.
+func TestNormalizeImageSourceNoteLeavesNoRow(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line([]byte(pasteLine("u-3", "[Image #2] what colour?", `,"imagePasteIds":[2]`,
+		imageBlock("image/png", testPNG(t, 4)))))
+	for _, text := range []string{
+		"[Image: source: /tmp/pics/paste.png]",
+		"[Image: source: /tmp/a.png]\n[Image: source: /home/u/b b.jpg]",
+	} {
+		note := `{"type":"user","isMeta":true,"uuid":"m-2","parentUuid":"u-3","message":{"role":"user",` +
+			`"content":[{"type":"text","text":` + jsonString(text) + `}]}}`
+		if out := n.Line([]byte(note)); len(out) != 0 {
+			t.Fatalf("the source note for %q became %v", text, kinds(out))
+		}
+	}
+}
+
+// Only the note itself goes. Meta text that merely mentions one, or a person
+// typing the same words, keeps the row it always had.
+func TestNormalizeImageSourceLookalikesKeepTheirRows(t *testing.T) {
+	n := NewNormalizer("demo")
+	meta := `{"type":"user","isMeta":true,"uuid":"m-3","message":{"role":"user","content":[` +
+		`{"type":"text","text":"see [Image: source: /tmp/a.png] above"}]}}`
+	if out := n.Line([]byte(meta)); len(out) != 1 || out[0].Kind != KindText {
+		t.Fatalf("meta text around a source note must keep its row, got %v", kinds(out))
+	}
+	typed := pasteLine("u-4", "[Image: source: /tmp/a.png]", "")
+	onlyKind(t, n.Line([]byte(typed)), KindUser)
+}

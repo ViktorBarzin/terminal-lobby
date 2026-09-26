@@ -328,6 +328,12 @@ func (n *Normalizer) conversation(rec Record) []Event {
 			e.Meta, e.Context = MetaContext, r
 			return []Event{e}
 		}
+		// A path pasted into the terminal becomes a picture on the prompt,
+		// which the bubble draws, and this note of where it came from. Shown,
+		// it read as Claude speaking and drew the same picture again under it.
+		if imageSourceNote(text) {
+			return nil
+		}
 	}
 
 	// isPrompt: the human actually said something (see the turn model above).
@@ -643,6 +649,25 @@ func imageRef(bl Block, n int) (ImageRef, bool) {
 		return ImageRef{}, false
 	}
 	return ImageRef{N: n, MediaType: bl.Source.MediaType, Bytes: int64(bl.Source.Size)}, true
+}
+
+// imageSourceRE is the note Claude Code writes after a prompt that attached a
+// pasted file path as a picture: "[Image: source: <path>]", one per picture.
+var imageSourceRE = regexp.MustCompile(`^\[Image: source: [^\]\n]+\]$`)
+
+// imageSourceNote reports whether a meta record's text is nothing but such
+// notes. Text around one is something else, and keeps its row.
+func imageSourceNote(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if !imageSourceRE.MatchString(strings.TrimSpace(line)) {
+			return false
+		}
+	}
+	return true
 }
 
 // shotLinkRE is a markdown link to a PNG or JPEG, the two formats
