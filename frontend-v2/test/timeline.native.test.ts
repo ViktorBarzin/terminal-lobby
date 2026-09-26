@@ -28,16 +28,18 @@ const prompt = (text = "go") => ev({ kind: "user", body: text });
 /** Rows of one unsettled turn, flattened past any fold. */
 const rowsOf = (...events: Event[]) => deriveRows(events);
 const flat = (rows: ReturnType<typeof deriveRows>) =>
-  visibleRows(
-    rows,
-    new Set(rows.filter((r) => r.kind === "turn-fold").map((r) => r.turnKey)),
-  );
+  visibleRows(rows, new Set(rows.filter((r) => r.kind === "turn-fold").map((r) => r.turnKey)));
 
 describe("tool rows carry what the call is doing", () => {
   it("labels a command row with the command", () => {
     const rows = rowsOf(
       prompt(),
-      ev({ kind: "tool_use", tool: "Bash", toolId: "tu1", body: JSON.stringify({ command: "go test ./..." }) }),
+      ev({
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "tu1",
+        body: JSON.stringify({ command: "go test ./..." }),
+      }),
     );
     const tool = rows.find((r) => r.kind === "tool") as ToolRow;
     expect(tool.itemType).toBe("command_execution");
@@ -88,9 +90,16 @@ describe("todo lists", () => {
         kind: "tool_use",
         tool: "TodoWrite",
         toolId: `tu${seq}`,
-        body: JSON.stringify({ todos: [{ content: "one", status: a }, { content: "two", status: b }] }),
+        body: JSON.stringify({
+          todos: [
+            { content: "one", status: a },
+            { content: "two", status: b },
+          ],
+        }),
       });
-    const rows = flat(rowsOf(prompt(), todo("in_progress", "pending"), todo("completed", "in_progress")));
+    const rows = flat(
+      rowsOf(prompt(), todo("in_progress", "pending"), todo("completed", "in_progress")),
+    );
     const todos = rows.filter((r) => r.kind === "todo") as TodoRow[];
     expect(todos).toHaveLength(1);
     expect(todos[0]!.steps.map((s) => s.status)).toEqual(["completed", "inProgress"]);
@@ -109,7 +118,10 @@ describe("questions", () => {
             question: "Which way?",
             header: "Route",
             multiSelect: false,
-            options: [{ label: "Left", description: "" }, { label: "Right", description: "" }],
+            options: [
+              { label: "Left", description: "" },
+              { label: "Right", description: "" },
+            ],
           },
         ],
       }),
@@ -213,7 +225,12 @@ describe("subagents", () => {
     const rows = flat(
       rowsOf(
         prompt(),
-        ev({ kind: "tool_use", tool: "Task", toolId: "ta1", body: JSON.stringify({ description: "explore" }) }),
+        ev({
+          kind: "tool_use",
+          tool: "Task",
+          toolId: "ta1",
+          body: JSON.stringify({ description: "explore" }),
+        }),
         ev({ kind: "thinking", body: "inner reasoning", sidechain: true }),
         ev({ kind: "tool_use", tool: "Read", toolId: "r1", body: "{}", sidechain: true }),
         ev({ kind: "tool_result", toolId: "ta1", body: "found it" }),
@@ -224,6 +241,137 @@ describe("subagents", () => {
     // and the subagent's own rows are NOT loose in the main timeline
     expect(rows.filter((r) => r.kind === "thinking")).toHaveLength(0);
   });
+
+  /** An Agent call, the way the transcript records one. */
+  const spawn = (toolId: string, prompt: string) =>
+    ev({
+      kind: "tool_use",
+      tool: "Agent",
+      toolId,
+      body: JSON.stringify({ description: prompt.slice(0, 20), prompt, subagent_type: "Explore" }),
+    });
+  /** One event of a subagent's own work, tagged with the agent it belongs to. */
+  const inner = (agentId: string, e: Partial<Event> & { kind: Event["kind"] }) =>
+    ev({ ...e, sidechain: true, agentId });
+  const callRow = (rows: ReturnType<typeof flat>, toolId: string) =>
+    rows.find((r) => r.kind === "tool" && (r as ToolRow).toolId === toolId) as ToolRow;
+  /** What a call holds, as the ids of the events behind its child rows. */
+  const heldBy = (rows: ReturnType<typeof flat>, toolId: string) =>
+    callRow(rows, toolId).children.map((c) => c.id);
+
+  it("keeps two agents' interleaved work under their own calls", () => {
+    const events = [
+      prompt("audit both halves"),
+      spawn("call-a", "Read the server half"),
+      spawn("call-b", "Read the client half"),
+      inner("agent-a", { kind: "user", body: "Read the server half" }),
+      inner("agent-b", { kind: "user", body: "Read the client half" }),
+      inner("agent-a", { kind: "tool_use", tool: "Read", toolId: "a-read", body: "{}" }),
+      inner("agent-b", { kind: "thinking", body: "where does the client start" }),
+      inner("agent-a", { kind: "tool_result", toolId: "a-read", body: "server.go" }),
+      inner("agent-b", { kind: "tool_use", tool: "Grep", toolId: "b-grep", body: "{}" }),
+      inner("agent-a", { kind: "text", body: "the server half is fine" }),
+      inner("agent-b", { kind: "text", body: "the client half is fine" }),
+    ];
+    const [, , , aPrompt, bPrompt, aRead, bThink, , bGrep, aText, bText] = events;
+    const rows = flat(rowsOf(...events));
+    // Every child row under its own call. With one `host` variable, all of
+    // them landed under call-b, the call that came last.
+    expect(heldBy(rows, "call-a")).toEqual([aPrompt!.id, aRead!.id, aText!.id]);
+    expect(heldBy(rows, "call-b")).toEqual([bPrompt!.id, bThink!.id, bGrep!.id, bText!.id]);
+    // The agent's result paired onto its own call inside the sub-timeline.
+    const read = callRow(rows, "call-a").children.find((c) => c.kind === "tool") as ToolRow;
+    expect(read.done).toBe(true);
+    expect(read.result).toBe("server.go");
+  });
+
+  it("never lets a subagent's prompt stand in for the turn's own", () => {
+    const rows = flat(
+      rowsOf(
+        prompt("audit both halves"),
+        spawn("call-a", "Read the server half"),
+        inner("agent-a", { kind: "user", body: "Read the server half" }),
+      ),
+    );
+    const users = rows.filter((r) => r.kind === "user");
+    expect(users.map((r) => (r as { body: string }).body)).toEqual(["audit both halves"]);
+    expect(callRow(rows, "call-a").children.map((c) => c.kind)).toEqual(["user"]);
+  });
+
+  it("pairs an agent with the call whose prompt it was given, whichever writes first", () => {
+    const events = [
+      prompt(),
+      spawn("call-a", "first job"),
+      spawn("call-b", "second job"),
+      // The second agent writes before the first one does.
+      inner("agent-b", { kind: "user", body: "second job" }),
+      inner("agent-b", { kind: "text", body: "b says" }),
+      inner("agent-a", { kind: "user", body: "first job" }),
+      inner("agent-a", { kind: "text", body: "a says" }),
+    ];
+    const rows = flat(rowsOf(...events));
+    expect(heldBy(rows, "call-a")).toEqual([events[5]!.id, events[6]!.id]);
+    expect(heldBy(rows, "call-b")).toEqual([events[3]!.id, events[4]!.id]);
+  });
+
+  it("takes the agent a call's result names over the order they wrote in", () => {
+    // No prompts to match on: the work arrives mid-stream. The results say
+    // which agent each call started, and that settles it.
+    const events = [
+      prompt(),
+      spawn("call-a", "first job"),
+      spawn("call-b", "second job"),
+      inner("agent-b", { kind: "text", body: "b says" }),
+      inner("agent-a", { kind: "text", body: "a says" }),
+      ev({
+        kind: "tool_result",
+        toolId: "call-a",
+        body: "launched",
+        result: { agentId: "agent-a" },
+      }),
+      ev({
+        kind: "tool_result",
+        toolId: "call-b",
+        body: "launched",
+        result: { agentId: "agent-b" },
+      }),
+    ];
+    const rows = flat(rowsOf(...events));
+    expect(heldBy(rows, "call-a")).toEqual([events[4]!.id]);
+    expect(heldBy(rows, "call-b")).toEqual([events[3]!.id]);
+  });
+
+  it("pairs agents with calls in spawn order when nothing names them", () => {
+    const events = [
+      prompt(),
+      spawn("call-a", "first job"),
+      spawn("call-b", "second job"),
+      inner("agent-a", { kind: "text", body: "a says" }),
+      inner("agent-b", { kind: "text", body: "b says" }),
+      inner("agent-a", { kind: "text", body: "a again" }),
+    ];
+    const rows = flat(rowsOf(...events));
+    expect(heldBy(rows, "call-a")).toEqual([events[3]!.id, events[5]!.id]);
+    expect(heldBy(rows, "call-b")).toEqual([events[4]!.id]);
+  });
+
+  it("keeps an agent's work under its call after the call returns", () => {
+    // A background agent's call returns within seconds and the agent works on
+    // for minutes. The return must not cut the rest of its work loose.
+    const events = [
+      prompt(),
+      spawn("call-a", "first job"),
+      ev({
+        kind: "tool_result",
+        toolId: "call-a",
+        body: "launched",
+        result: { agentId: "agent-a" },
+      }),
+      inner("agent-a", { kind: "text", body: "still going" }),
+    ];
+    const rows = flat(rowsOf(...events));
+    expect(heldBy(rows, "call-a")).toEqual([events[3]!.id]);
+  });
 });
 
 describe("the working row", () => {
@@ -231,7 +379,13 @@ describe("the working row", () => {
     const rows = rowsOf(
       prompt(),
       ev({ kind: "text", body: "I'll run the tests" }),
-      ev({ kind: "tool_use", tool: "Bash", toolId: "tu1", body: JSON.stringify({ command: "go test ./..." }), at: 1000 }),
+      ev({
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "tu1",
+        body: JSON.stringify({ command: "go test ./..." }),
+        at: 1000,
+      }),
     );
     const working = rows.find((r) => r.kind === "working") as WorkingRow;
     expect(working.toolLabel).toBe("go test ./...");
@@ -255,7 +409,12 @@ describe("the fold", () => {
   it("summarises the turn's changed files and token usage", () => {
     const rows = rowsOf(
       prompt(),
-      ev({ kind: "tool_use", tool: "Edit", toolId: "e1", body: JSON.stringify({ file_path: "/x/a.go" }) }),
+      ev({
+        kind: "tool_use",
+        tool: "Edit",
+        toolId: "e1",
+        body: JSON.stringify({ file_path: "/x/a.go" }),
+      }),
       ev({ kind: "tool_result", toolId: "e1", body: "" }),
       ev({ kind: "text", body: "changed it" }),
       ev({ kind: "turn_end", usage: { input_tokens: 7, output_tokens: 3 } }),
@@ -263,6 +422,34 @@ describe("the fold", () => {
     const fold = rows.find((r) => r.kind === "turn-fold") as TurnFoldRow;
     expect(fold.changedFiles).toEqual(["/x/a.go"]);
     expect(fold.usage).toEqual({ input_tokens: 7, output_tokens: 3 });
+  });
+
+  // An agent's transcript is one long turn, and its work is what the reader
+  // opened it for: folding it behind "Worked for 4m" would hide exactly that.
+  it("leaves a settled turn's work in place when asked not to fold", () => {
+    const events = [
+      prompt("find the strip"),
+      ev({ kind: "thinking", body: "start with the text view" }),
+      ev({ kind: "tool_use", tool: "Grep", toolId: "g1", body: JSON.stringify({ pattern: "x" }) }),
+      ev({ kind: "tool_result", toolId: "g1", body: "TextView.tsx:863" }),
+      ev({ kind: "text", body: "It is drawn in TextView.tsx." }),
+      ev({ kind: "turn_end" }),
+    ];
+    expect(deriveRows(events).map((r) => r.kind)).toEqual(["user", "turn-fold", "message"]);
+    expect(deriveRows(events, { fold: false }).map((r) => r.kind)).toEqual([
+      "user",
+      "thinking",
+      "tool",
+      "message",
+    ]);
+  });
+
+  it("still shows a running turn's working row when it does not fold", () => {
+    const rows = deriveRows(
+      [prompt(), ev({ kind: "tool_use", tool: "Bash", toolId: "b1", body: "{}" })],
+      { fold: false },
+    );
+    expect(rows.map((r) => r.kind)).toEqual(["user", "tool", "working"]);
   });
 });
 
@@ -311,7 +498,11 @@ describe("session lifecycle", () => {
 
   it("gives the composer its prompt history", () => {
     expect(
-      promptHistory([ev({ kind: "user", body: "one" }), ev({ kind: "text", body: "reply" }), ev({ kind: "user", body: "two" })]),
+      promptHistory([
+        ev({ kind: "user", body: "one" }),
+        ev({ kind: "text", body: "reply" }),
+        ev({ kind: "user", body: "two" }),
+      ]),
     ).toEqual(["one", "two"]);
   });
 });
@@ -323,7 +514,12 @@ describe("sameRow", () => {
     const build = () =>
       deriveRows([
         prompt(),
-        ev({ kind: "tool_use", tool: "Bash", toolId: "tu1", body: JSON.stringify({ command: "ls" }) }),
+        ev({
+          kind: "tool_use",
+          tool: "Bash",
+          toolId: "tu1",
+          body: JSON.stringify({ command: "ls" }),
+        }),
       ]);
     seq = 0;
     const a = build();

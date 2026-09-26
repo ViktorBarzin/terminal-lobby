@@ -52,8 +52,7 @@ type Session struct {
 	// slice's 4 GiB, so anon is partly reclaimable and this is an upper bound.
 	PaneUnreclaimable uint64
 	// TopIsClaude says whether the highest-RSS process in the pane is a claude.
-	// Exported as a metric only: it no longer gates the warning, because claude
-	// is the fattest process in nearly every pane it sits in.
+	// Exported as a metric only.
 	TopIsClaude bool
 }
 
@@ -86,34 +85,22 @@ const (
 	KindSessionKilled Kind = "session_killed"
 	// KindClaudeDied: the session survived and the conversation in it did not.
 	KindClaudeDied Kind = "claude_died"
-	// KindPaneNearCap: the cap will take a conversation next, not a build.
-	KindPaneNearCap Kind = "pane_near_cap"
 	// KindRebooted: the box restarted, carrying how many sessions came back.
 	KindRebooted Kind = "rebooted"
 )
 
 // Finding is one thing worth a journal line.
 type Finding struct {
-	Kind              Kind
-	User              string
-	Session           string
-	State             string
-	Background        string
-	PaneBytes         uint64
-	PaneUnreclaimable uint64
-	PaneLimit         uint64
-	Before            int
-	After             int
+	Kind       Kind
+	User       string
+	Session    string
+	State      string
+	Background string
+	Before     int
+	After      int
 }
 
 type Config struct {
-	// PaneWarnBytes is where the pane pre-warning sits, compared against
-	// UNRECLAIMABLE memory rather than memory.current, in panes with a claude.
-	PaneWarnBytes uint64
-	// PaneClearBytes is where a warned pane's episode ends. The gap below
-	// PaneWarnBytes keeps a pane hovering at the line to one warning. Zero, or
-	// anything above PaneWarnBytes, means PaneWarnBytes.
-	PaneClearBytes uint64
 	// ConfirmTicks is how many consecutive ticks a stamp-with-no-claude must
 	// hold. Restarting claude to load a new skill set leaves a tick that looks
 	// exactly like a death.
@@ -144,9 +131,6 @@ type Watcher struct {
 func NewWatcher(cfg Config) *Watcher {
 	if cfg.ConfirmTicks < 1 {
 		cfg.ConfirmTicks = 1
-	}
-	if cfg.PaneClearBytes == 0 || cfg.PaneClearBytes > cfg.PaneWarnBytes {
-		cfg.PaneClearBytes = cfg.PaneWarnBytes
 	}
 	if cfg.TombstoneGrace <= 0 {
 		cfg.TombstoneGrace = 90 * time.Second
@@ -262,32 +246,6 @@ func (w *Watcher) standing(cur Snapshot, first bool) []Finding {
 			delete(w.streak, key)
 			w.clear(KindClaudeDied, key)
 		}
-
-		// Compared against unreclaimable memory, not memory.current: the cap
-		// makes the kernel reclaim cache before it kills anything, so current
-		// sitting at the ceiling is normal rather than dangerous. An uncapped
-		// pane has nothing about to kill it either, so a warning there would
-		// name a risk that is not present. An open episode holds until the pane
-		// drops below the clear level, not just below the warn level.
-		atRisk := s.PaneLimit > 0 && s.ClaudeAlive
-		level := w.cfg.PaneWarnBytes
-		if w.isOpen(KindPaneNearCap, key) {
-			level = w.cfg.PaneClearBytes
-		}
-		if atRisk && s.PaneUnreclaimable >= level {
-			if w.raise(KindPaneNearCap, key) {
-				out = append(out, Finding{
-					Kind:              KindPaneNearCap,
-					User:              cur.User,
-					Session:           name,
-					PaneBytes:         s.PaneBytes,
-					PaneUnreclaimable: s.PaneUnreclaimable,
-					PaneLimit:         s.PaneLimit,
-				})
-			}
-		} else {
-			w.clear(KindPaneNearCap, key)
-		}
 	}
 	return out
 }
@@ -303,8 +261,6 @@ func (w *Watcher) raise(k Kind, key string) bool {
 }
 
 func (w *Watcher) clear(k Kind, key string) { delete(w.open, string(k)+"/"+key) }
-
-func (w *Watcher) isOpen(k Kind, key string) bool { return w.open[string(k)+"/"+key] }
 
 func (w *Watcher) skip(name string) bool {
 	for _, p := range w.cfg.SkipPrefixes {

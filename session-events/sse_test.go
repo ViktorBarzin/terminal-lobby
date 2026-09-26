@@ -75,7 +75,7 @@ func TestWriteSSEReplaysFromCursorHeartbeatsAndTailsLive(t *testing.T) {
 		live: make(chan sessionio.Event, 1),
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeSSE(w, r, src, 30*time.Millisecond)
+		writeSSE(w, r, src, nil, 30*time.Millisecond)
 	}))
 	defer srv.Close()
 
@@ -140,7 +140,7 @@ func TestSSEWindowsAFreshOpenButNotAResume(t *testing.T) {
 	r := httptest.NewRequest("GET", "/events/demo", nil)
 	w := httptest.NewRecorder()
 	close(src.live)
-	writeSSE(w, r, src, time.Hour)
+	writeSSE(w, r, src, nil, time.Hour)
 	if src.windowTurns != OpenWindowTurns || src.windowFrom != 0 {
 		t.Fatalf("fresh open asked for turns=%d from=%d", src.windowTurns, src.windowFrom)
 	}
@@ -149,7 +149,7 @@ func TestSSEWindowsAFreshOpenButNotAResume(t *testing.T) {
 	close(src2.live)
 	r2 := httptest.NewRequest("GET", "/events/demo", nil)
 	r2.Header.Set("Last-Event-ID", "7")
-	writeSSE(httptest.NewRecorder(), r2, src2, time.Hour)
+	writeSSE(httptest.NewRecorder(), r2, src2, nil, time.Hour)
 	if src2.windowFrom != 7 {
 		t.Fatalf("resume cursor lost: from=%d", src2.windowFrom)
 	}
@@ -171,7 +171,7 @@ func TestWriteSSEMarksTheEndOfTheOpeningWindow(t *testing.T) {
 	ctx, cancel := context.WithCancel(req.Context())
 	req = req.WithContext(ctx)
 	cancel() // return after the replay
-	writeSSE(rec, req, src, time.Hour)
+	writeSSE(rec, req, src, nil, time.Hour)
 
 	body := rec.Body.String()
 	if !strings.Contains(body, "event: ready\ndata: 2\n\n") {
@@ -193,7 +193,7 @@ func read(t *testing.T, src Source, target string) string {
 	req := httptest.NewRequest("GET", target, nil)
 	ctx, cancel := context.WithCancel(req.Context())
 	cancel()
-	writeSSE(rec, req.WithContext(ctx), src, time.Hour)
+	writeSSE(rec, req.WithContext(ctx), src, nil, time.Hour)
 	return rec.Body.String()
 }
 
@@ -270,7 +270,7 @@ func TestSSEResumeIsNeverBackfilled(t *testing.T) {
 	req.Header.Set("Last-Event-ID", "5")
 	ctx, cancel := context.WithCancel(req.Context())
 	cancel()
-	writeSSE(rec, req.WithContext(ctx), src, time.Hour)
+	writeSSE(rec, req.WithContext(ctx), src, nil, time.Hour)
 	body := rec.Body.String()
 
 	if strings.Contains(body, "event: back") {
@@ -328,7 +328,7 @@ func TestSSEReverseOpenDedupsAgainstTheLiveChannel(t *testing.T) {
 		{ID: 2, Kind: sessionio.KindText, Body: "two"},
 	}, live: live}
 	rec := httptest.NewRecorder()
-	writeSSE(rec, httptest.NewRequest("GET", "/events/demo?rev=1", nil), src, time.Hour)
+	writeSSE(rec, httptest.NewRequest("GET", "/events/demo?rev=1", nil), src, nil, time.Hour)
 	body := rec.Body.String()
 	if n := strings.Count(body, `"body":"two"`); n != 1 {
 		t.Fatalf("event 2 delivered %d times:\n%s", n, body)
@@ -347,7 +347,7 @@ func TestSSEOpenWindowIsClientCappable(t *testing.T) {
 		src := &fakeSource{all: []sessionio.Event{{ID: 1, Kind: sessionio.KindText}}, live: make(chan sessionio.Event)}
 		close(src.live)
 		r := httptest.NewRequest("GET", "/events/demo"+query, nil)
-		writeSSE(httptest.NewRecorder(), r, src, time.Hour)
+		writeSSE(httptest.NewRecorder(), r, src, nil, time.Hour)
 		return src.windowTurns
 	}
 
@@ -384,7 +384,7 @@ func TestSSECompressesWhenTheClientOffersIt(t *testing.T) {
 			r.Header.Set("Accept-Encoding", acceptEncoding)
 		}
 		w := httptest.NewRecorder()
-		writeSSE(w, r, src, time.Hour)
+		writeSSE(w, r, src, nil, time.Hour)
 		return w
 	}
 

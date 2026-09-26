@@ -120,6 +120,23 @@ describe("parking a transcript stream", () => {
     });
   });
 
+  it("says whether it is parked, so an agent's stream can follow it", () => {
+    // The drill-in opens a second stream beside this one, and it parks when
+    // this one does rather than keeping a second set of timers.
+    installEventSource();
+    installFrames();
+    createRoot((dispose) => {
+      const store = createSessionStore("park", { cache: noCache() });
+      sources[0]!.ready({ cursor: 10, epoch: "e1" });
+      expect(store.parked()).toBe(false);
+      store.park();
+      expect(store.parked()).toBe(true);
+      store.unpark();
+      expect(store.parked()).toBe(false);
+      dispose();
+    });
+  });
+
   it("loses nothing and shows nothing twice across the park", () => {
     installEventSource();
     const run = installFrames();

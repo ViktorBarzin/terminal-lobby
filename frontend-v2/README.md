@@ -462,6 +462,10 @@ src/
                          list back to manual
   store/
     session.ts           SSE → Solid store of events + prompt/cancel control
+    agent-stream.ts      One agent's own transcript for the drill-in: the
+                         session store's read path over that agent's stream
+                         (history behind a cursor, live after it, paging
+                         back, full results), read only and never cached
     catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
                          because an empty list means two different things — a
                          user with no skills, or a route that answered with
@@ -686,6 +690,16 @@ src/
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
     TextView.tsx         Text mode: timeline above the composer
+    AgentPanel.tsx       The agent panel beside the timeline: the session's
+                         agents and workflow runs, what each is doing now, in
+                         the reading column's right margin, or a strip above
+                         the timeline when the view is narrow. Elapsed and fade
+                         tick by direct DOM write
+    agents.logic.ts      PURE panel derivation: when it shows, row order and
+                         nesting, workflow phases, the tally, the formatting
+    AgentTranscript.tsx  The drill-in: one agent's own transcript in the
+                         session timeline's place, read only, with a header
+                         naming the agent and a way back to the session
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)

@@ -377,7 +377,7 @@ decompressed bytes model to 256,127 wire bytes against a ground truth of roughly
 Three things about SSE differ from the WebSocket and each needed its own answer.
 
 **Named events.** `session-events` writes `event: state` for the opening
-snapshot, `event: back` for the backfill and `event: ready` (`sse.go:229-317`),
+snapshot, `event: back` for the backfill and `event: ready` (`sse.go:339-445`),
 and a `message` listener fires only for *unnamed* events. Subscribing to
 `message` alone would have missed the opening replay — the largest single
 transfer the view makes, and the reason the wrapper exists. Rather than hard-code

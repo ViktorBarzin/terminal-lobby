@@ -175,3 +175,29 @@ func TestPrivReaderSpawnCommandShape(t *testing.T) {
 var _ = filepath.Join
 var _ = io.EOF
 var _ = errors.New
+
+// The parent half of the two agent-panel operations, over the real protocol.
+func TestPrivReaderReachesAnotherUsersAgentFiles(t *testing.T) {
+	home, dir := mkSessionDir(t)
+	pr := &privReader{osUser: "bob", spawn: inProcessChild(t, home, nil)}
+	t.Cleanup(pr.close)
+
+	files, err := pr.ListAgentFiles(dir)
+	if err != nil {
+		t.Fatalf("ListAgentFiles: %v", err)
+	}
+	if len(files) != 6 || files[0].Name != "subagents/agent-a1.jsonl" {
+		t.Fatalf("files = %+v", files)
+	}
+	b, err := pr.ReadSmallFile(filepath.Join(dir, "subagents", "agent-a1.meta.json"))
+	if err != nil || !strings.Contains(string(b), `"description":"look"`) {
+		t.Fatalf("ReadSmallFile = %q, %v", b, err)
+	}
+	b, err = pr.ReadSmallFile(filepath.Join(dir, "workflows", "scripts", "check-change-wf_r1.js"))
+	if err != nil || !strings.Contains(string(b), "name: 'check-change'") {
+		t.Fatalf("ReadSmallFile(the run's script) = %q, %v", b, err)
+	}
+	if _, err := pr.ReadSmallFile("/etc/passwd"); err == nil {
+		t.Fatal("a refused whole read must come back as an error")
+	}
+}

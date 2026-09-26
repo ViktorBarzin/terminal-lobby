@@ -70,6 +70,17 @@ func NewFileSourceWith(session, path string, poll time.Duration, r Reader) *File
 	}
 }
 
+// NewAgentFileSource is a source over one agent's own transcript,
+// agent-<id>.jsonl, which is what the drill-in streams: the same log, cursor
+// and backfill as a session's, with the agent's records read as a
+// conversation of their own (see NewAgentNormalizer). session is still the tmux
+// session name, carried on every event.
+func NewAgentFileSource(session, path string, poll time.Duration, r Reader) *FileSource {
+	f := NewFileSourceWith(session, path, poll, r)
+	f.norm = NewAgentNormalizer(session)
+	return f
+}
+
 // Path is the transcript this source is tailing. Callers cache sources by tmux
 // session NAME, which outlives the Claude session that claimed it, so this is
 // how they tell a cached source apart from a stale one.

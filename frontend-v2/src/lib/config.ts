@@ -165,11 +165,7 @@ export function keysUrl(session: string): string {
  * the step — the server clamps it, and a request without it gets the
  * pre-2026-08-28 turn-counted response.
  */
-export function earlierUrl(
-  session: string,
-  before: number,
-  bytes: number,
-): string {
+export function earlierUrl(session: string, before: number, bytes: number): string {
   return withActAs(
     `${API_BASE}/earlier/${encodeURIComponent(session)}?before=${before}&bytes=${bytes}`,
   );
@@ -198,6 +194,46 @@ export function toolImageUrl(session: string, toolId: string, n: number): string
 export function promptImageUrl(session: string, record: string, n: number): string {
   return withActAs(
     `${API_BASE}/result/${encodeURIComponent(session)}/user/${encodeURIComponent(record)}/image/${n}`,
+  );
+}
+
+/**
+ * SSE endpoint for one agent's own transcript, `agent-<id>.jsonl`: what the
+ * drill-in reads when an agent in the panel is tapped (session-events
+ * drill.go). The same framing as `eventsUrl`, reverse open included, under the
+ * session's own `/events/` prefix, because the production ingress routes by
+ * prefix and that one is already a rule.
+ *
+ * Each name is encoded as one segment. A workflow member that never started is
+ * named `<runId>#<index>`, and an unescaped `#` would end the path there.
+ */
+export function agentEventsUrl(session: string, agent: string, lastEventId: number): string {
+  const params: string[] = [];
+  if (lastEventId > 0) params.push(`lastEventId=${lastEventId}`);
+  params.push("rev=1");
+  return withActAs(
+    `${API_BASE}/events/${encodeURIComponent(session)}/agents/${encodeURIComponent(agent)}?${params.join("&")}`,
+  );
+}
+
+/** GET target for one step further back through an agent's transcript, in the
+ *  shape `earlierUrl` has for a session. */
+export function agentEarlierUrl(
+  session: string,
+  agent: string,
+  before: number,
+  bytes: number,
+): string {
+  return withActAs(
+    `${API_BASE}/events/${encodeURIComponent(session)}/agents/${encodeURIComponent(agent)}/earlier?before=${before}&bytes=${bytes}`,
+  );
+}
+
+/** GET target for one of an agent's tool results in full, after the wire
+ *  capped it. */
+export function agentResultUrl(session: string, agent: string, toolId: string): string {
+  return withActAs(
+    `${API_BASE}/events/${encodeURIComponent(session)}/agents/${encodeURIComponent(agent)}/result/${encodeURIComponent(toolId)}`,
   );
 }
 
@@ -328,9 +364,7 @@ export function clipboardListUrl(session: string): string {
 
 /** GET target serving one stored image back (gallery thumbnail / lightbox src). */
 export function clipboardImgUrl(session: string, name: string): string {
-  return clipboardUrl(
-    `/img/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
-  );
+  return clipboardUrl(`/img/${encodeURIComponent(session)}/${encodeURIComponent(name)}`);
 }
 
 /**
@@ -342,9 +376,7 @@ export function clipboardImgUrl(session: string, name: string): string {
  * own store directory.
  */
 export function clipboardFileUrl(session: string, name: string): string {
-  return clipboardUrl(
-    `/file/${encodeURIComponent(session)}/${encodeURIComponent(name)}`,
-  );
+  return clipboardUrl(`/file/${encodeURIComponent(session)}/${encodeURIComponent(name)}`);
 }
 
 /**
@@ -362,9 +394,7 @@ export const FILE_API_PREFIX = "/files";
  *  home; the server enforces the boundary + a 10MB cap). Doubles as an <img>
  *  src for image previews. */
 export function fileReadUrl(path: string): string {
-  return withActAs(
-    `${API_BASE}${FILE_API_PREFIX}/read?path=${encodeURIComponent(path)}`,
-  );
+  return withActAs(`${API_BASE}${FILE_API_PREFIX}/read?path=${encodeURIComponent(path)}`);
 }
 
 /** GET target for one picture on disk, from any path the caller's OS user can
@@ -381,9 +411,7 @@ export function pictureUrl(path: string): string {
  *  dotfiles. */
 export function fileListUrl(dir: string, all = false): string {
   const a = all ? "&all=1" : "";
-  return withActAs(
-    `${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`,
-  );
+  return withActAs(`${API_BASE}${FILE_API_PREFIX}/list?dir=${encodeURIComponent(dir)}${a}`);
 }
 
 /** POST target writing one file (roadmap pillar #6 editor). Body: JSON
@@ -445,5 +473,4 @@ export function skillActionUrl(
 /** The tmux-api prefs endpoint (roamed settings). Whole-doc GET/PUT. */
 export const PREFS_PATH = "/prefs";
 
-export const BUILD_ID: string =
-  typeof __TL_BUILD__ !== "undefined" ? __TL_BUILD__ : "dev";
+export const BUILD_ID: string = typeof __TL_BUILD__ !== "undefined" ? __TL_BUILD__ : "dev";

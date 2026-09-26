@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   untrack,
   type Accessor,
@@ -138,7 +139,6 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
-
 
 /** How long a jumped-to row stays highlighted — long enough to find with the
  *  eye after the scroll, short enough not to become part of the layout. */
@@ -289,15 +289,26 @@ export const MessagesTimeline: Component<{
   /** FALSE while this timeline belongs to a session the lobby is keeping
    *  mounted but not showing — it then owns no window-level handles. */
   owns?: boolean;
+  /**
+   * Mounted but not shown: the session's own timeline while the drill-in
+   * shows one of its agents in its place. Kept mounted so going back finds
+   * the reader where they were, with every fold as they left it.
+   */
+  hidden?: boolean;
+  /** Show this timeline again. Asked for when a jump lands on one of its rows
+   *  while it is hidden, which is how a find-in-session hit opens. */
+  onReveal?: () => void;
+  /** What the log is called to assistive tech: "Session transcript", or the
+   *  agent's when this is the drill-in. */
+  label?: string;
+  /** What the top row says once there is nothing earlier: "Start of session",
+   *  or the start of an agent's transcript in the drill-in. */
+  start?: string;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
-  const derived = createMemo<TimelineRow[]>(
-    () => props.rows ?? deriveRows(props.events),
-  );
-  const rows = createMemo<TimelineRow[]>(() =>
-    visibleRows(derived(), expandedTurns()),
-  );
+  const derived = createMemo<TimelineRow[]>(() => props.rows ?? deriveRows(props.events));
+  const rows = createMemo<TimelineRow[]>(() => visibleRows(derived(), expandedTurns()));
 
   /** The rows indexed by a render key, unique even if an event id repeats. */
   const keyed = createMemo(() => {
@@ -448,10 +459,10 @@ export const MessagesTimeline: Component<{
     // idle callback does not run while the browser has input to handle, so
     // scrolling and tapping stay ahead of it by construction. The timeout keeps
     // it from starving on a busy page, and rAF is the fallback.
-    const ric = (window as unknown as {
+    const ric = window as unknown as {
       requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
       cancelIdleCallback?: (h: number) => void;
-    });
+    };
     if (typeof ric.requestIdleCallback === "function") {
       const handle = ric.requestIdleCallback(() => growMounted(total), { timeout: 200 });
       onCleanup(() => ric.cancelIdleCallback?.(handle));
@@ -579,11 +590,7 @@ export const MessagesTimeline: Component<{
       case "todo":
         return <TodoRowView row={row() as TodoRow} />;
       case "question":
-        return (
-          <QuestionRowView
-            row={row() as QuestionRow}
-          />
-        );
+        return <QuestionRowView row={row() as QuestionRow} />;
       case "plan":
         return <PlanRowView row={row() as PlanRow} />;
       case "meta":
@@ -661,6 +668,9 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     const row = el?.querySelector<HTMLElement>(`[data-eid="${id}"]`);
     if (!el || !row) return false;
+    // A row nobody can see cannot be scrolled to, and the jump would report a
+    // success that showed nothing. The owner puts the timeline back first.
+    if (untrack(() => props.hidden)) props.onReveal?.();
     setPinned(false);
     row.scrollIntoView({ block: "center" });
     row.classList.add("tl-row-found");
@@ -702,9 +712,38 @@ export const MessagesTimeline: Component<{
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
     // move the viewport: you clicked to read what was hidden.
+    // A hidden box has no geometry and takes no scroll, so this waits, and
+    // runs again the moment the timeline shows: a reader who left it at the
+    // live end comes back to the live end, however far the session has gone.
+    if (props.hidden) return;
     const el = scroller;
     if (!el || !pinned()) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  });
+
+  /**
+   * The same pin, for when the timeline's own box changes size and nothing in
+   * the transcript does. The agent panel takes 260px of this column's width
+   * when it appears beside it, and the same rows wrap taller in what is left;
+   * on a phone its strip's list takes height from above the transcript.
+   * scrollTop holds through both and no scroll event fires, so the pin stayed
+   * set with the view short of the bottom and no "Latest" button to say so.
+   * Measured on 2026-09-24 at 1440x900: the panel arriving narrowed the rows
+   * from 860 to 760px and left the reader 420px above the live end until the
+   * next row came in.
+   *
+   * The box and never its content: a fold the reader opens grows the content,
+   * and that must not move the viewport (the effect above says why).
+   */
+  onMount(() => {
+    const el = scroller;
+    if (!el || typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(() => {
+      if (props.hidden || !pinned()) return;
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    });
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
   });
 
   const [loadingEarlier, setLoadingEarlier] = createSignal(false);
@@ -805,8 +844,10 @@ export const MessagesTimeline: Component<{
   return (
     <div
       class="tl-timeline"
+      classList={{ "tl-hidden": props.hidden === true }}
       role="log"
-      aria-label="Session transcript"
+      aria-label={props.label ?? "Session transcript"}
+      aria-hidden={props.hidden ? "true" : undefined}
       ref={scroller}
       onScroll={onScroll}
       onClick={recheckPinned}
@@ -828,9 +869,14 @@ export const MessagesTimeline: Component<{
         <div class="tl-row tl-row-earlier">
           <Show
             when={props.hasEarlier}
-            fallback={<span class="tl-status-text">Start of session</span>}
+            fallback={<span class="tl-status-text">{props.start ?? "Start of session"}</span>}
           >
-            <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
+            <button
+              type="button"
+              class="tl-linkbtn"
+              onClick={loadEarlier}
+              disabled={loadingEarlier()}
+            >
               {loadingEarlier() ? "Loading earlier…" : "Load earlier turns"}
             </button>
           </Show>

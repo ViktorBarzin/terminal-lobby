@@ -1,0 +1,12 @@
+{"type":"launched"}
+{"type":"started","key":"v2:1111111111111111111111111111111111111111111111111111111111111111","agentId":"a1b3c5d7e9f1b0011","label":"build:server","phase":"Build"}
+{"type":"started","key":"v2:1212121212121212121212121212121212121212121212121212121212121212","agentId":"a1b3c5d7e9f1b0012","label":"build:card","phase":"Build"}
+{"type":"result","key":"v2:1111111111111111111111111111111111111111111111111111111111111111","agentId":"a1b3c5d7e9f1b0011","result":{"ok":true,"summary":"Server half in place; toggles stay on the question."}}
+{"type":"started","key":"v2:1212121212121212121212121212121212121212121212121212121212121212","agentId":"a1b3c5d7e9f1b0013","label":"build:card","phase":"Build"}
+{"type":"result","key":"v2:1212121212121212121212121212121212121212121212121212121212121212","agentId":"a1b3c5d7e9f1b0013","result":{"ok":true,"summary":"The card sends one toggle per click and waits for the reading."}}
+{"type":"started","key":"v2:1414141414141414141414141414141414141414141414141414141414141414","agentId":"a1b3c5d7e9f1b0014","label":"review:bugs","phase":"Review"}
+{"type":"started","key":"v2:1515151515151515151515151515151515151515151515151515151515151515","agentId":"a1b3c5d7e9f1b0015","label":"review:design","phase":"Review"}
+{"type":"failed","key":"v2:1515151515151515151515151515151515151515151515151515151515151515","agentId":"a1b3c5d7e9f1b0015"}
+{"type":"result","key":"v2:1414141414141414141414141414141414141414141414141414141414141414","agentId":"a1b3c5d7e9f1b0014","result":{"findings":[],"summary":"No correctness bugs found."}}
+{"type":"started","key":"v2:1616161616161616161616161616161616161616161616161616161616161616","agentId":"a1b3c5d7e9f1b0016","label":"land","phase":"Land"}
+{"type":"result","key":"v2:1616161616161616161616161616161616161616161616161616161616161616","agentId":"a1b3c5d7e9f1b0016","result":{"ok":true,"landed_sha":"ee5ace5"}}

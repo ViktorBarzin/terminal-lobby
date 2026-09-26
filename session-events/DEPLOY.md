@@ -33,6 +33,11 @@ The picture routes added 2026-09-24 (one image block of a tool result, or of
 a prompt pasted into the terminal, read back from the transcript by position)
 live under the existing `/result/` prefix, so they needed no ingress change.
 
+The agent panel's drill-in reads one agent's transcript, its earlier history
+and its full tool results through routes below `/events/{session}` (see
+`drill.go`). They sit under that prefix on purpose, so the ingress rule above
+already covers them and no new prefix is needed.
+
 `/hooks/*` is **never** routed publicly, and the session-start handler is
 additionally hard-gated to loopback in `main.go` — it runs as the OS user on
 this box, so the ingress is not its only guard.

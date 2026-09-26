@@ -1,11 +1,6 @@
-import { batch, createSignal, onCleanup, type Accessor } from "solid-js";
+import { batch, createSignal, onCleanup, untrack, type Accessor } from "solid-js";
 import { createStore } from "solid-js/store";
-import {
-  SseClient,
-  type ReadyFrame,
-  type SessionState,
-  type SseStatus,
-} from "../sse/client";
+import { SseClient, type ReadyFrame, type SessionState, type SseStatus } from "../sse/client";
 import { track } from "../telemetry/track";
 import { HIDDEN_SUSPEND_MS, OFFSCREEN_SUSPEND_MS } from "../terminal/battery";
 import {
@@ -28,13 +23,10 @@ import {
 } from "../lib/config";
 import type { Event, PermissionDecision, SearchHit } from "../types/events";
 import { readCatalogue, type Catalogue } from "./catalogue";
-import {
-  isSlashCommand,
-  sameCommand,
-  type PendingPrompt,
-} from "../logic/compose.logic";
+import { isSlashCommand, sameCommand, type PendingPrompt } from "../logic/compose.logic";
 import { fetchWithDeadline } from "../lib/http";
 import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
+import { snapshotOf, type AgentSnapshot } from "../components/agents.logic";
 
 /**
  * Transcript reads move real bytes — loadEarlier asks for up to 400KB
@@ -42,7 +34,7 @@ import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answ
  * behind — so they get a longer deadline than the interactive calls beside
  * them, which are all a keystroke or a short JSON body.
  */
-const TRANSCRIPT_READ_TIMEOUT_MS = 30_000;
+export const TRANSCRIPT_READ_TIMEOUT_MS = 30_000;
 
 /**
  * How long a session stays off screen before what it holds open is let go.
@@ -109,10 +101,7 @@ export interface SessionStore {
    */
   started: Accessor<boolean>;
   /** Resolve a permission request. Returns true on the backend's 204. */
-  resolvePermission: (
-    reqId: string,
-    decision: PermissionDecision,
-  ) => Promise<boolean>;
+  resolvePermission: (reqId: string, decision: PermissionDecision) => Promise<boolean>;
   /** Send a prompt (provisional control endpoint — see blockers). Resolves
    *  false when the session refused it (409 mid-turn, 5xx, unreachable) so the
    *  composer can hand the typed text back instead of destroying it. */
@@ -150,6 +139,13 @@ export interface SessionStore {
    *  newest /context reading, the queue, prompt history). Null until it lands. */
   state: Accessor<SessionState | null>;
   /**
+   * The session's agents and workflow runs, from the newest `agents` frame,
+   * with how far the server's clock is ahead of this device's. Null until the
+   * first frame, and for good against a server that predates the event, which
+   * is how the panel stays away on an older deploy.
+   */
+  agents: Accessor<AgentSnapshot | null>;
+  /**
    * Close the stream because nobody is reading this session, keeping every
    * event, cursor and pending prompt held.
    *
@@ -163,6 +159,12 @@ export interface SessionStore {
   park: () => void;
   /** Reopen a parked stream. A no-op unless `park()` closed one. */
   unpark: () => void;
+  /**
+   * True while `park()` has the stream closed. The drill-in's own stream, an
+   * agent's transcript read beside this one, follows it, so the two park
+   * together on the one decision SessionView makes.
+   */
+  parked: Accessor<boolean>;
   /**
    * True from the moment a parked stream is asked to reopen until it has
    * answered, and false at every other time — including before anything has
@@ -315,10 +317,7 @@ function defaultTranscriptCache(): TranscriptCache {
   return sharedCache;
 }
 
-export function createSessionStore(
-  session: string,
-  opts: SessionStoreOptions = {},
-): SessionStore {
+export function createSessionStore(session: string, opts: SessionStoreOptions = {}): SessionStore {
   const [events, setEvents] = createStore<Event[]>([]);
   const [status, setStatus] = createSignal<SseStatus>("connecting");
   // A fresh open backfills a bounded number of BYTES (session-events
@@ -326,6 +325,7 @@ export function createSessionStore(
   // until the server's cursor says otherwise.
   const [hasEarlier, setHasEarlier] = createSignal(true);
   const [sessionState, setSessionState] = createSignal<SessionState | null>(null);
+  const [agents, setAgents] = createSignal<AgentSnapshot | null>(null);
   /**
    * Where the next step back begins.
    *
@@ -505,9 +505,7 @@ export function createSessionStore(
     };
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
       .requestIdleCallback;
-    cacheWriteHandle = idle
-      ? idle(run, { timeout: 2_000 })
-      : setTimeout(run, 500);
+    cacheWriteHandle = idle ? idle(run, { timeout: 2_000 }) : setTimeout(run, 500);
   };
 
   /**
@@ -655,6 +653,9 @@ export function createSessionStore(
       setEvents([]);
       setPendingPrompts([]);
       setSessionState(null);
+      // A new transcript is a new session directory, so the agents held
+      // belong to the conversation that ended. The new stream sends its own.
+      setAgents(null);
       setHasEarlier(true);
     });
     holding = true;
@@ -679,6 +680,7 @@ export function createSessionStore(
       scheduleFlush();
     },
     onState: (st: SessionState) => setSessionState(st),
+    onAgents: (set) => setAgents(snapshotOf(set, Date.now())),
     onStatus: (s: SseStatus) => {
       // Neither of these will ever send a `ready`, and waiting on one would
       // leave the view saying "catching up" for good: `no-transcript` is a
@@ -731,7 +733,7 @@ export function createSessionStore(
   let closed = false;
   /** Is the stream closed because nobody is reading this session? A third
    *  state beside started and closed: asked for, and coming back. */
-  let parked = false;
+  const [parked, setParked] = createSignal(false);
 
   /**
    * Open the stream, resuming from what this device already holds.
@@ -761,7 +763,7 @@ export function createSessionStore(
     // stands — it is what makes the eventual connect a resume — but opening the
     // socket now would undo the park in the same breath as it was decided.
     // `unpark()` is what connects instead.
-    if (parked) return;
+    if (parked()) return;
     client.start();
   };
 
@@ -818,8 +820,11 @@ export function createSessionStore(
    * exactly what parking exists to save.
    */
   const park = (): void => {
-    if (closed || parked || !started()) return;
-    parked = true;
+    // The flag is read untracked here and in `unpark`: SessionView calls them
+    // from inside an effect, which must not start re-running on the write
+    // just below.
+    if (closed || untrack(parked) || !started()) return;
+    setParked(true);
     flushNow();
     client.close();
   };
@@ -836,8 +841,8 @@ export function createSessionStore(
    * exactly as it would on any other reconnect.
    */
   const unpark = (): void => {
-    if (closed || !parked) return;
-    parked = false;
+    if (closed || !untrack(parked)) return;
+    setParked(false);
     setCatchingUp(true);
     client.start();
   };
@@ -865,10 +870,7 @@ export function createSessionStore(
    * than a rewrite (PermissionPanel.tsx carries the reasoning); until then it
    * says so instead of spending a request on a route that cannot answer.
    */
-  const resolvePermission = (
-    _reqId: string,
-    _decision: PermissionDecision,
-  ): Promise<boolean> => {
+  const resolvePermission = (_reqId: string, _decision: PermissionDecision): Promise<boolean> => {
     opts.notify?.("Permission prompts are answered in the terminal, not here", "error");
     return Promise.resolve(false);
   };
@@ -1038,9 +1040,7 @@ export function createSessionStore(
       setHasEarlier(false);
       return 0;
     }
-    const ask =
-      bytes ??
-      EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
+    const ask = bytes ?? EARLIER_STEPS_BYTES[Math.min(step, EARLIER_STEPS_BYTES.length - 1)]!;
     try {
       const res = await fetchWithDeadline(
         earlierUrl(session, before, ask),
@@ -1094,8 +1094,10 @@ export function createSessionStore(
     loadEarlier,
     hasEarlier,
     state: sessionState,
+    agents,
     park,
     unpark,
+    parked,
     catchingUp,
     setPinnedToBottom,
     pinned,

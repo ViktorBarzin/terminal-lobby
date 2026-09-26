@@ -29,19 +29,10 @@ import (
 	"time"
 )
 
-const (
-	MiB = 1 << 20
-	GiB = 1 << 30
-)
-
 func main() {
 	var (
 		interval = flag.Duration("interval", 30*time.Second,
 			"how often to look. The floor on how fast a pane can be seen approaching its cap.")
-		paneWarn = flag.Uint64("pane-warn-bytes", 5*GiB,
-			"warn when a pane holding a claude has UNRECLAIMABLE memory (anon + shmem) at or above this. Not memory.current, which rides up to the cap on reclaimable cache in any pane doing file I/O")
-		paneClear = flag.Uint64("pane-clear-bytes", 4608*MiB,
-			"a warned pane's episode ends only once its unreclaimable memory drops below this, so a pane hovering at the warn level warns once")
 		confirm = flag.Int("confirm-ticks", 2,
 			"consecutive ticks a stamp-with-no-claude must hold before it counts as a death")
 		textfile = flag.String("textfile", "/var/lib/node_exporter/textfile/tl_panes.prom",
@@ -55,9 +46,7 @@ func main() {
 	log.SetFlags(0) // journald stamps the lines; a second timestamp reads as noise
 
 	w := NewWatcher(Config{
-		PaneWarnBytes:  *paneWarn,
-		PaneClearBytes: *paneClear,
-		ConfirmTicks:   *confirm,
+		ConfirmTicks: *confirm,
 		// The prewarm slot holds a claude nobody is talking to, so losing one
 		// costs no conversation.
 		SkipPrefixes: []string{"__terminal_lobby_"},
@@ -73,7 +62,7 @@ func main() {
 	if !*once {
 		serveHealth(*addr, clock, *interval, log.Printf)
 	}
-	log.Printf("event=started users=%d interval=%s pane_warn_bytes=%d", len(users), *interval, *paneWarn)
+	log.Printf("event=started users=%d interval=%s", len(users), *interval)
 
 	tick := func() {
 		snaps := Collect(users, bootID)

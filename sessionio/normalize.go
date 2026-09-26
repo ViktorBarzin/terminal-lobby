@@ -56,9 +56,22 @@ type Normalizer struct {
 	// shots are the ids of browser_take_screenshot calls whose results have not
 	// arrived yet. Each is deleted when its result lands.
 	shots map[string]bool
+	// agent is set when the transcript is one agent's own agent-<id>.jsonl,
+	// where every record is a sidechain record (see NewAgentNormalizer).
+	agent bool
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
+
+// NewAgentNormalizer reads one agent's own transcript, agent-<id>.jsonl, as a
+// conversation of its own: the drill-in's stream. Every record in that file is
+// a sidechain record, and there the flag says whose file it is rather than that
+// the work nests under a call in someone else's thread. So nothing is marked
+// for nesting, the agent's model is reported as this thread's model, and the
+// prompt the agent was given opens its turn like any prompt.
+func NewAgentNormalizer(session string) *Normalizer {
+	return &Normalizer{session: session, agent: true}
+}
 
 // MaxInlineResult caps what one tool result may put on the wire. Measured over
 // the transcripts on this box, tool results run to 673 KB and one session holds
@@ -198,11 +211,12 @@ func (n *Normalizer) Record(rec Record) []Event {
 //
 // Sidechains are skipped: a subagent answers on whatever model it was
 // dispatched with, and reporting that would show the session running on Haiku
-// while the thread in front of the operator is on Opus. A record naming no
-// model is skipped too — an older transcript, or a line the CLI writes without
-// one, must not blank out a model that is still in force.
+// while the thread in front of the operator is on Opus. In the agent's own
+// file the subagent IS the thread, so its model is the one to report. A record
+// naming no model is skipped too — an older transcript, or a line the CLI
+// writes without one, must not blank out a model that is still in force.
 func (n *Normalizer) modelChange(rec Record) []Event {
-	if rec.Type != RecordAssistant || rec.IsSidechain || rec.Message.Model == "" {
+	if rec.Type != RecordAssistant || (rec.IsSidechain && !n.agent) || rec.Message.Model == "" {
 		return nil
 	}
 	// EXACT comparison, not the family one the receipt path uses. A record
@@ -473,11 +487,21 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	}
 
 	// Subagent work shares the transcript with the main thread; the renderer
-	// nests it rather than interleaving it.
-	if rec.IsSidechain {
+	// nests it rather than interleaving it, under the call of the agent the
+	// record names. In the agent's own file it is the thread itself.
+	if rec.IsSidechain && !n.agent {
 		for i := range out {
-			out[i].Sidechain = true
+			out[i].Sidechain, out[i].AgentID = true, rec.AgentID
 		}
+	}
+
+	// A tool result can end the turn by itself: a workflow member returns its
+	// answer through StructuredOutput and writes no end_turn record at all (37
+	// of the 38 members of one real run), so without this its turn stays open
+	// for good.
+	if rec.ToolEndsTurn && !n.turnDone {
+		n.turnDone, n.doneMsg = true, ""
+		out = append(out, n.emit(KindTurnEnd, at))
 	}
 
 	// One turn_end per turn: Claude splits a single reply across several lines

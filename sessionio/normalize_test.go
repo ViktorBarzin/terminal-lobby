@@ -612,6 +612,49 @@ func TestNormalizeMarksSidechainWork(t *testing.T) {
 	}
 }
 
+// Two subagents running at once interleave their records, and the renderer
+// can only nest each one under its own call if every event says whose it is.
+// A main-thread record names no agent, whatever keys it carries.
+func TestNormalizeNamesTheAgentOfSidechainWork(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{
+			"a subagent's text",
+			`{"type":"assistant","isSidechain":true,"agentId":"a1b2","message":{"role":"assistant","content":[{"type":"text","text":"sub"}]}}`,
+			"a1b2",
+		},
+		{
+			"a subagent's tool call",
+			`{"type":"assistant","isSidechain":true,"agentId":"c3d4","message":{"role":"assistant","content":[{"type":"tool_use","id":"tu_s","name":"Read","input":{}}]}}`,
+			"c3d4",
+		},
+		{
+			"a sidechain record without the key",
+			`{"type":"assistant","isSidechain":true,"message":{"role":"assistant","content":[{"type":"text","text":"old"}]}}`,
+			"",
+		},
+		{
+			"the main thread",
+			`{"type":"assistant","agentId":"a1b2","message":{"role":"assistant","content":[{"type":"text","text":"main"}]}}`,
+			"",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out := NewNormalizer("demo").Line([]byte(c.line))
+			if len(out) != 1 {
+				t.Fatalf("want one event, got %v", kinds(out))
+			}
+			if out[0].AgentID != c.want {
+				t.Fatalf("agentId = %q, want %q", out[0].AgentID, c.want)
+			}
+		})
+	}
+}
+
 func TestNormalizeEmitsLifecycleMeta(t *testing.T) {
 	cases := []struct {
 		name string

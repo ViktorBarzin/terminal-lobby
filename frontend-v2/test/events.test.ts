@@ -91,6 +91,19 @@ describe("parseEvent", () => {
     expect(none && ("images" in none || "files" in none)).toBe(false);
   });
 
+  it("keeps the agent a subagent's event belongs to", () => {
+    const e = parseEvent(
+      JSON.stringify({ id: 3, kind: "text", session: "s", sidechain: true, agentId: "a1b2" }),
+    );
+    expect(e).toEqual({ id: 3, kind: "text", session: "s", sidechain: true, agentId: "a1b2" });
+    // Anything that is not a name is dropped, not carried.
+    expect(parseEvent(JSON.stringify({ id: 4, kind: "text", session: "s", agentId: 7 }))).toEqual({
+      id: 4,
+      kind: "text",
+      session: "s",
+    });
+  });
+
   it("accepts a minimal event", () => {
     expect(parseEvent(JSON.stringify({ id: 1, kind: "turn_end", session: "s" }))).toEqual({
       id: 1,
