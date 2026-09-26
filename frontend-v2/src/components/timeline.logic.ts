@@ -1,10 +1,11 @@
-import type {
-  Event,
-  MetaKind,
-  ModelState,
-  PermissionDecision,
-  TokenUsage,
-  SessionState,
+import {
+  ORIGIN_AUTO_CONTINUATION,
+  type Event,
+  type MetaKind,
+  type ModelState,
+  type PermissionDecision,
+  type TokenUsage,
+  type SessionState,
 } from "../types/events";
 import type { PendingPrompt } from "../logic/compose.logic";
 import type { DialogView, PlanOptionView } from "../lib/answer-api";
@@ -160,9 +161,10 @@ export interface PlanRow {
 /**
  * What became of a plan put up for approval, as the transcript records it
  * (docs/plans/2026-09-24-text-composer-redesign.md, "Outcomes in the
- * timeline"). The first record of a new transcript after a clear is not a
- * plan outcome: it draws its own row. "transient" never comes out of
- * deriveRows; it is this client's own answer in flight (see shownPlanOutcome).
+ * timeline"). "continuation" is the plan a ContinuationRow carries: the first
+ * record of a new transcript after a clear, never an ExitPlanMode call.
+ * "transient" never comes out of deriveRows; it is this client's own answer in
+ * flight (see shownPlanOutcome).
  */
 export type PlanOutcome =
   | { kind: "pending" }
@@ -171,10 +173,29 @@ export type PlanOutcome =
   | { kind: "sent-back"; feedback: string }
   | { kind: "rejected" }
   | { kind: "superseded" }
+  | { kind: "continuation" }
   | { kind: "transient"; action: PlanTransient };
 
 /** This client's plan answer, applied but not in the transcript yet. */
 export type PlanTransient = "approve" | "feedback" | "clear";
+/**
+ * The first record of a conversation the plan approval started by clearing the
+ * context (docs/plans/2026-09-24-text-composer-redesign.md, "After clear
+ * context"). It takes the user row's slot, so it stays visible when the turn
+ * folds, and stands in for the "Implement the following plan: …" message the
+ * CLI wrote on the reader's behalf, which is not drawn.
+ */
+export interface ContinuationRow {
+  kind: "continuation";
+  key: string;
+  id: number;
+  /** The approved plan, as a resolved plan row (outcome "continuation"). */
+  plan: PlanRow;
+  /** What the reader added when approving, or "" when nothing was added. */
+  feedback: string;
+  turnKey: string;
+  at?: number;
+}
 export interface PermissionRow {
   kind: "permission";
   key: string;
@@ -261,7 +282,7 @@ export type LeafRow =
   | ErrorRow
   | StatusRow
   | MetaRow;
-export type TimelineRow = LeafRow | TurnFoldRow | WorkingRow;
+export type TimelineRow = LeafRow | TurnFoldRow | WorkingRow | ContinuationRow;
 
 interface Turn {
   key: string;
@@ -434,16 +455,60 @@ function replayPlanWrite(row: PlanRow, call: ToolRow, text: PlanText | undefined
   else delete row.stale;
 }
 
+/** What precedes the reader's feedback at the end of that record's text. */
+const CONTINUATION_FEEDBACK = "User feedback on this plan:";
+
+/**
+ * The continuation row for a user event sessionio marked as the record a clear
+ * context opens with, or null for any other user event.
+ *
+ * The feedback is read from the text, because the record carries it nowhere
+ * else. The CLI (2.1.283's template) writes the lead, the plan, the old
+ * transcript's path, a line about teammates, and then, only when the approval
+ * carried feedback, "User feedback on this plan: " and the feedback, last. So
+ * the search starts after the plan: a plan that mentions the phrase is not
+ * feedback.
+ */
+function continuationRow(e: Event, turnKey: string): ContinuationRow | null {
+  const plan = e.plan;
+  if (e.origin !== ORIGIN_AUTO_CONTINUATION || typeof plan !== "string" || plan === "") {
+    return null;
+  }
+  const body = e.body ?? "";
+  const planAt = body.indexOf(plan);
+  const from = planAt >= 0 ? planAt + plan.length : 0;
+  const markAt = body.indexOf(CONTINUATION_FEEDBACK, from);
+  const feedback = markAt >= 0 ? body.slice(markAt + CONTINUATION_FEEDBACK.length).trim() : "";
+  return {
+    kind: "continuation",
+    key: `continuation-${e.id}`,
+    id: e.id,
+    plan: {
+      kind: "plan",
+      key: `plan-continuation-${e.id}`,
+      id: e.id,
+      body: plan,
+      pending: false,
+      outcome: { kind: "continuation" },
+      turnKey,
+      ...(e.at !== undefined ? { at: e.at } : {}),
+    },
+    feedback,
+    turnKey,
+    ...(e.at !== undefined ? { at: e.at } : {}),
+  };
+}
+
 /**
  * Fold one turn's events into its rows: the user's message, and the work that
  * followed it. Every accumulator here is scoped to the turn, so they are locals
  * rather than state deriveRows has to carry.
  */
 function collectTurnRows(turn: Turn): {
-  userRow: UserRow | null;
+  userRow: UserRow | ContinuationRow | null;
   work: LeafRow[];
 } {
-  let userRow: UserRow | null = null;
+  let userRow: UserRow | ContinuationRow | null = null;
   const work: LeafRow[] = [];
   const toolBy = new Map<string, ToolRow>();
   // The subagent call currently collecting sidechain work, if any.
@@ -473,7 +538,7 @@ function collectTurnRows(turn: Turn): {
   for (const e of turn.events) {
     switch (e.kind) {
       case "user":
-        userRow = {
+        userRow = continuationRow(e, turn.key) ?? {
           kind: "user",
           key: `user-${e.id}`,
           id: e.id,
@@ -1004,6 +1069,8 @@ export function planHeader(outcome: PlanOutcome): string {
       return "Plan rejected";
     case "superseded":
       return "Plan not answered";
+    case "continuation":
+      return "Plan approved · carrying it out in a fresh context";
     case "transient":
       return TRANSIENT_HEADER[outcome.action];
   }
