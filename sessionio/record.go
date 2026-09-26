@@ -98,6 +98,19 @@ type Record struct {
 	// record alongside message.model. The two together are what a session is
 	// running as (see MetaModel).
 	Effort string `json:"effort"`
+	// IsAPIErrorMessage marks the assistant record Claude Code writes in place
+	// of a reply when the API call failed: model "<synthetic>", stop_reason
+	// "stop_sequence", and the error as its text. It is not always the end: the
+	// harness can retry past it and the conversation goes on.
+	IsAPIErrorMessage bool `json:"isApiErrorMessage"`
+	// ToolEndsTurn marks a tool result that ends the turn by itself. A workflow
+	// member returning its answer through StructuredOutput finishes on this
+	// record and never writes an end_turn one.
+	ToolEndsTurn bool `json:"toolEndsTurn"`
+	// AgentID names the subagent a sidechain record belongs to. Every record
+	// in an agent-<id>.jsonl carries it, so two agents' interleaved work can
+	// be told apart.
+	AgentID string `json:"agentId"`
 
 	// Line is the source line, byte for byte. Callers that forward a record
 	// onward use this rather than re-encoding.

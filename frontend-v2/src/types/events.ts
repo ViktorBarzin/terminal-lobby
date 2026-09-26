@@ -54,6 +54,8 @@ export interface Event {
   meta?: MetaKind;
   /** Subagent work, nested rather than interleaved. */
   sidechain?: boolean;
+  /** Which subagent a `sidechain` event belongs to, when its record says. */
+  agentId?: string;
   /** body/result were capped for the wire; the rest is fetched on demand. */
   truncated?: boolean;
   /**
@@ -183,6 +185,7 @@ export function parseEvent(data: string): Event | null {
   if (typeof o.meta === "string") ev.meta = o.meta as MetaKind;
   if (typeof o.bytes === "number") ev.bytes = o.bytes;
   if (o.sidechain === true) ev.sidechain = true;
+  if (typeof o.agentId === "string" && o.agentId) ev.agentId = o.agentId;
   if (o.truncated === true) ev.truncated = true;
   if (o.context && typeof o.context === "object") {
     ev.context = o.context as ContextReading;
@@ -226,4 +229,199 @@ export interface ReadyFrame {
   head?: number;
   /** Which log those ids belong to — a new transcript is a new epoch. */
   epoch?: string;
+}
+
+/**
+ * The session's concurrent work: the agents it spawned and the workflow runs it
+ * started, read off the session directory rather than the transcript, which
+ * carries none of it (docs/plans/2026-09-12-agent-workflow-visualisation-
+ * design.md). Mirrors sessionio.AgentSet.
+ *
+ * It arrives as the named `agents` frame, once on every open and resume right
+ * after `state`, then again whenever the set changes, at most once a second.
+ * Nothing in it judges liveness: there is no heartbeat on disk, so the panel
+ * shows elapsed time and last activity and never says "stuck".
+ */
+export interface AgentSet {
+  /** Server clock, ms epoch, when this snapshot was built. */
+  at: number;
+  /** Spawn order: startedAt ascending, then id. */
+  agents: AgentInfo[];
+  /** Start order. Empty until the server reads workflow runs. */
+  workflows: WorkflowInfo[];
+}
+
+export type AgentState = "queued" | "running" | "done" | "failed";
+
+/** One agent. Every string is "" and every number 0 when the disk had nothing. */
+export interface AgentInfo {
+  /** agentId, from the file name agent-<id>.jsonl. */
+  id: string;
+  description: string;
+  name: string;
+  agentType: string;
+  model: string;
+  /** Claude Code's own colour name for the agent, "" when it assigned none. */
+  color: string;
+  /** meta.spawnDepth as written: 1 for a plain agent the main thread spawned,
+   *  0 for a teammate or when absent, 2 or more for one another agent spawned.
+   *  Nesting is drawn from parentId, not from this. */
+  depth: number;
+  /** The agent that spawned this one; "" means the session's main thread. */
+  parentId: string;
+  toolUseId: string;
+  /** "wf_<runId>" for a workflow member, else "". */
+  workflowId: string;
+  phaseIndex: number;
+  /** A workflow member's label, else "". */
+  label: string;
+  state: AgentState;
+  startedAt: number;
+  /** When the agent last wrote a record. */
+  lastActivityAt: number;
+  /** When the state became done or failed, else 0. */
+  endedAt: number;
+  /** The newest tool_use block's name, "" before the first. */
+  tool: string;
+  /** A one-line summary of that call's input, at most 120 characters. */
+  toolDetail: string;
+  toolCalls: number;
+  outputTokens: number;
+  /** After the agent ends, at most 200 characters of its final text or error. */
+  result: string;
+  /** Running, with its turn ended to wait on background work of its own: a
+   *  Bash sent to the background, a Monitor, an Agent it launched. Absent when
+   *  not, and from a server that predates the field. */
+  waiting?: boolean;
+}
+
+export type WorkflowState = "running" | "done" | "failed" | "killed";
+
+export interface WorkflowPhase {
+  index: number;
+  title: string;
+  detail: string;
+}
+
+/** One `Workflow` run. Its members are ordinary entries in `agents`. */
+export interface WorkflowInfo {
+  /** "wf_<runId>". */
+  id: string;
+  /** The script's own name (meta.name). */
+  name: string;
+  /** The script's description (meta.description). */
+  summary: string;
+  state: WorkflowState;
+  startedAt: number;
+  /** 0 while running. */
+  endedAt: number;
+  phases: WorkflowPhase[];
+  /** The highest phaseIndex with a running member, else the highest started. */
+  currentPhase: number;
+  agentCount: number;
+  /** The run file's totalTokens, which counts input and cache tokens too. */
+  tokens: number;
+  toolCalls: number;
+}
+
+const AGENT_STATES: ReadonlySet<string> = new Set<AgentState>([
+  "queued",
+  "running",
+  "done",
+  "failed",
+]);
+const WORKFLOW_STATES: ReadonlySet<string> = new Set<WorkflowState>([
+  "running",
+  "done",
+  "failed",
+  "killed",
+]);
+
+const text = (v: unknown): string => (typeof v === "string" ? v : "");
+const count = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+function parseAgent(v: unknown): AgentInfo | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const id = text(o.id);
+  if (!id) return null;
+  return {
+    id,
+    description: text(o.description),
+    name: text(o.name),
+    agentType: text(o.agentType),
+    model: text(o.model),
+    color: text(o.color),
+    depth: count(o.depth),
+    parentId: text(o.parentId),
+    toolUseId: text(o.toolUseId),
+    workflowId: text(o.workflowId),
+    phaseIndex: count(o.phaseIndex),
+    label: text(o.label),
+    // A state this client does not know is never read as live work: claiming
+    // an agent is running is the one thing the panel must not guess.
+    state: AGENT_STATES.has(text(o.state)) ? (o.state as AgentState) : "done",
+    startedAt: count(o.startedAt),
+    lastActivityAt: count(o.lastActivityAt),
+    endedAt: count(o.endedAt),
+    tool: text(o.tool),
+    toolDetail: text(o.toolDetail),
+    toolCalls: count(o.toolCalls),
+    outputTokens: count(o.outputTokens),
+    result: text(o.result),
+    ...(o.waiting === true ? { waiting: true } : {}),
+  };
+}
+
+function parsePhase(v: unknown): WorkflowPhase | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  return { index: count(o.index), title: text(o.title), detail: text(o.detail) };
+}
+
+function parseWorkflow(v: unknown): WorkflowInfo | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const id = text(o.id);
+  if (!id) return null;
+  const phases = Array.isArray(o.phases) ? o.phases.map(parsePhase) : [];
+  return {
+    id,
+    name: text(o.name),
+    summary: text(o.summary),
+    state: WORKFLOW_STATES.has(text(o.state)) ? (o.state as WorkflowState) : "done",
+    startedAt: count(o.startedAt),
+    endedAt: count(o.endedAt),
+    phases: phases.filter((p): p is WorkflowPhase => p !== null),
+    currentPhase: count(o.currentPhase),
+    agentCount: count(o.agentCount),
+    tokens: count(o.tokens),
+    toolCalls: count(o.toolCalls),
+  };
+}
+
+/**
+ * Parse one `agents` frame into an AgentSet, or null when it is not one.
+ *
+ * Every field is filled in, so nothing downstream has to ask whether a string
+ * is there. An entry with no id is dropped rather than rendered as a row that
+ * cannot be told from the next one. A `null` list, which is what a nil Go
+ * slice marshals to, reads as an empty one.
+ */
+export function parseAgentSet(data: string): AgentSet | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(data);
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const agents = Array.isArray(o.agents) ? o.agents.map(parseAgent) : [];
+  const workflows = Array.isArray(o.workflows) ? o.workflows.map(parseWorkflow) : [];
+  return {
+    at: count(o.at),
+    agents: agents.filter((a): a is AgentInfo => a !== null),
+    workflows: workflows.filter((w): w is WorkflowInfo => w !== null),
+  };
 }

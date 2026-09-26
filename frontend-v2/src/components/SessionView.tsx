@@ -1640,10 +1640,13 @@ export const SessionView: Component<{
         >
           <TextView
             onScreen={onScreen()}
+            parked={store.parked()}
             events={store.events}
             rows={rows}
             working={working()}
             background={props.background}
+            agents={store.agents}
+            tool={props.tool}
             pending={pending()}
             onSend={send}
             onStop={stop}

@@ -96,6 +96,10 @@ type Event struct {
 	Meta Meta `json:"meta,omitempty"`
 	// Sidechain marks work belonging to a subagent rather than the main thread.
 	Sidechain bool `json:"sidechain,omitempty"`
+	// AgentID is which subagent a Sidechain event belongs to, when its record
+	// says. With two agents in flight it is what nests each one's work under
+	// its own call rather than under whichever call came last.
+	AgentID string `json:"agentId,omitempty"`
 	// Truncated says Body and/or Result were capped for the wire (see
 	// MaxInlineResult). The full payload is fetched on demand by ToolID.
 	Truncated bool `json:"truncated,omitempty"`

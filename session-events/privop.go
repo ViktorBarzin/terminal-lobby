@@ -61,6 +61,8 @@ type privResponse struct {
 	Result   json.RawMessage         `json:"result,omitempty"`
 	Commands []Command               `json:"commands,omitempty"`
 	Matches  []sessionio.ResultMatch `json:"matches,omitempty"`
+	// Files is a listagents answer. A readsmall answer rides in Blob.
+	Files []sessionio.AgentFile `json:"files,omitempty"`
 }
 
 // ownHome is the home directory of the user the CHILD is running as, read from
@@ -159,6 +161,31 @@ func handlePrivop(req privRequest, home, root string) privResponse {
 		}
 		return privResponse{OK: true, Matches: matches}
 
+	case "listagents":
+		// The agent panel's view of one session directory: names, sizes and
+		// times only, so the parent decides what to read without the child
+		// shipping anything it was not asked for.
+		if err := sessionDirWithin(root, req.Path); err != nil {
+			return fail("%v", err)
+		}
+		files, err := sessionio.ListAgentFiles(req.Path)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return privResponse{OK: true, Files: files}
+
+	case "readsmall":
+		// A sidecar, a workflow run file or a run's script, whole. None of
+		// them is read as lines, so readfrom can never return one.
+		if err := smallFileWithin(root, req.Path); err != nil {
+			return fail("%v", err)
+		}
+		blob, err := sessionio.ReadSmallFile(req.Path)
+		if err != nil {
+			return fail("%v", err)
+		}
+		return privResponse{OK: true, Blob: blob}
+
 	case "catalogue":
 		// The cwd is bounded like every other path here. Discover joins it with
 		// .claude/skills and .claude/commands, follows symlinked skill entries
@@ -186,6 +213,40 @@ func transcriptWithin(root, path string) error {
 		return fmt.Errorf("privop: %q is not an absolute transcript path", path)
 	}
 	return pathWithin(root, path)
+}
+
+// sessionDirWithin bounds listagents to a directory under this child's own
+// projects root. The listing does not follow links below it
+// (sessionio.ListAgentFiles), so bounding the directory bounds the walk.
+func sessionDirWithin(root, dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("privop: %q is not an absolute session directory", dir)
+	}
+	return pathWithin(root, dir)
+}
+
+// smallFileWithin bounds readsmall to the documents it exists for, under this
+// child's own projects root: JSON (the sidecars and the run files), and a
+// Workflow run's script, which sits in its session's workflows/scripts/ and
+// names its run. The script is the Workflow call's own input, which the
+// session's transcript already carries, so reading it shows no one anything
+// the transcript does not. A transcript is not one of these: readfrom serves
+// those from an offset, so every read after the first costs only what was
+// appended, where a whole read of a 34 MB one on every poll is what it avoids.
+func smallFileWithin(root, path string) error {
+	if !filepath.IsAbs(path) || !isSmallFile(path) {
+		return fmt.Errorf("privop: %q is not an absolute .json path or a workflow script", path)
+	}
+	return pathWithin(root, path)
+}
+
+func isSmallFile(path string) bool {
+	if filepath.Ext(path) == ".json" {
+		return true
+	}
+	dir := filepath.Dir(path)
+	_, isScript := sessionio.WorkflowScriptRun(filepath.Base(path))
+	return isScript && filepath.Base(dir) == "scripts" && filepath.Base(filepath.Dir(dir)) == "workflows"
 }
 
 // cwdWithin bounds catalogue's session working directory to this child's own
