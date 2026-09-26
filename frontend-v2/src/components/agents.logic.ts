@@ -76,19 +76,15 @@ export function elapsedOf(a: Pick<AgentInfo, "startedAt" | "endedAt">, now: numb
 
 /**
  * Claude Code's colour names, which the panel draws as the agent's spine so it
- * agrees with what the CLI shows. An agent with none gets a stand-in picked
- * from its id, so it keeps the same colour from one frame to the next.
+ * agrees with what the CLI shows. An agent Claude Code gave no colour (a plain
+ * background agent, a workflow member) gets the neutral spine rather than one
+ * made up here, which would be a second identity scheme beside the CLI's.
  */
 const HUES = ["blue", "green", "yellow", "purple", "orange", "pink", "cyan", "red"] as const;
 const KNOWN_HUES: ReadonlySet<string> = new Set(HUES);
 
-export function agentHue(a: Pick<AgentInfo, "id" | "color">): string {
-  if (KNOWN_HUES.has(a.color)) return `var(--tl-agent-${a.color})`;
-  let h = 0;
-  for (let i = 0; i < a.id.length; i++) h = (h * 31 + a.id.charCodeAt(i)) >>> 0;
-  // Red is left out of the stand-ins: on a spine it is too easily read as the
-  // failure colour, and an agent Claude Code did not colour has no claim to it.
-  return `var(--tl-agent-${HUES[h % (HUES.length - 1)]})`;
+export function agentHue(a: Pick<AgentInfo, "color">): string {
+  return KNOWN_HUES.has(a.color) ? `var(--tl-agent-${a.color})` : "var(--tl-agent-none)";
 }
 
 /** Does the session list say the session is still waiting on something? */

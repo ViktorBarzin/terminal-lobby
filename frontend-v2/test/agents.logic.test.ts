@@ -153,23 +153,13 @@ describe("agentHue", () => {
     expect(agentHue(agent("a", { color: "red" }))).toBe("var(--tl-agent-red)");
   });
 
-  it("gives an agent with no colour the same stand-in every time", () => {
-    const hue = agentHue(agent("a9f3c2", { color: "" }));
-    expect(hue).toMatch(/^var\(--tl-agent-[a-z]+\)$/);
-    expect(agentHue(agent("a9f3c2", { color: "" }))).toBe(hue);
+  it("gives an agent with no colour the neutral spine, not one made up from its id", () => {
+    expect(agentHue(agent("a9f3c2", { color: "" }))).toBe("var(--tl-agent-none)");
+    expect(agentHue(agent("b17e04", { color: "" }))).toBe("var(--tl-agent-none)");
   });
 
   it("treats a colour name it does not know like none at all", () => {
-    expect(agentHue(agent("a9f3c2", { color: "chartreuse" }))).toBe(
-      agentHue(agent("a9f3c2", { color: "" })),
-    );
-  });
-
-  it("spreads stand-ins over more than one hue", () => {
-    const hues = new Set(
-      Array.from({ length: 24 }, (_, i) => agentHue(agent(`agent-${i}`, { color: "" }))),
-    );
-    expect(hues.size).toBeGreaterThan(3);
+    expect(agentHue(agent("a9f3c2", { color: "chartreuse" }))).toBe("var(--tl-agent-none)");
   });
 });
 

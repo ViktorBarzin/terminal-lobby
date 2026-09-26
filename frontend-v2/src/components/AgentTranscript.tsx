@@ -78,7 +78,7 @@ export const AgentTranscript: Component<{
           </button>
           <div
             class="tl-drill-id"
-            style={{ "--spine": agentHue(props.info ?? { id: props.agent, color: "" }) }}
+            style={{ "--spine": agentHue(props.info ?? { color: "" }) }}
           >
             <div class="tl-drill-kind">
               <span class="tl-drill-kind-name">{head()?.kind ?? "Agent"}</span>

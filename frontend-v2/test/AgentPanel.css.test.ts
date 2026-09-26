@@ -32,3 +32,13 @@ describe("the agent panel's ticking cells", () => {
     expect(rule(".tl-agents-phase-status .tl-agents-elapsed")).toMatch(/text-align:\s*left/);
   });
 });
+
+describe("the agent colours", () => {
+  // The drill-in's header draws the same spine as the panel entry, from the
+  // same tokens. Scoped to the panel alone, `var(--tl-agent-green)` resolved
+  // to nothing there and the header's spine fell back to plain grey.
+  it("reach the drill-in's header as well as the panel", () => {
+    expect(rule(".tl-drill")).toMatch(/--tl-agent-green:/);
+    expect(rule(".tl-drill")).toMatch(/--tl-agent-none:/);
+  });
+});
