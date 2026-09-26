@@ -99,6 +99,40 @@ describe("the compose field fits its own text", () => {
   });
 });
 
+describe("measuring the field does not move the page around it", () => {
+  // To measure its text the field drops to height:auto, which is one row
+  // (rows=1), reads scrollHeight and writes the new height back. That forced
+  // layout is real: for an instant the composer is one line tall and the
+  // transcript above it one line taller. A transcript scrolled to its bottom
+  // has its scrollTop CLAMPED to the taller box's smaller maximum, and when the
+  // field goes back to three lines nothing moves it down again. Measured on
+  // the Android emulator on 2026-09-26: typing a three-line message left the
+  // reader 90px above the latest message with the "Latest" button up.
+  it("holds the box around the field at its height while the field measures itself", () => {
+    const { getByLabelText } = render(() => (
+      <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
+    ));
+    const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    const box = ta.parentElement!;
+    Object.defineProperty(box, "offsetHeight", { configurable: true, get: () => 92 });
+    const seen: string[] = [];
+    Object.defineProperty(ta, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        seen.push(box.style.minHeight);
+        return 3 * 24 + 18;
+      },
+    });
+    fireEvent.input(ta, { target: { value: "one\ntwo\nthree" } });
+    expect(seen.length, "the field measured itself").toBeGreaterThan(0);
+    expect(
+      seen.every((h) => h === "92px"),
+      `held while measuring, saw ${seen.join(",")}`,
+    ).toBe(true);
+    expect(box.style.minHeight, "and let go afterwards").toBe("");
+  });
+});
+
 describe("the field does not draw a second box inside the composer's", () => {
   it("has no border of its own", async () => {
     const { readFileSync } = await import("node:fs");

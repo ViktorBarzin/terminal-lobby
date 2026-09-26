@@ -300,10 +300,21 @@ export const PromptField: Component<{
   const [single, setSingle] = createSignal(true);
   const autosize = () => {
     if (!ta) return;
+    // Measuring drops the field to height:auto, one row, and the reads below
+    // force a real layout at that height. The box around the field is held at
+    // its height meanwhile, so the page never sees the composer shrink: a
+    // transcript parked at its bottom had its scrollTop clamped to the
+    // momentarily taller box, and nothing moved it back when the field grew
+    // again. On the emulator (2026-09-26) three typed lines left the reader
+    // 90px above the latest message with "Latest" up.
+    const box = ta.parentElement;
+    const heldWas = box?.style.minHeight ?? "";
+    if (box) box.style.minHeight = `${box.offsetHeight}px`;
     ta.style.height = "auto";
     const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
     const need = ta.scrollHeight;
     ta.style.height = Math.min(need + chrome, 200) + "px";
+    if (box) box.style.minHeight = heldWas;
     // One visual line, a picture's taller line included: `+` and Send centre on
     // it. Two or more and they sit at the bottom, level with the last line,
     // which is where the caret usually is. Unmeasurable (jsdom) leaves it be.
