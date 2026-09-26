@@ -224,7 +224,34 @@ export function parseEvent(data: string): Event | null {
   if (o.model && typeof o.model === "object") {
     ev.model = o.model as ModelState;
   }
+  const images = Array.isArray(o.images) ? parseImageRefs(o.images) : [];
+  if (images.length > 0) ev.images = images;
+  if (typeof o.record === "string") ev.record = o.record;
+  if (Array.isArray(o.files)) {
+    const files = o.files.filter((f): f is string => typeof f === "string");
+    if (files.length > 0) ev.files = files;
+  }
   return ev;
+}
+
+/**
+ * The picture references of one event, each copied field by field like the
+ * event itself. A reference without a numeric `n` names no block the route can
+ * serve, so it is dropped rather than drawn as a broken picture.
+ */
+function parseImageRefs(raw: readonly unknown[]): ImageRef[] {
+  const out: ImageRef[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.n !== "number") continue;
+    const ref: ImageRef = { n: r.n };
+    if (typeof r.mediaType === "string") ref.mediaType = r.mediaType;
+    if (typeof r.bytes === "number") ref.bytes = r.bytes;
+    if (typeof r.paste === "number") ref.paste = r.paste;
+    out.push(ref);
+  }
+  return out;
 }
 
 /**
