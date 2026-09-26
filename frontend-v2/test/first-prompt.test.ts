@@ -11,6 +11,7 @@ import {
   deliverFirstPrompt,
   firstPromptDelivery,
   FIRST_PROMPT_LADDER,
+  PI_FIRST_PROMPT_LADDER,
 } from "../src/lib/first-prompt";
 
 /** A fetch that answers each call from a script, recording what was sent. */
@@ -224,20 +225,39 @@ describe("the harness the first prompt names", () => {
     expect("tool" in r.bodies[0]!).toBe(false);
   });
 
-  // The last rung drops the wait so the text still goes. It must not drop the
-  // harness with it: a later caller could read a harness-less body as Claude.
-  it("keeps naming pi on the last rung, where the wait is dropped", async () => {
+  // Pi never gets the blind last rung. Text typed before pi owns the terminal
+  // is echoed by the tty, whose line discipline turns Enter into a line feed,
+  // and pi's editor reads a line feed as a new line: the prompt lands unsent
+  // in pi's input box. Seen live on 2026-09-26, with pi taking 49s to start on
+  // a loaded box, past the 23s the Claude ladder spends.
+  it("keeps the wait, and names pi, on every rung of pi's own ladder", async () => {
     const bodies: Record<string, unknown>[] = [];
     let n = 0;
     const fetchImpl = (async (_url: string, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       n += 1;
-      return new Response(null, { status: n < FIRST_PROMPT_LADDER.length ? 503 : 204 });
+      return new Response(null, { status: n < PI_FIRST_PROMPT_LADDER.length ? 503 : 204 });
     }) as unknown as typeof fetch;
     const c = fastClock();
     expect(await deliver({ fetchImpl, ...c, awaitReady: true, tool: "pi" })).toBe(true);
-    expect(bodies.map((b) => b.tool)).toEqual(FIRST_PROMPT_LADDER.map(() => "pi"));
-    expect(bodies.at(-1)!.awaitReady).toBe(false);
+    expect(c.waited).toEqual([...PI_FIRST_PROMPT_LADDER]);
+    expect(bodies.map((b) => b.tool)).toEqual(PI_FIRST_PROMPT_LADDER.map(() => "pi"));
+    expect(bodies.map((b) => b.awaitReady)).toEqual(PI_FIRST_PROMPT_LADDER.map(() => true));
+  });
+
+  it("gives up rather than type into a pi that never became ready", async () => {
+    const f = scripted([503]);
+    const c = fastClock();
+    expect(await deliver({ ...f, ...c, awaitReady: true, tool: "pi" })).toBe(false);
+    expect(f.waited.every((w) => w)).toBe(true);
+  });
+
+  it("gives pi's ladder room for a slow start, beyond Claude's", () => {
+    const total = (l: readonly number[]) => l.reduce((a, b) => a + b, 0);
+    expect(total(PI_FIRST_PROMPT_LADDER)).toBeGreaterThanOrEqual(60_000);
+    expect(PI_FIRST_PROMPT_LADDER.slice(0, FIRST_PROMPT_LADDER.length)).toEqual([
+      ...FIRST_PROMPT_LADDER,
+    ]);
   });
 
   it("asks Claude and pi to wait, and nothing else", () => {

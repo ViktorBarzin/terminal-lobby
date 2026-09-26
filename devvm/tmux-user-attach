@@ -246,6 +246,12 @@ fi
 # login+interactive shell a session gets, for the reason --probe gives: that is
 # where the user's PATH and any rc-file wrapper live.
 #
+# --no-extensions, because pi loads every extension the user installed before
+# it lists anything, and the list does not depend on them: the sign-in, the
+# catalogue and models.json do. Measured 2026-09-26 with pi-fabric installed,
+# the listing went from 0.9 s to 7.7 s and started the user's MCP servers, and
+# with a cold login shell on top it ran past the 12 s cap below.
+#
 # The user's enabledModels setting rides along, because --list-models ignores
 # it and tmux-api applies it. The settings file is printed whole and tmux-api
 # parses it; this script has no JSON parser it can count on. PI_CODING_AGENT_DIR
@@ -255,19 +261,22 @@ fi
 # Every section is framed by a marker line, because the shell's stdout is not
 # ours alone: an rc file may print a banner before the snippet runs and a logout
 # file may print after it. tmux-api reads only what sits between the markers,
-# the same filtering --probe's caller does by shape. A pi that hangs is cut off
+# the same filtering --probe's caller does by shape. Every marker starts on a
+# fresh line, the first two included: an rc file that prints without a trailing
+# newline (a terminal escape sequence, measured 2026-09-26) would otherwise glue
+# itself onto the marker and hide it. A pi that hangs is cut off
 # by `timeout` inside the shell, and tmux-api bounds the whole call on top.
 if [[ "${1:-}" == "--pi-models" ]]; then
     snippet='cd "$HOME" 2>/dev/null || cd /
 if ! command -v pi >/dev/null 2>&1; then
-    printf "%s\n" "@@terminal-lobby:pi-missing@@"
+    printf "\n%s\n" "@@terminal-lobby:pi-missing@@"
     exit 0
 fi
-printf "%s\n" "@@terminal-lobby:pi-models@@"
+printf "\n%s\n" "@@terminal-lobby:pi-models@@"
 if command -v timeout >/dev/null 2>&1; then
-    timeout 12 pi --list-models </dev/null 2>/dev/null
+    timeout 12 pi --no-extensions --list-models </dev/null 2>/dev/null
 else
-    pi --list-models </dev/null 2>/dev/null
+    pi --no-extensions --list-models </dev/null 2>/dev/null
 fi
 d="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 case "$d" in
