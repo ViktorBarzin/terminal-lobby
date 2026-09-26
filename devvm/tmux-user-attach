@@ -147,14 +147,6 @@ launch_flags() {
     [[ -n "$cmd" ]] || return 0
     case "$key" in
         claude)
-            # A new Claude session never starts above xhigh by default
-            # (Viktor, 2026-09-25: nobody on max by default). The lobby's
-            # effort pick roams and sticks, so a max chosen once rode along on
-            # every session after it. The composer no longer offers these two;
-            # this holds the line for a cached page or any other client. The
-            # managed default (high) applies instead, and `/effort max` in the
-            # running session is still there.
-            [[ "$effort" == max || "$effort" == ultracode ]] && effort=""
             # Single-quoted, because `claude-opus-5[1m]` is a glob to the shell
             # this line is handed to and would expand away the moment a file in
             # the start directory happened to match. MODEL_RE admits no quote,

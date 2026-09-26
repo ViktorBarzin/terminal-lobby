@@ -72,7 +72,7 @@ import { SettingsPanel, type PageId } from "./SettingsPanel";
 import { openerAction } from "./settings/rail";
 import { Toaster } from "./Toaster";
 import { startNetworkWatch } from "../diagnostics/network";
-import { createPrefsStore, modelChoiceFor } from "../store/prefs";
+import { createPrefsStore, modelChoiceFor, resetOneSessionEffort } from "../store/prefs";
 import { modelHarness, modelRequest } from "../lib/models";
 import { createSkillsStore } from "../store/skills";
 import { SkillsIcon } from "./Icons";
@@ -1217,6 +1217,9 @@ export const App: Component = () => {
     if (!name || store.loading()) return false;
     return !store.sessions.some((s) => s.name === name);
   });
+
+  // Max and ultracode launch the session they were picked for, never the next.
+  resetOneSessionEffort(selectedIsCreating, prefs);
 
   const selectedDir = createMemo(() => {
     const name = selectedName();

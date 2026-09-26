@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createRoot } from "solid-js";
+import { createRoot, createSignal } from "solid-js";
 import {
   changedPrefPaths,
   clampFontSize,
@@ -9,6 +9,7 @@ import {
   applyPatch,
   createPrefsStore,
   readPersistedPrefs,
+  resetOneSessionEffort,
   PREF_DEFAULTS,
   PREFS_KEY,
   PREFS_DIRTY_KEY,
@@ -56,18 +57,6 @@ describe("coercePrefs — validate-or-default", () => {
     expect(p.session.newCommand).toBe("claude");
     expect(p.notify.onDone).toBe(true);
     expect(p.notify.onAwaiting).toBe(true);
-  });
-
-  // A max saved before the composer stopped offering it would otherwise keep
-  // starting every new Claude session at max. It reads as no choice, which
-  // lands on the managed default (high). Codex keeps its own max.
-  it("a saved Claude max or ultracode reads as no choice", () => {
-    for (const effort of ["max", "ultracode"]) {
-      const p = coercePrefs({ session: { newEffort: effort, newCodexEffort: "max" } });
-      expect(p.session.newEffort).toBe("default");
-      expect(p.session.newCodexEffort).toBe("max");
-    }
-    expect(coercePrefs({ session: { newEffort: "xhigh" } }).session.newEffort).toBe("xhigh");
   });
 
   it("valid values pass through; a valid false notify survives", () => {
@@ -303,6 +292,84 @@ describe("createPrefsStore — live push into the terminal", () => {
       store.dispose();
       dispose();
     });
+  });
+});
+
+// Max and ultracode stay in the new-session picker, but they are one session's
+// choice, never the next session's default (Viktor, 2026-09-26: "let's not
+// hide it. just let's not default to it"). The attach reads the pick when the
+// created session connects, so it has to survive until then and go back to
+// default once the session exists.
+describe("resetOneSessionEffort — a max pick lasts one session", () => {
+  beforeEach(() => localStorage.clear());
+  const okJson = (body: unknown) => ({ ok: true, json: async () => body });
+
+  const mount = () =>
+    createRoot((dispose) => {
+      const store = createPrefsStore({ fetchImpl: async () => okJson({}) });
+      const [creating, setCreating] = createSignal(false);
+      resetOneSessionEffort(creating, store);
+      return {
+        store,
+        setCreating,
+        done: () => {
+          store.dispose();
+          dispose();
+        },
+      };
+    });
+
+  it("goes back to default once the session it was picked for exists", () => {
+    for (const effort of ["max", "ultracode"]) {
+      const m = mount();
+      m.store.setPref({ session: { newEffort: effort } });
+      m.setCreating(true);
+      // The attach is still to read it.
+      expect(m.store.prefs().session.newEffort).toBe(effort);
+      m.setCreating(false);
+      expect(m.store.prefs().session.newEffort).toBe("default");
+      m.done();
+    }
+  });
+
+  it("keeps it until a session is actually created", () => {
+    const m = mount();
+    m.store.setPref({ session: { newEffort: "max" } });
+    expect(m.store.prefs().session.newEffort).toBe("max");
+    m.done();
+  });
+
+  it("reads a saved Claude max as no choice when the doc is loaded", async () => {
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ session: { newEffort: "max", newCodexEffort: "max" } }),
+    );
+    const m = mount();
+    expect(m.store.prefs().session.newEffort).toBe("default");
+    expect(m.store.prefs().session.newCodexEffort).toBe("max");
+    m.done();
+    // And one roamed in from another device, where it was never used.
+    localStorage.clear();
+    const r = createRoot((dispose) => {
+      const store = createPrefsStore({
+        fetchImpl: async () => okJson({ session: { newEffort: "ultracode" } }),
+      });
+      return { store, dispose };
+    });
+    await r.store.bootSync();
+    expect(r.store.prefs().session.newEffort).toBe("default");
+    r.store.dispose();
+    r.dispose();
+  });
+
+  it("leaves every other pick sticky, and codex's own max", () => {
+    const m = mount();
+    m.store.setPref({ session: { newEffort: "xhigh", newCodexEffort: "max" } });
+    m.setCreating(true);
+    m.setCreating(false);
+    expect(m.store.prefs().session.newEffort).toBe("xhigh");
+    expect(m.store.prefs().session.newCodexEffort).toBe("max");
+    m.done();
   });
 });
 

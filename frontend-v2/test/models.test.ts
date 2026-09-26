@@ -6,13 +6,12 @@ import {
   DEFAULT_CHOICE,
   effortsFor,
   isEffortFor,
-  isNewSessionEffortFor,
+  isOneSessionEffort,
   isCurrentModel,
   isModelFor,
   labelFor,
   modelsFor,
   modelHarness,
-  newSessionOptionsFor,
   phraseFor,
   summarise,
   type ModelHarness,
@@ -75,24 +74,13 @@ describe("the model catalogue", () => {
     ]);
   });
 
-  // A new session's effort is a sticky pick that roams, so whatever sits in
-  // this list can become every session's default. Claude's stops at xhigh
-  // (Viktor, 2026-09-25: nobody on max by default); max and ultracode stay on
-  // a running session's own chip. Codex's ladder is its own and unchanged.
-  it("stops a new Claude session's ladder below max", () => {
-    expect(newSessionOptionsFor("claude", "effort").map((e) => e.id)).toEqual([
-      "default",
-      "low",
-      "medium",
-      "high",
-      "xhigh",
-    ]);
-    expect(newSessionOptionsFor("codex", "effort")).toEqual(effortsFor("codex"));
-    expect(newSessionOptionsFor("claude", "model")).toEqual(modelsFor("claude"));
-    expect(isNewSessionEffortFor("claude", "xhigh")).toBe(true);
-    expect(isNewSessionEffortFor("claude", "max")).toBe(false);
-    expect(isNewSessionEffortFor("claude", "ultracode")).toBe(false);
-    expect(isNewSessionEffortFor("codex", "max")).toBe(true);
+  // A new session's effort pick roams and sticks, so these two would become
+  // every later session's default. They stay in the picker and last one
+  // session (store/prefs.ts, resetOneSessionEffort). Codex keeps its own.
+  it("names the efforts that last one Claude session", () => {
+    expect(effortsFor("claude").filter((e) => isOneSessionEffort("claude", e.id)).map((e) => e.id))
+      .toEqual(["max", "ultracode"]);
+    expect(effortsFor("codex").some((e) => isOneSessionEffort("codex", e.id))).toBe(false);
   });
 
   // Both sides are slugs now, so the ordinary answer is the string comparison.
