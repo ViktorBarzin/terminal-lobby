@@ -356,7 +356,9 @@ describe("<MessagesTimeline> — image srcs are never rewritten", () => {
   });
 });
 
-// --- attachments in the timeline (design 2026-08-17, decisions 2 and 8) -----
+// --- attachments in the timeline (design 2026-08-17, decisions 2 and 8,
+// revised 2026-09-24; the rest of the picture cases are in
+// MessagesTimeline.images.test.tsx) -----------------------------------------
 describe("attachments render in place", () => {
   const IMG = "/var/lib/clipboard-store/wizard/qa/pasted-20260817-150232-a1.png";
 
@@ -392,12 +394,19 @@ describe("attachments render in place", () => {
     expect(container.querySelector(".tl-row-message")?.textContent).toContain(IMG);
   });
 
-  it("leaves a path in inline code alone", () => {
+  // Claude names a picture in backticks far more often than bare: 10 of the 11
+  // image mentions in the 2026-09-24 census were in inline code. The span
+  // keeps its text, which is still a command someone may copy, and the picture
+  // is drawn under the paragraph rather than in place of it.
+  it("keeps a path in inline code as code, and draws the picture under it", () => {
     const { container } = renderTimeline([
       ev({ id: 1, kind: "text", body: "run `cat " + IMG + "` first" }),
     ]);
-    expect(container.querySelector(".tl-row-message img")).toBeNull();
-    expect(container.querySelector(".tl-row-message")?.textContent).toContain(IMG);
+    const code = container.querySelector(".tl-row-message code");
+    expect(code?.textContent).toBe("cat " + IMG);
+    expect(code?.querySelector("img")).toBeNull();
+    const img = container.querySelector(".tl-row-message .tl-md-pictures img");
+    expect(img?.getAttribute("src")).toBe("/clipboard/img/qa/pasted-20260817-150232-a1.png");
   });
 
   it("still renders a markdown image reference the way it always did", () => {

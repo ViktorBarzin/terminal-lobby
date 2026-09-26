@@ -119,3 +119,55 @@ func TestSessionEventsWithoutActAsIsUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// A refusal from the gate is never cached, and a request it lets through
+// reaches the route with no cache header of the gate's making. The picture
+// routes are cached for a year, and their contract says their errors carry
+// no-store; measured live on 2026-09-26, the 401, 403 and 501 the gate writes
+// in front of them went out without it. A 501 is cacheable by default, so an
+// act-as refusal of a picture URL could otherwise outlive the refusal.
+func TestGateRefusalsAreNeverCached(t *testing.T) {
+	mapPath, admin, other := actAsEnv(t)
+	cases := []struct {
+		name, ident, as string
+		want            int
+	}{
+		{"no identity", "", "", http.StatusUnauthorized},
+		{"unmapped identity", "nobody-mapped", "", http.StatusForbidden},
+		{"admin acting as another", "adminauth", other, http.StatusNotImplemented},
+		{"non-admin acting as another", "otherauth", admin, http.StatusForbidden},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var seen string
+			h := authMiddleware(mapPath, probeHandler(&seen))
+			url := "/result/main/toolu_0123456789/image/0"
+			if tc.as != "" {
+				url += "?as=" + tc.as
+			}
+			req := httptest.NewRequest(http.MethodGet, url, nil)
+			if tc.ident != "" {
+				req.Header.Set(authHeader, tc.ident)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d", rec.Code, tc.want)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Errorf("Cache-Control %q on a refusal, want no-store", got)
+			}
+		})
+	}
+
+	var cc string
+	h := authMiddleware(mapPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cc = w.Header().Get("Cache-Control")
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/events/main", nil)
+	req.Header.Set(authHeader, "otherauth")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if cc != "" {
+		t.Fatalf("the route saw Cache-Control %q set by the gate; it must choose its own", cc)
+	}
+}

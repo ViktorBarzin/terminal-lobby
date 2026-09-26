@@ -116,7 +116,7 @@ joined to the read that consumed it.
 | `tmux-user-attach` | `session.attached` — **every** session start flows through this script, including plain ttyd URLs that never touch the lobby |
 | both lobbies | tab boot, selection, creation, palette/commands, view switch, sidebar + group collapse, theme, prefs, gallery/editor opens, paste/drop, soft keys, notification opt-in/delivery, self-updates applied (`app.reloaded`) or given up on (`app.update_failed`, ADR-0007), errors the user saw |
 | service worker (`frontend-v2/public/sw.js`) | the iOS cold-launch chain, which nothing else can see: the tap record written at push time (`notify.stash_written`), the tap itself and which arm the click handler took (`notify.tap`, `tl.kind` = `acked`\|`posted`\|`opened`\|`focused`\|`failed`), and whether the app-icon count could be drawn (`notify.badge_set`). The page reports the other half, `notify.stash_read` |
-| v2 lobby | how a member chose to join a session, read-only or read-write (`watch.switched`, `tl.to` = `ro`\|`rw`, plus `tl.as` when the joiner is acting as another user) |
+| v2 lobby | how a member chose to join a session, read-only or read-write (`watch.switched`, `tl.to` = `ro`\|`rw`, plus `tl.as` when the joiner is acting as another user); a picture opened full size in the Text view (`text.picture_opened`, `tl.kind` = `file`\|`block`, `tl.source` = `bubble`\|`prose`\|`tool`, never the path or the image) |
 
 Client events deliberately do **not** duplicate what a service already
 records. Kills, renames, moves, shares, saves and uploads are emitted

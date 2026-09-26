@@ -254,10 +254,25 @@ func (f *FileSource) Head() (int64, string) {
 	return newest, logEpoch(f.path)
 }
 
-// logEpoch names a log by the transcript behind it. Hashed rather than sent as
-// a path: it travels to the browser, and the identity is all the browser needs.
-func logEpoch(path string) string {
-	sum := sha256.Sum256([]byte(path))
+// eventShape names the wire shape events are normalized into. It is part of
+// the log's identity: a client holding events normalized under an older shape
+// drops them and reopens, the same path a rewritten transcript takes. Bumped
+// 2026-09-24, when pictures became references (ImageRef) and tool results
+// stopped carrying base64. Without it a device that cached a session before
+// that deploy would go on showing base64 bodies and bare "[Image #1]"
+// placeholders for as long as the cache holds, up to 2,000 events a session
+// (frontend-v2/src/store/transcript-cache.ts). The cost is one full reopen per
+// cached session per device, once.
+const eventShape = "2026-09-24-images"
+
+// logEpoch names a log by the transcript behind it and the shape its events
+// take. Hashed rather than sent as a path: it travels to the browser, and the
+// identity is all the browser needs.
+func logEpoch(path string) string { return logEpochFor(eventShape, path) }
+
+// logEpochFor is logEpoch under an explicit shape, so a test can vary it.
+func logEpochFor(shape, path string) string {
+	sum := sha256.Sum256([]byte(shape + "\x00" + path))
 	return hex.EncodeToString(sum[:8])
 }
 
@@ -339,6 +354,15 @@ func (f *FileSource) FullResult(toolID string) (string, json.RawMessage, error) 
 		return "", nil, errors.New("full result: no tool id")
 	}
 	return f.reader.FullResult(f.path, toolID)
+}
+
+// ImageBlock reads one picture back off disk, through the source's reader: a
+// transcript this process cannot open is scanned by a child running as its
+// owner, exactly as FullResult is. Nothing is cached here; the route's
+// immutable cache header is what keeps a picture from being read twice by the
+// same device.
+func (f *FileSource) ImageBlock(addr ImageAddr) (ImageData, error) {
+	return f.reader.ImageBlock(f.path, addr)
 }
 
 // Interrupt records an operator interrupt on this session at `at` (epoch ms)

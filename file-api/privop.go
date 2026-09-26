@@ -210,8 +210,9 @@ func errResult(err error) privopResult {
 
 // --- parent side: re-exec as the mapped user --------------------------------
 
-// runPrivop re-execs this binary AS osUser to run one op inside that user's
-// home. stdin carries the write payload (nil otherwise); the JSON envelope
+// runPrivop re-execs this binary AS osUser to run one op with that user's own
+// access: inside their home for list, read and write, anywhere they can read
+// for image. stdin carries the write payload (nil otherwise); the JSON envelope
 // comes back on stdout. Any sudo/grant/child failure collapses to an opaque 500
 // (the path is never echoed).
 // sudoBinary is absolute, and a var only as a test seam — the same reason
@@ -310,6 +311,12 @@ func runPrivopMain(op, path string, all bool) {
 	case "write":
 		content, _ := io.ReadAll(io.LimitReader(os.Stdin, maxFileSize+1))
 		res = opWrite(home, path, content)
+	case "image":
+		// No home here: a picture may sit anywhere this user can read, and
+		// the child running AS them is what makes the OS the judge of that
+		// (image.go). What comes back is a picture or a status, never the
+		// bytes of anything else.
+		res = opImageEnvelope(path)
 	default:
 		res = privopResult{Status: http.StatusInternalServerError, Error: "unknown op"}
 	}

@@ -2093,6 +2093,67 @@ label.tl-set-row-label {
   color: var(--text-muted);
 }
 
+/* ---- Pictures Claude names, and pictures tools hand back (2026-09-24) ----
+   A path in Claude's prose keeps its text, and its picture is drawn in a column
+   under the block that named it. Each one is a `.tl-attach-image`, so it has the
+   bubble's size: 320px tall at most, the width of the column at most. */
+.tl-md-pictures {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin: 2px 0 10px;
+}
+.tl-md-pictures .tl-attach-image {
+  margin: 4px 0;
+}
+/* Every picture in it failed to load: nothing is left to hold the margin. */
+.tl-md-pictures:empty {
+  display: none;
+}
+/* A `![](…)` drawn in place where no Picture button holds it (a timeline given
+   no effective user) still gets the conversation's cap. */
+.tl-row-message .tl-md-img {
+  max-height: 320px;
+  width: auto;
+}
+
+/* A tool row's pictures, under its head and indented to its label, visible
+   while the row is folded. Small on purpose: a run of Reads has to stay a run
+   of rows, and one press opens the lightbox. */
+.tl-tool-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 10px 8px 28px;
+}
+.tl-tool-thumb {
+  display: inline-block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+  max-width: 100%;
+}
+/* 96px tall and cropped from the top: a full-page capture (11 of the 85
+   screenshots in the census) would otherwise shrink to a sliver a few pixels
+   wide. The lightbox shows all of it. */
+.tl-tool-thumb img {
+  display: block;
+  height: 96px;
+  width: auto;
+  min-width: 64px;
+  max-width: min(100%, 320px);
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.tl-tool-thumb:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
 .tl-linkbtn {
   background: none;
   border: 0;

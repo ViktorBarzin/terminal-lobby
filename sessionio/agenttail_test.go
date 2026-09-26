@@ -455,6 +455,10 @@ func (r *scriptedReader) SearchResults(string, string, int) ([]ResultMatch, erro
 	return nil, errors.New("not scripted")
 }
 
+func (r *scriptedReader) ImageBlock(string, ImageAddr) (ImageData, error) {
+	return ImageData{}, errors.New("not scripted")
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)

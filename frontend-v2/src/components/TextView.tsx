@@ -1010,6 +1010,7 @@ export const TextView: Component<{
           onPinned={props.onPinned}
           pinned={props.pinned}
           me={props.me}
+          session={props.session}
           hidden={drill() !== null}
           onReveal={() => closeDrill(false)}
         />

@@ -157,7 +157,9 @@ src/
   lib/
     config.ts            Endpoints: /events,/prompt,/cancel (session-events),
                          apiUrl() for /api/sessions, clipboardUrl(),
-                         file read/list/write, TERMINAL_BASE + build id;
+                         file read/list/write, the picture routes (a file
+                         through /files/image, a transcript's image block
+                         under /result/), TERMINAL_BASE + build id;
                          also ACT_AS (?as=) and the appendActAs() every
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
@@ -610,6 +612,10 @@ src/
                          for 400 ms, or one divider drag fills all 25 slots
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
+    picture.ts           The Text view's one open picture, a module signal the
+                         lightbox draws. Opening puts a phone's keyboard away by
+                         blurring the field that had it, and closing gives that
+                         field back and focuses nothing else
     preview.logic.ts     PURE file-type → renderer + transcript → file-path
     preview.ts           File-preview store (open file, raw|rendered, browse)
     skills.logic.ts      PURE skill-row rules: what a row says about itself
@@ -710,11 +716,19 @@ src/
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
-                         rehype pass turning bare absolute paths in Claude's
-                         prose into attachments (code subtrees skipped)
-    Attachment.tsx       One attachment as the chat draws it: an image preview, a
-                         document chip, or the path when nothing can serve it —
-                         and MessageSegments, which substitutes in place
+                         rehype pass that draws a picture Claude names by its
+                         absolute path (plain, in backticks, or as a link's
+                         target) under the block naming it, and links a document
+                         it names. Fenced code is skipped
+    Attachment.tsx       One attachment as the chat draws it: a picture that
+                         opens the lightbox, a document chip, or the path when
+                         nothing can serve it. Picture, the button every picture
+                         in the view is drawn as, bubble-size or a tool row's
+                         thumbnail. MessageSegments substitutes in place,
+                         terminal pastes included
+    PictureLightbox.tsx  The Text view's lightbox, mounted once in App: every
+                         picture in a bubble, in Claude's prose or on a tool row
+                         opens it full size. Escape closes it and goes no further
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         The LIVE session's composer: the permission panel,
                          queued-prompt chips, the mode chip, the context meter
@@ -1021,6 +1035,14 @@ All of the following ship in the deployed build:
   Escape steps lightbox → grid → closed.
 - **Images in** — paste, drag-and-drop and upload to clipboard-upload, which
   hands back the server path typed into the pty.
+- **Pictures in the Text view** — a picture Claude names by its absolute path
+  (plain, in backticks, `![](…)` or `[x](…)`) is drawn under the text naming it,
+  a picture pasted into the terminal is drawn where its `[Image #N]` stood, and
+  a Read of an image or a browser screenshot shows a 96px thumbnail on its tool
+  row. Every one opens one shared lightbox, and one that cannot be read stays
+  text. Files come from file-api's picture route, which reads any path the user
+  can read; a transcript's own image blocks come back from session-events by
+  index.
 - **File preview + editor** (pillar #6) — an overlay over file-api: browse a
   directory, open a file by path or from the transcript-derived recents, render
   markdown (Markdown+Mermaid), HTML (sandboxed `srcdoc`), images, or

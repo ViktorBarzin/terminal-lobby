@@ -641,9 +641,11 @@ Claude reads. Up to 25MB it joins the session's store directory under a
 `file-` prefix and rides the same 30-day grace as **Session images**;
 larger, it stays a 7-day transfer ephemeron in /tmp and carries no chip.
 Before sending it is an **Inline chip** standing where it was pasted;
-after sending it is drawn where its path stands in the message. An
-attachment whose bytes nothing can serve — another user's store, outside
-the caller's home, swept — shows its path instead.
+after sending it is drawn where its path stands in the message, a photo
+as a **Picture** and a document as a chip. An attachment whose bytes
+nothing can serve shows its path instead: one in another user's store, a
+document outside the caller's home, a photo the caller's OS user cannot
+read, or one that was swept.
 The upload happens when the file is attached in a live **Composer**, and
 on send in the **New-session composer**, which has no session to upload
 into until Enter creates one.
@@ -818,6 +820,27 @@ _Avoid_: activity feed, events (Event is the wire type)
 The live row standing for a turn in flight: the tool currently running, an
 elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text.
+
+**Picture**:
+An image the **Text view** draws in the conversation, whichever way it
+arrived: a file named by its absolute path in a prompt, in Claude's reply
+or in a screenshot tool's result, or an **Image block** inside the
+transcript. It stands where it was named in a bubble, under the block that
+named it in Claude's reply, and as a thumbnail in a tool row, and pressing
+it opens it full size. One that cannot be read shows as the text it stood
+for, never as a broken image.
+_Avoid_: image (the word also names **Session images** and image blocks),
+thumbnail (the size a tool row draws a picture at, not a different thing),
+attachment (a person attaches a file; a picture can come from anywhere)
+
+**Image block**:
+A picture carried inside the transcript itself rather than as a file: what
+a paste into the terminal leaves in the prompt, where the text reads
+`[Image #1]`, and what Claude's Read returns for an image. It has no path,
+so the lobby names it by its place in the record and reads it back from
+the transcript.
+_Avoid_: embedded image, inline image, pasted image (a Read result is one
+too)
 
 **Agent panel**:
 The surface in the text view that names a session's concurrent work and says

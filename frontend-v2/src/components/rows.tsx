@@ -1,5 +1,9 @@
 import { createMemo, createSignal, For, Show, type Component } from "solid-js";
 import { Markdown } from "./Markdown";
+import { Picture } from "./Attachment";
+import { contentUrlFor } from "../lib/attachments";
+import { toolImageUrl } from "../lib/config";
+import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import type {
   MetaRow,
@@ -221,8 +225,19 @@ export const SkillRowView: Component<{ row: ToolRow }> = (props) => (
   </div>
 );
 
+/** One tool-row thumbnail: where its bytes come from and what it is called. */
+interface Thumb {
+  src: string;
+  alt: string;
+  kind: PictureKind;
+}
+
 export const ToolRowView: Component<{
   row: ToolRow;
+  /** the session, whose transcript holds a result's picture blocks. */
+  session?: string;
+  /** the effective OS user, which decides whether a store path is ours. */
+  me?: string;
   onOpenPreview?: (path: string) => void;
   /** Fetch the full payload for a result the wire capped. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
@@ -250,6 +265,34 @@ export const ToolRowView: Component<{
     setFull(await props.onLoadFull(props.row.toolId));
     setLoading(false);
   };
+
+  /**
+   * The pictures this call handed back, as small thumbnails (2026-09-24,
+   * reversing the August design's decision 8, which kept tool rows to their
+   * path). A Read of an image returns only the picture, so the row used to
+   * show 8 KiB of its base64 as output; a screenshot tool writes a file and
+   * links it relative to where Claude was started. The first is read back from
+   * the transcript by index, the second from disk by the absolute path the
+   * server resolved. Either needs what it reads from: a session for a block,
+   * an address for a file.
+   */
+  const thumbs = createMemo<Thumb[]>(() => {
+    const out: Thumb[] = [];
+    const toolId = props.row.toolId;
+    if (props.session && toolId) {
+      const alt = basename(path()) || "Picture";
+      for (const ref of props.row.images ?? []) {
+        out.push({ src: toolImageUrl(props.session, toolId, ref.n), alt, kind: "block" });
+      }
+    }
+    for (const file of props.row.files ?? []) {
+      const src = contentUrlFor(file, props.me ?? "");
+      if (src) out.push({ src, alt: basename(file), kind: "file" });
+    }
+    return out;
+  });
+  /** A result that is only pictures has nothing for the output block to say. */
+  const pictureOnly = () => thumbs().length > 0 && !props.row.result;
 
   return (
     <div class="tl-row tl-row-tool" data-eid={props.row.id} data-status={status()} data-item={props.row.itemType}>
@@ -289,6 +332,18 @@ export const ToolRowView: Component<{
         </span>
       </div>
 
+      {/* Outside the expanded part, so a picture shows while the row is
+          folded: looking at it is the reason to open the row at all. A
+          thumbnail that cannot be read simply goes, and the row keeps its
+          label and its path chip. */}
+      <Show when={thumbs().length > 0}>
+        <div class="tl-tool-thumbs">
+          <For each={thumbs()}>
+            {(t) => <Picture src={t.src} alt={t.alt} size="thumb" source="tool" kind={t.kind} />}
+          </For>
+        </div>
+      </Show>
+
       {/* A subagent's work is nested, not interleaved: its rows belong to the
           call that spawned it and read as a sub-timeline. */}
       <Show when={props.row.children.length > 0}>
@@ -316,7 +371,8 @@ export const ToolRowView: Component<{
             when={
               props.row.itemType !== "file_change" &&
               props.row.itemType !== "command_execution" &&
-              props.row.result !== undefined
+              props.row.result !== undefined &&
+              !pictureOnly()
             }
           >
             <>

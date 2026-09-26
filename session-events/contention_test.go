@@ -49,6 +49,10 @@ func (g *gatedReader) SearchResults(path, q string, limit int) ([]sessionio.Resu
 	return g.under.SearchResults(path, q, limit)
 }
 
+func (g *gatedReader) ImageBlock(path string, addr sessionio.ImageAddr) (sessionio.ImageData, error) {
+	return g.under.ImageBlock(path, addr)
+}
+
 // twoSessions registers two sessions for one user and returns the registry and
 // the transcript path of the one the test will make slow.
 func twoSessions(t *testing.T, user string) (*registry, string, func()) {

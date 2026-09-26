@@ -71,6 +71,40 @@ export interface Event {
    * marker per turn would say nothing (sessionio MetaModel).
    */
   model?: ModelState;
+  /**
+   * The pictures a `user` prompt (pasted into the terminal) or a `tool_result`
+   * (a Read of an image, a screenshot handed back as a block) carried. The
+   * bytes stay in the transcript and are read back by index through the
+   * image-block routes (`promptImageUrl`, `toolImageUrl`), so the base64 never
+   * crosses the stream and never meets its 8 KiB cap.
+   */
+  images?: ImageRef[];
+  /** The uuid of the user record that carried `images`, which is how the
+   *  prompt route finds the record again. Set only alongside `images`. */
+  record?: string;
+  /**
+   * The files a screenshot tool wrote, as absolute paths, on its `tool_result`.
+   * The tool links them relative to the directory Claude was started in, and
+   * the server resolves them, because the browser never learns that directory.
+   */
+  files?: string[];
+}
+
+/**
+ * One picture block a user prompt or a tool result carried (sessionio
+ * `ImageRef`). A reference, never the bytes.
+ */
+export interface ImageRef {
+  /** The block's index among the record's (or the result's) image blocks,
+   *  counting from 0, and the index the image-block route takes. */
+  n: number;
+  /** What the block declared. Advisory: the route sniffs the bytes. */
+  mediaType?: string;
+  /** The decoded size in bytes. */
+  bytes?: number;
+  /** The terminal paste id the prompt's text calls `[Image #N]`. Absent when
+   *  the record's paste ids did not line up one to one with its blocks. */
+  paste?: number;
 }
 
 /** The model a session answers on, and the effort it answers at. */
@@ -193,7 +227,34 @@ export function parseEvent(data: string): Event | null {
   if (o.model && typeof o.model === "object") {
     ev.model = o.model as ModelState;
   }
+  const images = Array.isArray(o.images) ? parseImageRefs(o.images) : [];
+  if (images.length > 0) ev.images = images;
+  if (typeof o.record === "string") ev.record = o.record;
+  if (Array.isArray(o.files)) {
+    const files = o.files.filter((f): f is string => typeof f === "string");
+    if (files.length > 0) ev.files = files;
+  }
   return ev;
+}
+
+/**
+ * The picture references of one event, each copied field by field like the
+ * event itself. A reference without a numeric `n` names no block the route can
+ * serve, so it is dropped rather than drawn as a broken picture.
+ */
+function parseImageRefs(raw: readonly unknown[]): ImageRef[] {
+  const out: ImageRef[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const r = item as Record<string, unknown>;
+    if (typeof r.n !== "number") continue;
+    const ref: ImageRef = { n: r.n };
+    if (typeof r.mediaType === "string") ref.mediaType = r.mediaType;
+    if (typeof r.bytes === "number") ref.bytes = r.bytes;
+    if (typeof r.paste === "number") ref.paste = r.paste;
+    out.push(ref);
+  }
+  return out;
 }
 
 /**

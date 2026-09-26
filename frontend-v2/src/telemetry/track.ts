@@ -75,6 +75,9 @@ export type TlEvent =
   // jump).
   | "text.first_paint"
   | "text.window_grew"
+  // A picture in the Text view opened full size (2026-09-24). tl.kind is file |
+  // block and tl.source is bubble | prose | tool, never the path or the image.
+  | "text.picture_opened"
   // navigation & keyboard
   | "palette.opened"
   | "palette.action"

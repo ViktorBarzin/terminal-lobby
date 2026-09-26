@@ -188,3 +188,22 @@ func TestSearchSnippetIsBoundedAndCentredOnTheMatch(t *testing.T) {
 		t.Errorf("snippet lost the match: %q", hits[0].Snippet)
 	}
 }
+
+// A picture is bytes, not text. Nothing a reader types should find one, not in
+// the in-memory log and not in the disk pass, which runs whenever the session
+// holds a truncated result.
+func TestSearchNeverMatchesImageBytes(t *testing.T) {
+	pic := testPNG(t, 64)
+	enc := b64(pic)
+	needle := enc[len(enc)/2 : len(enc)/2+24]
+	deep := strings.Repeat("noise line\n", 1200) // forces the disk pass
+	fs := writeTranscript(t,
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_img","name":"Read","input":{"file_path":"/tmp/a.png"}}]},"uuid":"a1"}`,
+		readResultLine("tu_img", pic),
+		`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"tu_deep","name":"Bash","input":{"command":"./run.sh"}}]},"uuid":"a3"}`,
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tu_deep","content":`+jsonString(deep)+`}]},"uuid":"a4"}`,
+	)
+	if hits := fs.Search(needle, 50); len(hits) != 0 {
+		t.Fatalf("a stretch of base64 matched %d hit(s): %+v", len(hits), hits)
+	}
+}

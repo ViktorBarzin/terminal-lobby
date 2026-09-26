@@ -1,5 +1,6 @@
 import type {
   Event,
+  ImageRef,
   MetaKind,
   ModelState,
   PermissionDecision,
@@ -52,6 +53,10 @@ export interface UserRow {
   body: string;
   turnKey: string;
   at?: number;
+  /** Pictures pasted into the terminal, drawn where `[Image #N]` stands. */
+  images?: ImageRef[];
+  /** The user record's uuid, which the prompt picture route is keyed by. */
+  record?: string;
 }
 export interface MessageRow {
   kind: "message";
@@ -93,6 +98,10 @@ export interface ToolRow {
   truncated: boolean;
   /** Subagent work belonging to this call (collab_agent_tool_call only). */
   children: LeafRow[];
+  /** The result's picture blocks (a Read of an image), read back by index. */
+  images?: ImageRef[];
+  /** Pictures a screenshot tool wrote, as absolute paths. */
+  files?: string[];
   /**
    * How much SKILL.md this load collapsed (itemType "skill" only). Folded in
    * from the `meta:skill` event that follows the call, because one load has to
@@ -412,6 +421,8 @@ function collectTurnRows(turn: Turn): {
           body: e.body ?? "",
           turnKey: turn.key,
           ...(e.at !== undefined ? { at: e.at } : {}),
+          ...(e.images?.length ? { images: e.images } : {}),
+          ...(e.images?.length && e.record ? { record: e.record } : {}),
         };
         // A subagent's prompt is its own first row, never the turn's.
         if (e.sidechain) add(row, e);
@@ -545,6 +556,8 @@ function collectTurnRows(turn: Turn): {
           existing.isError = !!e.isError;
           existing.done = true;
           existing.truncated = !!e.truncated;
+          if (e.images?.length) existing.images = e.images;
+          if (e.files?.length) existing.files = e.files;
           if (existing.itemType === "collab_agent_tool_call" && lastHost === existing) {
             lastHost = null;
           }
@@ -569,6 +582,8 @@ function collectTurnRows(turn: Turn): {
               turnKey: turn.key,
               ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
               ...(e.at !== undefined ? { at: e.at } : {}),
+              ...(e.images?.length ? { images: e.images } : {}),
+              ...(e.files?.length ? { files: e.files } : {}),
             },
             e,
           );
