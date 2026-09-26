@@ -163,7 +163,7 @@ describe("agentHue", () => {
   });
 });
 
-describe("panelPresent: only while the session actually owes work", () => {
+describe("panelPresent: only while something is running for the session", () => {
   const running = set([agent("a")]);
 
   it("shows while an agent runs and the turn is open", () => {
@@ -200,6 +200,36 @@ describe("panelPresent: only while the session actually owes work", () => {
     expect(
       panelPresent(set([stale], [workflow("wf_1", { state: "killed" })]), true, undefined),
     ).toBe(false);
+  });
+
+  // A session's agents run inside its claude process, so once the session list
+  // says that process has gone, nothing in the set can still be running.
+  it("hides once the session's claude has gone, whatever the transcripts last said", () => {
+    expect(panelPresent(running, false, { agents: 1 }, "shell")).toBe(false);
+    expect(panelPresent(running, true, { agents: 1 }, "shell")).toBe(false);
+    expect(panelPresent(running, true, undefined, "codex")).toBe(false);
+  });
+
+  it("with claude there, still needs something to say the session owes work", () => {
+    // An agent that died mid tool call reads as running for good; claude
+    // running alone must not hold the panel up for it.
+    expect(panelPresent(running, false, undefined, "claude")).toBe(false);
+    expect(panelPresent(running, true, undefined, "claude")).toBe(true);
+    expect(panelPresent(running, false, { agents: 1 }, "claude")).toBe(true);
+  });
+
+  it("counts an agent waiting on its own background work as owing it", () => {
+    // Claude Code stops listing an agent as working once its turn ends, so
+    // the session list drops one that is waiting on its own background Bash.
+    // Its own transcript still says the work is outstanding.
+    const waiting = set([agent("a", { waiting: true })]);
+    expect(panelPresent(waiting, false, undefined, "claude")).toBe(true);
+    expect(panelPresent(waiting, false, undefined, undefined)).toBe(true);
+    expect(panelPresent(waiting, false, undefined, "shell")).toBe(false);
+  });
+
+  it("still disappears when nothing is running, claude or not", () => {
+    expect(panelPresent(set([done("a")]), true, { agents: 1 }, "claude")).toBe(false);
   });
 });
 

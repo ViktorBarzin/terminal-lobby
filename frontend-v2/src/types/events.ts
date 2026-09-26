@@ -263,7 +263,9 @@ export interface AgentInfo {
   model: string;
   /** Claude Code's own colour name for the agent, "" when it assigned none. */
   color: string;
-  /** meta.spawnDepth: 1 for an agent the main thread spawned, 0 if absent. */
+  /** meta.spawnDepth as written: 1 for a plain agent the main thread spawned,
+   *  0 for a teammate or when absent, 2 or more for one another agent spawned.
+   *  Nesting is drawn from parentId, not from this. */
   depth: number;
   /** The agent that spawned this one; "" means the session's main thread. */
   parentId: string;
@@ -287,6 +289,10 @@ export interface AgentInfo {
   outputTokens: number;
   /** After the agent ends, at most 200 characters of its final text or error. */
   result: string;
+  /** Running, with its turn ended to wait on background work of its own: a
+   *  Bash sent to the background, a Monitor, an Agent it launched. Absent when
+   *  not, and from a server that predates the field. */
+  waiting?: boolean;
 }
 
 export type WorkflowState = "running" | "done" | "failed" | "killed";
@@ -363,6 +369,7 @@ function parseAgent(v: unknown): AgentInfo | null {
     toolCalls: count(o.toolCalls),
     outputTokens: count(o.outputTokens),
     result: text(o.result),
+    ...(o.waiting === true ? { waiting: true } : {}),
   };
 }
 

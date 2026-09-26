@@ -1646,6 +1646,7 @@ export const SessionView: Component<{
             working={working()}
             background={props.background}
             agents={store.agents}
+            tool={props.tool}
             pending={pending()}
             onSend={send}
             onStop={stop}

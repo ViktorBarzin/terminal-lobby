@@ -14,7 +14,7 @@ import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AgentSnapshot } from "../src/components/agents.logic";
 import type { AgentInfo, WorkflowInfo } from "../src/types/events";
-import type { BackgroundWork } from "../src/types/lobby";
+import type { BackgroundWork, SessionTool } from "../src/types/lobby";
 
 const T0 = 1_790_000_000_000;
 
@@ -63,16 +63,23 @@ const snap = (agents: AgentInfo[], workflows: WorkflowInfo[] = []): AgentSnapsho
   skew: 0,
 });
 
-function mount(opts: { agents?: AgentSnapshot | null; working?: boolean; bg?: BackgroundWork }) {
+function mount(opts: {
+  agents?: AgentSnapshot | null;
+  working?: boolean;
+  bg?: BackgroundWork;
+  tool?: SessionTool;
+}) {
   const [agents, setAgents] = createSignal<AgentSnapshot | null>(opts.agents ?? null);
   const [working, setWorking] = createSignal(opts.working ?? false);
   const [bg, setBg] = createSignal<BackgroundWork | undefined>(opts.bg);
+  const [tool, setTool] = createSignal<SessionTool | undefined>(opts.tool);
   const r = render(() => (
     <TextView
       events={[]}
       working={working()}
       background={bg}
       agents={agents}
+      tool={tool}
       pending={[]}
       onSend={async () => true}
       onStop={() => {}}
@@ -84,6 +91,7 @@ function mount(opts: { agents?: AgentSnapshot | null; working?: boolean; bg?: Ba
     setAgents,
     setWorking,
     setBg,
+    setTool,
     panel: () => r.container.querySelector(".tl-agents"),
     strip: () => r.container.querySelector(".tl-bg-strip"),
   };
@@ -104,6 +112,17 @@ describe("the agent panel in the text view", () => {
   it("stays while the session list still counts the agent after the turn closed", () => {
     const v = mount({ agents: snap([agent("a1")]), working: false, bg: { agents: 1 } });
     expect(v.panel()).not.toBeNull();
+  });
+
+  it("stays for an agent waiting on its own background work, and goes with the session's claude", () => {
+    const v = mount({
+      agents: snap([agent("a1", { waiting: true })]),
+      working: false,
+      tool: "claude",
+    });
+    expect(v.panel()).not.toBeNull();
+    v.setTool("shell");
+    expect(v.panel()).toBeNull();
   });
 
   it("is absent when nothing says the session still owes work", () => {

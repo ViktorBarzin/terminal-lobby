@@ -820,16 +820,20 @@ what each piece is doing now: the `Agent` subagents and teammates the session
 spawned and the `Workflow` runs it started, read from the session directory
 rather than the transcript. It sits in the right margin of the reading column,
 or as a strip above the transcript when the view is too narrow for a margin.
-It is there only while something in it is running and the session still owes
-work, meaning a turn is open or **Outstanding work** is counted, so an agent
-whose session was killed mid-run does not show as running. It shows elapsed
-time and last activity, and never says an agent is stuck. Background `Bash`
-commands and the session's own schedules are not in it.
+It is there only while something in it is running and something says the
+session still owes that work: an open turn, counted **Outstanding work**, or
+an agent whose own transcript says it is waiting on background work it
+started. It goes once the session's claude process has gone, so an agent
+whose session was killed mid-run does not show as running. An agent that ends
+its turn to wait on its own background work is still running. It shows
+elapsed time and last activity, and never says an agent is stuck. Background
+`Bash` commands and the session's own schedules are not in it.
 _Avoid_: task list, agent tree, activity panel
 
 **Live activity**:
 The one-line answer to "what is this agent doing right now", read from the
-last `tool_use` block in the agent's own **agent transcript**. Distinct from
+last `tool_use` block in the agent's own **agent transcript**, or from the
+call it is waiting on while it waits on its own background work. Distinct from
 **Outstanding work**, which is the count-only signal the state dot uses.
 _Avoid_: status, progress (nothing here has a denominator)
 

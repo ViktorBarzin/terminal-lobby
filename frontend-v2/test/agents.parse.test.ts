@@ -10,6 +10,21 @@ import { describe, it, expect } from "vitest";
 import { parseAgentSet } from "../src/types/events";
 
 describe("parseAgentSet", () => {
+  it("keeps an agent's waiting flag, which the presence rule reads", () => {
+    const frame = (extra: Record<string, unknown>) =>
+      parseAgentSet(
+        JSON.stringify({
+          at: 1,
+          agents: [{ id: "a1", state: "running", ...extra }],
+          workflows: [],
+        }),
+      );
+    expect(frame({ waiting: true })?.agents[0]?.waiting).toBe(true);
+    // Absent, or anything but true, is not waiting.
+    expect(frame({})?.agents[0]?.waiting).toBeUndefined();
+    expect(frame({ waiting: "yes" })?.agents[0]?.waiting).toBeUndefined();
+  });
+
   it("reads a whole frame as sent", () => {
     const set = parseAgentSet(
       JSON.stringify({

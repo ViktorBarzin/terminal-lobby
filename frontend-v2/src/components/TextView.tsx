@@ -43,7 +43,7 @@ import type { Question } from "./canonicalize";
 import { QuestionCard, type TypedAnswer } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
-import type { BackgroundWork } from "../types/lobby";
+import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { AgentPanel } from "./AgentPanel";
 import { AgentTranscript } from "./AgentTranscript";
 import { panelPresent, type AgentSnapshot } from "./agents.logic";
@@ -108,6 +108,9 @@ export const TextView: Component<{
   /** The session's agents and workflow runs, from the stream's `agents` frame.
    *  Absent, or null, against a server that predates it: no panel. */
   agents?: () => AgentSnapshot | null;
+  /** Which command the session runs, from the session list. The agent panel
+   *  shows only while the session's claude is there to run its agents. */
+  tool?: () => SessionTool | undefined;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
@@ -578,7 +581,7 @@ export const TextView: Component<{
    */
   const agentSet = createMemo(() => props.agents?.() ?? null);
   const showAgents = createMemo(() =>
-    panelPresent(agentSet()?.set, props.working, props.background?.()),
+    panelPresent(agentSet()?.set, props.working, props.background?.(), props.tool?.()),
   );
   const [narrow, setNarrow] = createSignal(false);
 

@@ -1,5 +1,5 @@
 import type { AgentInfo, AgentSet, WorkflowInfo } from "../types/events";
-import type { BackgroundWork } from "../types/lobby";
+import type { BackgroundWork, SessionTool } from "../types/lobby";
 
 /**
  * The agent panel's logic (docs/plans/2026-09-12-agent-workflow-visualisation-
@@ -111,24 +111,34 @@ function standing(a: AgentInfo, runs: Map<string, WorkflowInfo>): Standing {
 }
 
 /**
- * The presence rule: the panel appears only while the session actually owes
- * work. Something in the set is running AND either the turn is open or the
- * session list still counts background work. The second half is what keeps an
- * agent whose session was killed mid-run from showing as running forever: its
- * transcript never gets the record that would end it.
+ * The presence rule: the panel appears while something in the set is running
+ * and something says the session still owes that work.
+ *
+ * Running is what the files say, and they cannot say when an agent died: one
+ * killed mid tool call, or left waiting on a task whose notice never came,
+ * reads as running for good. So running alone does not hold the panel up.
+ * What does is an open turn, the session list still counting background work,
+ * or an agent whose own transcript says it is waiting on background work it
+ * started. The last is there because Claude Code stops listing an agent as
+ * working once its turn ends, so the session list drops an agent that has
+ * paused to wait on its own background Bash while that Bash still runs.
+ *
+ * A session's agents and workflow runs live inside its claude process, so
+ * once the session list says that process has gone (`tool`), nothing in the
+ * set can still be running, whatever its transcripts last said.
  */
 export function panelPresent(
   set: AgentSet | null | undefined,
   working: boolean,
   bg: BackgroundWork | undefined,
+  tool?: SessionTool,
 ): boolean {
   if (!set) return false;
-  if (!working && !owes(bg)) return false;
+  if (tool !== undefined && tool !== "claude") return false;
   const runs = new Map(set.workflows.map((w) => [w.id, w]));
-  return (
-    set.workflows.some((w) => w.state === "running") ||
-    set.agents.some((a) => standing(a, runs) === "live")
-  );
+  const live = set.agents.filter((a) => standing(a, runs) === "live");
+  if (live.length === 0 && !set.workflows.some((w) => w.state === "running")) return false;
+  return working || owes(bg) || live.some((a) => a.waiting === true);
 }
 
 interface RowBase {
