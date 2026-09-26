@@ -14,7 +14,7 @@ import (
 )
 
 // GET /pi-models answers "which models can this user's pi run", for the pi
-// picker in the new-session composer (docs/adr/0031-pi-lists-its-own-models-per-user.md).
+// picker in the new-session composer (docs/adr/0032-pi-lists-its-own-models-per-user.md).
 //
 // The Claude and Codex pickers read lists written into the frontend. Pi prints
 // its own before a session exists, and pi is where people sign into different

@@ -15,7 +15,7 @@ import (
 )
 
 // GET /pi-models: which models this user's pi can run, asked of pi itself
-// (docs/adr/0031-pi-lists-its-own-models-per-user.md).
+// (docs/adr/0032-pi-lists-its-own-models-per-user.md).
 
 // piListing is `pi --list-models` as pi 0.87.1 prints it: a header, then one
 // padded row per model, provider then id, sorted.

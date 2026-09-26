@@ -237,7 +237,7 @@ if [[ "${1:-}" == "--probe" ]]; then
 fi
 
 # --pi-models: the models this user's pi can run, for the new-session picker
-# (docs/adr/0031-pi-lists-its-own-models-per-user.md). tmux-api serves the
+# (docs/adr/0032-pi-lists-its-own-models-per-user.md). tmux-api serves the
 # answer as GET /pi-models.
 #
 # `pi --list-models` answers from the user's own sign-in and pi's catalogue
