@@ -246,6 +246,12 @@ fi
 # login+interactive shell a session gets, for the reason --probe gives: that is
 # where the user's PATH and any rc-file wrapper live.
 #
+# --no-extensions, because pi loads every extension the user installed before
+# it lists anything, and the list does not depend on them: the sign-in, the
+# catalogue and models.json do. Measured 2026-09-26 with pi-fabric installed,
+# the listing went from 0.9 s to 7.7 s and started the user's MCP servers, and
+# with a cold login shell on top it ran past the 12 s cap below.
+#
 # The user's enabledModels setting rides along, because --list-models ignores
 # it and tmux-api applies it. The settings file is printed whole and tmux-api
 # parses it; this script has no JSON parser it can count on. PI_CODING_AGENT_DIR
@@ -265,9 +271,9 @@ if ! command -v pi >/dev/null 2>&1; then
 fi
 printf "%s\n" "@@terminal-lobby:pi-models@@"
 if command -v timeout >/dev/null 2>&1; then
-    timeout 12 pi --list-models </dev/null 2>/dev/null
+    timeout 12 pi --no-extensions --list-models </dev/null 2>/dev/null
 else
-    pi --list-models </dev/null 2>/dev/null
+    pi --no-extensions --list-models </dev/null 2>/dev/null
 fi
 d="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 case "$d" in

@@ -384,7 +384,7 @@ func runPiModelsScript(t *testing.T, env []string, settings string, piBody strin
 }
 
 func TestPiModelsScriptFramesTheListingAndTheSettings(t *testing.T) {
-	stub := "#!/bin/sh\n[ \"$1\" = --list-models ] || exit 9\ncat <<'EOF'\n" + piListing + "EOF\n"
+	stub := "#!/bin/sh\ncase \" $* \" in *\" --list-models \"*) ;; *) exit 9 ;; esac\ncat <<'EOF'\n" + piListing + "EOF\n"
 	out := runPiModelsScript(t, nil, `{"enabledModels":["claude-opus-5"]}`, stub)
 	got, err := parsePiModels([]byte(out))
 	if err != nil {
@@ -395,6 +395,20 @@ func TestPiModelsScriptFramesTheListingAndTheSettings(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Enabled, []string{"claude-opus-5"}) {
 		t.Fatalf("enabled = %q from\n%s", got.Enabled, out)
+	}
+}
+
+// The listing runs with pi's extensions off. Loading them is what made the
+// picker time out on 2026-09-26: pi-fabric took the call from 0.9 s to 7.7 s
+// and started the user's MCP servers, for a list extensions do not change.
+func TestPiModelsScriptListsWithoutExtensions(t *testing.T) {
+	stub := "#!/bin/sh\ncase \" $* \" in *\" --no-extensions \"*) ;; *) exit 9 ;; esac\ncat <<'EOF'\n" + piListing + "EOF\n"
+	got, err := parsePiModels([]byte(runPiModelsScript(t, nil, "", stub)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SignedIn || len(got.Models) != 6 {
+		t.Fatalf("got %+v, want the listing from a pi run with --no-extensions", got)
 	}
 }
 
