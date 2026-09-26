@@ -903,6 +903,38 @@ approves the plan with the text, and `Enter` on the empty row rejects the plan.
 The text view fills it from the composer rather than from a box of its own.
 _Avoid_: reject row, row 4 (its number follows the options above it)
 
+**Plan card**:
+The text view's mirror of a **plan approval**, docked above the **Composer**
+where the question card docks: "Claude's plan is ready", the plan from the
+transcript, and the approve rows with the numbers and labels the pane draws.
+It draws no **feedback row**: while it is up the composer is that row, so Send
+sends the field's text back as feedback and the card's "Approve with this
+feedback" approves with it, and the mode and model **dials** are held. It has
+no Reject button and no digit shortcuts, since option 1 can clear context.
+_Avoid_: plan dialog (the CLI's own, in the pane), approval card
+
+**Plan outcome**:
+What became of a plan put up for a **plan approval**, as the transcript
+records it: approved (with the permission mode the approval chose, once the
+next mode record names it), sent back with feedback, rejected, or not answered,
+when the turn settled or a newer plan arrived without a result. A plan carried
+into a fresh context after a clear has its own outcome, since the old
+transcript records that approval as a rejection. The timeline's plan row wears
+it as its header. An answer this device sent that the transcript has not
+recorded yet shows as a transient outcome ("Approving…", "Sending back…",
+"Clearing context…") on that device only, for up to 20 s.
+_Avoid_: plan status, plan result (the `tool_result` is one input to it, not
+the outcome itself)
+
+**Continuation marker**:
+The first record of a conversation that a **plan approval** started by
+clearing the context: the CLI writes it as a user message, "Implement the
+following plan: …", which the reader never typed. The transcript tags it with
+the origin `auto-continuation`, and the text view draws it as a rule reading
+"Context cleared · carrying out the plan", the approved plan, and any feedback
+the approval carried, in place of that message.
+_Avoid_: continuation message, auto prompt (it is not a prompt anyone sent)
+
 **Marker fingerprint**:
 Which of the CLI's known landmarks a capture carried — the tab bar, the box
 glyphs, the two review wordings, the footer, the free-text and chat rows.

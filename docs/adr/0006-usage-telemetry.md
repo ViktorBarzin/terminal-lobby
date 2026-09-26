@@ -111,7 +111,7 @@ joined to the read that consumed it.
 | `tmux-api` | session kill/rename/retitle/restore, the auto-title rule (`session.autonamed`), session→project moves, project CRUD + mode/co-own, shares, layout reorder, copy-mode, push subscribe, the stale grid-pin sweep (`session.grid_repinned`, one per repaired session, `tl.client=sweep`), a pinned window pointed at the client reading it (`session.grid_sized`, `tl.kind` = the grid asked for; emitted only when something moved, so an unpinned session is silent), workspace membership written (`workspace.arranged`, `tl.count` = how many workspaces the user holds afterwards, `tl.tiles` = sessions across them, `tl.max` = the largest one; the split TREE is per-device and never arrives, ADR-0027, but the member count does) |
 | `clipboard-upload` | image upload, gallery list, `show-image` registration, non-image transfers, files kept beside a session (`file.attached`, `tl.count` = bytes) |
 | `file-api` | file preview, file save (by extension) |
-| `session-events` | prompt sent, cancel, SSE stream open/close, a blocking prompt answered (`claude.answered`, `tl.client` = `api` for keys or `api-text` for free text, `tl.count` = the answer's size; since 2026-09-23 not emitted for a multi-select toggle, so one multi-select answer counts once, at its commit, where before every tap committed and counted; since 2026-09-24 emitted once for each applied plan answer), each text-view answer request (one `text.answer_sent` or `text.answer_failed`, `tl.client` = `api-answer`, `tl.action` = `choose`\|`toggle`\|`commit`\|`back`\|`submit`\|`keys`, or since 2026-09-24 `plan-approve`\|`plan-feedback` for the plan-approval dialog, `tl.questions`, `tl.multi`, `tl.source` = `transcript`\|`pane`, `tl.reason` when it failed, `tl.markers_missing` when an open question's screen could only be partly read), a permission-mode request on `POST /model/{session}` (since 2026-09-24, `tl.action` = `mode`) |
+| `session-events` | prompt sent, cancel, SSE stream open/close, a blocking prompt answered (`claude.answered`, `tl.client` = `api` for keys or `api-text` for free text, `tl.count` = the answer's size; since 2026-09-23 not emitted for a multi-select toggle, so one multi-select answer counts once, at its commit, where before every tap committed and counted; since 2026-09-24 emitted once for each applied plan answer), each text-view answer request (one `text.answer_sent` or `text.answer_failed`, `tl.client` = `api-answer`, `tl.action` = `choose`\|`toggle`\|`commit`\|`back`\|`submit`\|`keys`, or since 2026-09-24 `plan-approve`\|`plan-feedback` for the plan-approval dialog, `tl.questions`, `tl.multi`, `tl.source` = `transcript`\|`pane`, `tl.reason` when it failed, `tl.markers_missing` when an open question's screen could only be partly read), a permission-mode request on `POST /model/{session}` (since 2026-09-24, the same `text.answer_sent` or `text.answer_failed` with `tl.client` = `api-mode`, `tl.action` = `mode`, `tl.from` and `tl.to` = the CLI's mode identifiers, `tl.count` = the Shift+Tab presses the walk took, `tl.reason` when it was refused; no `claude.answered`, since it answers no prompt) |
 | `skills-api` | skill install/remove/delete, plugin install/update/uninstall, enable/disable, the editor's write (`skill.edited`, `tl.key`), Claude respawned to load a new skill set |
 | `tmux-user-attach` | `session.attached` — **every** session start flows through this script, including plain ttyd URLs that never touch the lobby |
 | both lobbies | tab boot, selection, creation, palette/commands, view switch, sidebar + group collapse, theme, prefs, gallery/editor opens, paste/drop, soft keys, notification opt-in/delivery, self-updates applied (`app.reloaded`) or given up on (`app.update_failed`, ADR-0007), errors the user saw |
@@ -248,16 +248,30 @@ as it counts a question's. No new event name is involved in either.
 **A mode request carries `tl.action` = `mode`.** It rides
 `POST /model/{session}`, the route that sets the model, as a new `mode` field
 in the body, because a new route would need a change to the infra repo's
-IngressRoute, which allow-lists `session-events` paths one by one.
+IngressRoute, which allow-lists `session-events` paths one by one. It records
+into the answer events too, `text.answer_sent` when the walk applied and
+`text.answer_failed` with `tl.reason` when it was refused, because it is the
+same kind of record: the Text view driving the pane for a reader, one record
+per request. `tl.client` = `api-mode` keeps it apart from answers, which carry
+`api-answer`, so a query over answers has to read `tl.client`. `tl.from` and
+`tl.to` are the CLI's own mode identifiers and `tl.count` is the Shift+Tab
+presses, none of it from the conversation. It records no `claude.answered`,
+since a mode change answers no blocking prompt.
 
-**Worth checking, because it fails without an error.** `Emit` drops a name the
-catalog does not list and writes nothing. `claude.model_set`, which
-`POST /model/{session}` emits for a model change, is one of three names that
+**Why not `claude.model_set`.** `Emit` drops a name the catalog does not list
+and writes nothing. `claude.model_set`, which `POST /model/{session}` emits for
+a model change, is one of three names that
 `frontend-v2/test/docs.truth.test.ts` lists as emitted but left out of the
 catalog on purpose, until someone decides on their volume; unlike `api.served`
 and `api.rollup` it is not per-request. `session-events.service` wrote none in
-the seven days before 2026-09-24. So if the mode request rides
-`claude.model_set`, `mode` is dropped with it and that test stays green; it
-needs the catalog entry first. A new event name means the three edits in one
-commit that Consequences describes, and the same test fails until the catalog
-carries it.
+the seven days before 2026-09-24. A mode request riding `claude.model_set`
+would have been dropped with it while that test stayed green. The answer
+events are already in the catalog, so the mode request needed no catalog
+change, and `claude.model_set` is unchanged.
+
+**The prompt guard records nothing.** The plan spec proposed a
+`claude.prompt_refused` event for `POST /prompt/{session}` refusing while the
+plan approval is drawn. It was not built: the refusal is a 409 with reason
+`plan-open`, the client keeps the text in the field, and no new event name
+entered the catalog. Adding one later means the three edits in one commit that
+Consequences describes.

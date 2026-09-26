@@ -166,7 +166,13 @@ src/
                          request and a reading may carry, mirroring
                          sessionio/answerapi.go, plus the client that sends
                          one. Nothing here predicts a screen — every reply is
-                         a reading of the pane taken after the keys went in
+                         a reading of the pane taken after the keys went in.
+                         One DialogView covers both dialogs: a plan reading
+                         has `kind: "plan"`, the approve rows as drawn, the
+                         feedback row's number and the plan file, and no
+                         questions. A PlanAnswer is an approve row by number
+                         AND label, or one line of feedback that either sends
+                         the plan back or approves with it
     http.ts              The transport: a deadline on every request and
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
@@ -470,7 +476,12 @@ src/
                          the visible order into the layout when a drag hands the
                          list back to manual
   store/
-    session.ts           SSE → Solid store of events + prompt/cancel control
+    session.ts           SSE → Solid store of events + prompt/cancel control.
+                         A send the prompt guard refuses (409, reason
+                         `plan-open`: the plan approval is on the pane, where
+                         a paste and Enter would pick a menu row) resolves
+                         false, so the text stays in the field, and says the
+                         message box answers the plan now
     catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
                          because an empty list means two different things — a
                          user with no skills, or a route that answered with
@@ -699,8 +710,25 @@ src/
                          20 s the row reads "Approving…" or "Clearing
                          context…" before the transcript records the result
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
-    rows.tsx             One view per canonical item (diff, output, todo, …)
-    timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
+    rows.tsx             One view per canonical item (diff, output, todo, …).
+                         A plan row's header is its outcome; once answered its
+                         body folds to the first line behind "Show plan", and
+                         while the plan card is docked a pending row shrinks
+                         to one line pointing at it. ContinuationRowView draws
+                         the "Context cleared" rule, the approved plan and any
+                         feedback in place of the message the CLI wrote
+    timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM).
+                         Gives each ExitPlanMode row its outcome: approved
+                         (with the mode the next mode record names), sent back
+                         with feedback, rejected, or not answered once the turn
+                         settles or a newer plan arrives. A Write or Edit of
+                         the plan file landing after the call is replayed onto
+                         the row, and an Edit it cannot replay marks it stale.
+                         The user event sessionio tags `auto-continuation`
+                         becomes a ContinuationRow in the user row's slot.
+                         shownPlanOutcome lays this client's answer in flight
+                         over the transcript's, and planFromPane is the checked
+                         read of a plan reading, refused whole if malformed
     plan.logic.ts        PURE when the plan-approval card docks: the pane's
                          plan reading against the newest ExitPlanMode call.
                          Also what the card says after a reply, and the
@@ -720,7 +748,12 @@ src/
                          permission panel, the thin status line with its dials,
                          and the pill. The dock's top edge carries the state:
                          a sweep while Claude works, the awaiting colour while
-                         it waits, a dashed danger rule in bypass or no ask
+                         it waits, a dashed danger rule in bypass or no ask.
+                         While the plan card is docked the field is the plan's
+                         feedback row: its placeholder says so, Send goes to
+                         `onPlanFeedback`, the "queues" hint is hidden, and the
+                         mode and model dials are held. With a question docked
+                         Send answers it as free text (TextView `send`)
     StatusLine.tsx       The line above the pill: what the session is doing
                          (the call in flight, its target, how long, the steps)
                          with Stop beside it, "Waiting for you", work still
@@ -785,7 +818,9 @@ src/
                          them. It renders the answer in flight and the last
                          reply's notice, which its caller holds. No digit
                          shortcuts, no raw keypad and no Reject button, since
-                         a stray 1 would clear context
+                         a stray 1 would clear context. It draws no feedback
+                         row either: while it is up, the composer below is
+                         that row
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns

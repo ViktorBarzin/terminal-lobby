@@ -1376,10 +1376,11 @@ export const TextView: Component<{
         // minutes later (the session list knows, the transcript does not).
         live={lineLive()}
         background={backgroundLabel(props.background?.())}
-        // Send stays available while a question is docked — ADR-0010's "whoever
-        // answers first wins" — but it says what it will cost: a prompt takes
-        // the dialog down and Claude asks again. `asking()` is the same signal
-        // the card itself is keyed on, so the two cannot disagree.
+        // Send stays available while a question is docked, and answers it:
+        // `send` types what is in the field as the question's free-text
+        // answer, and only falls back to a prompt when the pane has no dialog
+        // left. Send's label says so. `asking()` is the same signal the card
+        // itself is keyed on, so the two cannot disagree.
         asking={!!asking()}
         planOpen={planDocked() !== null}
         onPlanFeedback={(text) => sendPlanFeedback(text, false)}

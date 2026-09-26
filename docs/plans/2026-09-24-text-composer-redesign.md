@@ -1,6 +1,6 @@
 # Redesigning the Text view composer
 
-**Status:** approved 2026-09-24. Quiet line chosen; building it.
+**Status:** approved 2026-09-24; built 2026-09-26. Quiet line and the plan approval are built on `wizard/quiet-line` and await release.
 **Owner:** wizard. **Repos touched:** terminal-lobby (frontend-v2, sessionio, session-events). No infra change: the two new server features ride routes the ingress already allows.
 **Decisions from:** Viktor's request on 2026-09-24, three questions he answered the same day, his choice of Quiet line from the five prototypes, and his request the same day that the Text view also answer Claude Code's plan-approval dialog.
 
