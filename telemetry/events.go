@@ -43,6 +43,11 @@ var knownEvents = map[string]bool{
 	// to send. The pair is what says whether the client-side transcript cache is
 	// earning its keep in the wild rather than in a test.
 	"text.open": true, // tl.cache, tl.cached, tl.fetched
+	// A picture in the Text view opened full size (2026-09-24): tl.kind is
+	// file | block (a file on disk, or a block the transcript carries) and
+	// tl.source is bubble | prose | tool. Never the path, the name or the
+	// bytes: those are conversation content (ADR-0008).
+	"text.picture_opened": true,
 	// Answering a blocking AskUserQuestion from the text view. The failure
 	// carries WHERE the sequence stopped and WHY, never what the pane held:
 	// a dialog can quote anything the session was working on.

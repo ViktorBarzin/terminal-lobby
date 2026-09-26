@@ -1,6 +1,7 @@
 import { For, Show, type Component } from "solid-js";
 import {
   DEFAULT_CHOICE,
+  fieldHeading,
   isCurrentModel,
   labelFor,
   modelName,
@@ -8,6 +9,7 @@ import {
   type ModelField,
   type ModelHarness,
   type ModelState,
+  type PiOffer,
 } from "../lib/models";
 import { CheckIcon } from "./Icons";
 
@@ -27,7 +29,14 @@ import { CheckIcon } from "./Icons";
  * what the dial shows ("Opus 5.5"), and the slug is what the CLI's picker is
  * driven by (lib/models.ts). Codex names its models by slug already, so its
  * rows carry one line. Effort is a segmented control laid out three by two,
- * since both CLIs offer six levels.
+ * since Claude and codex offer six levels.
+ *
+ * WHAT IT OFFERS FOR PI. Pi's models are the ones pi lists for this user and
+ * its levels the ones the session's model supports, so neither is written
+ * down: both come in as `offer` (lib/models.ts, PiOffer). Pi calls the second
+ * setting "thinking", and so does the heading. A heading over no rows reads
+ * like a broken list, which is what pi's model section is before its list
+ * arrives, so an empty section is left out.
  *
  * `default` is offered only where it means something. It is "leave it alone",
  * which is a real answer for a session that does not exist yet (the
@@ -52,6 +61,10 @@ export const ModelPanel: Component<{
   names?: { model: string; effort: string };
   /** The line under the lists, in place of the one about a live session. */
   note?: string;
+  /** Pi's rows, which only the caller can know (lib/models.ts, PiOffer). */
+  offer?: PiOffer;
+  /** Said on the model list itself, such as why pi's list could not be read. */
+  modelTitle?: string;
 }> = (props) => {
   const held = (): boolean => !!props.inertReason || props.busy;
   const chosen = (field: ModelField, id: string): boolean =>
@@ -59,9 +72,11 @@ export const ModelPanel: Component<{
       ? isCurrentModel(props.harness, id, props.state?.model)
       : props.state?.effort === id;
   const options = (field: ModelField) =>
-    optionsFor(props.harness, field).filter((o) => o.id !== DEFAULT_CHOICE);
+    optionsFor(props.harness, field, props.offer).filter((o) => o.id !== DEFAULT_CHOICE);
   /** `default`, where it is offered: first in both lists. */
   const offered = (): string[] => (props.offerDefault ? [DEFAULT_CHOICE] : []);
+  /** Whether the model list has a row to draw at all. */
+  const anyModel = (): boolean => offered().length + options("model").length > 0;
   const liveNote = (): string =>
     props.harness === "codex"
       ? "Also becomes codex's default for new sessions."
@@ -78,60 +93,66 @@ export const ModelPanel: Component<{
 
   return (
     <>
-      <div class="tl-pick-head" aria-hidden="true">
-        Model
-      </div>
-      <div role="radiogroup" aria-label={props.names?.model ?? "Model"}>
-        <For each={offered()}>
-          {(id) => (
-            <button
-              type="button"
-              role="radio"
-              class="tl-pick-row tl-pick-model"
-              data-value={id}
-              aria-checked={chosen("model", id)}
-              aria-disabled={held() ? "true" : undefined}
-              onClick={() => pick("model", id)}
-            >
-              <span class="tl-pick-name">Default</span>
-              <span class="tl-pick-tick" aria-hidden="true">
-                <Show when={chosen("model", id)}>
-                  <CheckIcon />
+      <Show when={anyModel()}>
+        <div class="tl-pick-head" aria-hidden="true">
+          {fieldHeading(props.harness, "model")}
+        </div>
+        <div role="radiogroup" aria-label={props.names?.model ?? "Model"} title={props.modelTitle}>
+          <For each={offered()}>
+            {(id) => (
+              <button
+                type="button"
+                role="radio"
+                class="tl-pick-row tl-pick-model"
+                data-value={id}
+                aria-checked={chosen("model", id)}
+                aria-disabled={held() ? "true" : undefined}
+                onClick={() => pick("model", id)}
+              >
+                <span class="tl-pick-name">Default</span>
+                <span class="tl-pick-tick" aria-hidden="true">
+                  <Show when={chosen("model", id)}>
+                    <CheckIcon />
+                  </Show>
+                </span>
+                <span class="tl-pick-sub">Whatever the CLI starts on</span>
+              </button>
+            )}
+          </For>
+          <For each={options("model")}>
+            {(o) => (
+              <button
+                type="button"
+                role="radio"
+                class="tl-pick-row tl-pick-model"
+                data-value={o.id}
+                aria-checked={chosen("model", o.id)}
+                aria-disabled={held() ? "true" : undefined}
+                title={props.inertReason || o.id}
+                onClick={() => pick("model", o.id)}
+              >
+                <span class="tl-pick-name">{modelName(props.harness, o.id)}</span>
+                <span class="tl-pick-tick" aria-hidden="true">
+                  <Show when={chosen("model", o.id)}>
+                    <CheckIcon />
+                  </Show>
+                </span>
+                <Show when={modelName(props.harness, o.id) !== o.id}>
+                  <span class="tl-pick-slug">{o.id}</span>
                 </Show>
-              </span>
-              <span class="tl-pick-sub">Whatever the CLI starts on</span>
-            </button>
-          )}
-        </For>
-        <For each={options("model")}>
-          {(o) => (
-            <button
-              type="button"
-              role="radio"
-              class="tl-pick-row tl-pick-model"
-              data-value={o.id}
-              aria-checked={chosen("model", o.id)}
-              aria-disabled={held() ? "true" : undefined}
-              title={props.inertReason || o.id}
-              onClick={() => pick("model", o.id)}
-            >
-              <span class="tl-pick-name">{modelName(props.harness, o.id)}</span>
-              <span class="tl-pick-tick" aria-hidden="true">
-                <Show when={chosen("model", o.id)}>
-                  <CheckIcon />
-                </Show>
-              </span>
-              <Show when={modelName(props.harness, o.id) !== o.id}>
-                <span class="tl-pick-slug">{o.id}</span>
-              </Show>
-            </button>
-          )}
-        </For>
-      </div>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="tl-pick-head" aria-hidden="true">
-        Effort
+        {fieldHeading(props.harness, "effort")}
       </div>
-      <div class="tl-effort-seg" role="radiogroup" aria-label={props.names?.effort ?? "Effort"}>
+      <div
+        class="tl-effort-seg"
+        role="radiogroup"
+        aria-label={props.names?.effort ?? fieldHeading(props.harness, "effort")}
+      >
         {/* A row of its own above the six levels, which keep their three by
             two. */}
         <For each={offered()}>

@@ -234,6 +234,15 @@ describe("loading earlier turns by reaching the top", () => {
     expect(row.querySelector("button")).toBeNull();
     expect(row.textContent).toMatch(/start of session/i);
   });
+
+  it("names the start of what it shows, which in the drill-in is an agent", () => {
+    const { container } = render(() => (
+      <MessagesTimeline events={TURN} hasEarlier={false} start="Start of this agent's transcript" />
+    ));
+    expect(container.querySelector(".tl-row-earlier")!.textContent).toBe(
+      "Start of this agent's transcript",
+    );
+  });
 });
 
 /**
@@ -271,4 +280,3 @@ describe("the top-of-transcript row exists exactly once", () => {
     expect(container.querySelectorAll(".tl-row-earlier")).toHaveLength(0);
   });
 });
-

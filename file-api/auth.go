@@ -34,7 +34,8 @@ func setMapPath(p string) {
 var homeBase = "/home"
 
 // userHome is the containment root for one OS user: /home/<osUser>. Every path
-// a request touches must resolve inside this directory.
+// a list, read or write touches must resolve inside this directory. The
+// picture route is the one exception and never calls this (image.go).
 func userHome(osUser string) string {
 	return filepath.Join(homeBase, osUser)
 }

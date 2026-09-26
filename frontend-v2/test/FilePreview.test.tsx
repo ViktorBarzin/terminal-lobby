@@ -494,6 +494,21 @@ describe("<FilePreview> — relative images in a previewed markdown file", () =>
     ]);
   });
 
+  // A picture named by its absolute path is not relative to anything, and the
+  // lobby origin has nothing at /tmp/pic.png: it is read through the picture
+  // route, which reads any path the caller can read (2026-09-24).
+  it("reads a picture named by its absolute path through the picture route", async () => {
+    const store = await loaded(
+      async () => ({ kind: "markdown", text: "![abs](/tmp/pic.png)" }),
+      "/a/b/doc.md",
+    );
+    const { container } = render(() => <FilePreview store={store} />);
+    expect(srcs(container)).toEqual(["/files/image?path=%2Ftmp%2Fpic.png"]);
+    // A document, not a conversation: the picture is a plain image, not a
+    // button that opens the lightbox.
+    expect(container.querySelector(".tl-preview-md button")).toBeNull();
+  });
+
   it("leaves every src alone when the markdown has no base (the transcript case)", async () => {
     // Markdown is shared with the assistant transcript renderer, which passes
     // no base and whose srcs are already absolute. Rewriting there would be a

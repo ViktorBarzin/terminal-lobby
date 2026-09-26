@@ -157,7 +157,9 @@ src/
   lib/
     config.ts            Endpoints: /events,/prompt,/cancel (session-events),
                          apiUrl() for /api/sessions, clipboardUrl(),
-                         file read/list/write, TERMINAL_BASE + build id;
+                         file read/list/write, the picture routes (a file
+                         through /files/image, a transcript's image block
+                         under /result/), TERMINAL_BASE + build id;
                          also ACT_AS (?as=) and the appendActAs() every
                          builder applies — push is deliberately excluded
     lobby-api.ts         tmux-api client (sessions/layout/whoami/kill/
@@ -235,9 +237,12 @@ src/
                          plus lensTarget(), the one answer for "whose account
                          is this tab looking at": it makes a session open
                          WATCHING and namespaces the Watch choice per target
-    models.ts            The model and effort catalogue, per harness: Claude
-                         and codex share no vocabulary, and their effort
-                         ladders differ at the top step (ultracode / ultra).
+    models.ts            The model and effort catalogue, per harness: Claude,
+                         codex and pi share no vocabulary, and their effort
+                         ladders differ at the ends (ultracode / ultra at the
+                         top, pi's off / minimal at the bottom). Pi's models
+                         are not written down: they come from pi-models.ts and
+                         are checked by the shape of a `provider/id` reference.
                          Neither setting is a launch flag — a per-model command
                          key would miss the pre-warm pool and give up Claude's
                          ~2.4s boot on every model but the default
@@ -253,6 +258,12 @@ src/
                          and replies with the mode the pane shows at the end;
                          one request and no retry, because a walk that timed
                          out may still have run
+    pi-models.ts         The models a pi session can start on, per OS user:
+                         GET /pi-models is `pi --list-models` run as the user,
+                         filtered by their enabledModels (ADR-0032). One copy
+                         per page, read again when the composer opens with pi
+                         chosen; callers asking at once share one read, and a
+                         failed read keeps the last answer
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
@@ -261,7 +272,11 @@ src/
                          can take it (503 while it cannot), on top of the
                          700/1600/3000/6000 ladder, resuming at the line that
                          did not land. The last rung asks for no hold, so a pane
-                         that never draws a prompt still gets the text
+                         that never draws a prompt still gets the text, except
+                         for pi, which holds on every rung of a longer ladder
+                         (PI_FIRST_PROMPT_LADDER) and never sends blind. Claude
+                         and pi ask for the hold; pi's prompt also says "tool":
+                         "pi", because the server waits for pi's `π - ` title
     new-commands.ts      Which new-session commands this box can actually run:
                          GET /new-commands is tmux-user-attach --probe run in
                          the session's own login shell, so a key with nothing
@@ -482,6 +497,10 @@ src/
                          a paste and Enter would pick a menu row) resolves
                          false, so the text stays in the field, and says the
                          message box answers the plan now
+    agent-stream.ts      One agent's own transcript for the drill-in: the
+                         session store's read path over that agent's stream
+                         (history behind a cursor, live after it, paging
+                         back, full results), read only and never cached
     catalogue.ts         Reads GET /commands into {commands, ok}. `ok` exists
                          because an empty list means two different things — a
                          user with no skills, or a route that answered with
@@ -617,6 +636,10 @@ src/
                          for 400 ms, or one divider drag fills all 25 slots
     gallery.logic.ts     PURE gallery sort / badge / step-back rules
     gallery.ts           Gallery store (re-fetches /clipboard/list on open)
+    picture.ts           The Text view's one open picture, a module signal the
+                         lightbox draws. Opening puts a phone's keyboard away by
+                         blurring the field that had it, and closing gives that
+                         field back and focuses nothing else
     preview.logic.ts     PURE file-type → renderer + transcript → file-path
     preview.ts           File-preview store (open file, raw|rendered, browse)
     skills.logic.ts      PURE skill-row rules: what a row says about itself
@@ -709,12 +732,24 @@ src/
                          holds each answer in flight and, for a plan, the
                          20 s the row reads "Approving…" or "Clearing
                          context…" before the transcript records the result
+    AgentPanel.tsx       The agent panel beside the timeline: the session's
+                         agents and workflow runs, what each is doing now, in
+                         the reading column's right margin, or a strip above
+                         the timeline when the view is narrow. Elapsed and fade
+                         tick by direct DOM write
+    agents.logic.ts      PURE panel derivation: when it shows, row order and
+                         nesting, workflow phases, the tally, the formatting
+    AgentTranscript.tsx  The drill-in: one agent's own transcript in the
+                         session timeline's place, read only, with a header
+                         naming the agent and a way back to the session
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …).
                          A plan row's header is its outcome; once answered its
                          body folds to the first line behind "Show plan", and
                          while the plan card is docked a pending row shrinks
-                         to one line pointing at it. ContinuationRowView draws
+                         to one line pointing at it. WorkingRowView draws the
+                         open turn's live row for the drill-in only, which has
+                         no composer and so no status line. ContinuationRowView draws
                          the "Context cleared" rule, the approved plan and any
                          feedback in place of the message the CLI wrote
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM).
@@ -738,11 +773,19 @@ src/
                          as dashed ghost bubbles. The working row is the
                          composer's line now, not a row
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
-                         rehype pass turning bare absolute paths in Claude's
-                         prose into attachments (code subtrees skipped)
-    Attachment.tsx       One attachment as the chat draws it: an image preview, a
-                         document chip, or the path when nothing can serve it —
-                         and MessageSegments, which substitutes in place
+                         rehype pass that draws a picture Claude names by its
+                         absolute path (plain, in backticks, or as a link's
+                         target) under the block naming it, and links a document
+                         it names. Fenced code is skipped
+    Attachment.tsx       One attachment as the chat draws it: a picture that
+                         opens the lightbox, a document chip, or the path when
+                         nothing can serve it. Picture, the button every picture
+                         in the view is drawn as, bubble-size or a tool row's
+                         thumbnail. MessageSegments substitutes in place,
+                         terminal pastes included
+    PictureLightbox.tsx  The Text view's lightbox, mounted once in App: every
+                         picture in a bubble, in Claude's prose or on a tool row
+                         opens it full size. Escape closes it and goes no further
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         The LIVE session's composer, the Quiet line: the
                          permission panel, the thin status line with its dials,
@@ -772,7 +815,9 @@ src/
                          on the pane
     ModelPanel.tsx       The model dial's list: the running CLI's models by
                          name with the slug under each, and effort as a three
-                         by two control. `default` is offered only by the
+                         by two control. Pi's rows are handed in as an offer
+                         (its own model list, the levels its model supports)
+                         under pi's word, Thinking. `default` is offered only by the
                          new-session composer: "leave it alone" answers a
                          question only a session that does not exist yet can
                          be asked
@@ -1088,6 +1133,14 @@ All of the following ship in the deployed build:
   Escape steps lightbox → grid → closed.
 - **Images in** — paste, drag-and-drop and upload to clipboard-upload, which
   hands back the server path typed into the pty.
+- **Pictures in the Text view** — a picture Claude names by its absolute path
+  (plain, in backticks, `![](…)` or `[x](…)`) is drawn under the text naming it,
+  a picture pasted into the terminal is drawn where its `[Image #N]` stood, and
+  a Read of an image or a browser screenshot shows a 96px thumbnail on its tool
+  row. Every one opens one shared lightbox, and one that cannot be read stays
+  text. Files come from file-api's picture route, which reads any path the user
+  can read; a transcript's own image blocks come back from session-events by
+  index.
 - **File preview + editor** (pillar #6) — an overlay over file-api: browse a
   directory, open a file by path or from the transcript-derived recents, render
   markdown (Markdown+Mermaid), HTML (sandboxed `srcdoc`), images, or

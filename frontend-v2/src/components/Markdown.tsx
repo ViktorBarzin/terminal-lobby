@@ -1,17 +1,21 @@
-import { createMemo, type Component } from "solid-js";
+import { Show, createMemo, createSignal, type Component } from "solid-js";
 import { SolidMarkdown, type SolidMarkdownComponents } from "solid-markdown";
 import type { PluggableList } from "unified";
 import { remarkPlugins } from "../lib/markdown-plugins";
 import rehypeSanitize from "rehype-sanitize";
 import {
   contentUrlFor,
+  isPicturePath,
+  pictureUrlFor,
   segmentMessage,
   storedDisplayName,
   type Segment,
 } from "../lib/attachments";
 import { Mermaid } from "./Mermaid";
 import { CodeView } from "./CodeView";
+import { Picture } from "./Attachment";
 import { fileReadUrl } from "../lib/config";
+import { basename } from "../store/preview.logic";
 
 /**
  * Assistant markdown renderer (design pillar #2: "full-width assistant markdown
@@ -26,7 +30,8 @@ import { fileReadUrl } from "../lib/config";
  *     grey before this; CodeView renders the plain text first and swaps in the
  *     highlighted markup, so a language it does not know loses nothing.
  *   - custom `pre`: pass-through, so a fence is wrapped exactly once.
- *   - custom `img`: lazy, constrained inline images.
+ *   - custom `img`: lazy, constrained images that read as their path when they
+ *     cannot be loaded, and open the lightbox in the conversation.
  */
 
 /** Minimal hast shape — avoids depending on @types/hast directly. Widened for
@@ -58,116 +63,271 @@ function hastLang(node: HastNode | undefined): string {
 }
 
 /**
- * Resolve a markdown image reference. A document previewed from DISK is
- * addressed by path, but its <img> resolves against the lobby ORIGIN — so
- * `![x](pic.png)` beside the file asked the lobby for /pic.png and 404'd while
- * the same picture referenced absolutely loaded. With a `base` (the file's own
- * directory) a relative reference is read back through the file-api instead.
+ * Resolve a markdown image reference.
  *
- * Anything already addressed stays untouched: a full URL, a data:/blob: URI, a
- * protocol-relative `//host/…`, and a root-relative `/…` — that last one is how
- * a file-api URL is written by hand, so it must pass through even though it
- * cannot be told apart from an absolute filesystem path.
+ * A picture named by its absolute path on disk (`![](/tmp/shot.png)`, which is
+ * how Claude writes one) is read through the conversation's own routes, with or
+ * without a base. Before 2026-09-24 it was left as written, so the browser
+ * asked the lobby ORIGIN for /tmp/shot.png and drew a broken image.
+ *
+ * A document previewed from DISK is addressed by path, but its <img> resolves
+ * against the lobby origin — so `![x](pic.png)` beside the file asked the lobby
+ * for /pic.png and 404'd. With a `base` (the file's own directory) a relative
+ * reference is read back through the file-api instead.
+ *
+ * Anything else stays untouched: a full URL, a data:/blob: URI, a
+ * protocol-relative `//host/…`, and a root-relative URL under one of the lobby's
+ * own routes, which is how a file-api or clipboard URL is written by hand
+ * (`isPicturePath` refuses those).
  */
 function resolveImageSrc(src: string | undefined, base?: string): string | undefined {
-  if (!base || !src) return src;
+  if (!src) return src;
+  if (isPicturePath(src)) return pictureUrlFor(src) ?? src;
+  if (!base) return src;
   if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("/")) return src;
   return fileReadUrl(`${base.replace(/\/+$/, "")}/${src}`);
 }
 
-/** The `img` renderer, bound to a base directory (or to none — the transcript,
- *  where every src is already absolute). */
-const imgFor =
-  (base?: string): SolidMarkdownComponents["img"] =>
-  (props) => (
-    <img
-      class="tl-md-img"
-      src={resolveImageSrc(props.src, base)}
-      alt={props.alt ?? ""}
-      loading="lazy"
-    />
+/**
+ * A `![](…)` reference, drawn in place.
+ *
+ * One that cannot be loaded reads as what it was written as, in the path style
+ * the attachments use, never as a broken-image icon. In the conversation it sits
+ * in a Picture button, so it is capped at the bubble's 320px and opens the
+ * lightbox; in the file preview, which is a document rather than a chat, it
+ * stays a bare image at its own size.
+ */
+const MarkdownImage: Component<{
+  src?: string;
+  alt?: string;
+  base?: string;
+  conversation: boolean;
+}> = (props) => {
+  const src = createMemo(() => resolveImageSrc(props.src, props.base));
+  const [broken, setBroken] = createSignal(false);
+  const asText = () => <span class="tl-attach-path">{props.src}</span>;
+  return (
+    <Show when={src() && !broken()} fallback={asText()}>
+      <Show
+        when={props.conversation}
+        fallback={
+          <img
+            class="tl-md-img"
+            src={src()}
+            alt={props.alt ?? ""}
+            loading="lazy"
+            onError={() => setBroken(true)}
+          />
+        }
+      >
+        <Picture
+          src={src()!}
+          alt={props.alt || basename(props.src ?? "")}
+          title={props.src}
+          size="full"
+          source="prose"
+          kind="file"
+          fallback={asText()}
+        />
+      </Show>
+    </Show>
   );
+};
 
 /**
- * Turn bare absolute paths in Claude's prose into attachments
- * (design 2026-08-17 decision 8): an image renders inline, a document becomes a
- * link to its bytes. Runs AFTER rehype-sanitize in the plugin list, so the nodes
- * it adds are not candidates for stripping.
+ * The `img` renderer, bound to a base directory (or to none, the transcript,
+ * where a picture is named by its absolute path) and to whether it draws in
+ * the conversation.
  *
- * It emits plain `img` and `a` elements rather than a custom tag, so the `img`
- * and `a` overrides below render them with no new mapping — an image gets the
- * same lazy, constrained treatment a `![](…)` reference always got.
+ * A node carrying `dataPicture` is one `rehypeAttachments` added under a block
+ * for a path named in the text. Its src is already a URL, and when it cannot be
+ * loaded it simply goes: the path it stands for is still in the text above it.
+ */
+const imgFor =
+  (base: string | undefined, conversation: boolean): SolidMarkdownComponents["img"] =>
+  (props) => {
+    const node = props.node as unknown as HastNode | undefined;
+    const path = node?.properties?.dataPicture;
+    if (typeof path === "string") {
+      return (
+        <Picture
+          src={props.src ?? ""}
+          alt={props.alt ?? ""}
+          title={path}
+          size="full"
+          source="prose"
+          kind="file"
+        />
+      );
+    }
+    return (
+      <MarkdownImage src={props.src} alt={props.alt} base={base} conversation={conversation} />
+    );
+  };
+
+/** The blocks a picture is drawn under: the first of these that holds the
+ *  path's mention. A table cell resolves to its table, so a picture never lands
+ *  in the middle of a grid. */
+const PICTURE_ANCHORS = new Set(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "table"]);
+
+/** Every picture a `![](…)` reference will draw in place, by its path. */
+function drawnInPlace(node: HastNode, into: Set<string>): Set<string> {
+  for (const child of node.children ?? []) {
+    if (child.type !== "element" || child.tagName === "pre") continue;
+    const src = child.tagName === "img" ? child.properties?.src : undefined;
+    if (typeof src === "string" && isPicturePath(src)) into.add(src);
+    drawnInPlace(child, into);
+  }
+  return into;
+}
+
+/**
+ * Draw the pictures Claude names in its prose (2026-09-24, revising design
+ * 2026-08-17 decision 8), and turn a document it names into a link to its
+ * bytes. Runs AFTER rehype-sanitize in the plugin list, so the nodes it adds are
+ * not candidates for stripping.
  *
- * CODE IS SKIPPED. A path inside a fence or an inline span is sample text — `cp
- * /var/lib/clipboard-store/…/a.png .` is a command to read, not a picture to
- * draw — so `code` and `pre` subtrees are left completely alone. This is the one
- * part of the pass that can quietly ruin a transcript, which is why it has its
- * own tests.
+ * An absolute image path keeps its text, wherever it is written: plain, in an
+ * inline code span (10 of the 11 image mentions in the census were in
+ * backticks), or as a link's target, whose href is pointed at the picture's
+ * bytes. The picture is drawn UNDER the block holding its first mention, after
+ * a paragraph, a heading or a table and at the end of a list item, one picture
+ * per path per message. The text stays because it is also a path somebody may
+ * want to copy, and a picture that cannot be read then costs nothing: it goes,
+ * and the text is what the view showed before.
+ *
+ * The pass emits plain `img` elements marked `dataPicture`, which the `img`
+ * override renders as a Picture, and plain `a` elements for documents, so it
+ * needs no custom tag.
+ *
+ * FENCED CODE IS SKIPPED. A path inside a fence is sample text — `cp
+ * /var/lib/clipboard-store/…/a.png .` in a script is a command to read, not a
+ * picture to draw — so `pre` subtrees, fenced and indented, are left alone. An
+ * inline span is a different case: it is how Claude writes the name of a file it
+ * made, and the span itself is never changed, only followed by the picture. This
+ * is the part of the pass that can quietly ruin a transcript, which is why it has
+ * its own tests.
  */
 function rehypeAttachments(options: { me: string }) {
   const { me } = options;
 
-  const nodeFor = (seg: Extract<Segment, { kind: "file" }>): HastNode | null => {
+  const chipFor = (seg: Extract<Segment, { kind: "file" }>): HastNode | null => {
     const url = contentUrlFor(seg.path, me);
     if (!url) return null; // not ours to fetch — leave the path as text
-    const label = storedDisplayName(seg.name);
-    if (seg.fileKind === "image") {
-      return {
-        type: "element",
-        tagName: "img",
-        properties: { src: url, alt: label },
-        children: [],
-      };
-    }
     return {
       type: "element",
       tagName: "a",
       properties: { href: url, className: ["tl-attach-chip"] },
-      children: [{ type: "text", value: label }],
+      children: [{ type: "text", value: storedDisplayName(seg.name) }],
     };
   };
 
-  const walk = (node: HastNode): void => {
-    const children = node.children;
-    if (!Array.isArray(children)) return;
-    const out: HastNode[] = [];
-    let touched = false;
-    for (const child of children) {
-      if (child.type === "element" && (child.tagName === "code" || child.tagName === "pre")) {
-        out.push(child);
-        continue;
-      }
-      if (child.type !== "text" || !child.value) {
-        walk(child);
-        out.push(child);
-        continue;
-      }
-      const segs = segmentMessage(child.value);
-      // One text segment covering the whole value means nothing matched.
-      if (segs.length === 1 && segs[0]!.kind === "text") {
-        out.push(child);
-        continue;
-      }
-      for (const seg of segs) {
-        if (seg.kind === "text") {
-          out.push({ type: "text", value: seg.text });
+  return (tree: HastNode): void => {
+    const drawn = drawnInPlace(tree, new Set());
+    /** Anchor block → the pictures under it, in the order they were named. */
+    const under = new Map<HastNode, { parent: HastNode; pictures: HastNode[] }>();
+
+    /** Draw `path` under the nearest anchor in `stack` (outermost first). */
+    const queue = (path: string, stack: readonly HastNode[]): void => {
+      if (drawn.has(path)) return;
+      const url = contentUrlFor(path, me);
+      if (!url) return;
+      drawn.add(path);
+      let at = stack.length - 1;
+      while (at > 0 && !PICTURE_ANCHORS.has(stack[at]!.tagName ?? "")) at--;
+      // No anchor at all (text straight under the root) puts it at the end.
+      const anchor = stack[at]!;
+      const parent = at > 0 ? stack[at - 1]! : anchor;
+      const slot = under.get(anchor) ?? { parent, pictures: [] };
+      slot.pictures.push({
+        type: "element",
+        tagName: "img",
+        properties: { src: url, alt: storedDisplayName(basename(path)), dataPicture: path },
+        children: [],
+      });
+      under.set(anchor, slot);
+    };
+
+    const walk = (node: HastNode, stack: readonly HastNode[], inLink: boolean): void => {
+      const children = node.children;
+      if (!Array.isArray(children)) return;
+      const here = [...stack, node];
+      const out: HastNode[] = [];
+      let touched = false;
+      for (const child of children) {
+        if (child.type === "element") {
+          if (child.tagName === "pre") {
+            out.push(child);
+            continue;
+          }
+          if (child.tagName === "code") {
+            for (const seg of segmentMessage(hastText(child))) {
+              if (seg.kind === "file" && seg.fileKind === "image") queue(seg.path, here);
+            }
+            out.push(child);
+            continue;
+          }
+          if (child.tagName === "a") {
+            const href = child.properties?.href;
+            if (typeof href === "string" && isPicturePath(href)) {
+              const url = contentUrlFor(href, me);
+              if (url) child.properties = { ...child.properties, href: url };
+              queue(href, here);
+            }
+            walk(child, here, true);
+            out.push(child);
+            continue;
+          }
+          walk(child, here, inLink);
+          out.push(child);
           continue;
         }
-        const el = nodeFor(seg);
-        if (el) {
-          out.push(el);
-          touched = true;
-        } else {
-          out.push({ type: "text", value: seg.path });
+        if (child.type !== "text" || !child.value) {
+          out.push(child);
+          continue;
+        }
+        const segs = segmentMessage(child.value);
+        // One text segment covering the whole value means nothing matched.
+        if (segs.length === 1 && segs[0]!.kind === "text") {
+          out.push(child);
+          continue;
+        }
+        for (const seg of segs) {
+          if (seg.kind === "text") {
+            out.push({ type: "text", value: seg.text });
+            continue;
+          }
+          if (seg.fileKind === "image") {
+            queue(seg.path, here);
+            out.push({ type: "text", value: seg.path });
+            continue;
+          }
+          // A link inside a link is not HTML, so a document named in a link's
+          // own text stays text.
+          const chip = inLink ? null : chipFor(seg);
+          out.push(chip ?? { type: "text", value: seg.path });
+          if (chip) touched = true;
         }
       }
-      if (segs.some((s) => s.kind === "file")) touched = true;
-    }
-    if (touched) node.children = out;
-  };
+      if (touched) node.children = out;
+    };
+    walk(tree, [], false);
 
-  return (tree: HastNode): void => {
-    walk(tree);
+    for (const [anchor, { parent, pictures }] of under) {
+      const block: HastNode = {
+        type: "element",
+        tagName: "div",
+        properties: { className: ["tl-md-pictures"] },
+        children: pictures,
+      };
+      if (anchor.tagName === "li" || anchor === parent) {
+        anchor.children = [...(anchor.children ?? []), block];
+        continue;
+      }
+      const siblings = parent.children ?? [];
+      const at = siblings.indexOf(anchor);
+      parent.children = [...siblings.slice(0, at + 1), block, ...siblings.slice(at + 1)];
+    }
   };
 }
 
@@ -194,7 +354,7 @@ const components: SolidMarkdownComponents = {
       </div>
     );
   },
-  img: imgFor(),
+  img: imgFor(undefined, false),
   // A table gets its own scroller, and the reason is a shape CSS cannot express
   // on one element: the scrollport has to stay the width of the phone while the
   // table is free to be wider. With `display: block; overflow-x: auto` on the
@@ -217,27 +377,32 @@ const components: SolidMarkdownComponents = {
 /**
  * `base` — the directory a RELATIVE image reference resolves against, set only
  * by the file preview (which knows the document's path on disk). It defaults to
- * undefined so the transcript renderer keeps the shared `components` object
- * verbatim and renders byte-identically.
+ * undefined so the transcript renderer keeps the shared `components` object.
  *
  * `attachAs` — the effective OS user, set by the transcript renderer. Its
- * presence turns a bare absolute path in Claude's prose into an attachment
- * (design 2026-08-17 decision 8): "I wrote the chart to /home/…/plot.png" shows
- * the chart. Left unset by the file preview, whose markdown is a document on
- * disk rather than a conversation.
+ * presence makes the markdown a conversation: a picture Claude names by its
+ * absolute path is drawn (2026-09-24), "I wrote the chart to /home/…/plot.png"
+ * shows the chart, and every picture opens the lightbox. It is checked for
+ * presence rather than truth because TextView passes "" until whoami answers,
+ * and in that window only a store path has to wait: the owner check needs the
+ * user, and every other picture does not. Left unset by the file preview, whose
+ * markdown is a document on disk rather than a conversation.
  */
 export const Markdown: Component<{
   text: string;
   base?: string;
   attachAs?: string;
 }> = (props) => {
+  const conversation = () => props.attachAs !== undefined;
   const comps = createMemo<SolidMarkdownComponents>(() =>
-    props.base ? { ...components, img: imgFor(props.base) } : components,
+    props.base || conversation()
+      ? { ...components, img: imgFor(props.base, conversation()) }
+      : components,
   );
   // Rebuilt only when the user changes, so an ordinary re-render does not
   // re-create the plugin list and make solid-markdown re-parse.
   const rehype = createMemo<PluggableList>(() =>
-    props.attachAs
+    props.attachAs !== undefined
       ? [rehypeSanitize, [rehypeAttachments, { me: props.attachAs }]]
       : [rehypeSanitize],
   );

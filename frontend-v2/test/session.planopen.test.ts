@@ -26,9 +26,7 @@ const respond = (status: number, body: string, contentType: string): typeof fetc
       headers: { "Content-Type": contentType },
     })) as unknown as typeof fetch;
 
-async function sendOnce(
-  text: string,
-): Promise<{ ok: boolean; notes: Note[]; pending: number }> {
+async function sendOnce(text: string): Promise<{ ok: boolean; notes: Note[]; pending: number }> {
   const notes: Note[] = [];
   let ok = false;
   let pending = 0;

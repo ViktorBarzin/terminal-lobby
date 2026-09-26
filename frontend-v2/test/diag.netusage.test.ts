@@ -120,6 +120,13 @@ describe("bucket classification", () => {
     ["/clipboard/img/design-t3/paste.png", "files"],
     ["/clipboard/img/design-t3/paste.webp", "files"],
     ["/clipboard/upload", "files"],
+    // The Text view's pictures (2026-09-24): one on disk through file-api, and
+    // a block read back out of a transcript, for a tool result or a prompt.
+    ["/files/image?path=/tmp/a.png", "files"],
+    ["/result/s/toolu_01abcdefgh/image/0", "files"],
+    ["/result/s/user/1ecbc9e7-ef70-4213-bd81-82c2dfcb5169/image/0", "files"],
+    // The full text of a capped result is the conversation, not a file.
+    ["/result/s/toolu_01abcdefgh", "api"],
     ["/clipboard/list?session=design-t3", "api"],
     ["/api/sessions/layout", "api"],
     ["/api/sessions/telemetry", "api"],

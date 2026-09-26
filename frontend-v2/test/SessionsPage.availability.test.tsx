@@ -40,6 +40,20 @@ describe("Settings — New session runs", () => {
     expect(option(container, "claude").textContent).toBe("Claude");
   });
 
+  // Claude stays the default harness (Viktor, 2026-09-26), and a pi pick in the
+  // composer lasts one session (store/prefs.ts), so pi is not offered as a
+  // default here. Everything else the composer offers is, in the same order,
+  // with the storable-only `default` at the end.
+  it("offers every harness but pi as the default", () => {
+    const { container } = render(() => <SessionsPage prefs={fakePrefs()} />);
+    expect(Array.from(picker(container).options).map((o) => o.value)).toEqual([
+      "claude",
+      "codex",
+      "shell",
+      "default",
+    ]);
+  });
+
   it("disables nothing without an answer from the server", () => {
     const { container } = render(() => <SessionsPage prefs={fakePrefs()} />);
     for (const o of Array.from(picker(container).options)) {

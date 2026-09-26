@@ -29,19 +29,10 @@ import (
 	"time"
 )
 
-const (
-	MiB = 1 << 20
-	GiB = 1 << 30
-)
-
 func main() {
 	var (
 		interval = flag.Duration("interval", 30*time.Second,
 			"how often to look. The floor on how fast a pane can be seen approaching its cap.")
-		paneWarn = flag.Uint64("pane-warn-bytes", 5*GiB,
-			"warn when a pane holding a claude has UNRECLAIMABLE memory (anon + shmem) at or above this. Not memory.current, which rides up to the cap on reclaimable cache in any pane doing file I/O")
-		paneClear = flag.Uint64("pane-clear-bytes", 4608*MiB,
-			"a warned pane's episode ends only once its unreclaimable memory drops below this, so a pane hovering at the warn level warns once")
 		confirm = flag.Int("confirm-ticks", 2,
 			"consecutive ticks a stamp-with-no-claude must hold before it counts as a death")
 		textfile = flag.String("textfile", "/var/lib/node_exporter/textfile/tl_panes.prom",
@@ -49,15 +40,17 @@ func main() {
 		once = flag.Bool("once", false, "take one look and exit, for a drill or a smoke test")
 		addr = flag.String("health-addr", "127.0.0.1:7689",
 			"loopback address for /health, which reports stale once ticks stop")
+		tmuxPersist = flag.String("tmux-persist", "/usr/local/bin/tmux-persist",
+			"what restores a session the pane memory cap killed; empty disables the automatic resume")
+		resumeEvery = flag.Duration("resume-every", time.Hour,
+			"a session is resumed automatically at most once in this window; a second cap kill inside it is left dead")
 	)
 	flag.Parse()
 
 	log.SetFlags(0) // journald stamps the lines; a second timestamp reads as noise
 
 	w := NewWatcher(Config{
-		PaneWarnBytes:  *paneWarn,
-		PaneClearBytes: *paneClear,
-		ConfirmTicks:   *confirm,
+		ConfirmTicks: *confirm,
 		// The prewarm slot holds a claude nobody is talking to, so losing one
 		// costs no conversation.
 		SkipPrefixes: []string{"__terminal_lobby_"},
@@ -73,9 +66,35 @@ func main() {
 	if !*once {
 		serveHealth(*addr, clock, *interval, log.Printf)
 	}
-	log.Printf("event=started users=%d interval=%s pane_warn_bytes=%d", len(users), *interval, *paneWarn)
+	log.Printf("event=started users=%d interval=%s", len(users), *interval)
+
+	// The automatic resume needs the kernel's kill records. Without them the
+	// watcher still reports deaths, so a failure to open /dev/kmsg is logged
+	// and the rest carries on. -once never resumes: it is a smoke test.
+	var kills <-chan memcgKill
+	resumer := NewResumer(*resumeEvery)
+	if *tmuxPersist != "" && !*once {
+		k, err := watchKmsg()
+		if err != nil {
+			log.Printf("event=resume_disabled error=%q", err.Error())
+		} else {
+			kills = k
+		}
+	}
 
 	tick := func() {
+		// Kill records first, so a session that vanished this tick can be
+		// matched to a kill written a moment before it went.
+		now := time.Now()
+	drain:
+		for kills != nil {
+			select {
+			case k := <-kills:
+				resumer.Killed(k.pid, k.at)
+			default:
+				break drain
+			}
+		}
 		snaps := Collect(users, bootID)
 
 		// -once is a smoke test, and seeding on the first look means it would
@@ -97,6 +116,24 @@ func main() {
 			// and no alert rule selects it.
 			log.Println(Line(f))
 		}
+		if kills != nil {
+			acts, notes := resumer.Decide(findings, now)
+			for _, n := range notes {
+				log.Println(Line(n))
+			}
+			// In the background: a restore waits on tmux and the disk, and the
+			// heartbeat must not wait with it.
+			for _, a := range acts {
+				go func(a ResumeAction) {
+					f := Finding{Kind: KindSessionResumed, User: a.User, Session: a.Session}
+					if err := runResume(*tmuxPersist, a); err != nil {
+						f.Kind, f.Error = KindResumeFailed, err.Error()
+					}
+					log.Println(Line(f))
+				}(a)
+			}
+		}
+		resumer.Observe(snaps)
 		log.Println(Heartbeat(len(snaps), total))
 		clock.mark(time.Now())
 

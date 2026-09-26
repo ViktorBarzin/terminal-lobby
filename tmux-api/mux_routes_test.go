@@ -77,6 +77,7 @@ func serviceRoutes() []route {
 	return []route{
 		{"/sessions", http.MethodGet, "/sessions", handleSessions},
 		{"/new-commands", http.MethodGet, "/new-commands", handleNewCommands},
+		{"/pi-models", http.MethodGet, "/pi-models", handlePiModels},
 		{"/sessions/prewarm", http.MethodPost, "/sessions/prewarm", handlePrewarm},
 		{"/sessions/", http.MethodDelete, "/sessions/qa-probe", handleSessionByName},
 		{"/whoami", http.MethodGet, "/whoami", handleWhoami},

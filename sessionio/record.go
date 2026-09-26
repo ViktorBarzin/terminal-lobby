@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 )
@@ -112,6 +113,23 @@ type Record struct {
 	// record alongside message.model. The two together are what a session is
 	// running as (see MetaModel).
 	Effort string `json:"effort"`
+	// ImagePasteIDs are the numbers of the pictures pasted into the terminal
+	// for this prompt, one per image block, the N its text calls "[Image #N]".
+	// Both terminal pastes in the 2026-09-24 census carried [1] beside one block.
+	ImagePasteIDs pasteIDs `json:"imagePasteIds"`
+	// IsAPIErrorMessage marks the assistant record Claude Code writes in place
+	// of a reply when the API call failed: model "<synthetic>", stop_reason
+	// "stop_sequence", and the error as its text. It is not always the end: the
+	// harness can retry past it and the conversation goes on.
+	IsAPIErrorMessage bool `json:"isApiErrorMessage"`
+	// ToolEndsTurn marks a tool result that ends the turn by itself. A workflow
+	// member returning its answer through StructuredOutput finishes on this
+	// record and never writes an end_turn one.
+	ToolEndsTurn bool `json:"toolEndsTurn"`
+	// AgentID names the subagent a sidechain record belongs to. Every record
+	// in an agent-<id>.jsonl carries it, so two agents' interleaved work can
+	// be told apart.
+	AgentID string `json:"agentId"`
 
 	// Line is the source line, byte for byte. Callers that forward a record
 	// onward use this rather than re-encoding.
@@ -129,6 +147,88 @@ type Block struct {
 	ToolUseID string          `json:"tool_use_id"`
 	Content   json.RawMessage `json:"content"`
 	IsError   bool            `json:"is_error"`
+	// Source is an image block's picture, nil on every other block.
+	Source *ImageSource `json:"source"`
+}
+
+// ImageSource is the `source` of an image block: what the picture declares
+// itself to be and how big it is, without the picture.
+//
+// The bytes stay in the transcript. A block runs to 645k base64 characters
+// (p50 140k over the 134 Reads of an image in the 2026-09-24 census) and a
+// Read line carries a second copy in toolUseResult, so decoding the data into a
+// string would put megabytes on the tail for every session with a picture in
+// it, for a field nothing on the wire carries. The image-block routes read the
+// bytes back by position when a browser asks (see ScanImageBlock).
+type ImageSource struct {
+	Type      string  `json:"type"` // "base64" in every census block
+	MediaType string  `json:"media_type"`
+	Size      b64Size `json:"data"`
+}
+
+// UnmarshalJSON decodes an image source and accepts any other shape as an empty
+// one. Block types other than image use the same key differently (the API's
+// search_result names its URL as a string), and encoding/json reports one
+// mistyped field as an error for the WHOLE content array, which Blocks() then
+// answers with nothing: one odd block would erase every block of its record.
+func (s *ImageSource) UnmarshalJSON(b []byte) error {
+	type plain ImageSource // shed this method, keep the tags
+	var p plain
+	if json.Unmarshal(b, &p) != nil {
+		*s = ImageSource{}
+		return nil
+	}
+	*s = ImageSource(p)
+	return nil
+}
+
+// pasteIDs is a record's imagePasteIds, read leniently. DecodeRecord drops a
+// line whose fields do not match their types, so a list in some future shape
+// (strings, objects) must cost the paste numbers and not the prompt they sit
+// beside: anything but an array of integers reads as no list at all.
+type pasteIDs []int
+
+// UnmarshalJSON implements the leniency described on the type.
+func (p *pasteIDs) UnmarshalJSON(b []byte) error {
+	var ids []int
+	if json.Unmarshal(b, &ids) != nil {
+		ids = nil
+	}
+	*p = ids
+	return nil
+}
+
+// b64Size is the decoded size of a base64 string, read off the JSON token
+// without holding the string.
+type b64Size int64
+
+// UnmarshalJSON sizes the token in place. With n the characters between the
+// quotes and pad the trailing '=' (at most two), the decoded size is
+// (n-pad)*3/4. A token carrying a backslash is unescaped first, because JSON
+// may spell '/' as '\/' and the count is of decoded characters; the encoder
+// Claude Code uses does not escape any base64 character, so that path is for
+// correctness rather than speed. Anything that is not a string sizes to 0
+// rather than failing the record: a picture of unknown size still renders.
+func (s *b64Size) UnmarshalJSON(b []byte) error {
+	*s = 0
+	if len(b) < 2 || b[0] != '"' || b[len(b)-1] != '"' {
+		return nil
+	}
+	body := b[1 : len(b)-1]
+	if bytes.IndexByte(body, '\\') >= 0 {
+		var str string
+		if json.Unmarshal(b, &str) != nil {
+			return nil
+		}
+		body = []byte(str)
+	}
+	n := len(body)
+	pad := 0
+	for pad < 2 && n-pad > 0 && body[n-1-pad] == '=' {
+		pad++
+	}
+	*s = b64Size((n - pad) * 3 / 4)
+	return nil
 }
 
 // DecodeRecord parses one transcript line. ok=false means the line was not a

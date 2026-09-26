@@ -88,8 +88,8 @@
 #                                      /etc/ttyd-user-map, session against
 #                                      tmux-api's session-name charset).
 #   /usr/local/bin/file-api           file-api re-execs ITSELF as the mapped
-#                                      user (`-privop list|read|write`) so the
-#                                      four-layer path validation in paths.go
+#                                      user (`-privop list|read|write|image`) so
+#                                      the four-layer path validation in paths.go
 #                                      runs with THAT user's view of the
 #                                      filesystem — symlink resolution needs
 #                                      their read access — confined to their own
@@ -98,6 +98,11 @@
 #                                      child re-validates containment itself, so
 #                                      the grant is scoped to one fixed
 #                                      behaviour and takes no path it trusts.
+#                                      `image` (2026-09-24) reads any path the
+#                                      user can read, with no containment, and
+#                                      returns only pictures: PNG, JPEG, GIF or
+#                                      WebP by their bytes, or an .svg path. The
+#                                      grant needed no change for it.
 #   /usr/local/bin/skills-api         skills-api re-execs ITSELF as the mapped
 #                                      user (`-privop <op>`, request on stdin) so
 #                                      each half of a skill install runs as the

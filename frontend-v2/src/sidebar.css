@@ -361,9 +361,9 @@
   background: var(--bg-card-hover);
 }
 /* What the attached session has consumed, beside the gear: today's dollars for
-   Claude Code, the tighter limit for Codex. It reads as a fact rather than a
-   control, so it carries no border of its own and only lights up under the
-   pointer, the way the other footer icons do.
+   Claude Code or pi, the tighter limit for Codex. It reads as a fact rather
+   than a control, so it carries no border of its own and only lights up under
+   the pointer, the way the other footer icons do.
 
    Tabular numerals for the same reason Data used sets them: a figure that
    changes while you look at it must not shift the row it sits in. It never
@@ -1043,11 +1043,11 @@
 }
 
 /* ---- Tool marks (which command the session runs) ----------------------- */
-/* Claude wears its own brand orange; the OpenAI blossom is a monochrome mark,
-   so inheriting the row's text color is what keeps it legible on light AND
-   dark themes; a shell is the absence of an agent, so it stays muted. The
-   negative margin tightens the pair against the state dot without shrinking
-   the row's 7px rhythm everywhere else. */
+/* Claude wears its own brand orange; the OpenAI blossom and pi's π are
+   monochrome marks, so inheriting the row's text color is what keeps them
+   legible on light AND dark themes; a shell is the absence of an agent, so it
+   stays muted. The negative margin tightens the pair against the state dot
+   without shrinking the row's 7px rhythm everywhere else. */
 .tl-tool {
   display: inline-flex;
   align-items: center;
@@ -1057,7 +1057,8 @@
 .tl-tool-claude {
   color: #d97757;
 }
-.tl-tool-codex {
+.tl-tool-codex,
+.tl-tool-pi {
   color: var(--text-primary);
 }
 .tl-tool-shell {

@@ -33,18 +33,6 @@ func TestLineQuotesValuesThatNeedIt(t *testing.T) {
 	}
 }
 
-func TestPaneLineCarriesTheNumbers(t *testing.T) {
-	got := Line(Finding{
-		Kind: KindPaneNearCap, User: "emo", Session: "infra",
-		PaneBytes: 4 << 30, PaneUnreclaimable: 3 << 30, PaneLimit: 6 << 30,
-	})
-	for _, want := range []string{`event=pane_near_cap`, `pane_bytes=4294967296`, `pane_unreclaimable=3221225472`, `pane_limit=6442450944`} {
-		if !strings.Contains(got, want) {
-			t.Errorf("want %q in %q", want, got)
-		}
-	}
-}
-
 func TestRebootLineCarriesTheRestoreGap(t *testing.T) {
 	got := Line(Finding{Kind: KindRebooted, User: "wizard", Before: 20, After: 18})
 	for _, want := range []string{`event=rebooted`, `before=20`, `after=18`} {

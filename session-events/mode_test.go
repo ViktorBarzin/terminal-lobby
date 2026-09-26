@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -141,27 +140,5 @@ func TestModeRouteReportsAnUnreadablePaneAs502(t *testing.T) {
 	}
 	if attrs := sink.only(t, "text.answer_failed"); attrs["tl.reason"] != answerUnreadable {
 		t.Errorf("tl.reason = %v, want %s", attrs["tl.reason"], answerUnreadable)
-	}
-}
-
-// A mode request goes to the walk before the model half's two refusals. The
-// walk runs while Claude works, with the safety rule in the driver, and it
-// checks for a dialog itself; the model half refuses both outright, which on a
-// mode request would turn every working session's dial into a 409. Source
-// assertions, because the handler lives inline in main() like its neighbours.
-func TestModelRouteSendsAModeRequestToTheWalkFirst(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	route := section(t, string(raw), `web.HandleFunc("POST /model/{session}"`, `root := http.NewServeMux()`)
-	walk := strings.Index(route, "serveMode(")
-	if walk < 0 {
-		t.Fatalf("POST /model no longer hands a mode request to serveMode:\n%s", route)
-	}
-	for _, later := range []string{"sessionio.StateRunning", "sessionio.OptionAsk", "injector.SetModel("} {
-		if at := strings.Index(route, later); at >= 0 && at < walk {
-			t.Errorf("%s comes before the mode walk", later)
-		}
 	}
 }

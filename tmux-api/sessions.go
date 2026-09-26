@@ -96,6 +96,7 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	if tree, err := procCacheInstance.get(); err == nil {
 		clearDeadStates(sessions, tree)
 		annotateTools(sessions, tree)
+		dropStalePiFields(sessions)
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
@@ -288,6 +289,12 @@ func parseSessions(out []byte) []Session {
 			Cols:        cols,
 			Rows:        rows,
 			SuspendedAt: suspendedAt,
+			// The pi extension's stamps, each held to the shape the extension
+			// writes. An unset option renders EMPTY, which is every session that
+			// is not running pi.
+			PiModel:    piModelOf(parts[piModelColumn]),
+			PiThinking: piThinkingOf(parts[piThinkingColumn]),
+			PiLevels:   piLevelsOf(parts[piLevelsColumn]),
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.
@@ -295,4 +302,49 @@ func parseSessions(out []byte) []Session {
 		})
 	}
 	return sessions
+}
+
+// piModelOf, piThinkingOf and piLevelsOf hold the pi extension's pane options
+// to the shapes it writes. The options are set with `tmux set-option`, which
+// anything running in the pane can call, so a value is passed on only when it
+// is one the lobby could itself have produced: a model reference the launch
+// gate admits (piRefRe, pimodels.go), and levels from pi's seven.
+func piModelOf(v string) string {
+	v = strings.TrimSpace(v)
+	if !piRefRe.MatchString(v) {
+		return ""
+	}
+	return v
+}
+
+func piThinkingOf(v string) string {
+	v = strings.TrimSpace(v)
+	if !piThinkingLevels[v] {
+		return ""
+	}
+	return v
+}
+
+func piLevelsOf(v string) string {
+	var kept []string
+	for _, level := range strings.Split(v, ",") {
+		if level = strings.TrimSpace(level); piThinkingLevels[level] {
+			kept = append(kept, level)
+		}
+	}
+	return strings.Join(kept, ",")
+}
+
+// dropStalePiFields forgets the pi readings of a pane that no longer runs pi.
+// The extension unsets them when pi quits, but a pi that was killed in a pane
+// whose shell outlived it leaves them behind, and a model chip for a process
+// that is gone would offer to switch a model nothing is running. An EMPTY
+// Tool means the process scan failed, and that is not evidence either way.
+func dropStalePiFields(sessions []Session) {
+	for i := range sessions {
+		if sessions[i].Tool == "" || sessions[i].Tool == toolPi {
+			continue
+		}
+		sessions[i].PiModel, sessions[i].PiThinking, sessions[i].PiLevels = "", "", ""
+	}
 }

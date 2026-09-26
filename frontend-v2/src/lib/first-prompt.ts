@@ -1,5 +1,6 @@
 import { promptUrl } from "./config";
 import { fetchWithDeadline } from "./http";
+import type { ModelHarness } from "./models";
 
 /**
  * Delivering the first prompt of a session the composer just created.
@@ -41,6 +42,22 @@ import { fetchWithDeadline } from "./http";
 export const FIRST_PROMPT_LADDER: readonly number[] = [700, 1600, 3000, 6000];
 
 /**
+ * Pi's ladder: Claude's four rungs, then more, about 76s of waiting in all.
+ *
+ * Pi loads every extension the person installed before it takes input, and a
+ * large one is slow: 8s on a quiet devvm with pi-fabric installed, 49s on a
+ * loaded one (2026-09-26). The server's wait answers the moment pi is ready,
+ * so the extra rungs cost nothing on a fast start.
+ */
+export const PI_FIRST_PROMPT_LADDER: readonly number[] = [
+  ...FIRST_PROMPT_LADDER,
+  10_000,
+  15_000,
+  20_000,
+  20_000,
+];
+
+/**
  * The gap between two lines sent back to back.
  *
  * Injecting is four tmux commands (clear the input line, set the buffer, paste
@@ -68,18 +85,51 @@ export interface DeliverFirstPromptOptions {
    * pane drawing Claude's `❯` and then holding still — so it reads the input
    * line rather than guessing from anything the browser can see.
    *
-   * Only for a command that draws that prompt, which is Claude. Asking for it
-   * where nothing will ever draw one would spend every rung waiting and then
-   * give up with the text unsent, so a caller starting something else leaves
-   * this off and takes the ladder alone.
+   * Only for a command that draws something the server can wait on, which is
+   * Claude and pi (see `firstPromptDelivery`). Asking for it where nothing will
+   * ever draw one would spend every rung waiting and then give up with the text
+   * unsent, so a caller starting something else leaves this off and takes the
+   * ladder alone.
    */
   awaitReady?: boolean;
+  /**
+   * Which harness the session runs, for a server that has to know. Absent is
+   * Claude, which is what session-events has always assumed; pi says so,
+   * because the wait reads a different thing off its pane.
+   */
+  tool?: "pi";
   ladder?: readonly number[];
   gapMs?: number;
   /** injectable for tests; defaults to setTimeout. */
   sleep?: (ms: number) => Promise<void>;
   /** injectable for tests; defaults to a deadlined same-origin fetch. */
   fetchImpl?: typeof fetch;
+}
+
+/**
+ * How the first prompt of a session running harness `h` asks to be delivered
+ * (null for a command that is not a harness).
+ *
+ * Claude and pi both draw something the server can wait for, so both ask for
+ * the wait. What they draw differs: Claude's input line shows its `❯`, and pi
+ * sets its pane title to `π - …` once startup and any "Trust project folder?"
+ * question are over. So pi's prompt names the harness, and Claude's leaves the
+ * field out, which the server has always read as Claude. Codex draws nothing
+ * the server waits on.
+ */
+export function firstPromptDelivery(h: ModelHarness | null): {
+  awaitReady: boolean;
+  tool?: "pi";
+} {
+  switch (h) {
+    case "claude":
+      return { awaitReady: true };
+    case "pi":
+      return { awaitReady: true, tool: "pi" };
+    case "codex":
+    case null:
+      return { awaitReady: false };
+  }
 }
 
 /** What one POST /prompt means for whether to try again. */
@@ -89,13 +139,14 @@ async function post(
   session: string,
   text: string,
   awaitReady: boolean,
+  tool: "pi" | undefined,
   fetchImpl: typeof fetch,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, awaitReady }),
+      body: JSON.stringify(tool ? { text, awaitReady, tool } : { text, awaitReady }),
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
@@ -125,10 +176,14 @@ async function post(
  * a Claude that crashed at launch, or something else entirely in the pane. The
  * text is better sent there than dropped, and it is the operator who can see
  * both.
+ *
+ * Pi is the exception, and keeps the wait to the end of its own, longer
+ * ladder. Text typed before pi owns the terminal is echoed by the tty, whose
+ * line discipline turns Enter into a line feed, and pi's editor reads a line
+ * feed as a new line, so a blind send leaves the prompt unsent in pi's input
+ * box. Giving up instead parks the text in the session's composer.
  */
-export async function deliverFirstPrompt(
-  o: DeliverFirstPromptOptions,
-): Promise<boolean> {
+export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<boolean> {
   const lines = o.lines.filter((l) => l !== "");
   if (lines.length === 0) return true;
 
@@ -139,15 +194,16 @@ export async function deliverFirstPrompt(
   // clears the server's own hold (session-events PromptReadyWait, 4s).
   const fetchImpl =
     o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
-  const ladder = o.ladder ?? FIRST_PROMPT_LADDER;
+  const pi = o.tool === "pi";
+  const ladder = o.ladder ?? (pi ? PI_FIRST_PROMPT_LADDER : FIRST_PROMPT_LADDER);
   const gapMs = o.gapMs ?? LINE_GAP_MS;
 
   let sent = 0;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
-    const wait = (o.awaitReady ?? false) && rung < ladder.length - 1;
+    const wait = (o.awaitReady ?? false) && (pi || rung < ladder.length - 1);
     while (sent < lines.length) {
-      const r = await post(o.session, lines[sent]!, wait, fetchImpl);
+      const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl);
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line
       sent += 1;

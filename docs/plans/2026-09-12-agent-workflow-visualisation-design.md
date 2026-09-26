@@ -1,6 +1,6 @@
 # Seeing what a session's agents are doing
 
-**Status:** approved 2026-09-15. Marginalia chosen; building it.
+**Status:** shipped 2026-09-26 in v0.73.0. Marginalia, built in the 2026-09-24 orchestrator bake-off.
 **Owner:** wizard. **Repos touched:** terminal-lobby.
 **Decisions from:** a grilling session on 2026-09-12.
 
@@ -12,6 +12,30 @@
 > strip "2 commands", and the Entities row, which lists background `Bash`
 > commands among what the panel shows. Whether the panel sources them from
 > somewhere else is open — nothing here decides it.
+
+> **Shipped, 2026-09-26, in v0.73.0.** The build comes from the Gas City run
+> of the 2026-09-24 orchestrator bake-off, with two parts taken from the Scion
+> run: its rule that an agent paused on its own background work is still
+> running, and its neutral spine for an agent Claude Code gave no colour.
+> Where the shipped panel differs from the text below:
+>
+> - Background `Bash` commands and the session's own schedules are not in the
+>   panel. Since 2026-09-20 nothing marks a background shell as the session
+>   working, and schedules had no build step.
+> - A running `Workflow` has no run file yet. On Claude Code 2.1.281 and later
+>   `workflows/wf_*.json` is written when the run ends. The samples below came
+>   from killed runs, which write it when killed. A live run is read from its
+>   `journal.jsonl` and its script's `meta`.
+> - The panel shows while something runs and something says the session owes
+>   that work: an open turn, `@claude_bg`, or an agent whose own transcript
+>   says it is waiting on background work it started. It goes once the
+>   session's claude process has gone. `@claude_bg` can drop a teammate that is
+>   still working (seen once on 2026-09-26, cause not yet known), and the panel
+>   shares that gap with the session dot.
+> - Tapping an agent reads its transcript from
+>   `/events/{session}/agents/{agent}`, under the ingress rule that already
+>   routes `/events/`.
+> - Line citations below describe the tree before the build.
 
 ## Chosen: Marginalia
 

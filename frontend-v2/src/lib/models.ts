@@ -46,10 +46,18 @@ import type { SessionTool } from "../types/lobby";
  * `default` is the absence of a choice: no flag, nothing driven, and the
  * session keeps whatever it booted with. It is the value every account starts
  * on.
+ *
+ * PI IS THE EXCEPTION TO "WRITTEN DOWN". Pi prints what a user can run before
+ * any session exists (`pi --list-models`), and it is the harness where people
+ * on the box sign into different providers, so one list here would be wrong
+ * for somebody from the start. Its models come from GET /pi-models, per OS
+ * user (ADR-0032, lib/pi-models.ts), and are checked by the shape of a
+ * reference rather than against a catalogue. Its seven thinking levels are
+ * pi's own and the same for everyone, so those are written down.
  */
 
 /** A tool that has a model to pick. A plain shell does not. */
-export type ModelHarness = "claude" | "codex";
+export type ModelHarness = "claude" | "codex" | "pi";
 
 /** The two things a harness lets you choose. */
 export type ModelField = "model" | "effort";
@@ -155,15 +163,112 @@ const CATALOGUE: Record<ModelHarness, Record<ModelField, readonly ModelOption[]>
       opt("ultra", "Ultra"),
     ],
   },
+  // No model rows: pi lists its own, per user (see the header), and
+  // `optionsFor` puts them after this one. The levels are pi's seven, in the
+  // order `/thinking` lists them, under pi's own word for the setting.
+  // Which of them a given model supports is what a running session stamps
+  // (`piLevels`); the composer offers all seven and pi clamps an unsupported
+  // one at start (ADR-0032).
+  pi: {
+    model: [anyDefault("model")],
+    effort: [
+      anyDefault("thinking"),
+      opt("off", "Off"),
+      opt("minimal", "Minimal"),
+      opt("low", "Low"),
+      opt("medium", "Medium"),
+      opt("high", "High"),
+      opt("xhigh", "Extra high"),
+      opt("max", "Max"),
+    ],
+  },
 };
+
+/**
+ * What a pi model reference may look like: `provider/id`, as pi prints it.
+ *
+ * The same pattern the attach scripts check the launch argument against
+ * (devvm/tmux-attach.sh, devvm/tmux-user-attach), so a reference this accepts
+ * is one the attach passes on, and one it refuses never reaches a shell. Up to
+ * 96 characters, starting with a letter or digit, so nothing here can be read
+ * as a flag.
+ */
+const PI_MODEL_REF = /^[A-Za-z0-9][A-Za-z0-9._:@/~-]{0,95}$/;
+
+export function isPiModelRef(v: unknown): v is string {
+  return typeof v === "string" && PI_MODEL_REF.test(v);
+}
+
+/**
+ * What pi offers right now, which nothing in this file writes down: the models
+ * pi lists for this user (GET /pi-models), and the thinking levels a running
+ * session's model supports (its `piLevels` stamp). Either may be missing,
+ * which means "not known yet", never "none".
+ */
+export interface PiOffer {
+  models?: readonly string[];
+  levels?: readonly string[];
+}
+
+/** The levels a pi session stamped, off the comma-separated option. */
+export function piLevels(stamp: string | undefined): string[] {
+  return (stamp ?? "")
+    .split(",")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+}
+
+/** The default row, then each model pi listed, once, and only real references. */
+function piModelOptions(refs: readonly string[] | undefined): readonly ModelOption[] {
+  const rows: ModelOption[] = [...CATALOGUE.pi.model];
+  const seen = new Set<string>([DEFAULT_CHOICE]);
+  for (const ref of refs ?? []) {
+    if (!isPiModelRef(ref) || seen.has(ref)) continue;
+    seen.add(ref);
+    rows.push(slug(ref));
+  }
+  return rows;
+}
+
+/**
+ * Pi's levels, narrowed to the ones the session's model supports. Nothing
+ * stamped, or nothing this build recognises, leaves all seven: a picker with
+ * no rows helps nobody, and pi clamps a level its model cannot use.
+ */
+function piEffortOptions(levels: readonly string[] | undefined): readonly ModelOption[] {
+  const all = CATALOGUE.pi.effort;
+  if (!levels || levels.length === 0) return all;
+  const known = all.filter((o) => o.id === DEFAULT_CHOICE || levels.includes(o.id));
+  return known.length > 1 ? known : all;
+}
 
 export const modelsFor = (h: ModelHarness): readonly ModelOption[] => CATALOGUE[h].model;
 export const effortsFor = (h: ModelHarness): readonly ModelOption[] => CATALOGUE[h].effort;
-export const optionsFor = (h: ModelHarness, f: ModelField): readonly ModelOption[] =>
-  CATALOGUE[h][f];
 
-const has = (h: ModelHarness, f: ModelField, id: unknown): boolean =>
-  typeof id === "string" && CATALOGUE[h][f].some((o) => o.id === id);
+/**
+ * What a picker offers for one field. Claude's and codex's rows are the
+ * written-down lists; pi's come from `pi`, which only pi's callers have.
+ */
+export function optionsFor(h: ModelHarness, f: ModelField, pi?: PiOffer): readonly ModelOption[] {
+  switch (h) {
+    case "claude":
+    case "codex":
+      return CATALOGUE[h][f];
+    case "pi":
+      return f === "model" ? piModelOptions(pi?.models) : piEffortOptions(pi?.levels);
+  }
+}
+
+/**
+ * Whether a stored id is one this harness could be sent. A pi model is judged
+ * by its shape, because the list it came from is pi's and not this file's:
+ * judged against the catalogue, every pi pick would be dropped on load.
+ */
+function has(h: ModelHarness, f: ModelField, id: unknown): boolean {
+  if (typeof id !== "string") return false;
+  if (h === "pi" && f === "model") return isPiModelRef(id);
+  return CATALOGUE[h][f].some((o) => o.id === id);
+}
 
 export const isModelFor = (h: ModelHarness, id: unknown): boolean => has(h, "model", id);
 
@@ -175,13 +280,15 @@ export const isEffortFor = (h: ModelHarness, id: unknown): boolean => has(h, "ef
  * The new-session pick roams and sticks (store/prefs.ts), so any row there can
  * quietly become every later session's default. Viktor's rule is Claude at
  * high by default and nobody on max by default (2026-09-25), with max still
- * offered in the picker (2026-09-26). So these two launch the session they
- * were picked for and then go back to default (resetOneSessionEffort), and a
- * saved one reads as no choice (coercePrefs).
+ * offered in the picker (2026-09-26). So these launch the session they were
+ * picked for and then go back to default (resetOneSessionEffort), and a saved
+ * one reads as no choice (coercePrefs). Pi's thinking levels include max, so
+ * the rule covers it too.
  */
 const ONE_SESSION_EFFORTS: Record<ModelHarness, ReadonlySet<string>> = {
   claude: new Set(["max", "ultracode"]),
   codex: new Set(),
+  pi: new Set(["max"]),
 };
 
 export const isOneSessionEffort = (h: ModelHarness, id: unknown): boolean =>
@@ -199,8 +306,16 @@ export const isOneSessionEffort = (h: ModelHarness, id: unknown): boolean =>
 export function adoptModelId(h: ModelHarness, id: unknown): string | undefined {
   if (typeof id !== "string" || id === "") return undefined;
   if (has(h, "model", id)) return id;
-  if (h === "codex") return undefined;
-  return canonicalFor(h, modelFamily(h, id));
+  switch (h) {
+    case "claude":
+      return canonicalFor(h, modelFamily(h, id));
+    // Neither has family words to carry forward: codex has always spelled its
+    // rows as slugs, and a pi reference the pattern refuses is one no attach
+    // would pass on.
+    case "codex":
+    case "pi":
+      return undefined;
+  }
 }
 
 /**
@@ -212,9 +327,44 @@ export function labelFor(h: ModelHarness, f: ModelField, id: string): string {
   return CATALOGUE[h][f].find((o) => o.id === id)?.label ?? id;
 }
 
-/** Which harness a session's tool is, or null for one with no model to pick. */
+/**
+ * Which harness a session's tool is, or null for one with no model to pick.
+ * A tool this build has never heard of gets no picker rather than borrowing
+ * one: a newer server can report a tool before the frontend knows it.
+ */
 export function modelHarness(tool: SessionTool | undefined): ModelHarness | null {
-  return tool === "claude" || tool === "codex" ? tool : null;
+  switch (tool) {
+    case "claude":
+    case "codex":
+    case "pi":
+      return tool;
+    case "shell":
+    case undefined:
+      return null;
+    default: {
+      const unknown: never = tool;
+      void unknown;
+      return null;
+    }
+  }
+}
+
+/** What a harness calls a field, for a heading over its rows. */
+export function fieldHeading(h: ModelHarness, f: ModelField): string {
+  if (f === "model") return "Model";
+  switch (h) {
+    case "claude":
+    case "codex":
+      return "Effort";
+    // Pi's own word, and the one its `/thinking` command uses.
+    case "pi":
+      return "Thinking";
+  }
+}
+
+/** What the chip is called, in the harness's own words. */
+export function chipName(h: ModelHarness): string {
+  return `${fieldHeading(h, "model")} and ${fieldHeading(h, "effort").toLowerCase()}`;
 }
 
 /** What a session says it is running as. Either half may be missing. */
@@ -239,10 +389,17 @@ export interface ModelState {
  */
 export function modelFamily(h: ModelHarness, model: string): string {
   if (!model) return "";
-  if (h === "codex") return model;
-  // claude-opus-5 → opus, claude-haiku-4-5-20251001 → haiku, opus → opus.
-  const m = /^claude-([a-z]+)/.exec(model);
-  return m ? m[1]! : model;
+  switch (h) {
+    case "claude": {
+      // claude-opus-5 → opus, claude-haiku-4-5-20251001 → haiku, opus → opus.
+      const m = /^claude-([a-z]+)/.exec(model);
+      return m ? m[1]! : model;
+    }
+    // Both only ever spell the whole reference, so the reference is the family.
+    case "codex":
+    case "pi":
+      return model;
+  }
 }
 
 /**
@@ -275,10 +432,17 @@ function canonicalFor(h: ModelHarness, family: string): string | undefined {
 export function isCurrentModel(h: ModelHarness, id: string, reported: string | undefined): boolean {
   if (!reported) return false;
   if (reported.toLowerCase() === id.toLowerCase()) return true;
-  if (h === "codex") return false;
-  // A word with no version in it is a family, not a model.
-  if (/\d/.test(reported)) return false;
-  return canonicalFor(h, modelFamily(h, reported)) === id;
+  switch (h) {
+    case "claude":
+      // A word with no version in it is a family, not a model.
+      if (/\d/.test(reported)) return false;
+      return canonicalFor(h, modelFamily(h, reported)) === id;
+    // Codex's footer and pi's stamp both name the whole reference, so there is
+    // no receipt-shaped window to cover.
+    case "codex":
+    case "pi":
+      return false;
+  }
 }
 
 /**

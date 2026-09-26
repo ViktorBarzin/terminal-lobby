@@ -2,14 +2,18 @@ package sessionio
 
 import (
 	"encoding/json"
+	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
 // Normalizer turns Claude Code transcript records into normalized Events.
-// It is stateful only for the monotonic sequence and the current turn, so a
-// fresh Normalizer replays a transcript identically from the start.
+// It is stateful only for the monotonic sequence, the current turn, the
+// directory the session was launched in and the screenshot calls still waiting
+// for their results, all of which the transcript itself decides, so a fresh
+// Normalizer replays a transcript identically from the start.
 //
 // Turn model — the renderer folds finished turns and shows "Working…" only while
 // one is running, so the wire has to carry the structure the transcript implies:
@@ -43,9 +47,31 @@ type Normalizer struct {
 	// reported when it differs. Every assistant record carries the pair, and a
 	// marker on each of them would say nothing.
 	model ModelState
+	// root is the directory Claude Code was launched in: the cwd of the first
+	// record that carries one. A screenshot's link is relative to it (see
+	// shotFiles), and it is NOT the cwd of the record holding the link, which
+	// differed in 65 of 85 census screenshots because Claude had cd'd. It is
+	// the directory the transcript is filed under too (layout.go).
+	root string
+	// shots are the ids of browser_take_screenshot calls whose results have not
+	// arrived yet. Each is deleted when its result lands.
+	shots map[string]bool
+	// agent is set when the transcript is one agent's own agent-<id>.jsonl,
+	// where every record is a sidechain record (see NewAgentNormalizer).
+	agent bool
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
+
+// NewAgentNormalizer reads one agent's own transcript, agent-<id>.jsonl, as a
+// conversation of its own: the drill-in's stream. Every record in that file is
+// a sidechain record, and there the flag says whose file it is rather than that
+// the work nests under a call in someone else's thread. So nothing is marked
+// for nesting, the agent's model is reported as this thread's model, and the
+// prompt the agent was given opens its turn like any prompt.
+func NewAgentNormalizer(session string) *Normalizer {
+	return &Normalizer{session: session, agent: true}
+}
 
 // MaxInlineResult caps what one tool result may put on the wire. Measured over
 // the transcripts on this box, tool results run to 673 KB and one session holds
@@ -163,6 +189,12 @@ func (n *Normalizer) Line(b []byte) []Event {
 // records (meta lines: mode, permission-mode, last-prompt, attachment, …) yield
 // nil.
 func (n *Normalizer) Record(rec Record) []Event {
+	// Taken from every record type, conversation or not: whichever comes first
+	// and names a directory names the launch directory. A FileSource's first
+	// read is the whole transcript (registry.start), so this sees the top.
+	if n.root == "" && filepath.IsAbs(rec.CWD) {
+		n.root = rec.CWD
+	}
 	if !rec.Conversational() {
 		return n.meta(rec)
 	}
@@ -179,11 +211,12 @@ func (n *Normalizer) Record(rec Record) []Event {
 //
 // Sidechains are skipped: a subagent answers on whatever model it was
 // dispatched with, and reporting that would show the session running on Haiku
-// while the thread in front of the operator is on Opus. A record naming no
-// model is skipped too — an older transcript, or a line the CLI writes without
-// one, must not blank out a model that is still in force.
+// while the thread in front of the operator is on Opus. In the agent's own
+// file the subagent IS the thread, so its model is the one to report. A record
+// naming no model is skipped too — an older transcript, or a line the CLI
+// writes without one, must not blank out a model that is still in force.
 func (n *Normalizer) modelChange(rec Record) []Event {
-	if rec.Type != RecordAssistant || rec.IsSidechain || rec.Message.Model == "" {
+	if rec.Type != RecordAssistant || (rec.IsSidechain && !n.agent) || rec.Message.Model == "" {
 		return nil
 	}
 	// EXACT comparison, not the family one the receipt path uses. A record
@@ -309,6 +342,12 @@ func (n *Normalizer) conversation(rec Record) []Event {
 			e.Meta, e.Context = MetaContext, r
 			return []Event{e}
 		}
+		// A path pasted into the terminal becomes a picture on the prompt,
+		// which the bubble draws, and this note of where it came from. Shown,
+		// it read as Claude speaking and drew the same picture again under it.
+		if imageSourceNote(text) {
+			return nil
+		}
 	}
 
 	// isPrompt: the human actually said something (see the turn model above).
@@ -323,8 +362,25 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	}
 
 	var out []Event
+	// imgN counts every image block in content order, whatever its source,
+	// because the image-block route counts the same way: a reference's N is
+	// the route's n.
+	imgN := 0
+	var pics []ImageRef
 	for _, bl := range blocks {
 		switch bl.Type {
+		case "image":
+			// A picture pasted into the terminal. Until 2026-09-24 this block
+			// was dropped and the bubble showed the literal "[Image #1]" its
+			// text carries. It travels as a reference (see ImageRef), and only
+			// a prompt's: a harness or meta record was never shown, so its
+			// pictures are not either.
+			if isPrompt {
+				if ref, ok := imageRef(bl, imgN); ok {
+					pics = append(pics, ref)
+				}
+			}
+			imgN++
 		case "text":
 			k := KindText
 			body := bl.Text
@@ -366,34 +422,91 @@ func (n *Normalizer) conversation(rec Record) []Event {
 			e := n.emit(KindToolUse, at)
 			e.Tool, e.ToolID = bl.Name, bl.ID
 			e.Body = string(bl.Input)
+			// The suffix covers the plain MCP name, which all 92 census calls
+			// used (mcp__playwright__browser_take_screenshot), and any
+			// plugin-scoped spelling of the same tool.
+			if strings.HasSuffix(bl.Name, "browser_take_screenshot") && bl.ID != "" {
+				if n.shots == nil {
+					n.shots = map[string]bool{}
+				}
+				n.shots[bl.ID] = true
+			}
 			out = append(out, e)
 		case "tool_result":
 			e := n.emit(KindToolResult, at)
 			e.ToolID, e.IsError = bl.ToolUseID, bl.IsError
-			raw := decodeToolResult(bl.Content)
+			text, images, pictures := decodeToolContent(bl.Content)
 			// "Launching skill: <name>" says a skill is about to inject its
 			// body, and names it even when the body will carry no marker.
-			if name, ok := skillReceipt(raw); ok && !bl.IsError {
+			if name, ok := skillReceipt(text); ok && !bl.IsError {
 				n.skillPending = name
 			}
-			body, cut := capText(plainText(raw))
+			body, cut := capText(plainText(text))
 			e.Body = body
-			// The structured result is where the stdout/stderr split and the
-			// diff live, so an oversized one is PRUNED down to those parts
-			// rather than dropped whole (see pruneResult).
-			res, pruned := pruneResult(rec.ToolUseResult)
-			e.Result = plainResult(res)
-			e.Truncated = cut || pruned
+			if pictures > 0 {
+				// A result carrying pictures sends references and its text, and
+				// nothing else. The structured toolUseResult is dropped because
+				// it repeats the pictures (a Read writes a second copy of the
+				// bytes in file.base64, beside originalSize and dimensions) and
+				// nothing renders it for these tools. Until 2026-09-24 an
+				// image-only result reached the wire as its raw content JSON,
+				// 8 KiB of base64 in a <pre>. Truncated now means the TEXT was
+				// cut, so a Read of an image offers no "Show full output".
+				e.Images, e.Truncated = images, cut
+			} else {
+				// The structured result is where the stdout/stderr split and the
+				// diff live, so an oversized one is PRUNED down to those parts
+				// rather than dropped whole (see pruneResult).
+				res, pruned := pruneResult(rec.ToolUseResult)
+				e.Result = plainResult(res)
+				e.Truncated = cut || pruned
+				// A screenshot saved to a file comes back as text linking it
+				// relative to the launch directory. An error names no file of
+				// its own, and one that quotes a path in prose is not a link.
+				if n.shots[bl.ToolUseID] && !bl.IsError {
+					e.Files = shotFiles(text, n.root)
+				}
+			}
+			delete(n.shots, bl.ToolUseID)
 			out = append(out, e)
 		}
 	}
 
-	// Subagent work shares the transcript with the main thread; the renderer
-	// nests it rather than interleaving it.
-	if rec.IsSidechain {
-		for i := range out {
-			out[i].Sidechain = true
+	// The prompt's pictures ride on its first bubble. A paste id is trusted
+	// only when the record lists exactly one per image block, which both census
+	// pastes did ([1] beside one block); matching a shorter list to the blocks
+	// would be a guess about which picture a placeholder meant. Without its
+	// record's uuid a reference could never be fetched, so none is sent.
+	if len(pics) > 0 && rec.UUID != "" {
+		if len(rec.ImagePasteIDs) == imgN {
+			for i := range pics {
+				pics[i].Paste = rec.ImagePasteIDs[pics[i].N]
+			}
 		}
+		for i := range out {
+			if out[i].Kind == KindUser {
+				out[i].Images, out[i].RecordID = pics, rec.UUID
+				break
+			}
+		}
+	}
+
+	// Subagent work shares the transcript with the main thread; the renderer
+	// nests it rather than interleaving it, under the call of the agent the
+	// record names. In the agent's own file it is the thread itself.
+	if rec.IsSidechain && !n.agent {
+		for i := range out {
+			out[i].Sidechain, out[i].AgentID = true, rec.AgentID
+		}
+	}
+
+	// A tool result can end the turn by itself: a workflow member returns its
+	// answer through StructuredOutput and writes no end_turn record at all (37
+	// of the 38 members of one real run), so without this its turn stays open
+	// for good.
+	if rec.ToolEndsTurn && !n.turnDone {
+		n.turnDone, n.doneMsg = true, ""
+		out = append(out, n.emit(KindTurnEnd, at))
 	}
 
 	// One turn_end per turn: Claude splits a single reply across several lines
@@ -510,20 +623,121 @@ func parseAt(ts string) int64 {
 	return t.UnixMilli()
 }
 
-// decodeToolResult accepts a tool_result content as a JSON string or an array of
-// {type:text,text} blocks.
+// decodeToolResult is the text a reader sees for a tool_result content: the
+// text half of decodeToolContent, so the wire, "Show full output", the search
+// and the skill receipt all follow one rule.
 func decodeToolResult(raw json.RawMessage) string {
+	text, _, _ := decodeToolContent(raw)
+	return text
+}
+
+// decodeToolContent splits a tool_result content into the text a reader sees
+// and the pictures it carried.
+//
+// A JSON string is its own text. A block array's text is its first text block,
+// "" when there is none, and each image block adds a reference when its source
+// is base64; pictures counts every image block, whatever its source, which is
+// what decides that a result holds pictures at all. The raw JSON is the text
+// only for an array holding neither text nor pictures, so a block type nobody
+// has seen yet still shows something, while a picture never shows as its
+// base64 again.
+func decodeToolContent(raw json.RawMessage) (text string, images []ImageRef, pictures int) {
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
-		return s
+		return s, nil, 0
 	}
 	var blocks []Block
-	if json.Unmarshal(raw, &blocks) == nil {
-		for _, b := range blocks {
-			if b.Type == "text" {
-				return b.Text
+	if json.Unmarshal(raw, &blocks) != nil {
+		return string(raw), nil, 0
+	}
+	hasText := false
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if !hasText {
+				text, hasText = b.Text, true
 			}
+		case "image":
+			if ref, ok := imageRef(b, pictures); ok {
+				images = append(images, ref)
+			}
+			pictures++
 		}
 	}
-	return string(raw)
+	if !hasText && pictures == 0 {
+		return string(raw), nil, 0
+	}
+	return text, images, pictures
+}
+
+// imageRef is the reference for the n-th image block, when its bytes are in
+// the transcript. Every census block was base64 (2 pastes, 134 Reads); a url
+// source has nothing for the route to serve.
+func imageRef(bl Block, n int) (ImageRef, bool) {
+	if bl.Source == nil || bl.Source.Type != "base64" {
+		return ImageRef{}, false
+	}
+	return ImageRef{N: n, MediaType: bl.Source.MediaType, Bytes: int64(bl.Source.Size)}, true
+}
+
+// imageSourceRE is the note Claude Code writes after a prompt that attached a
+// pasted file path as a picture: "[Image: source: <path>]", one per picture.
+var imageSourceRE = regexp.MustCompile(`^\[Image: source: [^\]\n]+\]$`)
+
+// imageSourceNote reports whether a meta record's text is nothing but such
+// notes. Text around one is something else, and keeps its row.
+func imageSourceNote(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if !imageSourceRE.MatchString(strings.TrimSpace(line)) {
+			return false
+		}
+	}
+	return true
+}
+
+// shotLinkRE is a markdown link to a PNG or JPEG, the two formats
+// browser_take_screenshot writes. Its result reads
+// "- [Screenshot of viewport](./page-top.png)"; the "Ran Playwright code"
+// section below it names the same file in code, not as a link.
+var shotLinkRE = regexp.MustCompile(`\]\(([^)\s]+\.(?i:png|jpe?g))\)`)
+
+// shotFiles resolves the pictures a screenshot result links to absolute paths.
+//
+// Playwright MCP 0.0.76 resolves a relative filename against the MCP client's
+// workspace, which is the directory Claude was launched in, and prints the
+// link relative to the same directory (path.relative, with "./" added when the
+// name has no directory part). A call with no filename writes under
+// <workspace>/.playwright-mcp, and its result carries the picture as a block
+// instead, which the caller takes first. Measured 2026-09-24 over 143
+// transcripts: link == relative(first cwd, file) for 85 screenshots of 85.
+// The browser never learns a cwd, so the path is made absolute here, where the
+// one fact the rule needs is already known.
+//
+// A relative link with no launch directory known resolves to nothing, and so
+// does anything carrying a scheme. An absolute link is kept as written.
+func shotFiles(text, root string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range shotLinkRE.FindAllStringSubmatch(text, -1) {
+		p := m[1]
+		switch {
+		case strings.Contains(p, "://"):
+			continue
+		case filepath.IsAbs(p):
+			p = filepath.Clean(p)
+		case root != "":
+			p = filepath.Join(root, p)
+		default:
+			continue
+		}
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
 }

@@ -81,6 +81,32 @@ const codexOnly = (): AgentSpend => ({
 
 const both = (): AgentSpend => ({ ...claudeOnly(), ...codexOnly(), period: "today" });
 
+/** Pi's section has exactly the Claude section's shape: pi computes dollars. */
+const piOnly = (): AgentSpend => ({
+  period: "today",
+  pi: {
+    costUsd: 0.87,
+    tokens: { input: 21000, output: 900, cacheRead: 12000, cacheCreation: 0 },
+    models: [
+      {
+        model: "anthropic/claude-opus-5",
+        tokens: { input: 21000, output: 900, cacheRead: 12000, cacheCreation: 0 },
+        costUsd: 0.87,
+      },
+    ],
+    sessions: [
+      {
+        sessionId: "pi-7",
+        session: "p1p2p3p4p5p6",
+        model: "anthropic/claude-opus-5",
+        tokens: { input: 21000, output: 900, cacheRead: 12000, cacheCreation: 0 },
+        costUsd: 0.87,
+        lastSeenSec: hourAgo(),
+      },
+    ],
+  },
+});
+
 /** Answers every request with one document, and records the URLs asked for. */
 function stubSpend(doc: AgentSpend | ((url: string) => AgentSpend)): string[] {
   const urls: string[] = [];
@@ -168,6 +194,73 @@ describe("Agent spend — the two sections", () => {
     const { container } = await openPanel();
     await waitFor(() => expect(container.textContent).toContain("Could not read"));
     expect(container.textContent).not.toContain("$0.00");
+  });
+});
+
+/**
+ * Pi, the third harness. It prices its own tokens and the lobby's extension
+ * posts each session's running total to the same store Claude's recorder
+ * feeds, so its section is drawn exactly like Claude's. The difference worth
+ * saying is where the dollars come from: pi's own price list, which is its
+ * estimate rather than what a seat is billed.
+ */
+describe("Agent spend — the Pi section", () => {
+  const piGroup = (c: HTMLElement) =>
+    [...c.querySelectorAll(".tl-set-group")].find(
+      (g) => g.querySelector(".tl-set-group-title")?.textContent === "Pi",
+    );
+
+  it("gives pi a section of its own, after the other two", async () => {
+    stubSpend({ ...both(), ...piOnly() });
+    const { container } = await openPanel();
+    await waitFor(() => expect(groups(container)).toEqual(["Claude Code", "Codex", "Pi"]));
+  });
+
+  it("leaves the other headings out for a box that has only run pi", async () => {
+    stubSpend(piOnly());
+    const { container } = await openPanel();
+    await waitFor(() => expect(groups(container)).toEqual(["Pi"]));
+    expect(container.textContent).not.toContain("Claude Code");
+    expect(container.textContent).not.toContain("Nothing has reported yet");
+  });
+
+  it("leads with pi's spend and lists its models and conversations like Claude's", async () => {
+    stubSpend({ ...claudeOnly(), ...piOnly() });
+    const { container } = await openPanel([{ name: "p1p2p3p4p5p6", title: "Pi harness" }]);
+    await waitFor(() => expect(piGroup(container)).toBeTruthy());
+    const g = piGroup(container)!;
+    expect(g.querySelector(".tl-spend-figure")?.textContent).toContain("$0.87");
+    expect(g.querySelector(".tl-spend-figure .tl-netusage-approx")).not.toBeNull();
+    const rows = [...g.querySelectorAll(".tl-spend-session")].map((r) => r.textContent ?? "");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toContain("Pi harness");
+    expect(rows[0]).toContain("$0.87");
+    expect(g.textContent).toContain("By model");
+    expect(g.textContent).toContain("anthropic/claude-opus-5");
+  });
+
+  it("says the dollars are pi's own estimate", async () => {
+    stubSpend(piOnly());
+    const { container } = await openPanel();
+    await waitFor(() => expect(piGroup(container)).toBeTruthy());
+    expect(piGroup(container)!.textContent).toMatch(/pi computes these/i);
+    expect(piGroup(container)!.textContent).not.toContain("Claude Code computes");
+  });
+
+  it("says so when no pi session ran in the period", async () => {
+    const doc = piOnly();
+    doc.pi!.sessions = [];
+    stubSpend(doc);
+    const { container } = await openPanel();
+    await waitFor(() => expect(piGroup(container)).toBeTruthy());
+    expect(piGroup(container)!.textContent).toContain("No pi session ran in this period.");
+  });
+
+  it("names pi among the tools it is waiting on when nothing has reported", async () => {
+    stubSpend({ period: "today" });
+    const { container } = await openPanel();
+    await waitFor(() => expect(container.textContent).toContain("Nothing has reported yet"));
+    expect(container.textContent).toMatch(/Claude Code, Codex or pi session/);
   });
 });
 

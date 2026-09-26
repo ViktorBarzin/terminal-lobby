@@ -19,9 +19,7 @@ describe("actAsUrl — switching is a navigation", () => {
     expect(actAsUrl("http://x/?api=https%3A%2F%2Fd&terminal=%2Ft2.html", "bob")).toBe(
       "/?api=https%3A%2F%2Fd&terminal=%2Ft2.html&as=bob",
     );
-    expect(actAsUrl("http://x/?api=https%3A%2F%2Fd&as=bob", "")).toBe(
-      "/?api=https%3A%2F%2Fd",
-    );
+    expect(actAsUrl("http://x/?api=https%3A%2F%2Fd&as=bob", "")).toBe("/?api=https%3A%2F%2Fd");
   });
 
   // The hash names the selected session in the identity you are LEAVING.
@@ -87,9 +85,7 @@ describe("appendActAs — the pure half", () => {
   });
 
   it("starts a query when the URL has none", () => {
-    expect(appendActAs("/api/sessions/sessions", "bob")).toBe(
-      "/api/sessions/sessions?as=bob",
-    );
+    expect(appendActAs("/api/sessions/sessions", "bob")).toBe("/api/sessions/sessions?as=bob");
   });
 
   it("extends a query the URL already has", () => {
@@ -155,24 +151,32 @@ describe("config wiring under ?as=bob", () => {
     expect(c.ACT_AS).toBe("bob");
     expect(c.apiUrl("/sessions")).toBe("/api/sessions/sessions?as=bob");
     expect(c.apiUrl("/layout")).toBe("/api/sessions/layout?as=bob");
-    expect(c.fileListUrl("/home/bob")).toBe(
-      "/files/list?dir=%2Fhome%2Fbob&as=bob",
-    );
-    expect(c.fileReadUrl("/home/bob/f")).toBe(
-      "/files/read?path=%2Fhome%2Fbob%2Ff&as=bob",
-    );
+    expect(c.fileListUrl("/home/bob")).toBe("/files/list?dir=%2Fhome%2Fbob&as=bob");
+    expect(c.fileReadUrl("/home/bob/f")).toBe("/files/read?path=%2Fhome%2Fbob%2Ff&as=bob");
     expect(c.fileWriteUrl()).toBe("/files/write?as=bob");
-    expect(c.clipboardListUrl("main")).toBe(
-      "/clipboard/list?session=main&as=bob",
+    expect(c.clipboardListUrl("main")).toBe("/clipboard/list?session=main&as=bob");
+    expect(c.clipboardImgUrl("main", "a.png")).toBe("/clipboard/img/main/a.png?as=bob");
+    // The picture routes are <img> srcs, which is exactly why ?as= travels as
+    // a parameter: file-api's picture route honours it the way /files/read
+    // does, and session-events answers 501 for the whole text view.
+    expect(c.pictureUrl("/tmp/a.png")).toBe("/files/image?path=%2Ftmp%2Fa.png&as=bob");
+    expect(c.toolImageUrl("main", "toolu_01abcdefgh", 0)).toBe(
+      "/result/main/toolu_01abcdefgh/image/0?as=bob",
     );
-    expect(c.clipboardImgUrl("main", "a.png")).toBe(
-      "/clipboard/img/main/a.png?as=bob",
+    expect(c.promptImageUrl("main", "1ecbc9e7-ef70-4213-bd81-82c2dfcb5169", 1)).toBe(
+      "/result/main/user/1ecbc9e7-ef70-4213-bd81-82c2dfcb5169/image/1?as=bob",
     );
     // session-events refuses ?as= with a 501 rather than serving the caller's
     // own transcripts — but it must still be ASKED, so the refusal is what the
     // Text view surfaces instead of silently wrong data.
     expect(c.eventsUrl("main", 0)).toBe("/events/main?rev=1&as=bob");
     expect(c.eventsUrl("main", 7)).toBe("/events/main?lastEventId=7&rev=1&as=bob");
+    // An agent's transcript is the same session's, read the same way.
+    expect(c.agentEventsUrl("main", "a1", 0)).toBe("/events/main/agents/a1?rev=1&as=bob");
+    expect(c.agentEarlierUrl("main", "a1", 9, 40)).toBe(
+      "/events/main/agents/a1/earlier?before=9&bytes=40&as=bob",
+    );
+    expect(c.agentResultUrl("main", "a1", "t1")).toBe("/events/main/agents/a1/result/t1?as=bob");
     expect(c.promptUrl("main")).toBe("/prompt/main?as=bob");
     expect(c.cancelUrl("main")).toBe("/cancel/main?as=bob");
   });
@@ -184,6 +188,10 @@ describe("config wiring under ?as=bob", () => {
     expect(c.fileReadUrl("/home/x/f")).toBe("/files/read?path=%2Fhome%2Fx%2Ff");
     expect(c.eventsUrl("main", 0)).toBe("/events/main?rev=1");
     expect(c.clipboardListUrl("main")).toBe("/clipboard/list?session=main");
+    expect(c.pictureUrl("/tmp/a.png")).toBe("/files/image?path=%2Ftmp%2Fa.png");
+    expect(c.toolImageUrl("main", "toolu_01abcdefgh", 0)).toBe(
+      "/result/main/toolu_01abcdefgh/image/0",
+    );
   });
 
   it("keeps telemetry off the switch, but still on the ?api= origin", async () => {
@@ -235,9 +243,7 @@ describe("terminal attach args under ?as=bob", () => {
     // attach would reach WIZARD's session of the same name, because ttyd never
     // sees ?as=.
     const { terminalFrameArgs } = await load("?as=bob");
-    expect(terminalFrameArgs("main")).toBe(
-      "arg=main&arg=default&arg=default&arg=bob",
-    );
+    expect(terminalFrameArgs("main")).toBe("arg=main&arg=default&arg=default&arg=bob");
   });
 
   it("does not override a genuinely foreign owner", async () => {

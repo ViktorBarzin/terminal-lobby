@@ -18,6 +18,7 @@
  * fallback, and its click activates the session in-app.
  */
 import { FAVICON_HREF } from "./favicon";
+import type { SessionTool } from "../types/lobby";
 
 export type NotifyEdge = "awaiting" | "done";
 
@@ -26,6 +27,25 @@ export interface FireOptions {
   hasRegistration: boolean;
   /** switch the app to a session when a constructor-notification is clicked. */
   onActivate: (session: string) => void;
+  /** which harness the session runs, named in the body. */
+  tool?: SessionTool;
+}
+
+/**
+ * The harness a body names. Pi's edges come from the same `@claude_state` a
+ * Claude session's do, so without this a pi turn finishing read "Claude
+ * finished its turn". Codex reports no state, so it never gets here, and a
+ * session whose tool nobody reported keeps the wording it always had.
+ */
+function harnessName(tool: SessionTool | undefined): string {
+  switch (tool) {
+    case "pi":
+      return "Pi";
+    case "codex":
+      return "Codex";
+    default:
+      return "Claude";
+  }
 }
 
 /**
@@ -46,9 +66,10 @@ export async function fireNotification(
 ): Promise<void> {
   const finished = kind === "done";
   const title = label + (finished ? " finished" : " needs input");
+  const who = harnessName(opts.tool);
   const notifOptions: NotificationOptions = {
     tag: "tl-" + session,
-    body: finished ? "Claude finished its turn." : "Claude is awaiting your input.",
+    body: finished ? `${who} finished its turn.` : `${who} is awaiting your input.`,
     icon: FAVICON_HREF,
     data: { session },
   };

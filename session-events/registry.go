@@ -34,6 +34,11 @@ type userState struct {
 	// separately because the slash-command catalogue is not a sessionio read.
 	reader sessionio.Reader
 	priv   *privReader
+	// agents reaches the agent files beside each transcript, the same two ways:
+	// LocalReader for the service's own user, priv for everyone else. A field
+	// of its own rather than a wider reader, so a test can swap the transcript
+	// reader for one that reads only transcripts.
+	agents sessionio.AgentReader
 }
 
 // liveSource is a running FileSource plus the handle that stops its tail. A
@@ -42,9 +47,16 @@ type userState struct {
 // session name leaks one tailer for the life of the process. done is closed
 // once that goroutine has returned, which is what makes the stop observable.
 type liveSource struct {
-	fs   *sessionio.FileSource
-	stop context.CancelFunc
-	done <-chan struct{}
+	fs *sessionio.FileSource
+	// agents follows the session's subagents for the agent panel, under the
+	// same context as the tail, so retiring the source stops both.
+	agents *agentWatch
+	// drills are the agent transcripts somebody opened from the panel
+	// (drill.go), tailed under ctx like the rest.
+	drills *drills
+	ctx    context.Context
+	stop   context.CancelFunc
+	done   <-chan struct{} // closed once the tail and the agent watch have both returned
 
 	// idleSince is when the sweep first found this source with no readers,
 	// zero while somebody is reading it. Two sweeps rather than one so a
@@ -75,13 +87,16 @@ type registry struct {
 	// now is the clock the idle sweep measures against. A seam so a test can
 	// age a source without waiting; production leaves it as time.Now.
 	now func() time.Time
+	// agentEvery is how often a watched session's agent files are listed,
+	// AgentScanInterval outside tests.
+	agentEvery time.Duration
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
 	return &registry{
 		users: map[string]*userState{}, ctx: ctx,
 		poll: poll, homeBase: homeBase, opts: opts, self: self,
-		now: time.Now,
+		now: time.Now, agentEvery: AgentScanInterval,
 	}
 }
 
@@ -99,9 +114,11 @@ func (rg *registry) user(osUser string) *userState {
 		}
 		if osUser == rg.self {
 			us.reader = sessionio.LocalReader{}
+			us.agents = sessionio.LocalReader{}
 		} else {
 			us.priv = newPrivReader(osUser)
 			us.reader = us.priv
+			us.agents = us.priv
 		}
 		rg.users[osUser] = us
 	}
@@ -129,6 +146,17 @@ func (rg *registry) user(osUser string) *userState {
 // a channel in us.building and the others wait on that, then loop and find the
 // finished source in the cache. That is the only thing serialized here.
 func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool) {
+	ls, ok := rg.live(osUser, session)
+	if !ok {
+		return nil, false
+	}
+	return ls.fs, true
+}
+
+// live is source with everything the session's entry holds, for a handler that
+// needs more than the transcript: the event stream takes the agent watch too,
+// and serving one agent's transcript resolves it through the watch's listing.
+func (rg *registry) live(osUser, session string) (*liveSource, bool) {
 	us := rg.user(osUser)
 	for {
 		us.mu.Lock()
@@ -146,7 +174,7 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		if ls, ok := us.srcs[session]; ok {
 			if ls.fs.Path() == info.Transcript {
 				us.mu.Unlock()
-				return ls.fs, true
+				return ls, true
 			}
 			us.retire(session, ls)
 		}
@@ -157,10 +185,10 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		}
 		done := make(chan struct{})
 		us.building[session] = done
-		reader := us.reader
+		reader, agents := us.reader, us.agents
 		us.mu.Unlock()
 
-		ls := rg.start(session, info.Transcript, reader)
+		ls := rg.start(session, info.Transcript, reader, agents)
 
 		us.mu.Lock()
 		delete(us.building, session)
@@ -182,7 +210,7 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 		us.srcs[session] = ls
 		us.mu.Unlock()
 		close(done)
-		return ls.fs, true
+		return ls, true
 	}
 }
 
@@ -198,6 +226,7 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 func (us *userState) retire(session string, ls *liveSource) {
 	ls.stop()
 	ls.fs.Close()
+	ls.drills.close()
 	delete(us.srcs, session)
 }
 
@@ -235,7 +264,11 @@ func (rg *registry) sweep() {
 	for _, us := range users {
 		us.mu.Lock()
 		for name, ls := range us.srcs {
-			if ls.fs.Subscribers() == 0 {
+			// A drill-in stream reads the session too: it is one of the
+			// session's agents, and resolving another agent from it needs the
+			// session's watch. So it keeps the source as a stream of the
+			// transcript does.
+			if ls.fs.Subscribers()+ls.drills.readers() == 0 {
 				// Nobody is reading. Retire it once it has been that way for
 				// idleGrace: the tail re-opens the transcript at the poll
 				// interval and the buffer holds every event it has seen, so an
@@ -248,12 +281,13 @@ func (rg *registry) sweep() {
 				if rg.now().Sub(ls.idleSince) < idleGrace {
 					continue
 				}
-				log.Printf("sweep %s/%s: no reader for %s, stopping the tail",
+				log.Printf("sweep %s/%s: no reader for %s, stopping the tail and the agent watch",
 					us.osUser, name, idleGrace)
 				us.retire(name, ls)
 				continue
 			}
 			ls.idleSince = time.Time{}
+			ls.drills.sweep(rg.now())
 			info, ok := us.sm.Get(name)
 			if ok && info.Transcript == ls.fs.Path() {
 				continue
@@ -393,8 +427,9 @@ func (rg *registry) watchPanesEvery(ctx context.Context, every time.Duration) {
 	}
 }
 
-// start builds a FileSource and runs its tail under a context of its own, so// start builds a FileSource and runs its tail under a context of its own, so
-// this one source can be stopped without taking down the rest of the process.
+// start builds a FileSource and the session's agent watch, and runs both under
+// a context of their own, so this one source can be stopped without taking down
+// the rest of the process.
 //
 // The FIRST read of the transcript happens here, synchronously, before the
 // source is handed to anyone. Left to the tail goroutine it raced every caller:
@@ -407,16 +442,33 @@ func (rg *registry) watchPanesEvery(ctx context.Context, every time.Duration) {
 // The cost is that the first request for a session waits for its transcript to
 // be parsed, once per session per process — the same work, moved to where its
 // result is actually used.
-func (rg *registry) start(session, transcript string, reader sessionio.Reader) *liveSource {
+//
+// The agent watch is the exception, and deliberately so: it starts before that
+// read and scans on its own goroutine. Nothing about opening a stream waits on
+// agent files, and a watch started first has usually published its set by the
+// time the state frame goes out.
+func (rg *registry) start(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
+	aw := newAgentWatch(sessionio.SessionDir(transcript), agents)
+	aw.every = rg.agentEvery
+	var running sync.WaitGroup
+	running.Add(2)
+	go func() {
+		defer running.Done()
+		aw.run(ctx)
+	}()
 	fs := sessionio.NewFileSourceWith(session, transcript, rg.poll, reader)
 	fs.TailOnce()
-	done := make(chan struct{})
 	go func() {
-		defer close(done)
+		defer running.Done()
 		fs.Run(ctx)
 	}()
-	return &liveSource{fs: fs, stop: stop, done: done}
+	done := make(chan struct{})
+	go func() {
+		running.Wait()
+		close(done)
+	}()
+	return &liveSource{fs: fs, agents: aw, drills: newDrills(), ctx: ctx, stop: stop, done: done}
 }
 
 // sessionStartBody is the SessionStart hook's payload.

@@ -3,10 +3,12 @@
 // devvm systemd sibling of tmux-api (:7684) and clipboard-upload (:7683):
 // stdlib net/http, per-user isolation via the identity header → OS user
 // (/etc/ttyd-user-map), every path confined to the caller's /home/<osUser> by
-// the four-layer defense in paths.go. A request that maps to a DIFFERENT OS
-// user than the service runs as re-execs this binary under `sudo -u <user>`
-// (-privop mode) so validation + the file op happen AS that user, inside their
-// 0750 home; same-user requests run inline. See privop.go.
+// the four-layer defense in paths.go, except GET /files/image, which serves
+// pictures from any path the user can read and nothing but pictures
+// (image.go, 2026-09-24). A request that maps to a DIFFERENT OS user than the
+// service runs as re-execs this binary under `sudo -u <user>` (-privop mode) so
+// validation + the file op happen AS that user, with that user's view of the
+// filesystem; same-user requests run inline. See privop.go.
 package main
 
 import (
@@ -30,7 +32,7 @@ func main() {
 	// -privop marks the privileged child (re-exec'd via sudo -u <user>): it runs
 	// one op AS that user and prints a JSON envelope. These flags are internal
 	// (set only by runPrivop), never by the systemd unit.
-	privop := flag.String("privop", "", "internal: run one op (list|read|write) as the current sudo-ed user")
+	privop := flag.String("privop", "", "internal: run one op (list|read|write|image) as the current sudo-ed user")
 	// -home is accepted and ignored. The child used to take its containment
 	// root from here, which let anyone holding the sudo grant choose it; it now
 	// reads its own home from the password database. Still parsed so that
@@ -59,6 +61,10 @@ func main() {
 	http.HandleFunc("/files/list", handleList)
 	http.HandleFunc("/files/read", handleRead)
 	http.HandleFunc("/files/write", handleWrite)
+	// Pictures for the text view, from any path the user can read. Under the
+	// existing /files/ prefix, which the ingress, the container's nginx and
+	// the dev proxy already route here, so it needed no infra change.
+	http.HandleFunc("/files/image", handleImage)
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
 	})

@@ -216,6 +216,21 @@ func (p *privReader) FullResult(path, toolID string) (string, json.RawMessage, e
 	return resp.Body, resp.Result, nil
 }
 
+// ImageBlock implements sessionio.Reader, on a child of its own.
+//
+// One picture is one scan of the whole transcript, and the answer runs to about
+// half a megabyte (Read blocks: p95 547k base64 characters, about 410 KB
+// decoded). On the shared pipe that would hold every 200 ms tail poll for this
+// user behind it, the reason ReadFrom's first read takes doOnce too. The route
+// caches each picture as immutable, so this is one fork per picture per device.
+func (p *privReader) ImageBlock(path string, addr sessionio.ImageAddr) (sessionio.ImageData, error) {
+	resp, err := p.doOnce(privRequest{Op: "image", Path: path, ToolID: addr.ToolID, Record: addr.Record, N: addr.N})
+	if err != nil {
+		return sessionio.ImageData{}, err
+	}
+	return sessionio.ImageData{MediaType: resp.Media, Data: resp.Blob}, nil
+}
+
 // SearchResults implements sessionio.Reader.
 func (p *privReader) SearchResults(path, q string, limit int) ([]sessionio.ResultMatch, error) {
 	resp, err := p.do(privRequest{Op: "search", Path: path, Query: q, Limit: limit})
@@ -234,4 +249,24 @@ func (p *privReader) Catalogue(cwd string) ([]Command, error) {
 	return resp.Commands, nil
 }
 
-var _ sessionio.Reader = (*privReader)(nil)
+// ListAgentFiles implements sessionio.AgentReader: the agent panel's listing of
+// one session directory, taken as the user who owns it.
+func (p *privReader) ListAgentFiles(sessionDir string) ([]sessionio.AgentFile, error) {
+	resp, err := p.do(privRequest{Op: "listagents", Path: sessionDir})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Files, nil
+}
+
+// ReadSmallFile implements sessionio.AgentReader: an identity sidecar, a
+// workflow run file or a run's script, read whole by the user who owns it.
+func (p *privReader) ReadSmallFile(path string) ([]byte, error) {
+	resp, err := p.do(privRequest{Op: "readsmall", Path: path})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Blob, nil
+}
+
+var _ sessionio.AgentReader = (*privReader)(nil)

@@ -7,7 +7,12 @@
  * either way, and text injected into the gap is gone with no error anywhere.
  */
 import { describe, it, expect, vi } from "vitest";
-import { deliverFirstPrompt, FIRST_PROMPT_LADDER } from "../src/lib/first-prompt";
+import {
+  deliverFirstPrompt,
+  firstPromptDelivery,
+  FIRST_PROMPT_LADDER,
+  PI_FIRST_PROMPT_LADDER,
+} from "../src/lib/first-prompt";
 
 /** A fetch that answers each call from a script, recording what was sent. */
 function scripted(statuses: readonly number[]) {
@@ -185,5 +190,82 @@ describe("deliverFirstPrompt", () => {
     expect(spy).not.toHaveBeenCalled();
     await p;
     expect(spy).toHaveBeenCalledWith(true);
+  });
+});
+
+/**
+ * Which harness the prompt is for. The server's readiness wait reads a
+ * different thing off each pane: Claude's `❯`, and for pi the `π - ` title pi
+ * sets once startup and any trust question are over. So a pi session's first
+ * prompt names the harness, and a Claude one leaves the field out, which is
+ * what the server has always read as Claude.
+ */
+describe("the harness the first prompt names", () => {
+  function recorder() {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: 204 });
+    }) as unknown as typeof fetch;
+    return { fetchImpl, bodies };
+  }
+
+  it("says pi, and asks for the wait, for a pi session", async () => {
+    const r = recorder();
+    const c = fastClock();
+    expect(await deliver({ ...r, ...c, awaitReady: true, tool: "pi" })).toBe(true);
+    expect(r.bodies).toEqual([{ text: "do the thing", awaitReady: true, tool: "pi" }]);
+  });
+
+  it("leaves the field out when no harness is named", async () => {
+    const r = recorder();
+    const c = fastClock();
+    expect(await deliver({ ...r, ...c, awaitReady: true })).toBe(true);
+    expect(r.bodies[0]).toEqual({ text: "do the thing", awaitReady: true });
+    expect("tool" in r.bodies[0]!).toBe(false);
+  });
+
+  // Pi never gets the blind last rung. Text typed before pi owns the terminal
+  // is echoed by the tty, whose line discipline turns Enter into a line feed,
+  // and pi's editor reads a line feed as a new line: the prompt lands unsent
+  // in pi's input box. Seen live on 2026-09-26, with pi taking 49s to start on
+  // a loaded box, past the 23s the Claude ladder spends.
+  it("keeps the wait, and names pi, on every rung of pi's own ladder", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    let n = 0;
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      n += 1;
+      return new Response(null, { status: n < PI_FIRST_PROMPT_LADDER.length ? 503 : 204 });
+    }) as unknown as typeof fetch;
+    const c = fastClock();
+    expect(await deliver({ fetchImpl, ...c, awaitReady: true, tool: "pi" })).toBe(true);
+    expect(c.waited).toEqual([...PI_FIRST_PROMPT_LADDER]);
+    expect(bodies.map((b) => b.tool)).toEqual(PI_FIRST_PROMPT_LADDER.map(() => "pi"));
+    expect(bodies.map((b) => b.awaitReady)).toEqual(PI_FIRST_PROMPT_LADDER.map(() => true));
+  });
+
+  it("gives up rather than type into a pi that never became ready", async () => {
+    const f = scripted([503]);
+    const c = fastClock();
+    expect(await deliver({ ...f, ...c, awaitReady: true, tool: "pi" })).toBe(false);
+    expect(f.waited.every((w) => w)).toBe(true);
+  });
+
+  it("gives pi's ladder room for a slow start, beyond Claude's", () => {
+    const total = (l: readonly number[]) => l.reduce((a, b) => a + b, 0);
+    expect(total(PI_FIRST_PROMPT_LADDER)).toBeGreaterThanOrEqual(60_000);
+    expect(PI_FIRST_PROMPT_LADDER.slice(0, FIRST_PROMPT_LADDER.length)).toEqual([
+      ...FIRST_PROMPT_LADDER,
+    ]);
+  });
+
+  it("asks Claude and pi to wait, and nothing else", () => {
+    expect(firstPromptDelivery("claude")).toEqual({ awaitReady: true });
+    expect(firstPromptDelivery("pi")).toEqual({ awaitReady: true, tool: "pi" });
+    // Codex draws nothing the server waits on, and a command that is not a
+    // harness has nothing to wait for either.
+    expect(firstPromptDelivery("codex")).toEqual({ awaitReady: false });
+    expect(firstPromptDelivery(null)).toEqual({ awaitReady: false });
   });
 });

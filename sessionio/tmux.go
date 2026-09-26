@@ -121,6 +121,21 @@ const (
 	// at a bash prompt and RUN. Reading this first is what keeps a prompt from
 	// going into any of those.
 	OptionSuspended = "@tl_suspended"
+	// OptionPiModel, OptionPiThinking and OptionPiLevels are what a pi session
+	// is on, stamped as PANE options by the lobby's pi extension
+	// (devvm/pi-extension.js) at every session start and every model or
+	// thinking change: the model as provider/id, the thinking level, and the
+	// comma-separated levels the current model supports. Pi draws neither
+	// setting anywhere a pane capture could read reliably, so the extension
+	// writes them down. tmux-api serves them on the session list, and
+	// session-events reads them back to confirm a switch it typed.
+	//
+	// Pane scope, and read through the pane's own option hierarchy: `#{@name}`
+	// in a format and display-message both resolve a pane option first, which
+	// is how a session-scoped read of the active pane finds them.
+	OptionPiModel    = "@tl_pi_model"
+	OptionPiThinking = "@tl_pi_thinking"
+	OptionPiLevels   = "@tl_pi_levels"
 )
 
 // Options is the tmux session-option store: read and written as the session's

@@ -1,6 +1,7 @@
-import { clipboardFileUrl, clipboardImgUrl, fileReadUrl } from "./config";
+import { clipboardFileUrl, clipboardImgUrl, fileReadUrl, pictureUrl } from "./config";
 import { extOf, IMAGE_EXT } from "../store/preview.logic";
 import { NAME_RE } from "../types/lobby";
+import type { ImageRef } from "../types/events";
 
 /**
  * Attachments in the text view: which paths in a message are files worth
@@ -67,6 +68,16 @@ const DOC_EXT = new Set([
  */
 const CHIP_IMAGE_EXT = new Set([...IMAGE_EXT, "heic", "heif", "tif", "tiff"]);
 
+/**
+ * What file-api's picture route serves (`GET /files/image`): the four raster
+ * types it sniffs from the bytes, and svg, which it names by the extension and
+ * serves under a sandboxing CSP. It reads any path the caller's OS user can
+ * read, which is what lets a screenshot in /tmp show at all. The other image
+ * types CHIP_IMAGE_EXT knows keep `/files/read`, home only, exactly as before:
+ * the picture route would answer them 415.
+ */
+const PICTURE_EXT = new Set(["png", "jpg", "jpeg", "gif", "webp", "svg"]);
+
 /** Every extension that can start a match outside the store. */
 const RENDERABLE_EXT = [...CHIP_IMAGE_EXT, ...DOC_EXT];
 
@@ -89,8 +100,23 @@ const FILE_RE = new RegExp(
   "gi",
 );
 
-/** Trailing characters that belong to the sentence, not to a stored path. */
-const TRAILING_PROSE_RE = /[.,;:!?)\]}"'»]+$/;
+/** Trailing characters that belong to the sentence, not to a stored path. The
+ *  backtick is one: a store path written in inline code runs to whitespace and
+ *  would otherwise carry the closing backtick into the file name. */
+const TRAILING_PROSE_RE = /[.,;:!?)\]}"'»`]+$/;
+
+/**
+ * Characters that, standing just before a match, mean it is not the start of an
+ * absolute path but the middle of something else: `shots/a.png` (a relative
+ * path, where the expression finds `/a.png`), `./a.png` and `../a.png`, `~/a.png`,
+ * and the tail of `https://x/a.png` or `file:///a.png`.
+ *
+ * Checked on the character rather than with a lookbehind in FILE_RE because
+ * the expression is built when the module loads, and an engine without
+ * lookbehind would throw right there, taking the whole view with it. That is
+ * the reason remark-gfm is gated (lib/markdown-plugins.ts).
+ */
+const CONTINUES_RE = /[\w:/.~-]/;
 
 /**
  * Split `/var/lib/clipboard-store/<owner>/<session>/<name>` into its parts, or
@@ -127,9 +153,46 @@ export function isRenderablePath(path: string): boolean {
 }
 
 /**
+ * The lobby's own routes. A root-relative reference under one of these is a URL
+ * somebody wrote by hand (`![](/clipboard/img/abc.png)`), not a file on disk,
+ * and it has always been passed through verbatim.
+ */
+const OWN_ROUTE_RE = /^\/(?:files|clipboard|result|api|assets)\//;
+
+/**
+ * Whether a markdown reference (an image's src, a link's href) names a picture
+ * on disk: absolute, not protocol-relative, with no query or fragment, an image
+ * extension, and not under one of the lobby's own routes. What passes is read
+ * through the conversation's own routes (`pictureUrlFor`); anything else is left
+ * exactly as it was written.
+ */
+export function isPicturePath(ref: string): boolean {
+  if (!ref.startsWith("/") || ref.startsWith("//")) return false;
+  if (ref.includes("?") || ref.includes("#")) return false;
+  if (OWN_ROUTE_RE.test(ref)) return false;
+  return CHIP_IMAGE_EXT.has(extOf(ref));
+}
+
+/**
+ * Where a picture's bytes are read from, with no owner check: a store path
+ * through the clipboard route, a type the picture route serves through that
+ * route (any path the caller can read), and any other image type through the
+ * file-api's home-only read, as before.
+ *
+ * The markdown renderer uses it for a reference Claude wrote as `![](…)`. A
+ * foreign store path there answers 404 and falls back to its text, the same
+ * outcome the owner check reaches without the request; `contentUrlFor` adds
+ * that check for the timeline, which asks whether to draw anything at all.
+ */
+export function pictureUrlFor(path: string): string | null {
+  if (!parseStorePath(path) && PICTURE_EXT.has(extOf(path))) return pictureUrl(path);
+  return previewContentUrl(path);
+}
+
+/**
  * The URL that serves `path`'s bytes back, or null when nothing can.
  *
- * THE one place that decides between the two backends, so the timeline, the
+ * THE one place that decides between the backends, so the timeline, the
  * gallery and the file preview cannot disagree about where a given path is read
  * from.
  *
@@ -138,13 +201,17 @@ export function isRenderablePath(path: string): boolean {
  *   - a store path owned by anyone else → null. The routes ignore the owner
  *     segment, so asking would either 404 or answer with the caller's own
  *     same-named file; falling back to the path text is decision 12
- *   - anything else → the file-api, which confines to the caller's home and
- *     answers 403 outside it, surfacing as the same fallback
+ *   - a png, jpeg, gif, webp or svg anywhere else → file-api's picture route,
+ *     which reads any path the caller's OS user can read and answers only with
+ *     pictures (2026-09-24). A path it cannot read answers 404, which surfaces
+ *     as the same fallback
+ *   - anything else → the file-api's read, which confines to the caller's home
+ *     and answers 403 outside it
  */
 export function contentUrlFor(path: string, me: string): string | null {
   const store = parseStorePath(path);
   if (store && (!me || store.owner !== me)) return null;
-  return previewContentUrl(path);
+  return pictureUrlFor(path);
 }
 
 /**
@@ -185,10 +252,20 @@ export function storedDisplayName(name: string): string {
   return STORED_ATTACH_RE.exec(name)?.[1] ?? name;
 }
 
-/** A run of message text, or one file reference standing where it appeared. */
+/** A run of message text, one file reference standing where it appeared, or
+ *  one picture block of the prompt standing where its placeholder was. */
 export type Segment =
   | { kind: "text"; text: string }
-  | { kind: "file"; path: string; name: string; fileKind: AttachmentKind };
+  | { kind: "file"; path: string; name: string; fileKind: AttachmentKind }
+  | {
+      kind: "block";
+      ref: ImageRef;
+      /** the `[Image #N]` it replaced, or "" when nothing in the text named it. */
+      text: string;
+    };
+
+/** What `segmentMessage` returns: text and paths, never a picture block. */
+type PathSegment = Exclude<Segment, { kind: "block" }>;
 
 /**
  * Split a message into text runs and file references, replacing each renderable
@@ -197,12 +274,15 @@ export type Segment =
  * at the top that the tray sent before that, and the one the pty welded
  * mid-sentence before either.
  */
-export function segmentMessage(text: string): Segment[] {
+export function segmentMessage(text: string): PathSegment[] {
   if (!text) return [];
-  const out: Segment[] = [];
+  const out: PathSegment[] = [];
   let at = 0;
   for (const m of text.matchAll(FILE_RE)) {
     const index = m.index ?? 0;
+    // Only an absolute path starts a match. `shots/a.png` names a relative
+    // file, and the expression finds `/a.png` inside it.
+    if (index > 0 && CONTINUES_RE.test(text[index - 1]!)) continue;
     // The store branch takes \S+, so it can absorb the sentence's punctuation;
     // the extension branch cannot, because it ends AT the extension. Anything
     // trimmed here is left behind for the following text run rather than
@@ -216,6 +296,99 @@ export function segmentMessage(text: string): Segment[] {
   }
   if (at < text.length) out.push({ kind: "text", text: text.slice(at) });
   return out;
+}
+
+/** What Claude Code writes into a prompt where an image was pasted into the
+ *  terminal. The picture itself travels as an image block of the same record. */
+const PLACEHOLDER_RE = /\[Image #(\d+)\]/g;
+
+/**
+ * A prompt's segments with each terminal paste drawn where it was pasted.
+ *
+ * A picture pasted into the terminal is not a file: the transcript holds it as
+ * an image block beside the text, and the text holds `[Image #1]` where it was
+ * pasted, which the bubble used to show as those ten characters. Each
+ * placeholder becomes the block whose paste id is its number. The server sets a
+ * paste id only when the record's ids line up one to one with its blocks, so
+ * without them the k-th placeholder takes the k-th picture. A placeholder no
+ * picture answers to stays text, and a picture no placeholder claimed goes at
+ * the end on a line of its own, so nothing the record carried goes missing.
+ */
+export function segmentPrompt(text: string, images: readonly ImageRef[] = []): Segment[] {
+  const segs: Segment[] = segmentMessage(text);
+  if (images.length === 0) return segs;
+  const byPaste = images.some((r) => r.paste !== undefined);
+  const claimed = new Set<ImageRef>();
+  let next = 0;
+  const answer = (id: number): ImageRef | undefined => {
+    if (byPaste) return images.find((r) => r.paste === id && !claimed.has(r));
+    while (next < images.length && claimed.has(images[next]!)) next++;
+    return images[next];
+  };
+
+  const out: Segment[] = [];
+  for (const seg of segs) {
+    if (seg.kind !== "text") {
+      out.push(seg);
+      continue;
+    }
+    let at = 0;
+    for (const m of seg.text.matchAll(PLACEHOLDER_RE)) {
+      const ref = answer(Number(m[1]));
+      if (!ref) continue;
+      claimed.add(ref);
+      const index = m.index ?? 0;
+      if (index > at) out.push({ kind: "text", text: seg.text.slice(at, index) });
+      out.push({ kind: "block", ref, text: m[0] });
+      at = index + m[0].length;
+    }
+    if (at === 0) out.push(seg);
+    else if (at < seg.text.length) out.push({ kind: "text", text: seg.text.slice(at) });
+  }
+
+  const left = images.filter((r) => !claimed.has(r));
+  if (left.length > 0 && text && !text.endsWith("\n")) out.push({ kind: "text", text: "\n" });
+  for (const ref of left) out.push({ kind: "block", ref, text: "" });
+  return out;
+}
+
+/** How many characters a segment stands for in a collapsed bubble. */
+function segmentLength(seg: Segment): number {
+  return seg.kind === "file" ? seg.path.length : seg.text.length;
+}
+
+/**
+ * The first `limit` characters of a message, cut only inside a text run.
+ *
+ * A long bubble used to collapse by slicing its body at character 600, which
+ * could end halfway through a store path: the fragment no longer matched, so
+ * the bubble showed a broken piece of path where the picture belonged. A path
+ * or a picture that STARTS before the limit is kept whole; one that starts at
+ * or after it is left for "Show more". `cut` says whether anything was left.
+ */
+export function collapseSegments(
+  segments: readonly Segment[],
+  limit: number,
+): { segments: Segment[]; cut: boolean } {
+  const out: Segment[] = [];
+  let used = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const seg = segments[i]!;
+    const len = segmentLength(seg);
+    if (used >= limit) {
+      // Everything from here on is left out, which is a cut unless all of it
+      // is empty text.
+      const rest = segments.slice(i);
+      return { segments: out, cut: rest.some((r) => r.kind !== "text" || r.text !== "") };
+    }
+    if (seg.kind === "text" && used + len > limit) {
+      out.push({ kind: "text", text: seg.text.slice(0, limit - used) });
+      return { segments: out, cut: true };
+    }
+    out.push(seg);
+    used += len;
+  }
+  return { segments: out, cut: false };
 }
 
 // ---- inline attachment tokens -------------------------------------------

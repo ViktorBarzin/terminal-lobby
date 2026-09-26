@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // row joins fields with the format separator, so fixtures stay readable even
@@ -60,6 +62,15 @@ func rowGrid(bg, born, created, origin, cols, rows string, fields ...string) str
 // gives. EMPTY is what every live session reports, and what every fixture
 // written before the column existed keeps saying.
 func rowSuspended(bg, born, created, origin, cols, rows, suspended string, fields ...string) string {
+	return rowPi(bg, born, created, origin, cols, rows, suspended, "", "", "", fields...)
+}
+
+// rowPi is the same line with the three pi columns filled in too — the model,
+// thinking level and supported levels the lobby's pi extension stamps on the
+// pane. They sit at piModelColumn, the last three columns before pane_title,
+// spliced for the reason rowCreated gives. EMPTY is what every session that is
+// not running pi reports.
+func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking, piLevels string, fields ...string) string {
 	if len(fields) < bgColumn {
 		return strings.Join(fields, listSep)
 	}
@@ -102,7 +113,14 @@ func rowSuspended(bg, born, created, origin, cols, rows, suspended string, field
 	withSuspended = append(withSuspended, withGrid[:suspendedColumn]...)
 	withSuspended = append(withSuspended, suspended)
 	withSuspended = append(withSuspended, withGrid[suspendedColumn:]...)
-	return strings.Join(withSuspended, listSep)
+	if len(withSuspended) < piModelColumn {
+		return strings.Join(withSuspended, listSep)
+	}
+	withPi := make([]string, 0, len(withSuspended)+3)
+	withPi = append(withPi, withSuspended[:piModelColumn]...)
+	withPi = append(withPi, piModel, piThinking, piLevels)
+	withPi = append(withPi, withSuspended[piModelColumn:]...)
+	return strings.Join(withPi, listSep)
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which
@@ -588,5 +606,115 @@ func TestExactPaneTargetsOneSessionsWindow(t *testing.T) {
 	}
 	if got := exactSession("work"); got != "=work" {
 		t.Errorf("exactSession(work) = %q, want %q", got, "=work")
+	}
+}
+
+// The pi extension's three pane options ride the list the way @claude_state
+// does, as the columns just before pane_title.
+func TestTmuxListFmtCarriesThePiOptions(t *testing.T) {
+	cols := strings.Split(tmuxListFmt, listSep)
+	for col, opt := range map[int]string{
+		piModelColumn:    sessionio.OptionPiModel,
+		piThinkingColumn: sessionio.OptionPiThinking,
+		piLevelsColumn:   sessionio.OptionPiLevels,
+	} {
+		if cols[col] != "#{"+opt+"}" {
+			t.Errorf("column %d is %q, want #{%s}", col, cols[col], opt)
+		}
+	}
+	if cols[listFields-1] != "#{pane_title}" {
+		t.Errorf("pane_title is no longer last: %q", cols[listFields-1])
+	}
+}
+
+func piRow(model, thinking, levels string) string {
+	return rowPi("", "", "", "", "", "", "", model, thinking, levels,
+		"$1", "pi-demo", "0", "1800000000", "1800000000", "", "done", "4242", "bash", "", "π - demo")
+}
+
+func TestParseSessionsReadsThePiFields(t *testing.T) {
+	got := parseSessions([]byte(piRow("anthropic/claude-opus-5", "high", "off,minimal,low,medium,high,xhigh,max") + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	s := got[0]
+	if s.PiModel != "anthropic/claude-opus-5" || s.PiThinking != "high" || s.PiLevels != "off,minimal,low,medium,high,xhigh,max" {
+		t.Fatalf("pi fields = %q %q %q", s.PiModel, s.PiThinking, s.PiLevels)
+	}
+	// The state stays where every state is, and the columns after them still
+	// land: pane_title is the trailing field.
+	if s.State != "done" || s.PaneTitle != "π - demo" {
+		t.Fatalf("state %q, pane title %q", s.State, s.PaneTitle)
+	}
+	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"piModel":"anthropic/claude-opus-5"`, `"piThinking":"high"`, `"piLevels":"off,minimal,low,medium,high,xhigh,max"`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("wire shape lacks %s: %s", want, b)
+		}
+	}
+}
+
+// A session that is not running pi carries none of the three, and the wire
+// shape it had before is unchanged: omitempty, not empty strings.
+func TestNonPiSessionsCarryNoPiFields(t *testing.T) {
+	got := parseSessions([]byte(piRow("", "", "") + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows", len(got))
+	}
+	b, _ := json.Marshal(got[0])
+	for _, key := range []string{`"piModel"`, `"piThinking"`, `"piLevels"`} {
+		if strings.Contains(string(b), key) {
+			t.Fatalf("a session with no pi options serialised %s: %s", key, b)
+		}
+	}
+}
+
+// The options are written by a process in the pane, and anything in the pane
+// can run `tmux set-option`. Only values in the shapes the extension writes
+// reach the wire; anything else is dropped rather than passed on.
+func TestParseSessionsDropsPiFieldsOutOfShape(t *testing.T) {
+	for _, tc := range []struct {
+		name, model, thinking, levels       string
+		wantModel, wantThinking, wantLevels string
+	}{
+		{"a model outside the gate", "anthropic/x y", "high", "high", "", "high", "high"},
+		{"markup", "<img src=x>", "high", "high", "", "high", "high"},
+		{"a level pi has not got", "anthropic/claude-opus-5", "ultracode", "low", "anthropic/claude-opus-5", "", "low"},
+		{"levels with a stranger", "anthropic/claude-opus-5", "low", "low,ultracode,high", "anthropic/claude-opus-5", "low", "low,high"},
+		{"levels with spaces", "anthropic/claude-opus-5", "low", " low , high ", "anthropic/claude-opus-5", "low", "low,high"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseSessions([]byte(piRow(tc.model, tc.thinking, tc.levels) + "\n"))
+			if len(got) != 1 {
+				t.Fatalf("parsed %d rows", len(got))
+			}
+			s := got[0]
+			if s.PiModel != tc.wantModel || s.PiThinking != tc.wantThinking || s.PiLevels != tc.wantLevels {
+				t.Fatalf("pi fields = %q %q %q, want %q %q %q",
+					s.PiModel, s.PiThinking, s.PiLevels, tc.wantModel, tc.wantThinking, tc.wantLevels)
+			}
+		})
+	}
+}
+
+// The options outlive a pi that was killed in a pane whose shell survived it.
+// Once the process tree says the pane runs something else, the stale reading is
+// dropped; when the scan failed and the tool is unknown, it is kept, for the
+// reason annotateTools leaves Tool empty rather than guessing.
+func TestStalePiFieldsGoWithTheProcess(t *testing.T) {
+	sessions := []Session{
+		{Name: "pi", Tool: toolPi, PiModel: "anthropic/claude-opus-5", PiThinking: "high", PiLevels: "high"},
+		{Name: "was-pi", Tool: toolShell, PiModel: "anthropic/claude-opus-5", PiThinking: "high", PiLevels: "high"},
+		{Name: "unknown", Tool: "", PiModel: "anthropic/claude-opus-5", PiThinking: "high", PiLevels: "high"},
+	}
+	dropStalePiFields(sessions)
+	if sessions[0].PiModel == "" || sessions[2].PiModel == "" {
+		t.Errorf("a live or unknown pi lost its model: %+v", sessions)
+	}
+	if sessions[1].PiModel != "" || sessions[1].PiThinking != "" || sessions[1].PiLevels != "" {
+		t.Errorf("a pane that no longer runs pi kept its pi fields: %+v", sessions[1])
 	}
 }

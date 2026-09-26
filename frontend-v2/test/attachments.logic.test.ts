@@ -7,15 +7,19 @@ import {
   attachmentKind,
   cutSpan,
   dropToken,
+  collapseSegments,
   contentUrlFor,
+  isPicturePath,
   isRenderablePath,
   parseStorePath,
   previewContentUrl,
   segmentMessage,
+  segmentPrompt,
   storedDisplayName,
   type Segment,
   type TokenizedAttachment,
 } from "../src/lib/attachments";
+import type { ImageRef } from "../src/types/events";
 
 /**
  * The recognition rule and the backend resolver
@@ -133,9 +137,39 @@ describe("contentUrlFor", () => {
     expect(contentUrlFor(P("bob/s/pasted-2026-a1.png"), MINE)).toBeNull();
   });
 
-  it("serves anything else through the file-api", () => {
+  // A picture comes from any path the caller can read, /tmp included, through
+  // file-api's picture-only route (2026-09-24). 57 of 137 Reads of an image in
+  // the census were under /tmp/claude-1000/*/scratchpad, which /files/read
+  // refuses because it confines to the home.
+  it("serves a picture anywhere on disk through the picture route", () => {
     expect(contentUrlFor("/home/wizard/code/out/plot.png", MINE)).toBe(
-      "/files/read?path=%2Fhome%2Fwizard%2Fcode%2Fout%2Fplot.png",
+      "/files/image?path=%2Fhome%2Fwizard%2Fcode%2Fout%2Fplot.png",
+    );
+    expect(contentUrlFor("/tmp/claude-1000/x/scratchpad/shot.PNG", MINE)).toBe(
+      "/files/image?path=%2Ftmp%2Fclaude-1000%2Fx%2Fscratchpad%2Fshot.PNG",
+    );
+  });
+
+  // The picture route names svg by its extension and serves it sandboxed, so
+  // it takes svg too.
+  it("serves an svg through the picture route", () => {
+    expect(contentUrlFor("/home/wizard/diagram.svg", MINE)).toBe(
+      "/files/image?path=%2Fhome%2Fwizard%2Fdiagram.svg",
+    );
+  });
+
+  // The picture route sniffs four raster types and nothing else, so an image
+  // it would refuse keeps the home-only read it has always had rather than
+  // turning into a 415.
+  it("keeps /files/read for an image type the picture route does not serve", () => {
+    expect(contentUrlFor("/home/wizard/icon.bmp", MINE)).toBe(
+      "/files/read?path=%2Fhome%2Fwizard%2Ficon.bmp",
+    );
+  });
+
+  it("serves a document through the file-api's read, as before", () => {
+    expect(contentUrlFor("/home/wizard/notes.pdf", MINE)).toBe(
+      "/files/read?path=%2Fhome%2Fwizard%2Fnotes.pdf",
     );
   });
 
@@ -216,6 +250,191 @@ describe("segmentMessage", () => {
 
   it("keeps an empty message empty", () => {
     expect(segmentMessage("")).toEqual([]);
+  });
+
+  // Only an ABSOLUTE path is a picture (decision 1). Today's expression found
+  // `/a.png` inside `shots/a.png`, and the tail of a URL or a home-relative path
+  // the same way, so the character before a match decides whether it starts a
+  // path at all.
+  it("refuses a match that continues a relative path, a URL or a ~ path", () => {
+    for (const text of [
+      "saved to shots/a.png",
+      "saved to ./a.png",
+      "saved to ../up/a.png",
+      "saved to ~/a.png",
+      "see https://x.com/a.png",
+      "see file:///tmp/a.png",
+      "nova-tv.png",
+    ]) {
+      expect(files(segmentMessage(text)), text).toEqual([]);
+    }
+  });
+
+  it("accepts a path in backticks, brackets or quotes", () => {
+    for (const text of ["`/tmp/a.png`", "(/tmp/a.png)", '"/tmp/a.png"', "at:\n/tmp/a.png"]) {
+      expect(files(segmentMessage(text)), text).toMatchObject([{ path: "/tmp/a.png" }]);
+    }
+  });
+
+  it("still finds a path after a refused one in the same text", () => {
+    const segs = segmentMessage("not shots/a.png but /tmp/b.png");
+    expect(files(segs)).toMatchObject([{ path: "/tmp/b.png" }]);
+  });
+
+  // The store branch takes everything up to whitespace, so a backticked store
+  // path in a bubble carried its closing backtick into the file name.
+  it("leaves a closing backtick out of a store path", () => {
+    const path = P("wizard/s/pasted-20260817-150232-a1b2c3d4.png");
+    const segs = segmentMessage("look at `" + path + "` please");
+    expect(files(segs)).toMatchObject([{ path }]);
+    expect(segs.at(-1)).toEqual({ kind: "text", text: "` please" });
+  });
+});
+
+describe("isPicturePath", () => {
+  it("accepts an absolute path to an image", () => {
+    for (const p of ["/tmp/a.png", "/home/wizard/x/Plot.JPG", "/a.webp", "/x/y.svg", "/x/y.heic"]) {
+      expect(isPicturePath(p), p).toBe(true);
+    }
+  });
+
+  it("refuses a relative path, a URL, a query or a fragment", () => {
+    for (const p of ["a.png", "./a.png", "//cdn.x/a.png", "https://x/a.png", "/a.png?x=1", "/a.png#top"]) {
+      expect(isPicturePath(p), p).toBe(false);
+    }
+  });
+
+  it("refuses a path that is not an image", () => {
+    expect(isPicturePath("/home/wizard/notes.pdf")).toBe(false);
+    expect(isPicturePath("/home/wizard/x/App.tsx")).toBe(false);
+  });
+
+  // A reference the lobby wrote by hand to one of its own routes is already a
+  // URL. `![](/clipboard/img/abc.png)` has always been passed through verbatim.
+  it("refuses a path under one of the lobby's own routes", () => {
+    for (const p of [
+      "/clipboard/img/abc.png",
+      "/files/read/a.png",
+      "/result/s/t/image.png",
+      "/api/sessions/x.png",
+      "/assets/logo.png",
+    ]) {
+      expect(isPicturePath(p), p).toBe(false);
+    }
+  });
+});
+
+// --- a terminal paste: `[Image #N]` in the text, the picture in a block ------
+describe("segmentPrompt", () => {
+  const ref = (n: number, paste?: number): ImageRef => ({
+    n,
+    mediaType: "image/png",
+    bytes: 100,
+    ...(paste !== undefined ? { paste } : {}),
+  });
+
+  it("puts each picture where its placeholder stood, matched by paste id", () => {
+    const a = ref(0, 1);
+    const b = ref(1, 2);
+    expect(segmentPrompt("[Image #2] vs [Image #1]\n\nwhich?", [a, b])).toEqual([
+      { kind: "block", ref: b, text: "[Image #2]" },
+      { kind: "text", text: " vs " },
+      { kind: "block", ref: a, text: "[Image #1]" },
+      { kind: "text", text: "\n\nwhich?" },
+    ]);
+  });
+
+  it("matches by order when no picture carries a paste id", () => {
+    const a = ref(0);
+    const b = ref(1);
+    expect(segmentPrompt("[Image #3] and [Image #7]", [a, b])).toEqual([
+      { kind: "block", ref: a, text: "[Image #3]" },
+      { kind: "text", text: " and " },
+      { kind: "block", ref: b, text: "[Image #7]" },
+    ]);
+  });
+
+  it("keeps a placeholder no picture answers to as text", () => {
+    const a = ref(0, 1);
+    expect(segmentPrompt("[Image #1] and [Image #2]", [a])).toEqual([
+      { kind: "block", ref: a, text: "[Image #1]" },
+      { kind: "text", text: " and [Image #2]" },
+    ]);
+  });
+
+  it("claims a picture once, so a repeated placeholder stays text", () => {
+    const a = ref(0, 1);
+    expect(segmentPrompt("[Image #1] [Image #1]", [a])).toEqual([
+      { kind: "block", ref: a, text: "[Image #1]" },
+      { kind: "text", text: " [Image #1]" },
+    ]);
+  });
+
+  it("appends a picture no placeholder claimed, on a line of its own", () => {
+    const a = ref(0, 5);
+    expect(segmentPrompt("what is this?", [a])).toEqual([
+      { kind: "text", text: "what is this?" },
+      { kind: "text", text: "\n" },
+      { kind: "block", ref: a, text: "" },
+    ]);
+    expect(segmentPrompt("", [a])).toEqual([{ kind: "block", ref: a, text: "" }]);
+  });
+
+  it("leaves a prompt with no pictures exactly as segmentMessage does", () => {
+    const text = `see ${P("wizard/s/pasted-a1.png")} and [Image #1]`;
+    expect(segmentPrompt(text, [])).toEqual(segmentMessage(text));
+    expect(segmentPrompt(text)).toEqual(segmentMessage(text));
+  });
+
+  it("keeps a store path and a placeholder side by side", () => {
+    const path = P("wizard/s/pasted-a1.png");
+    const a = ref(0, 1);
+    expect(segmentPrompt(`${path}\n[Image #1]`, [a])).toEqual([
+      { kind: "file", path, name: "pasted-a1.png", fileKind: "image" },
+      { kind: "text", text: "\n" },
+      { kind: "block", ref: a, text: "[Image #1]" },
+    ]);
+  });
+});
+
+// --- collapsing a long bubble without cutting a path in half ----------------
+describe("collapseSegments", () => {
+  const text = (t: string): Segment => ({ kind: "text", text: t });
+
+  it("cuts a long text run at the limit and says so", () => {
+    const r = collapseSegments([text("a".repeat(700))], 600);
+    expect(r.cut).toBe(true);
+    expect(r.segments).toEqual([text("a".repeat(600))]);
+  });
+
+  it("leaves a message within the limit whole", () => {
+    const segs = [text("a".repeat(600))];
+    expect(collapseSegments(segs, 600)).toEqual({ segments: segs, cut: false });
+  });
+
+  // The old collapse sliced the body at character 600, which could end in the
+  // middle of a store path: the bubble then showed a broken fragment of the
+  // path as text where the picture should have been.
+  it("keeps a store path that straddles the limit whole", () => {
+    const path = P("wizard/s/pasted-20260817-150232-a1b2c3d4.png");
+    const segs = segmentMessage("x".repeat(580) + " " + path + " and then " + "y".repeat(100));
+    const r = collapseSegments(segs, 600);
+    expect(r.cut).toBe(true);
+    expect(files(r.segments)).toMatchObject([{ path }]);
+    expect(r.segments.at(-1)).toMatchObject({ kind: "file", path });
+  });
+
+  it("keeps a placeholder whole, and drops what starts past the limit", () => {
+    const block: Segment = { kind: "block", ref: { n: 0, paste: 1 }, text: "[Image #1]" };
+    const late: Segment = { kind: "block", ref: { n: 1, paste: 2 }, text: "[Image #2]" };
+    const r = collapseSegments([text("a".repeat(595)), block, text("b".repeat(50)), late], 600);
+    expect(r.cut).toBe(true);
+    expect(r.segments).toEqual([text("a".repeat(595)), block]);
+  });
+
+  it("does not report a cut when the only thing past the limit is nothing", () => {
+    const r = collapseSegments([text("a".repeat(600)), text("")], 600);
+    expect(r.cut).toBe(false);
   });
 });
 

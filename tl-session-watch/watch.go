@@ -34,6 +34,10 @@ type Session struct {
 	// SessionEnd clears it on an orderly exit and a SIGKILL cannot run that
 	// hook, so a stamp with no claude behind it is evidence of a death.
 	ClaudeState string
+	// ClaudeAlive is whether the process that owns that stamp is alive under
+	// the pane: a claude, or a pi, whose lobby extension stamps the same option
+	// and clears it on quit. The name and the claude_died event keep Claude's
+	// word, because they are what the alert and the dashboards already read.
 	ClaudeAlive bool
 	// PaneBytes and PaneLimit come from the pane scope's cgroup:
 	// memory.current and memory.max. PaneLimit is 0 when the pane is uncapped.
@@ -52,9 +56,11 @@ type Session struct {
 	// slice's 4 GiB, so anon is partly reclaimable and this is an upper bound.
 	PaneUnreclaimable uint64
 	// TopIsClaude says whether the highest-RSS process in the pane is a claude.
-	// Exported as a metric only: it no longer gates the warning, because claude
-	// is the fattest process in nearly every pane it sits in.
+	// Exported as a metric only.
 	TopIsClaude bool
+	// ClaudePIDs are the claude processes in the session's panes, which is what
+	// a kernel kill record is matched against (autoresume.go).
+	ClaudePIDs []int
 }
 
 // Snapshot is one user's world at one tick.
@@ -86,34 +92,33 @@ const (
 	KindSessionKilled Kind = "session_killed"
 	// KindClaudeDied: the session survived and the conversation in it did not.
 	KindClaudeDied Kind = "claude_died"
-	// KindPaneNearCap: the cap will take a conversation next, not a build.
-	KindPaneNearCap Kind = "pane_near_cap"
 	// KindRebooted: the box restarted, carrying how many sessions came back.
 	KindRebooted Kind = "rebooted"
+	// KindSessionResumed: a session the pane memory cap killed was brought back
+	// with `claude --resume` (autoresume.go). Logged, never alerted.
+	KindSessionResumed Kind = "session_resumed"
+	// KindResumeSkipped: a cap kill within the hour of the last resume of the
+	// same session, left dead so a pane that refills cannot loop.
+	KindResumeSkipped Kind = "resume_skipped"
+	// KindResumeFailed: the resume was attempted and tmux-persist refused or
+	// failed. Error says why.
+	KindResumeFailed Kind = "resume_failed"
 )
 
 // Finding is one thing worth a journal line.
 type Finding struct {
-	Kind              Kind
-	User              string
-	Session           string
-	State             string
-	Background        string
-	PaneBytes         uint64
-	PaneUnreclaimable uint64
-	PaneLimit         uint64
-	Before            int
-	After             int
+	Kind       Kind
+	User       string
+	Session    string
+	State      string
+	Background string
+	// Error is the reason on a resume_skipped or resume_failed line.
+	Error  string
+	Before int
+	After  int
 }
 
 type Config struct {
-	// PaneWarnBytes is where the pane pre-warning sits, compared against
-	// UNRECLAIMABLE memory rather than memory.current, in panes with a claude.
-	PaneWarnBytes uint64
-	// PaneClearBytes is where a warned pane's episode ends. The gap below
-	// PaneWarnBytes keeps a pane hovering at the line to one warning. Zero, or
-	// anything above PaneWarnBytes, means PaneWarnBytes.
-	PaneClearBytes uint64
 	// ConfirmTicks is how many consecutive ticks a stamp-with-no-claude must
 	// hold. Restarting claude to load a new skill set leaves a tick that looks
 	// exactly like a death.
@@ -144,9 +149,6 @@ type Watcher struct {
 func NewWatcher(cfg Config) *Watcher {
 	if cfg.ConfirmTicks < 1 {
 		cfg.ConfirmTicks = 1
-	}
-	if cfg.PaneClearBytes == 0 || cfg.PaneClearBytes > cfg.PaneWarnBytes {
-		cfg.PaneClearBytes = cfg.PaneWarnBytes
 	}
 	if cfg.TombstoneGrace <= 0 {
 		cfg.TombstoneGrace = 90 * time.Second
@@ -262,32 +264,6 @@ func (w *Watcher) standing(cur Snapshot, first bool) []Finding {
 			delete(w.streak, key)
 			w.clear(KindClaudeDied, key)
 		}
-
-		// Compared against unreclaimable memory, not memory.current: the cap
-		// makes the kernel reclaim cache before it kills anything, so current
-		// sitting at the ceiling is normal rather than dangerous. An uncapped
-		// pane has nothing about to kill it either, so a warning there would
-		// name a risk that is not present. An open episode holds until the pane
-		// drops below the clear level, not just below the warn level.
-		atRisk := s.PaneLimit > 0 && s.ClaudeAlive
-		level := w.cfg.PaneWarnBytes
-		if w.isOpen(KindPaneNearCap, key) {
-			level = w.cfg.PaneClearBytes
-		}
-		if atRisk && s.PaneUnreclaimable >= level {
-			if w.raise(KindPaneNearCap, key) {
-				out = append(out, Finding{
-					Kind:              KindPaneNearCap,
-					User:              cur.User,
-					Session:           name,
-					PaneBytes:         s.PaneBytes,
-					PaneUnreclaimable: s.PaneUnreclaimable,
-					PaneLimit:         s.PaneLimit,
-				})
-			}
-		} else {
-			w.clear(KindPaneNearCap, key)
-		}
 	}
 	return out
 }
@@ -303,8 +279,6 @@ func (w *Watcher) raise(k Kind, key string) bool {
 }
 
 func (w *Watcher) clear(k Kind, key string) { delete(w.open, string(k)+"/"+key) }
-
-func (w *Watcher) isOpen(k Kind, key string) bool { return w.open[string(k)+"/"+key] }
 
 func (w *Watcher) skip(name string) bool {
 	for _, p := range w.cfg.SkipPrefixes {

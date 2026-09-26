@@ -16,6 +16,7 @@ import type { PrefsStore } from "../store/prefs";
 import type { NotificationSystem } from "../notify/notifications";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 import type { SkillsStore } from "../store/skills";
+import type { SessionTool } from "../types/lobby";
 import { railFor, resolvePage, type PageId, type RailEntry } from "./settings/rail";
 import { AppearancePage } from "./settings/pages/AppearancePage";
 import { TerminalPage } from "./settings/pages/TerminalPage";
@@ -80,8 +81,9 @@ export const SettingsPanel: Component<{
   actAs?: ActAsControl;
   /** the skills inventory behind the Skills page. */
   skills?: SkillsStore;
-  /** the caller's live sessions, for the Skills page's Sessions tab. */
-  skillSessions?: Accessor<ReadonlyArray<{ name: string; state?: string }>>;
+  /** the caller's live sessions, for the Skills page's Sessions tab. `tool`
+   *  decides which of them a restart (`claude --continue`) is offered for. */
+  skillSessions?: Accessor<ReadonlyArray<{ name: string; state?: string; tool?: SessionTool }>>;
   /** the caller's live sessions with their titles, so the Agent spend page can
    *  name a row rather than showing the session's id. */
   sessionTitles?: Accessor<ReadonlyArray<{ name: string; title?: string }>>;
@@ -257,10 +259,7 @@ export const SettingsPanel: Component<{
                 <TerminalPage prefs={props.prefs} />
               </Match>
               <Match when={current() === "sessions"}>
-                <SessionsPage
-                  prefs={props.prefs}
-                  availableCommands={props.availableCommands}
-                />
+                <SessionsPage prefs={props.prefs} availableCommands={props.availableCommands} />
               </Match>
               <Match when={current() === "keyboard"}>
                 <Show

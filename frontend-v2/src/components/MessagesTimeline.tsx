@@ -5,6 +5,7 @@ import {
   createSignal,
   For,
   onCleanup,
+  onMount,
   Show,
   untrack,
   type Accessor,
@@ -30,6 +31,7 @@ import {
   type PlanTransient,
   type QuestionRow,
   type StatusRow,
+  type WorkingRow,
   type ThinkingRow,
   type TimelineRow,
   type TodoRow,
@@ -40,6 +42,7 @@ import {
 import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
 import { MessageSegments } from "./Attachment";
+import { collapseSegments, segmentPrompt } from "../lib/attachments";
 import {
   ContinuationRowView,
   MetaRowView,
@@ -50,6 +53,7 @@ import {
   SkillRowView,
   ToolRowView,
   TurnFoldRowView,
+  WorkingRowView,
 } from "./rows";
 
 const USER_COLLAPSE_CHARS = 600;
@@ -62,12 +66,19 @@ const UserRowView: Component<{
   row: UserRow;
   /** effective OS user — decides whether a store path is ours to fetch. */
   me?: string;
+  /** the session, whose transcript holds the prompt's pasted pictures. */
+  session?: string;
   onOpenPreview?: (path: string) => void;
 }> = (props) => {
-  const long = () => props.row.body.length > USER_COLLAPSE_CHARS;
+  // The collapse works on segments rather than on the body, so it can never
+  // end halfway through a path or a `[Image #N]` placeholder: slicing the body
+  // at character 600 turned a store path across that point into a broken
+  // fragment of text where its picture belonged.
+  const segments = createMemo(() => segmentPrompt(props.row.body, props.row.images));
+  const collapsed = createMemo(() => collapseSegments(segments(), USER_COLLAPSE_CHARS));
+  const long = () => collapsed().cut;
   const [open, setOpen] = createSignal(false);
-  const shown = () =>
-    long() && !open() ? props.row.body.slice(0, USER_COLLAPSE_CHARS) + "…" : props.row.body;
+  const shown = () => (long() && !open() ? collapsed().segments : segments());
   return (
     <div class="tl-row tl-row-user" data-eid={props.row.id}>
       <div class="tl-bubble-user">
@@ -75,7 +86,14 @@ const UserRowView: Component<{
             <img>/<button> is phrasing content, so substituting a path in place
             costs the surrounding text nothing. */}
         <pre class="tl-user-text">
-          <MessageSegments text={shown()} me={props.me ?? ""} onOpen={props.onOpenPreview} />
+          <MessageSegments
+            segments={shown()}
+            me={props.me ?? ""}
+            session={props.session}
+            record={props.row.record}
+            onOpen={props.onOpenPreview}
+          />
+          {long() && !open() ? "…" : ""}
         </pre>
         <Show when={long()}>
           <button
@@ -119,7 +137,11 @@ const GhostRowsView: Component<{
             <div class="tl-ghost-body">
               <span class="tl-ghost-tag">Queued</span>
               <pre class="tl-user-text tl-ghost-text">
-                <MessageSegments text={text} me={props.me ?? ""} onOpen={props.onOpenPreview} />
+                <MessageSegments
+                  segments={segmentPrompt(text)}
+                  me={props.me ?? ""}
+                  onOpen={props.onOpenPreview}
+                />
               </pre>
             </div>
             <span class="tl-ghost-when">Sends when Claude finishes this turn</span>
@@ -136,8 +158,9 @@ const GhostRowsView: Component<{
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
   <div class="tl-row tl-row-message" data-eid={props.row.id}>
     <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
-      {/* `me` turns bare absolute paths in Claude's prose into attachments too
-          (design 2026-08-17 decision 8), skipping code — see Markdown.tsx. */}
+      {/* `me` makes this a conversation: a picture Claude names by its path is
+          drawn under the text naming it, and fenced code stays code — see
+          Markdown.tsx (2026-09-24, revising design 2026-08-17 decision 8). */}
       <Markdown text={props.row.body} attachAs={props.me} />
     </Show>
   </div>
@@ -307,6 +330,13 @@ export const MessagesTimeline: Component<{
    * did before attachments rendered at all.
    */
   me?: string;
+  /**
+   * The session these events belong to. A picture the transcript itself
+   * carries (one pasted into the terminal, or a Read of an image) has no file,
+   * so its bytes are read back from the session's transcript by index; without
+   * the session those pictures stay text.
+   */
+  session?: string;
   /** the opening window has not arrived yet — this is "not yet", not "none". */
   opening?: boolean;
   /** FALSE while this timeline belongs to a session the lobby is keeping
@@ -321,6 +351,25 @@ export const MessagesTimeline: Component<{
   /** This client's plan answer, applied and not in the transcript yet, and the
    *  call it answered (shownPlanOutcome). */
   planAnswer?: { toolId: string; action: PlanTransient } | null;
+  /**
+   * Mounted but not shown: the session's own timeline while the drill-in
+   * shows one of its agents in its place. Kept mounted so going back finds
+   * the reader where they were, with every fold as they left it.
+   */
+  hidden?: boolean;
+  /** Show this timeline again. Asked for when a jump lands on one of its rows
+   *  while it is hidden, which is how a find-in-session hit opens. */
+  onReveal?: () => void;
+  /** What the log is called to assistive tech: "Session transcript", or the
+   *  agent's when this is the drill-in. */
+  label?: string;
+  /** What the top row says once there is nothing earlier: "Start of session",
+   *  or the start of an agent's transcript in the drill-in. */
+  start?: string;
+  /** Draw the open turn's working row. Only for a timeline with no composer
+   *  under it, the drill-in, since a session's composer says it on its status
+   *  line. */
+  workingRow?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -333,13 +382,14 @@ export const MessagesTimeline: Component<{
    * The open turn's working row is left out. It closed the timeline until
    * 2026-09-24 and says its piece on the composer's thin line now
    * (StatusLine), which is where the reader is already looking and which does
-   * not scroll away with the transcript.
+   * not scroll away with the transcript. The drill-in has no composer, so it
+   * asks for the row (`workingRow`).
    */
   const keyed = createMemo(() => {
     const keys: string[] = [];
     const byKey = new Map<string, TimelineRow>();
     for (const row of rows()) {
-      if (row.kind === "working") continue;
+      if (row.kind === "working" && !props.workingRow) continue;
       let key = row.key;
       for (let n = 1; byKey.has(key); n++) key = `${row.key}#${n}`;
       keys.push(key);
@@ -532,6 +582,8 @@ export const MessagesTimeline: Component<{
         return (
           <ToolRowView
             row={row}
+            session={props.session}
+            me={props.me}
             onOpenPreview={props.onOpenPreview}
             onLoadFull={props.onLoadFull}
             renderChild={renderLeaf}
@@ -550,7 +602,14 @@ export const MessagesTimeline: Component<{
       case "status":
         return <StatusRowView row={row} />;
       case "user":
-        return <UserRowView row={row} me={props.me} onOpenPreview={props.onOpenPreview} />;
+        return (
+          <UserRowView
+            row={row}
+            me={props.me}
+            session={props.session}
+            onOpenPreview={props.onOpenPreview}
+          />
+        );
       case "permission":
         return <PermissionRowView row={row} />;
     }
@@ -558,12 +617,32 @@ export const MessagesTimeline: Component<{
 
   // The row kind is encoded in its key, so a node never changes kind under
   // itself and the switch can run once, at creation.
+  // A ticking clock for the drill-in's working row. One timer for the whole
+  // timeline, running only while that row is drawn: a per-row interval would
+  // re-render the list once a second forever.
+  const [now, setNow] = createSignal(0);
+  createEffect(() => {
+    const working = props.workingRow === true && rows().some((r) => r.kind === "working");
+    if (!working) {
+      setNow(0);
+      return;
+    }
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(t));
+  });
+
   const renderRow = (key: string): JSX.Element => {
     const row = rowAt(key);
     switch (row().kind) {
       case "user":
         return (
-          <UserRowView row={row() as UserRow} me={props.me} onOpenPreview={props.onOpenPreview} />
+          <UserRowView
+            row={row() as UserRow}
+            me={props.me}
+            session={props.session}
+            onOpenPreview={props.onOpenPreview}
+          />
         );
       case "continuation":
         return <ContinuationRowView row={row() as ContinuationRow} />;
@@ -578,6 +657,8 @@ export const MessagesTimeline: Component<{
         return (
           <ToolRowView
             row={row() as ToolRow}
+            session={props.session}
+            me={props.me}
             onOpenPreview={props.onOpenPreview}
             onLoadFull={props.onLoadFull}
             renderChild={renderLeaf}
@@ -607,6 +688,8 @@ export const MessagesTimeline: Component<{
         return <ErrorRowView row={row() as ErrorRow} />;
       case "status":
         return <StatusRowView row={row() as StatusRow} />;
+      case "working":
+        return <WorkingRowView row={row() as WorkingRow} now={now()} />;
       case "turn-fold":
         return (
           <TurnFoldRowView
@@ -672,6 +755,9 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     const row = el?.querySelector<HTMLElement>(`[data-eid="${id}"]`);
     if (!el || !row) return false;
+    // A row nobody can see cannot be scrolled to, and the jump would report a
+    // success that showed nothing. The owner puts the timeline back first.
+    if (untrack(() => props.hidden)) props.onReveal?.();
     setPinned(false);
     row.scrollIntoView({ block: "center" });
     row.classList.add("tl-row-found");
@@ -716,9 +802,69 @@ export const MessagesTimeline: Component<{
     // A queued prompt is drawn after the last row too, so a ghost arriving
     // keeps a pinned reader at the bottom the same way a new row does.
     void props.queued?.length;
+    // A hidden box has no geometry and takes no scroll, so this waits, and
+    // runs again the moment the timeline shows: a reader who left it at the
+    // live end comes back to the live end, however far the session has gone.
+    if (props.hidden) return;
     const el = scroller;
     if (!el || !pinned()) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  });
+
+  /**
+   * The same pin, for when the timeline's own box changes size and nothing in
+   * the transcript does. The agent panel takes 260px of this column's width
+   * when it appears beside it, and the same rows wrap taller in what is left;
+   * on a phone its strip's list takes height from above the transcript.
+   * scrollTop holds through both and no scroll event fires, so the pin stayed
+   * set with the view short of the bottom and no "Latest" button to say so.
+   * Measured on 2026-09-24 at 1440x900: the panel arriving narrowed the rows
+   * from 860 to 760px and left the reader 420px above the live end until the
+   * next row came in.
+   *
+   * The box and never its content: a fold the reader opens grows the content,
+   * and that must not move the viewport (the effect above says why).
+   */
+  onMount(() => {
+    const el = scroller;
+    if (!el || typeof ResizeObserver !== "function") return;
+    const ro = new ResizeObserver(() => {
+      if (props.hidden || !pinned()) return;
+      el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+    });
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
+  });
+
+  /**
+   * The same pin, for a picture that finishes loading. Every picture here is a
+   * lazy <img>, so it arrives after its row was laid out and pinned, and grows
+   * the content by its own height with no scroll event and no change to this
+   * box. Measured on 2026-09-26 at 1280x800: a session with pictures opened
+   * 3014px above its latest message, still flagged as pinned with no "Latest"
+   * button, and stayed there until the next event came in.
+   *
+   * A failed picture counts too: its text replaces it, at another height.
+   * load and error do not bubble, so this listens on the way down, and it moves
+   * the view a microtask later, once the picture's own handler has swapped the
+   * fallback in. A reader who scrolled up is left alone, as everywhere else.
+   */
+  onMount(() => {
+    const el = scroller;
+    if (!el) return;
+    const onPicture = (e: globalThis.Event) => {
+      if (!(e.target instanceof HTMLImageElement)) return;
+      queueMicrotask(() => {
+        if (props.hidden || !pinned()) return;
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      });
+    };
+    el.addEventListener("load", onPicture, true);
+    el.addEventListener("error", onPicture, true);
+    onCleanup(() => {
+      el.removeEventListener("load", onPicture, true);
+      el.removeEventListener("error", onPicture, true);
+    });
   });
 
   const [loadingEarlier, setLoadingEarlier] = createSignal(false);
@@ -819,8 +965,10 @@ export const MessagesTimeline: Component<{
   return (
     <div
       class="tl-timeline"
+      classList={{ "tl-hidden": props.hidden === true }}
       role="log"
-      aria-label="Session transcript"
+      aria-label={props.label ?? "Session transcript"}
+      aria-hidden={props.hidden ? "true" : undefined}
       ref={scroller}
       onScroll={onScroll}
       onClick={recheckPinned}
@@ -842,7 +990,7 @@ export const MessagesTimeline: Component<{
         <div class="tl-row tl-row-earlier">
           <Show
             when={props.hasEarlier}
-            fallback={<span class="tl-status-text">Start of session</span>}
+            fallback={<span class="tl-status-text">{props.start ?? "Start of session"}</span>}
           >
             <button
               type="button"

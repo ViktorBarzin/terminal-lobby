@@ -355,3 +355,21 @@ func TestFileSourceWorthWatchingOnlyWhileReadAndWorking(t *testing.T) {
 		t.Fatal("a settled turn is still being polled")
 	}
 }
+
+// The epoch names the wire SHAPE as well as the transcript. A device caches up
+// to 2,000 events per session for as long as the epoch holds, so when the shape
+// changes (2026-09-24: pictures became references and tool results stopped
+// carrying base64) a device holding the old shape must drop it and reopen,
+// the same path a rewritten transcript takes.
+func TestLogEpochDependsOnTheEventShape(t *testing.T) {
+	p := "/home/u/.claude/projects/x/y.jsonl"
+	if logEpochFor("2026-09-24-images", p) == logEpochFor("an-older-shape", p) {
+		t.Fatal("two event shapes share an epoch, so a device keeps events it can no longer render")
+	}
+	if logEpoch(p) != logEpochFor(eventShape, p) {
+		t.Fatal("the live epoch must be computed under the current event shape")
+	}
+	if logEpochFor(eventShape, p) != logEpochFor(eventShape, p) {
+		t.Fatal("the epoch must be deterministic: every restart would otherwise resync every client")
+	}
+}

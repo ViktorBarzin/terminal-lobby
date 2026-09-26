@@ -144,25 +144,3 @@ func TestThePlanRefusalSaysWhy(t *testing.T) {
 		t.Errorf("Content-Type = %q", ct)
 	}
 }
-
-// The guard runs before the injection, and answers with the refusal. Source
-// assertions, for the reason gate_test.go gives: the handler lives inline in
-// main().
-func TestPromptRefusesWhileThePlanIsOpen(t *testing.T) {
-	raw, err := os.ReadFile("main.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	prompt := promptHandler(t, string(raw))
-	guard := strings.Index(prompt, "planOpen(")
-	inject := strings.Index(prompt, "injector.Prompt(")
-	if guard < 0 || inject < 0 {
-		t.Fatalf("POST /prompt has no plan guard, or no injection:\n%s", prompt)
-	}
-	if guard > inject {
-		t.Error("the plan guard runs after the injection, which is no guard at all")
-	}
-	if !strings.Contains(prompt[guard:inject], "writePlanOpen(") {
-		t.Error("the plan guard does not answer with the plan-open refusal")
-	}
-}

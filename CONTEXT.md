@@ -12,10 +12,15 @@ authenticates and names the user works.
 
 **Session**:
 One tmux session belonging to one OS user, listed in the sidebar and
-rendered in the terminal pane. Usually runs a Claude Code conversation, but
-may be a plain shell. Carries a **name**, which nobody reads, and a
+rendered in the terminal pane. Usually runs a **harness**, most often Claude
+Code, but may be a plain shell. Carries a **name**, which nobody reads, and a
 **title**, which is what everybody reads.
 _Avoid_: terminal, tab, thread
+
+**Harness**:
+The agent CLI a session runs: Claude Code, Codex or pi. A plain shell is a
+command the lobby can start, but not a harness.
+_Avoid_: tool, CLI
 
 **Name** (of a session):
 The tmux session name. An opaque 12-character id, minted by the browser when
@@ -535,9 +540,9 @@ _Avoid_: snapshot (the record points AT one, which is tmux-persist's), backup,
 tombstone, undo token
 
 **Session state**:
-What the Claude conversation inside a session is doing: *running* (it is
-working and will produce more output), *awaiting input* (Claude asked
-something and is blocked on the user), or *completed* (finished, ready
+What the Claude or pi conversation inside a session is doing (Codex reports
+none): *running* (it is working and will produce more output), *awaiting
+input* (the harness asked something and is blocked on the user), or *completed* (finished, ready
 for the next prompt), or *suspended* (a **Suspended session**, whose Claude
 was killed to give its memory back and which a click resumes). A session
 with no live Claude has no state, with that one exception, which is why
@@ -636,9 +641,11 @@ Claude reads. Up to 25MB it joins the session's store directory under a
 `file-` prefix and rides the same 30-day grace as **Session images**;
 larger, it stays a 7-day transfer ephemeron in /tmp and carries no chip.
 Before sending it is an **Inline chip** standing where it was pasted;
-after sending it is drawn where its path stands in the message. An
-attachment whose bytes nothing can serve — another user's store, outside
-the caller's home, swept — shows its path instead.
+after sending it is drawn where its path stands in the message, a photo
+as a **Picture** and a document as a chip. An attachment whose bytes
+nothing can serve shows its path instead: one in another user's store, a
+document outside the caller's home, a photo the caller's OS user cannot
+read, or one that was swept.
 The upload happens when the file is attached in a live **Composer**, and
 on send in the **New-session composer**, which has no session to upload
 into until Enter creates one.
@@ -813,7 +820,10 @@ and text sent into that window is dropped with `POST /prompt` still answering
 an `awaitReady` flag and holds the injection until the pane draws Claude's own
 prompt character and holds still, answering 503 until then. The retry ladder
 carries the retries, and its last rung asks for no wait, so a pane that never
-draws one still gets the text.
+draws one still gets the text. Pi is the exception: it waits on every rung of
+a longer ladder and gives up rather than send blind, because text typed before
+pi owns the terminal arrives with Enter turned into a line feed, which pi reads
+as a new line.
 _Avoid_: initial message, seed prompt
 
 **Text view**:
@@ -844,6 +854,58 @@ elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text. It was the
 timeline's last row until 2026-09-24; since then it is drawn on the left of the
 **status line**.
+
+**Picture**:
+An image the **Text view** draws in the conversation, whichever way it
+arrived: a file named by its absolute path in a prompt, in Claude's reply
+or in a screenshot tool's result, or an **Image block** inside the
+transcript. It stands where it was named in a bubble, under the block that
+named it in Claude's reply, and as a thumbnail in a tool row, and pressing
+it opens it full size. One that cannot be read shows as the text it stood
+for, never as a broken image.
+_Avoid_: image (the word also names **Session images** and image blocks),
+thumbnail (the size a tool row draws a picture at, not a different thing),
+attachment (a person attaches a file; a picture can come from anywhere)
+
+**Image block**:
+A picture carried inside the transcript itself rather than as a file: what
+a paste into the terminal leaves in the prompt, where the text reads
+`[Image #1]`, and what Claude's Read returns for an image. It has no path,
+so the lobby names it by its place in the record and reads it back from
+the transcript.
+_Avoid_: embedded image, inline image, pasted image (a Read result is one
+too)
+
+**Agent panel**:
+The surface in the text view that names a session's concurrent work and says
+what each piece is doing now: the `Agent` subagents and teammates the session
+spawned and the `Workflow` runs it started, read from the session directory
+rather than the transcript. It sits in the right margin of the reading column,
+or as a strip above the transcript when the view is too narrow for a margin.
+It is there only while something in it is running and something says the
+session still owes that work: an open turn, counted **Outstanding work**, or
+an agent whose own transcript says it is waiting on background work it
+started. It goes once the session's claude process has gone, so an agent
+whose session was killed mid-run does not show as running. An agent that ends
+its turn to wait on its own background work is still running. It shows
+elapsed time and last activity, and never says an agent is stuck. Background
+`Bash` commands and the session's own schedules are not in it.
+_Avoid_: task list, agent tree, activity panel
+
+**Live activity**:
+The one-line answer to "what is this agent doing right now", read from the
+last `tool_use` block in the agent's own **agent transcript**, or from the
+call it is waiting on while it waits on its own background work. Distinct from
+**Outstanding work**, which is the count-only signal the state dot uses.
+_Avoid_: status, progress (nothing here has a denominator)
+
+**Agent transcript**:
+The per-agent JSONL under a session's `subagents/` directory, holding
+everything one subagent said and did. A session has one conversation and any
+number of agent transcripts beside it. Tapping an agent in the **Agent panel**
+shows its agent transcript in the conversation's place, read only, until Back.
+_Avoid_: sidechain (that names a record flag that never appears here),
+subsession
 
 **Blocking prompt**:
 Something the CLI is waiting on a human for, which the transcript does not
@@ -1018,13 +1080,13 @@ enough to **Data used** to be worth keeping apart deliberately, so each entry
 says which side it is on.
 
 **Agent spend**:
-What one OS user's Claude Code and Codex conversations have consumed over a
+What one OS user's Claude Code, Codex and pi conversations have consumed over a
 period, kept server-side in `/var/lib/tmux-api/spend/<user>.json` and served by
 `GET /agent-spend`. Distinct from **Data used** in every respect worth naming:
 that is **wire bytes** a browser moved, counted per browser profile and never
 leaving the device; this is what the agents themselves cost, counted per OS
-user, and it follows the person to any browser they sign in from. The two tools
-are kept apart all the way down, because Claude Code reports dollars and a
+user, and it follows the person to any browser they sign in from. The harnesses
+are kept apart all the way down, because Claude Code and pi report dollars and a
 ChatGPT plan reports none.
 _Avoid_: usage (taken: **Data used** owns it, and Codex's rollout spends the
 same word on tokens alone, in `total_token_usage`), cost tracking, billing
@@ -1036,8 +1098,9 @@ Renaming them would mean changing the managed-settings entry in the infra repo
 in the same breath, so they stand — grep for `usage` and expect both meanings.
 
 **Spend**:
-Dollars, and only for Claude Code, which computes `total_cost_usd` itself and
-hands it to the **Recorder** on every render. Never derived here: pricing
+Dollars, and only from a harness that computes them itself: Claude Code, which
+hands `total_cost_usd` to the **Recorder** on every render, and pi, which writes
+a cost into every message of its session file. Never derived here: pricing
 tokens ourselves would mean a rate table with no signal when it went stale.
 A Codex session has no spend figure at all, so its rows carry tokens and stop
 there.
@@ -1072,7 +1135,9 @@ already had with the same JSON on stdin. It is the only place the CLI hands out
 its own cost arithmetic. Everything it does on the recording side is a silent
 no-op on failure and runs in a background subshell, because a statusline that
 breaks somebody's prompt is worse than no feature. Codex has no counterpart and
-needs none: its rollout files already carry what the panel reads.
+needs none: its rollout files already carry what the panel reads. Pi's
+counterpart is the lobby's pi extension, which posts each session's running
+totals to `POST /hooks/pi-usage` when a turn settles.
 _Avoid_: hook (no hook payload carries cost, which is the whole reason this
 exists), agent, collector
 

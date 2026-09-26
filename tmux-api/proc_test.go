@@ -281,3 +281,96 @@ func TestProcTreeFromRealProc(t *testing.T) {
 		t.Fatalf("own pid %d missing from proc tree", os.Getpid())
 	}
 }
+
+// Pi joins the tool mark. Its comm is `pi` because it sets process.title; for
+// roughly its first 0.8 s it still reads as its runtime (`node`, or
+// `MainThread`, the same comm codex's node shim carries), and that start-up
+// window is a shell like any other pane with no agent in it yet.
+//
+// Precedence is explicit, claude then codex then pi, so a tie at equal depth
+// always resolves the same way whatever order /proc lists the processes in.
+func TestToolUnderKnowsPi(t *testing.T) {
+	dir := writeFakeProc(t, map[int]struct {
+		comm string
+		ppid int
+	}{
+		// pane runs pi through the login shell tmux-user-attach starts
+		100: {"bash", 1},
+		101: {"pi", 100},
+		102: {"bash", 101}, // pi's own bash tool
+		// pi in its first moments, before process.title lands
+		200: {"zsh", 1},
+		201: {"MainThread", 200},
+		// pi that spawned claude as a subprocess: the session is pi's
+		300: {"pi", 1},
+		301: {"bash", 300},
+		302: {"claude", 301},
+		// ties at equal depth
+		400: {"zsh", 1},
+		401: {"pi", 400},
+		402: {"claude", 400},
+		500: {"zsh", 1},
+		501: {"pi", 500},
+		502: {"codex", 500},
+	})
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		pane int
+		want string
+	}{
+		{"pi under the login shell", 100, toolPi},
+		{"pi before process.title reads as a shell", 200, toolShell},
+		{"pi outranks the claude it spawned", 300, toolPi},
+		{"claude wins a tie with pi", 400, toolClaude},
+		{"codex wins a tie with pi", 500, toolCodex},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tree.toolUnder(tc.pane); got != tc.want {
+				t.Fatalf("toolUnder(%d) = %q, want %q", tc.pane, got, tc.want)
+			}
+		})
+	}
+	if !(agentPrecedence(toolClaude) < agentPrecedence(toolCodex) && agentPrecedence(toolCodex) < agentPrecedence(toolPi)) {
+		t.Fatalf("precedence is not claude, codex, pi: %d %d %d",
+			agentPrecedence(toolClaude), agentPrecedence(toolCodex), agentPrecedence(toolPi))
+	}
+}
+
+// A live pi owns @claude_state too: the lobby's pi extension stamps it through
+// the same claude-tmux-state script. So the liveness backstop keeps a state
+// with a pi under the pane and still drops one with only codex there, which
+// never stamps it.
+func TestClearDeadStatesKeepsAPiSessionsState(t *testing.T) {
+	dir := writeFakeProc(t, map[int]struct {
+		comm string
+		ppid int
+	}{
+		100: {"bash", 1},
+		101: {"pi", 100},
+		200: {"codex", 1},
+		201: {"pi", 200}, // pi under codex: still a live stamper
+		300: {"bash", 1}, // pi exited, the shell remains
+		400: {"bash", 1},
+		401: {"codex", 400},
+	})
+	tree, err := procTreeFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := []Session{
+		{Name: "pi", State: "running", PanePID: 100},
+		{Name: "pi-under-codex", State: "done", PanePID: 200},
+		{Name: "pi-gone", State: "done", PanePID: 300},
+		{Name: "codex-only", State: "done", PanePID: 400},
+	}
+	clearDeadStates(sessions, tree)
+	for i, want := range []string{"running", "done", "", ""} {
+		if sessions[i].State != want {
+			t.Errorf("%s: State = %q, want %q", sessions[i].Name, sessions[i].State, want)
+		}
+	}
+}

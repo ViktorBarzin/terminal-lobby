@@ -629,3 +629,30 @@ func TestPaneTitleSummary(t *testing.T) {
 		})
 	}
 }
+
+// A pi session is titled from its first prompt, and pi's own pane title is not
+// a summary. Pi writes `π - <dir>`, or `π - <session name> - <dir>` once the
+// session is named, and none of those lead with a Claude Code glyph, so the rule
+// that adopts a pane title as the session title never fires for pi. It is pinned
+// here because a pi session DOES carry @claude_state, which is the other half of
+// what the rule looks for.
+func TestAutoTitleNeverAdoptsPisPaneTitle(t *testing.T) {
+	for _, title := range []string{"π - demo", "π - Refactor auth - terminal-lobby", "π"} {
+		if got, ok := paneTitleSummary(title); ok {
+			t.Errorf("paneTitleSummary(%q) = %q, true; pi's title is not a summary", title, got)
+		}
+	}
+	now := time.Now()
+	for _, state := range []string{stateRunning, stateDone, stateAwaiting} {
+		argv, rec := autoTitleFixture(t, "exit 0")
+		sessions := []Session{{ID: "$1", Name: "k7m2q9x4tpz3", State: state, Tool: toolPi,
+			Created: now.Add(-10 * time.Second).Unix(), PaneTitle: "π - terminal-lobby"}}
+		autoTitleSessions("wizard", sessions, now)
+		if got := recordedArgv(t, argv); got != "" {
+			t.Errorf("a %s pi session had its pane title adopted:\n%s", state, got)
+		}
+		if evs := autonamed(t, rec); len(evs) != 0 {
+			t.Errorf("a %s pi session emitted %d title events", state, len(evs))
+		}
+	}
+}

@@ -6,9 +6,16 @@ import {
   onCleanup,
   onMount,
   Show,
+  useContext,
   type Component,
 } from "solid-js";
-import type { Event, PermissionDecision, SessionState } from "../types/events";
+import type {
+  AgentInfo,
+  Event,
+  PermissionDecision,
+  SessionState,
+  WorkflowInfo,
+} from "../types/events";
 import {
   askingFromPane,
   currentMode,
@@ -57,11 +64,22 @@ import {
 } from "./plan.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
-import type { BackgroundWork } from "../types/lobby";
+import type { BackgroundWork, SessionTool } from "../types/lobby";
+import { AgentPanel } from "./AgentPanel";
+import { AgentTranscript } from "./AgentTranscript";
+import { panelPresent, type AgentSnapshot } from "./agents.logic";
+import { TileFocusContext } from "../lib/ownwhile";
+import { isEditingTarget } from "../keybindings/editing";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
-import { isCurrentModel, type ModelField, type ModelHarness, type ModelState } from "../lib/models";
+import {
+  isCurrentModel,
+  type ModelField,
+  type ModelHarness,
+  type ModelState,
+  type PiOffer,
+} from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
 import type { SetModeReply, SetModeResult } from "../lib/mode-api";
 import { isDangerMode, modeTitle, type ModeId } from "../logic/modes";
@@ -201,6 +219,13 @@ function refusal(
 }
 
 /**
+ * The narrowest text view the agent panel keeps its margin in, in px. The
+ * prototype's breakpoint: a 260px rail beside what is left still reads as a
+ * column, and below it the panel folds into a strip above the transcript.
+ */
+const RAIL_MIN_PX = 900;
+
+/**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
  * above a composer with the docked permission panel.
  *
@@ -221,6 +246,12 @@ export const TextView: Component<{
    *  main thread stops talking, and says nothing about the background agent
    *  that is still running. */
   background?: () => BackgroundWork | undefined;
+  /** The session's agents and workflow runs, from the stream's `agents` frame.
+   *  Absent, or null, against a server that predates it: no panel. */
+  agents?: () => AgentSnapshot | null;
+  /** Which command the session runs, from the session list. The agent panel
+   *  shows only while the session's claude is there to run its agents. */
+  tool?: () => SessionTool | undefined;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
@@ -263,6 +294,9 @@ export const TextView: Component<{
   /** FALSE while the lobby is keeping this session mounted without showing it:
    *  a hidden view answers for nothing global. */
   onScreen?: boolean;
+  /** The session's stream is parked while nobody reads it. An agent's
+   *  transcript open in the drill-in parks with it. */
+  parked?: boolean;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** take one step further back through the transcript. */
@@ -287,6 +321,13 @@ export const TextView: Component<{
   harness?: ModelHarness | null;
   /** put the session on a model or an effort level, and say what happened. */
   onSetModel?: (choice: { model: string; effort: string }) => Promise<SetModelResult>;
+  /** what a pi session stamped about itself (the session list's `piModel` and
+   *  `piThinking`). Read when the transcript names no model, which for a pi
+   *  session is always: the lobby reads no pi transcript. */
+  stampedModel?: ModelState;
+  /** pi's rows for the chip: the models pi lists and the levels the session's
+   *  model supports. Absent for every other harness. */
+  modelOffer?: PiOffer;
   /** the effective OS user — decides which store paths render as attachments. */
   me?: string;
   /** upload files and return the ones that became attachable. */
@@ -695,12 +736,104 @@ export const TextView: Component<{
   // font-size on one element: every font-size in app.css multiplies itself by
   // this, so the transcript, the answer card and the composer follow one pinch
   // together.
+  /**
+   * The agent panel, and which of its two forms fits.
+   *
+   * The margin needs 260px beside a readable column, so below RAIL_MIN_PX of
+   * text view it becomes a one-line strip above the transcript instead. The
+   * width is the TEXT VIEW's, not the window's: a workspace tile or the open
+   * sidebar narrows it without the viewport changing, which is why this is an
+   * observer and not a media query. A container query would have been the
+   * CSS-only way, but `container-type` makes the view a containing block for
+   * every fixed-position menu inside it (the composer's among them).
+   */
+  const agentSet = createMemo(() => props.agents?.() ?? null);
+  const showAgents = createMemo(() =>
+    panelPresent(agentSet()?.set, live() !== undefined, props.background?.(), props.tool?.()),
+  );
+  const [narrow, setNarrow] = createSignal(false);
+
+  /**
+   * The drill-in (design step 6): tapping an agent in the panel puts its own
+   * transcript in the session's place, and Back or Escape puts the session's
+   * back.
+   *
+   * VIEW STATE, NOT AN ADDRESS. The URL's hash is the session's own address,
+   * rewritten in place as the selection moves and read once at startup
+   * (lobby.logic `updateHash`, App `readInitialSelection`), and a session is
+   * renamed under that address when its first prompt lands, so an agent
+   * address inside it would have nothing stable to hang from. A reload
+   * therefore comes back to the session, which is also where Back goes.
+   *
+   * The session's timeline stays mounted behind the drill-in, hidden, so Back
+   * finds the reader where they left it, folds and all. The panel stays
+   * beside it with the open agent marked, and the drill-in stays when the
+   * panel goes: an agent that ends while someone reads it is still being read.
+   */
+  const [drill, setDrill] = createSignal<string | null>(null);
+  /** The newest the set said about the open agent, kept once it leaves the set. */
+  const drillInfo = createMemo<AgentInfo | undefined>((was) => {
+    const id = drill();
+    if (id === null) return undefined;
+    return agentSet()?.set.agents.find((a) => a.id === id) ?? (was?.id === id ? was : undefined);
+  });
+  const drillRun = createMemo<WorkflowInfo | undefined>((was) => {
+    const run = drillInfo()?.workflowId;
+    if (!run) return undefined;
+    return (
+      agentSet()?.set.workflows.find((w) => w.id === run) ?? (was?.id === run ? was : undefined)
+    );
+  });
+  /** Back to the session. From Back and Escape the focus returns to the entry
+   *  that opened it; a find jump keeps the focus it put on its own row. */
+  const closeDrill = (refocus: boolean): void => {
+    const id = drill();
+    setDrill(null);
+    if (!refocus || id === null) return;
+    const entry = [...(viewEl?.querySelectorAll<HTMLElement>("[data-agent]") ?? [])].find(
+      (e) => e.dataset.agent === id,
+    );
+    // The strip folds its list away on a tap, so there the entry is gone and
+    // the strip's own bar is the nearest thing to it.
+    const opener =
+      entry?.querySelector<HTMLButtonElement>("button.tl-agent-open") ??
+      viewEl?.querySelector<HTMLButtonElement>("button.tl-agents-bar");
+    opener?.focus({ preventScroll: true });
+  };
+  // Escape goes back from the view the keystrokes are going to (a workspace
+  // shows several), and never from a field being typed into. A key some other
+  // layer has claimed, an open file preview for one, is left to it.
+  const tileFocused = useContext(TileFocusContext);
+  onMount(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape" || e.defaultPrevented || drill() === null) return;
+      if (props.onScreen === false || !tileFocused() || !viewEl || viewEl.closest(".tl-hidden")) {
+        return;
+      }
+      const t = e.target instanceof Element ? e.target : null;
+      if (t && t !== document.body && !viewEl.contains(t)) return;
+      if (isEditingTarget(t)) return;
+      e.preventDefault();
+      closeDrill(true);
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
+
+  const observeWidth = (el: HTMLDivElement): void => {
+    if (typeof ResizeObserver !== "function") return; // older engines: the rail
+    const ro = new ResizeObserver(() => setNarrow(el.clientWidth < RAIL_MIN_PX));
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
+  };
+
   const [textSize, setTextSize] = createSignal(loadTextSize());
   const [sizing, setSizing] = createSignal<number | null>(null);
   let viewEl: HTMLDivElement | undefined;
   onMount(() => {
     const stop = installTextZoom({
-      surface: () => viewEl?.querySelector<HTMLElement>(".tl-timeline") ?? null,
+      // Whichever timeline is showing: the session's, or the drill-in's.
+      surface: () => viewEl?.querySelector<HTMLElement>(".tl-timeline:not(.tl-hidden)") ?? null,
       get: textSize,
       set: (n) => {
         setTextSize(n);
@@ -1139,8 +1272,15 @@ export const TextView: Component<{
    * session next answered. The APPLY reports what the session said about
    * itself immediately afterwards, and that reading holds until the transcript
    * reports a pair of its own.
+   *
+   * A pi session has no transcript here, so its STAMP stands in for one: the
+   * pair the lobby's pi extension writes on the pane whenever the model or the
+   * level changes. An apply holds until the stamp moves, exactly as it would
+   * wait for the transcript.
    */
-  const transcriptModel = createMemo(() => currentModel(props.events, props.sessionState));
+  const transcriptModel = createMemo(
+    () => currentModel(props.events, props.sessionState) ?? props.stampedModel,
+  );
   const [appliedModel, setAppliedModel] = createSignal<{
     state: ModelState;
     against: string;
@@ -1291,25 +1431,63 @@ export const TextView: Component<{
           Aa {sizing()}px
         </div>
       </Show>
-      <MessagesTimeline
-        opening={props.opening}
-        owns={props.onScreen !== false}
-        events={shown()}
-        rows={shownRows()}
-        queued={queued()}
-        onOpenPreview={props.onOpenPreview}
-        onLoadFull={props.onLoadFull}
-        onLoadEarlier={props.onLoadEarlier}
-        hasEarlier={props.hasEarlier}
-        onPinned={props.onPinned}
-        pinned={props.pinned}
-        me={props.me}
-        planDocked={planDocked()?.call ?? null}
-        planAnswer={(() => {
-          const a = planAnswered();
-          return a ? { toolId: a.toolId, action: a.action } : null;
-        })()}
-      />
+      {/* The transcript and, beside it, the agent panel: the right margin of
+          the reading column, or a strip above it when the view is narrow. */}
+      <div
+        class="tl-textview-body"
+        classList={{ "tl-textview-body-strip": showAgents() && narrow() }}
+        ref={observeWidth}
+      >
+        <MessagesTimeline
+          opening={props.opening}
+          owns={props.onScreen !== false}
+          events={shown()}
+          rows={shownRows()}
+          onOpenPreview={props.onOpenPreview}
+          onLoadFull={props.onLoadFull}
+          onLoadEarlier={props.onLoadEarlier}
+          hasEarlier={props.hasEarlier}
+          onPinned={props.onPinned}
+          pinned={props.pinned}
+          me={props.me}
+          session={props.session}
+          queued={queued()}
+          planDocked={planDocked()?.call ?? null}
+          planAnswer={(() => {
+            const a = planAnswered();
+            return a ? { toolId: a.toolId, action: a.action } : null;
+          })()}
+          hidden={drill() !== null}
+          onReveal={() => closeDrill(false)}
+        />
+        <Show when={drill()} keyed>
+          {(id) => (
+            <AgentTranscript
+              session={props.session ?? ""}
+              agent={id}
+              info={drillInfo()}
+              run={drillRun()}
+              skew={agentSet()?.skew ?? 0}
+              parked={props.parked === true}
+              onBack={() => closeDrill(true)}
+              onOpenPreview={props.onOpenPreview}
+              me={props.me}
+              notify={props.notify}
+            />
+          )}
+        </Show>
+        <Show when={showAgents() ? agentSet() : null}>
+          {(snap) => (
+            <AgentPanel
+              snapshot={snap()}
+              form={narrow() ? "strip" : "rail"}
+              // An agent's transcript is read through its session's routes.
+              onOpen={props.session ? (id) => setDrill(id) : undefined}
+              openId={drill()}
+            />
+          )}
+        </Show>
+      </div>
       {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
           covers it, and a walk that slides out from under a thumb mid-answer is
           worse than no walk. The permanent record is the inline row, which
@@ -1374,8 +1552,11 @@ export const TextView: Component<{
         // still owes once the transcript has closed the turn: an agent or a
         // workflow it launched keeps going and writes into this conversation
         // minutes later (the session list knows, the transcript does not).
+        // The agent panel names the same work one entry at a time, so the line
+        // leaves it out while the panel shows; on the panel's own signal, so
+        // the two cannot disagree.
         live={lineLive()}
-        background={backgroundLabel(props.background?.())}
+        background={showAgents() ? undefined : backgroundLabel(props.background?.())}
         // Send stays available while a question is docked, and answers it:
         // `send` types what is in the field as the question's free-text
         // answer, and only falls back to a prompt when the pane has no dialog
@@ -1400,7 +1581,7 @@ export const TextView: Component<{
         onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel
-          ? { harness: props.harness, onPickModel: pickModel }
+          ? { harness: props.harness, onPickModel: pickModel, modelOffer: props.modelOffer }
           : {})}
         {...(modelState() ? { model: modelState()! } : {})}
         modelBusy={modelBusy()}

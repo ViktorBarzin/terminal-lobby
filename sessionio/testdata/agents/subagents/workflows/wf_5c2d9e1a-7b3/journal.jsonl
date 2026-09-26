@@ -1,0 +1,6 @@
+{"type":"launched"}
+{"type":"started","key":"v2:0505050505050505050505050505050505050505050505050505050505050505","agentId":"a0b2c4d6e8f0a0005","label":"plan","phase":"Plan"}
+{"type":"result","key":"v2:0505050505050505050505050505050505050505050505050505050505050505","agentId":"a0b2c4d6e8f0a0005","result":{"reviewers":["bugs","design"]}}
+{"type":"started","key":"v2:0303030303030303030303030303030303030303030303030303030303030303","agentId":"a2c4e6f8a0b1c0003","label":"review:bugs","phase":"Review"}
+{"type":"started","key":"v2:0404040404040404040404040404040404040404040404040404040404040404","agentId":"a6b8d0f2c4e6d0004","label":"review:design","phase":"Review"}
+{"type":"result","key":"v2:0404040404040404040404040404040404040404040404040404040404040404","agentId":"a6b8d0f2c4e6d0004","result":{"ok":true,"summary":"The diff matches the design.","findings":[]}}

@@ -20,12 +20,14 @@ import { DialBar, type DialSpec } from "./Dial";
 import { ModePanel } from "./ModePanel";
 import { ContextRing, ShieldIcon, WarnIcon } from "./Icons";
 import {
+  chipName,
   labelFor,
   modelName,
   summarise,
   type ModelField,
   type ModelHarness,
   type ModelState,
+  type PiOffer,
 } from "../lib/models";
 
 /**
@@ -134,6 +136,8 @@ export const Composer: Component<{
   /** What that CLI reports being on, and whether a change is in flight. */
   model?: ModelState;
   modelBusy?: boolean;
+  /** Pi's rows: the models pi lists and the levels the session supports. */
+  modelOffer?: PiOffer;
   /** Put the session on a model or an effort level. */
   onPickModel?: (field: ModelField, id: string) => void;
   /** Directory listing for `@` path completion. */
@@ -239,11 +243,17 @@ export const Composer: Component<{
     const e = props.model?.effort ? labelFor(h, "effort", props.model.effort) : "";
     return [m, e].filter((s) => s !== "").join(" · ");
   };
+  /** What the dial is called, in the harness's own words: pi's second
+   *  setting is "thinking" (lib/models.ts chipName). */
+  const modelTitle = (): string => chipName(props.harness ?? "claude");
   const modelDial: DialSpec = {
     id: "model",
     label: "model",
     tab: "Model",
-    title: "Model and effort",
+    // A getter, so the float's name follows the harness like the rest does.
+    get title() {
+      return modelTitle();
+    },
     fold: 1,
     busy: () => props.modelBusy === true,
     held: modelHeld,
@@ -256,12 +266,12 @@ export const Composer: Component<{
       <span class="tl-dial-value">{props.modelBusy ? "Switching…" : modelWords() || "Model"}</span>
     ),
     ariaLabel: () =>
-      `Model and effort: ${modelWords() || "not reported yet"}. ${modelHeld() || "Change them"}`,
+      `${modelTitle()}: ${modelWords() || "not reported yet"}. ${modelHeld() || "Change them"}`,
     // The exact slug, which the name on the dial shortens (lib/models.ts).
     hint: () =>
       summarise(props.model)
-        ? `Model and effort: ${summarise(props.model)}`
-        : "Model and effort. The session has not answered yet",
+        ? `${modelTitle()}: ${summarise(props.model)}`
+        : `${modelTitle()}. The session has not answered yet`,
     panel: (ctx) => (
       <ModelPanel
         harness={props.harness ?? "claude"}
@@ -271,6 +281,7 @@ export const Composer: Component<{
         inertReason={modelHeld() || undefined}
         onPick={(field, id) => props.onPickModel?.(field, id)}
         onDone={ctx.close}
+        {...(props.modelOffer ? { offer: props.modelOffer } : {})}
       />
     ),
   };
