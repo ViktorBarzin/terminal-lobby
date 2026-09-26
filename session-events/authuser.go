@@ -46,6 +46,11 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 		gate.MapPath = mapPath
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A refusal is never cached: the picture routes behind this gate are
+		// cached for a year and promise no-store on every error, and a 501 is
+		// cacheable by default. A request that passes reaches its route with the
+		// header cleared again, so each route still picks its own policy.
+		w.Header().Set("Cache-Control", "no-store")
 		id, ok := gate.Authorize(w, r)
 		if !ok {
 			return
@@ -56,6 +61,7 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 				http.StatusNotImplemented)
 			return
 		}
+		w.Header().Del("Cache-Control")
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), osUserKey, osUser)))
 	})
 }
