@@ -578,8 +578,10 @@ so a full-page capture (11 of the 85 screenshots) shows its top rather than a
 thin sliver, and the lightbox shows all of it. On a 390px phone the stylesheet
 leaves a bubble about 266px of content width (6vw of timeline padding each side,
 85% of what remains, less the bubble's 12px padding and 1px border), and
-`max-width: 100%` fits a picture to it. That figure is computed from the CSS;
-the phone screenshots in the verification below are what confirm it.
+`max-width: 100%` fits a picture to it. That figure is computed from the CSS.
+The emulator check on 2026-09-26 ran at 412px, where the same formula gives
+about 283px, and measured a bubble content width of 282.8px with a 1600 by 900
+picture drawn exactly that wide.
 
 ## Security position
 
@@ -783,6 +785,21 @@ The tests show the code is what was intended. These steps show it works.
 5. On the shared Android emulator: the 320px cap, a picture that fits a bubble,
    a 96px thumbnail, and a tap on a picture that opens the lightbox and puts the
    keyboard away.
+   Run on 2026-09-26 against a local build, in Chrome on the emulator (412px
+   wide, device pixel ratio 2.625), with real `adb input tap` presses. A 600 by
+   1400 picture in a bubble drew at 138 by 320px; a 1600 by 900 one at 282.8px,
+   the bubble's content width; the Read row's thumbnail at 64 by 96px; and the
+   page never scrolled sideways (scroll width 412 of 412). With the keyboard up
+   and the composer focused, a tap on a bubble picture and on a prose picture
+   each opened the lightbox and hid the keyboard, and a tap to close gave the
+   composer its focus and keyboard back. A tap on the thumbnail with nothing
+   focused opened and closed the lightbox with no keyboard at any point.
+   Seen and left as it is: a picture opened from near the end of the
+   conversation with the keyboard up came back about 300px lower after the
+   round trip (from y 133 to 434, behind the composer). The likely cause is
+   the browser clamping the timeline's scroll position when the keyboard goes
+   away and the timeline grows (314 to 626px tall), and keeping the clamped
+   value when it returns. The "Latest" button is still offered.
 6. Once deployed, the same shapes against the deployed stack, and the Data used
    panel filing pictures under Files & images.
 
