@@ -746,6 +746,37 @@ export const MessagesTimeline: Component<{
     onCleanup(() => ro.disconnect());
   });
 
+  /**
+   * The same pin, for a picture that finishes loading. Every picture here is a
+   * lazy <img>, so it arrives after its row was laid out and pinned, and grows
+   * the content by its own height with no scroll event and no change to this
+   * box. Measured on 2026-09-26 at 1280x800: a session with pictures opened
+   * 3014px above its latest message, still flagged as pinned with no "Latest"
+   * button, and stayed there until the next event came in.
+   *
+   * A failed picture counts too: its text replaces it, at another height.
+   * load and error do not bubble, so this listens on the way down, and it moves
+   * the view a microtask later, once the picture's own handler has swapped the
+   * fallback in. A reader who scrolled up is left alone, as everywhere else.
+   */
+  onMount(() => {
+    const el = scroller;
+    if (!el) return;
+    const onPicture = (e: globalThis.Event) => {
+      if (!(e.target instanceof HTMLImageElement)) return;
+      queueMicrotask(() => {
+        if (props.hidden || !pinned()) return;
+        el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+      });
+    };
+    el.addEventListener("load", onPicture, true);
+    el.addEventListener("error", onPicture, true);
+    onCleanup(() => {
+      el.removeEventListener("load", onPicture, true);
+      el.removeEventListener("error", onPicture, true);
+    });
+  });
+
   const [loadingEarlier, setLoadingEarlier] = createSignal(false);
   const loadEarlier = async () => {
     if (!props.onLoadEarlier || loadingEarlier() || !props.hasEarlier) return;
