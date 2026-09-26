@@ -83,6 +83,13 @@ type AgentInfo struct {
 	ToolCalls    int    `json:"toolCalls"`    // tool_use blocks so far
 	OutputTokens int64  `json:"outputTokens"` // summed over distinct message ids, the last record of each winning
 	Result       string `json:"result"`       // once ended: at most 200 chars of the final text or error
+
+	// Waiting is a running agent whose turn has ended to wait on background
+	// work of its own: a Bash sent to the background, a Monitor, an Agent it
+	// launched with run_in_background (agenttail.go, stop). The work is still
+	// outstanding in its own transcript, which is what lets the panel keep it
+	// on screen when nothing else says the session is busy.
+	Waiting bool `json:"waiting,omitempty"`
 }
 
 // WorkflowPhase is one phase of a Workflow run, in run order.

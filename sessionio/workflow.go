@@ -464,6 +464,7 @@ func (w *Workflow) member(s memberSource, phases []WorkflowPhase, runEnd int64) 
 // finish ends a member by a source written after its transcript. Where the
 // transcript already ended it the same way, its own end and answer stand.
 func finish(info *AgentInfo, state AgentState, at int64, result string) {
+	info.Waiting = false // a member the run says has finished waits on nothing
 	if info.State != state {
 		info.State, info.EndedAt = state, at
 		if state == AgentDone {

@@ -149,6 +149,7 @@ func (t *AgentTail) Info(meta AgentMeta) AgentInfo {
 		ToolCalls:    t.toolCalls,
 		OutputTokens: t.tokens,
 		Result:       t.result,
+		Waiting:      t.waiting && t.state == AgentRunning,
 	}
 	// Before the first record the sidecar is all there is: the agent was
 	// spawned when it was written, and has done nothing since.
@@ -211,6 +212,7 @@ func (t *AgentTail) assistant(rec Record, at int64) {
 			if b.ID != "" {
 				t.calls[b.ID] = agentCall{t.tool, t.detail}
 			}
+			t.stopTask(b.Name, b.Input)
 			if b.Name == "Agent" || b.Name == "Task" {
 				t.spawned = append(t.spawned, b.ID)
 			}
@@ -258,6 +260,14 @@ func (t *AgentTail) showWaitingOn() {
 func (t *AgentTail) user(rec Record, at int64) {
 	blocks := rec.Blocks()
 	t.foldTasks(blocks)
+	// An agent that ended and is given more work starts a new piece of it:
+	// its clock starts again, so a teammate woken after an idle hour does not
+	// read as an hour in. Its tool calls and tokens keep adding up.
+	if t.ended() && at > 0 && slices.ContainsFunc(blocks, func(b Block) bool { return b.Type != "tool_result" }) {
+		if _, interrupted := interruptNotice(rec.Role(), rec.IsMeta, blocks); !interrupted && !rec.ToolEndsTurn {
+			t.startedAt = at
+		}
+	}
 	if notice, ok := interruptNotice(rec.Role(), rec.IsMeta, blocks); ok {
 		t.end(AgentFailed, at, notice)
 		return
@@ -365,6 +375,39 @@ func (t *AgentTail) foldTasks(blocks []Block) {
 	}
 }
 
+// stopTask retires the task an agent stops itself. TaskStop (KillShell and
+// KillBash before it) kills a background task, and no notification follows:
+// 42 of 56 measured on this box never enqueued one, and the agent's own
+// transcript never gets one. A stop that finds the task already over is no
+// harm, since an over task is not outstanding either.
+func (t *AgentTail) stopTask(tool string, input json.RawMessage) {
+	switch tool {
+	case "TaskStop", "KillShell", "KillBash":
+	default:
+		return
+	}
+	var in struct {
+		TaskID  string `json:"task_id"`
+		ShellID string `json:"shell_id"`
+		BashID  string `json:"bash_id"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return
+	}
+	for _, id := range []string{in.TaskID, in.ShellID, in.BashID} {
+		if id != "" {
+			t.retire(id)
+		}
+	}
+}
+
+// retire marks a task over and drops it from what the agent waits on.
+func (t *AgentTail) retire(id string) {
+	t.finished[id] = true
+	t.tasks = slices.DeleteFunc(t.tasks, func(task agentTask) bool { return task.id == id })
+	t.showWaitingOn()
+}
+
 func taskStarted(text string) string {
 	for _, re := range taskStarts {
 		if m := re.FindStringSubmatch(text); m != nil {
@@ -392,23 +435,28 @@ func (t *AgentTail) foldNotices(text string) {
 		if id == "" || !taskFinished(strings.TrimSpace(element(body, "status")), body) {
 			continue
 		}
-		t.finished[id] = true
-		t.tasks = slices.DeleteFunc(t.tasks, func(task agentTask) bool { return task.id == id })
-		t.showWaitingOn()
+		t.retire(id)
 	}
 }
 
-// taskFinished reads a notification's status. "completed", "failed",
-// "killed", "stopped" and "expired" (a Monitor at its deadline) are ends;
-// "running", "blocked", "pending" and no status at all are not. A background
-// agent notifies "completed" each time it stops, including when it has only
-// paused to wait on work of its own, and that notice says so.
+// taskFinished reads a notification. "completed", "failed", "killed",
+// "stopped" and "expired" are ends; "running", "blocked" and "pending" are
+// not. A background agent notifies "completed" each time it stops, including
+// when it has only paused to wait on work of its own, and that notice says so.
+//
+// A Monitor's notices carry no status at all, its end included: an event that
+// reads "[Monitor expired after 30m ...]" or "[Monitor timed out ...]" (463 of
+// them on this box by 2026-09-26, none with a status). Any other event is the
+// Monitor reporting, and not its end.
 func taskFinished(status, body string) bool {
 	switch status {
 	case "completed":
 		return !strings.Contains(body, "background work of its own still running")
 	case "failed", "killed", "stopped", "expired":
 		return true
+	case "":
+		event := strings.TrimSpace(element(body, "event"))
+		return strings.HasPrefix(event, "[Monitor expired") || strings.HasPrefix(event, "[Monitor timed out")
 	}
 	return false
 }

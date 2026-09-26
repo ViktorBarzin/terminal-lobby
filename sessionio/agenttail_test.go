@@ -288,6 +288,29 @@ func TestAgentTailWaitsOnItsOwnBackgroundWork(t *testing.T) {
 		wantEnded  string // RFC3339, "" = 0
 		wantTool   string
 	}{
+		{"a TaskStop on the task ends the wait, since no notice follows one",
+			[]string{prompt, bash, started, toolCall("2026-09-24T05:01:00.000Z", "m3", "t2", "TaskStop", `{"task_id":"bk1"}`),
+				toolResult("2026-09-24T05:01:01.000Z", "t2", `{"message":"Successfully stopped task: bk1 (sleep 240)","task_id":"bk1","task_type":"local_bash"}`, false), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "TaskStop bk1"},
+		{"so does a KillShell",
+			[]string{prompt, bash, started, toolCall("2026-09-24T05:01:00.000Z", "m3", "t2", "KillShell", `{"shell_id":"bk1"}`),
+				toolResult("2026-09-24T05:01:01.000Z", "t2", "Shell bk1 killed", false), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "KillShell bk1"},
+		{"a monitor that expired ends the wait, though its notice has no status",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Monitor", `{"description":"watch the build"}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Monitor started (task mn1, timeout 600000ms). You will be notified on each event.", false), pause,
+				monitorEvent("2026-09-24T05:10:02.000Z", "mn1", "[Monitor expired after 10m with no events delivered. Re-arm it if you still need the watch.]"), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "Monitor watch the build"},
+		{"so does a monitor that timed out",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Monitor", `{"description":"watch the build"}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Monitor started (task mn1, timeout 600000ms). You will be notified on each event.", false), pause,
+				monitorEvent("2026-09-24T05:10:02.000Z", "mn1", "[Monitor timed out — re-arm if needed.]"), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "Monitor watch the build"},
+		{"a monitor's ordinary event is not its end",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Monitor", `{"description":"watch the build"}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Monitor started (task mn1, timeout 600000ms). You will be notified on each event.", false), pause,
+				monitorEvent("2026-09-24T05:02:00.000Z", "mn1", "build 3 of 5 passed"), finalText("2026-09-24T05:02:02.000Z", "m3", "end_turn", "Noted.")},
+			AgentRunning, "", "", "Monitor watch the build"},
 		{"a turn ended with a background command outstanding is a pause",
 			[]string{prompt, bash, started, pause},
 			AgentRunning, "", "", "Bash sleep 240"},
@@ -346,7 +369,35 @@ func TestAgentTailWaitsOnItsOwnBackgroundWork(t *testing.T) {
 				t.Errorf("got state %q result %q ended %d tool %q\nwant state %q result %q ended %d tool %q",
 					info.State, info.Result, info.EndedAt, tool, tc.wantState, tc.wantResult, wantEnded, tc.wantTool)
 			}
+			// Waiting is running with the turn over: the last line is the
+			// pause itself or a notice that did not end it.
+			last := tc.lines[len(tc.lines)-1]
+			wantWaiting := tc.wantState == AgentRunning && strings.Contains(last, `"end_turn"`)
+			if info.Waiting != wantWaiting {
+				t.Errorf("Waiting = %v, want %v", info.Waiting, wantWaiting)
+			}
 		})
+	}
+}
+
+// A done agent given more work starts a new piece of it, so its clock starts
+// again rather than counting the hour it sat finished. Its tool calls and
+// tokens keep adding up.
+func TestAgentTailRestartsTheClockWhenWokenAfterItEnded(t *testing.T) {
+	lines := []string{
+		userText("2026-09-24T05:00:00.000Z", "Go."),
+		toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Bash", `{"command":"ls"}`),
+		finalText("2026-09-24T05:00:05.000Z", "m2", "end_turn", "Done."),
+		userText("2026-09-24T06:00:00.000Z", "Also count the closed ones."),
+		toolCall("2026-09-24T06:00:02.000Z", "m3", "t2", "Bash", `{"command":"wc -l"}`),
+	}
+	tail := NewAgentTail("agent-a1.jsonl", &scriptedReader{lines: [][]string{lines}, next: []int64{1}})
+	if _, err := tail.Poll(); err != nil {
+		t.Fatal(err)
+	}
+	info := tail.Info(AgentMeta{})
+	if info.State != AgentRunning || info.StartedAt != ms(t, "2026-09-24T06:00:00.000Z") || info.ToolCalls != 2 || info.OutputTokens != 30 {
+		t.Errorf("woken for more work: %+v", info)
 	}
 }
 
@@ -365,7 +416,7 @@ func TestAgentTailRecordedWaiter(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := tail.Info(meta)
-	if info.State != AgentRunning || info.EndedAt != 0 || info.Result != "" || info.Tool != "Bash" || info.ToolDetail != "sleep 240" {
+	if info.State != AgentRunning || !info.Waiting || info.EndedAt != 0 || info.Result != "" || info.Tool != "Bash" || info.ToolDetail != "sleep 240" {
 		t.Errorf("paused on its background command: %+v", info)
 	}
 
@@ -374,7 +425,7 @@ func TestAgentTailRecordedWaiter(t *testing.T) {
 		t.Fatal(err)
 	}
 	info = tail.Info(meta)
-	if info.State != AgentDone || info.Result != "waiter done" || info.EndedAt != ms(t, "2026-09-26T18:31:27.661Z") || info.OutputTokens != 125+19+6 {
+	if info.State != AgentDone || info.Waiting || info.Result != "waiter done" || info.EndedAt != ms(t, "2026-09-26T18:31:27.661Z") || info.OutputTokens != 125+19+6 {
 		t.Errorf("after the notice and its answer: %+v", info)
 	}
 }
@@ -464,4 +515,9 @@ func queuedNotice(ts, id, status string) string {
 // structuredOutput is how a workflow member hands back its result.
 func structuredOutput(ts, data string) string {
 	return fmt.Sprintf(`{"type":"attachment","isSidechain":true,"timestamp":%q,"attachment":{"type":"structured_output","data":%s}}`, ts, data)
+}
+
+// monitorEvent is a Monitor's notification: an event, and no status.
+func monitorEvent(ts, id, event string) string {
+	return userText(ts, "<task-notification>\n<task-id>"+id+"</task-id>\n<summary>Monitor event: \"watch the build\"</summary>\n<event>"+event+"</event>\n</task-notification>")
 }

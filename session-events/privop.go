@@ -231,7 +231,8 @@ func sessionDirWithin(root, dir string) error {
 // names its run. The script is the Workflow call's own input, which the
 // session's transcript already carries, so reading it shows no one anything
 // the transcript does not. A transcript is not one of these: readfrom serves
-// those in bounded steps, and a whole read of a 34 MB one is what it avoids.
+// those from an offset, so every read after the first costs only what was
+// appended, where a whole read of a 34 MB one on every poll is what it avoids.
 func smallFileWithin(root, path string) error {
 	if !filepath.IsAbs(path) || !isSmallFile(path) {
 		return fmt.Errorf("privop: %q is not an absolute .json path or a workflow script", path)
