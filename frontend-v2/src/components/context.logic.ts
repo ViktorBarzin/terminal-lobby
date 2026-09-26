@@ -1,7 +1,7 @@
 import type { ContextReading, Event, SessionState } from "../types/events";
 
 /**
- * The context meter's data.
+ * The context dial's data.
  *
  * The reading itself comes from the CLI: `/context` writes its own markdown into
  * the transcript and the normalizer turns it into a `meta` event carrying the
@@ -9,12 +9,12 @@ import type { ContextReading, Event, SessionState } from "../types/events";
  * and is not a constant (a session on this box reads 65.2k of 1m), which is why
  * reading what the CLI published beats deriving a worse version of it.
  *
- * A reading is a point in time, and nothing refreshes it: the meter shows what
+ * A reading is a point in time, and nothing refreshes it: the dial shows what
  * the last `/context` in the session said, and a session where nobody has run
- * one has no meter at all. Automating that was built and then removed on
+ * one has no dial at all. Automating that was built and then removed on
  * 2026-08-19 — keeping the number current meant typing into somebody's pane on
  * a schedule, and the text view does not write to a terminal unattended. So the
- * chip says how old its reading is, in settled turns, and a stale one reads as
+ * panel says how old its reading is, in settled turns, and a stale one reads as
  * stale rather than as live.
  */
 export interface ContextState {
@@ -24,10 +24,7 @@ export interface ContextState {
 }
 
 /** The newest reading in the log, with its age in settled turns. */
-export function contextState(
-  events: Event[],
-  seed?: SessionState | null,
-): ContextState | null {
+export function contextState(events: Event[], seed?: SessionState | null): ContextState | null {
   // A reading the state frame does not account for is the fresher one.
   const at = seed?.at ?? -1;
   for (let i = events.length - 1; i >= 0; i--) {
@@ -50,7 +47,7 @@ export function contextState(
   return { reading: seed.context, turnsAgo };
 }
 
-/** `65.2k`, the way the CLI writes it — so the chip and the pane agree. */
+/** `65.2k`, the way the CLI writes it, so the context dial and the pane agree. */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "0";
   if (n >= 1_000_000) return trimZero(n / 1_000_000) + "m";
@@ -72,7 +69,7 @@ export function percentFull(r: ContextReading): number {
 }
 
 /**
- * How the chip reads its fill. Compaction is the thing worth noticing before it
+ * How the context dial reads its fill. Compaction is the thing worth noticing before it
  * happens, so the bands are about how much room is left rather than about a
  * neat gradient.
  */
@@ -93,7 +90,7 @@ export function readingAge(turnsAgo: number): string {
  * The breakdown rows worth showing, largest first.
  *
  * "Free space" is dropped: it is the inverse of the meter, so it would always be
- * the biggest row and would say nothing the chip has not already said.
+ * the biggest row and would say nothing the dial has not already said.
  */
 export function breakdown(r: ContextReading): ContextReading["categories"] {
   const cats = (r.categories ?? []).filter(

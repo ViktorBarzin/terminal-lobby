@@ -32,7 +32,7 @@
   src:
     url("/fonts/JetBrainsMono-Regular.woff2") format("woff2"),
     url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Regular.woff2")
-      format("woff2");
+    format("woff2");
 }
 @font-face {
   font-family: "JetBrains Mono";
@@ -42,7 +42,7 @@
   src:
     url("/fonts/JetBrainsMono-Bold.woff2") format("woff2"),
     url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Bold.woff2")
-      format("woff2");
+    format("woff2");
 }
 @font-face {
   font-family: "JetBrains Mono";
@@ -52,7 +52,7 @@
   src:
     url("/fonts/JetBrainsMono-Italic.woff2") format("woff2"),
     url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-Italic.woff2")
-      format("woff2");
+    format("woff2");
 }
 @font-face {
   font-family: "JetBrains Mono";
@@ -62,7 +62,7 @@
   src:
     url("/fonts/JetBrainsMono-BoldItalic.woff2") format("woff2"),
     url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@v2.304/fonts/webfonts/JetBrainsMono-BoldItalic.woff2")
-      format("woff2");
+    format("woff2");
 }
 /* DM Sans Variable (OFL-1.1, @fontsource-variable latin subset) — the chrome
    UI face. NEVER applied to anything rendering pty content; terminal text
@@ -75,8 +75,9 @@
   src:
     url("/fonts/dm-sans-latin-wght-normal.woff2") format("woff2-variations"),
     url("https://cdn.jsdelivr.net/npm/@fontsource-variable/dm-sans@5.2.8/files/dm-sans-latin-wght-normal.woff2")
-      format("woff2-variations");
-  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    format("woff2-variations");
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
     U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
     U+2212, U+2215, U+FEFF, U+FFFD;
 }
@@ -103,17 +104,18 @@
   font-weight: 400;
   font-display: block;
   src: url("/fonts/tl-symbols.woff2") format("woff2");
-  unicode-range: U+2300-23FF, U+2700-27BF, U+2800-28FF, U+203B, U+2610, U+2612,
-    U+25FC;
+  unicode-range: U+2300-23FF, U+2700-27BF, U+2800-28FF, U+203B, U+2610, U+2612, U+25FC;
 }
 
 :root {
   /* Single source of truth for chrome mono stacks. */
-  --font-mono: "JetBrains Mono", "TL Symbols", "Fira Code", "Cascadia Code",
-    Menlo, Monaco, "Courier New", monospace;
+  --font-mono:
+    "JetBrains Mono", "TL Symbols", "Fira Code", "Cascadia Code", Menlo, Monaco, "Courier New",
+    monospace;
   /* Lobby chrome only. Weights in use: 400 body / 500 buttons / 600 headings. */
-  --font-ui: "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont,
-    "Segoe UI", system-ui, sans-serif;
+  --font-ui:
+    "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
+    sans-serif;
   /* T3 radius scale: buttons/menus/inputs = --radius, cards/dialog = +8. */
   --radius: 10px;
 }
@@ -434,11 +436,14 @@ body {
   --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.18);
   --scrollbar-thumb-active: rgba(255, 255, 255, 0.22);
-  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
-    inset 0 1px rgba(255, 255, 255, 0.06);
+  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), inset 0 1px rgba(255, 255, 255, 0.06);
   --skeleton-highlight: rgba(255, 255, 255, 0.04);
   --hover-tint: rgba(255, 255, 255, 0.04);
   --ring: var(--accent);
+  /* What a float wears: the composer's + tray, a dial's popover, the phone's
+     settings sheet (the Quiet line composer, 2026-09-24). Deeper than
+     --surface-shadow, which lies on the page rather than over it. */
+  --pop-shadow: 0 18px 40px -14px rgb(0 0 0 / 60%), 0 2px 8px rgb(0 0 0 / 28%);
   /* HOW A WORKSPACE COLOUR LANDS ON THIS THEME. The HUE comes from the
      workspace's id (components/lobby.logic.ts workspaceHue) and is the same on
      every theme, because it is the group's identity; only how light and how
@@ -461,8 +466,8 @@ body.theme-catppuccin-latte {
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
   --scrollbar-thumb-active: rgba(0, 0, 0, 0.3);
-  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05),
-    inset 0 -1px rgba(0, 0, 0, 0.04);
+  --surface-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), inset 0 -1px rgba(0, 0, 0, 0.04);
   --skeleton-highlight: rgba(255, 255, 255, 0.64);
   --hover-tint: rgba(0, 0, 0, 0.04);
+  --pop-shadow: 0 18px 40px -14px rgb(0 0 0 / 22%), 0 2px 8px rgb(0 0 0 / 7%);
 }

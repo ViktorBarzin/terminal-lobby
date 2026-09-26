@@ -16,6 +16,7 @@ import type { Event } from "../types/events";
 import { diag } from "../telemetry/diag";
 import {
   deriveRows,
+  MAX_QUEUED_SHOWN,
   sameRow,
   scrollTopAfterPrepend,
   visibleRows,
@@ -33,7 +34,6 @@ import {
   type ToolRow,
   type TurnFoldRow,
   type UserRow,
-  type WorkingRow,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
@@ -47,7 +47,6 @@ import {
   SkillRowView,
   ToolRowView,
   TurnFoldRowView,
-  WorkingRowView,
 } from "./rows";
 
 const USER_COLLAPSE_CHARS = 600;
@@ -61,9 +60,7 @@ const UserRowView: Component<{
   const long = () => props.row.body.length > USER_COLLAPSE_CHARS;
   const [open, setOpen] = createSignal(false);
   const shown = () =>
-    long() && !open()
-      ? props.row.body.slice(0, USER_COLLAPSE_CHARS) + "…"
-      : props.row.body;
+    long() && !open() ? props.row.body.slice(0, USER_COLLAPSE_CHARS) + "…" : props.row.body;
   return (
     <div class="tl-row tl-row-user" data-eid={props.row.id}>
       <div class="tl-bubble-user">
@@ -71,11 +68,7 @@ const UserRowView: Component<{
             <img>/<button> is phrasing content, so substituting a path in place
             costs the surrounding text nothing. */}
         <pre class="tl-user-text">
-          <MessageSegments
-            text={shown()}
-            me={props.me ?? ""}
-            onOpen={props.onOpenPreview}
-          />
+          <MessageSegments text={shown()} me={props.me ?? ""} onOpen={props.onOpenPreview} />
         </pre>
         <Show when={long()}>
           <button
@@ -91,6 +84,47 @@ const UserRowView: Component<{
     </div>
   );
 };
+
+/**
+ * The prompts waiting in Claude's queue, drawn at the end of the conversation
+ * as dashed outlines of the bubbles they will become.
+ *
+ * They were chips above the composer's field until 2026-09-24 (the Quiet line
+ * composer), clipped to one line each and sitting in the one strip of the
+ * screen that was already contested. A queued prompt is the reader's own
+ * message that has not left yet, so it goes where it will land. Three at most,
+ * then a count, the same cap the chips had.
+ *
+ * Not keyed rows. They are not the transcript's: they come from the queue's own
+ * operations (timeline.logic `queuedPrompts`), leave the moment Claude takes
+ * them, and the prompt then arrives as an ordinary user row.
+ */
+const GhostRowsView: Component<{
+  queued: string[];
+  me?: string;
+  onOpenPreview?: (path: string) => void;
+}> = (props) => (
+  <>
+    <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
+      {(text) => (
+        <div class="tl-row tl-row-user tl-row-ghost">
+          <div class="tl-bubble-user tl-bubble-ghost" title={text}>
+            <div class="tl-ghost-body">
+              <span class="tl-ghost-tag">Queued</span>
+              <pre class="tl-user-text tl-ghost-text">
+                <MessageSegments text={text} me={props.me ?? ""} onOpen={props.onOpenPreview} />
+              </pre>
+            </div>
+            <span class="tl-ghost-when">Sends when Claude finishes this turn</span>
+          </div>
+        </div>
+      )}
+    </For>
+    <Show when={props.queued.length > MAX_QUEUED_SHOWN}>
+      <div class="tl-row tl-ghost-more">+{props.queued.length - MAX_QUEUED_SHOWN} more waiting</div>
+    </Show>
+  </>
+);
 
 const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
   <div class="tl-row tl-row-message" data-eid={props.row.id}>
@@ -128,7 +162,6 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
-
 
 /** How long a jumped-to row stays highlighted — long enough to find with the
  *  eye after the scroll, short enough not to become part of the layout. */
@@ -272,21 +305,28 @@ export const MessagesTimeline: Component<{
   /** FALSE while this timeline belongs to a session the lobby is keeping
    *  mounted but not showing — it then owns no window-level handles. */
   owns?: boolean;
+  /** Prompts waiting in Claude's queue, oldest first, drawn as ghost bubbles
+   *  after the last row. */
+  queued?: string[];
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
-  const derived = createMemo<TimelineRow[]>(
-    () => props.rows ?? deriveRows(props.events),
-  );
-  const rows = createMemo<TimelineRow[]>(() =>
-    visibleRows(derived(), expandedTurns()),
-  );
+  const derived = createMemo<TimelineRow[]>(() => props.rows ?? deriveRows(props.events));
+  const rows = createMemo<TimelineRow[]>(() => visibleRows(derived(), expandedTurns()));
 
-  /** The rows indexed by a render key, unique even if an event id repeats. */
+  /**
+   * The rows indexed by a render key, unique even if an event id repeats.
+   *
+   * The open turn's working row is left out. It closed the timeline until
+   * 2026-09-24 and says its piece on the composer's thin line now
+   * (StatusLine), which is where the reader is already looking and which does
+   * not scroll away with the transcript.
+   */
   const keyed = createMemo(() => {
     const keys: string[] = [];
     const byKey = new Map<string, TimelineRow>();
     for (const row of rows()) {
+      if (row.kind === "working") continue;
       let key = row.key;
       for (let n = 1; byKey.has(key); n++) key = `${row.key}#${n}`;
       keys.push(key);
@@ -431,10 +471,10 @@ export const MessagesTimeline: Component<{
     // idle callback does not run while the browser has input to handle, so
     // scrolling and tapping stay ahead of it by construction. The timeout keeps
     // it from starving on a busy page, and rAF is the fallback.
-    const ric = (window as unknown as {
+    const ric = window as unknown as {
       requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number;
       cancelIdleCallback?: (h: number) => void;
-    });
+    };
     if (typeof ric.requestIdleCallback === "function") {
       const handle = ric.requestIdleCallback(() => growMounted(total), { timeout: 200 });
       onCleanup(() => ric.cancelIdleCallback?.(handle));
@@ -462,21 +502,6 @@ export const MessagesTimeline: Component<{
   /** True while rows are still being mounted — the reader sees a hint. */
   const filling = createMemo(() => shownKeys().length < allKeys().length);
 
-  // A ticking clock for the working row's elapsed timer. One timer for the
-  // whole timeline, running only while something is actually working — a
-  // per-row interval would re-render the list once a second forever.
-  const [now, setNow] = createSignal(0);
-  createEffect(() => {
-    const working = rows().some((r) => r.kind === "working");
-    if (!working) {
-      setNow(0);
-      return;
-    }
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    onCleanup(() => clearInterval(t));
-  });
-
   // A leaf row inside a subagent's sub-timeline. Rendered directly rather than
   // through the key machinery: it is owned by its parent tool row, which the
   // memo already holds stable.
@@ -491,7 +516,14 @@ export const MessagesTimeline: Component<{
         // marker saying which skill is now in force. Its own card, keyed on the
         // item type so nothing here branches on a tool's name.
         if (row.itemType === "skill") return <SkillRowView row={row} />;
-        return <ToolRowView row={row} onOpenPreview={props.onOpenPreview} onLoadFull={props.onLoadFull} renderChild={renderLeaf} />;
+        return (
+          <ToolRowView
+            row={row}
+            onOpenPreview={props.onOpenPreview}
+            onLoadFull={props.onLoadFull}
+            renderChild={renderLeaf}
+          />
+        );
       case "todo":
         return <TodoRowView row={row} />;
       case "question":
@@ -518,11 +550,7 @@ export const MessagesTimeline: Component<{
     switch (row().kind) {
       case "user":
         return (
-          <UserRowView
-            row={row() as UserRow}
-            me={props.me}
-            onOpenPreview={props.onOpenPreview}
-          />
+          <UserRowView row={row() as UserRow} me={props.me} onOpenPreview={props.onOpenPreview} />
         );
       case "message":
         return <MessageRowView row={row() as MessageRow} me={props.me} />;
@@ -543,11 +571,7 @@ export const MessagesTimeline: Component<{
       case "todo":
         return <TodoRowView row={row() as TodoRow} />;
       case "question":
-        return (
-          <QuestionRowView
-            row={row() as QuestionRow}
-          />
-        );
+        return <QuestionRowView row={row() as QuestionRow} />;
       case "plan":
         return <PlanRowView row={row() as PlanRow} />;
       case "meta":
@@ -558,8 +582,6 @@ export const MessagesTimeline: Component<{
         return <ErrorRowView row={row() as ErrorRow} />;
       case "status":
         return <StatusRowView row={row() as StatusRow} />;
-      case "working":
-        return <WorkingRowView row={row() as WorkingRow} now={now()} />;
       case "turn-fold":
         return (
           <TurnFoldRowView
@@ -666,6 +688,9 @@ export const MessagesTimeline: Component<{
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
     // move the viewport: you clicked to read what was hidden.
+    // A queued prompt is drawn after the last row too, so a ghost arriving
+    // keeps a pinned reader at the bottom the same way a new row does.
+    void props.queued?.length;
     const el = scroller;
     if (!el || !pinned()) return;
     el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
@@ -794,7 +819,12 @@ export const MessagesTimeline: Component<{
             when={props.hasEarlier}
             fallback={<span class="tl-status-text">Start of session</span>}
           >
-            <button type="button" class="tl-linkbtn" onClick={loadEarlier} disabled={loadingEarlier()}>
+            <button
+              type="button"
+              class="tl-linkbtn"
+              onClick={loadEarlier}
+              disabled={loadingEarlier()}
+            >
               {loadingEarlier() ? "Loading earlier…" : "Load earlier turns"}
             </button>
           </Show>
@@ -808,6 +838,11 @@ export const MessagesTimeline: Component<{
           </div>
         </Show>
         <For each={shownKeys()}>{(key) => renderRow(key)}</For>
+        <GhostRowsView
+          queued={props.queued ?? []}
+          me={props.me}
+          onOpenPreview={props.onOpenPreview}
+        />
       </Show>
       <Show when={!pinned()}>
         <button

@@ -6,8 +6,8 @@ import {
   Show,
   onCleanup,
   onMount,
+  type Accessor,
   type Component,
-  type JSX,
 } from "solid-js";
 import {
   composeMessage,
@@ -34,8 +34,10 @@ import {
   previewContentUrl,
   storedDisplayName,
 } from "../lib/attachments";
-import { PaperclipIcon } from "./Icons";
+import { PlusIcon, QueueIcon, SendArrowIcon } from "./Icons";
 import { dismissOnPress } from "./overlay";
+import { PlusTray } from "./PlusTray";
+import { dismissFloat } from "./Dial";
 
 /**
  * How tall a thumbnail is drawn, and how wide its box is, in px.
@@ -60,13 +62,14 @@ const THUMB_W = Math.round(THUMB_H * (16 / 9));
 const THUMB_LINE = THUMB_H + 8;
 
 /**
- * The field a prompt is written in, and the bar under it.
+ * The field a prompt is written in: the pill, with `+` before it and Send
+ * after it.
  *
  * Shared by the two composers, which want the same writing surface and nothing
- * else in common: `Composer` writes to a LIVE session and docks a permission
- * panel, a context meter, Stop and queued-prompt chips above this; the
- * new-session composer writes the prompt a session will be CREATED with and
- * puts a project, a command and a model beside it. Everything about the act of
+ * else in common: `Composer` writes to a LIVE session and puts a permission
+ * panel and the thin status line with its dials above this; the new-session
+ * composer writes the prompt a session will be CREATED with and puts a
+ * project, a command and a model above it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
  * newline, `/` and `@` completion, attachments, the unsent draft, ↑ history,
  * and the mobile input attributes (autocapitalize off, autocorrect and
@@ -78,10 +81,14 @@ const THUMB_LINE = THUMB_H + 8;
  * spliced in at the front on send, which is what Viktor asked to change on
  * 2026-09-13: a screenshot pasted mid-sentence belongs mid-sentence.
  *
- * Each composer contributes its own controls through `leftExtra` and
- * `rightExtra`, which land inside the two bar groups: the left one may scroll
- * and give up width, the right one never shrinks, and Send is permanently its
- * last child so it does not move when something is inserted beside it.
+ * THE PILL (the Quiet line composer, chosen 2026-09-24). One rounded surface
+ * holds `+`, the field and Send, 42px tall at rest on a desktop and 48px on a
+ * phone. It replaced a box that held the field and, on a bar beneath it,
+ * Attach, the mode and model chips, the context meter, Stop and Send: 124px at
+ * rest on a desktop and 127px on a phone (memory #13886). The chips moved to
+ * the dials on the line above, Stop moved beside the work it stops, and
+ * Attach, `/` and `@` moved behind the `+` (PlusTray). Send stays the pill's
+ * last control, never greys out on a live session, and never says "Queue".
  */
 export interface PromptFieldSinks {
   /** Put attachments into the message (a window drop, a gallery tile). */
@@ -90,7 +97,23 @@ export interface PromptFieldSinks {
   insertText: (text: string) => void;
   /** Put the caret in the field. */
   focus: () => void;
+  /** Whether a send would carry anything: prose, a held file, or both. */
+  hasInput: Accessor<boolean>;
+  /**
+   * Send what is written through a different sender, on the field's own terms.
+   *
+   * For the plan card's "Approve with this feedback", which is the composer's
+   * text sent another way: the field composes the message, clears, and puts
+   * everything back if the sender refuses, exactly as its own Send does, so a
+   * control outside the field can never lose what was typed (memory #11256).
+   * Resolves what the sender resolved, or false when there was nothing to send.
+   */
+  submitVia: (send: (text: string) => Promise<boolean>) => Promise<boolean>;
 }
+
+/** A per-instance id for the "queues" hint, which Send names as its
+ *  description. The lobby keeps many sessions mounted at once. */
+let hintSeq = 0;
 
 export const PromptField: Component<{
   /** The text view's pinch size. Read only to re-measure the field when it
@@ -152,10 +175,18 @@ export const PromptField: Component<{
    * the only caller, and returning false leaves the digit to be typed.
    */
   onEmptyDigit?: (digit: string) => boolean;
-  /** Controls for the bar's left group, after Attach. */
-  leftExtra?: JSX.Element;
-  /** Controls for the bar's right group, before Send. */
-  rightExtra?: JSX.Element;
+  /**
+   * Claude is working, so a send now QUEUES. While this is true and the field
+   * holds something, a quiet "queues" sits beside Send and Send names it as
+   * its description. Send keeps its name either way: the reading behind this
+   * lags the pane, and a button promising to queue would sometimes be wrong
+   * about what is about to happen (Composer.queue.test.tsx).
+   */
+  queueHint?: boolean;
+  /** The + tray's footer: where an attached file ends up. */
+  trayNote?: string;
+  /** No `+` at all: a field that takes no files and offers no triggers. */
+  noTray?: boolean;
   /**
    * Draw Send as unavailable while there is nothing to send.
    *
@@ -206,8 +237,12 @@ export const PromptField: Component<{
 }> = (props) => {
   let ta: HTMLTextAreaElement | undefined;
   let fileInput: HTMLInputElement | undefined;
+  let photoInput: HTMLInputElement | undefined;
+  let plusEl: HTMLButtonElement | undefined;
+  let trayEl: HTMLDivElement | undefined;
   /** The chip layer behind the field — see `mirror` and the JSX below. */
   let mirrorEl: HTMLDivElement | undefined;
+  const hintId = `tl-send-hint-${++hintSeq}`;
   const [draft, setDraft] = createSignal("");
   /** The files this message carries, each anchored to its token in the text. */
   const [attached, setAttached] = createSignal<DraftAttachment[]>([]);
@@ -257,11 +292,21 @@ export const PromptField: Component<{
    * is written in px at the moment of typing, so without that the text grows
    * inside a box that stays where it was.
    */
+  /** The field is one visual line tall, so the pill centres `+` and Send. */
+  const [single, setSingle] = createSignal(true);
   const autosize = () => {
     if (!ta) return;
     ta.style.height = "auto";
     const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
-    ta.style.height = Math.min(ta.scrollHeight + chrome, 200) + "px";
+    const need = ta.scrollHeight;
+    ta.style.height = Math.min(need + chrome, 200) + "px";
+    // One visual line, a picture's taller line included: `+` and Send centre on
+    // it. Two or more and they sit at the bottom, level with the last line,
+    // which is where the caret usually is. Unmeasurable (jsdom) leaves it be.
+    const cs = getComputedStyle(ta);
+    const one =
+      parseFloat(cs.lineHeight) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+    if (Number.isFinite(one) && one > 0) setSingle(need <= one + 1);
   };
 
   /**
@@ -499,7 +544,7 @@ export const PromptField: Component<{
    * `pad` keeps a chip from fusing with the words on either side of it. Plain
    * text never pads: a paste has to land exactly as typed.
    */
-  const splice = (text: string, pad: boolean): void => {
+  const splice = (text: string, pad: boolean, padAfter: boolean = pad): void => {
     if (!ta || !text) return;
     const at = caretKnown ? (ta.selectionStart ?? ta.value.length) : ta.value.length;
     const end = caretKnown ? (ta.selectionEnd ?? at) : at;
@@ -508,7 +553,7 @@ export const PromptField: Component<{
     const body =
       (pad && before && !/\s$/.test(before) ? " " : "") +
       text +
-      (pad && after && !/^\s/.test(after) ? " " : "");
+      (padAfter && after && !/^\s/.test(after) ? " " : "");
     ta.value = before + body + after;
     const pos = at + body.length;
     ta.setSelectionRange(pos, pos);
@@ -523,6 +568,22 @@ export const PromptField: Component<{
    * rest of the message survives.
    */
   const insertText = (text: string): void => splice(text, false);
+
+  /**
+   * Put a completion trigger at the caret and open its menu: the tray's
+   * "Commands and skills" and "A file path" rows.
+   *
+   * A space goes before it when the word before would otherwise swallow it,
+   * and none after, since the caret has to sit right behind the trigger for
+   * the menu to read the token it starts. At the start of an empty message a
+   * `/` is a command the CLI will run; anywhere else it mentions one, which is
+   * the distinction `completionFor` already draws.
+   */
+  const insertTrigger = (trigger: "/" | "@"): void => {
+    splice(trigger, true, false);
+    setPicked(0);
+    void refreshPaths();
+  };
 
   /**
    * Drop the files whose chips are no longer in the message.
@@ -540,7 +601,15 @@ export const PromptField: Component<{
     });
   };
 
-  onMount(() => props.register?.({ add: addAttachments, insertText, focus: () => ta?.focus() }));
+  onMount(() =>
+    props.register?.({
+      add: addAttachments,
+      insertText,
+      focus: () => ta?.focus(),
+      hasInput: sendable,
+      submitVia: (send) => submitWith((text) => send(text)),
+    }),
+  );
 
   /** The message split into runs of prose and the tokens standing in it, which
    *  is what the mirror layer paints chips from. */
@@ -703,32 +772,54 @@ export const PromptField: Component<{
   const sendable = createMemo(() => draft().trim() !== "" || attached().length > 0);
 
   /**
-   * Send the composed message.
+   * Send the composed message through `send`.
    *
    * The field is cleared optimistically because it has to feel instant, and the
    * text is put BACK if the send did not land — so a failure (a 5xx, an
    * unreachable box) can never destroy what was typed. Only a field the user has
-   * not since typed into is restored.
+   * not since typed into is restored. A sender that throws has not delivered
+   * anything either, so it restores the same way.
+   *
+   * `send` is `onSend` for Send and Enter, and whatever the caller hands
+   * `submitVia` otherwise (the plan card's "Approve with this feedback"), so
+   * every way out of the field keeps the same guarantee.
    */
-  const submit = () => {
+  const submitWith = (
+    send: (text: string, held: readonly DraftAttachment[]) => Promise<boolean>,
+  ): Promise<boolean> => {
     const raw = ta?.value ?? "";
     const held = attached();
     // The FILES count too: attachments with no prose is a valid message, so the
     // old `if (!t) return` would have swallowed a photo sent on its own.
     const message = props.pendingAttachments ? raw.trim() : composeMessage(raw, held);
-    if (!message && held.length === 0) return;
+    if (!message && held.length === 0) return Promise.resolve(false);
     clear();
-    void props.onSend(message, held).then((ok) => {
-      if (ok || !ta || ta.value !== "") return;
-      // A refusal restores BOTH halves. The text already had this guarantee; an
-      // attachment needs it more, because re-attaching means finding the file
-      // again — and the tokens are still in the text that comes back, so the
-      // chips land where they were.
-      ta.value = raw;
-      setDraft(raw);
-      setAttached(held);
-      autosize();
-    });
+    // Called in THIS tick, so a caller sees its sender run the moment Send is
+    // pressed; a sender that throws before it returns a promise counts as a
+    // refusal like one that rejects.
+    let sending: Promise<boolean>;
+    try {
+      sending = send(message, held);
+    } catch {
+      sending = Promise.resolve(false);
+    }
+    return sending
+      .catch(() => false)
+      .then((ok) => {
+        if (ok || !ta || ta.value !== "") return ok;
+        // A refusal restores BOTH halves. The text already had this guarantee;
+        // an attachment needs it more, because re-attaching means finding the
+        // file again — and the tokens are still in the text that comes back,
+        // so the chips land where they were.
+        ta.value = raw;
+        setDraft(raw);
+        setAttached(held);
+        autosize();
+        return ok;
+      });
+  };
+  const submit = (): void => {
+    void submitWith(props.onSend);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
@@ -893,56 +984,141 @@ export const PromptField: Component<{
     ta.focus();
   };
 
+  // ---- the + tray ----------------------------------------------------------
+  // One float at a time: a press outside the tray and the `+` closes it, and so
+  // does Escape, which hands the focus back to the `+`. Typing closes it too
+  // (the input handler), since a reader who types has chosen the field.
+  const [trayOpen, setTrayOpen] = createSignal(false);
+  dismissFloat({
+    open: trayOpen,
+    inside: (t) => !!trayEl?.contains(t) || !!plusEl?.contains(t),
+    close: (why) => {
+      setTrayOpen(false);
+      if (why === "escape") plusEl?.focus();
+    },
+  });
+  const toggleTray = (e: MouseEvent): void => {
+    // Watching: the `+` explains itself in its title and opens nothing, the
+    // way the Attach button it replaced was disabled with the same reason.
+    if (props.inertReason) return;
+    const opening = !trayOpen();
+    setTrayOpen(opening);
+    // From the keyboard the first row takes the focus, so the arrows work.
+    if (opening && e.detail === 0)
+      trayEl?.querySelector<HTMLButtonElement>(".tl-tray-item")?.focus();
+  };
+  /** Close the tray, then act: every row leaves the reader in the field. */
+  const fromTray = (act: () => void): void => {
+    setTrayOpen(false);
+    act();
+  };
+
+  /**
+   * What Send's tooltip says. A caller's caveat wins (a question it would
+   * dismiss, a plan it would answer); otherwise the queue, which is the one
+   * thing about a send the button itself does not show.
+   */
+  const queueing = (): boolean => props.queueHint === true && sendable();
+  const sendTitle = (): string =>
+    props.sendTitle ??
+    (queueing()
+      ? "Send (Enter). Claude is working, so this queues until the turn ends"
+      : "Send (Enter)");
+
   return (
     <>
-      <Show when={completion() && (completion()!.items.length > 0 || slashUnreadable())}>
-        <div class="tl-complete" role="listbox" ref={menuEl}>
-          <For each={completion()!.items}>
-            {(item, i) => (
-              <button
-                type="button"
-                class="tl-complete-item"
-                role="option"
-                aria-selected={i() === picked()}
-                data-picked={i() === picked() ? "true" : undefined}
-                data-source={item.source}
-                data-weak={item.weak ? "true" : undefined}
-                onClick={() => applyCompletion(item)}
-                title={item.description}
-              >
-                <span class="tl-complete-row">
-                  <span class="tl-complete-name">{item.value}</span>
-                  {/* Which of the four lists this row came from. 95 of the 130
-                      entries are built-ins, so without this the reader cannot
-                      tell their own skill from a command the CLI ships. */}
-                  <Show when={item.source && item.source !== "builtin"}>
-                    <span class="tl-complete-source">{item.source}</span>
+      <div class="tl-pillwrap">
+        <Show when={trayOpen()}>
+          <PlusTray
+            ref={(el) => (trayEl = el)}
+            canAttach={!!props.onAttach}
+            attaching={attaching()}
+            paths={!!props.onListDir}
+            note={props.trayNote}
+            onFile={() => fromTray(() => fileInput?.click())}
+            onPhoto={() => fromTray(() => photoInput?.click())}
+            onSlash={() => fromTray(() => insertTrigger("/"))}
+            onAt={() => fromTray(() => insertTrigger("@"))}
+          />
+        </Show>
+        {/* Above the pill rather than below it, and floating: the menu is a
+            question about the token under the caret, and in flow it pushed
+            the whole composer up by its own height every time it opened. */}
+        <Show
+          when={
+            !trayOpen() && completion() && (completion()!.items.length > 0 || slashUnreadable())
+          }
+        >
+          <div class="tl-complete" role="listbox" ref={menuEl}>
+            <For each={completion()!.items}>
+              {(item, i) => (
+                <button
+                  type="button"
+                  class="tl-complete-item"
+                  role="option"
+                  aria-selected={i() === picked()}
+                  data-picked={i() === picked() ? "true" : undefined}
+                  data-source={item.source}
+                  data-weak={item.weak ? "true" : undefined}
+                  onClick={() => applyCompletion(item)}
+                  title={item.description}
+                >
+                  <span class="tl-complete-row">
+                    <span class="tl-complete-name">{item.value}</span>
+                    {/* Which of the four lists this row came from. 95 of the 130
+                        entries are built-ins, so without this the reader cannot
+                        tell their own skill from a command the CLI ships. */}
+                    <Show when={item.source && item.source !== "builtin"}>
+                      <span class="tl-complete-source">{item.source}</span>
+                    </Show>
+                  </span>
+                  <Show when={item.description}>
+                    <span class="tl-complete-desc">{item.description}</span>
                   </Show>
-                </span>
-                <Show when={item.description}>
-                  <span class="tl-complete-desc">{item.description}</span>
-                </Show>
-              </button>
-            )}
-          </For>
-          {/* The per-user half of the catalogue is missing. Not an error state —
-              the built-ins above are real and usable — but it must not look
-              complete: every route the ingress does not carry answers with the
-              SPA's own index.html, on which `res.json()` throws, and the menu
-              then silently held 95 rows instead of 130. */}
-          <Show when={slashUnreadable()}>
-            <div class="tl-complete-note" role="note">
-              Your own skills could not be loaded
-            </div>
+                </button>
+              )}
+            </For>
+            {/* The per-user half of the catalogue is missing. Not an error state —
+                the built-ins above are real and usable — but it must not look
+                complete: every route the ingress does not carry answers with the
+                SPA's own index.html, on which `res.json()` throws, and the menu
+                then silently held 95 rows instead of 130. */}
+            <Show when={slashUnreadable()}>
+              <div class="tl-complete-note" role="note">
+                Your own skills could not be loaded
+              </div>
+            </Show>
+          </div>
+        </Show>
+        {/* One surface for `+`, the field and Send. The field goes transparent
+            inside it, so the pill carries the border, the fill and the focus
+            ring, and reads as one control rather than an input with buttons
+            parked beside it. */}
+        <div class="tl-pill" data-single={single() ? "" : undefined}>
+          <Show when={!props.noTray}>
+            <button
+              ref={plusEl}
+              type="button"
+              class="tl-plus"
+              aria-haspopup="menu"
+              aria-expanded={trayOpen()}
+              aria-label="Add a file, a photo, a command or a path"
+              aria-disabled={props.inertReason ? "true" : undefined}
+              aria-busy={attaching() ? "true" : undefined}
+              // What it opens, and where an image goes. A title is all a mouse
+              // gets before pressing; the tray's rows carry the words for a
+              // phone, which shows no titles at all.
+              title={
+                props.inertReason ||
+                "Attach a file or a photo, or insert a / command or an @ path. Images join this session's gallery"
+              }
+              onClick={toggleTray}
+            >
+              <span class="tl-disc">
+                <PlusIcon />
+              </span>
+            </button>
           </Show>
-        </div>
-      </Show>
-      {/* Field and controls in ONE surface. They were two: a bordered field
-          with an unbordered bar loose underneath it, which read as an input
-          that had lost its buttons. The border and the fill live here now and
-          the field goes transparent, so the whole thing is one control. */}
-      <div class="tl-composer-box">
-        <div class="tl-composer-row">
           {/* The chip layer.
 
               A textarea holds characters and nothing else, so an attachment
@@ -1034,6 +1210,7 @@ export const PromptField: Component<{
               enterkeyhint="send"
               aria-label={props.label}
               onInput={() => {
+                setTrayOpen(false);
                 sync();
                 setPicked(0);
                 void refreshPaths();
@@ -1049,83 +1226,79 @@ export const PromptField: Component<{
               }}
             />
           </div>
-        </div>
-        {/* The controls, on their own bar. They used to share the row with the
-            field, which left the field 92.8px of a 343.2px row once a turn
-            started and Stop appeared — 27%, for the thing the composer is for.
-            With the context meter present it fell to 26px and the row overflowed
-            its own width by 20px.
+          {/* Send is the pill's last control, always. It is never greyed out
+              on a live session and never renamed: a mid-turn send QUEUES in
+              Claude, and the quiet "queues" beside it is how that is said.
 
-            Two groups. The left one may scroll and give up width; the right one
-            never shrinks, so the controls that must stay reachable always are.
-            Send is the last child of it, permanently: today it jumps 71px left
-            the moment a turn starts, because Stop is inserted after it. */}
-        <div class="tl-composer-bar">
-          <div class="tl-bar-left">
-            <Show when={props.onAttach}>
-              {/* Present on EVERY device, which is the point: the soft-key row
-                  carries Copy and Paste only, so a phone had no file picker in either
-                  view — and the text view is the default view on a coarse pointer.
-                  `capture` is deliberately absent so iOS offers Photo Library / Take
-                  Photo / Choose File rather than jumping straight to the camera. */}
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                hidden
-                aria-hidden="true"
-                onChange={(e) => {
-                  const el = e.currentTarget;
-                  const files = [...(el.files ?? [])];
-                  el.value = ""; // let the same file be picked again
-                  void attach(files);
-                }}
-              />
-              <button
-                type="button"
-                class="tl-attach-btn"
-                aria-label="Attach an image or file"
-                // What it TAKES and where it goes. A paperclip on its own was the
-                // only wordless control on this bar, and its purpose lived in a
-                // title, which a phone has no way to show.
-                title={
-                  props.inertReason ||
-                  "Attach an image or file — images join this session's gallery"
-                }
-                disabled={!!props.inertReason || attaching()}
-                onClick={() => fileInput?.click()}
-              >
-                <PaperclipIcon />
-                <span class="tl-attach-label">{attaching() ? "Attaching…" : "Attach"}</span>
-              </button>
+              Why it is always here. Send was once REPLACED by Stop while a turn
+              ran, the browser half of a turn gate the server gave up on
+              2026-08-15, and what that cost was the phone, where there is no
+              Enter key to fall back on. Worse, the turn reading is derived from
+              the transcript, which lags the pane: measured live, a session
+              whose real state was `done` showed Stop in 98 of 100 samples over
+              300s, so a finished session could offer no way to send at all. */}
+          <div class="tl-pill-end">
+            <Show when={queueing()}>
+              <span class="tl-send-hint" id={hintId}>
+                <QueueIcon />
+                queues
+              </span>
             </Show>
-            {props.leftExtra}
-          </div>
-          <div class="tl-bar-right">
-            {props.rightExtra}
-            {/* Send is always here; Stop JOINS it while there is a turn to stop.
-                Stop used to REPLACE it, which is the browser half of a turn gate
-                the server gave up on 2026-08-15 — mid-turn sends queue in Claude,
-                and Enter has been doing exactly that all along. What the swap cost
-                was the phone, where there is no Enter key to fall back on.
-
-                Rendering Send unconditionally also fixes a second, worse case.
-                `working` comes from the transcript, which lags the pane: measured
-                live, a session whose real state was `done` showed Stop in 98 of 100
-                samples over 300s (and kept doing so after a reload), and 17-22% of
-                sessions disagreed with their state at any moment. A finished
-                session could therefore offer no way to send at all. */}
             <button
               type="button"
               class="tl-send"
+              aria-label="Send"
+              aria-describedby={queueing() ? hintId : undefined}
               onClick={submit}
               disabled={props.sendNeedsInput && !sendable()}
-              title={props.sendTitle}
+              title={sendTitle()}
             >
-              Send
+              <span class="tl-disc">
+                <SendArrowIcon />
+              </span>
             </button>
           </div>
         </div>
+        <Show when={props.onAttach}>
+          {/* Both pickers stay mounted while the tray comes and goes: a picker
+              opened from a row that has since unmounted still has to deliver
+              its files somewhere. The any-file input comes first, which is the
+              one a bare `input[type=file]` finds.
+
+              Present on EVERY device, which is the point: the soft-key row
+              carries Copy and Paste only, so a phone had no file picker in
+              either view, and the text view is the default view on a coarse
+              pointer. `capture` is deliberately absent from both so iOS offers
+              Photo Library, Take Photo and Choose File rather than jumping
+              straight to the camera. */}
+          <input
+            ref={fileInput}
+            type="file"
+            multiple
+            hidden
+            aria-hidden="true"
+            onChange={(e) => {
+              const el = e.currentTarget;
+              const files = [...(el.files ?? [])];
+              el.value = ""; // let the same file be picked again
+              void attach(files);
+            }}
+          />
+          <input
+            ref={photoInput}
+            type="file"
+            accept="image/*"
+            multiple
+            hidden
+            aria-hidden="true"
+            onChange={(e) => {
+              const el = e.currentTarget;
+              const files = [...(el.files ?? [])];
+              el.value = "";
+              void attach(files);
+            }}
+          />
+        </Show>
       </div>
       {/* The attached picture, full size. Same class as the gallery's, so the
           two look and behave alike, and pressing anywhere on it closes it —

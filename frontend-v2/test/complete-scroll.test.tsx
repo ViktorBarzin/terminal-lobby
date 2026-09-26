@@ -104,7 +104,8 @@ function stubLayout(
   Object.defineProperty(menu, "clientHeight", { configurable: true, get: () => viewHeight });
   // The scroller's own box does not move when it scrolls — only its children
   // do. Modelling it otherwise made the two cancel out and hid the scroll.
-  menu.getBoundingClientRect = () => ({ top: 0, bottom: viewHeight, height: viewHeight }) as DOMRect;
+  menu.getBoundingClientRect = () =>
+    ({ top: 0, bottom: viewHeight, height: viewHeight }) as DOMRect;
   const restub = (): void => {
     Array.from(menu.children).forEach((child, i) => {
       const el = child as HTMLElement;
@@ -120,7 +121,6 @@ describe("the menu scrolls with the arrow keys", () => {
   const open = () => {
     const r = render(() => (
       <Composer
-        working={false}
         pending={[]}
         commands={ROWS}
         onSend={async () => true}

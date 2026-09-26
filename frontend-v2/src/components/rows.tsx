@@ -9,7 +9,6 @@ import type {
   TodoRow,
   ToolRow,
   TurnFoldRow,
-  WorkingRow,
 } from "./timeline.logic";
 import { basename } from "../store/preview.logic";
 
@@ -129,7 +128,10 @@ const DiffView: Component<{ payload: unknown }> = (props) => {
               <div class="tl-diff-hunk">{h.header}</div>
               <For each={h.lines}>
                 {(l) => (
-                  <div class="tl-diff-line" data-sign={l.sign === " " ? "ctx" : l.sign === "+" ? "add" : "del"}>
+                  <div
+                    class="tl-diff-line"
+                    data-sign={l.sign === " " ? "ctx" : l.sign === "+" ? "add" : "del"}
+                  >
                     <span class="tl-diff-sign">{l.sign}</span>
                     <span class="tl-diff-text">{l.text}</span>
                   </div>
@@ -252,7 +254,12 @@ export const ToolRowView: Component<{
   };
 
   return (
-    <div class="tl-row tl-row-tool" data-eid={props.row.id} data-status={status()} data-item={props.row.itemType}>
+    <div
+      class="tl-row tl-row-tool"
+      data-eid={props.row.id}
+      data-status={status()}
+      data-item={props.row.itemType}
+    >
       <div class="tl-tool-head">
         <button
           type="button"
@@ -320,9 +327,7 @@ export const ToolRowView: Component<{
             }
           >
             <>
-              <div class="tl-tool-section-label">
-                output{props.row.isError ? " (error)" : ""}
-              </div>
+              <div class="tl-tool-section-label">output{props.row.isError ? " (error)" : ""}</div>
               <pre class="tl-code" classList={{ "tl-code-error": props.row.isError }}>
                 {props.row.result}
               </pre>
@@ -395,71 +400,71 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
   const anyDesc = () =>
     props.row.questions.some((q) => q.options.some((o) => (o.description ?? "").trim() !== ""));
   return (
-  <div class="tl-row tl-row-question" data-eid={props.row.id} data-pending={props.row.pending ? "true" : undefined}>
-    <For each={props.row.questions}>
-      {(q) => (
-        <div class="tl-question">
-          <div class="tl-question-head">
-            <span class="tl-question-chip">{q.header || "Question"}</span>
-            {/* The question text is the CARD's job while one is docked — it is a
+    <div
+      class="tl-row tl-row-question"
+      data-eid={props.row.id}
+      data-pending={props.row.pending ? "true" : undefined}
+    >
+      <For each={props.row.questions}>
+        {(q) => (
+          <div class="tl-question">
+            <div class="tl-question-head">
+              <span class="tl-question-chip">{q.header || "Question"}</span>
+              {/* The question text is the CARD's job while one is docked — it is a
                 hundred pixels below this and set larger. Printing it here too was
                 the duplication this collapse exists to remove, only quieter. What
                 the transcript needs while waiting is the PLACE the question
                 occupies; the words arrive when it becomes the record. */}
-            <Show when={!props.row.pending}>
-              <span class="tl-question-text">{q.question}</span>
-            </Show>
-          </div>
-          {/* While the answer is still being given, this row is not the record
+              <Show when={!props.row.pending}>
+                <span class="tl-question-text">{q.question}</span>
+              </Show>
+            </div>
+            {/* While the answer is still being given, this row is not the record
               yet — the card docked above the composer is asking the very same
               question, and rendering the options here too showed the whole thing
               twice, a card's height apart. It says what is being asked and where
               the answer is going, and becomes the full record when one lands. */}
-          <Show when={props.row.pending}>
-            <div class="tl-question-answering">answering below…</div>
-          </Show>
-          <Show when={!props.row.pending}>
-          <div class="tl-question-options" data-full={full() ? "true" : undefined}>
-            <For each={q.options}>
-              {(o, oi) => (
-                <div
-                  class="tl-question-option"
-                  data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
-                >
-                  <span class="tl-option-key">{oi() + 1}</span>
-                  <span class="tl-option-label">{o.label}</span>
-                  <Show when={o.description}>
-                    <span class="tl-option-desc">{o.description}</span>
-                  </Show>
-                </div>
-              )}
-            </For>
-          </div>
-          </Show>
-          <Show when={!props.row.pending && anyDesc()}>
-            <button
-              type="button"
-              class="tl-question-full"
-              onClick={() => setFull((v) => !v)}
-            >
-              {full() ? "Show less" : "Show all"}
-            </button>
-          </Show>
-          <Show when={!props.row.pending && props.row.answers.length > 0}>
-            <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
-          </Show>
-          {/* Asked, never answered, and no longer on screen — Claude Code takes
+            <Show when={props.row.pending}>
+              <div class="tl-question-answering">answering below…</div>
+            </Show>
+            <Show when={!props.row.pending}>
+              <div class="tl-question-options" data-full={full() ? "true" : undefined}>
+                <For each={q.options}>
+                  {(o, oi) => (
+                    <div
+                      class="tl-question-option"
+                      data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
+                    >
+                      <span class="tl-option-key">{oi() + 1}</span>
+                      <span class="tl-option-label">{o.label}</span>
+                      <Show when={o.description}>
+                        <span class="tl-option-desc">{o.description}</span>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            </Show>
+            <Show when={!props.row.pending && anyDesc()}>
+              <button type="button" class="tl-question-full" onClick={() => setFull((v) => !v)}>
+                {full() ? "Show less" : "Show all"}
+              </button>
+            </Show>
+            <Show when={!props.row.pending && props.row.answers.length > 0}>
+              <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
+            </Show>
+            {/* Asked, never answered, and no longer on screen — Claude Code takes
               a dialog down when something else claims the turn and re-asks.
               Saying so beats a row that keeps the live-dialog look for the rest
               of the session. */}
-          <Show when={props.row.superseded}>
-            <div class="tl-question-answer">unanswered — the session moved on</div>
-          </Show>
-        </div>
-      )}
-    </For>
-  </div>
-);
+            <Show when={props.row.superseded}>
+              <div class="tl-question-answer">unanswered — the session moved on</div>
+            </Show>
+          </div>
+        )}
+      </For>
+    </div>
+  );
 };
 
 export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
@@ -477,12 +482,14 @@ export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
 );
 
 /* Keyed by the whole MetaKind because the wire contract carries all of them.
-   `mode` and `permission-mode` no longer reach this view — deriveRows drops
-   them, since the composer's chip already shows the mode in force — but the
+   `mode` and `permission-mode` no longer reach this view: deriveRows drops
+   them, since the composer's mode dial already shows the mode in force. The
    record stays total so a new kind cannot be added without a label. */
 const META_LABEL: Record<MetaRow["meta"], string> = {
   mode: "mode",
   "permission-mode": "permissions",
+  // Dropped by deriveRows since 2026-09-24: a queued prompt is a ghost bubble
+  // at the end of the timeline while it waits, and its own row once taken.
   queued: "queued",
   // deriveRows drops these three, the way it drops the mode kinds — they are
   // bookkeeping for the queue list. The record stays total so a new kind
@@ -496,21 +503,22 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // Dropped by deriveRows as well: what the pane says about a blocking question
   // is state, and the answer card is where it shows.
   asking: "waiting for an answer",
-  // Dropped by deriveRows too — the reading belongs to the meter beside the
-  // composer, and one row per settled turn would divide the whole transcript.
+  // Dropped by deriveRows too: the reading belongs to the context dial on the
+  // composer's line, and one row per settled turn would divide the whole
+  // transcript.
   context: "context",
   // Dropped by deriveRows for the same reason as the mode: which model is
-  // answering is state, and the chip beside the composer shows it.
+  // answering is state, and the model dial on the composer's line shows it.
   model: "model",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
   <div class="tl-row tl-row-meta" data-eid={props.row.id} data-meta={props.row.meta}>
     <span class="tl-meta-rule" />
-    {/* `title` because the text is clamped to three lines (app.css): a `queued`
-        row carries the whole prompt, and a marker row is not where a reader
-        should have to read one. Nothing is lost — the prompt itself arrives as
-        its own row the moment it is sent. */}
+    {/* `title` because the text is clamped to three lines (app.css): a marker
+        row is not where a reader should have to read a long value. The
+        `queued` rows that carried whole prompts were the reason for the clamp,
+        and are ghost bubbles now (MessagesTimeline). */}
     <span class="tl-meta-text" title={props.row.body || undefined}>
       {META_LABEL[props.row.meta]}
       <Show when={props.row.body && props.row.meta !== "compact"}>
@@ -521,46 +529,6 @@ export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
     <span class="tl-meta-rule" />
   </div>
 );
-
-/**
- * The live row. It names the call actually in flight and ticks its own timer —
- * the transcript records a tool_use the moment Claude emits it, so this is
- * specific without a second data source (design decision 6).
- *
- * A turn can be open with nothing running, because Claude asked the reader
- * something and stopped. That row says so instead, and its clock counts the
- * wait rather than the turn (see WorkingRow.waiting).
- */
-export const WorkingRowView: Component<{ row: WorkingRow; now: number }> = (props) => {
-  const elapsed = () => {
-    const from = props.row.toolStartedAt ?? props.row.startedAt;
-    if (!from || !props.now) return "";
-    return formatDuration(props.now - from);
-  };
-  return (
-    <div
-      class="tl-row tl-row-working"
-      data-waiting={props.row.waiting ? "true" : undefined}
-      aria-live="polite"
-    >
-      <span class="tl-working-dot" />
-      <span class="tl-working-text">
-        <Show when={props.row.toolLabel} fallback={props.row.waiting ? "Waiting for you" : "Working…"}>
-          <span class="tl-working-tool">{props.row.tool}</span>
-          <span class="tl-working-label">{props.row.toolLabel}</span>
-        </Show>
-      </span>
-      <Show when={elapsed()}>
-        <span class="tl-working-elapsed">{elapsed()}</span>
-      </Show>
-      <Show when={props.row.steps > 1}>
-        <span class="tl-working-steps">
-          {props.row.steps} {props.row.steps === 1 ? "step" : "steps"}
-        </span>
-      </Show>
-    </div>
-  );
-};
 
 export const TurnFoldRowView: Component<{
   row: TurnFoldRow;

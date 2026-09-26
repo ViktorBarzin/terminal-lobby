@@ -33,7 +33,6 @@ function mount(attach: DraftAttachment[]) {
   const onAttach = vi.fn().mockResolvedValue(attach);
   const r = render(() => (
     <Composer
-      working={false}
       pending={[]}
       session="qa"
       onSend={vi.fn().mockResolvedValue(true)}

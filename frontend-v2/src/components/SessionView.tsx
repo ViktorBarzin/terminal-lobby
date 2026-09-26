@@ -23,7 +23,7 @@ import type { SseStatus } from "../sse/client";
 import { gridCramped, type SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
 import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
-import { pendingPermissions, sessionWorking, deriveRows } from "./timeline.logic";
+import { pendingPermissions, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
 import { ViewSwitch } from "./ViewSwitch";
 import { TextView } from "./TextView";
@@ -53,6 +53,7 @@ import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnost
 import type { BackgroundWork, SessionTool } from "../types/lobby";
 import { modelHarness } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
+import { setSessionMode } from "../lib/mode-api";
 import { flushHeldWhenAwake, holdForSuspended } from "../store/suspend-queue";
 
 /**
@@ -851,7 +852,6 @@ export const SessionView: Component<{
   });
 
   const rows = createMemo(() => deriveRows(store.events));
-  const working = createMemo(() => sessionWorking(rows()));
   const pending = createMemo(() => pendingPermissions(store.events));
 
   // ---- file preview surface (roadmap pillar #6) ---------------------------
@@ -1642,7 +1642,6 @@ export const SessionView: Component<{
             onScreen={onScreen()}
             events={store.events}
             rows={rows}
-            working={working()}
             background={props.background}
             pending={pending()}
             onSend={send}
@@ -1671,8 +1670,13 @@ export const SessionView: Component<{
             me={props.me?.() ?? ""}
             harness={modelHarness(props.tool?.())}
             onSetModel={setModel}
+            onSetMode={(m) => setSessionMode({ session, mode: m })}
             onAttach={attachFiles}
             inertReason={inertReason()}
+            // The line's Take control: the same toggle the header's Watch
+            // button flips, offered where the line says this device is only
+            // watching.
+            onTakeControl={() => toggleWatch()}
             register={(api) => (composer = api)}
           />
         </section>

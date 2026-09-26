@@ -235,8 +235,8 @@ export interface ModelState {
  * a box carrying the managed `modelPicker` rows even that receipt says the
  * slug, because the picker's label is the display name the CLI reaches for.
  *
- * It is NOT what the chip shows. Displaying the family threw away the version,
- * which is half of what "which model is this" means.
+ * It is NOT what the model dial shows. Displaying the family threw away the
+ * version, which is half of what "which model is this" means (`modelName`).
  */
 export function modelFamily(h: ModelHarness, model: string): string {
   if (!model) return "";
@@ -257,9 +257,8 @@ export function modelFamily(h: ModelHarness, model: string): string {
  * word means — the plain slug, never the `[1m]` variant or last generation.
  */
 function canonicalFor(h: ModelHarness, family: string): string | undefined {
-  return CATALOGUE[h].model.find(
-    (o) => o.id !== DEFAULT_CHOICE && modelFamily(h, o.id) === family,
-  )?.id;
+  return CATALOGUE[h].model.find((o) => o.id !== DEFAULT_CHOICE && modelFamily(h, o.id) === family)
+    ?.id;
 }
 
 /**
@@ -274,11 +273,7 @@ function canonicalFor(h: ModelHarness, family: string): string | undefined {
  * canonical row and nothing else, so `claude-opus-5` and `claude-opus-5[1m]`
  * are never both marked current.
  */
-export function isCurrentModel(
-  h: ModelHarness,
-  id: string,
-  reported: string | undefined,
-): boolean {
+export function isCurrentModel(h: ModelHarness, id: string, reported: string | undefined): boolean {
   if (!reported) return false;
   if (reported.toLowerCase() === id.toLowerCase()) return true;
   if (h === "codex") return false;
@@ -288,13 +283,13 @@ export function isCurrentModel(
 }
 
 /**
- * What the chip says: the model and the effort, or whichever half is known.
+ * The model and the effort as one exact string, or whichever half is known.
  *
  * The model is reported VERBATIM. `claude-opus-5` and
  * `claude-haiku-4-5-20251001` are different answers to which model this is, and
- * a chip that said "opus" and "haiku" could not tell two builds of one family
- * apart. A slug outruns the chip on a phone, so the stylesheet ellipsises it
- * and the title carries the whole thing.
+ * a label that said "opus" and "haiku" could not tell two builds of one family
+ * apart. This is what the model dial's title carries; the dial itself shows
+ * `modelName` below, which keeps the version and drops the rest of the slug.
  *
  * Between a change and the session's next turn the only source is the CLI's own
  * receipt, which names the family. That is what the session has said, so that
@@ -304,6 +299,33 @@ export function summarise(state: ModelState | undefined): string {
   if (!state) return "";
   return [state.model ?? "", state.effort ?? ""].filter((s) => s !== "").join(" · ");
 }
+
+/**
+ * What the model dial calls a model: `claude-opus-5-5` is "Opus 5.5".
+ *
+ * The chip before the dial showed the slug and nothing else, which on a 390px
+ * phone ran under Send and read "claude-opus-5-5 · ı" (measured on 0.71.2,
+ * memory #13886). The Quiet line composer (2026-09-24) shows a name and moves
+ * the slug into the picker and the dial's title. The rule `summarise` states
+ * still holds, because the version stays in the name: Opus 5 and Opus 5.5 are
+ * two answers, as are Opus 5 and Opus 5 · 1M.
+ *
+ * A date in the slug is part of the build and not the name, so Haiku's
+ * `-20251001` goes to the title with the rest. A bare family word, which is
+ * what the CLI's receipt normalises to before the next turn names the slug,
+ * reads as the family. Codex already names its models this way, so its slugs
+ * pass through, and so does anything this does not recognise.
+ */
+export function modelName(h: ModelHarness, model: string): string {
+  if (h !== "claude" || !model) return model;
+  if (/^(opus|sonnet|haiku)$/i.test(model)) return capitalise(model.toLowerCase());
+  const m = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(model);
+  if (!m) return model;
+  const version = m[3] ? `${m[2]}.${m[3]}` : m[2]!;
+  return `${capitalise(m[1]!.toLowerCase())} ${version}${m[4] ? " · 1M" : ""}`;
+}
+
+const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
  * The body of a `POST /model/{session}`, or null when there is nothing to

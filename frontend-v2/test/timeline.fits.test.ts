@@ -104,11 +104,16 @@ describe("what does not fit is wrapped or scrolled in its own box", () => {
  * shrinks the visual viewport and leaves `vh` resolving against the full
  * screen. Measured at 390x844 with a 336px keyboard: the card held 420px and
  * the composer sat 84px under the keyboard.
+ *
+ * The share went from 52% to 62% with the Quiet line composer (2026-09-24),
+ * which is 38px shorter than the one it replaced: on the prototype's 616px
+ * desktop pane that keeps a four-option card's every row in view (343px). It
+ * is still a share of the pane and still no `vh`.
  */
 describe("a question card leaves the composer room", () => {
   it("caps itself against its pane, not against the viewport", () => {
     const qcard = rule(".tl-qcard");
-    expect(qcard).toMatch(/max-height:\s*min\(52%,\s*420px\)/);
+    expect(qcard).toMatch(/max-height:\s*min\(62%,\s*460px\)/);
     expect(qcard).not.toMatch(/max-height:[^;]*vh/);
   });
 

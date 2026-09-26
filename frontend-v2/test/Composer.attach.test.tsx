@@ -37,7 +37,6 @@ function mount(over: Partial<Harness> = {}) {
   const onAttach = over.onAttach ?? vi.fn().mockResolvedValue([]);
   const r = render(() => (
     <Composer
-      working={false}
       pending={[]}
       session="qa"
       onSend={onSend}
@@ -47,7 +46,7 @@ function mount(over: Partial<Harness> = {}) {
     />
   ));
   const field = r.container.querySelector("textarea")!;
-  const send = () => fireEvent.click(r.getByText("Send"));
+  const send = () => fireEvent.click(r.getByLabelText("Send"));
   return { ...r, onSend, onAttach, field, send };
 }
 
@@ -311,7 +310,6 @@ describe("register", () => {
     const onSend = vi.fn().mockResolvedValue(true);
     const r = render(() => (
       <Composer
-        working={false}
         pending={[]}
         session="qa"
         onSend={onSend}
@@ -354,10 +352,10 @@ describe("register", () => {
   });
 
   it("sends what was inserted from outside", async () => {
-    const { api, onSend, getByText } = mountWithRegister();
+    const { api, onSend, getByLabelText } = mountWithRegister();
     api().insertText("from the palette");
     await waitFor(() => {});
-    fireEvent.click(getByText("Send"));
+    fireEvent.click(getByLabelText("Send"));
     expect(onSend).toHaveBeenCalledWith("from the palette", []);
   });
 });

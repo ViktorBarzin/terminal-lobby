@@ -448,6 +448,15 @@ export function completionFor(
  * bypassPermissions, manual, dontAsk, plan). `default` is the older name for
  * `manual` and still appears in transcripts written before the rename.
  *
+ * dontAsk is the one line with no "mode" in it. Measured on CLI 2.1.281 on
+ * 2026-09-24 (memory #13911), a session started in it reads
+ *
+ *   ⏵⏵ don't ask on (shift+tab to cycle)            dontAsk
+ *
+ * and the pattern here was "don't ask mode on" until then, so a session in the
+ * one mode that refuses every tool that would ask read as no mode at all. Both
+ * spellings match now, the measured one and the one a build may yet draw.
+ *
  * Matched on the phrase alone — the ⏵⏵/⏸ glyph, the "(shift+tab to cycle)" tail
  * and the "· ← for agents" suffix all vary with the session and the build.
  */
@@ -457,7 +466,7 @@ const PANE_MODES: ReadonlyArray<readonly [RegExp, string]> = [
   [/auto mode on/i, "auto"],
   [/manual mode on/i, "manual"],
   [/plan mode on/i, "plan"],
-  [/don'?t ask mode on/i, "dontAsk"],
+  [/don'?t ask (?:mode )?on/i, "dontAsk"],
 ];
 
 export function modeFromPane(pane: string): string {
@@ -474,31 +483,6 @@ export function modeFromPane(pane: string): string {
     }
   }
   return found;
-}
-
-/**
- * The mode, short enough to sit in a chip beside the input. The full names run
- * to `bypassPermissions`, which on a 390px screen crowds out both the message
- * field and the Send button.
- *
- * The words are the CLI's own, so the chip and the status line under the
- * terminal agree.
- */
-export function modeLabel(mode: string): string {
-  switch (mode) {
-    case "bypassPermissions":
-      return "bypass";
-    case "acceptEdits":
-      return "edits";
-    case "dontAsk":
-      return "no ask";
-    // `default` is what transcripts written before the rename call `manual`.
-    case "manual":
-    case "default":
-      return "manual";
-    default:
-      return mode;
-  }
 }
 
 /** One attachment, as the send sees it: where its bytes are, and the token

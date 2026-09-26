@@ -16,17 +16,10 @@ import { Composer } from "../src/components/Composer";
 
 const mount = () =>
   render(() => (
-    <Composer
-      working={false}
-      pending={[]}
-      onSend={async () => true}
-      onStop={() => {}}
-      onResolve={() => {}}
-    />
+    <Composer pending={[]} onSend={async () => true} onStop={() => {}} onResolve={() => {}} />
   ));
 
-const field = (c: HTMLElement) =>
-  c.querySelector<HTMLTextAreaElement>(".tl-composer-input")!;
+const field = (c: HTMLElement) => c.querySelector<HTMLTextAreaElement>(".tl-composer-input")!;
 
 describe("the composer takes focus during the touch, not after it", () => {
   it("focuses on pointerdown from a touch", () => {
@@ -68,7 +61,6 @@ describe("the composer's affordances", () => {
   it("recalls the previous prompt with ↑ from an empty field", () => {
     const { container } = render(() => (
       <Composer
-        working={false}
         pending={[]}
         history={["first prompt", "second prompt"]}
         onSend={async () => true}
@@ -85,39 +77,38 @@ describe("the composer's affordances", () => {
     expect(ta.value).toBe("second prompt");
   });
 
-  it("shows a queued prompt rather than letting it vanish", () => {
+  // Queued prompts were chips in here until 2026-09-24. They are ghost bubbles
+  // at the end of the timeline now (MessagesTimeline.ghost.test.tsx), and the
+  // composer draws none of its own.
+  it("leaves queued prompts to the timeline", () => {
     const { container } = render(() => (
-      <Composer
-        working={true}
-        pending={[]}
-        queued={["the one Claude has not started yet"]}
-        onSend={async () => true}
-        onStop={() => {}}
-        onResolve={() => {}}
-      />
+      <Composer pending={[]} onSend={async () => true} onStop={() => {}} onResolve={() => {}} />
     ));
-    expect(container.querySelector(".tl-queued-item")?.textContent).toContain(
-      "the one Claude has not started yet",
-    );
+    expect(container.querySelector(".tl-queued")).toBeNull();
   });
 
-  it("cycles the mode from the chip", () => {
+  // A click on the chip stepped the mode until the Quiet line composer. The
+  // dial opens the list instead, and Shift+Tab in the field is what steps.
+  it("steps the mode on Shift+Tab, and opens the list on a click", () => {
     const onCycleMode = vi.fn();
     const { container } = render(() => (
       <Composer
-        working={false}
         pending={[]}
         mode="bypassPermissions"
         onCycleMode={onCycleMode}
+        onPickMode={() => {}}
         onSend={async () => true}
         onStop={() => {}}
         onResolve={() => {}}
       />
     ));
-    const chip = container.querySelector<HTMLButtonElement>(".tl-mode-chip")!;
-    expect(chip.textContent).toBe("bypass");
-    fireEvent.click(chip);
-    expect(onCycleMode).toHaveBeenCalled();
+    fireEvent.keyDown(field(container), { key: "Tab", shiftKey: true });
+    expect(onCycleMode).toHaveBeenCalledTimes(1);
+    const dial = container.querySelector<HTMLButtonElement>('.tl-dial[data-dial="mode"]')!;
+    expect(dial.querySelector(".tl-dial-value")?.textContent).toBe("Bypass");
+    fireEvent.click(dial);
+    expect(container.querySelector(".tl-dial-pop-mode")).not.toBeNull();
+    expect(onCycleMode).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -140,13 +131,17 @@ describe("the keyboard's send key", () => {
   it("sends on insertLineBreak, and inserts no newline", () => {
     const onSend = vi.fn(async () => true);
     const { container } = render(() => (
-      <Composer working={false} pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
     ));
     const ta = field(container);
     type(ta, "ship it");
     const notPrevented = fireEvent(
       ta,
-      new InputEvent("beforeinput", { inputType: "insertLineBreak", bubbles: true, cancelable: true }),
+      new InputEvent("beforeinput", {
+        inputType: "insertLineBreak",
+        bubbles: true,
+        cancelable: true,
+      }),
     );
     expect(onSend).toHaveBeenCalledWith("ship it", []);
     expect(notPrevented).toBe(false); // the newline never reaches the field
@@ -156,13 +151,17 @@ describe("the keyboard's send key", () => {
   it("puts the text back when the session refused it", async () => {
     const onSend = vi.fn(async () => false);
     const { container } = render(() => (
-      <Composer working={false} pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
     ));
     const ta = field(container);
     type(ta, "do not lose me");
     fireEvent(
       ta,
-      new InputEvent("beforeinput", { inputType: "insertLineBreak", bubbles: true, cancelable: true }),
+      new InputEvent("beforeinput", {
+        inputType: "insertLineBreak",
+        bubbles: true,
+        cancelable: true,
+      }),
     );
     await new Promise((r) => setTimeout(r, 0));
     expect(ta.value).toBe("do not lose me");
@@ -171,14 +170,18 @@ describe("the keyboard's send key", () => {
   it("still lets Shift+Enter through as a soft newline", () => {
     const onSend = vi.fn(async () => true);
     const { container } = render(() => (
-      <Composer working={false} pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
     ));
     const ta = field(container);
     type(ta, "line one");
     fireEvent.keyDown(ta, { key: "Enter", shiftKey: true });
     const notPrevented = fireEvent(
       ta,
-      new InputEvent("beforeinput", { inputType: "insertLineBreak", bubbles: true, cancelable: true }),
+      new InputEvent("beforeinput", {
+        inputType: "insertLineBreak",
+        bubbles: true,
+        cancelable: true,
+      }),
     );
     expect(onSend).not.toHaveBeenCalled();
     expect(notPrevented).toBe(true); // the field keeps the newline
@@ -189,7 +192,7 @@ describe("the keyboard's send key", () => {
   it("does not send while an IME candidate is being committed", () => {
     const onSend = vi.fn(async () => true);
     const { container } = render(() => (
-      <Composer working={false} pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
     ));
     const ta = field(container);
     type(ta, "にほんご");

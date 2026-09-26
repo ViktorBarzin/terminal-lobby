@@ -1361,27 +1361,22 @@ label.tl-set-row-label {
      `Load earlier turns` — compensate for themselves, and did so while fighting
      this. */
   overflow-anchor: none;
-  padding: 16px clamp(12px, 6vw, 80px);
+  /* 26px at the foot, which is the fade below: the last row clears it when the
+     reader is at the bottom, and only padding is ever faded. */
+  padding: 16px clamp(12px, 6vw, 80px) 26px;
   display: flex;
   flex-direction: column;
   gap: 14px;
+  /* The conversation slides under the composer rather than meeting a band.
+     The dock had a fill and a top border until the Quiet line composer
+     (2026-09-24); it is transparent now, and the last 26px of the transcript
+     fade out under it instead. On the scroller's own box, so it is the
+     VISIBLE foot that fades and never a row the reader scrolled up to. */
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
 }
 /* The size a pinch has reached, while it is being made. Mirrors the terminal's
    own #font-pill: it appears on the claim and fades when the fingers lift. */
-/* Between the timeline and the composer: what the session is still doing after
-   the transcript has gone quiet. Sits in the flow rather than floating, because
-   it is a statement about the conversation and not a transient. */
-.tl-bg-strip {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
-  /* Inside .tl-textview, so it follows the pinch with the transcript and the
-     composer rather than sitting at native size beside them. */
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  border-top: 1px solid var(--border-subtle, var(--border-strong));
-}
 .tl-size-pill {
   position: absolute;
   top: 12px;
@@ -1447,6 +1442,50 @@ label.tl-set-row-label {
   font-family: var(--font-ui);
   white-space: pre-wrap;
   word-break: break-word;
+}
+/* A queued prompt: the reader's own message that has not left yet, drawn where
+   it will land as an outline of the bubble it will become. They were chips in
+   the composer until 2026-09-24. Long ones are cut at six lines; the title
+   carries the whole message. */
+.tl-bubble-ghost {
+  border: 1px dashed var(--border-strong);
+  background: transparent;
+  color: var(--text-muted);
+  animation: tl-rise 0.22s ease-out;
+}
+.tl-ghost-body {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  line-clamp: 6;
+  overflow: hidden;
+}
+.tl-ghost-tag {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 0 6px;
+  border-radius: 999px;
+  vertical-align: 1px;
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent);
+}
+.tl-ghost-text {
+  display: inline;
+}
+.tl-ghost-when {
+  display: block;
+  margin-top: 2px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  opacity: 0.85;
+}
+.tl-ghost-more {
+  text-align: right;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-style: italic;
+  color: var(--text-muted);
 }
 /* ---- Attachments in the chat (design 2026-08-17) -----------------------
    Rendered INSIDE the user bubble's <pre> and inside assistant markdown, so
@@ -1625,28 +1664,16 @@ label.tl-set-row-label {
   color: var(--danger);
   font-family: var(--font-mono);
 }
-.tl-row-working {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--text-muted);
-  font-size: calc(13px * var(--tl-text-scale, 1));
-}
+/* The pulse that says work is happening. The working row it was made for moved
+   onto the composer's thin line (2026-09-24), which has its own dot; this one
+   stays for the timeline's "loading earlier rows" hint, and the answer card
+   borrows its animation. */
 .tl-working-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--state-running);
   animation: tl-pulse 1.1s ease-in-out infinite;
-}
-/* The turn is open and nothing is running: Claude asked something and stopped.
-   It takes the awaiting colour the state dot and the permission row already use
-   for the same thing, and it holds still, since a pulse is what says work is
-   happening. */
-.tl-row-working[data-waiting="true"] .tl-working-dot {
-  background: var(--state-awaiting);
-  animation: none;
-  opacity: 1;
 }
 @keyframes tl-pulse {
   0%,
@@ -1853,38 +1880,43 @@ label.tl-set-row-label {
   padding: 16px clamp(12px, 6vw, 80px);
   overflow-y: auto;
 }
+/* The shell's name box, in the pill where the prompt field would be: one line,
+   the height of the field at rest. */
 .tl-new-name {
-  height: 40px;
+  flex: 1 1 auto;
+  height: calc(22px * var(--tl-text-scale, 1) + 10px);
   resize: none;
 }
-/* The box centres itself with `margin: 0 auto`, and an auto cross-axis margin
-   turns OFF a flex item's stretch — so without this it shrank to fit its own
-   content and sat 385px wide in a 1180px pane, measured at 1440x900. */
-.tl-new-composer > .tl-composer-box {
+/* The line and the pill centre themselves with `margin: 0 auto`, and an auto
+   cross-axis margin turns OFF a flex item's stretch, so without this they
+   shrank to fit their own content: the box once sat 385px wide in a 1180px
+   pane, measured at 1440x900. */
+.tl-new-composer > .tl-pillwrap,
+.tl-new-composer > .tl-pill,
+.tl-new-composer > .tl-new-line {
   width: 100%;
+  max-width: 860px;
+  margin-left: auto;
+  margin-right: auto;
+}
+/* The choices, on a line above the box where the live composer keeps its
+   dials, right-aligned the same way. Still the four selects until the dials
+   reach this screen. */
+.tl-new-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
 }
 
 /* ---- the new-session composer on a phone --------------------------------
    Measured on the Android emulator at 412px, which is the width class of the
-   iPhone Viktor reported from. Attach, the project select, the command select,
-   the model select and Send do not fit on one row, and they were in a
-   horizontal scroller with its scrollbar hidden. 173px of controls were off
-   the end of it: the command select was sheared by Send's edge (its right edge
-   at 339px against Send's left at 311px) and the model select sat at 478px,
-   past the screen. Nothing on the row said either had happened, so it read as
-   two controls drawn on top of each other, which is what it looked like.
-
-   `display: contents` on the left group is what makes this work. The controls
-   and Send were two sibling flex items, so wrapping the controls put Send on a
-   line of its own with the width of the row empty beside it. Dissolving the
-   group lets all five wrap as one flow, and `margin-left: auto` then parks Send
-   at the right of whatever line it lands on: two rows instead of three, 88px of
-   bar instead of 136, and nothing outside the viewport.
-
-   Scoped to the new-session composer. The live session's composer shares this
-   markup and not this problem: its bar carries Stop and the context meter, its
-   scroller earns its place, and it sits above a keyboard where a second row is
-   height it does not have. */
+   iPhone Viktor reported from: Attach, the project select, the command select,
+   the model select and Send did not fit on one row, and 173px of controls sat
+   off the end of a scroller with its scrollbar hidden. Since 2026-09-24 the
+   choices have a line of their own above the pill, which wraps, and Attach and
+   Send are in the pill, so nothing shares a row it cannot fit in. */
 @media (pointer: coarse) {
   .tl-new-composer {
     /* Pinned to the bottom, the way a chat composer is and the way T3 Code
@@ -1903,18 +1935,8 @@ label.tl-set-row-label {
     justify-content: flex-start;
     padding-bottom: calc(12px + var(--kb-offset, 0px) + var(--safe-b, 0px));
   }
-  .tl-new-composer > .tl-composer-box {
+  .tl-new-composer > .tl-new-line {
     margin-top: auto;
-  }
-  .tl-new-composer .tl-composer-bar {
-    flex-wrap: wrap;
-    row-gap: 8px;
-  }
-  .tl-new-composer .tl-bar-left {
-    display: contents;
-  }
-  .tl-new-composer .tl-bar-right {
-    margin-left: auto;
   }
   /* The codebase's own touch floor, which these selects were half of. */
   .tl-new-composer .tl-new-cmd {
@@ -1927,88 +1949,559 @@ label.tl-set-row-label {
   }
 }
 
-/* ---- composer + permission panel -------------------------------------- */
+/* ---- the composer: the Quiet line --------------------------------------
+   Viktor chose it on 2026-09-24 from five prototypes
+   (docs/plans/2026-09-24-text-composer-redesign.md, direction 1). One line of
+   small type, the session's state on the left and the mode, model and context
+   dials on the right, above ONE pill holding +, the field and Send.
+
+   Measured on the prototype in Chromium at 1:1: the dock is 86px at rest on a
+   desktop (4 + a 28px line + 2 + a 42px pill + 10) and 92px on a phone (4 + 34
+   + 48 + 6), where the composer it replaced measured 124px and 127px on 0.71.2
+   with the session's state in a row of its own above it (memory #13886). */
+
+/* The dock. No fill and no top border any more: the transcript fades out
+   under it (`.tl-timeline`'s mask), and the dock's top EDGE carries the
+   session's state instead. */
 .tl-composer {
+  position: relative;
   flex: 0 0 auto;
-  border-top: 1px solid var(--border);
-  background: var(--bg-sidebar);
-  padding: 10px clamp(12px, 6vw, 80px);
+  padding: 4px clamp(12px, 6vw, 80px) 10px;
 }
-/* One surface. The field used to carry the border and the control bar carried
-   none, so the composer read as a boxed input with its buttons floating loose
-   beneath it. The box holds the border and the fill; the field goes transparent
-   inside it. */
-.tl-composer-box {
-  max-width: 860px;
-  margin: 0 auto;
-  padding: 8px 10px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius);
-  background: var(--bg-card);
+/* The state light along the dock's top: nothing at rest, a slow sweep of the
+   running colour while Claude works, the awaiting colour, still, while it
+   waits for the reader, and a dashed danger rule while the mode asks nothing.
+   It spans the 860px column the line and the pill sit in, not the gutters. */
+.tl-composer::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: max(clamp(12px, 6vw, 80px), calc(50% - 430px));
+  right: max(clamp(12px, 6vw, 80px), calc(50% - 430px));
+  height: 1px;
+  pointer-events: none;
 }
-/* The box owns the column now, so these two stop centring themselves. */
-.tl-composer-box .tl-composer-row,
-.tl-composer-box .tl-composer-bar {
-  max-width: none;
-  margin-left: 0;
-  margin-right: 0;
+.tl-composer[data-status="working"]::before {
+  background:
+    linear-gradient(90deg, transparent, var(--state-running), transparent) no-repeat,
+    color-mix(in srgb, var(--state-running) 14%, transparent);
+  background-size:
+    34% 100%,
+    100% 100%;
+  animation: tl-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
-.tl-composer-row {
-  display: flex;
-  gap: 8px;
-  /* One child, the field. `flex-end` had four siblings of different heights to
-     bottom-align; with the controls on their own bar below there is nothing to
-     align to, and stretch is what lets the field own the full height. */
-  align-items: stretch;
-  max-width: 860px;
-  margin: 0 auto;
+.tl-composer[data-status="waiting"]::before {
+  background: color-mix(in srgb, var(--state-awaiting) 55%, transparent);
+}
+/* Bypass and No ask: the rule turns dashed and red, and stays that way
+   whatever the session is doing, since it is a statement about every tool
+   call to come. One of four signals, with the hatched dial, the pill's edge
+   and the placeholder. */
+.tl-composer[data-danger]::before {
+  height: 2px;
+  animation: none;
+  background: repeating-linear-gradient(90deg, var(--danger) 0 14px, transparent 14px 20px);
+}
+@keyframes tl-sweep {
+  from {
+    background-position:
+      -60% 0,
+      0 0;
+  }
+  to {
+    background-position:
+      160% 0,
+      0 0;
+  }
 }
 
-/* The controls, under the field rather than beside it.
-   Measured on master at 390x844: the field was 163.8px of a 343.2px row idle
-   (47.7%) and 92.8px (27.0%) once Stop appeared beside Send; with the context
-   meter present, 26px (7.6%) and the row overflowed its own width by 20px.
-   The field is now the whole row at every width. */
-.tl-composer-bar {
-  /* The containing block for the context meter's breakdown panel, which used to
-     pin itself to the row. On a 390px screen that put the panel's left edge at
-     x = -30.2, clipped; against this bar it lands inside the row. */
+/* ---- the line ------------------------------------------------------------
+   The positioned box the dial popovers are placed against, which is why it is
+   `relative`. It never scrolls: what does not fit folds away by `data-room`
+   (below), because a line that scrolled would clip its own popovers, which is
+   what forced the old model menu to `position: fixed`. */
+.tl-statusline {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 40px;
+  gap: 10px;
+  height: 28px;
   max-width: 860px;
-  margin: 6px auto 0;
+  margin: 0 auto 2px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
 }
-/* May scroll, and may give up width. */
-.tl-bar-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
+.tl-status-state {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
 }
-.tl-bar-left::-webkit-scrollbar {
+.tl-line-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+/* Working: the running colour, pulsing. Waiting: the awaiting colour the
+   state dot and the permission row already use, and still, because a pulse is
+   what says work is happening. Background: a hollow dot that breathes slowly,
+   for a turn that is over while an agent it started is not. */
+.tl-status-state[data-kind="working"] .tl-line-dot {
+  background: var(--state-running);
+  animation: tl-pulse 1.1s ease-in-out infinite;
+}
+.tl-status-state[data-kind="waiting"] .tl-line-dot {
+  background: var(--state-awaiting);
+}
+.tl-status-state[data-kind="background"] .tl-line-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.6px var(--state-running);
+  animation: tl-breathe 2.4s ease-in-out infinite;
+}
+.tl-status-word {
+  flex: none;
+  color: var(--text-primary);
+  font-weight: 560;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-status-state[data-kind="background"] .tl-status-word {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.tl-status-tool {
+  flex: none;
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.tl-status-target {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: var(--text-primary);
+}
+.tl-status-sep {
+  flex: none;
+  opacity: 0.7;
+}
+.tl-status-num {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.tl-status-steps {
+  flex: none;
+  display: inline-flex;
+  gap: 7px;
+}
+.tl-status-eye {
+  flex: none;
+  display: inline-flex;
+  color: var(--text-muted);
+}
+.tl-status-reason {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Stop, beside the work it stops. It shows only while something runs; red
+   beside a question read as an alarm. */
+.tl-statusline .tl-stop {
+  flex: none;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px 0 8px;
+  margin-left: 3px;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  font: inherit;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+  animation: tl-pop-in 0.18s ease-out;
+}
+.tl-statusline .tl-stop:hover {
+  background: color-mix(in srgb, var(--danger) 17%, transparent);
+}
+.tl-take {
+  flex: none;
+  position: relative;
+  height: 22px;
+  padding: 0 9px;
+  margin-left: 2px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 999px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+.tl-take:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* ---- the dials -------------------------------------------------------------
+   Each names what it sets ("mode Manual"), and each opens a list. On a wide
+   line they are type with a micro-label; a hover gives one a box. */
+.tl-dials-slot {
+  flex: none;
+  display: flex;
+  margin-left: auto;
+}
+.tl-dials {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+.tl-dial {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
+}
+.tl-dial:hover {
+  background: var(--hover-tint);
+  border-color: var(--border-strong);
+}
+.tl-dial[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.tl-dial-label {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+}
+/* Nothing is known yet, so the value is the dial's own name. */
+.tl-dial[data-unknown] .tl-dial-label {
   display: none;
 }
-/* Never shrinks: Stop and Send have to be reachable in every state, and the
-   overflow this replaces is what pushed Stop to 3.7px from the screen edge. */
-.tl-bar-right {
+.tl-dial[data-unknown] .tl-dial-value {
+  color: var(--text-muted);
+}
+.tl-dial-icon {
+  display: inline-flex;
+  color: var(--success);
+}
+.tl-dial-chev {
+  flex: none;
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+.tl-dial-lock {
+  display: none;
+}
+.tl-dial-div {
+  flex: none;
+  width: 1px;
+  height: 12px;
+  margin: 0 3px;
+  background: var(--border-strong);
+}
+.tl-dial-num {
+  font-variant-numeric: tabular-nums;
+}
+/* The mode's colour is SEMANTIC: how much the session does without asking,
+   read as a traffic light. Manual green, plan purple, edits and auto blue. */
+.tl-dial[data-tone="plan"] .tl-dial-icon {
+  color: var(--state-awaiting);
+}
+.tl-dial[data-tone="caution"] .tl-dial-icon {
+  color: var(--accent);
+}
+/* Context by how much room is LEFT, because compaction is the thing worth
+   noticing before it happens. */
+.tl-dial[data-dial="ctx"] .tl-dial-ring {
+  color: var(--text-muted);
+}
+.tl-dial[data-dial="ctx"][data-tone="warn"] .tl-dial-ring {
+  color: var(--state-awaiting);
+}
+.tl-dial[data-dial="ctx"][data-tone="full"] .tl-dial-ring {
+  color: var(--danger);
+}
+/* A change being driven: the picker is being typed into for about a second,
+   which a dial that looked idle would hide. A thin sweep under the value. */
+.tl-dial[data-busy] {
+  cursor: progress;
+}
+.tl-dial[data-busy] .tl-dial-value {
+  opacity: 0.55;
+}
+.tl-dial[data-busy]::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 2px;
+  height: 1px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
+  background-size: 40% 100%;
+  animation: tl-sweep-short 0.9s linear infinite;
+}
+@keyframes tl-sweep-short {
+  from {
+    background-position: -70% 0;
+  }
+  to {
+    background-position: 170% 0;
+  }
+}
+/* Held: watching, or a dialog on the pane. The reason is the title; a lock
+   says there is one. */
+.tl-dial[aria-disabled="true"] {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+.tl-dial[aria-disabled="true"]:hover {
+  background: none;
+  border-color: transparent;
+}
+.tl-dial[aria-disabled="true"] .tl-dial-chev {
+  display: none;
+}
+.tl-dial[aria-disabled="true"] .tl-dial-lock {
+  display: block;
+}
+.tl-dial[aria-disabled="true"] .tl-dial-icon {
+  color: var(--text-muted);
+}
+/* Bypass and No ask: the mode dial becomes a hatched danger tab. */
+.tl-dial[data-danger] {
+  color: var(--bg-page);
+  font-weight: 650;
+  border-color: var(--danger);
+  background: repeating-linear-gradient(
+    135deg,
+    var(--danger) 0 6px,
+    color-mix(in srgb, var(--danger) 84%, var(--bg-page)) 6px 12px
+  );
+  animation: tl-pop-in 0.22s ease-out;
+}
+.tl-dial[data-danger]:hover {
+  border-color: var(--danger);
+  filter: brightness(1.06);
+}
+.tl-dial[data-danger] .tl-dial-label,
+.tl-dial[data-danger] .tl-dial-chev,
+.tl-dial[data-danger] .tl-dial-icon {
+  color: var(--bg-page);
+  opacity: 0.9;
+}
+.tl-dial[data-danger][aria-expanded="true"] {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+/* ---- what the line keeps, by how wide it is ------------------------------
+   Container queries would say this, and Safari 15.6, the oldest engine served
+   (lib/baseline-polyfills.ts), has none. StatusLine measures itself and writes
+   `data-room` (statusline.logic `roomFor`). The micro-labels go first, then
+   the step count and the long background words, then, at a phone's width and
+   while the left side has something to say, the model and (while Claude works
+   or someone watches) the context fold into the phone's sheet, where every
+   dial keeps a tab. The mode never folds. */
+.tl-statusline[data-room="mid"] .tl-dial-label,
+.tl-statusline[data-room="narrow"] .tl-dial-label,
+.tl-statusline[data-room="tight"] .tl-dial-label {
+  display: none;
+}
+.tl-statusline[data-room="narrow"] .tl-status-steps,
+.tl-statusline[data-room="tight"] .tl-status-steps,
+.tl-statusline[data-room="narrow"] .tl-status-long,
+.tl-statusline[data-room="tight"] .tl-status-long {
+  display: none;
+}
+.tl-statusline[data-room="wide"] .tl-status-short,
+.tl-statusline[data-room="mid"] .tl-status-short {
+  display: none;
+}
+.tl-statusline[data-room="tight"]:not([data-kind="idle"]) [data-fold],
+.tl-statusline[data-room="tight"][data-kind="working"] [data-fold2],
+.tl-statusline[data-room="tight"][data-kind="watching"] [data-fold2],
+.tl-statusline[data-room="tight"][data-kind="working"] .tl-status-word,
+.tl-statusline[data-room="tight"][data-kind="watching"] .tl-status-reason {
+  display: none;
+}
+
+/* ---- the pill ------------------------------------------------------------
+   One surface for +, the field and Send. The field is transparent inside it,
+   so the pill carries the border, the fill and the focus ring. The positioned
+   box the + tray and the completion menu float above. */
+.tl-pillwrap {
+  position: relative;
+  max-width: 860px;
+  margin: 0 auto;
+}
+.tl-pill {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 21px;
+  background: var(--bg-card);
+  box-shadow: var(--surface-shadow);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+/* One visual line (PromptField writes it): + and Send centre on it. Taller,
+   they sit level with the last line, which is where the caret usually is. */
+.tl-pill[data-single] {
+  align-items: center;
+}
+.tl-pill:has(.tl-composer-input:focus) {
+  border-color: color-mix(in srgb, var(--accent) 65%, var(--border-strong));
+  box-shadow:
+    var(--surface-shadow),
+    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.tl-composer[data-danger] .tl-pill {
+  border-color: color-mix(in srgb, var(--danger) 75%, var(--border-strong));
+}
+.tl-composer[data-danger] .tl-pill:has(.tl-composer-input:focus) {
+  box-shadow:
+    var(--surface-shadow),
+    0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent);
+}
+
+/* + and Send: 32px circles, the drawing a disc inside a box that carries no
+   border of its own. The box is what a phone grows to its 44px target while
+   the disc stays 36px (the coarse-pointer block). */
+.tl-plus,
+.tl-send {
+  flex: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tl-disc {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  transition:
+    background 0.15s,
+    color 0.15s,
+    transform 0.12s;
+}
+.tl-disc svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+.tl-plus:hover .tl-disc {
+  background: var(--hover-tint);
+  color: var(--text-primary);
+}
+.tl-plus svg {
+  transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+.tl-plus[aria-expanded="true"] .tl-disc {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+/* Open, the + reads as the × that closes it. */
+.tl-plus[aria-expanded="true"] svg {
+  transform: rotate(45deg);
+}
+.tl-plus[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+.tl-plus[aria-disabled="true"] .tl-disc {
+  opacity: 0.38;
+  background: none;
+}
+.tl-plus[aria-busy="true"] .tl-disc {
+  animation: tl-breathe 1.2s ease-in-out infinite;
+}
+/* Send is filled, and in the same grammar as the answer card's Submit: white
+   on the accent. The prototype drew the arrow in the page colour; white keeps
+   the two commits one grammar (composer.aesthetics). */
+.tl-send .tl-disc {
+  background: var(--accent);
+  color: #fff;
+}
+.tl-send:hover .tl-disc {
+  filter: brightness(1.1);
+}
+.tl-send:active .tl-disc {
+  transform: scale(0.9);
+}
+/* Only the new-session composer ever draws it this way: there, Send CREATES
+   the session, so an empty box has to look like it cannot. The same 0.5 and
+   default cursor every other unavailable control here uses. */
+.tl-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.tl-plus:focus-visible,
+.tl-send:focus-visible,
+.tl-dial:focus-visible,
+.tl-statusline .tl-stop:focus-visible,
+.tl-take:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.tl-pill-end {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  height: 32px;
 }
-.tl-composer-bar .tl-attach-btn {
-  /* min-width, not width: it carries a word now. The 40px stays as the touch
-     floor, which is what the fixed size was for. */
-  min-width: 40px;
-  height: 40px;
-  padding: 0 10px;
+/* Mid-turn a send QUEUES. The button keeps its name; this says it, quietly,
+   while there is something to send. */
+.tl-send-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 4px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  white-space: nowrap;
+  animation: tl-fade-in 0.2s ease-out;
 }
+
 /* ---- attachments, inside the message ----------------------------------
    A tray above the field held the chips until 2026-09-13, and its paths went to
    the FRONT of the message whatever the writer meant. An attachment is a token
@@ -2016,14 +2509,22 @@ label.tl-set-row-label {
    drawn behind it.
 
    The layer and the field must lay the same string out identically, so every
-   property that decides where a glyph lands is set on BOTH — the padding here,
-   the font-size in the mobile block near the end of this file. A rule that
-   reaches one and not the other slides every chip off its word. */
+   property that decides where a glyph lands is set on BOTH: the padding and the
+   line height here, the font-size in the mobile block near the end of this
+   file. A rule that reaches one and not the other slides every chip off its
+   word. */
 .tl-field {
   position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
+}
+.tl-composer-input,
+.tl-composer-mirror {
+  font-family: var(--font-ui);
+  font-size: calc(14.5px * var(--tl-text-scale, 1));
+  line-height: calc(22px * var(--tl-text-scale, 1));
+  padding: 5px 6px;
 }
 .tl-composer-mirror {
   position: absolute;
@@ -2035,193 +2536,44 @@ label.tl-set-row-label {
   user-select: none;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  font: inherit;
-  padding: 9px 12px;
   /* The text is the FIELD's. This copy only carries the pills. */
   color: transparent;
 }
-/* No border and no padding of its own: either would move the text under it.
-   The pill is drawn OUTSIDE the box instead — a 1px spread shadow for the fill
-   and an outline for the edge, neither of which takes part in layout.
-
-   The edge is not decoration. Measured across the themes on 2026-09-13: a fill
-   alone at 20% reads on a dark ground and all but disappears on a light one
-   (catppuccin-latte), where the outline is what makes it a chip rather than a
-   faint wash. 1px of bleed rather than 2, so two chips side by side stay two. */
-.tl-inline-chip {
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--accent) 24%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 24%, transparent);
-  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-  outline-offset: 0;
-}
-.tl-inline-chip[data-kind="doc"] {
-  background: color-mix(in srgb, var(--text-muted) 24%, transparent);
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--text-muted) 24%, transparent);
-  outline-color: color-mix(in srgb, var(--text-muted) 50%, transparent);
-}
-/* An attached image is drawn as the image.
-
-   `[img]` says a picture is attached without saying WHICH picture, and on the
-   new-session screen that pill is the only thing about the paste there is to
-   see (Viktor, 2026-09-16). The picture is painted over the token's own
-   characters: the token is padded out to THUMB_W in the field's real font
-   (PromptField, `padFor`) so the two are the same width, and the line grows to
-   THUMB_LINE so there is room for something taller than a line of text.
-
-   It is the one thing in the mirror that sits ABOVE the field rather than
-   behind it — z-index against the field's `position: relative` — because the
-   characters it stands for are the FIELD's and would otherwise show through it.
-   Neither this layer nor the field is a stacking context, so the two compete
-   directly; the mirror's own `overflow: hidden` still clips it when the field
-   scrolls, which is what keeps a picture from escaping the box. */
-.tl-inline-chip[data-thumb] {
-  position: relative;
-  background: none;
-  box-shadow: none;
-  outline: none;
-}
-/* The picture's box, and the press that opens it full size.
-
-   A button rather than a click on the image, because the two accessibility
-   rules this repo lints for (biome.jsonc) exist to stop exactly that: a
-   mouse-only control wearing no role. It carries `tabindex="-1"` instead of a
-   place in the tab order, since this whole layer is `aria-hidden` and a
-   focusable thing inside one is worse than a thing a keyboard cannot reach. */
-.tl-inline-zoom {
-  position: absolute;
-  left: 0;
-  /* Centred on the token's own text box — the height of the glyphs, not of the
-     grown line — so the picture sits on the writing rather than above it. */
-  top: 50%;
-  transform: translateY(-50%);
-  /* The WHOLE token, not a fixed width: the pad takes it to at least
-     --tl-thumb-w (PromptField, `padFor`), and rounding or a ` 2` disambiguator
-     can take it a few px past that. Covering exactly the measured width left
-     the tail of the closing bracket showing beside the picture. The height is
-     PromptField's number, because the line grows to match it. */
-  width: 100%;
-  height: var(--tl-thumb-h);
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  z-index: 3;
-  /* The layer around it takes no clicks (`.tl-composer-mirror`), so this one
-     asks for them back. */
-  pointer-events: auto;
-  cursor: zoom-in;
-  /* The same edge the pill wore. On a screenshot of the app itself, which is
-     most of what gets pasted here, nothing else says where the picture ends. */
-  outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-  /* Behind a PNG with transparency, so it reads as a tile rather than a hole. */
-  background: var(--bg-card);
-}
-.tl-inline-zoom:hover {
-  outline-color: var(--accent);
-}
-.tl-inline-thumb {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: 4px;
-}
-/* Room for the picture, in the field and in the copy of it behind. Both, or
-   every chip slides off its token. */
-.tl-field[data-thumbs] .tl-composer-input,
-.tl-field[data-thumbs] .tl-composer-mirror {
-  line-height: var(--tl-thumb-line);
-}
-.tl-attach-btn {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 9px;
-  /* Not --text-muted: that tier is for text meant to recede, and this is
-     something to press. It was the faintest thing on a bar whose other controls
-     are a coloured chip and two filled buttons. */
-  color: var(--text-secondary, var(--text-primary));
-  background: none;
-  /* The only icon control in the app that wore a box, which made it read as an
-     empty input rather than a button. The header's icon buttons carry none. */
-  border: 0;
-  gap: 6px;
-  border-radius: var(--radius);
-  cursor: pointer;
-}
-.tl-attach-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-}
-/* The word that makes the paperclip legible. It is the first thing the left
-   group gives up if the bar ever runs out of room — the icon and the title
-   still carry the meaning then. */
-.tl-attach-label {
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-  white-space: nowrap;
-}
-@media (max-width: 360px) {
-  .tl-attach-label {
-    display: none;
-  }
-}
-.tl-attach-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  background: var(--bg-card-hover);
-}
-.tl-attach-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 .tl-composer-input {
   flex: 1 1 auto;
-  /* The surface around it carries both now. */
+  display: block;
+  width: 100%;
+  /* The pill around it carries both. */
   border: 0;
   /* Transparent, so the chip layer behind it shows through. */
   background: transparent;
-  /* Sole flex child now, so a long unbroken token in the draft would otherwise
-     set a min-content floor and push the field past the row. */
+  /* A long unbroken token in the draft would otherwise set a min-content
+     floor and push the field past the pill. */
   min-width: 0;
+  /* One line tall at rest, the height of + and Send beside it. */
+  min-height: calc(22px * var(--tl-text-scale, 1) + 10px);
+  margin: 0;
   resize: none;
-  font: inherit;
   color: var(--text-primary);
-  padding: 9px 12px;
   max-height: 200px;
   overflow-y: auto;
+  scrollbar-width: none;
   /* Above the chip layer, which is absolutely positioned in the same box. */
   position: relative;
 }
+.tl-composer-input::-webkit-scrollbar {
+  display: none;
+}
+.tl-composer-input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+/* The pill draws the focus ring, so the field draws none of its own. */
 .tl-composer-input:focus {
-  outline: 2px solid var(--ring);
-  outline-offset: -1px;
+  outline: none;
 }
-.tl-send,
-.tl-stop {
-  flex: 0 0 auto;
-  /* The 40px touch floor the rest of the app holds to. They were 39px, which
-     mattered less when they shared a row with a taller field. */
-  min-height: 40px;
-  font: inherit;
-  font-weight: 500;
-  border: 0;
-  border-radius: var(--radius);
-  padding: 9px 16px;
-  cursor: pointer;
-  color: #fff;
-}
-.tl-send {
-  background: var(--accent);
-}
-/* Only the new-session composer ever draws it this way: there, Send CREATES
-   the session, so an empty box has to look like it cannot. The same 0.5 and
-   default cursor every other unavailable control here uses. */
-.tl-send:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.tl-stop {
-  background: var(--danger);
-}
+
+/* ---- the permission panel, docked above the line ---------------------- */
 .tl-permpanel {
   max-width: 860px;
   margin: 0 auto 8px;
@@ -2275,6 +2627,466 @@ label.tl-set-row-label {
   margin-top: 6px;
   font-size: calc(11px * var(--tl-text-scale, 1));
   color: var(--text-muted);
+}
+
+/* ---- the composer's floats: the + tray, the dial popovers, the sheet -----
+   One float at a time, each above what opened it, each on the card surface
+   with the shadow the theme defines for floats (--pop-shadow). */
+.tl-tray,
+.tl-dial-pop {
+  position: absolute;
+  z-index: 30;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--pop-shadow);
+  /* The popovers and the sheet are drawn inside the line, whose type is the
+     muted tier; what they list is read at full weight. */
+  color: var(--text-primary);
+}
+/* The + tray, over the pill's left end where the + is. */
+.tl-tray {
+  left: 0;
+  bottom: calc(100% + 8px);
+  min-width: 250px;
+  padding: 5px;
+  transform-origin: 18px 100%;
+  animation: tl-pop-up 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.tl-tray-item {
+  display: grid;
+  grid-template-columns: 18px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.tl-tray-item:hover,
+.tl-tray-item:focus-visible {
+  background: var(--hover-tint);
+  outline-offset: -2px;
+}
+.tl-tray-item svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+.tl-tray-item[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.tl-tray-kbd {
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+.tl-tray-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+.tl-tray-note {
+  margin-top: 4px;
+  padding: 6px 10px 3px;
+  border-top: 1px solid var(--border);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+
+/* A dial's popover: above the line, its right edge on its dial's (Dial.tsx
+   writes `right` and caps `max-height` at the room above once it is laid
+   out). Held inside the screen on a narrow window. */
+.tl-dial-pop {
+  right: 0;
+  bottom: calc(100% + 6px);
+  max-width: calc(100vw - 24px);
+  padding: 6px;
+  overflow-y: auto;
+  transform-origin: 85% 100%;
+  animation: tl-pop-up 0.15s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.tl-dial-pop-mode {
+  width: 318px;
+}
+.tl-dial-pop-model {
+  width: 292px;
+}
+.tl-dial-pop-ctx {
+  width: 268px;
+  padding: 10px 12px;
+}
+
+/* The rows in a dial's list: the mode list, the model list. */
+.tl-pick-head {
+  margin: 6px 8px 4px;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-weight: 560;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+.tl-pick-row {
+  display: grid;
+  grid-template-columns: 18px 1fr 14px;
+  align-items: center;
+  gap: 1px 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.tl-pick-row:hover,
+.tl-pick-row:focus-visible {
+  background: var(--hover-tint);
+  outline-offset: -2px;
+}
+.tl-pick-row[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.tl-pick-row[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.tl-pick-icon {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  color: var(--success);
+}
+.tl-pick-row[data-tone="plan"] .tl-pick-icon {
+  color: var(--state-awaiting);
+}
+.tl-pick-row[data-tone="caution"] .tl-pick-icon {
+  color: var(--accent);
+}
+.tl-pick-row[data-tone="danger"] .tl-pick-icon,
+.tl-pick-row[data-tone="danger"] .tl-pick-name {
+  color: var(--danger);
+}
+.tl-pick-name {
+  font-weight: 560;
+}
+.tl-pick-sub {
+  grid-column: 2;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  line-height: 1.3;
+  color: var(--text-muted);
+}
+.tl-pick-slug {
+  grid-column: 1;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+.tl-pick-tick {
+  grid-column: 3;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--accent);
+}
+/* A model row is a name over its slug, with no icon. */
+.tl-pick-model {
+  grid-template-columns: 1fr 14px;
+}
+.tl-pick-model .tl-pick-tick {
+  grid-column: 2;
+}
+/* The rule before the two modes that ask nothing. */
+.tl-pick-gap {
+  height: 1px;
+  margin: 4px 8px;
+  background: color-mix(in srgb, var(--danger) 30%, var(--border));
+}
+/* Effort, as a segmented control. Both CLIs offer six levels, so three by
+   two rather than the prototype's one row of four. */
+.tl-effort-seg {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin: 0 6px 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-page);
+}
+.tl-effort-seg button {
+  height: 30px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tl-effort-seg button:hover {
+  color: var(--text-primary);
+}
+.tl-effort-seg button[aria-checked="true"] {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-strong);
+  font-weight: 560;
+}
+.tl-effort-seg button[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.tl-pick-note {
+  margin-top: 6px;
+  padding: 8px 8px 4px;
+  border-top: 1px solid var(--border);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* The phone's settings sheet: one sheet for every dial, a tab each. Fixed to
+   the bottom of the screen, clear of the home indicator, and above the
+   soft-key row (40) while below settings (60), the palette (65), the gallery
+   stack (66-69) and the toasts (70). */
+.tl-sheet-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+.tl-sheet-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: color-mix(in srgb, var(--bg-page) 62%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  cursor: default;
+  animation: tl-fade-in 0.2s ease-out;
+}
+.tl-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 80%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--safe-b, 0px);
+  border-top: 1px solid var(--border-strong);
+  border-radius: 20px 20px 0 0;
+  background: var(--bg-card);
+  box-shadow: var(--pop-shadow);
+  color: var(--text-primary);
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  animation: tl-sheet-up 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+/* It takes the focus on open so the keyboard goes down and a screen reader
+   hears its name; a ring round the whole sheet would say nothing more. */
+.tl-sheet:focus {
+  outline: none;
+}
+.tl-sheet-grab {
+  flex: none;
+  width: 38px;
+  height: 5px;
+  margin: 8px auto 2px;
+  border-radius: 5px;
+  background: var(--border-strong);
+}
+.tl-sheet-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 6px 0 16px;
+}
+.tl-sheet-title {
+  font-size: calc(16px * var(--tl-text-scale, 1));
+  font-weight: 600;
+}
+.tl-sheet-x {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  margin-left: auto;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.tl-sheet-tabs {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  margin: 2px 14px 10px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-page);
+}
+.tl-sheet-tabs button {
+  height: 44px;
+  border: 0;
+  border-radius: 9px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  font-weight: 500;
+  cursor: pointer;
+}
+.tl-sheet-tabs button[aria-selected="true"] {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 1px var(--border-strong);
+}
+.tl-sheet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 8px 14px;
+}
+.tl-sheet-body .tl-pick-row {
+  min-height: 56px;
+  padding: 8px 10px;
+  font-size: calc(15px * var(--tl-text-scale, 1));
+}
+.tl-sheet-body .tl-pick-sub,
+.tl-sheet-body .tl-pick-slug {
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-sheet-body .tl-pick-head {
+  margin: 10px 10px 6px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-sheet-body .tl-effort-seg button {
+  height: 44px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+}
+.tl-sheet-body .tl-pick-note {
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-sheet-body .tl-ctx-panel {
+  padding: 4px 10px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+}
+
+/* ---- the composer's motion ------------------------------------------------ */
+@keyframes tl-breathe {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes tl-pop-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tl-pop-in {
+  from {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tl-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes tl-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tl-sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+/* Reduced motion: every one of these stops, and the working edge holds a
+   steady running colour instead of sweeping. Scoped to the composer's own
+   classes rather than the prototype's global rule, which would reach the
+   whole app. */
+@media (prefers-reduced-motion: reduce) {
+  .tl-composer[data-status="working"]::before {
+    animation: none;
+    background: color-mix(in srgb, var(--state-running) 60%, transparent);
+  }
+  .tl-status-state[data-kind="working"] .tl-line-dot {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .tl-status-state[data-kind="background"] .tl-line-dot,
+  .tl-plus[aria-busy="true"] .tl-disc {
+    animation: none;
+  }
+  .tl-dial[data-busy]::before {
+    animation: none;
+    background: var(--accent);
+  }
+  .tl-statusline .tl-stop,
+  .tl-dial[data-danger],
+  .tl-tray,
+  .tl-dial-pop,
+  .tl-complete,
+  .tl-send-hint,
+  .tl-bubble-ghost,
+  .tl-sheet,
+  .tl-sheet-scrim {
+    animation: none;
+  }
+  .tl-plus svg,
+  .tl-disc,
+  .tl-dial,
+  .tl-pill {
+    transition: none;
+  }
 }
 
 /* ---- terminal view ------------------------------------------------------ */
@@ -2556,30 +3368,20 @@ body.tl-kb-up {
   --safe-b: 0px;
 }
 
-/* The 46px the control bar costs while the field is empty, bought back in the
-   states where the bottom of the screen is contested: a phone with the keyboard
-   up. All three surfaces below stack ABOVE the composer, so each one deepens the
-   spill past the keyboard line. Capped they scroll instead of growing.
-   Measured at 390x844 with --kb-offset 336 (keyboard line y=508), a question
-   card docked: a 6-image tray went from 11.8px past the line to 0, and a
-   143-char draft from 35.8px past to 0. The tray is gone — its files are chips
-   inside the message now, which cost no height of their own — and what is left
-   here still holds for the surfaces that do stack above the composer. Nothing
-   here fires on a desktop, and all of it reverts when the keyboard closes. */
+/* Height bought back where the bottom of the screen is contested: a phone
+   with the keyboard up. Measured at 390x844 with --kb-offset 336 (keyboard
+   line y=508), a question card docked: capping what floats above the
+   composer is what kept a 143-char draft from running 35.8px past the
+   keyboard line. The queued chips that were capped here are ghost bubbles in
+   the timeline since 2026-09-24, and cost the composer nothing. Nothing here
+   fires on a desktop, and all of it reverts when the keyboard closes. */
 @media (pointer: coarse) {
-  body.tl-kb-up .tl-queued {
-    max-height: 46px; /* two chips */
-    overflow-y: auto;
-  }
   body.tl-kb-up .tl-complete {
     max-height: 174px; /* ~4 rows rather than ~5.5 */
   }
   body.tl-kb-up .tl-composer {
-    padding-top: 6px;
+    padding-top: 4px;
     padding-bottom: 6px;
-  }
-  body.tl-kb-up .tl-composer-bar {
-    margin-top: 2px;
   }
 }
 
@@ -2744,6 +3546,102 @@ body.tl-kb-up {
   .tl-composer-input,
   .tl-composer-mirror {
     font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  }
+  /* The line and the padding that go with 16px, on the field and the chip
+     layer alike. A rule of its own, so the floor above stays exactly as it is
+     written. */
+  .tl-composer-input,
+  .tl-composer-mirror {
+    line-height: max(24px, calc(24px * var(--tl-text-scale, 1)));
+    padding: 10px 4px;
+  }
+  .tl-composer-input {
+    min-height: calc(max(24px, calc(24px * var(--tl-text-scale, 1))) + 20px);
+  }
+
+  /* ---- the Quiet line on a phone ----------------------------------------
+     A 34px line over a 48px pill, 92px of dock at rest; the home indicator's
+     inset is `.tl-views`' own reservation (`body.has-soft-keys .tl-views`
+     above), so the dock adds none of its own. Every control is a 44px target:
+     + and Send are 44px boxes round 36px discs, and the line's 28px controls
+     press over a taller area that reaches into the dock's padding and stops
+     at the pill, so no two targets overlap. */
+  .tl-composer {
+    padding-bottom: 6px;
+  }
+  .tl-statusline {
+    height: 34px;
+    margin-bottom: 0;
+    gap: 8px;
+    font-size: calc(12.5px * var(--tl-text-scale, 1));
+  }
+  .tl-status-word {
+    font-size: calc(13px * var(--tl-text-scale, 1));
+  }
+  .tl-statusline .tl-stop,
+  .tl-take {
+    height: 28px;
+    font-size: calc(12.5px * var(--tl-text-scale, 1));
+  }
+  .tl-dials {
+    gap: 5px;
+  }
+  /* A finger cannot hover, so every dial wears the box a hover gives one on a
+     desktop, and the micro-labels go: the sheet's tabs name them. */
+  .tl-dial {
+    height: 28px;
+    padding: 0 9px;
+    gap: 6px;
+    font-size: calc(12.5px * var(--tl-text-scale, 1));
+    background: var(--hover-tint);
+    border-color: var(--border);
+  }
+  .tl-dial-chev,
+  .tl-dial-label,
+  .tl-dial-div {
+    display: none;
+  }
+  .tl-dial::after,
+  .tl-statusline .tl-stop::after,
+  .tl-take::after {
+    content: "";
+    position: absolute;
+    left: -2px;
+    right: -2px;
+    top: -11px;
+    bottom: -5px;
+  }
+  .tl-pill {
+    padding: 1px;
+    border-radius: 24px;
+  }
+  .tl-plus,
+  .tl-send {
+    width: 44px;
+    height: 44px;
+  }
+  .tl-disc {
+    width: 36px;
+    height: 36px;
+  }
+  .tl-disc svg {
+    width: 18px;
+    height: 18px;
+  }
+  .tl-pill-end {
+    height: 44px;
+    gap: 2px;
+  }
+  .tl-tray {
+    min-width: 264px;
+  }
+  .tl-tray-item {
+    height: 48px;
+    font-size: calc(15px * var(--tl-text-scale, 1));
+  }
+  /* "or drop" and "or paste" name gestures a phone does not make. */
+  .tl-tray-kbd-fine {
+    display: none;
   }
 }
 
@@ -3717,8 +4615,7 @@ body.tl-kb-up {
   margin-bottom: 8px;
 }
 .tl-question-chip,
-.tl-plan-chip,
-.tl-queued-chip {
+.tl-plan-chip {
   flex: none;
   font-size: calc(10.5px * var(--tl-text-scale, 1));
   text-transform: uppercase;
@@ -3925,25 +4822,6 @@ body.tl-kb-up {
   font-style: italic;
 }
 
-/* The live row. */
-.tl-working-tool {
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.7;
-  margin-right: 6px;
-}
-.tl-working-label {
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-}
-.tl-working-elapsed,
-.tl-working-steps {
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  margin-left: 8px;
-  font-variant-numeric: tabular-nums;
-}
 .tl-fold-files,
 .tl-fold-tokens {
   font-size: calc(11.5px * var(--tl-text-scale, 1));
@@ -3965,7 +4843,9 @@ body.tl-kb-up {
 }
 .tl-scroll-end {
   position: sticky;
-  bottom: 8px;
+  /* Clear of the 26px fade at the timeline's foot, or the button would sit in
+     the part of the transcript that is fading out. */
+  bottom: 30px;
   align-self: center;
   padding: 5px 12px;
   border-radius: 999px;
@@ -3977,39 +4857,28 @@ body.tl-kb-up {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 
-/* Composer additions: queued prompts, completion menu, the mode chip. */
-.tl-queued {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 8px;
-}
-.tl-queued-item {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-width: 0;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-}
-.tl-queued-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+/* The composer's completion menu. */
 .tl-complete {
   display: flex;
   flex-direction: column;
-  /* Same column as the field it completes into. */
-  max-width: 860px;
-  margin: 0 auto 4px;
+  /* A float above the pill, the width of the pill. It sat in the composer's
+     flow until 2026-09-24, and every time it opened it pushed the whole
+     composer up by its own height; floating, it covers the line and the foot
+     of the transcript instead, like every other float the composer opens. */
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  padding: 4px;
   /* Room for ~4 two-line rows. The CLI's own menu shows three; more than this
      on a phone eats the transcript the reader is completing against. */
   max-height: 220px;
   overflow-y: auto;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
   background: var(--bg-card);
+  box-shadow: var(--pop-shadow);
 }
 .tl-complete-item {
   display: flex;
@@ -4116,144 +4985,6 @@ body.tl-kb-up {
   margin-right: 6px;
   opacity: 0.8;
 }
-.tl-mode-chip {
-  flex: none;
-  /* The bar is a centred 40px strip, not a row of unequal heights. */
-  align-self: center;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  cursor: pointer;
-  white-space: nowrap;
-}
-.tl-mode-chip:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-/* ---- The model / effort chip ------------------------------------------
-   Beside the mode chip and shaped like it, because the two answer the same
-   kind of question about the session in front of you. What it says is the
-   session's own reading, so a session that has not answered yet reads
-   "model" rather than a value nobody set. */
-.tl-model {
-  position: relative;
-  display: inline-flex;
-  flex: none;
-  align-self: center;
-}
-.tl-model-chip {
-  flex: none;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  cursor: pointer;
-  white-space: nowrap;
-  /* A phone's composer bar holds the mode chip, this, the meter and Send. The
-     model name is the one that grows — a slug runs to
-     "claude-haiku-4-5-20251001 · max" — so it is the one that gives way. The
-     ceiling fits the common slugs on a desktop and ellipsises the rest; the
-     title attribute carries the whole thing either way. */
-  max-width: min(26ch, 40vw);
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tl-model-chip:hover:not(:disabled) {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-/* Driving a picker takes about a second, and it is a second in which the
-   session's own pane is being typed into. Saying so beats a chip that looks
-   idle while keys land in it. */
-.tl-model-chip[data-busy] {
-  opacity: 0.6;
-  cursor: progress;
-}
-.tl-model-chip:disabled {
-  cursor: default;
-}
-/* The composer sits at the BOTTOM of the screen, so this menu opens upward —
-   the shared .tl-menu drops from a header. Left-aligned to the chip for the
-   same reason: the chip is on the left of its bar. */
-/* `.tl-menu` is defined in sidebar.css, which loads after this file, so the
-   base rule would win at equal specificity. The parent selector is what makes
-   these stick. */
-.tl-model .tl-model-menu {
-  position: fixed;
-  top: auto;
-  right: auto;
-  min-width: 170px;
-  max-height: min(60vh, 420px);
-  overflow-y: auto;
-}
-.tl-model-item {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-}
-/* The tick keeps its column whether or not it is drawn, so every label sits on
-   one left edge. */
-.tl-model-tick {
-  display: inline-block;
-  width: 1em;
-  flex: none;
-  color: var(--accent);
-}
-.tl-menu-note {
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  line-height: 1.35;
-  color: var(--text-muted);
-  padding: 6px 8px 2px;
-  border-top: 1px solid var(--border);
-  margin-top: 4px;
-  white-space: normal;
-}
-/* The chip says what this session will do WITHOUT asking, so it is coloured by
-   how much that is — read as a traffic light rather than as a label you have to
-   parse. The tokens are the theme's own, so every theme gets it.
-
-   manual  asks before anything                     safe
-   plan    will not execute at all                  its own colour, not a risk
-   edits   file changes land unasked                caution
-   auto    most things land unasked                 caution
-   bypass  nothing is asked, ever                   the loudest one
-   no ask  same, under the CLI's newer name         the loudest one
-
-   `default` is what transcripts written before the rename call `manual`. */
-.tl-mode-chip[data-mode="manual"],
-.tl-mode-chip[data-mode="default"] {
-  color: var(--success);
-  border-color: color-mix(in srgb, var(--success) 45%, transparent);
-}
-.tl-mode-chip[data-mode="plan"] {
-  color: var(--state-awaiting);
-  border-color: color-mix(in srgb, var(--state-awaiting) 45%, transparent);
-}
-.tl-mode-chip[data-mode="acceptEdits"],
-.tl-mode-chip[data-mode="auto"] {
-  color: var(--accent);
-  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-}
-.tl-mode-chip[data-mode="bypassPermissions"],
-.tl-mode-chip[data-mode="dontAsk"] {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-}
-/* Hover keeps the mode's own colour rather than flipping every chip to the
-   accent, which would make bypass look like accept-edits for as long as the
-   pointer sat on it. */
-.tl-mode-chip[data-mode]:hover {
-  border-color: currentColor;
-  filter: brightness(1.15);
-}
-
 /* The answer card, docked above the composer while a question is blocking. It
    sits IN the composer's column rather than over the transcript, so the phone
    keyboard pushes it up with the input instead of covering it. */
@@ -4267,16 +4998,18 @@ body.tl-kb-up {
   /* A long walk on a short phone scrolls inside the card, so the composer under
      it never leaves the screen.
 
-     52% OF THE PANE, not of the viewport. The pane is what the composer has to
-     fit into beside the card, and on iOS Safari the two part company the moment
-     a keyboard opens: the keyboard shrinks only the VISUAL viewport, so `52vh`
-     went on resolving against the whole 844px screen while the pane holding the
-     card was 465px. Measured at 390x844 with a 336px keyboard: the card kept
-     its 420px, and the composer — the thing being typed into — was pushed to
-     501-592, its bottom 84px underneath the keyboard. With plenty of room the
-     two readings agree (417px against 420px at full height), so this changes
-     nothing but the case it fixes. */
-  max-height: min(52%, 420px);
+     A SHARE OF THE PANE, not of the viewport. The pane is what the composer has
+     to fit into beside the card, and on iOS Safari the two part company the
+     moment a keyboard opens: the keyboard shrinks only the VISUAL viewport, so
+     `52vh` went on resolving against the whole 844px screen while the pane
+     holding the card was 465px. Measured at 390x844 with a 336px keyboard: the
+     card kept its 420px, and the composer, the thing being typed into, was
+     pushed to 501-592, its bottom 84px underneath the keyboard.
+
+     62% since the Quiet line composer (2026-09-24), up from 52%: the composer
+     under the card is 38px shorter, and 62% keeps a four-option card's every
+     row in view on the prototype's 616px desktop pane (343px). */
+  max-height: min(62%, 460px);
   /* The CARD no longer scrolls — the option list inside it does. It was one
      scroll box holding everything, so the button that submits was simply below
      the fold: measured at 390x844 the actions sat 388px past the bottom edge,
@@ -4645,94 +5378,61 @@ body.tl-kb-up {
   }
 }
 
-/* How full the context is, beside the mode chip. The bar carries the reading at
-   a glance and the number is there when a glance is not enough; both come from
-   the CLI's own `/context` figures, so the chip and the pane agree. */
-.tl-ctx {
-  /* STATIC, so the breakdown panel below resolves against .tl-composer-bar
-     instead of this chip. Anchored to the chip on a 390px screen the panel's
-     left edge measured x = -30.2 and was clipped; against the bar it is
-     row-width and lands inside. */
-  position: static;
-  flex: none;
-  align-self: center;
+/* What fills the context window, behind the context dial: the CLI's own
+   `/context` figures, so the dial and the pane agree. It was a panel under a
+   chip beside the mode chip until 2026-09-24; it is the body of the context
+   dial's popover now, and of the Context tab in the phone's sheet. */
+.tl-ctx-panel {
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
-.tl-ctx-chip {
+.tl-ctx-top {
   display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: transparent;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.tl-ctx-big {
+  font-size: calc(22px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.tl-ctx-of {
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
-  cursor: pointer;
-  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
+/* One bar, coloured by how much room is LEFT, because compaction is the thing
+   worth noticing before it happens. */
 .tl-ctx-bar {
   display: block;
-  width: 26px;
-  height: 4px;
+  height: 6px;
+  margin: 8px 0 8px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
   overflow: hidden;
 }
 .tl-ctx-fill {
   display: block;
   height: 100%;
   border-radius: 999px;
-  background: currentColor;
+  background: var(--text-muted);
 }
-/* Coloured by how much room is LEFT, because compaction is the thing worth
-   noticing before it happens — read as a traffic light, like the mode chip. */
-.tl-ctx-chip[data-tone="ok"] {
-  color: var(--text-muted);
+.tl-ctx-panel[data-tone="warn"] .tl-ctx-fill {
+  background: var(--state-awaiting);
 }
-.tl-ctx-chip[data-tone="warn"] {
-  color: var(--state-awaiting);
-  border-color: color-mix(in srgb, var(--state-awaiting) 45%, transparent);
-}
-.tl-ctx-chip[data-tone="full"] {
-  color: var(--danger);
-  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
-  background: color-mix(in srgb, var(--danger) 10%, transparent);
-}
-.tl-ctx-chip:hover {
-  border-color: currentColor;
-  filter: brightness(1.15);
-}
-/* The breakdown opens UPWARD: the chip sits on the composer at the bottom of
-   the screen, so a panel below it would be off-screen on a phone. */
-.tl-ctx-panel {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 6px);
-  z-index: 30;
-  min-width: 210px;
-  max-width: min(300px, calc(100vw - 24px));
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-panel, var(--bg-page));
-  box-shadow: 0 6px 20px rgb(0 0 0 / 28%);
-  font-size: calc(12px * var(--tl-text-scale, 1));
-}
-.tl-ctx-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding-bottom: 6px;
-  margin-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-}
-.tl-ctx-total {
-  font-weight: 600;
+.tl-ctx-panel[data-tone="full"] .tl-ctx-fill {
+  background: var(--danger);
 }
 .tl-ctx-model,
 .tl-ctx-age,
 .tl-ctx-empty {
   color: var(--text-muted);
+}
+.tl-ctx-model {
+  margin-bottom: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(11px * var(--tl-text-scale, 1));
 }
 .tl-ctx-rows {
   margin: 0;
@@ -4743,7 +5443,7 @@ body.tl-kb-up {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  padding: 2px 0;
+  padding: 3px 0;
 }
 .tl-ctx-name {
   overflow: hidden;
@@ -4757,7 +5457,7 @@ body.tl-kb-up {
 }
 .tl-ctx-age {
   margin-top: 6px;
-  padding-top: 6px;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
   font-size: calc(11px * var(--tl-text-scale, 1));
 }
@@ -4774,9 +5474,6 @@ body.tl-kb-up {
   .tl-complete-item {
     min-height: 40px;
   }
-  .tl-ctx-chip {
-    min-height: 32px;
-  }
   /* The card is answered with a thumb. */
   .tl-qcard-option,
   .tl-qcard-back,
@@ -4784,18 +5481,11 @@ body.tl-kb-up {
   .tl-qcard-send {
     min-height: 40px;
   }
-  .tl-mode-chip {
-    min-height: 32px;
-  }
   /* A diff is the widest thing text mode renders; let it scroll on its own
      rather than making the page scroll sideways. */
   .tl-diff {
     font-size: calc(11.5px * var(--tl-text-scale, 1));
   }
-}
-.tl-queued-more {
-  font-style: italic;
-  opacity: 0.75;
 }
 
 /* While the newest rows are up and the rest are still mounting a chunk per
@@ -5232,7 +5922,7 @@ body.tl-kb-up {
 
    Every colour here is a theme token, and the choice of which one is the whole
    of the styling decision. The alarm colour in this codebase is --danger and it
-   carries one meaning, "you are disconnected" (.tl-status-dot above); a busy
+   carries one meaning, "you are disconnected" (.tl-line-dot above); a busy
    machine never reaches that, so the threshold rule borrows --state-running,
    the amber the degraded dot already uses. The same colour then means the same
    thing in both places. */

@@ -120,3 +120,157 @@ export const SkillsIcon: Component<{ size?: number }> = (props) => (
     <path d="M17.5 14v7" />
   </Svg>
 );
+
+/* ---- The Quiet line composer's glyphs (2026-09-24) -----------------------
+   Drawn from the prototype's own paths (docs/plans/2026-09-24-text-composer-
+   redesign.md, direction 1) on the small boxes the prototype drew them in, so
+   a 12px chevron and a 16px arrow keep the stroke weights they were designed
+   at rather than being scaled out of a 24px box. Same rule as the set above:
+   every stroke and fill is `currentColor`. */
+
+const Glyph: Component<{
+  box: string;
+  size?: number;
+  width?: number;
+  class?: string;
+  children: JSX.Element;
+}> = (props) => (
+  <svg
+    class={props.class}
+    width={props.size ?? 16}
+    height={props.size ?? 16}
+    viewBox={props.box}
+    fill="none"
+    stroke="currentColor"
+    stroke-width={props.width ?? 1.6}
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    {props.children}
+  </svg>
+);
+
+/** The pill's `+`: what can be added to the message. It turns to a × while
+ *  its tray is open, by rotation in CSS rather than by a second glyph. */
+export const PlusIcon: Component<{ size?: number }> = (props) => (
+  <Glyph box="0 0 16 16" size={props.size} width={1.8}>
+    <path d="M8 3v10M3 8h10" />
+  </Glyph>
+);
+
+/** Send, as an arrow: the button keeps its name in `aria-label`. */
+export const SendArrowIcon: Component<{ size?: number }> = (props) => (
+  <Glyph box="0 0 16 16" size={props.size} width={2}>
+    <path d="M8 13.2V3.2M3.6 7.4 8 3l4.4 4.4" />
+  </Glyph>
+);
+
+/** Stop's filled square. */
+export const StopSquareIcon: Component<{ size?: number }> = (props) => (
+  <svg width={props.size ?? 8} height={props.size ?? 8} viewBox="0 0 10 10" aria-hidden="true">
+    <rect x="1" y="1" width="8" height="8" rx="1.6" fill="currentColor" />
+  </svg>
+);
+
+/** A mode that asks before something: the shield. */
+export const ShieldIcon: Component<{ size?: number; class?: string }> = (props) => (
+  <Glyph box="0 0 16 16" size={props.size ?? 12} width={1.7} class={props.class}>
+    <path d="M8 1.9 3.2 3.7v3.9c0 3 2 5.3 4.8 6.5 2.8-1.2 4.8-3.5 4.8-6.5V3.7L8 1.9Z" />
+  </Glyph>
+);
+
+/** A mode that asks about nothing: the warning triangle. */
+export const WarnIcon: Component<{ size?: number; class?: string }> = (props) => (
+  <Glyph box="0 0 16 16" size={props.size ?? 12} width={1.7} class={props.class}>
+    <path d="M8 2.2 14.3 13.4H1.7L8 2.2Z" />
+    <path d="M8 6.6v3.2" stroke-width="1.8" />
+    <circle cx="8" cy="11.6" r=".5" fill="currentColor" stroke-width="1.2" />
+  </Glyph>
+);
+
+/** The up-and-down chevrons that say a dial opens a list. */
+export const ChevronsIcon: Component = () => (
+  <Glyph box="0 0 8 10" size={10} width={1.4} class="tl-dial-chev">
+    <path d="M2 3.6 4 1.6l2 2M2 6.4l2 2 2-2" />
+  </Glyph>
+);
+
+/** A dial that cannot act right now. */
+export const LockIcon: Component = () => (
+  <Glyph box="0 0 12 12" size={10} class="tl-dial-lock">
+    <rect x="2.2" y="5.2" width="7.6" height="5.4" rx="1.3" />
+    <path d="M4 5.2V3.9a2 2 0 0 1 4 0v1.3" />
+  </Glyph>
+);
+
+/** The tray's "Commands and skills" row. */
+export const SlashBoxIcon: Component = () => (
+  <Glyph box="0 0 16 16">
+    <rect x="1.8" y="1.8" width="12.4" height="12.4" rx="3" />
+    <path d="M9.8 4.6 6.2 11.4" />
+  </Glyph>
+);
+
+/** The tray's "A file path" row. */
+export const AtIcon: Component = () => (
+  <Glyph box="0 0 16 16">
+    <circle cx="8" cy="8" r="2.6" />
+    <path d="M10.6 8v1a1.9 1.9 0 0 0 3.8 0V8A6.4 6.4 0 1 0 12 13" />
+  </Glyph>
+);
+
+/** The tick on the row a list is set to. */
+export const CheckIcon: Component = () => (
+  <Glyph box="0 0 14 14" size={14} width={1.9}>
+    <path d="m2.8 7.4 2.8 2.8 5.6-6" />
+  </Glyph>
+);
+
+/** Closes the phone's settings sheet. */
+export const CloseIcon: Component = () => (
+  <Glyph box="0 0 16 16" size={18} width={1.8}>
+    <path d="m4 4 8 8M12 4l-8 8" />
+  </Glyph>
+);
+
+/** The small stack beside Send's "queues" hint. */
+export const QueueIcon: Component = () => (
+  <Glyph box="0 0 12 12" size={11}>
+    <path d="M2 3.5h8M2 6h8M2 8.5h5" />
+  </Glyph>
+);
+
+/**
+ * How full the context window is, as a ring. The track is the same colour at
+ * 28%, so the ring reads on every theme without a second token.
+ */
+export const ContextRing: Component<{ percent: number }> = (props) => {
+  const r = 5;
+  const c = 2 * Math.PI * r;
+  const dash = () => (c * Math.max(0, Math.min(100, props.percent))) / 100;
+  return (
+    <svg class="tl-dial-ring" width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+      <circle
+        cx="7"
+        cy="7"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        stroke-opacity=".28"
+        stroke-width="2.2"
+      />
+      <circle
+        cx="7"
+        cy="7"
+        r={r}
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        stroke-linecap="round"
+        stroke-dasharray={`${dash().toFixed(2)} ${c.toFixed(2)}`}
+        transform="rotate(-90 7 7)"
+      />
+    </svg>
+  );
+};

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { completionFor, composeMessage, modeFromPane, modeLabel } from "../src/logic/compose.logic";
+import { completionFor, composeMessage, modeFromPane } from "../src/logic/compose.logic";
 
 const files = ["main.go", "main_test.go", "registry.go", "sub/"];
 
@@ -107,27 +107,22 @@ describe("the permission mode, read off the pane", () => {
   });
 });
 
-describe("the mode chip's label", () => {
-  // `bypassPermissions` beside the input crowded out both the message field and
-  // the Send button at 390px.
-  it("shortens the long mode names, in the CLI's own words", () => {
-    expect(modeLabel("bypassPermissions")).toBe("bypass");
-    expect(modeLabel("acceptEdits")).toBe("edits");
-    expect(modeLabel("auto")).toBe("auto");
-    expect(modeLabel("plan")).toBe("plan");
-    expect(modeLabel("manual")).toBe("manual");
-    expect(modeLabel("dontAsk")).toBe("no ask");
+// dontAsk's status line has no "mode" in it. Measured on CLI 2.1.281 on
+// 2026-09-24 (memory #13911), a session started with `--permission-mode
+// dontAsk` reads "⏵⏵ don't ask on (shift+tab to cycle)", and the pattern the
+// chip carried, "don't ask mode on", never matched it: the dial read no mode at
+// all for a session in the one mode that refuses everything.
+describe("the dontAsk status line", () => {
+  const line = (s: string) => `\n\u2500\u2500\u2500\u2500\n  ${s} \u00b7 \u2190 for agents\n`;
+
+  it("reads the line the CLI actually draws", () => {
+    expect(modeFromPane(line("\u23f5\u23f5 don't ask on (shift+tab to cycle)"))).toBe("dontAsk");
   });
 
-  // `default` is what the CLI called `manual` before the rename, and it is
-  // still what older transcripts in ~/.claude/projects say — 281 of those
-  // records against 0 saying `manual` when this was written.
-  it("reads a pre-rename `default` as manual", () => {
-    expect(modeLabel("default")).toBe("manual");
-  });
-
-  it("passes an unfamiliar mode through unchanged", () => {
-    expect(modeLabel("somethingNew")).toBe("somethingNew");
+  it("still reads the longer spelling, should a build draw it", () => {
+    expect(modeFromPane(line("\u23f5\u23f5 don't ask mode on (shift+tab to cycle)"))).toBe(
+      "dontAsk",
+    );
   });
 });
 

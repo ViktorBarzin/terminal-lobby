@@ -240,6 +240,13 @@ src/
                          reply is what the session reports afterwards rather
                          than an echo, because an effort change can be refused
                          without anything failing
+    mode-api.ts          Putting a session in a permission mode from the mode
+                         dial: the same POST /model route with a `mode` in the
+                         body, since a new prefix would need the IngressRoute
+                         changed. The server walks Shift+Tab one stop at a time
+                         and replies with the mode the pane shows at the end;
+                         one request and no retry, because a walk that timed
+                         out may still have run
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
@@ -452,7 +459,11 @@ src/
                          has not moved yet, so order.logic.ts still takes one
                          type from it and store/lobby.ts still reads it from
                          components/
-    compose.logic.ts     PURE `/` and `@` completion + the mode cycle
+    compose.logic.ts     PURE `/` and `@` completion + reading the mode off
+                         the pane's status line
+    modes.ts             PURE the mode dial's list: six modes with one line
+                         each on what they do, the CLI's own titles, which two
+                         ask nothing first, and the placeholder that says so
     order.logic.ts       PURE session ordering: newest-first by created or by
                          last DRIVEN time (never session_activity, which a
                          read-only attach bumps), and the capture that freezes
@@ -683,7 +694,10 @@ src/
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
-    MessagesTimeline.tsx Rows-as-data renderer (fold / tool / working / …)
+    MessagesTimeline.tsx Rows-as-data renderer (fold / tool / question / …),
+                         with Claude's queued prompts drawn after the last row
+                         as dashed ghost bubbles. The working row is the
+                         composer's line now, not a row
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
                          rehype pass turning bare absolute paths in Claude's
                          prose into attachments (code subtrees skipped)
@@ -691,15 +705,45 @@ src/
                          document chip, or the path when nothing can serve it —
                          and MessageSegments, which substitutes in place
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
-    Composer.tsx         The LIVE session's composer: the permission panel,
-                         queued-prompt chips, the mode chip, the context meter
-                         and Stop, docked around PromptField
-    PromptField.tsx      The writing surface both composers share: multi-line
-                         with Enter to send and Shift+Enter for a newline, `/`
-                         and `@` completion, attachments as inline chips (an
-                         image is drawn as the picture, and opens full size when
-                         pressed), the unsent draft, ↑ history, and the mobile
-                         input attributes that restore QuickType and swipe typing
+    Composer.tsx         The LIVE session's composer, the Quiet line: the
+                         permission panel, the thin status line with its dials,
+                         and the pill. The dock's top edge carries the state:
+                         a sweep while Claude works, the awaiting colour while
+                         it waits, a dashed danger rule in bypass or no ask
+    StatusLine.tsx       The line above the pill: what the session is doing
+                         (the call in flight, its target, how long, the steps)
+                         with Stop beside it, "Waiting for you", work still
+                         running in the background, or who is watching. Owns
+                         the 1s clock, and folds by `data-room` from its own
+                         width, since Safari 15.6 has no container queries
+    statusline.logic.ts  PURE the line's state and precedence, a target's
+                         short form, and the width bands it folds at
+    Dial.tsx             The labelled dials and their floats: a popover above
+                         the dial with a fine pointer, ONE bottom sheet with a
+                         tab per dial with a coarse one. Knows nothing about
+                         modes or models; the caller hands it DialSpecs
+    ModePanel.tsx        The mode dial's list: six modes, one line each, the
+                         danger two under a rule, No ask held unless the
+                         session is in it, and every row held while a dialog is
+                         on the pane
+    ModelPanel.tsx       The model dial's list: the running CLI's models by
+                         name with the slug under each, and effort as a three
+                         by two control. `default` is not among them: "leave
+                         it alone" answers a question only a session that does
+                         not exist yet can be asked
+    ContextPanel.tsx     What fills the context window, behind the context
+                         dial. Figures are the CLI's own, because the ceiling
+                         is not on the wire and is not a constant
+    PlusTray.tsx         What the pill's + opens: attach a file, add a photo,
+                         / commands, @ a file path. The rows only report the
+                         press; the inputs and the caret stay in PromptField
+    PromptField.tsx      The writing surface both composers share, as a pill:
+                         + first, Send last. Multi-line with Enter to send and
+                         Shift+Enter for a newline, `/` and `@` completion,
+                         attachments as inline chips (an image is drawn as the
+                         picture, and opens full size when pressed), the unsent
+                         draft, ↑ history, and the mobile input attributes that
+                         restore QuickType and swipe typing
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip
@@ -728,14 +772,6 @@ src/
                          over the whole transcript — the window here is 20 turns
                          — and a hit jumps by loading earlier turns until its
                          row exists (Alt+Shift+F, or the bar menu on a phone)
-    ContextMeter.tsx     How full the context is, beside the mode chip, with the
-                         breakdown behind a tap. Figures are the CLI's own — the
-                         ceiling is not on the wire and is not a constant
-    ModelMenu.tsx        The model and effort chip, beside the mode chip: what
-                         the session is answering AS, one tap from changing it.
-                         Its lists are the running CLI's own, and `default` is
-                         not among them — "leave it alone" answers a question
-                         only a session that does not exist yet can be asked
     PermissionPanel.tsx  INERT. Approve/Deny UI kept for a future gated
                          re-enable; its server side was removed in 575d4f5, so
                          Composer still mounts it but it always renders nothing
@@ -835,7 +871,9 @@ src/
                          rather than svg text, because preserveAspectRatio
                          "none" would smear anything inside the viewBox
     Icons.tsx            Chrome icons as inline Lucide SVG (image, camera,
-                         clipboard, file-text, rotate-cw) — never emoji
+                         clipboard, file-text, rotate-cw) and the composer's
+                         own small glyphs (+, the send arrow, the shield, the
+                         context ring). Never emoji
     Toaster.tsx          Top-right toast stack
   keybindings/
     chords.logic.ts      PURE layout-proof chord parse/match

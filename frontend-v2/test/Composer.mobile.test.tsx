@@ -11,13 +11,7 @@ describe("<Composer> — send routing", () => {
   it("desktop (no sendToTerminal): Enter calls onSend with the trimmed text", async () => {
     const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={onSend}
-        onStop={noop}
-        onResolve={noop}
-      />
+      <Composer pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "  hello world  " } });
@@ -38,7 +32,6 @@ describe("<Composer> — send routing", () => {
     const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
       <Composer
-        working={false}
         pending={[]}
         onSend={onSend}
         onStop={noop}
@@ -58,7 +51,7 @@ describe("<Composer> — send routing", () => {
   it("sends a multiline message as one whole message", async () => {
     const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
-      <Composer working={false} pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
+      <Composer pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "first\nsecond\nthird" } });
@@ -73,7 +66,6 @@ describe("<Composer> — send routing", () => {
     const sendToTerminal = vi.fn();
     const { getByLabelText } = render(() => (
       <Composer
-        working={false}
         pending={[]}
         onSend={onSend}
         onStop={noop}
@@ -91,13 +83,7 @@ describe("<Composer> — send routing", () => {
   it("empty / whitespace-only input never sends", () => {
     const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={onSend}
-        onStop={noop}
-        onResolve={noop}
-      />
+      <Composer pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "   " } });
@@ -107,7 +93,7 @@ describe("<Composer> — send routing", () => {
 
   it("carries the mobile iOS input attributes (QuickType-friendly)", () => {
     const { getByLabelText } = render(() => (
-      <Composer working={false} pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
+      <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     expect(ta.getAttribute("autocapitalize")).toBe("off");
@@ -174,18 +160,9 @@ describe("<Composer> — Enter during IME composition", () => {
   const mount = (extra: { sendToTerminal?: (b: string) => void } = {}) => {
     const onSend = vi.fn(sent);
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={onSend}
-        onStop={noop}
-        onResolve={noop}
-        {...extra}
-      />
+      <Composer pending={[]} onSend={onSend} onStop={noop} onResolve={noop} {...extra} />
     ));
-    const ta = getByLabelText(
-      "Message to send to the session",
-    ) as HTMLTextAreaElement;
+    const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     return { onSend, ta };
   };
 
@@ -225,17 +202,9 @@ describe("<Composer> — Enter during IME composition", () => {
  * rejected prompt is retryable instead of retyped.
  */
 describe("<Composer> — a refused send keeps the typed text", () => {
-  const typeAndSend = (
-    onSend: (t: string) => Promise<boolean>,
-  ): HTMLTextAreaElement => {
+  const typeAndSend = (onSend: (t: string) => Promise<boolean>): HTMLTextAreaElement => {
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={onSend}
-        onStop={noop}
-        onResolve={noop}
-      />
+      <Composer pending={[]} onSend={onSend} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     fireEvent.input(ta, { target: { value: "the long prompt I do not want to retype" } });

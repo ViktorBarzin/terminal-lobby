@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
-import { PromptField } from "../src/components/PromptField";
+import { PromptField, type PromptFieldSinks } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
@@ -101,22 +101,97 @@ describe("<PromptField> — the draft it persists under", () => {
   });
 });
 
-describe("<PromptField> — the controls each composer contributes", () => {
-  it("puts them in their own bar group, with Send permanently last", () => {
-    const { container } = render(() => (
-      <PromptField
-        onSend={onSend}
-        label="Message"
-        leftExtra={<button class="tl-left-one" />}
-        rightExtra={<button class="tl-right-one" />}
-      />
+/**
+ * The pill: `+` first, Send last, the field between.
+ *
+ * Each composer used to hand its own controls in through `leftExtra` and
+ * `rightExtra`, which landed in the two groups of a bar under the field. The
+ * Quiet line composer (2026-09-24) moved those controls to a line of dials
+ * above the pill, which each composer draws itself, so the field takes no
+ * controls from outside any more.
+ */
+describe("<PromptField>: the pill", () => {
+  it("puts + first and Send last, with the field between", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
+    const pill = container.querySelector(".tl-pill")!;
+    expect(pill.firstElementChild!.classList.contains("tl-plus")).toBe(true);
+    const end = pill.lastElementChild!;
+    expect(end.classList.contains("tl-pill-end")).toBe(true);
+    expect(end.lastElementChild!.classList.contains("tl-send")).toBe(true);
+  });
+
+  it("drops the + for a field that takes nothing but words", () => {
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" noTray />);
+    expect(container.querySelector(".tl-plus")).toBeNull();
+    expect(
+      container.querySelector(".tl-pill")!.firstElementChild!.classList.contains("tl-field"),
+    ).toBe(true);
+  });
+});
+
+/**
+ * Sending another way, on the field's own terms.
+ *
+ * The plan card's "Approve with this feedback" sends the composer's text by a
+ * route of its own. It goes through the field, so the text is composed,
+ * cleared and restored exactly as Send does it: never cleared without either a
+ * confirmed send or a restore (memory #11256).
+ */
+describe("<PromptField>: the sinks a card outside it can use", () => {
+  const mountWithSinks = () => {
+    let sinks: PromptFieldSinks | undefined;
+    const r = render(() => (
+      <PromptField onSend={onSend} label="Message" register={(s) => (sinks = s)} />
     ));
-    const classOf = (sel: string) =>
-      Array.from(container.querySelectorAll(`${sel} > *`)).map(
-        (e) => (e.className || "").toString().split(" ")[0],
-      );
-    expect(classOf(".tl-bar-left")).toEqual(["tl-left-one"]);
-    expect(classOf(".tl-bar-right")).toEqual(["tl-right-one", "tl-send"]);
+    return { ...r, sinks: () => sinks! };
+  };
+
+  it("says whether there is anything to send, as it is typed", () => {
+    const { container, sinks } = mountWithSinks();
+    expect(sinks().hasInput()).toBe(false);
+    type(field(container), "change step 2");
+    expect(sinks().hasInput()).toBe(true);
+    type(field(container), "   ");
+    expect(sinks().hasInput()).toBe(false);
+  });
+
+  it("sends through the route it is handed, not through Send's", async () => {
+    const { container, sinks } = mountWithSinks();
+    type(field(container), "approve, but keep the tests");
+    const via: string[] = [];
+    const ok = await sinks().submitVia(async (t) => {
+      via.push(t);
+      return true;
+    });
+    expect(ok).toBe(true);
+    expect(via).toEqual(["approve, but keep the tests"]);
+    expect(sent).toEqual([]);
+    expect(field(container).value).toBe("");
+  });
+
+  it("puts the text back when that route refuses, or throws", async () => {
+    const { container, sinks } = mountWithSinks();
+    type(field(container), "keep me");
+    expect(await sinks().submitVia(async () => false)).toBe(false);
+    expect(field(container).value).toBe("keep me");
+    expect(
+      await sinks().submitVia(async () => {
+        throw new Error("gone");
+      }),
+    ).toBe(false);
+    expect(field(container).value).toBe("keep me");
+  });
+
+  it("sends nothing, and says so, when there is nothing written", async () => {
+    const { sinks } = mountWithSinks();
+    let called = false;
+    expect(
+      await sinks().submitVia(async () => {
+        called = true;
+        return true;
+      }),
+    ).toBe(false);
+    expect(called).toBe(false);
   });
 });
 

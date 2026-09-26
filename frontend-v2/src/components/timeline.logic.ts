@@ -312,7 +312,6 @@ function collectTurnRows(turn: Turn): {
   userRow: UserRow | null;
   work: LeafRow[];
 } {
-
   let userRow: UserRow | null = null;
   const work: LeafRow[] = [];
   const toolBy = new Map<string, ToolRow>();
@@ -506,25 +505,25 @@ function collectTurnRows(turn: Turn): {
       case "meta": {
         const meta = e.meta ?? "mode";
         // `mode` and `permission-mode` are STATE, not events: the composer's
-        // chip always shows the mode in force, so a divider announcing each
-        // change interrupts the conversation to repeat what is already on
-        // screen (Viktor, 2026-08-17). The EVENTS still flow — currentMode()
-        // reads them for that chip — only the row is dropped, and dropped
+        // mode dial always shows the mode in force, so a divider announcing
+        // each change interrupts the conversation to repeat what is already on
+        // screen (Viktor, 2026-08-17). The EVENTS still flow, since
+        // currentMode() reads them for that dial; only the row is dropped, and dropped
         // outright rather than folded, since expanding a turn would put the
         // divider back.
         if (meta === "mode" || meta === "permission-mode") break;
-        // A `/context` reading is state for the same reason, and the meter
-        // beside the composer is where it shows. A reading also arrives as a
+        // A `/context` reading is state for the same reason, and the context
+        // dial on the composer's line is where it shows. A reading also arrives as a
         // 15 KB block of markdown the CLI already rendered in the pane, so a
         // row per reading would be the biggest thing in the log.
         if (meta === "context") break;
-        // Which model is answering is state as well, and the chip beside the
-        // composer is where it shows. A change made from the lobby leaves its
+        // Which model is answering is state as well, and the model dial on the
+        // composer's line is where it shows. A change made from the lobby leaves its
         // own visible mark anyway: applying one types `/model` into the pane,
         // and that line arrives as an ordinary row.
         if (meta === "model") break;
         // The queue's departures are bookkeeping for queuedPrompts(), the
-        // same way the mode events are for the chip: a divider saying a
+        // same way the mode events are for the dial: a divider saying a
         // prompt left the queue tells the reader nothing the queue itself
         // does not already say by shrinking.
         if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
@@ -543,6 +542,14 @@ function collectTurnRows(turn: Turn): {
         // measured), and the event still flows so the queue list stays in
         // step.
         if (meta === "queued" && isHarnessNotice(e.body ?? "")) break;
+        // A REAL queued prompt earns no row either, since 2026-09-24. The
+        // timeline draws what waits in the queue as ghost bubbles after its
+        // last row (MessagesTimeline, off queuedPrompts), and the prompt
+        // arrives as its own user row the moment Claude takes it, so a marker
+        // here was a third copy of one message, the first thing on screen to
+        // say it twice. A prompt taken out of the queue unsent now leaves no
+        // trace, which is what happened to it.
+        if (meta === "queued") break;
         // A skill load is TWO records: the `Skill` call, and the SKILL.md
         // body sessionio collapsed to this event. One thing happened, so it
         // reads as one card — the size lands on the call and this row is
@@ -585,8 +592,7 @@ function collectTurnRows(turn: Turn): {
         break;
       case "permission_resolved": {
         const pr = work.find(
-          (r): r is PermissionRow =>
-            r.kind === "permission" && r.reqId === e.reqId,
+          (r): r is PermissionRow => r.kind === "permission" && r.reqId === e.reqId,
         );
         if (pr) {
           pr.decision = e.body ?? "";
@@ -640,11 +646,7 @@ function collectTurnRows(turn: Turn): {
  * The rows a turn contributes below its user message. A settled turn with more
  * than one work row folds; anything else hands back the work as it stands.
  */
-function foldSettledTurn(
-  turn: Turn,
-  work: LeafRow[],
-  settled: boolean,
-): TimelineRow[] {
+function foldSettledTurn(turn: Turn, work: LeafRow[], settled: boolean): TimelineRow[] {
   const rows: TimelineRow[] = [];
   if (settled && work.length > 1) {
     // Keep the last assistant message visible (the turn's "answer"); fold the
@@ -660,11 +662,7 @@ function foldSettledTurn(
     if (visibleAt < 0) visibleAt = work.length - 1;
     const visible = work[visibleAt];
     const hidden = work.filter((_, i) => i !== visibleAt);
-    const changed = [
-      ...new Set(
-        work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])),
-      ),
-    ];
+    const changed = [...new Set(work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])))];
     const fold: TurnFoldRow | null =
       hidden.length > 0
         ? {
@@ -676,9 +674,7 @@ function foldSettledTurn(
             hasError: hidden.some(leafFailed),
             changedFiles: changed,
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
-            ...(turnDuration(turn) !== undefined
-              ? { durationMs: turnDuration(turn) }
-              : {}),
+            ...(turnDuration(turn) !== undefined ? { durationMs: turnDuration(turn) } : {}),
           }
         : null;
     // Chronology: the fold stands for the run of hidden rows that begins at
@@ -750,9 +746,7 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
     key: `working-${turn.key}`,
     turnKey: turn.key,
     steps: work.length,
-    ...(turn.events[0]?.at !== undefined
-      ? { startedAt: turn.events[0]!.at }
-      : {}),
+    ...(turn.events[0]?.at !== undefined ? { startedAt: turn.events[0]!.at } : {}),
     ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
     ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
     ...(waitingFor || paneAsking ? { waiting: true } : {}),
@@ -906,14 +900,10 @@ export interface PendingPermission {
  * composer-docked permission panel. */
 export function pendingPermissions(events: Event[]): PendingPermission[] {
   const resolved = new Set(
-    events
-      .filter((e) => e.kind === "permission_resolved" && e.reqId)
-      .map((e) => e.reqId as string),
+    events.filter((e) => e.kind === "permission_resolved" && e.reqId).map((e) => e.reqId as string),
   );
   return events
-    .filter(
-      (e) => e.kind === "permission_request" && e.reqId && !resolved.has(e.reqId),
-    )
+    .filter((e) => e.kind === "permission_request" && e.reqId && !resolved.has(e.reqId))
     .map((e) => ({
       reqId: e.reqId as string,
       tool: e.tool ?? "",
@@ -922,15 +912,35 @@ export function pendingPermissions(events: Event[]): PendingPermission[] {
 }
 
 /**
- * True while the last turn is still OPEN (drives the Send↔Stop morph).
+ * True while the last turn is still OPEN.
  *
  * Open is not the same as working, and this is deliberately the wider of the
- * two: a turn parked on a question is unfinished, and Stop is how a reader
- * takes the dialog down. What the row says is the narrower question (see
- * WorkingRow.waiting).
+ * two: a turn parked on a question is unfinished. It used to decide whether
+ * the composer offered Stop, which is how a reader took a dialog down, and it
+ * no longer does. Since the Quiet line composer (2026-09-24) Stop sits on the
+ * thin line above the pill and shows only while something RUNS, read off the
+ * live row's `waiting` (`liveRow` below). While Claude waits, the ways out are
+ * the card's own buttons, Send, and the terminal.
  */
 export function sessionWorking(rows: TimelineRow[]): boolean {
   return rows.some((r) => r.kind === "working");
+}
+
+/**
+ * The open turn's live row, or undefined while no turn is open.
+ *
+ * The timeline drew this row at its foot until 2026-09-24. It moved onto the
+ * composer's thin line (components/StatusLine.tsx), where it reads the same
+ * fields the row did: the call in flight, how long it has run, the step count,
+ * and whether Claude is working or waiting for the reader. The last row of its
+ * kind, because only the last turn can be open.
+ */
+export function liveRow(rows: TimelineRow[]): WorkingRow | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (r.kind === "working") return r;
+  }
+  return undefined;
 }
 
 /**
@@ -998,15 +1008,13 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     latest = "";
   }
   if (!latest) return null;
-  const raw = parseJSON(latest) as
-    | {
-        questions?: unknown;
-        headers?: unknown;
-        count?: unknown;
-        answered?: unknown;
-        partial?: unknown;
-      }
-    | null;
+  const raw = parseJSON(latest) as {
+    questions?: unknown;
+    headers?: unknown;
+    count?: unknown;
+    answered?: unknown;
+    partial?: unknown;
+  } | null;
   const qs = questions(raw);
   if (qs.length === 0) return null;
   return {
@@ -1055,10 +1063,7 @@ export function currentMode(events: Event[], seed?: SessionState | null): string
  * has said nothing about either — and a chip showing a guess would be worse
  * than one showing nothing.
  */
-export function currentModel(
-  events: Event[],
-  seed?: SessionState | null,
-): ModelState | undefined {
+export function currentModel(events: Event[], seed?: SessionState | null): ModelState | undefined {
   let state = seed?.model;
   for (const e of after(events, seed)) {
     if (e.kind === "meta" && e.meta === "model" && e.model) state = e.model;
@@ -1081,7 +1086,13 @@ function after(events: Event[], seed?: SessionState | null): Event[] {
   return events.filter((e) => e.id > at);
 }
 
-/** How many queued prompts the composer shows before summarising the rest. */
+/**
+ * How many queued prompts the timeline draws before summarising the rest.
+ *
+ * They were chips above the composer's field until 2026-09-24 and are ghost
+ * bubbles at the end of the conversation now, where each will land once
+ * Claude takes it. Three is still where "+N more waiting" takes over.
+ */
 export const MAX_QUEUED_SHOWN = 3;
 
 /**
@@ -1128,6 +1139,40 @@ export function queuedPrompts(events: Event[], seed?: SessionState | null): stri
     }
   }
   return queue.filter((t) => !isHarnessNotice(t));
+}
+
+/**
+ * The prompts sent from here that Claude has NOT queued, so the timeline draws
+ * each message once.
+ *
+ * A prompt sent mid-turn shows at once as a pending bubble (withPendingPrompts
+ * below), and seconds later the CLI records it as queued, which the timeline
+ * draws as a dashed ghost at its end. Without this the one message showed
+ * twice, as a bubble and as a ghost (spec risk R6). The change of look between
+ * the two moments stays; the double does not.
+ *
+ * One queued entry accounts for ONE pending prompt, oldest first, the same way
+ * the store releases pending prompts one transcript record at a time: two
+ * identical messages with one of them queued are still two messages. Returns
+ * `sent` itself when nothing is left out, so the caller's fold is reused.
+ */
+export function withoutQueued<T extends { text: string }>(
+  sent: readonly T[],
+  queued: readonly string[],
+): readonly T[] {
+  if (sent.length === 0 || queued.length === 0) return sent;
+  const waiting = new Map<string, number>();
+  for (const q of queued) waiting.set(q, (waiting.get(q) ?? 0) + 1);
+  let dropped = false;
+  const kept = sent.filter((p) => {
+    const text = p.text.trim();
+    const n = waiting.get(text) ?? 0;
+    if (n === 0) return true;
+    waiting.set(text, n - 1);
+    dropped = true;
+    return false;
+  });
+  return dropped ? kept : sent;
 }
 
 /** The harness's own injected notices, which nobody queued and nobody reads. */
@@ -1180,10 +1225,7 @@ export function scrollTopAfterPrepend(
  * waiting on a response reads as a turn with nothing in it yet — which is
  * exactly what it is.
  */
-export function withPendingPrompts(
-  events: Event[],
-  sent: ReadonlyArray<PendingPrompt>,
-): Event[] {
+export function withPendingPrompts(events: Event[], sent: ReadonlyArray<PendingPrompt>): Event[] {
   if (sent.length === 0) return events;
   return [
     ...events,

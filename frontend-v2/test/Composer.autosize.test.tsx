@@ -58,10 +58,14 @@ function stubBox(ta: HTMLTextAreaElement, lh: () => number, lines: () => number)
 describe("the compose field fits its own text", () => {
   it("leaves room for the border, which scrollHeight does not include", () => {
     const { getByLabelText } = render(() => (
-      <Composer working={false} pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
+      <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    stubBox(ta, () => 24, () => 1);
+    stubBox(
+      ta,
+      () => 24,
+      () => 1,
+    );
     fireEvent.input(ta, { target: { value: "done i sized int, try now" } });
     // scrollHeight is 1*24 + 18 = 42; the field must be 44 so the content box
     // is still 24. Setting 42 leaves 22 for a 24px line.
@@ -74,24 +78,23 @@ describe("the compose field fits its own text", () => {
     // changes the font and nothing re-measured, so the line outgrew its box.
     const [size, setSize] = createSignal(15);
     const { getByLabelText } = render(() => (
-      <Composer
-        working={false}
-        pending={[]}
-        onSend={sent}
-        onStop={noop}
-        onResolve={noop}
-        textSize={size()}
-      />
+      <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} textSize={size()} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     let lh = 24;
-    stubBox(ta, () => lh, () => 1);
+    stubBox(
+      ta,
+      () => lh,
+      () => 1,
+    );
     fireEvent.input(ta, { target: { value: "one line" } });
     const small = parseFloat(ta.style.height);
 
     lh = 36; // the same one line, at a bigger size
     setSize(22);
-    expect(parseFloat(ta.style.height), "re-measured after the size changed").toBeGreaterThan(small);
+    expect(parseFloat(ta.style.height), "re-measured after the size changed").toBeGreaterThan(
+      small,
+    );
     expect(ta.scrollHeight).toBeLessThanOrEqual(ta.clientHeight + 1);
   });
 });

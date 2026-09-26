@@ -11,11 +11,17 @@
  *  - the field carried a border and the control bar carried none, so the
  *    composer read as a boxed input with loose controls beneath it.
  *
- * NOT changed, and worth recording so nobody "fixes" it later: the mode chip's
+ * NOT changed, and worth recording so nobody "fixes" it later: the mode's
  * colour is SEMANTIC, not decoration. manual is green, plan purple, auto blue,
- * bypass red — red because bypass is the mode that lets everything through. It
- * shares a hue with Stop; it is told apart by weight, an outline pill against a
- * filled button, not by hue.
+ * bypass red, red because bypass is the mode that lets everything through.
+ * Since the Quiet line composer (2026-09-24) the colour is the mode dial's
+ * shield, and bypass turns the whole dial into a hatched danger tab, told
+ * apart from Stop by the hatching and by where it sits.
+ *
+ * The Quiet line also rewrote two of these on purpose. The attach button went
+ * behind the pill's `+`, and the "one surface" is the pill: `+`, the field and
+ * Send, with the dials on a line of plain type above it rather than a bar
+ * inside the box.
  *
  * CSS text, because none of this is behaviour.
  */
@@ -32,7 +38,11 @@ const css = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8").replace(
 
 const rule = (selector: string): string => {
   for (const m of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    const sel = m[1]!.trim().split("\n").map((s) => s.trim()).join("\n");
+    const sel = m[1]!
+      .trim()
+      .split("\n")
+      .map((s) => s.trim())
+      .join("\n");
     if (sel === selector) return m[2]!;
   }
   throw new Error(`no rule for ${selector}`);
@@ -56,17 +66,22 @@ describe("one grammar per act", () => {
 });
 
 describe("icons are icons", () => {
-  it("does not put a box round the attach button", () => {
-    const attach = rule(".tl-attach-btn");
-    expect(attach).toMatch(/border:\s*0/);
+  it("does not put a box round the + or Send; the disc inside is the drawing", () => {
+    expect(rule(".tl-plus,\n.tl-send")).toMatch(/border:\s*0/);
   });
 });
 
 describe("the composer is one control", () => {
-  it("wraps the field and its bar in a single surface", () => {
-    const box = rule(".tl-composer-box");
-    expect(box).toMatch(/border:\s*1px solid/);
-    expect(box).toMatch(/border-radius/);
+  it("draws +, the field and Send as a single pill", () => {
+    const pill = rule(".tl-pill");
+    expect(pill).toMatch(/border:\s*1px solid/);
+    expect(pill).toMatch(/border-radius:\s*21px/);
+  });
+
+  it("leaves the status line as type on the page, with no box of its own", () => {
+    const line = rule(".tl-statusline");
+    expect(line).not.toMatch(/border/);
+    expect(line).not.toMatch(/background/);
   });
 
   it("takes the border off the field, which the surface now carries", () => {

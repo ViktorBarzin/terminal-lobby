@@ -14,9 +14,11 @@ import {
   currentMode,
   currentModel,
   deriveRows,
+  liveRow,
   pendingQuestion,
   promptHistory,
   queuedPrompts,
+  withoutQueued,
   withPendingPrompts,
   type PendingPermission,
   type TimelineRow,
@@ -42,6 +44,8 @@ import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import { isCurrentModel, type ModelField, type ModelHarness, type ModelState } from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
+import type { SetModeReply, SetModeResult } from "../lib/mode-api";
+import { isDangerMode, modeTitle, type ModeId } from "../logic/modes";
 
 /**
  * A model reading, as one comparable string.
@@ -49,8 +53,8 @@ import type { SetModelResult } from "../lib/model-api";
  * The applied reading holds only until the TRANSCRIPT moves, and this is how it
  * notices: the reading is stored alongside the transcript's value at the moment
  * it was taken, and it simply stops matching when a turn writes a new one. The
- * same trick the permission-mode chip uses for its pane reading, and it needs
- * no bookkeeping to expire.
+ * same trick the mode dial uses for its pane reading, and it needs no
+ * bookkeeping to expire.
  */
 const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.effort ?? ""}`;
 
@@ -59,12 +63,88 @@ const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.
  * line repainted 40ms after the keystroke when this was measured (2026-08-17);
  * the first delay is that with room to spare, the second is the retry.
  *
- * This is the permission-mode chip's own read-back, and the last one left in
- * this file. Answering a dialog no longer waits on the pane from here: the
- * server types, captures and verifies in one local sequence and replies with
- * the reading (sessionio/answerdrive.go).
+ * This is Shift+Tab's own read-back, and the last one left in this file. A
+ * pick from the mode dial's list does not wait on the pane from here: the
+ * server walks and reads in one local sequence and replies with the mode it
+ * read (lib/mode-api.ts), and answering a dialog works the same way
+ * (sessionio/answerdrive.go).
  */
 const PANE_READ_DELAYS_MS = [150, 600];
+
+/**
+ * Why the mode cannot change while a dialog is on the pane.
+ *
+ * Shift+Tab is the only way the CLI changes mode, and inside a dialog it is a
+ * key the dialog reads. On the plan approval's feedback row it APPROVES the
+ * plan with whatever was typed (measured on CLI 2.1.281, memory #13896). What
+ * it does in a question or a permission dialog was not measured, so those hold
+ * the dial too, as a precaution (spec section 5.5).
+ */
+const MODE_HELD_BY_DIALOG =
+  "Answer Claude first: a mode change now would type into the open dialog";
+
+/**
+ * What a refused mode pick says, and how loudly.
+ *
+ * The dial already shows the mode the reply read, so these say why it is not
+ * the one picked. `unsafe-path` comes in two shapes: refused before a single
+ * press (the pane is still on the start), or stopped mid-walk because a mode
+ * that asks nothing showed while Claude worked, in which case the session IS
+ * in that mode now and the reader has to hear it as an error. Walks to Auto
+ * will be refused often: sessions here start with
+ * --dangerously-skip-permissions, which puts Bypass between Plan and Auto on
+ * the cycle (memory #13911).
+ */
+function refusal(
+  target: ModeId,
+  was: string,
+  reply: SetModeReply,
+): { text: string; tone: "warning" | "error" } {
+  const to = modeTitle(target);
+  const now = modeTitle(reply.mode || was);
+  switch (reply.reason) {
+    case "unavailable":
+      return {
+        text: `${to} is not offered in this session, so it stayed on ${now}.`,
+        tone: "warning",
+      };
+    case "unsafe-path":
+      if (reply.mode && reply.mode !== was && isDangerMode(reply.mode)) {
+        return {
+          text: `Stopped on ${now} on the way to ${to}, because Claude is working. The session is on ${now} now.`,
+          tone: "error",
+        };
+      }
+      return {
+        text:
+          `Reaching ${to} from ${modeTitle(was)} passes through Bypass while Claude is working. ` +
+          "Stop Claude first, or pick it when the turn ends.",
+        tone: "warning",
+      };
+    case "dialog-open":
+      return { text: `${MODE_HELD_BY_DIALOG}.`, tone: "warning" };
+    // The server's other three (sessionio setmode.go). Each gets a sentence
+    // rather than the bare word, since a toast is read by someone who has
+    // never seen the driver.
+    case "unverified":
+      return {
+        text: `Shift+Tab went in and the status line did not move, so nothing more was pressed. The session is on ${now}.`,
+        tone: "warning",
+      };
+    case "unreadable":
+      return {
+        text: "The pane shows no permission mode to start from, so nothing was pressed.",
+        tone: "warning",
+      };
+    case "refused":
+      return { text: "tmux would not take the key, so the mode did not change.", tone: "error" };
+    default:
+      return {
+        text: `The mode did not change: ${reply.reason || "no reason given"}.`,
+        tone: "error",
+      };
+  }
+}
 
 /**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
@@ -72,15 +152,16 @@ const PANE_READ_DELAYS_MS = [150, 600];
  *
  * It also owns the upward half of ADR-0010: a blocking prompt is mirrored from
  * the transcript (a question) or from the pane (a permission dialog), and the
- * answer goes back into the same pty. A permission decision and the mode chip
- * go as keys from here. A QUESTION does not, since 2026-09-10: each choice is
+ * answer goes back into the same pty. A permission decision and Shift+Tab go
+ * as keys from here. A QUESTION does not, since 2026-09-10: each choice is
  * one request to the server, which types beside the parser and replies with a
  * reading of the screen that resulted (docs/plans/2026-09-10-text-mode-
- * answers-dialogs-design.md).
+ * answers-dialogs-design.md). A pick from the mode dial's list works the same
+ * way since 2026-09-24: one request, and the server walks the keys and reads
+ * the pane itself (lib/mode-api.ts).
  */
 export const TextView: Component<{
   events: Event[];
-  working: boolean;
   /** What the SESSION still owes, from the session list rather than the
    *  transcript. The transcript cannot answer this: it closes the turn when the
    *  main thread stops talking, and says nothing about the background agent
@@ -95,8 +176,11 @@ export const TextView: Component<{
   sendToTerminal?: (bytes: string) => void;
   /** open a file path in the preview overlay (transcript Read/Edit/Write rows). */
   onOpenPreview?: (path: string) => void;
-  /** type keys into the session's pane — the permission-mode chip's Shift+Tab. */
+  /** type keys into the session's pane: Shift+Tab in the message field. */
   onKeys?: (keys: string[]) => Promise<boolean>;
+  /** put the session in a permission mode picked from the mode dial's list;
+   *  the server walks Shift+Tab to it and replies with the mode it read. */
+  onSetMode?: (mode: ModeId) => Promise<SetModeResult>;
   /** read what the session's pane currently shows — the live permission mode. */
   onPane?: () => Promise<{ pane: string; state: string } | null>;
   /**
@@ -155,14 +239,20 @@ export const TextView: Component<{
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
   /** watching: the controls that type, and attaching, are inert. */
   inertReason?: string;
+  /** stop watching and drive the session from this device: the thin line's
+   *  Take control, the same toggle as the header's Watch button. */
+  onTakeControl?: () => void;
   /** receive the composer's sinks, for gestures that land outside it. */
   register?: (api: ComposerSinks) => void;
   /** show the Terminal view — where a question the pane can only half show has
    *  to be answered until the transcript catches up. */
   onOpenTerminal?: () => void;
 }> = (props) => {
-  // What the transcript says, plus what it has not caught up with.
-  const sent = createMemo(() => props.pendingPrompts?.() ?? []);
+  const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
+  // What the transcript says, plus what it has not caught up with. A prompt
+  // Claude has already queued is left out: the timeline draws it as a ghost
+  // bubble at its end, and one message should show once (withoutQueued).
+  const sent = createMemo(() => withoutQueued(props.pendingPrompts?.() ?? [], queued()));
   const shown = createMemo(() => withPendingPrompts(props.events, sent()));
   /** The transcript folded, once. */
   const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events));
@@ -170,7 +260,13 @@ export const TextView: Component<{
    *  nothing is in flight, so the common case reuses the fold above rather than
    *  repeating it; an unsent prompt is rare and short-lived. */
   const shownRows = createMemo(() => (sent().length === 0 ? baseRows() : deriveRows(shown())));
-  const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
+  /**
+   * The open turn's live row, off the rows the timeline draws: with a prompt
+   * pending that is the pending turn, whose row reads "Working" with no tool,
+   * which is what the timeline showed in that moment before the row moved onto
+   * the composer's thin line (2026-09-24).
+   */
+  const live = createMemo(() => liveRow(shownRows()));
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
   const [modeBusy, setModeBusy] = createSignal(false);
 
@@ -185,10 +281,12 @@ export const TextView: Component<{
    * therefore never shows what pressing it just did, which is what Viktor
    * reported.
    *
-   * So the pane is read at the two moments the answer can have changed without
-   * a turn behind it: when this view opens, and right after the chip is pressed.
-   * A pane reading holds until the transcript reports a mode of its own, at
-   * which point the transcript is the fresher of the two and takes over.
+   * So the pane is read at the moments the answer can have changed without a
+   * turn behind it: when this view opens, and right after Shift+Tab. A pick
+   * from the dial's list comes back with a reading of its own, the mode the
+   * server's walk ended on, and is stored the same way. A pane reading holds
+   * until the transcript reports a mode of its own, at which point the
+   * transcript is the fresher of the two and takes over.
    */
   const transcriptMode = createMemo(() => currentMode(props.events, props.sessionState));
   // A pane reading, plus the transcript value it was taken against. It stops
@@ -205,7 +303,7 @@ export const TextView: Component<{
    * Re-read the pane, twice when the first read still shows what was there
    * before. The status line repaints ~40ms after the keystroke (measured), so
    * one read is normally enough; the second covers a pane that was mid-repaint
-   * at that instant rather than leaving the chip showing the old mode.
+   * at that instant rather than leaving the dial showing the old mode.
    */
   const readMode = async (was: string): Promise<void> => {
     for (const wait of PANE_READ_DELAYS_MS) {
@@ -372,7 +470,7 @@ export const TextView: Component<{
    * The newest reading the server sent back, and what was being asked when
    * it was sent.
    *
-   * The same pairing the mode and model chips above use: a reading is stored
+   * The same pairing the mode and model dials above use: a reading is stored
    * with the value it was taken against and stops counting the moment that
    * value moves, so nothing has to expire it. Here the value is `asking()`, so
    * a reply arriving after the session has moved to another call renders on
@@ -688,10 +786,10 @@ export const TextView: Component<{
   /**
    * What the session is answering as.
    *
-   * Two sources, for the same reason the permission-mode chip has two. The
-   * TRANSCRIPT is authoritative and is what an arriving reader has, but it only
-   * moves when a turn ends, so a change made from the chip would not show until
-   * the session next answered. The APPLY reports what the session said about
+   * Two sources, for the same reason the mode dial has two. The TRANSCRIPT is
+   * authoritative and is what an arriving reader has, but it only moves when a
+   * turn ends, so a change made from the model dial would not show until the
+   * session next answered. The APPLY reports what the session said about
    * itself immediately afterwards, and that reading holds until the transcript
    * reports a pair of its own.
    */
@@ -712,7 +810,7 @@ export const TextView: Component<{
    *
    * The reply is the session's own reading, not an echo: an effort change can
    * be refused without anything failing — an `env.CLAUDE_CODE_EFFORT_LEVEL` in
-   * the account's settings pins one and the slider still moves — so a chip
+   * the account's settings pins one and the slider still moves — so a dial
    * that trusted the request would show a level the session is not on
    * (lib/model-api.ts).
    */
@@ -731,7 +829,7 @@ export const TextView: Component<{
         // MERGED, not replaced. The reply carries only what the change could
         // establish: an effort pass reads the effort back off the pane and
         // says nothing about the model, because a stock Claude pane does not
-        // report one. Replacing wholesale blanked half the chip until the
+        // report one. Replacing wholesale blanked half the dial until the
         // session next answered.
         const was = modelState();
         setAppliedModel({
@@ -764,15 +862,63 @@ export const TextView: Component<{
     });
   });
 
+  /**
+   * Why the mode cannot change right now, or "" when it can: a dialog is on
+   * the pane, where Shift+Tab is a key the dialog reads (MODE_HELD_BY_DIALOG).
+   *
+   * Three ways to know one is up. A question the card is answering, a
+   * permission the panel is answering, and the live row's `waiting`, which is
+   * true while the transcript holds any of Claude's stops without an answer,
+   * the plan put up for approval among them.
+   */
+  const modeHeld = createMemo((): string =>
+    asking() !== "" || props.pending.length > 0 || live()?.waiting === true
+      ? MODE_HELD_BY_DIALOG
+      : "",
+  );
+  /** Modes the server has said this session does not offer. They stay out of
+   *  reach until the view remounts, since launch flags do not change mid-run. */
+  const [unavailable, setUnavailable] = createSignal<ReadonlySet<string>>(new Set());
+
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
     // says where it landed — the transcript will not, until the next turn.
-    if (!props.onKeys || modeBusy()) return;
+    // Never into a dialog, and never from a device that only watches.
+    if (!props.onKeys || modeBusy() || modeHeld() || props.inertReason) return;
     setModeBusy(true);
     const was = mode();
     void props
       .onKeys(["BTab"])
       .then((ok) => (ok ? readMode(was) : undefined))
+      .finally(() => setModeBusy(false));
+  };
+
+  /**
+   * Put the session in a mode picked from the dial's list.
+   *
+   * One request: the server walks Shift+Tab and replies with the mode it read
+   * at the end, whether or not the walk got there (lib/mode-api.ts). That
+   * reading goes through the same `paneRead` signal as a read of the pane, so
+   * the transcript still takes over once it reports a mode of its own. A
+   * refusal says why through the toast stack, the way a model pick does.
+   */
+  const pickMode = (id: ModeId): void => {
+    if (!props.onSetMode || modeBusy() || modeHeld() || props.inertReason || id === mode()) return;
+    const was = mode();
+    setModeBusy(true);
+    void props
+      .onSetMode(id)
+      .then((r) => {
+        if (!r.ok) {
+          props.notify?.(r.reason, "error");
+          return;
+        }
+        if (r.reply.mode) setPaneRead({ mode: r.reply.mode, against: transcriptMode() });
+        if (r.reply.applied) return;
+        if (r.reply.reason === "unavailable") setUnavailable((u) => new Set(u).add(id));
+        const said = refusal(id, was, r.reply);
+        props.notify?.(said.text, said.tone);
+      })
       .finally(() => setModeBusy(false));
   };
 
@@ -793,6 +939,7 @@ export const TextView: Component<{
         owns={props.onScreen !== false}
         events={shown()}
         rows={shownRows()}
+        queued={queued()}
         onOpenPreview={props.onOpenPreview}
         onLoadFull={props.onLoadFull}
         onLoadEarlier={props.onLoadEarlier}
@@ -801,20 +948,6 @@ export const TextView: Component<{
         pinned={props.pinned}
         me={props.me}
       />
-      {/* The transcript closes the turn when the main thread stops talking, so
-          the working row goes with it — while a background agent or a workflow
-          it launched keeps running and will write into this same conversation
-          minutes later. This strip covers exactly that gap: shown only when the
-          session owes something AND no turn is open, so it never doubles up
-          with the working row. */}
-      <Show when={!props.working && backgroundLabel(props.background?.())}>
-        {(what) => (
-          <div class="tl-bg-strip" role="status">
-            <span class="tl-state-dot tl-state-running" aria-hidden="true" />
-            Still working in the background: {what()}
-          </div>
-        )}
-      </Show>
       {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
           covers it, and a walk that slides out from under a thumb mid-answer is
           worse than no walk. The permanent record is the inline row, which
@@ -852,8 +985,13 @@ export const TextView: Component<{
         )}
       </Show>
       <Composer
-        working={props.working}
         textSize={textSize()}
+        // The open turn's row, which the thin line reads, and what the session
+        // still owes once the transcript has closed the turn: an agent or a
+        // workflow it launched keeps going and writes into this conversation
+        // minutes later (the session list knows, the transcript does not).
+        live={live()}
+        background={backgroundLabel(props.background?.())}
         // Send stays available while a question is docked — ADR-0010's "whoever
         // answers first wins" — but it says what it will cost: a prompt takes
         // the dialog down and Claude asks again. `asking()` is the same signal
@@ -865,8 +1003,12 @@ export const TextView: Component<{
         onResolve={props.onResolve}
         sendToTerminal={props.sendToTerminal}
         history={history()}
-        queued={queued()}
         {...(props.onKeys ? { mode: mode(), onCycleMode: cycleMode } : {})}
+        {...(props.onSetMode ? { onPickMode: pickMode } : {})}
+        modeBusy={modeBusy()}
+        modeHeld={modeHeld()}
+        modesUnavailable={unavailable()}
+        onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel
           ? { harness: props.harness, onPickModel: pickModel }

@@ -44,41 +44,22 @@ describe("<MessagesTimeline> (smoke)", () => {
     expect(getByText("Command")).toBeInTheDocument();
   });
 
-  it("shows a working indicator while the last turn is still running", () => {
+  // The row that said "Working…" with the call in flight closed the timeline
+  // until the Quiet line composer (2026-09-24). It says the same words on the
+  // composer's thin line now (StatusLine.test.tsx), including "Waiting for
+  // you" while Claude is stopped on a question, and the timeline keeps only
+  // what the conversation says.
+  it("draws the running turn's rows, and leaves the working words to the composer", () => {
     const events: Event[] = [
       ev({ id: 1, kind: "user", body: "start" }),
       ev({ id: 2, kind: "text", body: "on it" }),
     ];
-    const { getByText } = render(() => <MessagesTimeline events={events} />);
-    expect(getByText("Working…")).toBeInTheDocument();
+    const { getByText, queryByText, container } = render(() => (
+      <MessagesTimeline events={events} />
+    ));
     expect(getByText("on it")).toBeInTheDocument();
-  });
-
-  // The same indicator, over a turn that is open because Claude STOPPED and
-  // asked something. It used to read "Working…" here with a running clock, over
-  // a session where nothing was running and the answer card was docked below
-  // asking the reader to choose (Viktor, 2026-09-04).
-  it("says it is waiting, not working, while a question has no answer", () => {
-    const events: Event[] = [
-      ev({ id: 1, kind: "user", body: "start" }),
-      ev({
-        id: 2,
-        kind: "tool_use",
-        tool: "AskUserQuestion",
-        toolId: "q1",
-        body: JSON.stringify({
-          questions: [
-            { question: "Which one?", header: "Pick", multiSelect: false, options: [{ label: "A" }] },
-          ],
-        }),
-      }),
-    ];
-    const { getByText, queryByText, container } = render(() => <MessagesTimeline events={events} />);
-    expect(getByText("Waiting for you")).toBeInTheDocument();
     expect(queryByText("Working…")).toBeNull();
-    // The dot holds still and takes the awaiting colour; a pulse is what says
-    // work is happening.
-    expect(container.querySelector('.tl-row-working[data-waiting="true"]')).not.toBeNull();
+    expect(container.querySelector(".tl-row-working")).toBeNull();
   });
 
   it("renders an empty state with no events", () => {
@@ -140,10 +121,7 @@ describe("<MessagesTimeline> row identity", () => {
     expect(tool.querySelector(".tl-code")).not.toBeNull();
     expect(tool.getAttribute("data-status")).toBe("running");
 
-    setEvents([
-      ...LIVE,
-      ev({ id: 4, kind: "tool_result", toolId: "t1", body: "line one" }),
-    ]);
+    setEvents([...LIVE, ev({ id: 4, kind: "tool_result", toolId: "t1", body: "line one" })]);
 
     expect(container.querySelector(".tl-row-tool")).toBe(tool);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
@@ -215,9 +193,7 @@ describe("<MessagesTimeline> fenced blocks", () => {
   // (highlight.js) — so the <pre> carries its classes as well. What has to stay
   // true is the shape: ONE <pre> per fence, carrying the language and the code.
   it("renders a code fence as exactly one <pre>", () => {
-    const { container } = render(() => (
-      <MessagesTimeline events={said("```bash\nls -la\n```")} />
-    ));
+    const { container } = render(() => <MessagesTimeline events={said("```bash\nls -la\n```")} />);
     const md = container.querySelector(".tl-markdown")!;
     const pres = [...md.querySelectorAll("pre")];
     expect(pres).toHaveLength(1);
@@ -319,9 +295,7 @@ describe("<MessagesTimeline> collapsed failure signal", () => {
     expect(tool.querySelector(".tl-tool-tick")!.textContent).toBe("✗");
 
     fireEvent.click(tool.querySelector(".tl-tool-toggle")!);
-    const labels = [...tool.querySelectorAll(".tl-tool-section-label")].map(
-      (n) => n.textContent,
-    );
+    const labels = [...tool.querySelectorAll(".tl-tool-section-label")].map((n) => n.textContent);
     expect(labels).toContain("output (error)");
     expect(tool.querySelector(".tl-code-error")!.textContent).toContain("ENOENT");
   });
@@ -346,9 +320,7 @@ describe("<MessagesTimeline> — image srcs are never rewritten", () => {
     ];
 
     const { container } = render(() => <MessagesTimeline events={events} />);
-    expect(
-      [...container.querySelectorAll("img")].map((n) => n.getAttribute("src")),
-    ).toEqual([
+    expect([...container.querySelectorAll("img")].map((n) => n.getAttribute("src"))).toEqual([
       "https://example.com/a.png",
       "/clipboard/img/abc.png",
       "pic.png",
@@ -417,9 +389,7 @@ describe("<MessagesTimeline> — rows handed down by the owner", () => {
 
   it("renders the rows it is given rather than folding the events again", () => {
     const rows = deriveRows(TURN);
-    const { container } = render(() => (
-      <MessagesTimeline events={[]} rows={rows} />
-    ));
+    const { container } = render(() => <MessagesTimeline events={[]} rows={rows} />);
     expect(container.textContent).toContain("derive me");
   });
 
@@ -430,9 +400,7 @@ describe("<MessagesTimeline> — rows handed down by the owner", () => {
 
   it("follows the rows when they change", () => {
     const [rows, setRows] = createSignal(deriveRows(TURN));
-    const { container } = render(() => (
-      <MessagesTimeline events={[]} rows={rows()} />
-    ));
+    const { container } = render(() => <MessagesTimeline events={[]} rows={rows()} />);
     expect(container.textContent).not.toContain("second prompt");
     setRows(deriveRows([...TURN, ev({ id: 4, kind: "user", body: "second prompt" })]));
     expect(container.textContent).toContain("second prompt");

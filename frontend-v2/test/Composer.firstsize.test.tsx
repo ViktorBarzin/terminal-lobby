@@ -61,9 +61,7 @@ function stubBox(ta: HTMLTextAreaElement, lh: () => number) {
 const mount = () => {
   observers = [];
   installResizeObserver();
-  const r = render(() => (
-    <Composer working={false} pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
-  ));
+  const r = render(() => <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} />);
   const ta = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
   return { ...r, ta };
 };

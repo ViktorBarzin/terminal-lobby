@@ -41,23 +41,18 @@ describe("a task notification delivered through the queue", () => {
     expect(rows.map((r) => r.kind)).toContain("user");
   });
 
-  it("still leaves a real queued prompt its row", () => {
+  // A real queued prompt kept a "queued" marker row here until 2026-09-24.
+  // The Quiet line composer draws it as a ghost bubble at the end of the
+  // timeline while it waits (MessagesTimeline), and as its own user row once
+  // Claude takes it, so the marker would be a third copy of one message. The
+  // queue itself still reads the event (queuedPrompts), for the ghost.
+  it("leaves a real queued prompt to the ghost bubble, rather than a row", () => {
     const rows = deriveRows([
       user("do the thing"),
       meta("queued", NOTIFICATION),
       meta("queued", "and then this"),
     ]);
-    const metas = rows.filter((r) => r.kind === "meta");
-    expect(metas).toHaveLength(1);
-    expect(metas[0]).toMatchObject({ meta: "queued", body: "and then this" });
-  });
-
-  it("keeps a prompt that merely mentions one", () => {
-    const rows = deriveRows([
-      user("do the thing"),
-      meta("queued", "what is a <task-notification> anyway"),
-    ]);
-    expect(rows.filter((r) => r.kind === "meta")).toHaveLength(1);
+    expect(rows.filter((r) => r.kind === "meta")).toEqual([]);
   });
 
   it("does not swallow the summary the notification's own record carries", () => {

@@ -33,6 +33,7 @@ import {
 } from "../lib/models";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
+import { SendArrowIcon } from "./Icons";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt } from "../lib/first-prompt";
@@ -84,8 +85,8 @@ function objectUrl(f: File): string | undefined {
  * from Claude's own summary of the conversation a few seconds later. Until it
  * does, the card reads the first line of what was typed here.
  *
- * Four controls sit under the field, and the row reads as one sentence: "in
- * code · run Claude · claude-opus-5 · max effort". The PROJECT is where the
+ * Four controls sit on a line above the field, and the line reads as one
+ * sentence: "in code · run Claude · claude-opus-5 · max effort". The PROJECT is where the
  * session lands, defaulting to the last one created in and overridable for one
  * create by the `+` on a sidebar group. The COMMAND is which tool runs, the
  * same roamed `session.newCommand` the terminal attach reads, so what is picked
@@ -380,32 +381,40 @@ export const NewSessionComposer: Component<{
         <span class="tl-session">New session</span>
       </div>
       <div class="tl-new-composer">
+        {/* The choices sit on a line above the box, where the live composer
+            keeps its dials (the Quiet line, 2026-09-24). They are still the
+            four selects here; the dials replace them on this screen next. */}
+        <div class="tl-new-line">{controls()}</div>
         <Show
           when={!naming()}
           fallback={
-            <div class="tl-composer-box">
-              <div class="tl-composer-row">
-                <input
-                  ref={nameEl}
-                  class="tl-composer-input tl-new-name"
-                  placeholder="Name this shell…"
-                  aria-label="Name for the new session"
-                  maxlength={MAX_TITLE_RUNES}
-                  value={name()}
-                  autofocus={!isCoarsePointer()}
-                  onInput={(e) => setName(e.currentTarget.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") submitName();
-                  }}
-                />
-              </div>
-              <div class="tl-composer-bar">
-                <div class="tl-bar-left">{controls()}</div>
-                <div class="tl-bar-right">
-                  <button type="button" class="tl-send" disabled={!namable()} onClick={submitName}>
-                    Send
-                  </button>
-                </div>
+            <div class="tl-pill tl-pill-name">
+              <input
+                ref={nameEl}
+                class="tl-composer-input tl-new-name"
+                placeholder="Name this shell…"
+                aria-label="Name for the new session"
+                maxlength={MAX_TITLE_RUNES}
+                value={name()}
+                autofocus={!isCoarsePointer()}
+                onInput={(e) => setName(e.currentTarget.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") submitName();
+                }}
+              />
+              <div class="tl-pill-end">
+                <button
+                  type="button"
+                  class="tl-send"
+                  aria-label="Send"
+                  title="Start the shell (Enter)"
+                  disabled={!namable()}
+                  onClick={submitName}
+                >
+                  <span class="tl-disc">
+                    <SendArrowIcon />
+                  </span>
+                </button>
               </div>
             </div>
           }
@@ -432,7 +441,7 @@ export const NewSessionComposer: Component<{
               // reached into.
               sinks = api;
             }}
-            leftExtra={controls()}
+            trayNote="Files upload when the session starts"
           />
         </Show>
       </div>

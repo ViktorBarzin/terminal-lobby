@@ -128,7 +128,6 @@ function mount(
   const r = render(() => (
     <TextView
       events={events()}
-      working={false}
       pending={[]}
       onSend={async () => true}
       onStop={() => {}}
