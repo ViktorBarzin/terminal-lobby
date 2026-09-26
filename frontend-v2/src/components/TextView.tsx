@@ -33,7 +33,7 @@ import {
   type DialogView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
-import { QuestionCard } from "./QuestionCard";
+import { QuestionCard, type TypedAnswer } from "./QuestionCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork } from "../types/lobby";
@@ -576,8 +576,8 @@ export const TextView: Component<{
    * with the current reading, and the card re-renders against it and carries
    * on. Nothing latches, and nobody is sent to the Terminal by it.
    */
-  const put = async (req: AnswerRequest): Promise<void> => {
-    if (!props.onAnswer || answering()) return;
+  const put = async (req: AnswerRequest): Promise<AnswerResponse | null> => {
+    if (!props.onAnswer || answering()) return null;
     // Stamped with the card that asked, taken BEFORE the await: a reply that
     // lands after the session has moved to another call describes neither, and
     // pairing it with the key it was sent under is what drops it.
@@ -598,7 +598,7 @@ export const TextView: Component<{
       // a dropped reply cannot tell us that, and the next request re-reads the
       // pane anyway, as does the watcher within its 2s tick.
       props.notify?.("Couldn't reach the session to answer that.", "error");
-      return;
+      return null;
     }
     // `pane` is read HERE rather than next to `at`, so it is the watcher's
     // last word as of the reply landing. A tick that fired while the request
@@ -616,6 +616,7 @@ export const TextView: Component<{
       setReplied({ at, pane, call, resp });
       setAnswering(false);
     });
+    return resp;
   };
 
   /**
@@ -661,23 +662,85 @@ export const TextView: Component<{
   // `stay` is the multi-select toggle: apply the set and stay on the
   // question. Without it a multi-select request is the commit, and until
   // 2026-09-23 every click was one, so the first click left the question.
-  const chooseOption = (
+  const choiceRequest = (
     header: string,
     choices: string[],
     text?: string,
     stay?: boolean,
-  ): Promise<void> =>
-    put({
-      header: header || callAddress(),
-      ...(choices.length === 1 ? { choice: choices[0] } : { choices }),
-      ...(text ? { text } : {}),
-      ...(stay ? { stay: true } : {}),
-    });
+  ): AnswerRequest => ({
+    header: header || callAddress(),
+    ...(choices.length === 1 ? { choice: choices[0] } : { choices }),
+    ...(text ? { text } : {}),
+    ...(stay ? { stay: true } : {}),
+  });
+  const chooseOption = async (
+    header: string,
+    choices: string[],
+    text?: string,
+    stay?: boolean,
+  ): Promise<void> => {
+    await put(choiceRequest(header, choices, text, stay));
+  };
   const toggleOptions = (header: string, choices: string[], text?: string): Promise<void> =>
     chooseOption(header, choices, text, true);
-  const goBackTo = (header: string): Promise<void> => put({ back: header });
-  const submitAnswers = (): Promise<void> => put({ submit: true });
-  const pressKeys = (keys: string[]): Promise<void> => put({ keys });
+  const goBackTo = async (header: string): Promise<void> => {
+    await put({ back: header });
+  };
+  const submitAnswers = async (): Promise<void> => {
+    await put({ submit: true });
+  };
+  const pressKeys = async (keys: string[]): Promise<void> => {
+    await put({ keys });
+  };
+
+  /** The docked card's way of turning typed words into an answer, while a card
+   *  is docked. */
+  let typedAnswer: ((words: string) => TypedAnswer | null) | undefined;
+
+  /**
+   * The composer's Send. With a question docked it ANSWERS the question with
+   * what was typed, the way the card's own free-text field does.
+   *
+   * Reported 2026-09-26 (Viktor): he typed his answer into the message field
+   * and pressed Send, and it went in as a prompt. A prompt is typed into the
+   * pane and closed with Enter, and with the dialog up that Enter picked the
+   * highlighted option and the words were lost. A person who types while being
+   * asked something is answering it.
+   *
+   * The CLI's free-text row is a single line, so line breaks become spaces.
+   * When the server finds no dialog on screen the question has gone and the
+   * words go as the prompt they would otherwise have been. Any other refusal
+   * keeps the words in the field (a false return) and says why.
+   */
+  const send = async (text: string): Promise<boolean> => {
+    if (!asking() || !props.onAnswer || !typedAnswer) return props.onSend(text);
+    const words = text.replace(/\s*\n\s*/g, " ").trim();
+    const answer = typedAnswer(words);
+    if (!answer) {
+      props.notify?.(
+        review()
+          ? "Claude's question is waiting on Submit. Submit it from the card first."
+          : "The card can't read Claude's question. Answer it from the card or the Terminal.",
+        "error",
+      );
+      return false;
+    }
+    if (answering()) {
+      props.notify?.("Still sending the last answer. Send again in a moment.", "error");
+      return false;
+    }
+    const resp = await put(choiceRequest(answer.header, answer.choices, answer.text));
+    if (!resp) return false;
+    if (resp.applied) return true;
+    if (resp.reason === "no-dialog") return props.onSend(text);
+    props.notify?.(
+      resp.reason === "unverified"
+        ? "Couldn't confirm your answer went in. Check the card before sending again."
+        : "The question changed before your answer went in. Check the card and send again.",
+      "error",
+    );
+    return false;
+  };
 
   // How full the context is, from the CLI's own `/context` reading — whenever
   // one is in the transcript, because somebody ran the command. Nothing injects
@@ -848,6 +911,9 @@ export const TextView: Component<{
             onKeys={pressKeys}
             onChat={focusComposer}
             onTerminal={props.onOpenTerminal}
+            register={(fn) => {
+              typedAnswer = fn;
+            }}
           />
         )}
       </Show>
@@ -860,7 +926,7 @@ export const TextView: Component<{
         // the card itself is keyed on, so the two cannot disagree.
         asking={!!asking()}
         pending={props.pending}
-        onSend={props.onSend}
+        onSend={send}
         onStop={props.onStop}
         onResolve={props.onResolve}
         sendToTerminal={props.sendToTerminal}

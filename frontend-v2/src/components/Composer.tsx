@@ -46,10 +46,9 @@ export const Composer: Component<{
    *  withhold Send: it is derived from the transcript and lags the pane, and a
    *  mid-turn send queues rather than failing. */
   working: boolean;
-  /** Claude is asking a blocking question right now. Sending a prompt takes the
-   *  dialog down and Claude re-asks, so Send says so — it does not refuse.
-   *  ADR-0010: whoever answers first wins; the pane and this view are two
-   *  windows onto one process. */
+  /** Claude is asking a blocking question right now. The text view sends what
+   *  is typed as the question's free-text answer then (TextView `send`), so
+   *  Send says so. */
   asking?: boolean;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (5xx, unreachable),
@@ -154,7 +153,7 @@ export const Composer: Component<{
         register={props.register}
         sendTitle={
           props.asking
-            ? "Send — this will dismiss the question Claude is asking, and it will ask again"
+            ? "Send — answers the question Claude is asking with what you typed"
             : undefined
         }
         leftExtra={

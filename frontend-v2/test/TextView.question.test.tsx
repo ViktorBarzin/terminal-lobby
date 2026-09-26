@@ -122,6 +122,7 @@ const reply = (view: DialogView, over: Partial<AnswerResponse> = {}): AnswerResp
 function mount(
   initial: Event[],
   onAnswer: (req: AnswerRequest) => Promise<AnswerResponse | null> = async () => null,
+  onSend: (text: string) => Promise<boolean> = async () => true,
 ) {
   const notify = vi.fn();
   const [events, setEvents] = createSignal<Event[]>(initial);
@@ -130,7 +131,7 @@ function mount(
       events={events()}
       working={false}
       pending={[]}
-      onSend={async () => true}
+      onSend={onSend}
       onStop={() => {}}
       onResolve={() => {}}
       onKeys={async () => true}
@@ -362,6 +363,117 @@ describe("one choice, one request", () => {
       choice: "Type something",
       text: "a plum, actually",
     });
+  });
+
+  /** Type into the composer at the foot of the view and press its Send. */
+  const sendFromComposer = (v: ReturnType<typeof mount>, text: string) => {
+    const ta = v.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    ta.value = text;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    v.container.querySelector<HTMLButtonElement>(".tl-send")!.click();
+  };
+
+  it("answers the question with what the composer sends, not a new prompt", async () => {
+    // Reported 2026-09-26 (Viktor): with a question docked, typing in the
+    // message field and pressing Send went in as a prompt, whose Enter then
+    // picked the highlighted option and dropped the text.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) =>
+      reply(paneAt(drawn("Pick a drink", "Tea", "Coffee"), 1)),
+    );
+    const onSend = vi.fn(async (_t: string) => true);
+    const v = mount(
+      [ask("tool-a", twoQuestions), asking(paneAt(drawn("Pick a fruit", "Apple", "Pear"), 0))],
+      onAnswer,
+      onSend,
+    );
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a fruit"));
+
+    sendFromComposer(v, "a plum, actually");
+
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      header: "Fruit",
+      choice: "Type something",
+      text: "a plum, actually",
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("sends a prompt after all when the answer finds no dialog on screen", async () => {
+    const onAnswer = vi.fn(
+      async (_req: AnswerRequest): Promise<AnswerResponse> => ({
+        applied: false,
+        reason: "no-dialog",
+      }),
+    );
+    const onSend = vi.fn(async (_t: string) => true);
+    const v = mount(
+      [ask("tool-a", twoQuestions), asking(paneAt(drawn("Pick a fruit", "Apple", "Pear"), 0))],
+      onAnswer,
+      onSend,
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+
+    sendFromComposer(v, "never mind that");
+
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("never mind that"));
+  });
+
+  it("keeps the text and says why when the answer is refused", async () => {
+    const onAnswer = vi.fn(
+      async (_req: AnswerRequest): Promise<AnswerResponse> => ({
+        applied: false,
+        reason: "not-drawn",
+        dialog: paneAt(drawn("Pick a drink", "Tea", "Coffee"), 1),
+      }),
+    );
+    const onSend = vi.fn(async (_t: string) => true);
+    const v = mount(
+      [ask("tool-a", twoQuestions), asking(paneAt(drawn("Pick a fruit", "Apple", "Pear"), 0))],
+      onAnswer,
+      onSend,
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+
+    sendFromComposer(v, "a plum");
+
+    await waitFor(() => expect(v.notify).toHaveBeenCalled());
+    expect(onSend).not.toHaveBeenCalled();
+    const ta = v.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    await waitFor(() => expect(ta.value).toBe("a plum"));
+  });
+
+  it("does not type into the review screen from the composer", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest): Promise<AnswerResponse | null> => null);
+    const onSend = vi.fn(async (_t: string) => true);
+    const v = mount(
+      [
+        ask("tool-a", twoQuestions),
+        asking({
+          questions: [
+            {
+              question: "Ready to submit your answers?",
+              header: "",
+              multiSelect: false,
+              options: [],
+            },
+          ],
+          headers: ["Fruit", "Drink"],
+          count: 2,
+          answered: 2,
+          partial: true,
+        }),
+      ],
+      onAnswer,
+      onSend,
+    );
+    await waitFor(() => expect(v.text(".tl-qcard-step")).toBe("ready to submit"));
+
+    sendFromComposer(v, "hello");
+
+    await waitFor(() => expect(v.notify).toHaveBeenCalled());
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
   });
 
   it("submits from the review screen, and the card goes when the dialog does", async () => {
