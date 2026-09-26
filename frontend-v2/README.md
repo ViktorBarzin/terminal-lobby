@@ -697,6 +697,8 @@ src/
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)
+    plan.logic.ts        PURE when the plan-approval card docks: the pane's
+                         plan reading against the newest ExitPlanMode call
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / question / …),
                          with Claude's queued prompts drawn after the last row
                          as dashed ghost bubbles. The working row is the
