@@ -91,6 +91,8 @@ export const Composer: Component<{
    * open plan menu by accident.
    */
   planOpen?: boolean;
+  /** This device's plan answer is clearing the context; the line says so. */
+  planClearing?: boolean;
   /** Send's route while `planOpen`. Resolves false when refused, which puts
    *  the text back. */
   onPlanFeedback?: (text: string) => Promise<boolean>;
@@ -345,6 +347,7 @@ export const Composer: Component<{
         live={props.live}
         background={props.background}
         inertReason={props.inertReason}
+        clearing={props.planClearing}
         onStop={props.onStop}
         onTakeControl={props.onTakeControl}
       >

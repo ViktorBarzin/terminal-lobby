@@ -139,7 +139,8 @@ function mount(
       notify={notify}
     />
   ));
-  const card = () => r.container.querySelector<HTMLElement>(".tl-qcard");
+  // The question card only: the plan card shares its `.tl-qcard` look.
+  const card = () => r.container.querySelector<HTMLElement>(".tl-qcard:not(.tl-plancard)");
   const text = (sel: string) => r.container.querySelector<HTMLElement>(sel)?.textContent ?? null;
   const option = (label: string) =>
     [...r.container.querySelectorAll<HTMLElement>(".tl-qcard-option")].find(
@@ -1008,6 +1009,8 @@ describe("a plan reading on the asking meta", () => {
     const v = mount([asking(plan)]);
     await Promise.resolve();
     expect(v.card()).toBeNull();
+    // The plan card docks in its place.
+    expect(v.container.querySelector(".tl-plancard")).not.toBeNull();
   });
 
   it("takes the question card down when it replaces a question reading", async () => {

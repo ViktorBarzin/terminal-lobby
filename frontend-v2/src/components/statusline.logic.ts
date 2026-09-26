@@ -17,13 +17,19 @@ export type LineState =
   | { kind: "waiting"; row: WorkingRow }
   | { kind: "background"; label: string }
   | { kind: "watching"; reason: string }
+  /** This device approved a plan with an option that clears the context, and
+   *  the new conversation has not arrived yet. */
+  | { kind: "clearing" }
   | { kind: "idle" };
 
 /**
  * Which state the line shows, by the prototype's precedence.
  *
  * Watching comes first: a device that only watches can stop nothing and send
- * nothing, and the line is where it says so. Then the open turn, waiting when
+ * nothing, and the line is where it says so. Then a context clear this device
+ * started from the plan card: the old transcript records it as a rejection and
+ * closes its turn, and for up to 20 s nothing else says that Claude is about
+ * to start on the plan in a new conversation. Then the open turn, waiting when
  * Claude is stopped on the reader and working otherwise. Then work the session
  * still owes once its turn has closed (lobby.logic `backgroundLabel`), which by
  * this order never speaks while a turn is open and so never doubles up with
@@ -36,8 +42,10 @@ export function lineState(o: {
   live?: WorkingRow;
   background?: string;
   inertReason?: string;
+  clearing?: boolean;
 }): LineState {
   if (o.inertReason) return { kind: "watching", reason: o.inertReason };
+  if (o.clearing) return { kind: "clearing" };
   if (o.live)
     return o.live.waiting ? { kind: "waiting", row: o.live } : { kind: "working", row: o.live };
   if (o.background) return { kind: "background", label: o.background };

@@ -693,7 +693,11 @@ src/
                          stay on the session bar, which follows focus
     SessionView.tsx      The per-session two-view surface (text | terminal)
     ViewSwitch.tsx       Segmented Text|Terminal + activity dot
-    TextView.tsx         Text mode: timeline above the composer
+    TextView.tsx         Text mode: timeline above the composer, with the
+                         question card or the plan card docked between. It
+                         holds each answer in flight and, for a plan, the
+                         20 s the row reads "Approving…" or "Clearing
+                         context…" before the transcript records the result
     canonicalize.ts      Tool call → canonical item (ported from T3, MIT)
     rows.tsx             One view per canonical item (diff, output, todo, …)
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM)

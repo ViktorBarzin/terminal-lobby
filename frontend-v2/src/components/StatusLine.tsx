@@ -56,6 +56,8 @@ export const StatusLine: Component<{
   background?: string;
   /** Why this device cannot act on the session; watching. */
   inertReason?: string;
+  /** This device's plan answer is clearing the context (statusline.logic). */
+  clearing?: boolean;
   onStop?: () => void;
   /** Hand the session back to this device, from the watching state. */
   onTakeControl?: () => void;
@@ -63,7 +65,12 @@ export const StatusLine: Component<{
   children?: JSX.Element;
 }> = (props) => {
   const state = createMemo<LineState>(() =>
-    lineState({ live: props.live, background: props.background, inertReason: props.inertReason }),
+    lineState({
+      live: props.live,
+      background: props.background,
+      inertReason: props.inertReason,
+      clearing: props.clearing,
+    }),
   );
 
   // One clock for the line, running only while a turn is open.
@@ -101,6 +108,9 @@ export const StatusLine: Component<{
       case "watching":
         spoken = true;
         return s.reason;
+      case "clearing":
+        spoken = true;
+        return "Clearing context, then Claude starts on the plan";
       case "idle":
         return spoken ? "Claude finished" : was;
     }
@@ -208,6 +218,10 @@ export const StatusLine: Component<{
                 </Show>
               </>
             )}
+          </Match>
+          <Match when={state().kind === "clearing"}>
+            <span class="tl-line-dot" aria-hidden="true" />
+            <span class="tl-status-word">Clearing context · starting on the plan</span>
           </Match>
           <Match when={background()}>
             {(label) => (

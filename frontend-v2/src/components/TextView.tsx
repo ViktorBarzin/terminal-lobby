@@ -20,8 +20,13 @@ import {
   queuedPrompts,
   withoutQueued,
   withPendingPrompts,
+  planFromPane,
   type PendingPermission,
+  type PlanReading,
+  type PlanRow,
+  type PlanTransient,
   type TimelineRow,
+  type WorkingRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "../logic/compose.logic";
 import type { Catalogue } from "../store/catalogue";
@@ -33,10 +38,23 @@ import {
   type DialogOptionView,
   type DialogQuestionView,
   type DialogView,
+  type PlanAnswer,
+  type PlanOptionView,
   type QuestionDialogView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
 import { QuestionCard, type TypedAnswer } from "./QuestionCard";
+import { PlanCard } from "./PlanCard";
+import {
+  decidePlanDock,
+  planDockFacts,
+  planFeedback,
+  planReadingKey,
+  planReplyNotice,
+  type PlanDock,
+  type PlanNotice,
+  type PlanSending,
+} from "./plan.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork } from "../types/lobby";
@@ -83,6 +101,34 @@ const PANE_READ_DELAYS_MS = [150, 600];
  */
 const MODE_HELD_BY_DIALOG =
   "Answer Claude first: a mode change now would type into the open dialog";
+
+/**
+ * How long this client's applied plan answer stands in for the transcript's
+ * record of it, in ms (docs/plans/2026-09-24-text-composer-redesign.md, the
+ * reply table). The result is normally written within a second or two; a clear
+ * context switches the stream to the new conversation in about 6 s. Past this
+ * the answer is taken not to have landed, and the row and the dock go back to
+ * what the transcript and the pane say.
+ */
+const PLAN_SETTLE_MS = 20_000;
+
+/**
+ * Whether an approve row clears the context before Claude starts on the plan,
+ * read from the label the pane draws ("Yes, clear context (6% used) and use
+ * auto mode"). The labels change between sessions, so this is the only way to
+ * tell, and it only decides what the row and the status line say meanwhile.
+ */
+const clearsContext = (label: string): boolean => /\bclear context\b/i.test(label);
+
+/** Every plan row in a fold of the transcript, folded away or not. */
+function findPlanRow(rows: TimelineRow[], toolId: string): PlanRow | undefined {
+  for (const r of rows) {
+    for (const leaf of r.kind === "turn-fold" ? r.hidden : [r]) {
+      if (leaf.kind === "plan" && leaf.toolId === toolId) return leaf;
+    }
+  }
+  return undefined;
+}
 
 /**
  * What a refused mode pick says, and how loudly.
@@ -138,7 +184,10 @@ function refusal(
         tone: "warning",
       };
     case "refused":
-      return { text: "tmux would not take the key, so the mode did not change.", tone: "error" };
+      return {
+        text: "tmux would not take the key, so the mode did not change.",
+        tone: "error",
+      };
     default:
       return {
         text: `The mode did not change: ${reply.reason || "no reason given"}.`,
@@ -597,7 +646,10 @@ export const TextView: Component<{
       };
     })();
     if (!seen) return null;
-    return { ...seen, questions: drawnQuestions(seen).map((q) => withCallContent(q, known)) };
+    return {
+      ...seen,
+      questions: drawnQuestions(seen).map((q) => withCallContent(q, known)),
+    };
   });
 
   /**
@@ -658,6 +710,9 @@ export const TextView: Component<{
   // message field rather than an answer they did not want to give.
   let sinks: ComposerSinks | undefined;
   const focusComposer = () => sinks?.focus();
+  /** The same handle as a signal, for what renders from it: the plan card
+   *  offers "Approve with this feedback" only while the field holds text. */
+  const [composerSinks, setComposerSinks] = createSignal<ComposerSinks>();
 
   /**
    * Put one request to the dialog and render whatever comes back.
@@ -841,6 +896,230 @@ export const TextView: Component<{
     return false;
   };
 
+  // ---- The plan approval ----
+  //
+  // docs/plans/2026-09-24-text-composer-redesign.md, "The plan-approval flow"
+  // and "When the card docks, and what it shows". The card docks where the
+  // question card docks; an option tap is one request, and the composer's
+  // Send is the dialog's feedback row while the card is up.
+
+  /** What the dock decision reads off the events: the pane's plan reading and
+   *  the newest ExitPlanMode call (plan.logic). */
+  const planFacts = createMemo(() => planDockFacts(props.events));
+  /**
+   * This client's plan answer, applied and not settled yet: the readings it
+   * was sent against, the call it answered, and what the row says meanwhile.
+   *
+   * It ends when the transcript records the result, or for a clear context
+   * when the old conversation's events go, which is the stream switching to
+   * the new one; or after PLAN_SETTLE_MS, whichever comes first. Only this
+   * client knows it answered, so other devices go straight from the pending
+   * row to what the transcript says (open point 12).
+   */
+  const [planAnswered, setPlanAnswered] = createSignal<{
+    keys: string[];
+    toolId: string;
+    action: PlanTransient;
+  } | null>(null);
+  let settleTimer: ReturnType<typeof setTimeout> | undefined;
+  const endPlanAnswer = (): void => {
+    clearTimeout(settleTimer);
+    settleTimer = undefined;
+    setPlanAnswered(null);
+  };
+  onCleanup(() => clearTimeout(settleTimer));
+  /**
+   * Whether the card docks. The answered keys are usually one reading, the
+   * watcher's; after an `unknown-option` redraw the card was answering the
+   * reply's reading, and the watcher may still be on the older one or catch up
+   * to the newer, so neither re-docks while the answer settles.
+   */
+  const planDock = createMemo((): PlanDock => {
+    if (!props.onAnswer) return { docked: false };
+    const facts = planFacts();
+    let dock = decidePlanDock(facts, null);
+    for (const key of planAnswered()?.keys ?? []) {
+      if (!dock.docked) break;
+      dock = decidePlanDock(facts, { key, settling: true });
+    }
+    return dock;
+  });
+  const planDocked = createMemo(() => {
+    const d = planDock();
+    return d.docked ? d : null;
+  });
+
+  createEffect(() => {
+    const a = planAnswered();
+    if (!a || !a.toolId) return;
+    const row = findPlanRow(baseRows(), a.toolId);
+    // The call has gone from the transcript: the stream switched to the
+    // conversation a clear context started.
+    if (!row) {
+      endPlanAnswer();
+      return;
+    }
+    // A clear also shows over the rejection the old transcript records
+    // (shownPlanOutcome), so only the switch or the clock ends it.
+    if (a.action === "clear") return;
+    const k = row.outcome.kind;
+    if (k !== "pending" && k !== "superseded") endPlanAnswer();
+  });
+
+  const [planSending, setPlanSending] = createSignal<PlanSending | null>(null);
+  /**
+   * What the card says after the last reply, or after a press it ignored,
+   * stamped with the watcher reading it was said against. `reading` is the
+   * reply's own reading when it carried one, which the card draws instead of
+   * the watcher's: an `unknown-option` reply is the screen after the refusal.
+   */
+  const [planReply, setPlanReply] = createSignal<{
+    against: string;
+    reading: PlanReading | null;
+    notice: PlanNotice;
+  } | null>(null);
+  /** The reply, while the card it was said on is still up. The watcher
+   *  catching up to the reply's own reading does not end it. */
+  const planReplyNow = createMemo(() => {
+    const d = planDocked();
+    const r = planReply();
+    if (!d || !r) return null;
+    const k = planReadingKey(d.reading);
+    return k === r.against || (r.reading && k === planReadingKey(r.reading)) ? r : null;
+  });
+  createEffect(() => {
+    if (!planDocked()) setPlanReply(null);
+  });
+  /** The approve rows the card offers: the reply's reading where it has one. */
+  const planCardReading = (): PlanReading | null => {
+    const d = planDocked();
+    if (!d) return null;
+    const r = planReplyNow();
+    if (!r) return d.reading;
+    if (r.reading) return r.reading;
+    return r.notice === "changed" ? null : d.reading;
+  };
+  /** The plan the card shows: the pending call's row, corrected for a plan
+   *  file written in the same message (timeline.logic), or null while the
+   *  transcript has no call for this dialog ("Loading the plan…"). */
+  const planShown = createMemo((): { text: string | null; stale: boolean } => {
+    const call = planDocked()?.call;
+    const row = call ? findPlanRow(baseRows(), call) : undefined;
+    return row ? { text: row.body, stale: row.stale === true } : { text: null, stale: false };
+  });
+  /** A notice for a press that was not sent, keeping any reading a reply left. */
+  const sayOnPlanCard = (notice: PlanNotice): void => {
+    const d = planDocked();
+    if (!d) return;
+    const r = planReplyNow();
+    setPlanReply({
+      against: r?.against ?? planReadingKey(d.reading),
+      reading: r?.reading ?? null,
+      notice,
+    });
+  };
+
+  /**
+   * Put one plan answer to the dialog. Applied, the card undocks at once and
+   * the row shows `action` until the transcript catches up; refused, the card
+   * says why from the reply and stays. Resolves undefined when nothing was
+   * sent, null when the call failed.
+   */
+  const answerPlan = async (
+    plan: PlanAnswer,
+    sending: PlanSending,
+    action: PlanTransient,
+  ): Promise<AnswerResponse | null | undefined> => {
+    const d = planDocked();
+    if (!d || !props.onAnswer || planSending()) return undefined;
+    const against = planReadingKey(d.reading);
+    const shown = planCardReading();
+    const keys = shown ? [against, planReadingKey(shown)] : [against];
+    const toolId = d.call ?? "";
+    batch(() => {
+      setPlanSending(sending);
+      setPlanReply(null);
+    });
+    let resp: AnswerResponse | null;
+    try {
+      resp = await props.onAnswer({ plan });
+    } catch (err) {
+      setPlanSending(null);
+      throw err;
+    }
+    batch(() => {
+      setPlanSending(null);
+      const notice = planReplyNotice(resp);
+      if (notice === null) {
+        clearTimeout(settleTimer);
+        setPlanAnswered({ keys, toolId, action });
+        settleTimer = setTimeout(endPlanAnswer, PLAN_SETTLE_MS);
+        return;
+      }
+      setPlanReply({ against, reading: planFromPane(resp?.dialog), notice });
+    });
+    return resp;
+  };
+
+  const approvePlanOption = (option: PlanOptionView): void => {
+    void answerPlan(
+      { option: option.number, label: option.label },
+      { kind: "option", number: option.number },
+      clearsContext(option.label) ? "clear" : "approve",
+    );
+  };
+
+  /**
+   * The composer's text as feedback on the plan: `approve: false` keeps
+   * Claude planning (Send), `approve: true` approves with it (the card's
+   * button). Resolves true only when the reply is applied, so the field keeps
+   * the text otherwise.
+   *
+   * Once the card has said the plan is gone, the next Send goes out as the
+   * prompt it would otherwise have been. An approval with feedback cleared the
+   * context in the one session where it was measured, whose option 1 cleared
+   * it, so the row says what option 1 says it does.
+   */
+  const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> => {
+    if (!planDocked() || planReplyNow()?.notice === "gone") return props.onSend(text);
+    if (planSending()) {
+      sayOnPlanCard("busy");
+      return false;
+    }
+    const f = planFeedback(text);
+    if (f.text === "") return false;
+    if (f.tooLong) {
+      sayOnPlanCard("too-long");
+      return false;
+    }
+    const first = planCardReading()?.options.find((o) => o.number === 1);
+    const action: PlanTransient = !approve
+      ? "feedback"
+      : first && clearsContext(first.label)
+        ? "clear"
+        : "approve";
+    const resp = await answerPlan({ feedback: f.text, approve }, { kind: "feedback" }, action);
+    return resp?.applied === true;
+  };
+
+  /**
+   * What the composer's line is handed as the open turn. While the card is
+   * docked it reads "Waiting for you" even before the transcript has the call,
+   * when the transcript alone still says Claude is working. The wait's start
+   * is not known then, so the line shows no clock rather than the turn's.
+   */
+  const lineLive = createMemo((): WorkingRow | undefined => {
+    const l = live();
+    if (!planDocked() || l?.waiting) return l;
+    return {
+      kind: "working",
+      key: l?.key ?? "plan-dock",
+      turnKey: l?.turnKey ?? "",
+      steps: l?.steps ?? 0,
+      waiting: true,
+    };
+  });
+
   // How full the context is, from the CLI's own `/context` reading — whenever
   // one is in the transcript, because somebody ran the command. Nothing injects
   // it and nothing here computes a context size: the ceiling is not on the wire
@@ -880,7 +1159,10 @@ export const TextView: Component<{
    */
   const pickModel = (field: ModelField, id: string): void => {
     if (!props.onSetModel || modelBusy()) return;
-    const want = { model: field === "model" ? id : "", effort: field === "effort" ? id : "" };
+    const want = {
+      model: field === "model" ? id : "",
+      effort: field === "effort" ? id : "",
+    };
     const against = modelKey(transcriptModel());
     setModelBusy(true);
     void props
@@ -930,13 +1212,14 @@ export const TextView: Component<{
    * Why the mode cannot change right now, or "" when it can: a dialog is on
    * the pane, where Shift+Tab is a key the dialog reads (MODE_HELD_BY_DIALOG).
    *
-   * Three ways to know one is up. A question the card is answering, a
-   * permission the panel is answering, and the live row's `waiting`, which is
-   * true while the transcript holds any of Claude's stops without an answer,
-   * the plan put up for approval among them.
+   * Four ways to know one is up. A question the card is answering, a
+   * permission the panel is answering, the plan card, which docks from the
+   * pane's reading before the transcript has the call, and the live row's
+   * `waiting`, which is true while the transcript holds any of Claude's stops
+   * without an answer.
    */
   const modeHeld = createMemo((): string =>
-    asking() !== "" || props.pending.length > 0 || live()?.waiting === true
+    asking() !== "" || props.pending.length > 0 || live()?.waiting === true || planDocked() !== null
       ? MODE_HELD_BY_DIALOG
       : "",
   );
@@ -1011,6 +1294,11 @@ export const TextView: Component<{
         onPinned={props.onPinned}
         pinned={props.pinned}
         me={props.me}
+        planDocked={planDocked()?.call ?? null}
+        planAnswer={(() => {
+          const a = planAnswered();
+          return a ? { toolId: a.toolId, action: a.action } : null;
+        })()}
       />
       {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
           covers it, and a walk that slides out from under a thumb mid-answer is
@@ -1051,19 +1339,40 @@ export const TextView: Component<{
           />
         )}
       </Show>
+      {/* The plan approval docks in the same place. It holds no state of its
+          own that belongs to one dialog, beyond whether the plan is shown in
+          full, so it is not keyed. */}
+      <Show when={planDocked()}>
+        <PlanCard
+          reading={planCardReading()}
+          plan={planShown().text}
+          stale={planShown().stale}
+          hasInput={composerSinks()?.hasInput() ?? false}
+          sending={planSending()}
+          notice={planReplyNow()?.notice ?? null}
+          onApprove={approvePlanOption}
+          onApproveWithFeedback={() => {
+            void composerSinks()?.submitVia((text) => sendPlanFeedback(text, true));
+          }}
+          onTerminal={props.onOpenTerminal}
+        />
+      </Show>
       <Composer
         textSize={textSize()}
         // The open turn's row, which the thin line reads, and what the session
         // still owes once the transcript has closed the turn: an agent or a
         // workflow it launched keeps going and writes into this conversation
         // minutes later (the session list knows, the transcript does not).
-        live={live()}
+        live={lineLive()}
         background={backgroundLabel(props.background?.())}
         // Send stays available while a question is docked — ADR-0010's "whoever
         // answers first wins" — but it says what it will cost: a prompt takes
         // the dialog down and Claude asks again. `asking()` is the same signal
         // the card itself is keyed on, so the two cannot disagree.
         asking={!!asking()}
+        planOpen={planDocked() !== null}
+        onPlanFeedback={(text) => sendPlanFeedback(text, false)}
+        planClearing={planAnswered()?.action === "clear"}
         pending={props.pending}
         onSend={send}
         onStop={props.onStop}
@@ -1090,6 +1399,7 @@ export const TextView: Component<{
         inertReason={props.inertReason}
         register={(api) => {
           sinks = api;
+          setComposerSinks(api);
           props.register?.(api);
         }}
       />

@@ -37,7 +37,12 @@ describe("lineState", () => {
   });
 
   it("puts watching ahead of the turn, since nothing here can act on it", () => {
-    expect(lineState({ live: row(), inertReason: "Watching: this device does not type" })).toEqual({
+    expect(
+      lineState({
+        live: row(),
+        inertReason: "Watching: this device does not type",
+      }),
+    ).toEqual({
       kind: "watching",
       reason: "Watching: this device does not type",
     });
@@ -54,15 +59,39 @@ describe("lineState", () => {
       label: "2 agents",
     });
   });
+
+  // This client approved the plan with an option that clears the context. The
+  // old transcript closes its turn and the new one has not arrived, so the
+  // line says what is happening in between, for the device that answered.
+  it("puts a context clear this device started ahead of the turn and the background", () => {
+    expect(lineState({ live: row(), background: "2 agents", clearing: true })).toEqual({
+      kind: "clearing",
+    });
+    expect(
+      lineState({
+        clearing: true,
+        inertReason: "Watching: this device does not type",
+      }).kind,
+    ).toBe("watching");
+  });
 });
 
 describe("liveRow", () => {
-  const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "s", ...e });
+  const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
+    session: "s",
+    ...e,
+  });
 
   it("finds the open turn's working row", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "start" }),
-      ev({ id: 2, kind: "tool_use", tool: "Bash", toolId: "b1", body: '{"command":"ls"}' }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "b1",
+        body: '{"command":"ls"}',
+      }),
     ]);
     const live = liveRow(rows);
     expect(live?.kind).toBe("working");
@@ -109,7 +138,10 @@ describe("splitReason", () => {
   });
 
   it("falls back to the plain word when the reason has no head of its own", () => {
-    expect(splitReason("view only")).toEqual({ head: "Watching", rest: "view only" });
+    expect(splitReason("view only")).toEqual({
+      head: "Watching",
+      rest: "view only",
+    });
   });
 });
 
