@@ -268,6 +268,117 @@ func TestAgentTailStates(t *testing.T) {
 	}
 }
 
+// An agent that hands work to the background and then ends its turn has paused
+// to wait for it, not finished: Claude Code wakes it with the task's
+// notification, and Claude Code's own bar calls it finished at each pause. So
+// an end of turn ends the agent only when nothing it started in the background
+// is still outstanding. The wordings are Claude Code's own (2.1.283), each seen
+// in transcripts on this box.
+func TestAgentTailWaitsOnItsOwnBackgroundWork(t *testing.T) {
+	prompt := userText("2026-09-24T05:00:00.000Z", "Go.")
+	bash := toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Bash", `{"command":"sleep 240","run_in_background":true}`)
+	started := toolResult("2026-09-24T05:00:02.000Z", "t1", "Command running in background with ID: bk1. Output is being written to: /tmp/x/tasks/bk1.output", false)
+	pause := finalText("2026-09-24T05:00:03.000Z", "m2", "end_turn", "Waiting for it.")
+	finish := finalText("2026-09-24T05:04:05.000Z", "m3", "end_turn", "waiter done")
+	for _, tc := range []struct {
+		name       string
+		lines      []string
+		wantState  AgentState
+		wantResult string
+		wantEnded  string // RFC3339, "" = 0
+		wantTool   string
+	}{
+		{"a turn ended with a background command outstanding is a pause",
+			[]string{prompt, bash, started, pause},
+			AgentRunning, "", "", "Bash sleep 240"},
+		{"the command's notice wakes it, and its next end is the end",
+			[]string{prompt, bash, started, pause, notice("2026-09-24T05:04:01.000Z", "bk1", "completed", ""), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "Bash sleep 240"},
+		{"a notice that arrives while it is busy retires the task too",
+			[]string{prompt, bash, started, queuedNotice("2026-09-24T05:00:02.500Z", "bk1", "completed"), pause},
+			AgentDone, "Waiting for it.", "2026-09-24T05:00:03.000Z", "Bash sleep 240"},
+		{"a notice that is not an end leaves it waiting",
+			[]string{prompt, bash, started, pause, notice("2026-09-24T05:01:00.000Z", "bk1", "running", ""), finalText("2026-09-24T05:01:02.000Z", "m3", "end_turn", "Still waiting.")},
+			AgentRunning, "", "", "Bash sleep 240"},
+		{"a command the harness moved to the background holds it too",
+			[]string{prompt, bash, toolResult("2026-09-24T05:02:00.000Z", "t1", `Command "sleep 900" was moved to the background (ID: bk2). It keeps running.`, false), pause},
+			AgentRunning, "", "", "Bash sleep 240"},
+		{"a killed command ends the wait",
+			[]string{prompt, bash, started, pause, notice("2026-09-24T05:01:00.000Z", "bk1", "killed", ""), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "Bash sleep 240"},
+		{"a monitor holds it until the monitor expires",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Monitor", `{"description":"watch the build"}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Monitor started (task mn1, timeout 600000ms). You will be notified on each event.", false), pause},
+			AgentRunning, "", "", "Monitor watch the build"},
+		{"a background agent it launched holds it through that agent's own pause",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Agent", `{"description":"Child","prompt":"x","run_in_background":true}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Async agent launched successfully. (internal)\nagentId: ach1 (internal ID)", false), pause,
+				notice("2026-09-24T05:02:00.000Z", "ach1", "completed", "This agent stopped with background work of its own still running; the same task-id notifies again."),
+				finalText("2026-09-24T05:02:02.000Z", "m3", "end_turn", "Child paused.")},
+			AgentRunning, "", "", "Agent Child"},
+		{"and that agent's last notice lets it finish",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Agent", `{"description":"Child","prompt":"x","run_in_background":true}`),
+				toolResult("2026-09-24T05:00:02.000Z", "t1", "Async agent launched successfully. (internal)\nagentId: ach1 (internal ID)", false), pause,
+				notice("2026-09-24T05:03:00.000Z", "ach1", "completed", "It stops with no live background children of its own."), finish},
+			AgentDone, "waiter done", "2026-09-24T05:04:05.000Z", "Agent Child"},
+		{"an agent that ran in the foreground names an agentId but is no task",
+			[]string{prompt, toolCall("2026-09-24T05:00:01.000Z", "m1", "t1", "Agent", `{"description":"Child","prompt":"x"}`),
+				toolResult("2026-09-24T05:00:40.000Z", "t1", "The child's report.\nagentId: ach2", false), pause},
+			AgentDone, "Waiting for it.", "2026-09-24T05:00:03.000Z", "Agent Child"},
+		{"a failure while it waits is still a failure",
+			[]string{prompt, bash, started, pause, userText("2026-09-24T05:01:00.000Z", "[Request interrupted by user]")},
+			AgentFailed, "[Request interrupted by user]", "2026-09-24T05:01:00.000Z", "Bash sleep 240"},
+		{"a workflow member's structured output ends it whatever it left running",
+			[]string{prompt, bash, started, structuredOutput("2026-09-24T05:00:04.000Z", `{"ok":true}`)},
+			AgentDone, `{"ok":true}`, "2026-09-24T05:00:04.000Z", "Bash sleep 240"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tail := NewAgentTail("agent-a1.jsonl", &scriptedReader{lines: [][]string{tc.lines}, next: []int64{1}})
+			if _, err := tail.Poll(); err != nil {
+				t.Fatal(err)
+			}
+			info := tail.Info(AgentMeta{})
+			var wantEnded int64
+			if tc.wantEnded != "" {
+				wantEnded = ms(t, tc.wantEnded)
+			}
+			if tool := strings.TrimSpace(info.Tool + " " + info.ToolDetail); info.State != tc.wantState || info.Result != tc.wantResult || info.EndedAt != wantEnded || tool != tc.wantTool {
+				t.Errorf("got state %q result %q ended %d tool %q\nwant state %q result %q ended %d tool %q",
+					info.State, info.Result, info.EndedAt, tool, tc.wantState, tc.wantResult, wantEnded, tc.wantTool)
+			}
+		})
+	}
+}
+
+// The same pause, read from a recorded agent (2.1.283, 2026-09-26) as its
+// transcript grew: a background `sleep 240`, a turn that ends to wait for it,
+// the notice four minutes later, and the answer that really ends it.
+func TestAgentTailRecordedWaiter(t *testing.T) {
+	const src = "testdata/agents/subagents/agent-aee635c515c9699b7.jsonl"
+	lines := strings.Split(strings.TrimSuffix(mustRead(t, src), "\n"), "\n")
+	path := filepath.Join(t.TempDir(), "agent-aee635c515c9699b7.jsonl")
+	tail := NewAgentTail(path, LocalReader{})
+	meta := readMeta(t, src)
+
+	appendTo(t, path, strings.Join(lines[:4], "\n")+"\n")
+	if _, err := tail.Poll(); err != nil {
+		t.Fatal(err)
+	}
+	info := tail.Info(meta)
+	if info.State != AgentRunning || info.EndedAt != 0 || info.Result != "" || info.Tool != "Bash" || info.ToolDetail != "sleep 240" {
+		t.Errorf("paused on its background command: %+v", info)
+	}
+
+	appendTo(t, path, strings.Join(lines[4:], "\n")+"\n")
+	if _, err := tail.Poll(); err != nil {
+		t.Fatal(err)
+	}
+	info = tail.Info(meta)
+	if info.State != AgentDone || info.Result != "waiter done" || info.EndedAt != ms(t, "2026-09-26T18:31:27.661Z") || info.OutputTokens != 125+19+6 {
+		t.Errorf("after the notice and its answer: %+v", info)
+	}
+}
+
 // scriptedReader answers each ReadFrom with the next scripted batch, recording
 // the offset it was asked for.
 type scriptedReader struct {
@@ -335,4 +446,22 @@ func apiError(ts, text string) string {
 
 func toolResult(ts, toolID, text string, endsTurn bool) string {
 	return fmt.Sprintf(`{"type":"user","isSidechain":true,"timestamp":%q,"toolEndsTurn":%t,"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":%q,"content":%s}]}}`, ts, endsTurn, toolID, jsonString(text))
+}
+
+// notice is a background task's notification as it reaches an agent that is
+// waiting: a user record whose text carries the notification.
+func notice(ts, id, status, extra string) string {
+	return userText(ts, "[SYSTEM NOTIFICATION - NOT USER INPUT]\n\n<task-notification>\n<task-id>"+id+"</task-id>\n<status>"+status+"</status>\n<summary>"+extra+"</summary>\n</task-notification>")
+}
+
+// queuedNotice is the same notification reaching an agent that is busy: a
+// queued_command attachment.
+func queuedNotice(ts, id, status string) string {
+	prompt := "<task-notification>\n<task-id>" + id + "</task-id>\n<status>" + status + "</status>\n</task-notification>"
+	return fmt.Sprintf(`{"type":"attachment","isSidechain":true,"timestamp":%q,"attachment":{"type":"queued_command","prompt":%s,"commandMode":"task-notification"}}`, ts, jsonString(prompt))
+}
+
+// structuredOutput is how a workflow member hands back its result.
+func structuredOutput(ts, data string) string {
+	return fmt.Sprintf(`{"type":"attachment","isSidechain":true,"timestamp":%q,"attachment":{"type":"structured_output","data":%s}}`, ts, data)
 }

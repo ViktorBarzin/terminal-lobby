@@ -404,11 +404,11 @@ export function panelRows(set: AgentSet, opts: { doneOpen: boolean }): PanelRow[
   const out: PanelRow[] = [];
 
   // An agent that has ended while one of its own still runs keeps its place,
-  // drawn as ended, so the tree above a running agent stays whole. Every Agent
-  // call a subagent makes runs in the background (Claude Code 2.1.281), so a
-  // parent ends its turn seconds after it spawns and is woken again when the
-  // child is done. Without its row the child would lose its indent, and the
-  // parent would move to the done line and back.
+  // drawn as ended, so the tree above a running agent stays whole. A parent
+  // that ends its turn to wait on a child it launched in the background reads
+  // as running (sessionio agenttail.go, stop), so this is for one that really
+  // finished and left its child going. Without its row the child would lose
+  // its indent.
   const live = new Set(order.filter((o) => at.get(o.agent.id) === "live").map((o) => o.agent.id));
   const held = new Set(
     order
