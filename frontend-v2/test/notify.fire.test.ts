@@ -52,3 +52,36 @@ describe("fireNotification", () => {
     expect(shown[0]!.options.data).toEqual({ session: "6j0wjvxxf7e5" });
   });
 });
+
+/**
+ * Which harness finished. The body said "Claude" for every session, which a
+ * pi session would get wrong. It names the harness the session runs, the same
+ * change the server's push makes, so one edge reads the same whichever path
+ * delivers it. A session whose tool nobody reported keeps the old wording.
+ */
+describe("fireNotification — the harness it names", () => {
+  const fireFor = (tool: "claude" | "pi" | undefined, kind: "awaiting" | "done") =>
+    fireNotification("6j0wjvxxf7e5", "Models", kind, {
+      hasRegistration: true,
+      onActivate: () => {},
+      ...(tool ? { tool } : {}),
+    });
+
+  it("says pi for a pi session", async () => {
+    await fireFor("pi", "done");
+    await fireFor("pi", "awaiting");
+    expect(shown.map((n) => n.options.body)).toEqual([
+      "Pi finished its turn.",
+      "Pi is awaiting your input.",
+    ]);
+  });
+
+  it("says Claude for a Claude session, and when nothing says which", async () => {
+    await fireFor("claude", "done");
+    await fireFor(undefined, "awaiting");
+    expect(shown.map((n) => n.options.body)).toEqual([
+      "Claude finished its turn.",
+      "Claude is awaiting your input.",
+    ]);
+  });
+});

@@ -38,6 +38,28 @@ describe("Settings — New session runs", () => {
     const { container } = render(() => <SessionsPage prefs={fakePrefs()} />);
     expect(option(container, "shell").textContent).toBe("Plain shell");
     expect(option(container, "claude").textContent).toBe("Claude");
+    expect(option(container, "pi").textContent).toBe("Pi");
+  });
+
+  // The row offers what the composer offers, in the same order, with the
+  // storable-only `default` at the end.
+  it("offers pi beside the other harnesses", () => {
+    const { container } = render(() => <SessionsPage prefs={fakePrefs()} />);
+    expect(Array.from(picker(container).options).map((o) => o.value)).toEqual([
+      "claude",
+      "codex",
+      "pi",
+      "shell",
+      "default",
+    ]);
+  });
+
+  it("disables pi on a box that cannot run it", () => {
+    const { container } = render(() => (
+      <SessionsPage prefs={fakePrefs()} availableCommands={() => ({ pi: false })} />
+    ));
+    expect(option(container, "pi").disabled).toBe(true);
+    expect(option(container, "pi").textContent).toMatch(/not installed/i);
   });
 
   it("disables nothing without an answer from the server", () => {

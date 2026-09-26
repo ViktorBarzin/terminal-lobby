@@ -538,8 +538,9 @@ export const Sidebar: Component<{
           </Show>
           {props.actAsChip}
           {/* Beside the gear, because it is the short answer to the question the
-            gear opens: attach a Claude session and it reads today's spend,
-            attach a Codex one and it reads the tighter of its two limits. */}
+            gear opens: attach a Claude or pi session and it reads that tool's
+            spend today, attach a Codex one and it reads the tighter of its two
+            limits. */}
           <Show when={props.onOpenSpend}>
             {(open) => (
               <SpendFigure tool={attachedTool} polls={store.polls} onOpen={() => open()()} />

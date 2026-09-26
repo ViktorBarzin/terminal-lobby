@@ -6,6 +6,7 @@
  * that decide what a person reads are testable without mounting anything.
  */
 import type { PeerBlock, PeerSkill, Plugin, Skill } from "../lib/skills-api";
+import type { SessionTool } from "../types/lobby";
 
 export type Tone = "muted" | "accent" | "warn";
 
@@ -43,7 +44,8 @@ export function skillStatus(s: Skill): RowStatus {
     };
   }
   if (s.from) return { label: `from ${s.from}`, tone: "muted" };
-  if (s.symlink) return { label: "own · linked", tone: "muted", detail: "This entry is a symlink." };
+  if (s.symlink)
+    return { label: "own · linked", tone: "muted", detail: "This entry is a symlink." };
   return { label: "own", tone: "muted" };
 }
 
@@ -51,7 +53,11 @@ export function skillStatus(s: Skill): RowStatus {
  *  advertised by the marketplace it came from. */
 export function pluginStatus(p: Plugin): RowStatus {
   if (p.stale && p.latest) {
-    return { label: `${p.version} · ${p.latest}`, tone: "accent", detail: `Version ${p.latest} is available.` };
+    return {
+      label: `${p.version} · ${p.latest}`,
+      tone: "accent",
+      detail: `Version ${p.latest} is available.`,
+    };
   }
   return { label: p.version || "unknown", tone: "muted" };
 }
@@ -106,14 +112,21 @@ export interface SessionRow {
  * Which of the caller's sessions are running an older skill set, and which of
  * those may be restarted.
  *
- * Every live session is affected — a skill is read when Claude starts — so the
- * list is all of them, with the mid-turn ones marked. Running first, so it is
- * obvious why some have no button, then by name for a stable order.
+ * Every live CLAUDE session is affected — a skill is read when Claude starts —
+ * so the list is all of them, with the mid-turn ones marked. Running first, so
+ * it is obvious why some have no button, then by name for a stable order.
+ *
+ * Only Claude sessions, because the restart respawns `claude --continue`: in a
+ * pi, codex or shell session it would replace whatever runs there with a
+ * Claude, and none of those reads the skills this page manages. A session
+ * whose tool nobody reported is left out too, since nothing vouches that it is
+ * Claude. `tool` rides along from the session list (App's `skillSessions`).
  */
 export function restartTargets(
-  sessions: ReadonlyArray<{ name: string; state?: string }>,
+  sessions: ReadonlyArray<{ name: string; state?: string; tool?: SessionTool }>,
 ): SessionRow[] {
   return sessions
+    .filter((s) => s.tool === "claude")
     .map((s) => {
       const state = s.state || "idle";
       return { name: s.name, state, restartable: state !== "running" };

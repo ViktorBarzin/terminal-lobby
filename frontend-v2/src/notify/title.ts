@@ -18,7 +18,7 @@
  * green tick so both badges clear together. The bare default (every `done` is
  * unseen) is what a caller without a visit store gets.
  */
-import { sessionLabel } from "../types/lobby";
+import { sessionLabel, type SessionTool } from "../types/lobby";
 
 export type TitleSession = {
   name: string;
@@ -28,6 +28,8 @@ export type TitleSession = {
   title?: string;
   state?: string;
   pane_current_command?: string;
+  /** Which harness it runs, so a page-fired banner names the right one. */
+  tool?: SessionTool;
   /**
    * The OS user who owns it, when that is NOT the viewer — a session shared with
    * you through a project or a direct share. Absent for your own.
@@ -85,9 +87,7 @@ export function composeTitle(p: TitleParts): string {
     sessionLabel(p.sessions.find((x) => x.name === name) ?? { name });
   const attention = p.attentionSession ? "● " + labelFor(p.attentionSession) + " " : "";
   const active =
-    p.activeSession != null
-      ? p.sessions.find((s) => s.name === p.activeSession)
-      : undefined;
+    p.activeSession != null ? p.sessions.find((s) => s.name === p.activeSession) : undefined;
   const cmd = active?.pane_current_command;
   const body = p.activeSession
     ? cmd

@@ -68,9 +68,10 @@ export interface BackgroundWork {
  * Which command a session is running (tmux-api `tool`, resolved from the
  * pane's process tree — NOT from pane_current_command, which reads "bash" for
  * both wrapper-launched agents). Absent when the server predates the field or
- * its /proc scan failed.
+ * its /proc scan failed. `pi` is the third harness (docs/plans/
+ * 2026-09-25-pi-harness-design.md).
  */
-export type SessionTool = "claude" | "codex" | "shell";
+export type SessionTool = "claude" | "codex" | "pi" | "shell";
 
 /** One session as returned by GET /api/sessions. */
 export interface Session {
@@ -159,6 +160,16 @@ export interface Session {
   pane_title?: string;
   /** Which command the session runs; drives the sidebar tool mark. */
   tool?: SessionTool;
+  /** A pi session's model, `provider/id`, as the lobby's pi extension stamped
+   *  it on the pane (`@tl_pi_model`). Pi has no transcript the lobby reads, so
+   *  this is what its model chip shows. Absent until the extension has run,
+   *  and on every session that is not pi. */
+  piModel?: string;
+  /** A pi session's thinking level (`@tl_pi_thinking`), same terms. */
+  piThinking?: string;
+  /** The thinking levels a pi session's current model supports, comma-separated
+   *  (`@tl_pi_levels`), which is what its chip offers. Same terms. */
+  piLevels?: string;
   /** Who made this session, from its `@tl_origin` tmux option: `user` when the
    *  lobby's own create path made it, `test` when a harness stamped it.
    *
@@ -171,6 +182,9 @@ export interface Session {
    *  System. */
   origin?: string;
 }
+
+/** What a pi session stamped about itself, as the session list carries it. */
+export type PiStamp = Pick<Session, "piModel" | "piThinking" | "piLevels">;
 
 /** A per-user layout project (sidebar grouping + ordering). */
 export interface LayoutProject {

@@ -11,7 +11,7 @@
  * with the row they tested; the behaviour they pin (a command with nothing
  * behind it hands back a session that dies on open) is unchanged.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, waitFor } from "@solidjs/testing-library";
 import { createSignal, Show } from "solid-js";
 import type { SlashCommand } from "../src/logic/compose.logic";
@@ -31,6 +31,7 @@ import type { CommandAvailability } from "../src/lib/new-commands";
 import { DRAFTS_KEY, loadDraft, type DraftAttachment } from "../src/store/drafts";
 import { toasts } from "../src/store/toast";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
+import { resetPiModels } from "../src/lib/pi-models";
 
 class FakeApi implements LobbyApi {
   /** The rescue's stamp (POST /sessions/{name}/origin). Nothing here drags a
@@ -93,7 +94,12 @@ interface Mounted {
  * test/first-prompt.test.ts, where the timing is the subject.
  */
 interface Wire {
-  delivered: { session: string; lines: readonly string[]; awaitReady: boolean }[];
+  delivered: {
+    session: string;
+    lines: readonly string[];
+    awaitReady: boolean;
+    tool?: string;
+  }[];
   uploads: { files: readonly File[]; session: string }[];
   /** What each upload answers with, in order; the last answer repeats. */
   chips: DraftAttachment[][];
@@ -150,6 +156,7 @@ function mount(
             session: o.session,
             lines: o.lines,
             awaitReady: o.awaitReady ?? false,
+            tool: o.tool,
           });
           const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
           return wire.results[i] ?? true;
@@ -208,8 +215,12 @@ const labelOf = (store: LobbyStore, name: string): string =>
 beforeEach(() => {
   localStorage.clear();
   toasts.clear();
+  resetPiModels();
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe("<NewSessionComposer> — creating from a prompt", () => {
   it("creates a session from what you typed, with no name asked for", async () => {
@@ -430,6 +441,44 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
     m.store.dispose();
   });
 
+  // The pool only ever claims a slot for the `claude` key (tmux-user-attach),
+  // so a slot warmed for any other command is a ~530MB Claude that sits until
+  // the server's TTL collects it.
+  it("warms nothing when the command is not Claude", async () => {
+    for (const newCommand of ["pi", "codex", "shell"]) {
+      localStorage.setItem(
+        PREFS_KEY,
+        JSON.stringify({ session: { newProject: "alpha", newCommand } }),
+      );
+      const api = new FakeApi();
+      withProjects(api);
+      const m = mount(api);
+      await m.store.refresh();
+      await Promise.resolve();
+      expect(api.prewarmed, newCommand).toEqual([]);
+      m.store.dispose();
+      m.unmount();
+    }
+  });
+
+  it("hands the slot back when the command moves off Claude, and warms again on the way back", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
+    const api = new FakeApi();
+    withProjects(api);
+    const m = mount(api);
+    await m.store.refresh();
+    await waitFor(() => expect(api.prewarmed).toEqual(["/home/wizard/code/alpha"]));
+
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "pi" } });
+    await waitFor(() => expect(api.released).toEqual(["/home/wizard/code/alpha"]));
+
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "claude" } });
+    await waitFor(() =>
+      expect(api.prewarmed).toEqual(["/home/wizard/code/alpha", "/home/wizard/code/alpha"]),
+    );
+    m.store.dispose();
+  });
+
   it("does not warm a project with no dir, since that would warm $HOME", async () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "nodir" } }));
     const api = new FakeApi();
@@ -550,7 +599,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
   // handing out sessions that die on open.
   it("selects something that runs when the stored preference does not", async () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "claude" } }));
-    const m = mount(new FakeApi(), { claude: false, codex: false, shell: true });
+    const m = mount(new FakeApi(), { claude: false, codex: false, pi: false, shell: true });
     await m.store.refresh();
     await waitFor(() => expect(pick(m.container, "Command for new session").value).toBe("shell"));
     m.store.dispose();
@@ -570,7 +619,7 @@ describe("<NewSessionComposer> — the command it runs", () => {
     const m = mount(new FakeApi(), {});
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
-    for (const v of ["claude", "codex", "shell"]) {
+    for (const v of ["claude", "codex", "pi", "shell"]) {
       expect(option(sel, v).disabled, `${v} disabled`).toBe(false);
     }
     expect(sel.value).toBe("claude");
@@ -1162,6 +1211,248 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     // swallow it into a tray that is not on screen.
     expect(e.defaultPrevented).toBe(false);
     expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    m.store.dispose();
+  });
+});
+
+/**
+ * Pi, the third harness (docs/plans/2026-09-25-pi-harness-design.md).
+ *
+ * Its models are not written down anywhere in the frontend: pi lists them per
+ * user, and tmux-api serves that list as GET /pi-models (ADR-0032). So the
+ * model menu fills from that answer, the thinking menu offers pi's seven
+ * levels, and the first prompt asks the server to wait for pi by name.
+ */
+describe("<NewSessionComposer> — pi", () => {
+  const OPUS = "anthropic/claude-opus-5";
+  const MINI = "openai/gpt-5.4-mini";
+  const row = (ref: string) => {
+    const [provider, id] = ref.split("/");
+    return { ref, provider, id, thinking: true };
+  };
+
+  /** Answer GET /pi-models with `body`; count how often it was asked. */
+  function servePiModels(body: unknown): { asked: () => number } {
+    let asked = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).endsWith("/pi-models")) {
+          asked += 1;
+          return new Response(JSON.stringify(body), { status: 200 });
+        }
+        return new Response("", { status: 404 });
+      }),
+    );
+    return { asked: () => asked };
+  }
+
+  const choosePi = () =>
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "pi" } }));
+  const values = (sel: HTMLSelectElement) => Array.from(sel.options).map((o) => o.value);
+  const hint = (c: HTMLElement) => c.querySelector(".tl-new-hint");
+
+  it("offers pi between codex and the shell, phrased like the others", async () => {
+    servePiModels({ signedIn: true, models: [] });
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const sel = pick(m.container, "Command for new session");
+    expect(values(sel)).toEqual(["claude", "codex", "pi", "shell"]);
+    expect(option(sel, "pi").textContent).toBe("run pi");
+    m.store.dispose();
+  });
+
+  it("disables pi on a box that cannot run it, and says why", async () => {
+    const m = mount(new FakeApi(), { pi: false });
+    await m.store.refresh();
+    const sel = pick(m.container, "Command for new session");
+    expect(option(sel, "pi").disabled).toBe(true);
+    expect(option(sel, "pi").textContent).toMatch(/not installed/i);
+    m.store.dispose();
+  });
+
+  it("fills the model menu from pi's own list, after the default", async () => {
+    servePiModels({ signedIn: true, models: [row(OPUS), row(MINI)] });
+    choosePi();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() =>
+      expect(values(pick(m.container, "Model for new session"))).toEqual(["default", OPUS, MINI]),
+    );
+    // A reference is already unmistakably a model, so it carries no noun.
+    expect(option(pick(m.container, "Model for new session"), OPUS).textContent).toBe(OPUS);
+    expect(hint(m.container)).toBeNull();
+    m.store.dispose();
+  });
+
+  // Opening the composer is the moment a person is about to choose, so that is
+  // when the list is read again: a provider signed into since the page loaded
+  // shows up without a reload.
+  it("reads the list again each time it opens with pi chosen", async () => {
+    const served = servePiModels({ signedIn: true, models: [row(OPUS)] });
+    choosePi();
+    const first = mount(new FakeApi());
+    await first.store.refresh();
+    await waitFor(() => expect(served.asked()).toBe(1));
+    first.store.dispose();
+    first.unmount();
+
+    const second = mount(new FakeApi());
+    await second.store.refresh();
+    await waitFor(() => expect(served.asked()).toBe(2));
+    second.store.dispose();
+  });
+
+  // Each read costs the server a login shell running pi.
+  it("asks nothing until pi is the command, then asks once", async () => {
+    const served = servePiModels({ signedIn: true, models: [row(OPUS)] });
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await Promise.resolve();
+    expect(served.asked()).toBe(0);
+
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "pi" } });
+    await waitFor(() => expect(served.asked()).toBe(1));
+    // Picking a model writes a preference, and that is not a reason to ask again.
+    await waitFor(() => expect(values(pick(m.container, "Model for new session"))).toContain(OPUS));
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: OPUS } });
+    await Promise.resolve();
+    expect(served.asked()).toBe(1);
+    m.store.dispose();
+  });
+
+  it("offers only the default to someone who has not signed pi in, and says how", async () => {
+    servePiModels({ signedIn: false, models: [] });
+    choosePi();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(hint(m.container)).not.toBeNull());
+    expect(values(pick(m.container, "Model for new session"))).toEqual(["default"]);
+    expect(hint(m.container)!.textContent).toMatch(/\/login/);
+    m.store.dispose();
+  });
+
+  // A list that could not be read is not a sign-in problem, and a hint sending
+  // somebody off to /login for it would be a wild goose chase.
+  it("does not blame the sign-in when the list could not be read", async () => {
+    servePiModels({ signedIn: false, models: [], error: "pi --list-models timed out" });
+    choosePi();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() =>
+      expect(pick(m.container, "Model for new session").getAttribute("title")).toMatch(/timed out/),
+    );
+    expect(hint(m.container)).toBeNull();
+    m.store.dispose();
+  });
+
+  it("drops the hint once pi is no longer the command", async () => {
+    servePiModels({ signedIn: false, models: [] });
+    choosePi();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(hint(m.container)).not.toBeNull());
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "claude" },
+    });
+    expect(hint(m.container)).toBeNull();
+    m.store.dispose();
+  });
+
+  it("offers pi's seven thinking levels, in pi's words", async () => {
+    servePiModels({ signedIn: true, models: [] });
+    choosePi();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const sel = pick(m.container, "Effort for new session");
+    expect(values(sel)).toEqual([
+      "default",
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+    ]);
+    expect(option(sel, "high").textContent).toBe("High thinking");
+    expect(option(sel, "off").textContent).toBe("No thinking");
+    m.store.dispose();
+  });
+
+  it("writes pi's choice under pi's own keys, leaving Claude's alone", async () => {
+    servePiModels({ signedIn: true, models: [row(OPUS), row(MINI)] });
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    fireEvent.change(pick(m.container, "Model for new session"), {
+      target: { value: "claude-sonnet-5" },
+    });
+    fireEvent.change(pick(m.container, "Command for new session"), { target: { value: "pi" } });
+    await waitFor(() => expect(values(pick(m.container, "Model for new session"))).toContain(MINI));
+    fireEvent.change(pick(m.container, "Model for new session"), { target: { value: MINI } });
+    fireEvent.change(pick(m.container, "Effort for new session"), {
+      target: { value: "minimal" },
+    });
+
+    expect(m.prefs.prefs().session.newPiModel).toBe(MINI);
+    expect(m.prefs.prefs().session.newPiEffort).toBe("minimal");
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
+
+    // And back: Claude's menu still shows Claude's pick.
+    fireEvent.change(pick(m.container, "Command for new session"), {
+      target: { value: "claude" },
+    });
+    expect(pick(m.container, "Model for new session").value).toBe("claude-sonnet-5");
+    m.store.dispose();
+  });
+
+  // The attach launches on the stored pick whatever the menu shows, so the menu
+  // has to show it too, even before the list arrives or after pi stopped
+  // listing it. A blank or a "default" there would be a menu that disagrees
+  // with what starts.
+  it("shows a stored pick that the list does not carry", async () => {
+    servePiModels({ signedIn: true, models: [row(MINI)] });
+    localStorage.setItem(
+      PREFS_KEY,
+      JSON.stringify({ session: { newCommand: "pi", newPiModel: OPUS } }),
+    );
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(values(pick(m.container, "Model for new session"))).toContain(MINI));
+    const sel = pick(m.container, "Model for new session");
+    expect(values(sel)).toContain(OPUS);
+    expect(sel.value).toBe(OPUS);
+    m.store.dispose();
+  });
+
+  it("asks the server to wait for pi, and says it is pi", async () => {
+    servePiModels({ signedIn: true, models: [] });
+    choosePi();
+    const api = new FakeApi();
+    const w = emptyWire();
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]).toEqual({
+      session: api.puts[0]!.ungrouped[0]!,
+      lines: ["Fix the deploy"],
+      awaitReady: true,
+      tool: "pi",
+    });
+    m.store.dispose();
+  });
+
+  it("names no harness on a Claude session's first prompt", async () => {
+    const w = emptyWire();
+    const m = mount(new FakeApi(), {}, w);
+    await m.store.refresh();
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+    await waitFor(() => expect(w.delivered.length).toBe(1));
+    expect(w.delivered[0]!.tool).toBeUndefined();
     m.store.dispose();
   });
 });

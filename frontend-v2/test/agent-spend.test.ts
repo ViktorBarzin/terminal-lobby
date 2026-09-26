@@ -199,4 +199,31 @@ describe("sidebarFigure", () => {
     expect(sidebarFigure("codex", codexDoc([win(2.4, soon)]), now)).toBe("2%");
     expect(sidebarFigure("codex", codexDoc([win(99.6, soon)]), now)).toBe("100%");
   });
+
+  // Pi computes dollars the way Claude Code does, and its section has exactly
+  // the Claude section's shape, so a pi session shows today's pi dollars.
+  const piDoc = (costUsd: number): AgentSpend => ({
+    period: "today",
+    pi: {
+      costUsd,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+      models: [],
+      sessions: [],
+    },
+  });
+
+  it("gives a pi session today's pi spend, in dollars", () => {
+    expect(sidebarFigure("pi", piDoc(1.5), now)).toBe("$1.50");
+    expect(sidebarFigure("pi", piDoc(0.004), now)).toBe("<$0.01");
+  });
+
+  // Each harness's figure comes from its own section. Showing Claude's dollars
+  // beside a pi session would be a measurement of something else.
+  it("never lends one harness's dollars to the other", () => {
+    expect(sidebarFigure("pi", claudeDoc(4.12), now)).toBe("");
+    expect(sidebarFigure("claude", piDoc(1.5), now)).toBe("");
+    const both: AgentSpend = { ...claudeDoc(4.12), ...piDoc(1.5) };
+    expect(sidebarFigure("pi", both, now)).toBe("$1.50");
+    expect(sidebarFigure("claude", both, now)).toBe("$4.12");
+  });
 });

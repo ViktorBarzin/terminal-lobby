@@ -545,6 +545,7 @@ export function createNotificationSystem(opts: NotificationSystemOptions): Notif
       void fireNotification(f.session, sessionConfirmLabel(s ?? { name: f.session }), f.kind, {
         hasRegistration: hasReg,
         onActivate: opts.onActivateSession,
+        tool: s?.tool,
       });
     }
   });

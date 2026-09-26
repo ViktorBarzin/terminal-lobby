@@ -44,13 +44,8 @@ import { lsGet, lsSet } from "../lib/storage";
  * any other client's boot GET.
  */
 
-export type NewCommand = "default" | "claude" | "codex" | "shell";
-export const NEW_COMMANDS: readonly NewCommand[] = [
-  "claude",
-  "codex",
-  "shell",
-  "default",
-];
+export type NewCommand = "default" | "claude" | "codex" | "pi" | "shell";
+export const NEW_COMMANDS: readonly NewCommand[] = ["claude", "codex", "pi", "shell", "default"];
 export const DEFAULT_NEW_COMMAND: NewCommand = "claude";
 
 /** xterm cursor shapes the terminal page accepts (vanilla PREF_VALID). */
@@ -135,12 +130,14 @@ export interface Prefs {
    * (it is also the one the terminal attach reads) and `newProject` is the
    * project a create lands in, "" for Ungrouped.
    *
-   * The model and the effort are held PER HARNESS, because the two CLIs share
+   * The model and the effort are held PER HARNESS, because the CLIs share
    * no vocabulary: `opus` means nothing to codex, `gpt-5.6-terra` means nothing
    * to Claude, and their effort ladders agree on every step but the top one
    * (`ultracode` / `ultra`). One key for both would have made switching command
    * silently ask for a model the other cannot run. Claude's keeps the original
-   * `newModel` name so a doc written before this still applies.
+   * `newModel` name so a doc written before this still applies. Pi's pair is
+   * the third: its models are `provider/id` references from pi's own list, and
+   * its thinking ladder starts at `off` and `minimal`, below the other two.
    *
    * All of them roam: none changes when a person picks up a different device.
    */
@@ -151,6 +148,8 @@ export interface Prefs {
     newEffort: string;
     newCodexModel: string;
     newCodexEffort: string;
+    newPiModel: string;
+    newPiEffort: string;
   };
   notify: { onDone: boolean; onAwaiting: boolean };
   /** Session-list display. `showLastActive` governs the relative "5m ago" on
@@ -171,19 +170,34 @@ export interface ModelChoice {
   effort: string;
 }
 
-/** What a new session of this harness should start on. */
+/**
+ * What a new session of this harness should start on.
+ *
+ * A switch with no fallthrough to Claude's keys, on purpose: when this was a
+ * ternary, every harness that was not codex read Claude's pair, which is how a
+ * third harness would have started on a Claude slug nobody picked for it.
+ */
 export function modelChoiceFor(p: Prefs, h: ModelHarness): ModelChoice {
-  return h === "codex"
-    ? { model: p.session.newCodexModel, effort: p.session.newCodexEffort }
-    : { model: p.session.newModel, effort: p.session.newEffort };
+  switch (h) {
+    case "claude":
+      return { model: p.session.newModel, effort: p.session.newEffort };
+    case "codex":
+      return { model: p.session.newCodexModel, effort: p.session.newCodexEffort };
+    case "pi":
+      return { model: p.session.newPiModel, effort: p.session.newPiEffort };
+  }
 }
 
 /** The patch that records one of those choices, under the right harness's key. */
 export function modelChoicePatch(h: ModelHarness, f: ModelField, id: string): PrefsPatch {
-  if (h === "codex") {
-    return { session: f === "model" ? { newCodexModel: id } : { newCodexEffort: id } };
+  switch (h) {
+    case "claude":
+      return { session: f === "model" ? { newModel: id } : { newEffort: id } };
+    case "codex":
+      return { session: f === "model" ? { newCodexModel: id } : { newCodexEffort: id } };
+    case "pi":
+      return { session: f === "model" ? { newPiModel: id } : { newPiEffort: id } };
   }
-  return { session: f === "model" ? { newModel: id } : { newEffort: id } };
 }
 
 export interface PrefsPatch {
@@ -249,6 +263,8 @@ export const PREF_DEFAULTS: Prefs = {
     newEffort: DEFAULT_CHOICE,
     newCodexModel: DEFAULT_CHOICE,
     newCodexEffort: DEFAULT_CHOICE,
+    newPiModel: DEFAULT_CHOICE,
+    newPiEffort: DEFAULT_CHOICE,
   },
   notify: { onDone: true, onAwaiting: true },
   sidebar: { showLastActive: false, order: DEFAULT_SESSION_ORDER },
@@ -261,12 +277,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isValidFontSize(v: unknown): v is number {
-  return (
-    typeof v === "number" &&
-    Number.isInteger(v) &&
-    v >= FONT_SIZE_MIN &&
-    v <= FONT_SIZE_MAX
-  );
+  return typeof v === "number" && Number.isInteger(v) && v >= FONT_SIZE_MIN && v <= FONT_SIZE_MAX;
 }
 
 /** Finite number inside an inclusive range — the vanilla PREF_VALID shape for
@@ -281,9 +292,7 @@ function oneOf<T extends string | number>(v: unknown, allowed: readonly T[]): v 
 }
 
 function isNewCommand(v: unknown): v is NewCommand {
-  return (
-    v === "default" || v === "claude" || v === "codex" || v === "shell"
-  );
+  return oneOf(v, NEW_COMMANDS);
 }
 
 /** Clamp any input to a valid integer font size (invalid → default). */
@@ -313,14 +322,12 @@ export function coercePrefs(raw: unknown): Prefs {
     cursorStyle: oneOf(src.cursorStyle, CURSOR_STYLES)
       ? src.cursorStyle
       : PREF_DEFAULTS.cursorStyle,
-    cursorBlink:
-      typeof src.cursorBlink === "boolean" ? src.cursorBlink : PREF_DEFAULTS.cursorBlink,
+    cursorBlink: typeof src.cursorBlink === "boolean" ? src.cursorBlink : PREF_DEFAULTS.cursorBlink,
     fontWeightBold: oneOf(src.fontWeightBold, BOLD_WEIGHTS)
       ? src.fontWeightBold
       : PREF_DEFAULTS.fontWeightBold,
     links: {
-      copyChip:
-        typeof links.copyChip === "boolean" ? links.copyChip : PREF_DEFAULTS.links.copyChip,
+      copyChip: typeof links.copyChip === "boolean" ? links.copyChip : PREF_DEFAULTS.links.copyChip,
     },
     gestures: {
       wheelSmooth:
@@ -349,9 +356,7 @@ export function coercePrefs(raw: unknown): Prefs {
         : PREF_DEFAULTS.input.tapFocus,
     },
     session: {
-      newCommand: isNewCommand(session.newCommand)
-        ? session.newCommand
-        : DEFAULT_NEW_COMMAND,
+      newCommand: isNewCommand(session.newCommand) ? session.newCommand : DEFAULT_NEW_COMMAND,
       // A project is named by a person, so anything is a legal name; only the
       // TYPE is checked. A name whose project has since been deleted resolves
       // to Ungrouped in the composer rather than being rewritten here, so
@@ -371,11 +376,18 @@ export function coercePrefs(raw: unknown): Prefs {
       newCodexEffort: isEffortFor("codex", session.newCodexEffort)
         ? (session.newCodexEffort as string)
         : DEFAULT_CHOICE,
+      // Pi's models are pi's own list, fetched per user, so no catalogue here
+      // can vouch for one. The check is the shape the attach accepts instead
+      // (isPiModelRef): checked against a catalogue, every pick would be
+      // dropped on the next load.
+      newPiModel: adoptModelId("pi", session.newPiModel) ?? DEFAULT_CHOICE,
+      newPiEffort: isEffortFor("pi", session.newPiEffort)
+        ? (session.newPiEffort as string)
+        : DEFAULT_CHOICE,
     },
     notify: {
       onDone: typeof notify.onDone === "boolean" ? notify.onDone : true,
-      onAwaiting:
-        typeof notify.onAwaiting === "boolean" ? notify.onAwaiting : true,
+      onAwaiting: typeof notify.onAwaiting === "boolean" ? notify.onAwaiting : true,
     },
     sidebar: {
       // Anything that is not literally `true` is off — including a stored
@@ -407,10 +419,7 @@ export function coercePrefs(raw: unknown): Prefs {
  * subkey typed here whose default differs from term.html's, which is why every
  * default in PREF_DEFAULTS names its line.
  */
-export function composeDoc(
-  raw: unknown,
-  prefs: Prefs,
-): Record<string, unknown> {
+export function composeDoc(raw: unknown, prefs: Prefs): Record<string, unknown> {
   const base = isPlainObject(raw) ? { ...raw } : {};
   const session = isPlainObject(base.session) ? base.session : {};
   const notify = isPlainObject(base.notify) ? base.notify : {};
@@ -448,6 +457,8 @@ export function composeDoc(
       newEffort: prefs.session.newEffort,
       newCodexModel: prefs.session.newCodexModel,
       newCodexEffort: prefs.session.newCodexEffort,
+      newPiModel: prefs.session.newPiModel,
+      newPiEffort: prefs.session.newPiEffort,
     },
     notify: {
       ...notify,
@@ -468,21 +479,11 @@ export function composeDoc(
  * deep-merged one level (a server namespace missing a subkey must not reset the
  * local subkey — matches the vanilla adoptPrefs posture).
  */
-export function mergeAdopt(
-  localRaw: unknown,
-  serverRaw: unknown,
-): Record<string, unknown> {
+export function mergeAdopt(localRaw: unknown, serverRaw: unknown): Record<string, unknown> {
   const local = isPlainObject(localRaw) ? localRaw : {};
   const server = isPlainObject(serverRaw) ? serverRaw : {};
   const merged: Record<string, unknown> = { ...local, ...server };
-  for (const k of [
-    "session",
-    "notify",
-    "sidebar",
-    "links",
-    "gestures",
-    "input",
-  ] as const) {
+  for (const k of ["session", "notify", "sidebar", "links", "gestures", "input"] as const) {
     const l = isPlainObject(local[k]) ? local[k] : {};
     const s = isPlainObject(server[k]) ? server[k] : {};
     merged[k] = { ...l, ...s };
@@ -515,16 +516,8 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("links.copyChip", prev.links.copyChip, next.links.copyChip);
   diff("gestures.wheelSmooth", prev.gestures.wheelSmooth, next.gestures.wheelSmooth);
   diff("gestures.wheelSpeed", prev.gestures.wheelSpeed, next.gestures.wheelSpeed);
-  diff(
-    "gestures.scrollSpeedV2",
-    prev.gestures.scrollSpeedV2,
-    next.gestures.scrollSpeedV2,
-  );
-  diff(
-    "gestures.scrollMomentum",
-    prev.gestures.scrollMomentum,
-    next.gestures.scrollMomentum,
-  );
+  diff("gestures.scrollSpeedV2", prev.gestures.scrollSpeedV2, next.gestures.scrollSpeedV2);
+  diff("gestures.scrollMomentum", prev.gestures.scrollMomentum, next.gestures.scrollMomentum);
   diff("input.tapFocus", prev.input.tapFocus, next.input.tapFocus);
   diff("session.newCommand", prev.session.newCommand, next.session.newCommand);
   diff("session.newProject", prev.session.newProject, next.session.newProject);
@@ -532,13 +525,11 @@ export function changedPrefPaths(prev: Prefs, next: Prefs): [string, string][] {
   diff("session.newEffort", prev.session.newEffort, next.session.newEffort);
   diff("session.newCodexModel", prev.session.newCodexModel, next.session.newCodexModel);
   diff("session.newCodexEffort", prev.session.newCodexEffort, next.session.newCodexEffort);
+  diff("session.newPiModel", prev.session.newPiModel, next.session.newPiModel);
+  diff("session.newPiEffort", prev.session.newPiEffort, next.session.newPiEffort);
   diff("notify.onDone", prev.notify.onDone, next.notify.onDone);
   diff("notify.onAwaiting", prev.notify.onAwaiting, next.notify.onAwaiting);
-  diff(
-    "sidebar.showLastActive",
-    prev.sidebar.showLastActive,
-    next.sidebar.showLastActive,
-  );
+  diff("sidebar.showLastActive", prev.sidebar.showLastActive, next.sidebar.showLastActive);
   diff("sidebar.order", prev.sidebar.order, next.sidebar.order);
   return out;
 }
@@ -691,9 +682,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   const putDebounceMs = opts.putDebounceMs ?? 400;
   const fetchImpl: FetchLike | undefined =
     opts.fetchImpl ??
-    (typeof fetch !== "undefined"
-      ? (input, init) => fetchWithDeadline(input, init)
-      : undefined);
+    (typeof fetch !== "undefined" ? (input, init) => fetchWithDeadline(input, init) : undefined);
 
   // rawDoc is the canonical persisted document (unknown keys preserved). The
   // signal is the typed, validated VIEW derived from it.
@@ -704,7 +693,6 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     withoutOneSessionEffort({ ...coercePrefs(rawDoc), fontSize: seeded }),
   );
   const [prefs, setPrefsSignal] = createSignal<Prefs>(coercePrefs(rawDoc));
-
 
   let dirty = false;
   let putTimer: ReturnType<typeof setTimeout> | undefined;
@@ -805,8 +793,7 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
     if (!fetchImpl) return;
     let doc: unknown;
     try {
-      const resp = await fetchImpl(apiUrl(PREFS_PATH), {
-      });
+      const resp = await fetchImpl(apiUrl(PREFS_PATH), {});
       if (!resp.ok) return; // keep local; next boot retries
       doc = await resp.json();
     } catch {

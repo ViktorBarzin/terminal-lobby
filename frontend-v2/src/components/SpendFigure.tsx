@@ -6,7 +6,12 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { fetchAgentSpend, sidebarFigure, type AgentSpend } from "../lib/agent-spend";
+import {
+  fetchAgentSpend,
+  sidebarFigure,
+  spendsMeasurably,
+  type AgentSpend,
+} from "../lib/agent-spend";
 import type { SessionTool } from "../types/lobby";
 
 /**
@@ -14,9 +19,10 @@ import type { SessionTool } from "../types/lobby";
  *
  * The Settings page is where the whole picture lives; this is the one figure
  * that is worth carrying without opening it. It follows the attached session's
- * tool, in that tool's own terms: today's dollars for Claude Code, which
- * computes them, and the tighter of the two limits for Codex, which reports no
- * dollars on a ChatGPT plan. A shell, or nothing attached, draws nothing.
+ * tool, in that tool's own terms: today's dollars for Claude Code and for pi,
+ * which both compute them, and the tighter of the two limits for Codex, which
+ * reports no dollars on a ChatGPT plan. A shell, or nothing attached, draws
+ * nothing.
  *
  * No colour and no threshold. A dollar total has no ceiling, so a red figure
  * would be inventing a budget the user never set.
@@ -89,16 +95,22 @@ export const SpendFigure: Component<{
     const tool = props.tool();
     // A box that has never run an agent asks for nothing. There is no figure
     // for a shell, so there is no reason to have read one.
-    if (tool !== "claude" && tool !== "codex") return;
+    if (!spendsMeasurably(tool)) return;
     if (Date.now() - lastReadAt < MIN_READ_MS) return;
     void load(tool);
   });
 
   const figure = (): string => sidebarFigure(props.tool(), doc(), nowMs());
-  const title = (): string =>
-    props.tool() === "codex"
-      ? "How much of the tighter Codex limit is gone. Opens Agent spend"
-      : "What Claude Code has cost today. Opens Agent spend";
+  const title = (): string => {
+    switch (props.tool()) {
+      case "codex":
+        return "How much of the tighter Codex limit is gone. Opens Agent spend";
+      case "pi":
+        return "What pi has cost today, by its own prices. Opens Agent spend";
+      default:
+        return "What Claude Code has cost today. Opens Agent spend";
+    }
+  };
 
   return (
     <Show when={figure()}>

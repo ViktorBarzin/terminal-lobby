@@ -41,7 +41,15 @@ beforeEach(() => {
 const inventory = (over: Partial<Inventory> = {}): Inventory => ({
   user: "wizard",
   skills: [
-    { name: "grilling", description: "Grill a plan", files: 1, executable: 0, bytes: 900, hash: "h1", enabled: true },
+    {
+      name: "grilling",
+      description: "Grill a plan",
+      files: 1,
+      executable: 0,
+      bytes: 900,
+      hash: "h1",
+      enabled: true,
+    },
     {
       name: "cluster-health",
       description: "Cluster triage",
@@ -54,7 +62,15 @@ const inventory = (over: Partial<Inventory> = {}): Inventory => ({
       sourceHash: "old",
       updateAvailable: true,
     },
-    { name: "caveman", files: 1, executable: 0, bytes: 500, hash: "h3", enabled: false, from: "bob" },
+    {
+      name: "caveman",
+      files: 1,
+      executable: 0,
+      bytes: 500,
+      hash: "h3",
+      enabled: false,
+      from: "bob",
+    },
   ],
   plugins: [
     {
@@ -66,15 +82,46 @@ const inventory = (over: Partial<Inventory> = {}): Inventory => ({
       latest: "5.3.0",
       stale: true,
     },
-    { id: "context7@official", name: "context7", marketplace: "official", version: "61c059", enabled: true },
+    {
+      id: "context7@official",
+      name: "context7",
+      marketplace: "official",
+      version: "61c059",
+      enabled: true,
+    },
   ],
   peers: [
     {
       user: "bob",
       skills: [
-        { name: "diagnose", description: "Debug it", files: 2, executable: 0, bytes: 2048, hash: "p1", enabled: true, verdict: "absent" },
-        { name: "tdd", files: 2, executable: 1, bytes: 3000, hash: "p2", enabled: true, verdict: "differs" },
-        { name: "file-issue", files: 1, executable: 0, bytes: 800, hash: "h9", enabled: true, verdict: "same" },
+        {
+          name: "diagnose",
+          description: "Debug it",
+          files: 2,
+          executable: 0,
+          bytes: 2048,
+          hash: "p1",
+          enabled: true,
+          verdict: "absent",
+        },
+        {
+          name: "tdd",
+          files: 2,
+          executable: 1,
+          bytes: 3000,
+          hash: "p2",
+          enabled: true,
+          verdict: "differs",
+        },
+        {
+          name: "file-issue",
+          files: 1,
+          executable: 0,
+          bytes: 800,
+          hash: "h9",
+          enabled: true,
+          verdict: "same",
+        },
       ],
     },
   ],
@@ -165,8 +212,11 @@ function stubStore(over: Partial<SkillsStore> = {}) {
 }
 
 const sessions = () => [
-  { name: "infra-work", state: "running" },
-  { name: "notes", state: "done" },
+  { name: "infra-work", state: "running", tool: "claude" as const },
+  { name: "notes", state: "done", tool: "claude" as const },
+  // Idle and not Claude: the restart respawns `claude --continue`, so this
+  // row is not offered one, and not listed at all.
+  { name: "pie", state: "done", tool: "pi" as const },
 ];
 
 function fakePrefs(): PrefsStore {
@@ -179,7 +229,10 @@ function fakePrefs(): PrefsStore {
  * at the address it moved to. `initialPage` is what the header's Skills button
  * passes, so this is the app's own route in.
  */
-function open(over: Partial<SkillsStore> = {}, opts: { sessions?: boolean; confirm?: (m: string) => boolean; onClose?: () => void } = {}) {
+function open(
+  over: Partial<SkillsStore> = {},
+  opts: { sessions?: boolean; confirm?: (m: string) => boolean; onClose?: () => void } = {},
+) {
   const { store, calls } = stubStore(over);
   const r = render(() => (
     <SettingsPanel
@@ -204,9 +257,8 @@ function open(over: Partial<SkillsStore> = {}, opts: { sessions?: boolean; confi
 }
 
 /** The tabs of the Skills page itself, excluding the settings rail's. */
-const skillTabs = (c: HTMLElement) => [
-  ...c.querySelectorAll('[aria-label="Skill lists"] [role="tab"]'),
-] as HTMLElement[];
+const skillTabs = (c: HTMLElement) =>
+  [...c.querySelectorAll('[aria-label="Skill lists"] [role="tab"]')] as HTMLElement[];
 
 describe("the Skills panel's shell", () => {
   it("asks for the inventory when it first opens, not before", () => {
@@ -392,6 +444,14 @@ describe("the Plugins and Sessions tabs", () => {
     await waitFor(() => expect(calls).toContain("restart:notes"));
   });
 
+  it("offers no restart for a pi session, which a Claude respawn would replace", () => {
+    const { tab, queryByText, getAllByText } = open({}, { sessions: true });
+    tab("Sessions");
+    expect(queryByText("pie")).toBeNull();
+    // Still the one idle Claude session's button, and no second one for pi.
+    expect(getAllByText("Restart")).toHaveLength(1);
+  });
+
   it("drops the Sessions tab when there are none", () => {
     const { container } = open();
     expect(skillTabs(container).map((t) => t.textContent)).not.toContain("Sessions");
@@ -447,7 +507,10 @@ describe("permanent removal", () => {
     const inv = inventory();
     inv.skills[0]!.symlink = true;
     const asked: string[] = [];
-    const { getAllByText } = open({ inventory: () => inv }, { confirm: (m) => (asked.push(m), false) });
+    const { getAllByText } = open(
+      { inventory: () => inv },
+      { confirm: (m) => (asked.push(m), false) },
+    );
     fireEvent.click(getAllByText("Delete")[0]!);
     expect(asked[0]).toContain("points at is left alone");
   });
@@ -571,7 +634,9 @@ describe("installing from a repo", () => {
 
   it("looks at a repo before installing anything", async () => {
     const { getByLabelText, getByText, calls } = withSource();
-    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: " mattpocock/skills " } });
+    fireEvent.input(getByLabelText("Install from a repo"), {
+      target: { value: " mattpocock/skills " },
+    });
     fireEvent.click(getByText("Look"));
     await waitFor(() => expect(calls).toContain("inspect:mattpocock/skills"));
     expect(calls.some((c) => c.startsWith("install:"))).toBe(false);
@@ -579,7 +644,9 @@ describe("installing from a repo", () => {
 
   it("offers both kinds when a repo is both", async () => {
     const { getByLabelText, getByText } = withSource();
-    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: "mattpocock/skills" } });
+    fireEvent.input(getByLabelText("Install from a repo"), {
+      target: { value: "mattpocock/skills" },
+    });
     fireEvent.click(getByText("Look"));
     await waitFor(() => expect(getByText("Skills (2)")).toBeTruthy());
     expect(getByText(/Plugins in mattpocock-skills/)).toBeTruthy();
@@ -588,7 +655,9 @@ describe("installing from a repo", () => {
 
   it("installs only what was ticked, by kind", async () => {
     const { getByLabelText, getByText, getAllByRole, getByRole, calls } = withSource();
-    fireEvent.input(getByLabelText("Install from a repo"), { target: { value: "mattpocock/skills" } });
+    fireEvent.input(getByLabelText("Install from a repo"), {
+      target: { value: "mattpocock/skills" },
+    });
     fireEvent.click(getByText("Look"));
     await waitFor(() => expect(getByText("Skills (2)")).toBeTruthy());
     const boxes = getAllByRole("checkbox").filter((b) =>
@@ -605,10 +674,16 @@ describe("installing from a repo", () => {
   it("says the installer runs as you before it runs", async () => {
     const asked: string[] = [];
     const [src, setSrc] = createSignal<SourceInfo | null>({
-      owner: "some-stranger", repo: "skills", knownOwner: false,
+      owner: "some-stranger",
+      repo: "skills",
+      knownOwner: false,
       skills: [{ name: "x", path: "skills/x/SKILL.md" }],
     });
-    const { store } = stubStore({ source: src, inspecting: () => false, clearSource: () => setSrc(null) });
+    const { store } = stubStore({
+      source: src,
+      inspecting: () => false,
+      clearSource: () => setSrc(null),
+    });
     const { getAllByRole, getByRole } = render(() => (
       <SettingsPanel
         prefs={fakePrefs()}
@@ -618,14 +693,18 @@ describe("installing from a repo", () => {
         confirm={(m: string) => (asked.push(m), false)}
       />
     ));
-    fireEvent.click(getAllByRole("checkbox").find((b) => (b.parentElement?.textContent ?? "").startsWith("x"))!);
+    fireEvent.click(
+      getAllByRole("checkbox").find((b) => (b.parentElement?.textContent ?? "").startsWith("x"))!,
+    );
     fireEvent.click(getByRole("button", { name: /^Install/ }));
     expect(asked[0]).toContain("runs that project's own installer as you");
   });
 
   it("flags an owner this account has not installed from before", () => {
     const [src] = createSignal<SourceInfo | null>({
-      owner: "some-stranger", repo: "skills", knownOwner: false,
+      owner: "some-stranger",
+      repo: "skills",
+      knownOwner: false,
       skills: [{ name: "x", path: "skills/x/SKILL.md" }],
     });
     const { store } = stubStore({ source: src, inspecting: () => false });
@@ -663,7 +742,9 @@ describe("a source that offers a lot", () => {
 
   it("shows no filter for a short list", () => {
     const [src] = createSignal<SourceInfo | null>({
-      owner: "o", repo: "r", knownOwner: true,
+      owner: "o",
+      repo: "r",
+      knownOwner: true,
       skills: [{ name: "one", path: "one/SKILL.md" }],
     });
     const { store } = stubStore({ source: src, inspecting: () => false });
@@ -715,7 +796,9 @@ describe("a skill's file, inline", () => {
     fireEvent.click(yes.getByText("grilling"));
     await waitFor(() => expect(cmChange).toBeTruthy());
     cmChange!("typed\n");
-    await waitFor(() => expect((yes.getByText("Revert") as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() =>
+      expect((yes.getByText("Revert") as HTMLButtonElement).disabled).toBe(false),
+    );
     fireEvent.click(yes.getByText("Revert"));
     await waitFor(() => expect(yes.calls).toContain("reread"));
 
@@ -763,7 +846,12 @@ describe("a skill's file, inline", () => {
     // holds one file, so the one it holds must not appear under the other row.
     const { getByText, queryByText } = open({
       expanded: () => rowKey("bob", "diagnose"),
-      diff: () => ({ owner: "bob", name: "tdd", verdict: "differs", diff: " same\n-mine\n+theirs" }),
+      diff: () => ({
+        owner: "bob",
+        name: "tdd",
+        verdict: "differs",
+        diff: " same\n-mine\n+theirs",
+      }),
       view: () => ({
         owner: "bob",
         name: "diagnose",

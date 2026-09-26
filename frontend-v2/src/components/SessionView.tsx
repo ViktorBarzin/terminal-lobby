@@ -50,9 +50,10 @@ import { terminalFrameArgs } from "../lib/terminal-url";
 import { setSessionGrid } from "../lib/lobby-api";
 import { refocusTerminal } from "../keybindings/refocus";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
-import type { BackgroundWork, SessionTool } from "../types/lobby";
-import { modelHarness } from "../lib/models";
+import type { BackgroundWork, PiStamp, SessionTool } from "../types/lobby";
+import { modelHarness, piLevels, type ModelState, type PiOffer } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
+import { ensurePiModels, piModels } from "../lib/pi-models";
 import { flushHeldWhenAwake, holdForSuspended } from "../store/suspend-queue";
 
 /**
@@ -221,6 +222,11 @@ export const SessionView: Component<{
    *  and effort lists the composer's chip offers, and a session running a plain
    *  shell — or one nothing has reported a tool for — gets no chip at all. */
   tool?: () => SessionTool | undefined;
+  /** What a pi session stamped about itself, off the session list: its model,
+   *  its thinking level and the levels that model supports. The chip reads
+   *  them, because the lobby reads no pi transcript to find a model in.
+   *  Absent, or empty, for every other session. */
+  piStamp?: () => PiStamp | undefined;
   /** roamed prefs — the A−/A+ buttons step fontSize, which the store persists
    *  and pushes live into the terminal via window.__tlPrefsLive. Optional so a
    *  test can mount the view without one (the buttons then no-op). */
@@ -280,6 +286,32 @@ export const SessionView: Component<{
    * definition — the rungs exist for a session created a moment ago, which is
    * the new-session composer's problem rather than this one's.
    */
+  // ---- a pi session's chip --------------------------------------------------
+  // Its rows are pi's own list, read once for the page if nothing has read it
+  // yet (the new-session composer refreshes it on every open), and the levels
+  // the session's model supports. A memo, so the read follows the tool and not
+  // every session poll that happens to re-find the same one.
+  const isPi = createMemo(() => modelHarness(props.tool?.()) === "pi");
+  createEffect(() => {
+    if (isPi()) void ensurePiModels();
+  });
+  const piReading = (): ModelState | undefined => {
+    if (!isPi()) return undefined;
+    const p = props.piStamp?.();
+    if (!p?.piModel && !p?.piThinking) return undefined;
+    return {
+      ...(p.piModel ? { model: p.piModel } : {}),
+      ...(p.piThinking ? { effort: p.piThinking } : {}),
+    };
+  };
+  const piOffer = (): PiOffer | undefined =>
+    isPi()
+      ? {
+          models: (piModels()?.models ?? []).map((m) => m.ref),
+          levels: piLevels(props.piStamp?.()?.piLevels),
+        }
+      : undefined;
+
   const setModel = (choice: { model: string; effort: string }) => {
     const h = modelHarness(props.tool?.());
     if (!h)
@@ -1674,6 +1706,8 @@ export const SessionView: Component<{
             me={props.me?.() ?? ""}
             harness={modelHarness(props.tool?.())}
             onSetModel={setModel}
+            stampedModel={piReading()}
+            modelOffer={piOffer()}
             onAttach={attachFiles}
             inertReason={inertReason()}
             register={(api) => (composer = api)}

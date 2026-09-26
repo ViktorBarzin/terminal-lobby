@@ -8,7 +8,7 @@ import { ContextMeter } from "./ContextMeter";
 import type { ContextState } from "./context.logic";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { ModelMenu } from "./ModelMenu";
-import type { ModelField, ModelHarness, ModelState } from "../lib/models";
+import type { ModelField, ModelHarness, ModelState, PiOffer } from "../lib/models";
 
 /**
  * The LIVE session's composer: everything that only means something once there
@@ -76,6 +76,8 @@ export const Composer: Component<{
   /** What that CLI reports being on, and whether a change is in flight. */
   model?: ModelState;
   modelBusy?: boolean;
+  /** Pi's rows: the models pi lists and the levels the session supports. */
+  modelOffer?: PiOffer;
   /** Put the session on a model or an effort level. */
   onPickModel?: (field: ModelField, id: string) => void;
   /** Directory listing for `@` path completion. */
@@ -178,6 +180,7 @@ export const Composer: Component<{
                   state={() => props.model}
                   busy={() => props.modelBusy === true}
                   onPick={(field, id) => props.onPickModel?.(field, id)}
+                  offer={() => props.modelOffer}
                   inertReason={props.inertReason}
                 />
               )}
