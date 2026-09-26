@@ -1,14 +1,18 @@
 import { createMemo, createSignal, For, Show, type Component } from "solid-js";
 import { Markdown } from "./Markdown";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
-import type {
-  MetaRow,
-  PlanRow,
-  QuestionRow,
-  ThinkingRow,
-  TodoRow,
-  ToolRow,
-  TurnFoldRow,
+import {
+  planHeader,
+  planSummary,
+  shownPlanOutcome,
+  type MetaRow,
+  type PlanRow,
+  type PlanTransient,
+  type QuestionRow,
+  type ThinkingRow,
+  type TodoRow,
+  type ToolRow,
+  type TurnFoldRow,
 } from "./timeline.logic";
 import { basename } from "../store/preview.logic";
 
@@ -467,19 +471,85 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
   );
 };
 
-export const PlanRowView: Component<{ row: PlanRow }> = (props) => (
-  <div class="tl-row tl-row-plan" data-eid={props.row.id}>
-    <div class="tl-plan-head">
-      <span class="tl-plan-chip">Plan</span>
-      <Show when={props.row.pending}>
-        <span class="tl-plan-state">awaiting approval</span>
+/**
+ * A plan put up for approval, and what became of it
+ * (docs/plans/2026-09-24-text-composer-redesign.md, "Outcomes in the
+ * timeline").
+ *
+ * Pending, it shows the whole plan. While the plan card is docked below, the
+ * card is showing the same plan with its choices, so the row shrinks to one
+ * line saying where to look. Once answered, the header says how, and the body
+ * folds to its first line: the plan was read when it was answered, and a long
+ * one would otherwise stand between the reader and what Claude did with it.
+ *
+ * `transient` is this client's own answer, applied and not in the transcript
+ * yet (shownPlanOutcome). It wins over the docked stub, since the card
+ * undocks the moment the answer applies.
+ */
+export const PlanRowView: Component<{
+  row: PlanRow;
+  /** The plan card docked above the composer is showing this row's plan. */
+  docked?: boolean;
+  transient?: PlanTransient;
+}> = (props) => {
+  const outcome = createMemo(() => shownPlanOutcome(props.row, props.transient));
+  const open = () => outcome().kind === "pending";
+  const stub = () => open() && props.docked === true;
+  const summary = createMemo(() => planSummary(props.row.body));
+  const [expanded, setExpanded] = createSignal(false);
+  const feedback = () => {
+    const o = outcome();
+    return o.kind === "sent-back" ? o.feedback : "";
+  };
+  return (
+    <div
+      class="tl-row tl-row-plan"
+      data-eid={props.row.id}
+      data-outcome={outcome().kind}
+      data-docked={stub() ? "true" : undefined}
+    >
+      <div class="tl-plan-head">
+        <Show
+          when={open()}
+          fallback={
+            <span class="tl-plan-outcome" data-outcome={outcome().kind}>
+              {planHeader(outcome())}
+            </span>
+          }
+        >
+          <span class="tl-plan-chip">Plan</span>{" "}
+          <span class="tl-plan-state">
+            waiting for your approval{stub() ? " · shown below" : ""}
+          </span>
+        </Show>
+      </div>
+      <Show when={feedback()}>
+        <blockquote class="tl-plan-feedback">{feedback()}</blockquote>
+      </Show>
+      <Show when={!stub()}>
+        <Show
+          when={open() || expanded()}
+          fallback={<div class="tl-plan-summary">{summary().line}</div>}
+        >
+          <div class="tl-plan-body">
+            <Markdown text={props.row.body} />
+          </div>
+        </Show>
+        <Show when={!open() && summary().more}>
+          <button
+            type="button"
+            class="tl-linkbtn tl-plan-toggle"
+            aria-expanded={expanded()}
+            data-scroll-anchor-ignore
+            onClick={() => setExpanded((v) => !v)}
+          >
+            {expanded() ? "Hide plan" : "Show plan"}
+          </button>
+        </Show>
       </Show>
     </div>
-    <div class="tl-plan-body">
-      <Markdown text={props.row.body} />
-    </div>
-  </div>
-);
+  );
+};
 
 /* Keyed by the whole MetaKind because the wire contract carries all of them.
    `mode` and `permission-mode` no longer reach this view: deriveRows drops

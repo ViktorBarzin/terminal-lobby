@@ -4739,6 +4739,53 @@ body.tl-kb-up {
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
+/* The accent border marks a plan still asking for an answer. Once answered it
+   is a record, and quieter than the live card below it. */
+.tl-row-plan:not([data-outcome="pending"]) {
+  border-color: var(--border);
+}
+/* The plan card docked above the composer shows this plan with its choices,
+   so the row is one line pointing at it. */
+.tl-row-plan[data-docked="true"] {
+  border-style: dashed;
+  padding-block: 6px;
+}
+.tl-row-plan[data-docked="true"] .tl-plan-head {
+  margin-bottom: 0;
+}
+.tl-plan-outcome {
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.tl-plan-outcome[data-outcome="approved"] {
+  color: var(--success);
+}
+.tl-plan-outcome[data-outcome="rejected"],
+.tl-plan-outcome[data-outcome="superseded"] {
+  color: var(--text-muted);
+}
+.tl-plan-outcome[data-outcome="transient"] {
+  color: var(--text-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+.tl-plan-feedback {
+  margin: 0 0 6px;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid var(--border-strong);
+  color: var(--text-primary);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tl-plan-summary {
+  color: var(--text-muted);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* A skill load, marked as a skill.
    Its own card rather than the hairline the other lifecycle markers get: a

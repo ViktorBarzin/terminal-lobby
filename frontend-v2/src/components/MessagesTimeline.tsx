@@ -26,6 +26,7 @@ import {
   type MetaRow,
   type PermissionRow,
   type PlanRow,
+  type PlanTransient,
   type QuestionRow,
   type StatusRow,
   type ThinkingRow,
@@ -50,6 +51,10 @@ import {
 } from "./rows";
 
 const USER_COLLAPSE_CHARS = 600;
+
+/** A plan row's call id, which the dock and this client's answer name it by. */
+const planToolId = (row: TimelineRow): string | undefined =>
+  row.kind === "plan" ? row.toolId : undefined;
 
 const UserRowView: Component<{
   row: UserRow;
@@ -308,6 +313,12 @@ export const MessagesTimeline: Component<{
   /** Prompts waiting in Claude's queue, oldest first, drawn as ghost bubbles
    *  after the last row. */
   queued?: string[];
+  /** The ExitPlanMode call whose plan the docked plan card is showing
+   *  (decidePlanDock). Its row shrinks to one line meanwhile. */
+  planDocked?: string | null;
+  /** This client's plan answer, applied and not in the transcript yet, and the
+   *  call it answered (shownPlanOutcome). */
+  planAnswer?: { toolId: string; action: PlanTransient } | null;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -573,7 +584,17 @@ export const MessagesTimeline: Component<{
       case "question":
         return <QuestionRowView row={row() as QuestionRow} />;
       case "plan":
-        return <PlanRowView row={row() as PlanRow} />;
+        return (
+          <PlanRowView
+            row={row() as PlanRow}
+            docked={props.planDocked != null && planToolId(row()) === props.planDocked}
+            transient={
+              props.planAnswer && props.planAnswer.toolId === planToolId(row())
+                ? props.planAnswer.action
+                : undefined
+            }
+          />
+        );
       case "meta":
         return <MetaRowView row={row() as MetaRow} />;
       case "permission":

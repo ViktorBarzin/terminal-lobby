@@ -134,6 +134,9 @@ export interface PlanRow {
   kind: "plan";
   key: string;
   id: number;
+  /** The ExitPlanMode call's id, which the plan card's dock and this client's
+   *  own answer name the row by. */
+  toolId?: string;
   /**
    * The plan as the reader should see it: the approved text once approved
    * (`toolUseResult.plan`, which carries edits made in the CLI with ctrl+g),
@@ -550,6 +553,7 @@ function collectTurnRows(turn: Turn): {
             kind: "plan",
             key: `plan-${e.toolId || e.id}`,
             id: e.id,
+            ...(e.toolId ? { toolId: e.toolId } : {}),
             body: text,
             pending: true,
             outcome: { kind: "pending" },
@@ -1003,6 +1007,22 @@ export function planHeader(outcome: PlanOutcome): string {
     case "transient":
       return TRANSIENT_HEADER[outcome.action];
   }
+}
+
+/**
+ * The line a resolved plan row folds to: the plan's first non-blank line,
+ * without the markdown that would draw it as a heading or in bold, and whether
+ * anything follows it.
+ */
+export function planSummary(body: string): { line: string; more: boolean } {
+  const lines = body.split("\n").filter((l) => l.trim() !== "");
+  const first = lines[0] ?? "";
+  const line = first
+    .trim()
+    .replace(/^(#{1,6}|>|[-*+]|\d+[.)])\s+/, "")
+    .replace(/(\*\*|__|`)/g, "")
+    .trim();
+  return { line, more: lines.length > 1 };
 }
 
 /** How an approval's header names the mode it chose. */
