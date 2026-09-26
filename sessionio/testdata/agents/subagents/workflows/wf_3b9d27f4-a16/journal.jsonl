@@ -1,0 +1,5 @@
+{"type":"launched"}
+{"type":"started","key":"v2:2121212121212121212121212121212121212121212121212121212121212121","agentId":"a3c5e7f9b1d3c0021","label":"classify files","phase":"Survey"}
+{"type":"result","key":"v2:2121212121212121212121212121212121212121212121212121212121212121","agentId":"a3c5e7f9b1d3c0021","result":{"delete":["frontend/term.html"],"keep":[]}}
+{"type":"started","key":"v2:2222222222222222222222222222222222222222222222222222222222222222","agentId":"a3c5e7f9b1d3c0022","label":"frontend source","phase":"Delete"}
+{"type":"started","key":"v2:2323232323232323232323232323232323232323232323232323232323232323","agentId":"a3c5e7f9b1d3c0023","label":"docs and the ADR","phase":"Delete"}

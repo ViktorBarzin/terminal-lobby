@@ -180,11 +180,105 @@ func acceptsGzip(r *http.Request) bool {
 	return false
 }
 
-func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Duration, onOpen ...func(bytes, count int)) {
+// AgentFrameEvery is the most often one stream is sent an agents frame. The set
+// moves with every tool call of every agent, and the panel ticks its own
+// elapsed clock, so a second is as fresh as a glance needs.
+const AgentFrameEvery = time.Second
+
+// agentFeed is the read side of a session's agent set (agentWatch is the real
+// one). An interface so the SSE layer is tested without agent files.
+type agentFeed interface {
+	// Current is the newest set, its version, and whether it is fresh enough
+	// to send.
+	Current() (sessionio.AgentSet, uint64, bool)
+	// Subscribe signals after every scan of the set, whether or not it moved.
+	Subscribe() (<-chan struct{}, func())
+}
+
+// agentPacer decides when a stream's next agents frame may go: the first one at
+// once, a changed set at most once per AgentFrameEvery, an unchanged one never.
+type agentPacer struct {
+	sent bool
+	ver  uint64
+	at   time.Time
+}
+
+// due reports whether the set at version ver goes out now, and when it has to
+// wait, for how long.
+func (p *agentPacer) due(ok bool, ver uint64, now time.Time) (send bool, wait time.Duration) {
+	switch {
+	case !ok, p.sent && ver == p.ver:
+		return false, 0
+	case !p.sent:
+		return true, 0
+	}
+	if since := now.Sub(p.at); since < AgentFrameEvery {
+		return false, AgentFrameEvery - since
+	}
+	return true, 0
+}
+
+func (p *agentPacer) mark(ver uint64, now time.Time) { p.sent, p.ver, p.at = true, ver, now }
+
+// agentStream is one stream's side of the agent feed: what the pacer last let
+// through, and the timer holding back a change that came too soon. The zero
+// value is a stream without the feed, whose channels are nil and never fire.
+type agentStream struct {
+	feed  agentFeed
+	sig   <-chan struct{}
+	pacer agentPacer
+	timer *time.Timer
+	due   <-chan time.Time // the timer's channel while it is armed
+}
+
+// offer writes the current set if the pacer lets it go now, and arms the timer
+// when a change has to wait. It reports whether a frame was written.
+func (a *agentStream) offer(sink *sseSink, now time.Time) bool {
+	if a.feed == nil {
+		return false
+	}
+	set, ver, ok := a.feed.Current()
+	send, wait := a.pacer.due(ok, ver, now)
+	if !send {
+		if wait > 0 && a.due == nil {
+			a.timer = time.NewTimer(wait)
+			a.due = a.timer.C
+		}
+		return false
+	}
+	a.stop()
+	// Stamped as it is written, not when the set was built: the client takes
+	// its clock's skew from this, and a set built a second earlier would put
+	// that second into every elapsed figure it draws.
+	set.At = now.UnixMilli()
+	sinkFrame(sink, "agents", set)
+	a.pacer.mark(ver, now)
+	return true
+}
+
+func (a *agentStream) stop() {
+	if a.timer != nil {
+		a.timer.Stop()
+	}
+	a.timer, a.due = nil, nil
+}
+
+func writeSSE(w http.ResponseWriter, r *http.Request, src Source, agents agentFeed, hb time.Duration, onOpen ...func(bytes, count int)) {
+	sink, ok := openSSE(w, r)
+	if !ok {
+		return
+	}
+	defer sink.close()
+	streamSSE(sink, r, src, agents, hb, onOpen...)
+}
+
+// openSSE starts an event-stream response: the headers, gzip when the client
+// offered it, and the status. The caller closes the sink when it is done.
+func openSSE(w http.ResponseWriter, r *http.Request) (*sseSink, bool) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
-		return
+		return nil, false
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -199,14 +293,30 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 		gz := gzip.NewWriter(w)
 		sink.gz = gz
 		sink.w = gz
-		defer sink.close()
 	}
 	w.WriteHeader(http.StatusOK)
+	return sink, true
+}
 
+// streamSSE is writeSSE after the response has started: the opening exchange
+// the request asked for, then the live tail until the client goes.
+func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb time.Duration, onOpen ...func(bytes, count int)) {
 	// Subscribe BEFORE replaying so no event appended in between is lost; then
 	// skip any live event whose ID was already covered by the replay (dedup).
 	ch, cancel := src.Subscribe()
 	defer cancel()
+
+	// The agent panel's set rides on the reverse open only. An older bundle has
+	// no state frame for it to follow and no panel to feed. Subscribed here, for
+	// the same reason as the event channel above: a change landing during the
+	// opening exchange must not be missed.
+	var ag agentStream
+	if agents != nil && reverseOpen(r) {
+		sig, release := agents.Subscribe()
+		defer release()
+		ag.feed, ag.sig = agents, sig
+	}
+	defer ag.stop()
 
 	var lastID int64
 	var openBytes, openCount int
@@ -233,8 +343,10 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 		// Backfilling it would drop exactly what it reconnected to collect, so
 		// the resume stays forward — but the state frame still rides along,
 		// because a disconnected client may have missed a mode change or a
-		// queue operation with no row of its own.
+		// queue operation with no row of its own. The agents ride along for
+		// the same reason.
 		sinkFrame(sink, "state", src.State(StatePrompts))
+		ag.offer(sink, time.Now())
 		sink.flush()
 		for _, e := range src.Replay(resume) {
 			sink.printf("id: %d\ndata: %s\n\n", e.ID, e.JSON())
@@ -252,7 +364,14 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 		// composer, the mode chip and the context meter are usable the moment it
 		// lands — then history from the newest event backwards, so the first
 		// row a reader sees is the last thing that happened.
+		//
+		// The agent set follows the state frame when the watch already has a
+		// fresh one. When it does not (its first read of a large agent
+		// transcript is still running, or nobody had been watching), nothing
+		// here waits for it: the first set goes out from the loop below the
+		// moment the watch publishes one.
 		sinkFrame(sink, "state", src.State(StatePrompts))
+		ag.offer(sink, time.Now())
 		sink.flush()
 		b := src.Backfill(0, OpenBackfillBytes)
 		for i := len(b.Events) - 1; i >= 0; i-- {
@@ -298,6 +417,15 @@ func writeSSE(w http.ResponseWriter, r *http.Request, src Source, hb time.Durati
 			sink.printf("id: %d\ndata: %s\n\n", e.ID, e.JSON())
 			lastID = e.ID
 			sink.flush()
+		case <-ag.sig:
+			if ag.offer(sink, time.Now()) {
+				sink.flush()
+			}
+		case <-ag.due:
+			ag.stop()
+			if ag.offer(sink, time.Now()) {
+				sink.flush()
+			}
 		case <-ticker.C:
 			sink.print(": hb\n\n")
 			sink.flush()

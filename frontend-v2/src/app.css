@@ -1370,7 +1370,9 @@ label.tl-set-row-label {
    own #font-pill: it appears on the claim and fades when the fingers lift. */
 /* Between the timeline and the composer: what the session is still doing after
    the transcript has gone quiet. Sits in the flow rather than floating, because
-   it is a statement about the conversation and not a transient. */
+   it is a statement about the conversation and not a transient. Drawn only
+   while the agent panel is absent (TextView), since the panel names the same
+   work. */
 .tl-bg-strip {
   display: flex;
   align-items: center;
@@ -1381,6 +1383,576 @@ label.tl-set-row-label {
   font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
   border-top: 1px solid var(--border-subtle, var(--border-strong));
+}
+
+/* ---- The agent panel (Marginalia) --------------------------------------
+   docs/plans/2026-09-12-agent-workflow-visualisation-design.md, prototype
+   docs/plans/assets/agent-panel/p1-ambient.html. The right margin of the
+   reading column: text on the page, a hairline to make it a field, and a 2px
+   spine per entry in the agent's own colour whose indent draws the tree. No
+   card, no background, no badges. Below 900px of text view it folds into a
+   strip above the transcript (TextView RAIL_MIN_PX).
+
+   The transcript and the panel share a row, so the timeline keeps its own
+   scroll and the panel scrolls on its own beside it. */
+.tl-textview-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.tl-textview-body > .tl-timeline {
+  min-width: 0;
+}
+.tl-textview-body-strip {
+  flex-direction: column;
+}
+.tl-agents {
+  /* Claude Code names a colour per agent; these are the fixed mapping, the
+     prototype's, and legible as a 2px rule on the light themes too. */
+  --tl-agent-blue: #4493f8;
+  --tl-agent-green: #56d364;
+  --tl-agent-yellow: #e3b341;
+  --tl-agent-purple: #a371f7;
+  --tl-agent-orange: #e8833a;
+  --tl-agent-pink: #f778ba;
+  --tl-agent-cyan: #39c5cf;
+  --tl-agent-red: #ff7b72;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-agents[data-form="rail"] {
+  flex: none;
+  width: 260px;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 14px 22px 11px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+.tl-agents[data-form="strip"] {
+  order: -1; /* above the transcript, which comes first in the markup */
+  flex: none;
+  border-bottom: 1px solid var(--border);
+}
+/* The tally: one tick per agent, the whole glance in one line. */
+.tl-agents-tally {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-page);
+  padding: 13px 0 9px 14px;
+}
+.tl-agents-ticks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: flex-end;
+  min-height: 11px;
+}
+.tl-agents-tally .tl-agents-ticks {
+  margin-bottom: 7px;
+}
+.tl-agents-tick {
+  flex: none;
+  width: 3px;
+  height: 11px;
+  border-radius: 1px;
+  background: var(--tick, var(--text-muted));
+}
+.tl-agents-tick[data-quiet="true"] {
+  opacity: 0.34;
+}
+.tl-agents-tick[data-kind="failed"] {
+  background: var(--danger);
+}
+.tl-agents-tick[data-kind="done"] {
+  height: 4px;
+  opacity: 0.26;
+  background: var(--text-muted);
+}
+.tl-agents-more {
+  align-self: center;
+  margin-left: 1px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(9.5px * var(--tl-text-scale, 1));
+  opacity: 0.55;
+}
+.tl-agents-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tl-agents-count {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.tl-agents-tokens {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
+  opacity: 0.65;
+}
+.tl-agents-list {
+  display: flex;
+  flex-direction: column;
+}
+/* An entry. POSITIONED, because its spine is an absolute ::before and the
+   nearest positioned ancestor otherwise is .tl-textview itself (see the
+   QuestionCard multi-select note: a decoration with no positioned parent is a
+   view-sized box). */
+.tl-agent {
+  position: relative;
+  border-radius: 0 5px 5px 0;
+}
+/* The whole entry is one button, so the tap that opens the agent's own
+   transcript lands on the row the reader is looking at. The entry's padding
+   lives here for that reason: the tint and the tap cover the same box. */
+.tl-agent-open {
+  display: block;
+  width: 100%;
+  padding: 6px 2px 7px calc(16px + var(--indent, 0) * 11px);
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-agent-open:disabled {
+  cursor: default;
+}
+.tl-agent-open:enabled:hover,
+.tl-agent[data-open="true"] > .tl-agent-open,
+.tl-agents-member[data-open="true"] > .tl-agent-open {
+  background: var(--hover-tint);
+}
+.tl-agent-open:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.tl-agent::before {
+  content: "";
+  position: absolute;
+  left: calc(var(--indent, 0) * 11px);
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--spine, var(--border-strong));
+}
+.tl-agent[data-ended="true"]::before {
+  background: var(--border-strong);
+}
+.tl-agent[data-failed="true"]::before {
+  background: var(--danger);
+}
+/* The title's line: the description, and beside it the elapsed cell. */
+.tl-agent-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tl-agent-title {
+  flex: 1;
+  min-width: 0;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.33;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.tl-agent[data-ended="true"] .tl-agent-title {
+  color: color-mix(in srgb, var(--text-primary) 46%, transparent);
+}
+.tl-agent-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 2px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+}
+/* The volatile string truncates, never wraps, so a new tool call cannot
+   change the height of a row. */
+.tl-agent-act {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-agent[data-failed="true"] .tl-agent-act {
+  color: color-mix(in srgb, var(--danger) 82%, transparent);
+}
+.tl-agent-num,
+.tl-agent-time {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.72;
+}
+.tl-agent-time {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+}
+/* The faint chevron that says an entry opens, brighter under the pointer. It
+   keeps its cell when there is nothing to open, so the elapsed cell beside it
+   does not shift the moment a queued agent starts. */
+.tl-agent-go {
+  flex: none;
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  line-height: 1;
+  opacity: 0.22;
+}
+.tl-agent-open:enabled:hover .tl-agent-go,
+.tl-agent-open:focus-visible .tl-agent-go,
+.tl-agent[data-open="true"] .tl-agent-go {
+  opacity: 0.9;
+}
+.tl-agent-open:disabled .tl-agent-go {
+  visibility: hidden;
+}
+/* Anything that ticks sits in a fixed-width cell, so changing digits never
+   push the activity line about. */
+.tl-agents-elapsed {
+  display: inline-block;
+  min-width: 6ch;
+  text-align: right;
+}
+/* A workflow: a grey spine for the run, one muted line per live member. */
+.tl-agents-run {
+  position: relative;
+  margin-top: 2px;
+  padding: 17px 2px 4px 16px;
+}
+.tl-agents-run::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 17px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-strong);
+}
+.tl-agents-run-k {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.tl-agents-run-num {
+  flex: none;
+  margin-left: auto;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.62;
+}
+.tl-agents-run-title {
+  margin-top: 3px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.33;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+/* Nothing describes the run yet, so its title is its id: a handle, drawn as
+   one rather than as a description. */
+.tl-agents-run-title[data-id="true"] {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  font-weight: 400;
+  color: inherit;
+  opacity: 0.6;
+}
+.tl-agents-phase {
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 8px 2px 2px 16px;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.tl-agents-phase::before,
+.tl-agents-fold::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--border-strong);
+}
+.tl-agents-phase[data-state="done"] {
+  opacity: 0.45;
+}
+.tl-agents-phase[data-state="waiting"] {
+  opacity: 0.3;
+}
+.tl-agents-phase-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-agents-phase-status {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.8;
+}
+/* Here the figure follows words, "3 running · 15s", so it starts at the left
+   of its cell: right-aligned, a figure under a minute left a gap inside the
+   phrase. The cell keeps its width, so the words still never move. */
+.tl-agents-phase-status .tl-agents-elapsed {
+  text-align: left;
+}
+.tl-agents-member {
+  position: relative;
+  border-radius: 0 5px 5px 0;
+}
+.tl-agents-member > .tl-agent-open {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 2px 2px 14px;
+}
+.tl-agents-member[data-open="true"] .tl-agents-member-title {
+  color: var(--text-primary);
+}
+.tl-agents-member::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 1px;
+  bottom: 1px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--spine, var(--border-strong));
+}
+.tl-agents-member-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+}
+.tl-agents-member-act {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  opacity: 0.8;
+}
+.tl-agents-member[data-failed="true"] .tl-agents-member-act {
+  color: var(--danger);
+  opacity: 1;
+}
+.tl-agents-fold {
+  position: relative;
+  padding: 3px 2px 3px 16px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(10px * var(--tl-text-scale, 1));
+  opacity: 0.62;
+}
+/* Everything finished, as one line that opens. */
+.tl-agents-donebar {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 11px 2px 6px 16px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-agents-donebar:hover {
+  color: var(--text-primary);
+}
+.tl-agents-donebar-count {
+  flex: 1;
+}
+.tl-agents-caret {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-transform: none;
+  opacity: 0.6;
+}
+/* The narrow form: the tally and a label on one line, opening into the list. */
+.tl-agents-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 30px;
+  padding: 6px clamp(12px, 6vw, 80px);
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-agents-bar:hover {
+  background: var(--hover-tint);
+}
+.tl-agents-bar .tl-agents-ticks {
+  flex: none;
+  flex-wrap: nowrap;
+}
+.tl-agents-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+}
+.tl-agents-open {
+  max-height: min(46vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 clamp(12px, 6vw, 80px) 10px;
+  border-top: 1px solid var(--border);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+/* The drill-in (AgentTranscript.tsx): one agent's transcript in the session's
+   place, the session's own timeline hidden behind it. The header stays put
+   while the transcript scrolls under it, so the way back is always on screen,
+   and it lines up with the reading column below it. */
+.tl-drill {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.tl-drill-head {
+  flex: none;
+  padding: 12px clamp(12px, 6vw, 80px) 11px;
+  border-bottom: 1px solid var(--border);
+}
+/* The reading column's own width, as the timeline's rows have it. */
+.tl-drill-inner {
+  max-width: 860px;
+  margin: 0 auto;
+}
+.tl-drill-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  cursor: pointer;
+}
+.tl-drill-back:hover {
+  color: var(--text-primary);
+  background: var(--hover-tint);
+}
+.tl-drill-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The agent's spine, the same 2px rule its panel entry carries. */
+.tl-drill-id {
+  position: relative;
+  margin-top: 10px;
+  padding-left: 16px;
+}
+.tl-drill-id::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 2px;
+  bottom: 2px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--spine, var(--border-strong));
+}
+.tl-drill-kind {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+.tl-drill-tag {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  text-transform: none;
+  letter-spacing: 0;
+  opacity: 0.6;
+}
+.tl-drill-title {
+  margin-top: 4px;
+  font-size: calc(17px * var(--tl-text-scale, 1));
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+.tl-drill-meta {
+  margin-top: 5px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+/* Content-box, so the line starts where the header's column does. */
+.tl-drill-missing {
+  box-sizing: content-box;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px clamp(12px, 6vw, 80px);
+  color: var(--text-muted);
+  font-style: italic;
 }
 .tl-size-pill {
   position: absolute;

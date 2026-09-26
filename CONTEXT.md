@@ -814,6 +814,33 @@ The live row standing for a turn in flight: the tool currently running, an
 elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text.
 
+**Agent panel**:
+The surface in the text view that names a session's concurrent work and says
+what each piece is doing now: the `Agent` subagents and teammates the session
+spawned and the `Workflow` runs it started, read from the session directory
+rather than the transcript. It sits in the right margin of the reading column,
+or as a strip above the transcript when the view is too narrow for a margin.
+It is there only while something in it is running and the session still owes
+work, meaning a turn is open or **Outstanding work** is counted, so an agent
+whose session was killed mid-run does not show as running. It shows elapsed
+time and last activity, and never says an agent is stuck. Background `Bash`
+commands and the session's own schedules are not in it.
+_Avoid_: task list, agent tree, activity panel
+
+**Live activity**:
+The one-line answer to "what is this agent doing right now", read from the
+last `tool_use` block in the agent's own **agent transcript**. Distinct from
+**Outstanding work**, which is the count-only signal the state dot uses.
+_Avoid_: status, progress (nothing here has a denominator)
+
+**Agent transcript**:
+The per-agent JSONL under a session's `subagents/` directory, holding
+everything one subagent said and did. A session has one conversation and any
+number of agent transcripts beside it. Tapping an agent in the **Agent panel**
+shows its agent transcript in the conversation's place, read only, until Back.
+_Avoid_: sidechain (that names a record flag that never appears here),
+subsession
+
 **Blocking prompt**:
 Something the CLI is waiting on a human for, which the transcript does not
 report while it is pending — a permission prompt, or an `AskUserQuestion`

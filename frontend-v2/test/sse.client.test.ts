@@ -30,10 +30,7 @@ class FakeSource implements EventSourceLike {
 /** Resolve everything queued behind the (async) failure classification. */
 const flush = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
-function harness(
-  probe: () => number | null = () => 200,
-  over: Partial<SseClientOptions> = {},
-) {
+function harness(probe: () => number | null = () => 200, over: Partial<SseClientOptions> = {}) {
   const sources: FakeSource[] = [];
   const timers: { fn: () => void; ms: number }[] = [];
   const received: Event[] = [];
@@ -482,5 +479,55 @@ describe("SseClient resync", () => {
 
     expect(resets).toHaveLength(0);
     expect(h.client.cursor).toBe(5000);
+  });
+});
+
+/**
+ * The agent panel's frame (design step 2 puts it on the wire): a named
+ * `agents` event carrying the whole set. It arrives after `state` on every
+ * open and again on change, and it is not part of the id space, so nothing
+ * about it touches the cursor.
+ */
+describe("the agents frame", () => {
+  const frame = {
+    at: 1_790_000_000_000,
+    agents: [{ id: "a1", description: "Find prior art", state: "running", tool: "Read" }],
+    workflows: [],
+  };
+
+  it("hands the parsed set to onAgents", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onAgents: (a) => got.push(a) });
+    h.client.connect();
+    h.sources[0]!.emit("agents", frame);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toMatchObject({ at: 1_790_000_000_000, agents: [{ id: "a1", tool: "Read" }] });
+  });
+
+  it("leaves the cursor alone", () => {
+    const h = harness(() => 200, { onAgents: () => {} });
+    h.client.connect();
+    h.sources[0]!.onmessage?.({ data: line({ id: 7, kind: "text", body: "a" }) });
+    h.sources[0]!.emit("agents", frame);
+    expect(h.client.cursor).toBe(7);
+  });
+
+  it("drops a frame that is not a set", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onAgents: (a) => got.push(a) });
+    h.client.connect();
+    h.sources[0]!.emit("agents", 42);
+    h.sources[0]!.emit("agents", [frame]);
+    expect(got).toEqual([]);
+  });
+
+  it("counts the frame as proof the stream is alive", () => {
+    const h = harness(() => 200, { onAgents: () => {}, stallTimeoutMs: 1000 });
+    h.client.connect();
+    h.advance(5000);
+    h.sources[0]!.emit("agents", frame);
+    // A wake signal right after it trusts the stream rather than rebuilding it.
+    h.client.instantRetry();
+    expect(h.sources).toHaveLength(1);
   });
 });

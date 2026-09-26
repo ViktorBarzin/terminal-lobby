@@ -206,3 +206,139 @@ func TestCataloguRefusesACwdThatSymlinksOutOfTheHome(t *testing.T) {
 		t.Error("a cwd that resolves outside the home must be refused")
 	}
 }
+
+// mkSessionDir lays out one session directory under a fake home's projects
+// root, the way Claude Code writes it: an ad-hoc agent with its sidecar, and a
+// workflow member with the run file and the run's script. It returns (home,
+// sessionDir).
+func mkSessionDir(t *testing.T) (string, string) {
+	t.Helper()
+	home, transcript := mkHome(t, `{}`)
+	dir := sessionio.SessionDir(transcript)
+	for name, body := range map[string]string{
+		"subagents/agent-a1.jsonl":                     "{}\n",
+		"subagents/agent-a1.meta.json":                 `{"agentType":"Explore","description":"look"}`,
+		"subagents/workflows/wf_r1/agent-m1.jsonl":     "{}\n",
+		"subagents/workflows/wf_r1/agent-m1.meta.json": `{}`,
+		"workflows/wf_r1.json":                         `{"runId":"r1"}`,
+		"workflows/scripts/check-change-wf_r1.js":      "export const meta = { name: 'check-change' }\n",
+	} {
+		p := filepath.Join(dir, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return home, dir
+}
+
+// The agent panel needs another user's session directory listed and its small
+// JSON files read, as that user: ReadFrom returns complete lines only, and a
+// sidecar or a run file never ends in one.
+func TestPrivopListsASessionsAgentFiles(t *testing.T) {
+	home, dir := mkSessionDir(t)
+
+	resp := ask(t, home, privRequest{Op: "listagents", Path: dir})
+	if !resp.OK {
+		t.Fatalf("refused a legitimate listing: %s", resp.Err)
+	}
+	var names []string
+	for _, f := range resp.Files {
+		names = append(names, f.Name)
+		if f.Size <= 0 || f.MTime <= 0 {
+			t.Errorf("%s came back without its size or mtime: %+v", f.Name, f)
+		}
+	}
+	want := []string{
+		"subagents/agent-a1.jsonl", "subagents/agent-a1.meta.json",
+		"subagents/workflows/wf_r1/agent-m1.jsonl", "subagents/workflows/wf_r1/agent-m1.meta.json",
+		"workflows/scripts/check-change-wf_r1.js", "workflows/wf_r1.json",
+	}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Fatalf("listing = %v, want %v", names, want)
+	}
+}
+
+func TestPrivopReadsASmallFileUnderItsRoot(t *testing.T) {
+	home, dir := mkSessionDir(t)
+
+	resp := ask(t, home, privRequest{Op: "readsmall", Path: filepath.Join(dir, "subagents", "agent-a1.meta.json")})
+	if !resp.OK {
+		t.Fatalf("refused a sidecar: %s", resp.Err)
+	}
+	if string(resp.Blob) != `{"agentType":"Explore","description":"look"}` {
+		t.Fatalf("blob = %q", resp.Blob)
+	}
+
+	// A run's script, which names the run and its phases before the run file
+	// exists. It is the script the session's own transcript already carries,
+	// as the Workflow call's input, so reading it shows no one anything new.
+	resp = ask(t, home, privRequest{Op: "readsmall", Path: filepath.Join(dir, "workflows", "scripts", "check-change-wf_r1.js")})
+	if !resp.OK || string(resp.Blob) != "export const meta = { name: 'check-change' }\n" {
+		t.Fatalf("a run's script: ok %v, err %q, blob %q", resp.OK, resp.Err, resp.Blob)
+	}
+}
+
+// The same boundary every other operation keeps: the parent names the path,
+// so the child refuses anything outside its own projects root, and a whole
+// read is further held to the JSON documents it exists for. A transcript is
+// not one of them; readfrom already serves those, in bounded steps.
+func TestPrivopRefusesAgentReadsOutsideItsProjectsRoot(t *testing.T) {
+	home, dir := mkSessionDir(t)
+	root := filepath.Join(home, ".claude", "projects")
+	secret := filepath.Join(home, "secret.json")
+	if err := os.WriteFile(secret, []byte(`{"token":"x"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "subagents", "agent-escape.meta.json")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	linkedDir := filepath.Join(root, "-home-bob", "escape")
+	if err := os.Symlink(home, linkedDir); err != nil {
+		t.Fatal(err)
+	}
+	big := filepath.Join(dir, "workflows", "wf_big.json")
+	if err := os.WriteFile(big, []byte(strings.Repeat(" ", sessionio.MaxSmallFile+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	strayScript := filepath.Join(dir, "subagents", "check-change-wf_r1.js")
+	helper := filepath.Join(dir, "workflows", "scripts", "helper.js")
+	outsideScript := filepath.Join(home, "workflows", "scripts", "check-change-wf_r1.js")
+	for _, p := range []string{strayScript, helper, outsideScript} {
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("export const meta = {}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, tc := range []struct {
+		name string
+		req  privRequest
+	}{
+		{"a listing of /etc", privRequest{Op: "listagents", Path: "/etc"}},
+		{"a listing of the home", privRequest{Op: "listagents", Path: home}},
+		{"a listing that climbs out", privRequest{Op: "listagents", Path: filepath.Join(root, "..", "..")}},
+		{"a relative listing", privRequest{Op: "listagents", Path: "-home-bob/abc"}},
+		{"a listing through a link out of the root", privRequest{Op: "listagents", Path: linkedDir}},
+		{"a whole read of /etc/passwd", privRequest{Op: "readsmall", Path: "/etc/passwd"}},
+		{"a whole read of a JSON file outside the root", privRequest{Op: "readsmall", Path: secret}},
+		{"a whole read through a link out of the root", privRequest{Op: "readsmall", Path: link}},
+		{"a whole read of a transcript", privRequest{Op: "readsmall", Path: filepath.Join(dir, "subagents", "agent-a1.jsonl")}},
+		{"a whole read past the cap", privRequest{Op: "readsmall", Path: big}},
+		{"a script that is not under workflows/scripts/", privRequest{Op: "readsmall", Path: strayScript}},
+		{"a .js under workflows/scripts/ that names no run", privRequest{Op: "readsmall", Path: helper}},
+		{"a script outside the root", privRequest{Op: "readsmall", Path: outsideScript}},
+		{"a relative whole read", privRequest{Op: "readsmall", Path: "x/agent-a1.meta.json"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if resp := ask(t, home, tc.req); resp.OK {
+				t.Fatalf("child accepted %+v and answered %+v", tc.req, resp)
+			}
+		})
+	}
+}

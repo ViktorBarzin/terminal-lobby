@@ -1,5 +1,7 @@
 import {
+  parseAgentSet,
   parseEvent,
+  type AgentSet,
   type Event,
   type ReadyFrame,
   type SessionState,
@@ -17,12 +19,7 @@ export type { ReadyFrame, SessionState };
  * until the session registers, which is why it is distinct from
  * `reconnecting`.
  */
-export type SseStatus =
-  | "connecting"
-  | "open"
-  | "reconnecting"
-  | "no-transcript"
-  | "closed";
+export type SseStatus = "connecting" | "open" | "reconnecting" | "no-transcript" | "closed";
 
 /** A named frame's JSON payload, or null when it is not an object at all. */
 function parseJSON<T>(data: string): T | null {
@@ -138,6 +135,13 @@ export interface SseClientOptions {
    * as the rest lands (see store/session.ts).
    */
   onReady?: (r: ReadyFrame) => void;
+  /**
+   * The session's agents and workflow runs, as a whole set (the named
+   * `agents` frame): once on every open and resume, then again whenever the
+   * set changes. Outside the id space, so it never moves the cursor, and a
+   * server that predates it simply never calls this.
+   */
+  onAgents?: (a: AgentSet) => void;
   /** injectable for tests; defaults to the browser EventSource. */
   createSource?: (url: string) => EventSourceLike;
   /** reads the stream URL's HTTP status (null = unreachable). Injectable so
@@ -178,12 +182,12 @@ export class SseClient {
   private readonly o: Required<
     Omit<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset"
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset" | "onAgents"
     >
   > &
     Pick<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset"
+      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset" | "onAgents"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -212,6 +216,7 @@ export class SseClient {
       onBackfill: opts.onBackfill,
       onState: opts.onState,
       onReset: opts.onReset,
+      onAgents: opts.onAgents,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -284,6 +289,11 @@ export class SseClient {
       const s = parseJSON<SessionState>(ev.data);
       if (s) this.o.onState?.(s);
     });
+    es.addEventListener?.("agents", (ev) => {
+      this.markAlive();
+      const a = parseAgentSet(ev.data);
+      if (a) this.o.onAgents?.(a);
+    });
     es.addEventListener?.("ready", (ev) => {
       this.markAlive();
       // A server on the older contract sends the last replayed id here, which
@@ -355,9 +365,7 @@ export class SseClient {
    * and gets the same endless retry ladder.
    */
   private async classifyFailure(): Promise<void> {
-    const status = await this.o.probeStatus(
-      this.o.url(this.o.session, this.lastEventId),
-    );
+    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId));
     // close() or an instantRetry may have overtaken the probe.
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
@@ -366,10 +374,7 @@ export class SseClient {
 
   private scheduleReconnect(): void {
     this.attempt += 1;
-    const backoff = Math.min(
-      this.o.maxDelayMs,
-      this.o.baseDelayMs * 2 ** (this.attempt - 1),
-    );
+    const backoff = Math.min(this.o.maxDelayMs, this.o.baseDelayMs * 2 ** (this.attempt - 1));
     // Full jitter in [backoff/2, backoff] avoids reconnection thundering herds.
     const delay = backoff / 2 + this.o.random() * (backoff / 2);
     this.setStatus("reconnecting");
@@ -398,9 +403,7 @@ export class SseClient {
 
   private async reprobe(): Promise<void> {
     if (this.stopped || this.source) return;
-    const status = await this.o.probeStatus(
-      this.o.url(this.o.session, this.lastEventId),
-    );
+    const status = await this.o.probeStatus(this.o.url(this.o.session, this.lastEventId));
     if (this.stopped || this.source) return;
     if (status === NO_STREAM_STATUS) this.enterNoTranscript();
     else this.connect(); // registered (or unknown) → back to the normal path

@@ -234,4 +234,24 @@ func (p *privReader) Catalogue(cwd string) ([]Command, error) {
 	return resp.Commands, nil
 }
 
-var _ sessionio.Reader = (*privReader)(nil)
+// ListAgentFiles implements sessionio.AgentReader: the agent panel's listing of
+// one session directory, taken as the user who owns it.
+func (p *privReader) ListAgentFiles(sessionDir string) ([]sessionio.AgentFile, error) {
+	resp, err := p.do(privRequest{Op: "listagents", Path: sessionDir})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Files, nil
+}
+
+// ReadSmallFile implements sessionio.AgentReader: an identity sidecar, a
+// workflow run file or a run's script, read whole by the user who owns it.
+func (p *privReader) ReadSmallFile(path string) ([]byte, error) {
+	resp, err := p.do(privRequest{Op: "readsmall", Path: path})
+	if err != nil {
+		return nil, err
+	}
+	return resp.Blob, nil
+}
+
+var _ sessionio.AgentReader = (*privReader)(nil)

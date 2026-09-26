@@ -303,6 +303,64 @@ function answersFrom(payload: unknown): string[] {
   return out;
 }
 
+/** A string field of a JSON object held as text or as a value, "" otherwise. */
+function stringField(v: unknown, key: string): string {
+  const o = typeof v === "string" ? parseJSON(v) : v;
+  const f = o && typeof o === "object" ? (o as Record<string, unknown>)[key] : undefined;
+  return typeof f === "string" ? f : "";
+}
+
+/**
+ * Which call each subagent's work belongs to: agent id to the tool id of the
+ * call that spawned it.
+ *
+ * Read over the whole turn before any row is placed, so two agents running at
+ * once land under their own calls whichever of them wrote first. Three signals,
+ * strongest first. A call's structured result names the agent it started
+ * (`agentId`, on every Agent result on this box). An agent's first record is
+ * the prompt it was given, word for word the call's own `prompt` input. And
+ * failing both, agents and the calls still unclaimed pair in the order they
+ * appeared, which is what a single `host` variable could only ever get right
+ * for one agent at a time.
+ */
+function subagentCalls(events: Event[]): Map<string, string> {
+  const calls: { toolId: string; prompt: string; at: number }[] = [];
+  const out = new Map<string, string>();
+  const firsts: { agentId: string; event: Event; at: number }[] = [];
+  const seen = new Set<string>();
+  events.forEach((e, at) => {
+    if (e.kind === "tool_use" && e.toolId) {
+      if (describeTool(e.tool ?? "", e.body).type === "collab_agent_tool_call") {
+        const prompt = stringField(e.body, "prompt");
+        // A call that spawns nothing (ListAgents, say, which also reads as
+        // agent work) has no agent of its own to claim.
+        if (prompt || e.tool === "Agent" || e.tool === "Task") {
+          calls.push({ toolId: e.toolId, prompt, at });
+        }
+      }
+    }
+    if (e.kind === "tool_result" && e.toolId) {
+      const started = stringField(e.result, "agentId");
+      if (started) out.set(started, e.toolId);
+    }
+    if (e.sidechain && e.agentId && !seen.has(e.agentId)) {
+      seen.add(e.agentId);
+      firsts.push({ agentId: e.agentId, event: e, at });
+    }
+  });
+  const claimed = new Set(out.values());
+  for (const a of firsts) {
+    if (out.has(a.agentId)) continue;
+    const open = calls.filter((c) => c.at < a.at && !claimed.has(c.toolId));
+    const body = a.event.kind === "user" ? (a.event.body ?? "") : "";
+    const call = (body ? open.find((c) => c.prompt === body) : undefined) ?? open[0];
+    if (!call) continue;
+    out.set(a.agentId, call.toolId);
+    claimed.add(call.toolId);
+  }
+  return out;
+}
+
 /**
  * Fold one turn's events into its rows: the user's message, and the work that
  * followed it. Every accumulator here is scoped to the turn, so they are locals
@@ -312,12 +370,14 @@ function collectTurnRows(turn: Turn): {
   userRow: UserRow | null;
   work: LeafRow[];
 } {
-
   let userRow: UserRow | null = null;
   const work: LeafRow[] = [];
   const toolBy = new Map<string, ToolRow>();
-  // The subagent call currently collecting sidechain work, if any.
-  let host: ToolRow | null = null;
+  // Which call each subagent's work belongs to, by agent id (see above).
+  const callOf = subagentCalls(turn.events);
+  // Sidechain work that names no agent goes under the newest subagent call
+  // still waiting on its result, the only rule there is for it.
+  let lastHost: ToolRow | null = null;
   let lastTodo: TodoRow | null = null;
   // Rows awaiting the tool_result that resolves them, by tool_use_id. Local
   // to the turn: deriveRows runs on every event and must be pure, so nothing
@@ -328,16 +388,24 @@ function collectTurnRows(turn: Turn): {
   // row for the same load.
   const skillCalls = new Map<string, ToolRow>();
 
+  /** The subagent call a sidechain event's row belongs under, if any. */
+  const hostOf = (e: Event): ToolRow | null => {
+    if (!e.sidechain) return null;
+    if (!e.agentId) return lastHost;
+    const call = callOf.get(e.agentId);
+    return (call && toolBy.get(call)) || null;
+  };
   /** Push a row into the turn, or into the subagent that spawned it. */
-  const add = (row: LeafRow, sidechain?: boolean) => {
-    if (sidechain && host) host.children.push(row);
+  const add = (row: LeafRow, e: Event) => {
+    const host = hostOf(e);
+    if (host) host.children.push(row);
     else work.push(row);
   };
 
   for (const e of turn.events) {
     switch (e.kind) {
-      case "user":
-        userRow = {
+      case "user": {
+        const row: UserRow = {
           kind: "user",
           key: `user-${e.id}`,
           id: e.id,
@@ -345,7 +413,11 @@ function collectTurnRows(turn: Turn): {
           turnKey: turn.key,
           ...(e.at !== undefined ? { at: e.at } : {}),
         };
+        // A subagent's prompt is its own first row, never the turn's.
+        if (e.sidechain) add(row, e);
+        else userRow = row;
         break;
+      }
       case "text":
         add(
           {
@@ -356,7 +428,7 @@ function collectTurnRows(turn: Turn): {
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
           },
-          e.sidechain,
+          e,
         );
         break;
       case "thinking":
@@ -369,7 +441,7 @@ function collectTurnRows(turn: Turn): {
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
           },
-          e.sidechain,
+          e,
         );
         break;
       case "tool_use": {
@@ -390,7 +462,7 @@ function collectTurnRows(turn: Turn): {
               turnKey: turn.key,
               ...(e.at !== undefined ? { at: e.at } : {}),
             };
-            add(lastTodo, e.sidechain);
+            add(lastTodo, e);
           }
           break;
         }
@@ -407,7 +479,7 @@ function collectTurnRows(turn: Turn): {
             ...(e.at !== undefined ? { at: e.at } : {}),
           };
           if (e.toolId) pendingByTool.set(e.toolId, row);
-          add(row, e.sidechain);
+          add(row, e);
           break;
         }
         if (d.type === "plan") {
@@ -422,7 +494,7 @@ function collectTurnRows(turn: Turn): {
             ...(e.at !== undefined ? { at: e.at } : {}),
           };
           if (e.toolId) pendingByTool.set(e.toolId, row);
-          add(row, e.sidechain);
+          add(row, e);
           break;
         }
         const row: ToolRow = {
@@ -451,8 +523,8 @@ function collectTurnRows(turn: Turn): {
         if (d.type === "skill" && d.label) skillCalls.set(d.label, row);
         // A subagent's own work arrives as sidechain records AFTER the call
         // that spawned it, so the call becomes the host for what follows.
-        if (d.type === "collab_agent_tool_call") host = row;
-        add(row, e.sidechain);
+        if (d.type === "collab_agent_tool_call") lastHost = row;
+        add(row, e);
         break;
       }
       case "tool_result": {
@@ -473,8 +545,8 @@ function collectTurnRows(turn: Turn): {
           existing.isError = !!e.isError;
           existing.done = true;
           existing.truncated = !!e.truncated;
-          if (existing.itemType === "collab_agent_tool_call" && host === existing) {
-            host = null;
+          if (existing.itemType === "collab_agent_tool_call" && lastHost === existing) {
+            lastHost = null;
           }
         } else {
           add(
@@ -498,7 +570,7 @@ function collectTurnRows(turn: Turn): {
               ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
               ...(e.at !== undefined ? { at: e.at } : {}),
             },
-            e.sidechain,
+            e,
           );
         }
         break;
@@ -560,15 +632,18 @@ function collectTurnRows(turn: Turn): {
             break;
           }
         }
-        add({
-          kind: "meta",
-          key: `meta-${e.id}`,
-          id: e.id,
-          meta,
-          body: e.body ?? "",
-          turnKey: turn.key,
-          ...(e.at !== undefined ? { at: e.at } : {}),
-        });
+        add(
+          {
+            kind: "meta",
+            key: `meta-${e.id}`,
+            id: e.id,
+            meta,
+            body: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          },
+          e,
+        );
         break;
       }
       case "permission_request":
@@ -585,8 +660,7 @@ function collectTurnRows(turn: Turn): {
         break;
       case "permission_resolved": {
         const pr = work.find(
-          (r): r is PermissionRow =>
-            r.kind === "permission" && r.reqId === e.reqId,
+          (r): r is PermissionRow => r.kind === "permission" && r.reqId === e.reqId,
         );
         if (pr) {
           pr.decision = e.body ?? "";
@@ -606,14 +680,17 @@ function collectTurnRows(turn: Turn): {
         break;
       }
       case "error":
-        add({
-          kind: "error",
-          key: `err-${e.id}`,
-          id: e.id,
-          body: e.body ?? "",
-          turnKey: turn.key,
-          ...(e.at !== undefined ? { at: e.at } : {}),
-        });
+        add(
+          {
+            kind: "error",
+            key: `err-${e.id}`,
+            id: e.id,
+            body: e.body ?? "",
+            turnKey: turn.key,
+            ...(e.at !== undefined ? { at: e.at } : {}),
+          },
+          e,
+        );
         break;
       case "session":
       case "state":
@@ -640,11 +717,7 @@ function collectTurnRows(turn: Turn): {
  * The rows a turn contributes below its user message. A settled turn with more
  * than one work row folds; anything else hands back the work as it stands.
  */
-function foldSettledTurn(
-  turn: Turn,
-  work: LeafRow[],
-  settled: boolean,
-): TimelineRow[] {
+function foldSettledTurn(turn: Turn, work: LeafRow[], settled: boolean): TimelineRow[] {
   const rows: TimelineRow[] = [];
   if (settled && work.length > 1) {
     // Keep the last assistant message visible (the turn's "answer"); fold the
@@ -660,11 +733,7 @@ function foldSettledTurn(
     if (visibleAt < 0) visibleAt = work.length - 1;
     const visible = work[visibleAt];
     const hidden = work.filter((_, i) => i !== visibleAt);
-    const changed = [
-      ...new Set(
-        work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])),
-      ),
-    ];
+    const changed = [...new Set(work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])))];
     const fold: TurnFoldRow | null =
       hidden.length > 0
         ? {
@@ -676,9 +745,7 @@ function foldSettledTurn(
             hasError: hidden.some(leafFailed),
             changedFiles: changed,
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
-            ...(turnDuration(turn) !== undefined
-              ? { durationMs: turnDuration(turn) }
-              : {}),
+            ...(turnDuration(turn) !== undefined ? { durationMs: turnDuration(turn) } : {}),
           }
         : null;
     // Chronology: the fold stands for the run of hidden rows that begins at
@@ -750,19 +817,24 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
     key: `working-${turn.key}`,
     turnKey: turn.key,
     steps: work.length,
-    ...(turn.events[0]?.at !== undefined
-      ? { startedAt: turn.events[0]!.at }
-      : {}),
+    ...(turn.events[0]?.at !== undefined ? { startedAt: turn.events[0]!.at } : {}),
     ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
     ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
     ...(waitingFor || paneAsking ? { waiting: true } : {}),
   };
 }
 
-/** Derive the folded row list from a session's events (see module doc). */
-export function deriveRows(events: Event[]): TimelineRow[] {
+/**
+ * Derive the folded row list from a session's events (see module doc).
+ *
+ * `fold: false` leaves every settled turn's work in place. The drill-in reads
+ * an agent's own transcript that way: an agent is one long turn, and folding it
+ * behind "Worked for 4m" would hide exactly the work the reader opened it for.
+ */
+export function deriveRows(events: Event[], opts: { fold?: boolean } = {}): TimelineRow[] {
   const turns = groupTurns(events);
   const out: TimelineRow[] = [];
+  const fold = opts.fold !== false;
 
   turns.forEach((turn, ti) => {
     const isLast = ti === turns.length - 1;
@@ -770,7 +842,7 @@ export function deriveRows(events: Event[]): TimelineRow[] {
     const { userRow, work } = collectTurnRows(turn);
 
     if (userRow) out.push(userRow);
-    for (const r of foldSettledTurn(turn, work, settled)) out.push(r);
+    for (const r of foldSettledTurn(turn, work, settled && fold)) out.push(r);
     if (!settled) out.push(workingRowFor(turn, work));
   });
 
@@ -906,14 +978,10 @@ export interface PendingPermission {
  * composer-docked permission panel. */
 export function pendingPermissions(events: Event[]): PendingPermission[] {
   const resolved = new Set(
-    events
-      .filter((e) => e.kind === "permission_resolved" && e.reqId)
-      .map((e) => e.reqId as string),
+    events.filter((e) => e.kind === "permission_resolved" && e.reqId).map((e) => e.reqId as string),
   );
   return events
-    .filter(
-      (e) => e.kind === "permission_request" && e.reqId && !resolved.has(e.reqId),
-    )
+    .filter((e) => e.kind === "permission_request" && e.reqId && !resolved.has(e.reqId))
     .map((e) => ({
       reqId: e.reqId as string,
       tool: e.tool ?? "",
@@ -998,15 +1066,13 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
     latest = "";
   }
   if (!latest) return null;
-  const raw = parseJSON(latest) as
-    | {
-        questions?: unknown;
-        headers?: unknown;
-        count?: unknown;
-        answered?: unknown;
-        partial?: unknown;
-      }
-    | null;
+  const raw = parseJSON(latest) as {
+    questions?: unknown;
+    headers?: unknown;
+    count?: unknown;
+    answered?: unknown;
+    partial?: unknown;
+  } | null;
   const qs = questions(raw);
   if (qs.length === 0) return null;
   return {
@@ -1055,10 +1121,7 @@ export function currentMode(events: Event[], seed?: SessionState | null): string
  * has said nothing about either — and a chip showing a guess would be worse
  * than one showing nothing.
  */
-export function currentModel(
-  events: Event[],
-  seed?: SessionState | null,
-): ModelState | undefined {
+export function currentModel(events: Event[], seed?: SessionState | null): ModelState | undefined {
   let state = seed?.model;
   for (const e of after(events, seed)) {
     if (e.kind === "meta" && e.meta === "model" && e.model) state = e.model;
@@ -1180,10 +1243,7 @@ export function scrollTopAfterPrepend(
  * waiting on a response reads as a turn with nothing in it yet — which is
  * exactly what it is.
  */
-export function withPendingPrompts(
-  events: Event[],
-  sent: ReadonlyArray<PendingPrompt>,
-): Event[] {
+export function withPendingPrompts(events: Event[], sent: ReadonlyArray<PendingPrompt>): Event[] {
   if (sent.length === 0) return events;
   return [
     ...events,
