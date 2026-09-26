@@ -42,6 +42,22 @@ import type { ModelHarness } from "./models";
 export const FIRST_PROMPT_LADDER: readonly number[] = [700, 1600, 3000, 6000];
 
 /**
+ * Pi's ladder: Claude's four rungs, then more, about 76s of waiting in all.
+ *
+ * Pi loads every extension the person installed before it takes input, and a
+ * large one is slow: 8s on a quiet devvm with pi-fabric installed, 49s on a
+ * loaded one (2026-09-26). The server's wait answers the moment pi is ready,
+ * so the extra rungs cost nothing on a fast start.
+ */
+export const PI_FIRST_PROMPT_LADDER: readonly number[] = [
+  ...FIRST_PROMPT_LADDER,
+  10_000,
+  15_000,
+  20_000,
+  20_000,
+];
+
+/**
  * The gap between two lines sent back to back.
  *
  * Injecting is four tmux commands (clear the input line, set the buffer, paste
@@ -160,6 +176,12 @@ async function post(
  * a Claude that crashed at launch, or something else entirely in the pane. The
  * text is better sent there than dropped, and it is the operator who can see
  * both.
+ *
+ * Pi is the exception, and keeps the wait to the end of its own, longer
+ * ladder. Text typed before pi owns the terminal is echoed by the tty, whose
+ * line discipline turns Enter into a line feed, and pi's editor reads a line
+ * feed as a new line, so a blind send leaves the prompt unsent in pi's input
+ * box. Giving up instead parks the text in the session's composer.
  */
 export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<boolean> {
   const lines = o.lines.filter((l) => l !== "");
@@ -172,13 +194,14 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
   // clears the server's own hold (session-events PromptReadyWait, 4s).
   const fetchImpl =
     o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
-  const ladder = o.ladder ?? FIRST_PROMPT_LADDER;
+  const pi = o.tool === "pi";
+  const ladder = o.ladder ?? (pi ? PI_FIRST_PROMPT_LADDER : FIRST_PROMPT_LADDER);
   const gapMs = o.gapMs ?? LINE_GAP_MS;
 
   let sent = 0;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
-    const wait = (o.awaitReady ?? false) && rung < ladder.length - 1;
+    const wait = (o.awaitReady ?? false) && (pi || rung < ladder.length - 1);
     while (sent < lines.length) {
       const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl);
       if (r === "no") return false;

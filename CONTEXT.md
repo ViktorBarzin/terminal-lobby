@@ -791,7 +791,10 @@ and text sent into that window is dropped with `POST /prompt` still answering
 an `awaitReady` flag and holds the injection until the pane draws Claude's own
 prompt character and holds still, answering 503 until then. The retry ladder
 carries the retries, and its last rung asks for no wait, so a pane that never
-draws one still gets the text.
+draws one still gets the text. Pi is the exception: it waits on every rung of
+a longer ladder and gives up rather than send blind, because text typed before
+pi owns the terminal arrives with Enter turned into a line feed, which pi reads
+as a new line.
 _Avoid_: initial message, seed prompt
 
 **Text view**:

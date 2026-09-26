@@ -336,6 +336,12 @@ func TestPiModelsGivesUpOnAShellThatHangs(t *testing.T) {
 // What it prints is what the parser above reads, so the two halves are tested
 // against each other rather than each against a copy of the other.
 func runPiModelsScript(t *testing.T, env []string, settings string, piBody string) string {
+	return runPiModelsScriptRC(t, env, settings, piBody, "")
+}
+
+// runPiModelsScriptRC is runPiModelsScript with a ~/.bash_profile, which the
+// snippet's login shell reads before it runs.
+func runPiModelsScriptRC(t *testing.T, env []string, settings string, piBody string, rc string) string {
 	t.Helper()
 	script, err := filepath.Abs(filepath.Join("..", "devvm", "tmux-user-attach"))
 	if err != nil || !fileExists(script) {
@@ -371,6 +377,9 @@ func runPiModelsScript(t *testing.T, env []string, settings string, piBody strin
 	}
 	if settings != "" {
 		write(filepath.Join(home, ".pi", "agent", "settings.json"), settings, 0o644)
+	}
+	if rc != "" {
+		write(filepath.Join(home, ".bash_profile"), rc, 0o644)
 	}
 	cmd := exec.Command(filepath.Join(bin, "bash"), script, "--pi-models")
 	// PATH is the stubs and nothing else; HOME is the stub account's, as sudo
@@ -409,6 +418,21 @@ func TestPiModelsScriptListsWithoutExtensions(t *testing.T) {
 	}
 	if !got.SignedIn || len(got.Models) != 6 {
 		t.Fatalf("got %+v, want the listing from a pi run with --no-extensions", got)
+	}
+}
+
+// A shell startup file that prints without a trailing newline must not glue
+// itself onto the first marker. wizard's did on 2026-09-26, with a terminal
+// escape sequence, and the picker read "pi printed no model list".
+func TestPiModelsScriptSurvivesABannerWithoutANewline(t *testing.T) {
+	stub := "#!/bin/sh\ncat <<'EOF'\n" + piListing + "EOF\n"
+	rc := "printf '\\033]1337;SetUserVar=token=abc\\007'\n"
+	got, err := parsePiModels([]byte(runPiModelsScriptRC(t, nil, "", stub, rc)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.SignedIn || len(got.Models) != 6 {
+		t.Fatalf("got %+v, want the listing despite the banner", got)
 	}
 }
 
