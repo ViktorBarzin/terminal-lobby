@@ -76,10 +76,7 @@ export const AgentTranscript: Component<{
           <button type="button" class="tl-drill-back" ref={back} onClick={() => props.onBack()}>
             <span aria-hidden="true">←</span> Back to session
           </button>
-          <div
-            class="tl-drill-id"
-            style={{ "--spine": agentHue(props.info ?? { color: "" }) }}
-          >
+          <div class="tl-drill-id" style={{ "--spine": agentHue(props.info ?? { color: "" }) }}>
             <div class="tl-drill-kind">
               <span class="tl-drill-kind-name">{head()?.kind ?? "Agent"}</span>
               <For each={head()?.tags ?? []}>{(t) => <span class="tl-drill-tag">{t}</span>}</For>
