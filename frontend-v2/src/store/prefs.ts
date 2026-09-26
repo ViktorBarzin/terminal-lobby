@@ -1,4 +1,4 @@
-import { createSignal, type Accessor } from "solid-js";
+import { createEffect, createSignal, on, type Accessor } from "solid-js";
 import {
   DEFAULT_SESSION_ORDER,
   isSessionOrder,
@@ -11,6 +11,7 @@ import {
   adoptModelId,
   DEFAULT_CHOICE,
   isEffortFor,
+  isOneSessionEffort,
   type ModelField,
   type ModelHarness,
 } from "../lib/models";
@@ -646,7 +647,44 @@ function seedFontSize(doc: Record<string, unknown>): number {
  */
 export function readPersistedPrefs(): Prefs {
   const doc = readRawDoc();
-  return { ...coercePrefs(doc), fontSize: seedFontSize(doc) };
+  return withoutOneSessionEffort({ ...coercePrefs(doc), fontSize: seedFontSize(doc) });
+}
+
+/**
+ * A Claude max or ultracode found in a LOADED doc reads as no choice: it was
+ * picked for a session that never got created, on this device or another, or
+ * saved by a client from before the one-session rule. Applied where a doc is
+ * read in (load, server adopt), never on a live pick, which the attach still
+ * has to read (resetOneSessionEffort).
+ */
+function withoutOneSessionEffort(p: Prefs): Prefs {
+  return isOneSessionEffort("claude", p.session.newEffort)
+    ? { ...p, session: { ...p.session, newEffort: DEFAULT_CHOICE } }
+    : p;
+}
+
+/**
+ * Put a one-session effort (max, ultracode) back to default once the session
+ * it was picked for exists.
+ *
+ * The attach reads the pick when the created session first connects
+ * (App.newLaunch), so it cannot be cleared at submit. `creating` is true from
+ * the create until the poll first returns the session, and by then tmux has
+ * started the CLI with its flags. The socket keeps the args it opened with, so
+ * clearing here cannot reach back into that launch.
+ */
+export function resetOneSessionEffort(creating: Accessor<boolean>, store: PrefsStore): void {
+  createEffect(
+    on(
+      creating,
+      (now, before) => {
+        if (before && !now && isOneSessionEffort("claude", store.prefs().session.newEffort)) {
+          store.setPref({ session: { newEffort: DEFAULT_CHOICE } });
+        }
+      },
+      { defer: true },
+    ),
+  );
 }
 
 export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
@@ -661,7 +699,10 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
   // signal is the typed, validated VIEW derived from it.
   let rawDoc = readRawDoc();
   const seeded = seedFontSize(rawDoc);
-  rawDoc = composeDoc(rawDoc, { ...coercePrefs(rawDoc), fontSize: seeded });
+  rawDoc = composeDoc(
+    rawDoc,
+    withoutOneSessionEffort({ ...coercePrefs(rawDoc), fontSize: seeded }),
+  );
   const [prefs, setPrefsSignal] = createSignal<Prefs>(coercePrefs(rawDoc));
 
 
@@ -748,7 +789,10 @@ export function createPrefsStore(opts: PrefsStoreOptions = {}): PrefsStore {
 
   function adopt(serverDoc: unknown): void {
     const merged = mergeAdopt(rawDoc, serverDoc);
-    const next = { ...coercePrefs(merged), fontSize: seedFontSize(merged) };
+    const next = withoutOneSessionEffort({
+      ...coercePrefs(merged),
+      fontSize: seedFontSize(merged),
+    });
     rawDoc = composeDoc(merged, next);
     setPrefsSignal(next);
     persist(); // NO schedulePut: adoption is not a user change (no PUT-back).

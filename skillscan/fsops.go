@@ -151,18 +151,24 @@ func Remove(home, name string, at time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return backup, forgetState(home, name)
+}
+
+// forgetState clears a gone skill's enabled marker and its provenance, the part
+// of a remove that is not about files.
+func forgetState(home, name string) error {
 	if err := ClearEnabled(home, name+"@skills-dir"); err != nil {
-		return backup, err
+		return err
 	}
 	man, err := LoadManifest(home)
 	if err != nil {
-		return backup, err
+		return err
 	}
 	if _, ok := man.Installed[name]; !ok {
-		return backup, nil
+		return nil
 	}
 	man.Forget(name)
-	return backup, man.Save(home)
+	return man.Save(home)
 }
 
 // ErrExists says the name is taken by a skill this call will not touch. The
@@ -230,7 +236,11 @@ func Unpack(home, name, from string, blobs []Blob, hash string, replace bool, at
 	return unpackWith(home, name, from, blobs, hash, replace, at, DefaultLimits)
 }
 
-func unpackWith(home, name, from string, blobs []Blob, hash string, replace bool, at time.Time, lim Limits) (backup string, err error) {
+func unpackWith(home, name, from string, blobs []Blob, hash string, replace bool, at time.Time, lim Limits) (string, error) {
+	return unpackIn(InClaude, home, name, from, blobs, hash, replace, at, lim)
+}
+
+func unpackIn(l Layout, home, name, from string, blobs []Blob, hash string, replace bool, at time.Time, lim Limits) (backup string, err error) {
 	if err := ValidName(name); err != nil {
 		return "", err
 	}
@@ -241,7 +251,14 @@ func unpackWith(home, name, from string, blobs []Blob, hash string, replace bool
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", err
 	}
-	dst := filepath.Join(root, name)
+	entry := filepath.Join(root, name)
+	dst := entry
+	if l == InAgents {
+		dst = filepath.Join(AgentsRoot(home), name)
+		if err := os.MkdirAll(AgentsRoot(home), 0o755); err != nil {
+			return "", err
+		}
+	}
 
 	// Assemble first, verify, and only then displace anything that is there: a
 	// refused install must not have cost the caller their existing skill.
@@ -283,18 +300,29 @@ func unpackWith(home, name, from string, blobs []Blob, hash string, replace bool
 		return "", fmt.Errorf("packed skill hashes to %s, not the declared %s", got, hash)
 	}
 
-	if _, err := os.Lstat(dst); err == nil {
+	taken := false
+	for _, p := range []string{entry, dst} {
+		if _, err := os.Lstat(p); err == nil {
+			taken = true
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+	}
+	if taken {
 		if !replace {
 			return "", ErrExists
 		}
-		if backup, err = Backup(home, name, at); err != nil {
+		if backup, err = backupIn(l, home, name, at); err != nil {
 			return "", err
 		}
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return "", err
 	}
 	if err := os.Rename(stage, dst); err != nil {
 		return backup, err
+	}
+	if l == InAgents {
+		if err := os.Symlink(agentsLink(name), entry); err != nil {
+			return backup, err
+		}
 	}
 	man, err := LoadManifest(home)
 	if err != nil {

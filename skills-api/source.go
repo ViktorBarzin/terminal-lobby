@@ -392,7 +392,7 @@ func httpGet(ctx context.Context, u, token string) (*http.Response, []byte, erro
 // The names are checked against what the repo actually offers before anything
 // runs, so the installer is never handed a name the inspection did not find —
 // the client's request cannot widen what gets installed.
-func installFromSource(home, owner, repo, kind string, names []string) (string, error) {
+func installFromSource(home, osUser, owner, repo, kind string, names []string) (string, error) {
 	if len(names) == 0 {
 		return "", fmt.Errorf("nothing selected to install")
 	}
@@ -414,7 +414,7 @@ func installFromSource(home, owner, repo, kind string, names []string) (string, 
 				return "", err
 			}
 		}
-		return installSkills(home, owner, repo, names)
+		return installSkills(home, osUser, owner, repo, names)
 	case "plugins":
 		if info.Marketplace == "" {
 			return "", fmt.Errorf("%s/%s is not a plugin marketplace", owner, repo)
@@ -433,15 +433,18 @@ func installFromSource(home, owner, repo, kind string, names []string) (string, 
 	return "", fmt.Errorf("unknown install kind %q", kind)
 }
 
-// installSkills runs the vercel skills CLI as this user. It writes a real
-// directory to ~/.claude/skills/<name>, which is the layout the manager already
-// reads, so nothing else has to move afterwards.
-func installSkills(home, owner, repo string, names []string) (string, error) {
+// installSkills runs the vercel skills CLI as this user, for the harnesses the
+// machine's skills policy lists (layout.go). With claude-code alone the CLI
+// writes a real directory to ~/.claude/skills/<name>; with a second harness it
+// keeps the real copy in ~/.agents/skills and links ~/.claude/skills/<name> to
+// it. Either way it matches the layout the rest of the manager reads.
+func installSkills(home, osUser, owner, repo string, names []string) (string, error) {
 	args := []string{"-y", skillsCLI, "add", owner + "/" + repo}
 	for _, n := range names {
 		args = append(args, "-s", n)
 	}
-	args = append(args, "-a", "claude-code", "-g", "-y")
+	args = append(args, agentArgs(osUser)...)
+	args = append(args, "-g", "-y")
 	out, err := runAsUser(home, npxBinary, args...)
 	if err != nil {
 		return out, err

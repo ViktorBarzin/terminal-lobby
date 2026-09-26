@@ -12,6 +12,12 @@ import (
 // Session is one tmux session as one tick saw it.
 type Session struct {
 	Name string
+	// ID is tmux's identity for the session as "$<session_id>:<session_created>",
+	// empty when the row did not carry one. A rename leaves both halves alone,
+	// which is what lets vanished() tell a renamed session from a lost one.
+	// session_id alone is not enough: tmux numbers from zero again when its
+	// server restarts, and the creation time is what a reused number lacks.
+	ID string
 	// Background is the session's @claude_bg stamp: space-separated
 	// `<kind>:<id>` tokens for background work it launched that has not
 	// reported back (a=agent, w=workflow, t=teammate). Empty when it owes
@@ -40,14 +46,14 @@ type Session struct {
 	PaneBytes uint64
 	PaneLimit uint64
 	// PaneUnreclaimable is anon + shmem, which is the memory that actually forces
-	// a kill. The user slice sets memory.swap.max=0 and cgroup limits are
-	// hierarchical, so neither can be paged out. In the pane above this read 628
-	// MB against the same 6144 MB cap; forty minutes earlier, with /tmp 95% full,
-	// it read 4424 MB and the pane genuinely was at risk.
+	// a kill. In the pane above this read 628 MB against the same 6144 MB cap;
+	// forty minutes earlier, with /tmp 95% full, it read 4424 MB and the pane
+	// genuinely was at risk. Since 2026-09-02 panes may swap, within the user
+	// slice's 4 GiB, so anon is partly reclaimable and this is an upper bound.
 	PaneUnreclaimable uint64
-	// TopIsClaude says whether the highest-RSS process in the pane is a claude,
-	// which is the same ranking the kernel uses at the cap. It is the difference
-	// between the cap taking a build and the cap taking a conversation.
+	// TopIsClaude says whether the highest-RSS process in the pane is a claude.
+	// Exported as a metric only: it no longer gates the warning, because claude
+	// is the fattest process in nearly every pane it sits in.
 	TopIsClaude bool
 }
 
@@ -102,9 +108,12 @@ type Finding struct {
 
 type Config struct {
 	// PaneWarnBytes is where the pane pre-warning sits, compared against
-	// UNRECLAIMABLE memory rather than memory.current. Gated on the fattest
-	// process being a claude, which is what lets it sit well below the cap.
+	// UNRECLAIMABLE memory rather than memory.current, in panes with a claude.
 	PaneWarnBytes uint64
+	// PaneClearBytes is where a warned pane's episode ends. The gap below
+	// PaneWarnBytes keeps a pane hovering at the line to one warning. Zero, or
+	// anything above PaneWarnBytes, means PaneWarnBytes.
+	PaneClearBytes uint64
 	// ConfirmTicks is how many consecutive ticks a stamp-with-no-claude must
 	// hold. Restarting claude to load a new skill set leaves a tick that looks
 	// exactly like a death.
@@ -135,6 +144,9 @@ type Watcher struct {
 func NewWatcher(cfg Config) *Watcher {
 	if cfg.ConfirmTicks < 1 {
 		cfg.ConfirmTicks = 1
+	}
+	if cfg.PaneClearBytes == 0 || cfg.PaneClearBytes > cfg.PaneWarnBytes {
+		cfg.PaneClearBytes = cfg.PaneWarnBytes
 	}
 	if cfg.TombstoneGrace <= 0 {
 		cfg.TombstoneGrace = 90 * time.Second
@@ -170,7 +182,7 @@ func (w *Watcher) Tick(snaps []Snapshot) []Finding {
 		if seen && !rebooted {
 			out = append(out, w.vanished(prev, cur)...)
 		}
-		out = append(out, w.standing(cur)...)
+		out = append(out, w.standing(cur, !seen)...)
 	}
 	return out
 }
@@ -179,12 +191,26 @@ func (w *Watcher) Tick(snaps []Snapshot) []Finding {
 // recent tombstone explains the disappearance.
 func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 	cutoff := cur.Taken.Add(-w.cfg.TombstoneGrace).Unix()
+	// Identities present now, whatever they are called. A name that left while
+	// its identity stayed was renamed: autotitle does it seconds after a session
+	// starts and a backfill does it to old ones, and before this every one of
+	// them read as a death (8 of 8 session_died lines in the 40 hours to
+	// 2026-09-24 08:00).
+	present := map[string]bool{}
+	for _, s := range cur.Sessions {
+		if s.ID != "" {
+			present[s.ID] = true
+		}
+	}
 	var out []Finding
 	for name, was := range prev.Sessions {
 		if w.skip(name) {
 			continue
 		}
 		if _, still := cur.Sessions[name]; still {
+			continue
+		}
+		if was.ID != "" && present[was.ID] {
 			continue
 		}
 		kind := KindSessionDied
@@ -203,7 +229,14 @@ func (w *Watcher) vanished(prev, cur Snapshot) []Finding {
 }
 
 // standing reports the two conditions read off a session that is still there.
-func (w *Watcher) standing(cur Snapshot) []Finding {
+//
+// first is true on this watcher's first snapshot of the user. A claude already
+// dead then died while nobody was watching, so it is recorded as known rather
+// than reported. Without this every restart re-announced the same long-dead
+// claudes one tick in (5 of 6 claude_died lines in the 72 hours to 2026-09-24),
+// and every terminal-lobby deploy restarts the watcher. It clears the moment
+// that claude runs again, so a later death in the same session still reports.
+func (w *Watcher) standing(cur Snapshot, first bool) []Finding {
 	var out []Finding
 	for name, s := range cur.Sessions {
 		if w.skip(name) {
@@ -211,6 +244,9 @@ func (w *Watcher) standing(cur Snapshot) []Finding {
 		}
 		key := cur.User + "/" + name
 
+		if first && s.ClaudeState != "" && !s.ClaudeAlive {
+			w.raise(KindClaudeDied, key)
+		}
 		if s.ClaudeState != "" && !s.ClaudeAlive {
 			w.streak[key]++
 			if w.streak[key] >= w.cfg.ConfirmTicks && w.raise(KindClaudeDied, key) {
@@ -231,8 +267,14 @@ func (w *Watcher) standing(cur Snapshot) []Finding {
 		// makes the kernel reclaim cache before it kills anything, so current
 		// sitting at the ceiling is normal rather than dangerous. An uncapped
 		// pane has nothing about to kill it either, so a warning there would
-		// name a risk that is not present.
-		if s.PaneLimit > 0 && s.PaneUnreclaimable >= w.cfg.PaneWarnBytes && s.TopIsClaude {
+		// name a risk that is not present. An open episode holds until the pane
+		// drops below the clear level, not just below the warn level.
+		atRisk := s.PaneLimit > 0 && s.ClaudeAlive
+		level := w.cfg.PaneWarnBytes
+		if w.isOpen(KindPaneNearCap, key) {
+			level = w.cfg.PaneClearBytes
+		}
+		if atRisk && s.PaneUnreclaimable >= level {
 			if w.raise(KindPaneNearCap, key) {
 				out = append(out, Finding{
 					Kind:              KindPaneNearCap,
@@ -261,6 +303,8 @@ func (w *Watcher) raise(k Kind, key string) bool {
 }
 
 func (w *Watcher) clear(k Kind, key string) { delete(w.open, string(k)+"/"+key) }
+
+func (w *Watcher) isOpen(k Kind, key string) bool { return w.open[string(k)+"/"+key] }
 
 func (w *Watcher) skip(name string) bool {
 	for _, p := range w.cfg.SkipPrefixes {
