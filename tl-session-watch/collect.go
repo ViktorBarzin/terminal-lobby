@@ -421,6 +421,11 @@ func paneFacts(s Session, samples []procSample, memOf func(pid int) (cur, unrecl
 			break
 		}
 	}
+	for _, sm := range samples {
+		if sm.IsClaude {
+			s.ClaudePIDs = append(s.ClaudePIDs, sm.Pid)
+		}
+	}
 	top := pickTop(samples)
 	if top.Pid == 0 {
 		return s
