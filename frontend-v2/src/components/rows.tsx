@@ -5,6 +5,7 @@ import {
   planHeader,
   planSummary,
   shownPlanOutcome,
+  type ContinuationRow,
   type MetaRow,
   type PlanRow,
   type PlanTransient,
@@ -550,6 +551,31 @@ export const PlanRowView: Component<{
     </div>
   );
 };
+
+/**
+ * The first record of a conversation the plan approval started by clearing the
+ * context (docs/plans/2026-09-24-text-composer-redesign.md, "After clear
+ * context"): a marker saying the context was cleared, the approved plan as a
+ * resolved plan row, and the reader's feedback when the approval carried some.
+ * It stands in for the "Implement the following plan: …" message the CLI
+ * wrote, which is not drawn.
+ */
+export const ContinuationRowView: Component<{ row: ContinuationRow }> = (props) => (
+  <div class="tl-row tl-row-continuation" data-eid={props.row.id}>
+    <div class="tl-continuation-marker">
+      <span class="tl-meta-rule" />
+      <span class="tl-continuation-marker-text">Context cleared · carrying out the plan</span>
+      <span class="tl-meta-rule" />
+    </div>
+    <PlanRowView row={props.row.plan} />
+    <Show when={props.row.feedback}>
+      <div class="tl-continuation-feedback">
+        <span class="tl-continuation-caption">With your feedback</span>
+        <blockquote class="tl-plan-feedback">{props.row.feedback}</blockquote>
+      </div>
+    </Show>
+  </div>
+);
 
 /* Keyed by the whole MetaKind because the wire contract carries all of them.
    `mode` and `permission-mode` no longer reach this view: deriveRows drops

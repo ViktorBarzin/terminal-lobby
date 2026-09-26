@@ -4758,7 +4758,8 @@ body.tl-kb-up {
   font-weight: 600;
   color: var(--text-primary);
 }
-.tl-plan-outcome[data-outcome="approved"] {
+.tl-plan-outcome[data-outcome="approved"],
+.tl-plan-outcome[data-outcome="continuation"] {
   color: var(--success);
 }
 .tl-plan-outcome[data-outcome="rejected"],
@@ -4778,6 +4779,31 @@ body.tl-kb-up {
   font-size: calc(13px * var(--tl-text-scale, 1));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+/* The first record after the plan approval cleared the context: a marker in
+   the lifecycle rule's look, the approved plan, and the feedback it carried.
+   Drawn in the user row's slot, so it stays when the turn folds. */
+.tl-continuation-marker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-block: 10px 4px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+}
+.tl-continuation-marker-text {
+  flex: 0 1 auto;
+  min-width: 0;
+  text-align: center;
+}
+.tl-continuation-feedback {
+  margin: 0 0 8px;
+}
+.tl-continuation-caption {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
 }
 .tl-plan-summary {
   color: var(--text-muted);

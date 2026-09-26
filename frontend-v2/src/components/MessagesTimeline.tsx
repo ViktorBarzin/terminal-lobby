@@ -20,6 +20,7 @@ import {
   sameRow,
   scrollTopAfterPrepend,
   visibleRows,
+  type ContinuationRow,
   type ErrorRow,
   type LeafRow,
   type MessageRow,
@@ -40,6 +41,7 @@ import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
 import { MessageSegments } from "./Attachment";
 import {
+  ContinuationRowView,
   MetaRowView,
   PlanRowView,
   QuestionRowView,
@@ -563,6 +565,8 @@ export const MessagesTimeline: Component<{
         return (
           <UserRowView row={row() as UserRow} me={props.me} onOpenPreview={props.onOpenPreview} />
         );
+      case "continuation":
+        return <ContinuationRowView row={row() as ContinuationRow} />;
       case "message":
         return <MessageRowView row={row() as MessageRow} me={props.me} />;
       case "thinking":

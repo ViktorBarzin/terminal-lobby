@@ -11,10 +11,12 @@
  * (docs/plans/2026-09-24-text-composer-redesign.md, "After clear context").
  *
  * The record below is the real one, read from sessionio's capture
- * (testdata/plan-continuation.jsonl, CLI 2.1.281, 2026-09-24). No capture of
- * the with-feedback variant exists yet, so that case appends the feedback line
- * exactly as the CLI 2.1.283 template writes it: two newlines, then
- * "User feedback on this plan: " and the text, after everything else.
+ * (testdata/plan-continuation.jsonl, CLI 2.1.281, 2026-09-24). sessionio has
+ * no capture of the with-feedback variant, so that case appends the feedback
+ * line the way CLI 2.1.283 writes it: two newlines, then
+ * "User feedback on this plan: " and the text, after everything else. That
+ * shape was checked on 2026-09-26 against a real "approve with this feedback"
+ * in a scratch session.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -35,9 +37,10 @@ interface ContinuationRecord {
 }
 
 const record = JSON.parse(
-  readFileSync(resolve(process.cwd(), "../sessionio/testdata/plan-continuation.jsonl"), "utf8").split(
-    "\n",
-  )[0]!,
+  readFileSync(
+    resolve(process.cwd(), "../sessionio/testdata/plan-continuation.jsonl"),
+    "utf8",
+  ).split("\n")[0]!,
 ) as ContinuationRecord;
 
 const FEEDBACK = "Also print the file size with wc -c.";
@@ -56,7 +59,11 @@ const continuationEvent = (body = record.message.content): Event => ({
 });
 
 const at0 = Date.parse(record.timestamp);
-const inTurn = (e: Omit<Event, "session" | "turnId">): Event => ({ session: "s", turnId: "t1", ...e });
+const inTurn = (e: Omit<Event, "session" | "turnId">): Event => ({
+  session: "s",
+  turnId: "t1",
+  ...e,
+});
 
 /** The work Claude does on the plan: a message, a Write, a closing message. */
 const work: Event[] = [
