@@ -5,13 +5,15 @@ import (
 	"time"
 )
 
-// cfg is the shape every test starts from: warn at 5 GiB and stand down below
-// 4.5 GiB, confirm a dead claude over two consecutive ticks, and ignore the
-// prewarm pool.
+const (
+	MiB = 1 << 20
+	GiB = 1 << 30
+)
+
+// cfg is the shape every test starts from: confirm a dead claude over two
+// consecutive ticks, and ignore the prewarm pool.
 func cfg() Config {
 	return Config{
-		PaneWarnBytes:  5 * GiB,
-		PaneClearBytes: 4608 * MiB,
 		ConfirmTicks:   2,
 		SkipPrefixes:   []string{"__terminal_lobby_"},
 		TombstoneGrace: 90 * time.Second,
@@ -325,116 +327,23 @@ func TestARebootIsOneFindingWithTheRestoreGap(t *testing.T) {
 	none(t, got, KindSessionKilled)
 }
 
-// --- the pane pre-warning ------------------------------------------------
+// --- pane memory is metrics only ---------------------------------------
 
-func TestPaneOverThresholdWarns(t *testing.T) {
+// A pre-warning on pane memory ran from 2026-09-01 to 2026-09-26 and was
+// removed: about 51 Slack posts in 26 days, and all 5 claude kills in that time
+// went ahead despite a 26-54 minute warning. A killed conversation resumes from
+// its transcript, so the watcher reports the death and not the approach to it.
+// Pane memory still reaches Prometheus through the textfile metrics.
+func TestAPaneAtItsCapIsNotAFinding(t *testing.T) {
 	w := NewWatcher(cfg())
-	big := live("infra")
-	big.PaneBytes = 5500 * MiB
-	big.PaneUnreclaimable = 5500 * MiB
+	full := live("infra")
+	full.PaneBytes = 6 * GiB
+	full.PaneUnreclaimable = 5900 * MiB
 
-	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-	if f.Session != "infra" || f.PaneBytes != 5500*MiB || f.PaneLimit != 6*GiB {
-		t.Fatalf("want infra 5500MiB/6GiB, got %s %d/%d", f.Session, f.PaneBytes, f.PaneLimit)
+	w.Tick([]Snapshot{snap("wizard", "boot-1", live("infra"))})
+	if got := w.Tick([]Snapshot{snap("wizard", "boot-1", full)}); len(got) != 0 {
+		t.Fatalf("want no findings for a full pane with a live claude, got %+v", got)
 	}
-}
-
-// Claude is ~0.4 GB and is the largest single process in almost every pane it
-// sits in, so "claude is fattest" filtered nothing: 212 warnings in the 26 days
-// to 2026-09-26 against 5 claude kills. And when a build is fattest the cap
-// takes the build and then the claude: on 2026-09-24 it killed ~30 vitest
-// workers first and the conversation after them. A claude anywhere in a pane
-// this full is at risk.
-func TestPaneOverThresholdWarnsWhateverIsFattest(t *testing.T) {
-	w := NewWatcher(cfg())
-	big := live("infra")
-	big.PaneBytes = 5500 * MiB
-	big.PaneUnreclaimable = 5500 * MiB
-	big.TopIsClaude = false
-
-	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-}
-
-// A pane with no claude in it holds no conversation to lose.
-func TestPaneOverThresholdWithNoClaudeStaysQuiet(t *testing.T) {
-	w := NewWatcher(cfg())
-	big := live("infra")
-	big.ClaudeState = ""
-	big.ClaudeAlive = false
-	big.TopIsClaude = false
-	big.PaneBytes = 5500 * MiB
-	big.PaneUnreclaimable = 5500 * MiB
-
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-}
-
-func TestPaneUnderThresholdStaysQuiet(t *testing.T) {
-	w := NewWatcher(cfg())
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", live("infra"))}), KindPaneNearCap)
-}
-
-// An uncapped pane has nothing about to kill it, so the warning would name a
-// risk that does not exist.
-func TestUncappedPaneStaysQuiet(t *testing.T) {
-	w := NewWatcher(cfg())
-	big := live("infra")
-	big.PaneBytes = 5500 * MiB
-	big.PaneUnreclaimable = 5500 * MiB
-	big.PaneLimit = 0
-
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-}
-
-// A pane sitting above the line for an hour is one episode. Re-crossing it after
-// dropping back is a new one.
-func TestPaneWarningIsPerEpisode(t *testing.T) {
-	w := NewWatcher(cfg())
-	big := live("infra")
-	big.PaneBytes = 5500 * MiB
-	big.PaneUnreclaimable = 5500 * MiB
-
-	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-
-	w.Tick([]Snapshot{snap("wizard", "boot-1", live("infra"))}) // dropped back
-	only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", big)}), KindPaneNearCap)
-}
-
-// A pane hovering around the line is one episode. Without the gap between the
-// warn and clear levels, every dip and return was a fresh warning and a fresh
-// Slack post.
-func TestPaneHoveringAtTheLineWarnsOnce(t *testing.T) {
-	w := NewWatcher(cfg())
-	at := func(unreclaimable uint64) []Snapshot {
-		s := live("infra")
-		s.PaneBytes = unreclaimable
-		s.PaneUnreclaimable = unreclaimable
-		return []Snapshot{snap("wizard", "boot-1", s)}
-	}
-
-	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
-	none(t, w.Tick(at(4800*MiB)), KindPaneNearCap) // dipped, still above clear
-	none(t, w.Tick(at(5200*MiB)), KindPaneNearCap)
-
-	none(t, w.Tick(at(4*GiB)), KindPaneNearCap) // below clear: episode over
-	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
-}
-
-// A clear level left unset, or set above the warn level, collapses to the warn
-// level rather than leaving an episode open forever or never.
-func TestPaneClearLevelDefaultsToWarnLevel(t *testing.T) {
-	c := cfg()
-	c.PaneClearBytes = 0
-	w := NewWatcher(c)
-	at := func(unreclaimable uint64) []Snapshot {
-		s := live("infra")
-		s.PaneUnreclaimable = unreclaimable
-		return []Snapshot{snap("wizard", "boot-1", s)}
-	}
-
-	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
-	none(t, w.Tick(at(5*GiB-1)), KindPaneNearCap)
-	only(t, w.Tick(at(5*GiB)), KindPaneNearCap)
 }
 
 // --- users are independent ----------------------------------------------
@@ -455,60 +364,4 @@ func TestUsersDoNotShareState(t *testing.T) {
 	if f.User != "wizard" {
 		t.Fatalf("emo's identically-named session was implicated: %+v", f)
 	}
-}
-
-// --- what "near the cap" has to mean ---------------------------------------
-//
-// memory.current is the wrong number, and the box proved it. The "issues" pane
-// read 6143 MB of a 6144 MB cap while holding only 624 MB anon and 3 MB shmem;
-// the other 5272 MB was page cache, 5131 MB of it cold inactive_file. Its
-// memory.events showed max=45450 with oom_kill=0 — the cap had been reached
-// forty-five thousand times and had never killed anything, because each time the
-// kernel simply reclaimed cache.
-//
-// So current riding at the cap is normal for any pane doing file I/O, and a
-// threshold on it fires on every busy pane forever. What forces a kill is the
-// memory the cap cannot drop as cache: anon plus shmem. (Panes could not swap
-// when this was measured; since 2026-09-02 they can, within 4 GiB per user.)
-
-func TestPaneAtTheCapOnCacheAloneStaysQuiet(t *testing.T) {
-	// The "issues" pane exactly as measured 2026-09-01 19:10.
-	w := NewWatcher(cfg())
-	s := live("issues")
-	s.PaneBytes = 6143 * MiB
-	s.PaneUnreclaimable = 628 * MiB
-	s.PaneLimit = 6144 * MiB
-
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
-}
-
-func TestPaneWithUnreclaimablePastTheThresholdWarns(t *testing.T) {
-	// Shaped like the same pane 40 minutes earlier, when /tmp was 95% full and
-	// shmem made up most of it, scaled past today's 5 GiB line. The measured
-	// 4424 MB now sits under it: that pane was never killed.
-	w := NewWatcher(cfg())
-	s := live("issues")
-	s.PaneBytes = 5400 * MiB
-	s.PaneUnreclaimable = 5200 * MiB
-	s.PaneLimit = 6144 * MiB
-
-	f := only(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
-	if f.PaneUnreclaimable != 5200*MiB {
-		t.Errorf("want the unreclaimable figure carried into the finding, got %d", f.PaneUnreclaimable)
-	}
-	if f.PaneBytes != 5400*MiB {
-		t.Errorf("want memory.current carried too, so the reader can see the split, got %d", f.PaneBytes)
-	}
-}
-
-// A pane whose cache alone is huge must not warn even when current exceeds the
-// threshold by a wide margin.
-func TestCacheHeavyPaneWellOverTheThresholdStaysQuiet(t *testing.T) {
-	w := NewWatcher(cfg())
-	s := live("infra")
-	s.PaneBytes = 5 * GiB
-	s.PaneUnreclaimable = 400 * MiB
-	s.PaneLimit = 6 * GiB
-
-	none(t, w.Tick([]Snapshot{snap("wizard", "boot-1", s)}), KindPaneNearCap)
 }
