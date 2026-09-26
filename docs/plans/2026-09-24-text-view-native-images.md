@@ -1,6 +1,6 @@
 # Native images in the Text view
 
-**Status:** approved 2026-09-24; building it.
+**Status:** shipped 2026-09-26 in terminal-lobby 0.75.0.
 **Owner:** wizard. **Repos touched:** terminal-lobby (`sessionio/`, `session-events/`,
 `file-api/`, `telemetry/`, `frontend-v2/`, `frontend/diag.js`). No infra change.
 **Decisions from:** Viktor's request on 2026-09-24 and his answers the same day.
@@ -802,6 +802,21 @@ The tests show the code is what was intended. These steps show it works.
    value when it returns. The "Latest" button is still offered.
 6. Once deployed, the same shapes against the deployed stack, and the Data used
    panel filing pictures under Files & images.
+   Run on 2026-09-26 at 21:10 UTC, after 0.75.0 installed and its postinst
+   restarted the services at 21:02. A scratch Claude session read a PNG in its
+   scratchpad, named three paths in its reply (plain, in backticks and as
+   `![]()`) plus a missing `/logos/x.png`, received a picture pasted into the
+   terminal, and took a Playwright screenshot with the relative filename
+   `qa-shot.png`. Through `scripts/qa-harness.py` at 1280px, with the turn
+   folds opened, the deployed build drew all of them: the three prose pictures
+   at 479 by 320px, the pasted picture in its bubble at 497 by 320px, the Read
+   row's thumbnail from `/result/…/image/0` at 152 by 96px, and the screenshot
+   row's thumbnail from `/files/image` at 169 by 96px. `/logos/x.png` got a 404
+   and stayed text. Data used, read after its first 60-second window, listed
+   Files & images at 41,297 bytes, which is the sum of the eight picture
+   transfers, and the deployed `bucketFor` filed each `/files/image` and
+   `/result/…/image/n` request under files. None of those bytes reached App
+   code.
 
 Safari on the iPhone rig (`homelab ios`) is checked if its browser holds a lobby
 login. If it does not, the report says Safari is unverified.
@@ -829,6 +844,16 @@ landing, and only if that Safari holds a lobby login. The Android emulator run
 in step 5 is the closest touch-device evidence meanwhile. It is Chrome, not
 WebKit, so it says nothing about Safari's own image decoding or its
 home-screen app viewport.
+
+After shipping, 2026-09-26 at 21:10 UTC: `homelab ios doctor` failed at the
+same ssh link, so Safari is still unverified with the deployed build. What the
+checks covered: the two picture routes and all five shapes against local builds
+(steps 1 to 4), the phone layout in Chrome on the Android emulator against a
+local build (step 5), and the same shapes and the Data used filing against the
+deployed stack on desktop Chromium (step 6). What they did not: Safari and the
+iPhone home-screen app, and the emulator against the deployed build, which was
+not re-run. The Safari check needs the London Mac back online and a lobby login
+in the rig's Safari.
 
 ## Shipping
 
