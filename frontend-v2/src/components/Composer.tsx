@@ -117,6 +117,9 @@ export const Composer: Component<{
   /** Why the mode cannot change right now: a dialog is on the pane, where
    *  Shift+Tab would type into it. The mode dial is held with this reason. */
   modeHeld?: string;
+  /** Why the model dial cannot act right now, for the same dialogs: the
+   *  picker is driven by typing `/model` into the pane. */
+  modelHeld?: string;
   /** Modes the server has said this session does not offer. */
   modesUnavailable?: ReadonlySet<string>;
   /** Step the permission mode once, as Shift+Tab does in the CLI. */
@@ -227,6 +230,8 @@ export const Composer: Component<{
     ),
   };
 
+  /** Why the model dial cannot act: watching, or a dialog on the pane. */
+  const modelHeld = (): string => props.inertReason || props.modelHeld || "";
   /** The model half and the effort half, or whichever is known. */
   const modelWords = (): string => {
     const h = props.harness ?? "claude";
@@ -241,7 +246,7 @@ export const Composer: Component<{
     title: "Model and effort",
     fold: 1,
     busy: () => props.modelBusy === true,
-    held: () => props.inertReason,
+    held: modelHeld,
     // A session that has not answered yet has said nothing about either, so
     // the dial reads "Model" rather than inventing a value: the composer's
     // stored preference is what the NEXT session starts on, which is a
@@ -251,7 +256,7 @@ export const Composer: Component<{
       <span class="tl-dial-value">{props.modelBusy ? "Switching…" : modelWords() || "Model"}</span>
     ),
     ariaLabel: () =>
-      `Model and effort: ${modelWords() || "not reported yet"}. ${props.inertReason || "Change them"}`,
+      `Model and effort: ${modelWords() || "not reported yet"}. ${modelHeld() || "Change them"}`,
     // The exact slug, which the name on the dial shortens (lib/models.ts).
     hint: () =>
       summarise(props.model)
@@ -262,7 +267,8 @@ export const Composer: Component<{
         harness={props.harness ?? "claude"}
         state={props.model}
         busy={props.modelBusy === true}
-        inertReason={props.inertReason}
+        // The phone's sheet reaches this panel by its tab, past the held dial.
+        inertReason={modelHeld() || undefined}
         onPick={(field, id) => props.onPickModel?.(field, id)}
         onDone={ctx.close}
       />
@@ -370,7 +376,9 @@ export const Composer: Component<{
         onCycleMode={props.onCycleMode}
         onEmptyDigit={onEmptyDigit}
         register={props.register}
-        queueHint={working()}
+        // Hidden while the plan card is up: that send answers the dialog, and
+        // the live row can still say working before the plan call is recorded.
+        queueHint={working() && !props.planOpen}
         trayNote="Images join this session's gallery"
         sendTitle={sendTitle()}
       />

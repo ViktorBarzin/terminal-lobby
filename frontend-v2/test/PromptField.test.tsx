@@ -155,6 +155,17 @@ describe("<PromptField>: the sinks a card outside it can use", () => {
     expect(sinks().hasInput()).toBe(false);
   });
 
+  it("says whether what is written runs over more than one line, as it is typed", () => {
+    // The plan card says line breaks become spaces while the field holds any.
+    const { container, sinks } = mountWithSinks();
+    type(field(container), "one line");
+    expect(sinks().lineBreaks()).toBe(false);
+    type(field(container), "first\nsecond");
+    expect(sinks().lineBreaks()).toBe(true);
+    type(field(container), "");
+    expect(sinks().lineBreaks()).toBe(false);
+  });
+
   it("sends through the route it is handed, not through Send's", async () => {
     const { container, sinks } = mountWithSinks();
     type(field(container), "approve, but keep the tests");

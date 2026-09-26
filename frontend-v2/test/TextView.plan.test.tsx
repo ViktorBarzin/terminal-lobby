@@ -15,7 +15,7 @@
  */
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, type ComponentProps } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { AnswerRequest, AnswerResponse, DialogView } from "../src/lib/answer-api";
 import type { Event } from "../src/types/events";
@@ -100,6 +100,7 @@ function mount(
   onAnswer: (req: AnswerRequest) => Promise<AnswerResponse | null> = async () => applied(),
   onSend: (text: string) => Promise<boolean> = async () => true,
   onKeys: (keys: string[]) => Promise<boolean> = async () => true,
+  extra: Partial<ComponentProps<typeof TextView>> = {},
 ) {
   const [events, setEvents] = createSignal<Event[]>(initial);
   const r = render(() => (
@@ -113,6 +114,7 @@ function mount(
       onPane={async () => ({ pane: "", state: "done" })}
       onAnswer={onAnswer}
       notify={() => {}}
+      {...extra}
     />
   ));
   const q = <T extends HTMLElement = HTMLElement>(sel: string) => r.container.querySelector<T>(sel);
@@ -128,7 +130,9 @@ function mount(
   const status = () => q(".tl-status-state .tl-status-word")?.textContent ?? null;
   const field = () => q<HTMLTextAreaElement>("textarea")!;
   const send = () => q<HTMLButtonElement>(".tl-send")!;
+  const dial = (id: string) => q<HTMLButtonElement>(`.tl-dial[data-dial="${id}"]`);
   return {
+    dial,
     ...r,
     setEvents,
     events,
@@ -383,6 +387,145 @@ describe("feedback through the composer", () => {
     // Option 1 clears context in this session, and approving with feedback
     // did too where it was measured.
     expect(v.header()).toBe("Clearing context…");
+  });
+});
+
+describe("what Send does with the field while the card is docked", () => {
+  it("sends nothing for a field of blanks and line breaks", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const onSend = vi.fn(async () => true);
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    fireEvent.input(v.field(), { target: { value: "  \n \n " } });
+    fireEvent.click(v.send());
+    await Promise.resolve();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(v.card()).not.toBeNull();
+  });
+
+  it("does not send feedback over 2,000 bytes, says why, and keeps the text", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const onSend = vi.fn(async () => true);
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    // 1,001 two-byte characters: 1,001 characters, 2,002 bytes.
+    const long = "é".repeat(1001);
+    fireEvent.input(v.field(), { target: { value: long } });
+    fireEvent.click(v.send());
+    await waitFor(() =>
+      expect(v.card()!.textContent).toContain(
+        "Not sent: the Terminal's feedback field takes up to 2,000 bytes.",
+      ),
+    );
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+    await waitFor(() => expect(v.field().value).toBe(long));
+  });
+
+  it("says under the card that line breaks become spaces while the field has any", async () => {
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    const note = () => v.card()!.querySelector(".tl-plancard-lines");
+    fireEvent.input(v.field(), { target: { value: "one line" } });
+    expect(note()).toBeNull();
+    fireEvent.input(v.field(), { target: { value: "first\nsecond" } });
+    await waitFor(() => expect(note()?.textContent).toContain("Line breaks become spaces"));
+  });
+
+  it.each(["no-dialog", "not-drawn"] as const)(
+    "keeps the text on %s, and the next Send goes as a prompt",
+    async (reason) => {
+      const onAnswer = vi.fn(
+        async (_req: AnswerRequest): Promise<AnswerResponse> => ({ applied: false, reason }),
+      );
+      const onSend = vi.fn(async (_text: string) => true);
+      const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
+      await waitFor(() => expect(v.card()).not.toBeNull());
+      fireEvent.input(v.field(), { target: { value: "one more step" } });
+      fireEvent.click(v.send());
+      await waitFor(() =>
+        expect(v.card()!.textContent).toContain("The plan is no longer waiting in the Terminal."),
+      );
+      await waitFor(() => expect(v.field().value).toBe("one more step"));
+      expect(onSend).not.toHaveBeenCalled();
+
+      fireEvent.click(v.send());
+      await waitFor(() => expect(onSend).toHaveBeenCalledWith("one more step"));
+      expect(onAnswer).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("leaves 1 and 2 on an empty field to a permission, never the plan", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const onResolve = vi.fn();
+    const v = mount(
+      [prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)],
+      onAnswer,
+      undefined,
+      undefined,
+      { onResolve },
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    fireEvent.keyDown(v.field(), { key: "1" });
+    fireEvent.keyDown(v.field(), { key: "2" });
+    await Promise.resolve();
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onResolve).not.toHaveBeenCalled();
+    expect(v.card()).not.toBeNull();
+  });
+});
+
+describe("the dials while the card is docked", () => {
+  const modeEvent = (id: number, mode: string): Event =>
+    ev({ id, kind: "meta", meta: "permission-mode", body: mode });
+
+  it("holds the mode and model dials with the reason as the title, before the transcript has the call", async () => {
+    // The prompt opened a turn and nothing records the plan call yet, so only
+    // the pane's reading says a dialog is up.
+    const onSetModel = vi.fn(async () => ({
+      ok: true as const,
+      state: { model: "claude-sonnet-5", effort: "" },
+    }));
+    const v = mount(
+      [modeEvent(1, "default"), prompt(2), asking(3, PLAN_FIRST)],
+      undefined,
+      undefined,
+      undefined,
+      { harness: "claude", onSetModel },
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    await waitFor(() => expect(v.dial("mode")).not.toBeNull());
+    expect(v.dial("mode")!.getAttribute("aria-disabled")).toBe("true");
+    expect(v.dial("mode")!.getAttribute("title")).toBe(
+      "Answer Claude first: a mode change now would type into the open dialog",
+    );
+    const model = v.dial("model")!;
+    expect(model.getAttribute("aria-disabled")).toBe("true");
+    expect(model.getAttribute("title")).toBe(
+      "Answer Claude first: a model change now would type into the open dialog",
+    );
+    fireEvent.click(model);
+    expect(v.container.querySelector(".tl-dial-pop")).toBeNull();
+    expect(onSetModel).not.toHaveBeenCalled();
+  });
+
+  it("frees both dials once the dialog has been answered", async () => {
+    const v = mount(
+      [modeEvent(1, "default"), prompt(2), planUse(3, "p1"), asking(4, PLAN_FIRST)],
+      undefined,
+      undefined,
+      undefined,
+      {
+        harness: "claude",
+        onSetModel: async () => ({ ok: true as const, state: { model: "", effort: "" } }),
+      },
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    v.setEvents([...v.events(), asking(5, ""), approved(6, "p1")]);
+    await waitFor(() => expect(v.card()).toBeNull());
+    await waitFor(() => expect(v.dial("model")!.getAttribute("aria-disabled")).toBeNull());
+    expect(v.dial("mode")!.getAttribute("aria-disabled")).toBeNull();
   });
 });
 

@@ -101,6 +101,10 @@ const PANE_READ_DELAYS_MS = [150, 600];
  */
 const MODE_HELD_BY_DIALOG =
   "Answer Claude first: a mode change now would type into the open dialog";
+/** The same hold for the model dial: `/model` is typed into the pane too, and
+ *  the server already refuses it while a question is up. */
+const MODEL_HELD_BY_DIALOG =
+  "Answer Claude first: a model change now would type into the open dialog";
 
 /**
  * How long this client's applied plan answer stands in for the transcript's
@@ -1158,7 +1162,7 @@ export const TextView: Component<{
    * (lib/model-api.ts).
    */
   const pickModel = (field: ModelField, id: string): void => {
-    if (!props.onSetModel || modelBusy()) return;
+    if (!props.onSetModel || modelBusy() || modelHeld()) return;
     const want = {
       model: field === "model" ? id : "",
       effort: field === "effort" ? id : "",
@@ -1209,8 +1213,9 @@ export const TextView: Component<{
   });
 
   /**
-   * Why the mode cannot change right now, or "" when it can: a dialog is on
-   * the pane, where Shift+Tab is a key the dialog reads (MODE_HELD_BY_DIALOG).
+   * Whether a dialog is on the pane, which holds the mode dial, Shift+Tab and
+   * the model dial: Shift+Tab is a key the dialog reads (on the plan's
+   * feedback row it approves the plan), and `/model` would be typed into it.
    *
    * Four ways to know one is up. A question the card is answering, a
    * permission the panel is answering, the plan card, which docks from the
@@ -1218,11 +1223,16 @@ export const TextView: Component<{
    * `waiting`, which is true while the transcript holds any of Claude's stops
    * without an answer.
    */
-  const modeHeld = createMemo((): string =>
-    asking() !== "" || props.pending.length > 0 || live()?.waiting === true || planDocked() !== null
-      ? MODE_HELD_BY_DIALOG
-      : "",
+  const dialogUp = createMemo(
+    (): boolean =>
+      asking() !== "" ||
+      props.pending.length > 0 ||
+      live()?.waiting === true ||
+      planDocked() !== null,
   );
+  const modeHeld = (): string => (dialogUp() ? MODE_HELD_BY_DIALOG : "");
+  /** The model dial is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
+  const modelHeld = (): string => (dialogUp() ? MODEL_HELD_BY_DIALOG : "");
   /** Modes the server has said this session does not offer. They stay out of
    *  reach until the view remounts, since launch flags do not change mid-run. */
   const [unavailable, setUnavailable] = createSignal<ReadonlySet<string>>(new Set());
@@ -1348,6 +1358,7 @@ export const TextView: Component<{
           plan={planShown().text}
           stale={planShown().stale}
           hasInput={composerSinks()?.hasInput() ?? false}
+          lineBreaks={composerSinks()?.lineBreaks() ?? false}
           sending={planSending()}
           notice={planReplyNow()?.notice ?? null}
           onApprove={approvePlanOption}
@@ -1383,6 +1394,7 @@ export const TextView: Component<{
         {...(props.onSetMode ? { onPickMode: pickMode } : {})}
         modeBusy={modeBusy()}
         modeHeld={modeHeld()}
+        modelHeld={modelHeld()}
         modesUnavailable={unavailable()}
         onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}

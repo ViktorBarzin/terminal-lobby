@@ -99,6 +99,10 @@ export interface PromptFieldSinks {
   focus: () => void;
   /** Whether a send would carry anything: prose, a held file, or both. */
   hasInput: Accessor<boolean>;
+  /** Whether what is written runs over more than one line. The plan card says
+   *  line breaks become spaces while it does, since its feedback row is one
+   *  line. */
+  lineBreaks: Accessor<boolean>;
   /**
    * Send what is written through a different sender, on the field's own terms.
    *
@@ -607,6 +611,7 @@ export const PromptField: Component<{
       insertText,
       focus: () => ta?.focus(),
       hasInput: sendable,
+      lineBreaks: () => draft().includes("\n"),
       submitVia: (send) => submitWith((text) => send(text)),
     }),
   );
