@@ -192,12 +192,51 @@ describe("no container queries", () => {
   });
 });
 
-describe("the new-session line", () => {
-  // The dials sit right-aligned with nothing on their left, as the live
-  // composer's do; left-aligned they would read as a sentence (open point 8).
-  it("right-aligns its dials, and is what their popover hangs from", () => {
-    const line = rule(".tl-new-line");
-    expect(line).toMatch(/justify-content:\s*flex-end/);
-    expect(line).toMatch(/position:\s*relative/);
+describe("the new-session screen (prototype 6-new)", () => {
+  it("asks in a 22px hero at 620, 21px on a phone, the project muted", () => {
+    const hero = rule(".tl-new-hero");
+    expect(hero).toMatch(/font-size:\s*calc\(22px/);
+    expect(hero).toMatch(/font-weight:\s*620/);
+    expect(hero).toMatch(/text-align:\s*center/);
+    expect(rule(".tl-new-hero span")).toMatch(/color:\s*var\(--text-muted\)/);
+    expect(rule(".tl-new-hero", coarse())).toMatch(/font-size:\s*calc\(21px/);
+  });
+
+  // The strip hangs from the box's bottom edge, 16px in from each side.
+  it("draws the strip at 40px, open at the top, on the card at 55%", () => {
+    const strip = rule(".tl-new-strip");
+    expect(strip).toMatch(/height:\s*40px/);
+    expect(strip).toMatch(/width:\s*calc\(100% - 32px\)/);
+    expect(strip).toMatch(/border:\s*1px solid var\(--border\)/);
+    expect(strip).toMatch(/border-top:\s*0/);
+    expect(strip).toMatch(/border-radius:\s*0 0 14px 14px/);
+    expect(strip).toMatch(/background:\s*color-mix\(in srgb, var\(--bg-card\) 55%, transparent\)/);
+  });
+
+  it("puts the command at the far end of the strip", () => {
+    expect(rule('.tl-strip-item[data-side="end"]')).toMatch(/margin-left:\s*auto/);
+  });
+
+  it("keeps the phone's 14px gutter, so the hero stays on one line at 390px", () => {
+    expect(rule(".tl-new-composer", coarse())).toMatch(/padding-left:\s*14px/);
+    expect(rule(".tl-new-composer", coarse())).toMatch(/padding-right:\s*14px/);
+  });
+
+  // Default, five rungs and ultracode ran past a 390px sheet's edge.
+  it("lets the effort control wrap rather than run off the sheet", () => {
+    expect(rule(".tl-ms-seg")).toMatch(/flex-wrap:\s*wrap/);
+  });
+
+  it("draws 32px strip buttons, 36px under a finger", () => {
+    expect(rule(".tl-strip-btn")).toMatch(/height:\s*32px/);
+    expect(rule(".tl-strip-btn", coarse())).toMatch(/height:\s*36px/);
+  });
+
+  // The prototype centres the box on the phone as well; the keyboard's
+  // reservation is what keeps it in view once the keyboard is up.
+  it("centres the box on a phone too, clear of the keyboard", () => {
+    expect(rule(".tl-new-composer")).toMatch(/justify-content:\s*center/);
+    expect(rule(".tl-new-composer", coarse())).not.toMatch(/justify-content/);
+    expect(rule(".tl-new-composer", coarse())).toMatch(/--kb-offset/);
   });
 });

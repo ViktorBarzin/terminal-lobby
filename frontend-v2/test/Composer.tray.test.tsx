@@ -224,7 +224,7 @@ describe("the + menu's size", () => {
     expect(r).toMatch(/left:\s*0/);
     expect(r).toMatch(/min-width:\s*232px/);
     // The surface every composer float shares.
-    const surface = rule(".tl-plus-menu,\n.tl-dial-pop");
+    const surface = rule(".tl-plus-menu,\n.tl-strip-pop");
     expect(surface).toMatch(/border-radius:\s*14px/);
     expect(surface).toMatch(/box-shadow:\s*var\(--pop-shadow\)/);
   });

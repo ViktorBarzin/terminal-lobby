@@ -178,18 +178,17 @@ export const ChevronDownIcon: Component<{ class?: string }> = (props) => (
   </Glyph>
 );
 
-/** The up-and-down chevrons that say a dial opens a list. */
-export const ChevronsIcon: Component = () => (
-  <Glyph box="0 0 8 10" size={10} width={1.4} class="tl-dial-chev">
-    <path d="M2 3.6 4 1.6l2 2M2 6.4l2 2 2-2" />
+/** The new-session strip's project button (prototype 6-t3's `folder`). */
+export const FolderGlyph: Component = () => (
+  <Glyph box="0 0 16 16" size={14}>
+    <path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.6H13c.7 0 1.2.5 1.2 1.2v6.2c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z" />
   </Glyph>
 );
 
-/** A dial that cannot act right now. */
-export const LockIcon: Component = () => (
-  <Glyph box="0 0 12 12" size={10} class="tl-dial-lock">
-    <rect x="2.2" y="5.2" width="7.6" height="5.4" rx="1.3" />
-    <path d="M4 5.2V3.9a2 2 0 0 1 4 0v1.3" />
+/** The new-session strip's command button (prototype 6-t3's `prompt`). */
+export const PromptGlyph: Component = () => (
+  <Glyph box="0 0 16 16" size={14}>
+    <path d="m3 4.5 3.2 3.5L3 11.5M8 12h5" />
   </Glyph>
 );
 
@@ -230,13 +229,6 @@ export const SlashBoxIcon: Component = () => (
 export const CheckIcon: Component = () => (
   <Glyph box="0 0 14 14" size={14} width={1.9}>
     <path d="m2.8 7.4 2.8 2.8 5.6-6" />
-  </Glyph>
-);
-
-/** Closes the phone's settings sheet. */
-export const CloseIcon: Component = () => (
-  <Glyph box="0 0 16 16" size={18} width={1.8}>
-    <path d="m4 4 8 8M12 4l-8 8" />
   </Glyph>
 );
 

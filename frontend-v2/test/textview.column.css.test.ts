@@ -143,17 +143,30 @@ describe("the system font", () => {
     expect(appCss).not.toContain('.tl-session-bar[data-mode="text"]');
   });
 
+  it("draws the new-session screen in the same face, its prompt field too", () => {
+    expect(decl(appCss, ".tl-new-view", "font-family")).toBe("var(--font-text)");
+    const scoped = rules(appCss)
+      .filter((r) => /font-family:\s*var\(--font-text\)/.test(r.body))
+      .flatMap((r) => r.selectors);
+    expect(scoped).toContain(".tl-new-view .tl-composer-input");
+    expect(scoped).toContain(".tl-new-view .tl-composer-mirror");
+  });
+
   it("leaves the lobby in DM Sans", () => {
     expect(decl(appCss, "body", "font-family")).toBe("var(--font-ui)");
   });
 
-  // Two exceptions. The model sheet's phone layer is drawn into the document's
-  // body, because the composer's blurred surface would pin a fixed sheet to the
-  // box (ModelSheet.tsx), so it names the face itself. The session bar heads
-  // both views and keeps one face across them.
+  // Three exceptions. The model sheet's phone layer is drawn into the
+  // document's body, because the composer's blurred surface would pin a fixed
+  // sheet to the box (ModelSheet.tsx), so it names the face itself. The
+  // session bar heads both views and keeps one face across them. The
+  // new-session screen is drawn as the Text view is (prototype 6-new).
   it("is read only under the Text view", () => {
     const allowed = (s: string): boolean =>
-      s.startsWith(".tl-textview") || s === ".tl-session-bar" || s === ".tl-ms-layer";
+      s.startsWith(".tl-textview") ||
+      s.startsWith(".tl-new-view") ||
+      s === ".tl-session-bar" ||
+      s === ".tl-ms-layer";
     const offenders = [appCss, sidebarCss].flatMap((css) =>
       rules(css)
         .filter((r) => /var\(--font-text\)/.test(r.body))

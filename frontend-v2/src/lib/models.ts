@@ -308,6 +308,29 @@ export function effortsForModel(
 }
 
 /**
+ * The levels a NEW session can start on, for the new-session model sheet.
+ *
+ * `default` leads, because "whatever the CLI starts on" is a real answer for a
+ * session that does not exist yet. Then the model's own levels
+ * (`effortsForModel`; a `default` model is read as no model yet, which gets
+ * the whole list). Claude's ultracode joins every model with xhigh: it is
+ * xhigh plus dynamic workflows, chosen by the launch flag and lasting one
+ * session (`isOneSessionEffort`). A model with one level (Haiku 4.5) gets no
+ * rows at all, so the sheet says so instead of offering a control.
+ */
+export function startEfforts(h: ModelHarness, model: string, pi?: PiOffer): readonly ModelOption[] {
+  const rows = effortsForModel(h, model === DEFAULT_CHOICE ? undefined : model, pi);
+  if (rows.length === 0) return [];
+  const ultra = CATALOGUE.claude.effort.find((o) => o.id === "ultracode");
+  const withUltra =
+    h === "claude" && ultra && rows.some((o) => o.id === "xhigh") && !rows.includes(ultra)
+      ? [...rows, ultra]
+      : rows;
+  const dflt = optionsFor(h, "effort", pi).find((o) => o.id === DEFAULT_CHOICE);
+  return dflt ? [dflt, ...withUltra] : withUltra;
+}
+
+/**
  * Whether a stored id is one this harness could be sent. A pi model is judged
  * by its shape, because the list it came from is pi's and not this file's:
  * judged against the catalogue, every pi pick would be dropped on load.

@@ -2777,22 +2777,35 @@ label.tl-set-row-label {
    Mirrors .tl-session-view: a bar that does not scroll, then the content. The
    bar has to sit OUTSIDE the padded column below, or it would be inset from
    the edges while the session view's runs full width, which is the difference
-   you would see when moving between them. */
+   you would see when moving between them. It is drawn in the Text view's face
+   (prototype 6-new), the system font, like the header over it. */
 .tl-new-view {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+  font-family: var(--font-text);
+}
+/* Rules that name DM Sans for themselves, and render on this screen: the
+   prompt field and its completion menu (the same list the Text view scopes). */
+.tl-new-view .tl-composer-input,
+.tl-new-view .tl-composer-mirror,
+.tl-new-view .tl-complete-desc,
+.tl-new-view .tl-complete-source,
+.tl-new-view .tl-complete-note {
+  font-family: var(--font-text);
 }
 
-/* ---- the new-session composer ------------------------------------------ */
-/* Nothing selected is not an empty state: it is where a session is started, so
-   the composer owns the pane. A prompt wants the width, and on a phone this is
-   the LANDING view — the first thing the app shows. Centred on a desktop,
-   where there is room either side of it; pinned to the bottom on a phone, in
-   the coarse-pointer block below, because that is where a composer lives and
-   where the thumb already is. */
+/* ---- the new-session composer: the T3 pass -------------------------------
+   Viktor approved it on 2026-09-27 (docs/plans/2026-09-27-text-view-t3-pass.md,
+   prototype states 6-new and 6-shell): a hero line, the live composer's box
+   at full size, and under it a strip with the project on the left and the
+   command on the right, like T3 Code's workspace and branch strip. Centred on
+   a desktop and on a phone alike, as the prototype draws both. It replaced a
+   bottom pin on a phone (2026-09-04) and the Quiet line's dials above the box
+   (2026-09-24). The same horizontal padding as the live composer's dock, so
+   the box is the same width on both screens. */
 .tl-new-composer {
   flex: 1 1 auto;
   min-width: 0;
@@ -2800,89 +2813,163 @@ label.tl-set-row-label {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 10px;
   padding: 16px clamp(12px, 6vw, 80px);
   overflow-y: auto;
 }
-/* The shell's name box, in the box where the prompt field would be: one line,
-   the height of the field at rest. */
-.tl-pill-name > .tl-new-name {
-  grid-area: field;
+/* "What should we build in <project>?", 22px at 620, the project muted. */
+.tl-new-hero {
+  margin: 0 0 22px;
+  text-align: center;
+  font-size: calc(22px * var(--tl-text-scale, 1));
+  font-weight: 620;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
-.tl-new-name {
-  flex: 1 1 auto;
-  height: calc(22px * var(--tl-text-scale, 1) + 10px);
-  resize: none;
-}
-/* One line under the box, for what the chosen command needs before its
-   controls can mean anything: today, pi with no provider signed in. */
-.tl-new-hint {
-  width: 100%;
-  max-width: 760px;
-  margin: 0 auto;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  line-height: 1.4;
+.tl-new-hero span {
   color: var(--text-muted);
+  font-weight: 500;
 }
-/* The line and the pill centre themselves with `margin: 0 auto`, and an auto
-   cross-axis margin turns OFF a flex item's stretch, so without this they
-   shrank to fit their own content: the box once sat 385px wide in a 1180px
-   pane, measured at 1440x900. */
+/* The column centres itself with `margin: 0 auto`, and an auto cross-axis
+   margin turns OFF a flex item's stretch, so without the width the box
+   shrank to fit its own content: it once sat 385px wide in a 1180px pane,
+   measured at 1440x900. */
 .tl-new-composer > .tl-pillwrap,
-.tl-new-composer > .tl-pill,
-.tl-new-composer > .tl-new-line {
+.tl-new-composer > .tl-new-hint {
   width: 100%;
   max-width: 760px;
   margin-left: auto;
   margin-right: auto;
 }
-/* The dials, on a line above the box where the live composer keeps its own,
-   right-aligned the same way with nothing on their left. The line is what a
-   dial's popover hangs from (Dial.tsx places it against its offsetParent). */
-.tl-new-line {
+/* The shell's name box, in the box where the prompt field would be, the same
+   size as the prompt's: the field's own floor (60px, 86px on a phone). */
+.tl-pill-name > .tl-new-name {
+  grid-area: field;
+}
+/* The strip: 40px, 16px in from each side of the box, hanging from its
+   bottom edge with no top border of its own. */
+.tl-new-strip {
   position: relative;
+  align-self: center;
+  width: calc(100% - 32px);
+  max-width: 728px;
   display: flex;
-  justify-content: flex-end;
   align-items: center;
-  min-height: 28px;
+  gap: 4px;
+  height: 40px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 14px 14px;
+  background: color-mix(in srgb, var(--bg-card) 55%, transparent);
+  color: var(--text-muted);
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
-.tl-new-line .tl-dials {
+.tl-strip-item {
+  position: relative;
   min-width: 0;
+  display: inline-flex;
 }
-/* A long project name gives way before the command and the model do. */
-.tl-new-line .tl-dial[data-dial="project"] .tl-dial-value {
-  max-width: 18ch;
+/* A long project name gives way; the command keeps its word. */
+.tl-strip-item[data-side="start"] {
+  flex: 0 1 auto;
+}
+.tl-strip-item[data-side="end"] {
+  flex: none;
+  margin-left: auto;
+}
+.tl-strip-btn {
+  min-width: 0;
+  max-width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.tl-strip-btn b {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  color: var(--text-primary);
+  font-weight: 560;
+}
+.tl-strip-btn svg {
+  flex: none;
+}
+.tl-strip-chev {
+  width: 10px;
+  height: 10px;
+}
+.tl-strip-btn[aria-expanded="true"] {
+  background: var(--hover-tint);
+  color: var(--text-primary);
+}
+@media (hover: hover) {
+  .tl-strip-btn:hover {
+    background: var(--hover-tint);
+    color: var(--text-primary);
+  }
+}
+/* A strip list with a fine pointer: under its button, on the float surface,
+   capped on open at the room left below it in the composer. */
+.tl-strip-pop {
+  top: calc(100% + 6px);
+  width: 300px;
+  max-width: calc(100vw - 32px);
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  scrollbar-width: thin;
+  animation: tl-fade-in 0.14s ease-out;
+}
+.tl-strip-item[data-side="start"] .tl-strip-pop {
+  left: 0;
+}
+.tl-strip-item[data-side="end"] .tl-strip-pop {
+  right: 0;
+}
+.tl-strip-pop > .tl-ms-h:first-child {
+  margin-top: 4px;
+}
+/* One line under the strip, for what the chosen command needs before its
+   controls can mean anything: today, pi with no provider signed in. */
+.tl-new-hint {
+  margin-top: 10px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  color: var(--text-muted);
 }
 
 /* ---- the new-session composer on a phone --------------------------------
-   Measured on the Android emulator at 412px, which is the width class of the
-   iPhone Viktor reported from: Attach, the project select, the command select,
-   the model select and Send did not fit on one row, and 173px of controls sat
-   off the end of a scroller with its scrollbar hidden. Since 2026-09-24 the
-   choices are dials on a line of their own above the pill, and Attach and
-   Send are in the pill, so nothing shares a row it cannot fit in. */
+   Centred, as on a desktop. The keyboard is the one difficulty: without the
+   reservation below, opening it would put the box behind it. --kb-offset is
+   live on this screen because the viewport sync is installed at the SHELL
+   rather than per session, which App.tsx did deliberately so the list screen
+   would have it too. --safe-b keeps Send off the home indicator. */
 @media (pointer: coarse) {
+  /* The prototype's 14px phone gutter, which keeps the hero on one line at
+     390px. */
   .tl-new-composer {
-    /* Pinned to the bottom, the way a chat composer is and the way T3 Code
-       puts it (Viktor, 2026-09-04: "let's make the canvas at the bottom
-       similarly to how it is for t3 code"). It started centred, which left the
-       box 354px down an otherwise empty screen; the top was better and the
-       bottom is where the thumb already is.
-       The keyboard is the whole difficulty with a bottom pin: without the
-       reservation below, opening it puts the composer behind it. --kb-offset is
-       live on this screen because the viewport sync is installed at the SHELL
-       rather than per session, which App.tsx did deliberately so the list
-       screen would have it too. --safe-b keeps Send off the home indicator. */
-    /* The BOX is pushed down, not the whole column: justify-content would
-       take the header with it and park it above the box at the bottom, which
-       is the opposite of the session view and of what a header is. */
-    justify-content: flex-start;
+    padding-left: 14px;
+    padding-right: 14px;
     padding-bottom: calc(12px + var(--kb-offset, 0px) + var(--safe-b, 0px));
   }
-  .tl-new-composer > .tl-new-line {
-    margin-top: auto;
+  .tl-new-hero {
+    font-size: calc(21px * var(--tl-text-scale, 1));
+  }
+  .tl-strip-btn {
+    height: 36px;
+    font-size: calc(13.5px * var(--tl-text-scale, 1));
   }
 }
 
@@ -2905,121 +2992,6 @@ label.tl-set-row-label {
   position: relative;
   flex: 0 0 auto;
   padding: 0 clamp(12px, 6vw, 80px) 14px;
-}
-
-/* ---- the dials -------------------------------------------------------------
-   Each names what it sets ("mode Manual"), and each opens a list. On a wide
-   line they are type with a micro-label; a hover gives one a box. */
-.tl-dials {
-  display: flex;
-  align-items: center;
-  gap: 1px;
-}
-.tl-dial {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 7px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    background 0.12s,
-    border-color 0.12s,
-    color 0.12s;
-}
-.tl-dial:hover {
-  background: var(--hover-tint);
-  border-color: var(--border-strong);
-}
-.tl-dial[aria-expanded="true"] {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-.tl-dial-label {
-  color: var(--text-muted);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-}
-/* Nothing is known yet, so the value is the dial's own name. */
-.tl-dial[data-unknown] .tl-dial-label {
-  display: none;
-}
-.tl-dial[data-unknown] .tl-dial-value {
-  color: var(--text-muted);
-}
-/* A pi model is its full reference, up to 96 characters
-   (openrouter/meta-llama/…:free), which would push every other dial off the
-   line. The dial's title and the list behind it carry the whole of it. */
-.tl-dial[data-dial="model"] .tl-dial-value {
-  max-width: 28ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.tl-dial-chev {
-  flex: none;
-  color: var(--text-muted);
-  margin-left: 1px;
-}
-.tl-dial-lock {
-  display: none;
-}
-.tl-dial-div {
-  flex: none;
-  width: 1px;
-  height: 12px;
-  margin: 0 3px;
-  background: var(--border-strong);
-}
-/* A change being driven: the picker is being typed into for about a second,
-   which a dial that looked idle would hide. A thin sweep under the value. */
-.tl-dial[data-busy] {
-  cursor: progress;
-}
-.tl-dial[data-busy] .tl-dial-value {
-  opacity: 0.55;
-}
-.tl-dial[data-busy]::before {
-  content: "";
-  position: absolute;
-  left: 6px;
-  right: 6px;
-  bottom: 2px;
-  height: 1px;
-  border-radius: 1px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent) no-repeat;
-  background-size: 40% 100%;
-  animation: tl-sweep-short 0.9s linear infinite;
-}
-@keyframes tl-sweep-short {
-  from {
-    background-position: -70% 0;
-  }
-  to {
-    background-position: 170% 0;
-  }
-}
-/* Held: watching, or a dialog on the pane. The reason is the title; a lock
-   says there is one. */
-.tl-dial[aria-disabled="true"] {
-  color: var(--text-muted);
-  cursor: not-allowed;
-}
-.tl-dial[aria-disabled="true"]:hover {
-  background: none;
-  border-color: transparent;
-}
-.tl-dial[aria-disabled="true"] .tl-dial-chev {
-  display: none;
-}
-.tl-dial[aria-disabled="true"] .tl-dial-lock {
-  display: block;
 }
 
 /* ---- the surface ---------------------------------------------------------
@@ -3095,9 +3067,6 @@ label.tl-set-row-label {
   gap: 6px;
   padding-left: 2px;
   overflow: hidden;
-}
-.tl-box-tools .tl-dial-label {
-  display: none;
 }
 .tl-pill[data-shape="pill"] .tl-box-tools,
 .tl-pill[data-shape="pill"] .tl-composer-mirror {
@@ -3389,9 +3358,13 @@ label.tl-set-row-label {
   background: var(--border);
 }
 /* Effort: one segmented row. Each level is as wide as its word needs and the
-   spare room is shared, so pi's seven levels and "ultracode" still fit. */
+   spare room is shared, so pi's seven levels and "ultracode" still fit. The
+   new-session sheet adds "default" as well, and at a phone's 14px that ran
+   past the sheet's edge at 390px, so the last levels wrap onto a second row
+   rather than being cut off. */
 .tl-ms-seg {
   display: flex;
+  flex-wrap: wrap;
   gap: 2px;
   margin: 0 2px;
   padding: 3px;
@@ -3681,7 +3654,6 @@ label.tl-set-row-label {
 }
 .tl-plus:focus-visible,
 .tl-send:focus-visible,
-.tl-dial:focus-visible,
 .tl-take:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
@@ -3922,19 +3894,19 @@ label.tl-set-row-label {
   color: var(--text-muted);
 }
 
-/* ---- the composer's floats: the + menu, the dial popovers, the sheet -----
-   One float at a time, each above what opened it, each on the card surface
+/* ---- the composer's floats: the + menu and the new-session strip lists --
+   One float at a time, each beside what opened it, each on the card surface
    with the shadow the theme defines for floats (--pop-shadow). */
 .tl-plus-menu,
-.tl-dial-pop {
+.tl-strip-pop {
   position: absolute;
   z-index: 30;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
   background: var(--bg-card);
   box-shadow: var(--pop-shadow);
-  /* The popovers and the sheet are drawn inside the line, whose type is the
-     muted tier; what they list is read at full weight. */
+  /* A strip list is drawn inside the strip, whose type is the muted tier;
+     what it lists is read at full weight. */
   color: var(--text-primary);
 }
 /* The + menu, over the left end of the pill or the box, where the + is
@@ -3995,302 +3967,6 @@ label.tl-set-row-label {
   height: 1px;
   margin: 4px 8px;
   background: var(--border);
-}
-
-/* A dial's popover: above the line, its right edge on its dial's (Dial.tsx
-   writes `right` and caps `max-height` at the room above once it is laid
-   out). Held inside the screen on a narrow window. */
-.tl-dial-pop {
-  right: 0;
-  bottom: calc(100% + 6px);
-  max-width: calc(100vw - 24px);
-  padding: 6px;
-  overflow-y: auto;
-  transform-origin: 85% 100%;
-  animation: tl-pop-up 0.15s cubic-bezier(0.2, 0.8, 0.3, 1);
-}
-.tl-dial-pop-model {
-  width: 292px;
-}
-/* The new-session composer's two others. */
-.tl-dial-pop-project {
-  width: 292px;
-}
-.tl-dial-pop-command {
-  width: 240px;
-}
-
-/* The rows in a dial's list: the mode list, the model list. */
-.tl-pick-head {
-  margin: 6px 8px 4px;
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  font-weight: 560;
-  letter-spacing: 0.02em;
-  color: var(--text-muted);
-}
-.tl-pick-row {
-  display: grid;
-  grid-template-columns: 18px 1fr 14px;
-  align-items: center;
-  gap: 1px 10px;
-  width: 100%;
-  min-height: 40px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 9px;
-  background: none;
-  color: var(--text-primary);
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  text-align: left;
-  cursor: pointer;
-}
-.tl-pick-row:hover,
-.tl-pick-row:focus-visible {
-  background: var(--hover-tint);
-  outline-offset: -2px;
-}
-.tl-pick-row[aria-checked="true"] {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-.tl-pick-row[aria-disabled="true"] {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.tl-pick-icon {
-  grid-row: 1 / span 2;
-  display: grid;
-  place-items: center;
-  color: var(--success);
-}
-.tl-pick-row[data-tone="plan"] .tl-pick-icon {
-  color: var(--state-awaiting);
-}
-.tl-pick-row[data-tone="caution"] .tl-pick-icon {
-  color: var(--accent);
-}
-.tl-pick-row[data-tone="danger"] .tl-pick-icon,
-.tl-pick-row[data-tone="danger"] .tl-pick-name {
-  color: var(--danger);
-}
-.tl-pick-name {
-  font-weight: 560;
-}
-.tl-pick-sub {
-  grid-column: 2;
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  line-height: 1.3;
-  color: var(--text-muted);
-}
-.tl-pick-slug {
-  grid-column: 1;
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-}
-.tl-pick-tick {
-  grid-column: 3;
-  grid-row: 1 / span 2;
-  display: grid;
-  place-items: center;
-  width: 14px;
-  height: 14px;
-  color: var(--accent);
-}
-/* A model row is a name over its slug, with no icon. */
-.tl-pick-model {
-  grid-template-columns: 1fr 14px;
-}
-.tl-pick-model .tl-pick-tick {
-  grid-column: 2;
-}
-/* The line under a row with no icon: a project's directory, a command that is
-   not installed, the default model. */
-.tl-pick-model .tl-pick-sub {
-  grid-column: 1;
-}
-/* The rule before the two modes that ask nothing. */
-.tl-pick-gap {
-  height: 1px;
-  margin: 4px 8px;
-  background: color-mix(in srgb, var(--danger) 30%, var(--border));
-}
-/* Effort, as a segmented control. Both CLIs offer six levels, so three by
-   two rather than the prototype's one row of four. */
-.tl-effort-seg {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  margin: 0 6px 2px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg-page);
-}
-.tl-effort-seg button {
-  height: 30px;
-  border: 0;
-  border-radius: 7px;
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-  white-space: nowrap;
-  cursor: pointer;
-}
-.tl-effort-seg button:hover {
-  color: var(--text-primary);
-}
-.tl-effort-seg button[aria-checked="true"] {
-  background: var(--bg-card-hover);
-  color: var(--text-primary);
-  box-shadow: 0 0 0 1px var(--border-strong);
-  font-weight: 560;
-}
-/* The new-session composer's "Default", on a row of its own above the six
-   levels. */
-.tl-effort-seg .tl-effort-default {
-  grid-column: 1 / -1;
-}
-.tl-effort-seg button[aria-disabled="true"] {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.tl-pick-note {
-  margin-top: 6px;
-  padding: 8px 8px 4px;
-  border-top: 1px solid var(--border);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  line-height: 1.4;
-  color: var(--text-muted);
-}
-
-/* The phone's settings sheet: one sheet for every dial, a tab each. Fixed to
-   the bottom of the screen, clear of the home indicator, and above the
-   soft-key row (40) while below settings (60), the palette (65), the gallery
-   stack (66-69) and the toasts (70). */
-.tl-sheet-layer {
-  position: fixed;
-  inset: 0;
-  z-index: 50;
-}
-.tl-sheet-scrim {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  background: color-mix(in srgb, var(--bg-page) 62%, transparent);
-  -webkit-backdrop-filter: blur(2px);
-  backdrop-filter: blur(2px);
-  cursor: default;
-  animation: tl-fade-in 0.2s ease-out;
-}
-.tl-sheet {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  max-height: 80%;
-  display: flex;
-  flex-direction: column;
-  padding-bottom: var(--safe-b, 0px);
-  border-top: 1px solid var(--border-strong);
-  border-radius: 20px 20px 0 0;
-  background: var(--bg-card);
-  box-shadow: var(--pop-shadow);
-  color: var(--text-primary);
-  font-size: calc(14px * var(--tl-text-scale, 1));
-  animation: tl-sheet-up 0.26s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-/* It takes the focus on open so the keyboard goes down and a screen reader
-   hears its name; a ring round the whole sheet would say nothing more. */
-.tl-sheet:focus {
-  outline: none;
-}
-.tl-sheet-grab {
-  flex: none;
-  width: 38px;
-  height: 5px;
-  margin: 8px auto 2px;
-  border-radius: 5px;
-  background: var(--border-strong);
-}
-.tl-sheet-head {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 6px 0 16px;
-}
-.tl-sheet-title {
-  font-size: calc(16px * var(--tl-text-scale, 1));
-  font-weight: 600;
-}
-.tl-sheet-x {
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  margin-left: auto;
-  border: 0;
-  border-radius: 50%;
-  background: none;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-.tl-sheet-tabs {
-  flex: none;
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 2px;
-  margin: 2px 14px 10px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-page);
-}
-.tl-sheet-tabs button {
-  height: 44px;
-  border: 0;
-  border-radius: 9px;
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: calc(14px * var(--tl-text-scale, 1));
-  font-weight: 500;
-  cursor: pointer;
-}
-.tl-sheet-tabs button[aria-selected="true"] {
-  background: var(--bg-card-hover);
-  color: var(--text-primary);
-  box-shadow: 0 0 0 1px var(--border-strong);
-}
-.tl-sheet-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 8px 14px;
-}
-.tl-sheet-body .tl-pick-row {
-  min-height: 56px;
-  padding: 8px 10px;
-  font-size: calc(15px * var(--tl-text-scale, 1));
-}
-.tl-sheet-body .tl-pick-sub,
-.tl-sheet-body .tl-pick-slug {
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-}
-.tl-sheet-body .tl-pick-head {
-  margin: 10px 10px 6px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-}
-.tl-sheet-body .tl-effort-seg button {
-  height: 44px;
-  font-size: calc(14px * var(--tl-text-scale, 1));
-}
-.tl-sheet-body .tl-pick-note {
-  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 
 /* ---- the composer's motion ------------------------------------------------ */
@@ -4358,24 +4034,18 @@ label.tl-set-row-label {
   .tl-send[data-kind="stop"]:disabled .tl-disc {
     animation: none;
   }
-  .tl-dial[data-busy]::before {
-    animation: none;
-    background: var(--accent);
-  }
   .tl-ms-pop,
   .tl-ms-sheet,
   .tl-ms-scrim,
   .tl-plus-menu,
-  .tl-dial-pop,
+  .tl-strip-pop,
   .tl-complete,
-  .tl-row-user[data-queued] .tl-bubble-user,
-  .tl-sheet,
-  .tl-sheet-scrim {
+  .tl-row-user[data-queued] .tl-bubble-user {
     animation: none;
   }
   .tl-plus svg,
   .tl-disc,
-  .tl-dial,
+  .tl-strip-btn,
   .tl-model-btn,
   .tl-pill {
     transition: none;
@@ -4870,21 +4540,6 @@ body.tl-kb-up {
   .tl-model-btn {
     height: 44px;
     font-size: calc(14.5px * var(--tl-text-scale, 1));
-  }
-  /* A finger cannot hover, so every dial wears the box a hover gives one on a
-     desktop, and the micro-labels go: the sheet's tabs name them. */
-  .tl-dial {
-    height: 32px;
-    padding: 0 9px;
-    gap: 6px;
-    font-size: calc(12.5px * var(--tl-text-scale, 1));
-    background: var(--hover-tint);
-    border-color: var(--border);
-  }
-  .tl-dial-chev,
-  .tl-dial-label,
-  .tl-dial-div {
-    display: none;
   }
   .tl-plus-menu {
     min-width: 250px;

@@ -190,24 +190,28 @@ const aFile = (name: string, type = "image/png"): File =>
 const field = (c: HTMLElement) =>
   c.querySelector<HTMLTextAreaElement>('textarea[aria-label="Prompt for a new session"]');
 const nameBox = (c: HTMLElement) =>
-  c.querySelector<HTMLInputElement>('input[aria-label="Name for the new session"]');
+  c.querySelector<HTMLTextAreaElement>('[aria-label="Name for the new session"]');
 /**
- * The dial each choice sits on. The effort shares the model's dial, the way
- * the live composer's model dial carries both.
+ * The control each choice opens from. The project and the command sit in the
+ * strip under the box; the model and the effort share the model button in the
+ * box's row, whose sheet carries both (the T3 pass, 2026-09-27).
  */
-const DIAL_OF: Record<string, string> = {
-  "Project for new session": "project",
-  "Command for new session": "command",
-  "Model for new session": "model",
-  "Effort for new session": "model",
+const OPENER_OF: Record<string, string> = {
+  "Project for new session": '.tl-new-strip [data-strip="project"]',
+  "Command for new session": '.tl-new-strip [data-strip="command"]',
+  "Model for new session": ".tl-model-btn",
+  "Effort for new session": ".tl-model-btn",
 };
-const dial = (c: HTMLElement, label: string) =>
-  c.querySelector<HTMLButtonElement>(`.tl-dial[data-dial="${DIAL_OF[label]}"]`);
-/** The list a choice is made from, opening its dial first when it is shut. */
+const opener = (c: HTMLElement, label: string) =>
+  c.querySelector<HTMLButtonElement>(OPENER_OF[label]!);
+/**
+ * The list a choice is made from, opening its control first when it is shut.
+ * Searched in the whole document: the phone's sheet is drawn into the body.
+ */
 const pick = (c: HTMLElement, label: string): HTMLElement => {
-  const d = dial(c, label)!;
+  const d = opener(c, label)!;
   if (d.getAttribute("aria-expanded") !== "true") fireEvent.click(d);
-  return c.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${label}"]`)!;
+  return document.querySelector<HTMLElement>(`[role="radiogroup"][aria-label="${label}"]`)!;
 };
 const option = (list: HTMLElement, value: string) =>
   list.querySelector<HTMLButtonElement>(`[role="radio"][data-value="${value}"]`)!;
@@ -674,7 +678,7 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     expect(field(m.container)).toBeNull();
     // Nothing summarises a shell, so there is no model to choose either.
-    expect(dial(m.container, "Model for new session")).toBeNull();
+    expect(opener(m.container, "Model for new session")).toBeNull();
     m.store.dispose();
   });
 
@@ -818,12 +822,13 @@ describe("<NewSessionComposer> — the model and the effort it starts on", () =>
 });
 
 /**
- * The choices sit on the same dials as the live composer's (Dial.tsx): a
- * popover with a fine pointer, one sheet with a tab per dial on a phone. What
- * is particular to this screen is where they sit and what a pick does to the
- * sheet (docs/plans/2026-09-24-text-composer-redesign.md, open points 8 and 9).
+ * The T3 pass (docs/plans/2026-09-27-text-view-t3-pass.md, prototype states
+ * 6-new and 6-shell): the box at full size under a hero line, the model
+ * button inside the box, and a strip under it with the project on the left
+ * and the command on the right. Each opens its list as a popover with a fine
+ * pointer and as a bottom sheet with a coarse one.
  */
-describe("<NewSessionComposer> — the dials", () => {
+describe("<NewSessionComposer> — the box, the hero and the strip", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   /** A coarse pointer, as `(pointer: coarse)` answers on a phone. */
@@ -839,81 +844,268 @@ describe("<NewSessionComposer> — the dials", () => {
         }) as unknown as MediaQueryList,
     );
   };
+  const withAlpha = (api: FakeApi): void => {
+    api.layoutVal = {
+      ...emptyLayout(),
+      projects: [{ name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" }],
+    };
+  };
+  const hero = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-new-hero");
+  const strip = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-new-strip");
 
-  // Right-aligned with nothing on their left, like the live composer's dials.
-  // Left-aligned they would read as a sentence, which is what the selects were.
-  it("puts the three dials alone on the line, project then command then model", async () => {
-    const m = mount(new FakeApi());
+  it("asks what to build in the project, in the hero and the placeholder", async () => {
+    const api = new FakeApi();
+    withAlpha(api);
+    const m = mount(api);
     await m.store.refresh();
-    const line = m.container.querySelector(".tl-new-line")!;
-    expect(Array.from(line.children).map((el) => el.className)).toEqual(["tl-dials"]);
-    const ids = Array.from(line.querySelectorAll(".tl-dial")).map((d) =>
-      d.getAttribute("data-dial"),
+    m.setPreset("alpha");
+    await waitFor(() =>
+      expect(hero(m.container)!.textContent).toBe("What should we build in alpha?"),
     );
-    expect(ids).toEqual(["project", "command", "model"]);
+    // The project in its own span, drawn muted.
+    expect(hero(m.container)!.querySelector("span")!.textContent).toBe("alpha");
+    expect(field(m.container)!.placeholder).toBe("What should Claude do in alpha?");
     m.store.dispose();
   });
 
-  it("keeps each dial's accessible name, followed by what it is set to", async () => {
+  it("names the CLI the command starts in the placeholder", async () => {
+    const api = new FakeApi();
+    withAlpha(api);
+    const m = mount(api);
+    await m.store.refresh();
+    m.setPreset("alpha");
+    choose(m.container, "Command for new session", "codex");
+    await waitFor(() =>
+      expect(field(m.container)!.placeholder).toBe("What should Codex do in alpha?"),
+    );
+    m.store.dispose();
+  });
+
+  // Ungrouped is not a place; "build in Ungrouped" would read as one.
+  it("drops the project from the words when there is none", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    expect(hero(m.container)!.textContent).toBe("What should we build?");
+    expect(field(m.container)!.placeholder).toBe("What should Claude do?");
+    m.store.dispose();
+  });
+
+  it("draws the box at full size on a phone, not the folded pill", async () => {
+    coarse();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    expect(m.container.querySelector(".tl-pill")!.getAttribute("data-shape")).toBe("box");
+    m.store.dispose();
+  });
+
+  it("puts the model button inside the box, beside the +", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const box = m.container.querySelector(".tl-pill")!;
+    expect(box.querySelector(".tl-box-tools .tl-model-btn")).not.toBeNull();
+    expect(box.querySelector(".tl-plus")).not.toBeNull();
+    // The Quiet line's dials are gone from this screen.
+    expect(m.container.querySelector(".tl-dial")).toBeNull();
+    m.store.dispose();
+  });
+
+  it("puts the project left and the command right, in a strip under the box", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const s = strip(m.container)!;
+    expect(s).not.toBeNull();
+    // Under the box: the strip follows the box's wrapper.
+    expect(s.previousElementSibling!.classList.contains("tl-pillwrap")).toBe(true);
+    const ids = Array.from(s.querySelectorAll("button")).map((b) => b.getAttribute("data-strip"));
+    expect(ids).toEqual(["project", "command"]);
+    expect(opener(m.container, "Project for new session")!.textContent).toContain("Ungrouped");
+    expect(opener(m.container, "Command for new session")!.textContent).toContain("claude");
+    m.store.dispose();
+  });
+
+  it("keeps each control's accessible name, followed by what it is set to", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     choose(m.container, "Model for new session", "claude-opus-5-5");
     choose(m.container, "Effort for new session", "high");
-    expect(dial(m.container, "Project for new session")!.getAttribute("aria-label")).toBe(
+    expect(opener(m.container, "Project for new session")!.getAttribute("aria-label")).toBe(
       "Project for new session: Ungrouped",
     );
-    expect(dial(m.container, "Command for new session")!.getAttribute("aria-label")).toBe(
+    expect(opener(m.container, "Command for new session")!.getAttribute("aria-label")).toBe(
       "Command for new session: Claude",
     );
-    const model = dial(m.container, "Model for new session")!;
+    const model = opener(m.container, "Model for new session")!;
     expect(model.getAttribute("aria-label")).toBe("Model for new session: Opus 5.5 · High");
-    // The name on the dial, the exact slug in its title.
-    expect(model.textContent).toContain("Opus 5.5 · High");
+    // The name on the button, as T3 draws it; the exact slug in its title.
+    expect(model.textContent).toBe("Opus 5.5");
     expect(model.title).toContain("claude-opus-5-5");
     m.store.dispose();
   });
 
+  it("reads Default on the model button until a model is chosen", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    expect(opener(m.container, "Model for new session")!.textContent).toBe("Default");
+    m.store.dispose();
+  });
+
+  it("opens the project list from the strip as a popover on a desktop", async () => {
+    const api = new FakeApi();
+    withAlpha(api);
+    const m = mount(api);
+    await m.store.refresh();
+    const list = pick(m.container, "Project for new session");
+    expect(list.closest(".tl-strip-pop")).not.toBeNull();
+    expect(opener(m.container, "Project for new session")!.getAttribute("aria-expanded")).toBe(
+      "true",
+    );
+    fireEvent.click(option(list, "alpha"));
+    expect(m.container.querySelector(".tl-strip-pop")).toBeNull();
+    expect(m.prefs.prefs().session.newProject).toBe("alpha");
+    m.store.dispose();
+  });
+
+  it("opens the command list from the strip as a popover on a desktop", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const list = pick(m.container, "Command for new session");
+    expect(list.closest(".tl-strip-pop")).not.toBeNull();
+    fireEvent.click(option(list, "codex"));
+    expect(m.container.querySelector(".tl-strip-pop")).toBeNull();
+    m.store.dispose();
+  });
+
+  it("opens only one list at a time", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    pick(m.container, "Project for new session");
+    pick(m.container, "Command for new session");
+    expect(m.container.querySelectorAll(".tl-strip-pop")).toHaveLength(1);
+    expect(
+      document.querySelector('[aria-label="Project for new session"][role="radiogroup"]'),
+    ).toBeNull();
+    m.store.dispose();
+  });
+
+  it("closes a list on Escape and gives the focus back to its button", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    pick(m.container, "Command for new session");
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(m.container.querySelector(".tl-strip-pop")).toBeNull();
+    expect(document.activeElement).toBe(opener(m.container, "Command for new session"));
+    m.store.dispose();
+  });
+
+  it("opens the strip's lists as a bottom sheet on a phone, which a pick puts away", async () => {
+    coarse();
+    const api = new FakeApi();
+    withAlpha(api);
+    const m = mount(api);
+    await m.store.refresh();
+    const list = pick(m.container, "Project for new session");
+    expect(list.closest(".tl-ms-sheet")).not.toBeNull();
+    expect(m.container.querySelector(".tl-strip-pop")).toBeNull();
+    fireEvent.click(option(list, "alpha"));
+    expect(document.querySelector(".tl-ms-sheet")).toBeNull();
+    expect(m.prefs.prefs().session.newProject).toBe("alpha");
+    m.store.dispose();
+  });
+
+  // Model and effort are usually picked together, and a sheet that closed
+  // after each would mean two trips. A pick here writes a preference and
+  // types into nothing, so there is no pane to hand back to.
+  it("keeps the phone's model sheet up after a pick, so a second choice needs no second visit", async () => {
+    coarse();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    fireEvent.click(option(pick(m.container, "Model for new session"), "claude-sonnet-5"));
+    fireEvent.click(option(pick(m.container, "Effort for new session"), "low"));
+    expect(document.querySelector(".tl-ms-sheet")).not.toBeNull();
+    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
+    expect(m.prefs.prefs().session.newEffort).toBe("low");
+    m.store.dispose();
+  });
+
+  it("puts the model popover away after a pick on a desktop", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Model for new session", "claude-sonnet-5");
+    expect(m.container.querySelector(".tl-ms-pop")).toBeNull();
+    m.store.dispose();
+  });
+
+  // A session that does not exist has no mode to walk and no context used.
+  it("gives the model sheet Model and Effort only", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    pick(m.container, "Model for new session");
+    const pop = m.container.querySelector(".tl-ms-pop")!;
+    expect(pop.querySelector('[aria-label="Permission mode"]')).toBeNull();
+    expect(pop.querySelector(".tl-ms-ctx")).toBeNull();
+    const heads = Array.from(pop.querySelectorAll(".tl-ms-h")).map(
+      (h) => h.firstChild?.textContent,
+    );
+    expect(heads).toEqual(["Model", "Effort"]);
+    m.store.dispose();
+  });
+
+  it("says Haiku 4.5 has one effort level rather than offering a control", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Model for new session", "claude-haiku-4-5-20251001");
+    pick(m.container, "Model for new session");
+    const pop = m.container.querySelector(".tl-ms-pop")!;
+    expect(pop.querySelector(".tl-ms-seg")).toBeNull();
+    expect(pop.querySelector(".tl-ms-none")!.textContent).toBe("Haiku 4.5 has one effort level.");
+    m.store.dispose();
+  });
+
   // The composer scrolls (overflow-y: auto), so a popover taller than the room
-  // above its dial is cut off at the composer's top, under the session bar.
-  // Measured at 1280x800: the project list lost its Ungrouped row.
-  it("caps a popover at the room above its dial inside the composer", async () => {
+  // above the box is cut off at the composer's top, under the session bar.
+  it("caps the model popover at the room above the box inside the composer", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     const at = (top: number) => (): DOMRect =>
-      ({ top, bottom: top + 28, left: 340, right: 1200, width: 860, height: 28 }) as DOMRect;
-    m.container.querySelector<HTMLElement>(".tl-new-view")!.getBoundingClientRect = at(0);
+      ({ top, bottom: top + 108, left: 340, right: 1100, width: 760, height: 108 }) as DOMRect;
     m.container.querySelector<HTMLElement>(".tl-new-composer")!.getBoundingClientRect = at(80);
-    const d = dial(m.container, "Model for new session")!;
-    d.getBoundingClientRect = at(402);
-    // jsdom lays nothing out, so every offsetParent is null and the popover
-    // would never be placed at all.
-    const parent = vi
-      .spyOn(HTMLElement.prototype, "offsetParent", "get")
-      .mockImplementation(function (this: HTMLElement) {
-        return this.parentElement;
-      });
-    fireEvent.click(d);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(m.container.querySelector<HTMLElement>(".tl-dial-pop")!.style.maxHeight).toBe(
-      `${402 - 80 - 12}px`,
+    m.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = at(402);
+    fireEvent.click(opener(m.container, "Model for new session")!);
+    expect(m.container.querySelector<HTMLElement>(".tl-ms-pop")!.style.maxHeight).toBe(
+      `${402 - 80 - 16}px`,
     );
-    parent.mockRestore();
     m.store.dispose();
   });
 
-  it("puts the popover away after a pick on a desktop", async () => {
+  // Max is offered and lasts the one session it was picked for
+  // (resetOneSessionEffort in store/prefs.ts). The sheet says so before the
+  // pick rather than after the next session starts on high.
+  it("offers max for one session, and says so", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
-    choose(m.container, "Command for new session", "codex");
-    expect(m.container.querySelector(".tl-dial-pop")).toBeNull();
+    choose(m.container, "Effort for new session", "max");
+    expect(m.prefs.prefs().session.newEffort).toBe("max");
+    pick(m.container, "Effort for new session");
+    const pop = m.container.querySelector(".tl-ms-pop")!;
+    expect(pop.querySelector(".tl-ms-note")?.textContent).toMatch(/this one session/i);
     m.store.dispose();
   });
 
-  // Two choices in one visit: the project and the model are usually picked
-  // together, and a sheet that closed after each would mean two trips.
-  it("keeps the phone's sheet open after a pick, so a second choice needs no second visit", async () => {
-    coarse();
+  it("keeps ultracode on a model with xhigh", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    choose(m.container, "Model for new session", "claude-sonnet-5");
+    expect(values(pick(m.container, "Effort for new session"))).toContain("ultracode");
+    m.store.dispose();
+  });
+});
+
+describe("<NewSessionComposer> — a new shell", () => {
+  const shellPref = (): void =>
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
+
+  it("asks for a name in the hero and the box", async () => {
+    shellPref();
     const api = new FakeApi();
     api.layoutVal = {
       ...emptyLayout(),
@@ -921,45 +1113,44 @@ describe("<NewSessionComposer> — the dials", () => {
     };
     const m = mount(api);
     await m.store.refresh();
-
-    choose(m.container, "Project for new session", "alpha");
-    const sheet = m.container.querySelector(".tl-sheet")!;
-    expect(sheet).not.toBeNull();
-    const tabs = Array.from(sheet.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
-    expect(tabs.map((t) => t.textContent)).toEqual(["Project", "Command", "Model"]);
-
-    fireEvent.click(tabs[2]!);
-    fireEvent.click(option(pick(m.container, "Model for new session"), "claude-sonnet-5"));
-    fireEvent.click(option(pick(m.container, "Effort for new session"), "low"));
-    expect(m.container.querySelector(".tl-sheet")).not.toBeNull();
-    expect(m.prefs.prefs().session.newProject).toBe("alpha");
-    expect(m.prefs.prefs().session.newModel).toBe("claude-sonnet-5");
-    expect(m.prefs.prefs().session.newEffort).toBe("low");
-    m.store.dispose();
-  });
-
-  it("gives a shell's sheet no model tab", async () => {
-    coarse();
-    const m = mount(new FakeApi());
-    await m.store.refresh();
-    choose(m.container, "Command for new session", "shell");
-    const tabs = Array.from(
-      m.container.querySelectorAll<HTMLButtonElement>('.tl-sheet [role="tab"]'),
+    m.setPreset("alpha");
+    await waitFor(() =>
+      expect(m.container.querySelector(".tl-new-hero")!.textContent).toBe("Name a shell in alpha"),
     );
-    expect(tabs.map((t) => t.textContent)).toEqual(["Project", "Command"]);
+    expect(nameBox(m.container)!.placeholder).toBe("Name this shell…");
     m.store.dispose();
   });
 
-  // Max is offered and lasts the one session it was picked for
-  // (resetOneSessionEffort in store/prefs.ts). The list says so before the
-  // pick rather than after the next session starts on high.
-  it("offers max for one session, and says so", async () => {
+  it("hides the + by visibility and leaves the model button out", async () => {
+    shellPref();
     const m = mount(new FakeApi());
     await m.store.refresh();
-    choose(m.container, "Effort for new session", "max");
-    expect(m.prefs.prefs().session.newEffort).toBe("max");
-    const pop = pick(m.container, "Effort for new session").closest(".tl-dial-pop")!;
-    expect(pop.querySelector(".tl-pick-note")?.textContent).toMatch(/this one session/i);
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    expect(m.container.querySelector(".tl-pill-name .tl-plus")!.hasAttribute("data-hidden")).toBe(
+      true,
+    );
+    expect(m.container.querySelector(".tl-model-btn")).toBeNull();
+    m.store.dispose();
+  });
+
+  it("keeps the strip, so the command can be changed back", async () => {
+    shellPref();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    expect(opener(m.container, "Command for new session")!.textContent).toContain("shell");
+    choose(m.container, "Command for new session", "claude");
+    await waitFor(() => expect(field(m.container)).not.toBeNull());
+    m.store.dispose();
+  });
+
+  it("keeps a pasted newline out of a name", async () => {
+    shellPref();
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    type(nameBox(m.container)!, "one\ntwo");
+    expect(nameBox(m.container)!.value).toBe("one two");
     m.store.dispose();
   });
 });
@@ -1429,7 +1620,7 @@ describe("<NewSessionComposer> — pi", () => {
     await m.store.refresh();
     const sel = pick(m.container, "Command for new session");
     expect(values(sel)).toEqual(["claude", "codex", "pi", "shell"]);
-    expect(option(sel, "pi").querySelector(".tl-pick-name")?.textContent).toBe("Pi");
+    expect(option(sel, "pi").querySelector(".tl-ms-name")?.textContent).toBe("Pi");
     m.store.dispose();
   });
 
@@ -1452,7 +1643,7 @@ describe("<NewSessionComposer> — pi", () => {
     );
     // A reference is already unmistakably a model, so it is its own name.
     expect(
-      option(pick(m.container, "Model for new session"), OPUS).querySelector(".tl-pick-name")
+      option(pick(m.container, "Model for new session"), OPUS).querySelector(".tl-ms-name")
         ?.textContent,
     ).toBe(OPUS);
     expect(hint(m.container)).toBeNull();
@@ -1548,8 +1739,10 @@ describe("<NewSessionComposer> — pi", () => {
       "xhigh",
       "max",
     ]);
-    expect(option(sel, "high").textContent).toBe("High");
-    expect(option(sel, "off").textContent).toBe("Off");
+    // The segmented control writes each level as pi's own word, as the live
+    // sheet does, and says it in full in the title.
+    expect(option(sel, "high").textContent).toBe("high");
+    expect(option(sel, "off").title).toBe("Off");
     m.store.dispose();
   });
 

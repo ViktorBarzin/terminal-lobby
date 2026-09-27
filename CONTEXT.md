@@ -830,15 +830,25 @@ attach menu, plus menu
 The prompt field for a session that does not exist yet, shown wherever nothing
 is selected and on a phone as the landing view. You type what you want to do,
 press Enter, and the session is created with your text as its first prompt.
-Three **dials** sit on the line above it, right-aligned: which **project** it
-lands in, which command runs, and which model and how hard it thinks, those two
-sharing one dial. Choosing a plain shell turns the field into a naming pill and
-drops the model dial, because a shell has no prompt to receive and no model. Either shape has to have
+Since the T3 pass (2026-09-27) it is the **Composer**'s box at full size under
+a line asking "What should we build in <project>?". The model button sits in
+the box, and its **Model sheet** holds the model and the effort, each with a
+Default. Under the box is the **New-session strip**. Choosing a plain shell
+turns the box into "Name this shell…", with the "+" held out of sight and no
+model button, because a shell has no prompt to receive and no model. It
+replaced three **dials** on a line above the field. Either shape has to have
 something in it — an empty box created a session with nothing in it to
 summarise until 2026-09-12, and Send is now drawn unavailable until you type.
 A held file counts as what was typed, since it leaves as the path it uploaded
 to.
 _Avoid_: create row, new-session form, session wizard
+
+**New-session strip**:
+The 40px strip hanging under the **New-session composer**'s box, like T3
+Code's workspace and branch strip: which **project** the session lands in on
+the left, and which command runs on the right. Each opens its list, as a
+popover with a mouse and a bottom sheet on a phone, and a pick closes it.
+_Avoid_: dial, footer, toolbar
 
 **First prompt**:
 What the **New-session composer** sends to a session it has just created: the

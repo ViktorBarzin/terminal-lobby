@@ -13,6 +13,7 @@ import {
   labelFor,
   modelName,
   optionsFor,
+  startEfforts,
   summarise,
   type ModelField,
   type ModelHarness,
@@ -62,6 +63,15 @@ import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
  * its catalogue and pi the levels its session stamped, under pi's own word,
  * "Thinking". The level the session reports always shows, so a session on
  * ultracode, which the row leaves out, still sees it ticked.
+ *
+ * THE NEW-SESSION VARIANT (`offerDefault`). The new-session screen's box
+ * carries the same button, and its sheet holds Model and Effort only: a
+ * session that does not exist has no mode to walk and no context used. Both
+ * lists lead with Default ("whatever the CLI starts on"), Claude keeps
+ * ultracode on every model with xhigh (lib/models.ts `startEfforts`), and a
+ * pick writes a preference rather than typing into a pane, so the phone's
+ * sheet stays up for the second choice (`keepSheetOpen`) and `note` says when
+ * an effort lasts one session.
  */
 
 /** The float's accessible name, on the popover and the bottom sheet alike. */
@@ -98,6 +108,21 @@ export const ModelSheet: Component<{
   context?: ContextState;
   /** Watching: the sheet reads, and every row is inert. */
   inertReason?: string;
+  /** A session not started yet: Default leads both lists, and the efforts
+   *  are the ones a launch can ask for (`startEfforts`). */
+  offerDefault?: boolean;
+  /** The two lists' accessible names, "Model" and the effort heading unless
+   *  given. */
+  names?: { model: string; effort: string };
+  /** The button's accessible name, followed by the model and the effort. The
+   *  live composer's names the harness and the mode instead. */
+  buttonName?: string;
+  /** A line under the efforts, in place of codex's live-session note. */
+  note?: string;
+  /** Said on the model list itself, such as why pi's list could not be read. */
+  modelTitle?: string;
+  /** A pick leaves the phone's sheet up, for a second choice in one visit. */
+  keepSheetOpen?: boolean;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [sheet, setSheet] = createSignal(false);
@@ -113,8 +138,11 @@ export const ModelSheet: Component<{
   /** Why the button opens nothing: a dialog is on the pane. */
   const held = (): string => props.modelHeld || props.modeHeld || "";
   /** The model's name, or "" while the session has not said. */
-  const name = (): string =>
-    props.harness && props.model?.model ? modelName(props.harness, props.model.model) : "";
+  const name = (): string => {
+    const m = props.model?.model;
+    if (!props.harness || !m) return "";
+    return m === DEFAULT_CHOICE ? "Default" : modelName(props.harness, m);
+  };
   const label = (): string => {
     if (busy()) return "Switching…";
     if (props.harness) return name() || "Model";
@@ -124,17 +152,23 @@ export const ModelSheet: Component<{
   const spoken = (): string => {
     const h = props.harness;
     if (!h) return "";
-    const e = props.model?.effort ? labelFor(h, "effort", props.model.effort) : "";
+    const effort = props.model?.effort;
+    const e = effort && effort !== DEFAULT_CHOICE ? labelFor(h, "effort", effort) : "";
     return [name(), e].filter((s) => s !== "").join(" · ");
   };
   const title = (): string => {
     if (held()) return held();
     const h = props.harness;
     if (!h) return `Permission mode: ${modeTitle(props.mode ?? "")}`;
+    // The exact slug and effort, which the name on the button shortens.
+    if (props.buttonName) {
+      return `Model and effort for the new session: ${props.model?.model ?? DEFAULT_CHOICE} · ${props.model?.effort ?? DEFAULT_CHOICE}`;
+    }
     const exact = summarise(props.model);
     return exact ? `${chipName(h)}: ${exact}` : `${chipName(h)}. The session has not answered yet`;
   };
   const ariaLabel = (): string => {
+    if (props.buttonName) return `${props.buttonName}: ${spoken() || "Default"}`;
     const parts: string[] = [];
     if (props.harness) parts.push(`${chipName(props.harness)}: ${spoken() || "not reported yet"}.`);
     if (props.mode) parts.push(`Permission mode: ${modeTitle(props.mode)}.`);
@@ -161,7 +195,8 @@ export const ModelSheet: Component<{
    */
   const placePop = (): void => {
     const pill = root?.closest(".tl-pill");
-    const view = root?.closest(".tl-textview");
+    // The new-session composer scrolls, so its own top is the ceiling there.
+    const view = root?.closest(".tl-textview, .tl-new-composer");
     if (!pill) return;
     const room = pill.getBoundingClientRect().top - (view?.getBoundingClientRect().top ?? 0) - 16;
     setPopMax(Math.min(POP_MAX, Math.max(160, room)));
@@ -192,31 +227,36 @@ export const ModelSheet: Component<{
   const chosen = (field: ModelField, id: string): boolean => {
     const hh = h();
     if (!hh) return false;
+    if (field === "model" && id === DEFAULT_CHOICE) return props.model?.model === DEFAULT_CHOICE;
     return field === "model"
       ? isCurrentModel(hh, id, props.model?.model)
       : props.model?.effort === id;
   };
   const modelRows = (): readonly ModelOption[] => {
     const hh = h();
-    return hh
-      ? optionsFor(hh, "model", props.modelOffer).filter((o) => o.id !== DEFAULT_CHOICE)
-      : [];
+    if (!hh) return [];
+    const rows = optionsFor(hh, "model", props.modelOffer).filter((o) => o.id !== DEFAULT_CHOICE);
+    return props.offerDefault ? [{ id: DEFAULT_CHOICE, label: "Default" }, ...rows] : rows;
   };
   /** This model's levels, and the one the session is on if the row left it out. */
   const effortRows = (): readonly ModelOption[] => {
     const hh = h();
     if (!hh) return [];
-    const rows = effortsForModel(hh, props.model?.model, props.modelOffer);
+    const rows = props.offerDefault
+      ? startEfforts(hh, props.model?.model ?? DEFAULT_CHOICE, props.modelOffer)
+      : effortsForModel(hh, props.model?.model, props.modelOffer);
     const cur = props.model?.effort;
     if (rows.length === 0 || !cur || rows.some((o) => o.id === cur)) return rows;
     return isEffortFor(hh, cur) && cur !== DEFAULT_CHOICE
       ? [...rows, { id: cur, label: labelFor(hh, "effort", cur) }]
       : rows;
   };
+  /** A model row's name: Default, or the model's own. */
+  const rowName = (id: string): string => (id === DEFAULT_CHOICE ? "Default" : modelName(h()!, id));
   const pickModel = (field: ModelField, id: string): void => {
     if (modelLocked()) return;
     if (!chosen(field, id)) props.onPickModel?.(field, id);
-    close(true);
+    if (!(props.keepSheetOpen && sheet())) close(true);
   };
 
   // ---- the Mode section --------------------------------------------------------
@@ -245,6 +285,9 @@ export const ModelSheet: Component<{
     close(true);
   };
 
+  /** Named for what it holds: a new session's sheet has no Mode section. */
+  const sheetName = (): string => (props.mode ? SHEET_NAME : "Model and effort");
+
   /** The one line under the lists that says why nothing can be picked. */
   const holdNote = (): string => props.inertReason || props.modelHeld || props.modeHeld || "";
 
@@ -254,7 +297,7 @@ export const ModelSheet: Component<{
         <div class="tl-ms-h" aria-hidden="true">
           {fieldHeading(h()!, "model")}
         </div>
-        <div role="radiogroup" aria-label="Model">
+        <div role="radiogroup" aria-label={props.names?.model ?? "Model"} title={props.modelTitle}>
           <For each={modelRows()}>
             {(o) => (
               <button
@@ -269,13 +312,16 @@ export const ModelSheet: Component<{
               >
                 <span class="tl-ms-lab">
                   <SparkleIcon size={14} class="tl-ms-spark" />
-                  <span class="tl-ms-name">{modelName(h()!, o.id)}</span>
+                  <span class="tl-ms-name">{rowName(o.id)}</span>
                   {/* The exact slug, which Viktor asked to see (2026-09-06);
                       codex and pi already name their rows by it. */}
-                  <Show when={modelName(h()!, o.id) !== o.id}>
+                  <Show when={o.id !== DEFAULT_CHOICE && rowName(o.id) !== o.id}>
                     <small class="tl-ms-slug">{o.id}</small>
                   </Show>
                 </span>
+                <Show when={o.id === DEFAULT_CHOICE}>
+                  <span class="tl-ms-desc">Whatever the CLI starts on</span>
+                </Show>
                 <span class="tl-ms-tick" aria-hidden="true">
                   <Show when={chosen("model", o.id)}>
                     <CheckIcon />
@@ -303,7 +349,11 @@ export const ModelSheet: Component<{
                 </p>
               }
             >
-              <div class="tl-ms-seg" role="radiogroup" aria-label={fieldHeading(hh(), "effort")}>
+              <div
+                class="tl-ms-seg"
+                role="radiogroup"
+                aria-label={props.names?.effort ?? fieldHeading(hh(), "effort")}
+              >
                 <For each={effortRows()}>
                   {(o) => (
                     <button
@@ -324,8 +374,15 @@ export const ModelSheet: Component<{
             {/* Codex's picker writes ~/.codex/config.toml and has no "this
                 session only" key, where Claude's does, so a change there also
                 moves what the next codex session starts on. */}
-            <Show when={hh() === "codex"}>
-              <p class="tl-ms-note">Also becomes codex's default for new sessions.</p>
+            <Show
+              when={props.note}
+              fallback={
+                <Show when={hh() === "codex"}>
+                  <p class="tl-ms-note">Also becomes codex's default for new sessions.</p>
+                </Show>
+              }
+            >
+              <p class="tl-ms-note">{props.note}</p>
             </Show>
           </>
         )}
@@ -421,7 +478,7 @@ export const ModelSheet: Component<{
           ref={popEl}
           class="tl-ms-pop"
           role="dialog"
-          aria-label={SHEET_NAME}
+          aria-label={sheetName()}
           style={{ "max-height": `${popMax()}px` }}
           onKeyDown={(e) => walkNav(e, NAV)}
         >
@@ -430,7 +487,11 @@ export const ModelSheet: Component<{
       </Show>
       <Show when={open() && sheet()}>
         <Portal>
-          <BottomSheet ref={(el) => (layerEl = el)} onClose={() => close(false)}>
+          <BottomSheet
+            ref={(el) => (layerEl = el)}
+            label={sheetName()}
+            onClose={() => close(false)}
+          >
             {body()}
           </BottomSheet>
         </Portal>
@@ -440,7 +501,8 @@ export const ModelSheet: Component<{
 };
 
 /**
- * The phone's sheet: a scrim and a sheet rising from the bottom edge.
+ * The phone's sheet: a scrim and a sheet rising from the bottom edge. The
+ * model sheet's, and the new-session strip's project and command lists.
  *
  * Rendered into the document's body. The composer's surface blurs what is
  * behind it (`backdrop-filter`), which makes it the containing block of any
@@ -451,8 +513,10 @@ export const ModelSheet: Component<{
  * keyboard away when the message field had it; Tab cannot walk out behind the
  * scrim; closing hands the focus back to whatever held it (lib/focus-trap).
  */
-const BottomSheet: Component<{
+export const BottomSheet: Component<{
   ref: (el: HTMLDivElement) => void;
+  /** The sheet's accessible name. */
+  label: string;
   onClose: () => void;
   children: JSX.Element;
 }> = (props) => {
@@ -475,7 +539,7 @@ const BottomSheet: Component<{
         class="tl-ms-sheet"
         role="dialog"
         aria-modal="true"
-        aria-label={SHEET_NAME}
+        aria-label={props.label}
         tabindex={-1}
         ref={sheetEl}
         onKeyDown={onKeyDown}

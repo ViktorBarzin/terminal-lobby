@@ -697,15 +697,17 @@ src/
                          session-poll tick with a 30s floor between reads, and
                          opens Settings → Agent spend when tapped
     NewSessionComposer.tsx
-                         The new-session composer: three dials (project,
-                         command, model with effort) right-aligned on a line
-                         above the prompt pill, on the same DialBar the live
-                         composer uses. On a phone a pick keeps the sheet open,
-                         so two choices take one visit. What you type becomes
-                         the session's first prompt; the name is a minted id and
+                         The new-session composer: a hero line, the live
+                         composer's box at full size with the model button
+                         in it (Model and Effort, each with a Default), and a
+                         strip under the box with the project on the left and
+                         the command on the right, each opening its list as a
+                         popover or a bottom sheet. What you type becomes the
+                         session's first prompt; the name is a minted id and
                          the title is Claude's own summary of the conversation.
-                         Choosing `shell` swaps the pill for a naming pill and
-                         drops the model dial, since a shell has no prompt
+                         Choosing `shell` turns the box into "Name this
+                         shell…", hides the + and drops the model button,
+                         since a shell has no prompt
     OrderMenu.tsx        The header's ordering picker (manual / created / active)
     menu.ts              The ⋯ popup: poll hold + Escape/outside-press dismiss
     menu.logic.ts        PURE placement for a fixed ⋯ popup: which side of the
@@ -809,11 +811,6 @@ src/
                          width, since Safari 15.6 has no container queries
     statusline.logic.ts  PURE the line's state and precedence, a target's
                          short form, and the width bands it folds at
-    Dial.tsx             The new-session composer's labelled dials and their
-                         floats: a popover above the dial with a fine pointer,
-                         ONE bottom sheet with a tab per dial with a coarse
-                         one. Knows nothing about projects or models; the
-                         caller hands it DialSpecs
     ModelSheet.tsx       The live composer's one model button ("✳ Opus 5.5 ⌄",
                          a red shield in Bypass and No ask) and the sheet it
                          opens: a 360px popover on a desktop, a bottom sheet
@@ -822,15 +819,11 @@ src/
                          modes (the danger two under a rule, No ask held
                          unless the session is in it), and a quiet "Context N%
                          used" line. Every row is held while a dialog is on
-                         the pane or another device drives
-    ModelPanel.tsx       The new-session model dial's list: the CLI's models by
-                         name with the slug under each, and effort as a three
-                         by two control. Pi's rows are handed in as an offer
-                         (its own model list, the levels its model supports)
-                         under pi's word, Thinking. `default` is offered only by the
-                         new-session composer: "leave it alone" answers a
-                         question only a session that does not exist yet can
-                         be asked
+                         the pane or another device drives. The new-session
+                         box carries it too (`offerDefault`): Model and Effort
+                         only, Default first in both, and a phone's sheet stays
+                         up after a pick. Its BottomSheet also holds the
+                         new-session strip's project and command lists
     PlusMenu.tsx         What the composer's + opens: Photo library, Camera,
                          File, Commands (/). `@` is typed only. The rows only
                          report the press; the inputs and the caret stay in

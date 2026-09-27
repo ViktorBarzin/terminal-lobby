@@ -9,6 +9,7 @@ import {
   type Component,
   type JSX,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { setSessionModel } from "../lib/model-api";
 import { readCatalogue } from "../store/catalogue";
 import { newSessionCommandsUrl } from "../lib/config";
@@ -25,20 +26,19 @@ import {
   NEW_SESSION_COMMANDS as COMMANDS,
   type CommandAvailability,
 } from "../lib/new-commands";
-import {
-  chipName,
-  DEFAULT_CHOICE,
-  isOneSessionEffort,
-  labelFor,
-  modelHarness,
-  modelName,
-  type ModelHarness,
-} from "../lib/models";
+import { isOneSessionEffort, labelFor, modelHarness, type ModelHarness } from "../lib/models";
 import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
-import { DialBar, type DialSpec } from "./Dial";
-import { ModelPanel } from "./ModelPanel";
-import { CheckIcon, PlusIcon, SendArrowIcon } from "./Icons";
+import { BottomSheet, ModelSheet } from "./ModelSheet";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  FolderGlyph,
+  PlusIcon,
+  PromptGlyph,
+  SendArrowIcon,
+} from "./Icons";
+import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt, firstPromptDelivery } from "../lib/first-prompt";
@@ -91,26 +91,30 @@ function objectUrl(f: File): string | undefined {
  * from Claude's own summary of the conversation a few seconds later. Until it
  * does, the card reads the first line of what was typed here.
  *
- * Three dials sit on a line above the field, right-aligned the way the live
- * composer's are, and built from the same component (Dial.tsx): "project code
- * · command Claude · model Opus 5.5 · High". The PROJECT is where the session
- * lands, defaulting to the last one created in and overridable for one create
- * by the `+` on a sidebar group. The COMMAND is which tool runs, the same
- * roamed `session.newCommand` the terminal attach reads, so what is picked here
- * is what starts. The MODEL and the EFFORT share one dial, as they do on the
- * live composer. Both belong to whichever CLI the command names (no two share
- * a vocabulary) and leave as launch arguments on the process the attach starts
- * (lib/terminal-url.ts). Pi's models are the one list not written down: they
- * are pi's own, read from GET /pi-models each time this opens with pi chosen
- * (ADR-0032), and its effort is pi's thinking level.
+ * THE T3 PASS (Viktor, 2026-09-27; docs/plans/2026-09-27-text-view-t3-pass.md,
+ * prototype states 6-new and 6-shell). A hero line asks "What should we build
+ * in <project>?", and under it is the live composer's box at full size, on a
+ * phone too. The model button sits inside the box, as it does on a live
+ * session, and its sheet holds the Model and the Effort. Under the box is a
+ * strip, like T3 Code's workspace and branch strip: the project on the left
+ * and the command on the right, each opening its list as a popover with a
+ * fine pointer and a bottom sheet with a coarse one. It replaced the Quiet
+ * line's three dials above the field (2026-09-24).
  *
- * On a phone the dials open one sheet with a tab each, and a pick leaves it
- * open, so the project and the model take one visit rather than two. A
- * popover on a desktop closes on a pick, as the live composer's does.
+ * The PROJECT is where the session lands, defaulting to the last one created
+ * in and overridable for one create by the `+` on a sidebar group. The COMMAND
+ * is which tool runs, the same roamed `session.newCommand` the terminal attach
+ * reads, so what is picked here is what starts. The MODEL and the EFFORT belong
+ * to whichever CLI the command names (no two share a vocabulary) and leave as
+ * launch arguments on the process the attach starts (lib/terminal-url.ts).
+ * Pi's models are the one list not written down: they are pi's own, read from
+ * GET /pi-models each time this opens with pi chosen (ADR-0032), and its effort
+ * is pi's thinking level.
  *
- * Choosing `shell` turns the box back into a NAME box: a shell has no
- * conversation to prompt or to summarise, and it is the case where someone most
- * likely wanted to name the thing. It holds the same line either way — nothing
+ * Choosing `shell` turns the box back into a NAME box, "Name this shell…": a
+ * shell has no conversation to prompt or to summarise, and it is the case where
+ * someone most likely wanted to name the thing. The `+` is held out of sight
+ * and the model button leaves. It holds the same line either way: nothing
  * typed, nothing created.
  */
 /** The real catalogue read: what a session started in `dir` would offer. */
@@ -211,7 +215,7 @@ export const NewSessionComposer: Component<{
     });
   });
 
-  let nameEl: HTMLInputElement | undefined;
+  let nameEl: HTMLTextAreaElement | undefined;
   const [name, setName] = createSignal("");
 
   // ---- speculative pre-warm ------------------------------------------------
@@ -419,97 +423,24 @@ export const NewSessionComposer: Component<{
     void submit(n, []);
   };
 
-  // ---- the dials ------------------------------------------------------------
-  // Built once each and handed to the bar by reference, every value read
-  // through an accessor, so a pick updates a dial in place rather than
-  // rebuilding it under the reader's finger.
-
-  /** What a pick does to the float: a popover goes away, the phone's sheet
-   *  stays, so a second choice needs no second visit. */
-  const afterPick = (ctx: { close: () => void; sheet: boolean }): (() => void) | undefined =>
-    ctx.sheet ? undefined : ctx.close;
-
+  // ---- the words -------------------------------------------------------------
+  /** The project as the strip names it. */
   const projectName = (): string => props.project() || "Ungrouped";
-  const projectDial: DialSpec = {
-    id: "project",
-    label: "project",
-    tab: "Project",
-    title: "Project for new session",
-    value: () => <span class="tl-dial-value">{projectName()}</span>,
-    ariaLabel: () => `Project for new session: ${projectName()}`,
-    hint: () => `Project for the new session: ${projectName()}. ${whereItStarts(props.project())}`,
-    panel: (ctx) => (
-      <div role="radiogroup" aria-label="Project for new session">
-        <ChoiceRow
-          value=""
-          name="Ungrouped"
-          sub={whereItStarts("")}
-          checked={props.project() === ""}
-          onPick={() => pickProject("", ctx)}
-        />
-        <For each={projects()}>
-          {(p) => (
-            <ChoiceRow
-              value={p.name}
-              name={p.name}
-              sub={whereItStarts(p.name)}
-              checked={props.project() === p.name}
-              onPick={() => pickProject(p.name, ctx)}
-            />
-          )}
-        </For>
-      </div>
-    ),
+  /** Ungrouped is not a place, so the words leave the project out there. */
+  const inProject = (): string => (props.project() ? ` in ${props.project()}` : "");
+  /** The placeholder names the CLI the command starts. */
+  const placeholder = (): string => {
+    const c = cmd();
+    const who = c === "codex" || c === "pi" ? COMMAND_LABELS[c] : "Claude";
+    return `What should ${who} do${inProject()}?`;
   };
   /** A project's row says where its session would start. */
   function whereItStarts(name: string): string {
     const dir = dirFor(name);
     return dir ? `Starts in ${dir}` : "Starts in your home directory";
   }
-  function pickProject(name: string, ctx: { close: () => void; sheet: boolean }): void {
-    if (name !== props.project()) props.onProject(name);
-    afterPick(ctx)?.();
-  }
 
-  const commandDial: DialSpec = {
-    id: "command",
-    label: "command",
-    tab: "Command",
-    title: "Command for new session",
-    value: () => <span class="tl-dial-value">{COMMAND_LABELS[cmd()]}</span>,
-    ariaLabel: () => `Command for new session: ${COMMAND_LABELS[cmd()]}`,
-    hint: () => `What the new session runs: ${COMMAND_LABELS[cmd()]}`,
-    panel: (ctx) => (
-      <div role="radiogroup" aria-label="Command for new session">
-        <For each={COMMANDS}>
-          {(c) => (
-            <ChoiceRow
-              value={c}
-              name={COMMAND_LABELS[c]}
-              // Greyed out and saying why: a command with nothing behind it
-              // starts a session that closes the moment it opens.
-              sub={canRun(c, avail()) ? undefined : "Not installed on this box"}
-              disabled={!canRun(c, avail())}
-              checked={cmd() === c}
-              onPick={() => {
-                if (c !== cmd()) props.prefs.setPref({ session: { newCommand: c } });
-                afterPick(ctx)?.();
-              }}
-            />
-          )}
-        </For>
-      </div>
-    ),
-  };
-
-  /** The model by name and the effort by label, as the live dial words them.
-   *  An untouched effort is left out rather than read as "Default". */
-  const modelWords = (h: ModelHarness): string => {
-    const c = choice(h);
-    const m = c.model === DEFAULT_CHOICE ? "Default" : modelName(h, c.model);
-    const e = c.effort === DEFAULT_CHOICE ? "" : labelFor(h, "effort", c.effort);
-    return [m, e].filter((w) => w !== "").join(" · ");
-  };
+  // ---- the model and the effort ---------------------------------------------
   /** Under the lists: what the choice does, and when it lasts one session. */
   const modelNote = (h: ModelHarness): string => {
     const effort = choice(h).effort;
@@ -517,52 +448,39 @@ export const NewSessionComposer: Component<{
       ? `${labelFor(h, "effort", effort)} lasts this one session. The next one starts on the default again.`
       : "The new session starts on these.";
   };
-  const modelDial: DialSpec = {
-    id: "model",
-    label: "model",
-    tab: "Model",
-    get title() {
-      return `${chipName(harness() ?? "claude")} for new session`;
-    },
-    value: () => <span class="tl-dial-value">{modelWords(harness() ?? "claude")}</span>,
-    ariaLabel: () => `Model for new session: ${modelWords(harness() ?? "claude")}`,
-    // The exact slug, which the name on the dial shortens.
-    hint: () => {
-      const c = choice(harness() ?? "claude");
-      return `Model and effort for the new session: ${c.model} · ${c.effort}`;
-    },
-    panel: (ctx) => (
-      <Show when={harness()}>
-        {(h) => (
-          <ModelPanel
-            harness={h()}
-            state={choice(h())}
-            busy={false}
-            offerDefault
-            names={{
-              model: "Model for new session",
-              effort: "Effort for new session",
-            }}
-            note={modelNote(h())}
-            // Pi's rows are pi's own list plus the stored pick, which the
-            // attach launches on whatever the list says (piModelRows).
-            {...(h() === "pi" ? { offer: { models: piModelRows() } } : {})}
-            // Said on the list it explains, not as a banner: the list could
-            // not be read, and the default is what pi will start on.
-            {...(piListError() ? { modelTitle: piListError() } : {})}
-            onPick={(field, id) => props.prefs.setPref(modelChoicePatch(h(), field, id))}
-            onDone={afterPick(ctx)}
-          />
-        )}
-      </Show>
-    ),
-  };
-
-  /** A shell has no model and no effort, so it gets no model dial. */
-  const hasModel = createMemo(() => harness() !== null);
-  const dials = createMemo<DialSpec[]>(() =>
-    hasModel() ? [projectDial, commandDial, modelDial] : [projectDial, commandDial],
+  /** The model button in the box: Model and Effort, no mode, no context. */
+  const modelButton = (h: ModelHarness): JSX.Element => (
+    <ModelSheet
+      harness={h}
+      model={choice(h)}
+      offerDefault
+      keepSheetOpen
+      buttonName="Model for new session"
+      names={{ model: "Model for new session", effort: "Effort for new session" }}
+      note={modelNote(h)}
+      // Pi's rows are pi's own list plus the stored pick, which the attach
+      // launches on whatever the list says (piModelRows).
+      {...(h === "pi" ? { modelOffer: { models: piModelRows() } } : {})}
+      // Said on the list it explains, not as a banner: the list could not be
+      // read, and the default is what pi will start on.
+      {...(piListError() ? { modelTitle: piListError() } : {})}
+      onPickModel={(field, id) => props.prefs.setPref(modelChoicePatch(h, field, id))}
+    />
   );
+
+  // ---- the strip ---------------------------------------------------------------
+  // One list open at a time: pressing the other button moves the float to it.
+  const [stripOpen, setStripOpen] = createSignal<StripId | null>(null);
+  const toggleStrip = (id: StripId): void => void setStripOpen((o) => (o === id ? null : id));
+  const closeStrip = (id: StripId): void => {
+    if (stripOpen() === id) setStripOpen(null);
+  };
+  const pickProject = (name: string): void => {
+    if (name !== props.project()) props.onProject(name);
+  };
+  const pickCommand = (c: NewCommand): void => {
+    if (c !== cmd()) props.prefs.setPref({ session: { newCommand: c } });
+  };
 
   return (
     <div class="tl-new-view">
@@ -585,49 +503,70 @@ export const NewSessionComposer: Component<{
         </div>
       </div>
       <div class="tl-new-composer">
-        {/* The choices sit on a line above the box, where the live composer
-            keeps its dials (the Quiet line, 2026-09-24). */}
-        <div class="tl-new-line">
-          <DialBar dials={dials()} sheetTitle="New session" />
-        </div>
+        <h2 class="tl-new-hero">
+          <Show
+            when={props.project()}
+            fallback={naming() ? "Name a shell" : "What should we build?"}
+          >
+            {(p) => (
+              <>
+                {naming() ? "Name a shell in " : "What should we build in "}
+                <span>{p()}</span>
+                {naming() ? "" : "?"}
+              </>
+            )}
+          </Show>
+        </h2>
         <Show
           when={!naming()}
           fallback={
-            <div class="tl-pill tl-pill-name" data-shape="box">
-              {/* The + a prompt box carries, held out of sight: a name takes
-                  no files, and hiding it by visibility keeps the name field
-                  and the round button where they sit for a prompt (6-shell). */}
-              <span class="tl-plus" data-hidden aria-hidden="true" tabIndex={-1}>
-                <span class="tl-disc">
-                  <PlusIcon />
-                </span>
-              </span>
-              <input
-                ref={nameEl}
-                class="tl-composer-input tl-new-name"
-                placeholder="Name this shell…"
-                aria-label="Name for the new session"
-                maxlength={MAX_TITLE_RUNES}
-                value={name()}
-                autofocus={!isCoarsePointer()}
-                onInput={(e) => setName(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") submitName();
-                }}
-              />
-              <div class="tl-pill-end">
-                <button
-                  type="button"
-                  class="tl-send"
-                  aria-label="Send"
-                  title="Start the shell (Enter)"
-                  disabled={!namable()}
-                  onClick={submitName}
-                >
+            <div class="tl-pillwrap">
+              <div class="tl-pill tl-pill-name" data-shape="box">
+                {/* The + a prompt box carries, held out of sight: a name takes
+                    no files, and hiding it by visibility keeps the name field
+                    and the round button where they sit for a prompt (6-shell). */}
+                <span class="tl-plus" data-hidden aria-hidden="true" tabIndex={-1}>
                   <span class="tl-disc">
-                    <SendArrowIcon />
+                    <PlusIcon />
                   </span>
-                </button>
+                </span>
+                {/* A textarea, so the name sits at the top of the box as the
+                    prompt does; it is still one line, with Enter to start. */}
+                <textarea
+                  ref={nameEl}
+                  class="tl-composer-input tl-new-name"
+                  rows={1}
+                  placeholder="Name this shell…"
+                  aria-label="Name for the new session"
+                  maxlength={MAX_TITLE_RUNES}
+                  enterkeyhint="go"
+                  value={name()}
+                  autofocus={!isCoarsePointer()}
+                  onInput={(e) => {
+                    const v = e.currentTarget.value.replace(/[\r\n]+/g, " ");
+                    if (v !== e.currentTarget.value) e.currentTarget.value = v;
+                    setName(v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    submitName();
+                  }}
+                />
+                <div class="tl-pill-end">
+                  <button
+                    type="button"
+                    class="tl-send"
+                    aria-label="Send"
+                    title="Start the shell (Enter)"
+                    disabled={!namable()}
+                    onClick={submitName}
+                  >
+                    <span class="tl-disc">
+                      <SendArrowIcon />
+                    </span>
+                  </button>
+                </div>
               </div>
             </div>
           }
@@ -637,11 +576,16 @@ export const NewSessionComposer: Component<{
             onAttach={holdFiles}
             pendingAttachments
             label="Prompt for a new session"
-            placeholder="What do you want to do?"
+            placeholder={placeholder()}
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}
             commands={commands()}
             commandsOk={commandsOk()}
+            tools={
+              <Show when={harness()} keyed>
+                {(h) => modelButton(h)}
+              </Show>
+            }
             // A desktop lands here ready to type. A coarse pointer deliberately
             // does not: this is the phone's LANDING view, and focusing it would
             // throw a keyboard over the screen before anyone asked for one.
@@ -656,10 +600,76 @@ export const NewSessionComposer: Component<{
             attachNote="Files upload when the session starts"
           />
         </Show>
-        {/* Under the box rather than in its row of controls, which has no
-            room for a sentence on a phone. Only when the answer really is
-            "nobody signed in": a list that could not be read says so on the
-            model menu's own title instead. */}
+        <div class="tl-new-strip">
+          <StripPicker
+            id="project"
+            title="Project for new session"
+            heading="Project"
+            icon={<FolderGlyph />}
+            value={projectName()}
+            ariaLabel={`Project for new session: ${projectName()}`}
+            hint={`Project for the new session: ${projectName()}. ${whereItStarts(props.project())}`}
+            open={stripOpen() === "project"}
+            onToggle={toggleStrip}
+            onClose={closeStrip}
+          >
+            {(done) => (
+              <>
+                <StripRow
+                  value=""
+                  name="Ungrouped"
+                  sub={whereItStarts("")}
+                  checked={props.project() === ""}
+                  onPick={() => done(() => pickProject(""))}
+                />
+                <For each={projects()}>
+                  {(p) => (
+                    <StripRow
+                      value={p.name}
+                      name={p.name}
+                      sub={whereItStarts(p.name)}
+                      checked={props.project() === p.name}
+                      onPick={() => done(() => pickProject(p.name))}
+                    />
+                  )}
+                </For>
+              </>
+            )}
+          </StripPicker>
+          <StripPicker
+            id="command"
+            title="Command for new session"
+            heading="Command"
+            icon={<PromptGlyph />}
+            value={cmd()}
+            ariaLabel={`Command for new session: ${COMMAND_LABELS[cmd()]}`}
+            hint={`What the new session runs: ${COMMAND_LABELS[cmd()]}`}
+            open={stripOpen() === "command"}
+            onToggle={toggleStrip}
+            onClose={closeStrip}
+          >
+            {(done) => (
+              <For each={COMMANDS}>
+                {(c) => (
+                  <StripRow
+                    value={c}
+                    name={COMMAND_LABELS[c]}
+                    // Greyed out and saying why: a command with nothing behind
+                    // it starts a session that closes the moment it opens.
+                    sub={canRun(c, avail()) ? undefined : "Not installed on this box"}
+                    disabled={!canRun(c, avail())}
+                    checked={cmd() === c}
+                    onPick={() => done(() => pickCommand(c))}
+                  />
+                )}
+              </For>
+            )}
+          </StripPicker>
+        </div>
+        {/* Under the strip rather than in the box's row of controls, which
+            has no room for a sentence on a phone. Only when the answer really
+            is "nobody signed in": a list that could not be read says so on
+            the model list's own title instead. */}
         <Show when={piSignedOut()}>
           <p class="tl-new-hint">
             Pi is not signed in yet. Run <code>/login</code> in a pi session, and its models appear
@@ -680,12 +690,147 @@ export const NewSessionComposer: Component<{
   );
 };
 
+/** Which of the strip's two lists. */
+type StripId = "project" | "command";
+
+/** What the arrow keys walk in a strip list. */
+const STRIP_NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
+
+/** The tallest a strip popover gets, and the least it is squeezed to. */
+const STRIP_POP_MAX = 360;
+const STRIP_POP_MIN = 160;
+
 /**
- * One row in the project or the command list: a name, a line under it where
- * there is something to say, and a tick on the chosen one. The model list is
- * ModelPanel's own.
+ * One button in the new-session strip, and the list it opens.
+ *
+ * Drawn as the prototype's strip button (6-new): an icon, the value in bold
+ * and a chevron. A fine pointer gets a popover under the strip, capped at the
+ * room left below it in the composer, which scrolls; a coarse one gets the
+ * model sheet's bottom sheet. A pick applies and closes either, giving the
+ * focus back to the button, since each list holds one choice.
  */
-const ChoiceRow: Component<{
+const StripPicker: Component<{
+  id: StripId;
+  /** The list's accessible name ("Project for new session"). */
+  title: string;
+  /** The heading over the rows. */
+  heading: string;
+  icon: JSX.Element;
+  /** What the button shows in bold. */
+  value: string;
+  ariaLabel: string;
+  hint: string;
+  open: boolean;
+  onToggle: (id: StripId) => void;
+  onClose: (id: StripId) => void;
+  /** The rows. `done` applies a pick and closes the list. */
+  children: (done: (apply: () => void) => void) => JSX.Element;
+}> = (props) => {
+  const [sheet, setSheet] = createSignal(false);
+  const [popMax, setPopMax] = createSignal(STRIP_POP_MAX);
+  let root: HTMLSpanElement | undefined;
+  let btn: HTMLButtonElement | undefined;
+  let popEl: HTMLDivElement | undefined;
+  let layerEl: HTMLDivElement | undefined;
+
+  const close = (refocus: boolean): void => {
+    if (!props.open) return;
+    props.onClose(props.id);
+    if (refocus) btn?.focus();
+  };
+  dismissFloat({
+    open: () => props.open,
+    inside: (t) => !!(root?.contains(t) || layerEl?.contains(t)),
+    close: (why) => close(why === "escape"),
+  });
+
+  /** The room below the strip inside the composer, which is what scrolls. */
+  const placePop = (): void => {
+    const view = root?.closest(".tl-new-composer");
+    const strip = root?.closest(".tl-new-strip");
+    if (!view || !strip) return;
+    const room = view.getBoundingClientRect().bottom - strip.getBoundingClientRect().bottom - 12;
+    setPopMax(Math.min(STRIP_POP_MAX, Math.max(STRIP_POP_MIN, room)));
+  };
+
+  const press = (e: MouseEvent): void => {
+    if (props.open) {
+      close(false);
+      return;
+    }
+    const phone = isCoarsePointer();
+    setSheet(phone);
+    if (!phone) placePop();
+    props.onToggle(props.id);
+    // A keyboard activation is a click with no pointer detail: the list takes
+    // the focus then, or the arrows would have nothing to walk.
+    if (!phone && e.detail === 0) focusChosen(popEl, STRIP_NAV);
+  };
+  const done = (apply: () => void): void => {
+    apply();
+    close(true);
+  };
+  const body = (): JSX.Element => (
+    <>
+      <div class="tl-ms-h" aria-hidden="true">
+        {props.heading}
+      </div>
+      <div role="radiogroup" aria-label={props.title}>
+        {props.children(done)}
+      </div>
+    </>
+  );
+
+  return (
+    <span class="tl-strip-item" data-side={props.id === "command" ? "end" : "start"} ref={root}>
+      <button
+        ref={btn}
+        type="button"
+        class="tl-strip-btn"
+        data-strip={props.id}
+        aria-haspopup="dialog"
+        aria-expanded={props.open}
+        aria-label={props.ariaLabel}
+        title={props.hint}
+        onClick={press}
+      >
+        {props.icon}
+        <b>{props.value}</b>
+        <ChevronDownIcon class="tl-strip-chev" />
+      </button>
+      <Show when={props.open && !sheet()}>
+        <div
+          ref={popEl}
+          class="tl-strip-pop"
+          role="dialog"
+          aria-label={props.title}
+          style={{ "max-height": `${popMax()}px` }}
+          onKeyDown={(e) => walkNav(e, STRIP_NAV)}
+        >
+          {body()}
+        </div>
+      </Show>
+      <Show when={props.open && sheet()}>
+        <Portal>
+          <BottomSheet
+            ref={(el) => (layerEl = el)}
+            label={props.title}
+            onClose={() => close(false)}
+          >
+            {body()}
+          </BottomSheet>
+        </Portal>
+      </Show>
+    </span>
+  );
+};
+
+/**
+ * One row in the project or the command list, in the model sheet's row
+ * style: a name, a line under it where there is something to say, and a tick
+ * on the chosen one.
+ */
+const StripRow: Component<{
   value: string;
   name: string;
   sub?: string;
@@ -696,7 +841,7 @@ const ChoiceRow: Component<{
   <button
     type="button"
     role="radio"
-    class="tl-pick-row tl-pick-model"
+    class="tl-ms-row"
     data-value={props.value}
     aria-checked={props.checked}
     aria-disabled={props.disabled ? "true" : undefined}
@@ -704,14 +849,16 @@ const ChoiceRow: Component<{
       if (!props.disabled) props.onPick();
     }}
   >
-    <span class="tl-pick-name">{props.name}</span>
-    <span class="tl-pick-tick" aria-hidden="true">
+    <span class="tl-ms-lab">
+      <span class="tl-ms-name">{props.name}</span>
+    </span>
+    <span class="tl-ms-tick" aria-hidden="true">
       <Show when={props.checked}>
         <CheckIcon />
       </Show>
     </span>
     <Show when={props.sub}>
-      <span class="tl-pick-sub">{props.sub}</span>
+      <span class="tl-ms-desc">{props.sub}</span>
     </Show>
   </button>
 );

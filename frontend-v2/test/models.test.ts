@@ -20,6 +20,7 @@ import {
   modelHarness,
   optionsFor,
   piLevels,
+  startEfforts,
   summarise,
   type ModelHarness,
 } from "../src/lib/models";
@@ -543,6 +544,70 @@ describe("the efforts a model offers", () => {
       "off",
       "low",
       "high",
+    ]);
+  });
+});
+
+/**
+ * The new-session sheet's levels. A session that has not started can be told
+ * to start on whatever its CLI would, so `default` leads, and ultracode (xhigh
+ * plus dynamic workflows, a one-session effort) is offered on every model that
+ * has xhigh, since the launch flag is where it is chosen.
+ */
+describe("the efforts a new session can start on", () => {
+  const ids = (h: ModelHarness, model: string, pi?: { levels?: string[] }) =>
+    startEfforts(h, model, pi).map((o) => o.id);
+
+  it("offers Claude's whole ladder, default first, while the model is the default", () => {
+    expect(ids("claude", DEFAULT_CHOICE)).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultracode",
+    ]);
+  });
+
+  it("keeps ultracode on a model with xhigh", () => {
+    expect(ids("claude", "claude-sonnet-5")).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultracode",
+    ]);
+  });
+
+  it("offers nothing on Haiku 4.5, which has one level", () => {
+    expect(ids("claude", "claude-haiku-4-5-20251001")).toEqual([]);
+  });
+
+  it("keeps codex's catalogue, ultra and all", () => {
+    expect(ids("codex", "gpt-5.5")).toEqual([
+      "default",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+  });
+
+  it("offers pi's seven thinking levels after its default", () => {
+    expect(ids("pi", DEFAULT_CHOICE)).toEqual([
+      "default",
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
     ]);
   });
 });
