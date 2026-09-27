@@ -296,6 +296,9 @@ export const TextView: Component<{
   /** FALSE while the lobby is keeping this session mounted without showing it:
    *  a hidden view answers for nothing global. */
   onScreen?: boolean;
+  /** FALSE while the session's Terminal is the view on screen in its place.
+   *  Coming back from it re-reads the mode, which a Shift+Tab there moves. */
+  textShown?: boolean;
   /** The session's stream is parked while nobody reads it. An agent's
    *  transcript open in the drill-in parks with it. */
   parked?: boolean;
@@ -429,13 +432,13 @@ export const TextView: Component<{
   /**
    * The pane is also read at the moments the mode can have moved without this
    * view asking, which the transcript will not report until the next prompt.
-   * Each time the view comes back on screen: a Shift+Tab typed in the Terminal
-   * changes it there. And whenever a turn starts or ends: approving a plan
+   * Each time the view comes back on screen, from the Terminal or from another
+   * session: a Shift+Tab typed in the Terminal changes it there. And whenever a turn starts or ends: approving a plan
    * switches mode mid-turn, as can a key pressed on another device. Measured
    * 2026-09-26: after "Yes, manually approve edits" the dial read "Plan" at
    * idle until a reload, and a Terminal Shift+Tab left it stale on return.
    */
-  const onScreen = (): boolean => props.onScreen !== false;
+  const onScreen = (): boolean => props.onScreen !== false && props.textShown !== false;
   // Not while a pick from the dial is walking: its reply is the reading that
   // counts, and a read taken mid-walk could land after it.
   const rereadMode = (): void => {

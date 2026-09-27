@@ -1672,6 +1672,7 @@ export const SessionView: Component<{
         >
           <TextView
             onScreen={onScreen()}
+            textShown={mode() === "text"}
             parked={store.parked()}
             events={store.events}
             rows={rows}

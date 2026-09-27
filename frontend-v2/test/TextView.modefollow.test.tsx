@@ -51,6 +51,7 @@ const PLAN_TEXT = "# Write hello.txt\n\n1. Write it.\n";
 function mount(opts: { events: Event[]; onScreen?: boolean }) {
   const [events, setEvents] = createSignal<Event[]>(opts.events);
   const [onScreen, setOnScreen] = createSignal(opts.onScreen ?? true);
+  const [textShown, setTextShown] = createSignal(true);
   let status = STATUS.plan;
   const onPane = vi.fn(async () => ({ pane: pane(status), state: "done" }));
   const onAnswer = vi.fn(async (): Promise<AnswerResponse> => ({ applied: true, done: true }));
@@ -65,6 +66,7 @@ function mount(opts: { events: Event[]; onScreen?: boolean }) {
       onPane={onPane}
       onAnswer={onAnswer}
       onScreen={onScreen()}
+      textShown={textShown()}
       notify={() => {}}
     />
   ));
@@ -77,6 +79,7 @@ function mount(opts: { events: Event[]; onScreen?: boolean }) {
     setEvents,
     events,
     setOnScreen,
+    setTextShown,
     onPane,
     onAnswer,
     option,
@@ -142,12 +145,23 @@ describe("<TextView>: the mode dial follows changes it did not make", () => {
     expect(v.onPane.mock.calls.length).toBeGreaterThan(before);
   });
 
-  it("reads the pane again each time the Text view comes back on screen", async () => {
+  it("reads the pane again on coming back from the session's Terminal", async () => {
     const v = mount({ events: [modeEvent(1, "plan")] });
     await v.opened();
     expect(v.shown()).toBe("Plan");
 
     // Off to the Terminal, where a Shift+Tab moves the mode on.
+    v.setTextShown(false);
+    v.paneShows(STATUS.edits);
+    v.setTextShown(true);
+
+    await waitFor(() => expect(v.shown()).toBe("Edits"));
+  });
+
+  it("reads the pane again when the session comes back on screen", async () => {
+    const v = mount({ events: [modeEvent(1, "plan")] });
+    await v.opened();
+
     v.setOnScreen(false);
     v.paneShows(STATUS.edits);
     v.setOnScreen(true);
