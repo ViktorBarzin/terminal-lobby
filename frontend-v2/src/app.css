@@ -3271,7 +3271,7 @@ label.tl-set-row-label {
   bottom: 0;
   max-height: 90%;
   overflow-y: auto;
-  padding: 6px 16px calc(20px + var(--safe-b, 0px));
+  padding: 6px 16px calc(14px + var(--safe-b, 0px));
   border-radius: 22px 22px 0 0;
   background: var(--bg-card);
   box-shadow:
@@ -3491,6 +3491,12 @@ label.tl-set-row-label {
   min-height: 48px;
   padding: 6px 12px;
   font-size: calc(16px * var(--tl-text-scale, 1));
+}
+/* A mode row's two lines sit on 5px of padding, which with the two model
+   columns lets the whole sheet fit a 412x783 phone (measured 2026-09-27: 720px
+   of sheet in a 705px box before). */
+.tl-ms-sheet .tl-ms-mode {
+  padding-block: 5px;
 }
 /* More than three models go in two columns (ModelSheet), each cell a name
    over its slug, so Bypass, No ask and the context line fit a phone's sheet
