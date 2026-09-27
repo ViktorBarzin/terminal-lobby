@@ -1,4 +1,12 @@
-import { createMemo, Show, type Component, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  onCleanup,
+  Show,
+  type Component,
+  type JSX,
+} from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
@@ -74,6 +82,22 @@ import {
  */
 /** What a caller outside the composer may put into the message being written. */
 export type ComposerSinks = PromptFieldSinks;
+
+/**
+ * How long one press of Stop holds the round button when the session has not
+ * said the turn settled by then.
+ *
+ * Stop is `Injector.Cancel` (sessionio/tmux.go), which sends C-c without
+ * reading the pane, and a second C-c at an idle Claude prompt exits the CLI.
+ * So a press holds the button until the hook state leaves `running`: Cancel
+ * re-stamps it `done` and the session list carries that within ~10s
+ * (ADR-0001). NOT on the transcript's row going away: measured live on
+ * 2026-09-27, the row closed and came back within a second of an interrupt
+ * while the list still read `running`, and a second tap sent a second C-c.
+ * Past this bound the session really is still running, and another press is
+ * the reader's to make.
+ */
+const STOP_SETTLE_MS = 20_000;
 
 export const Composer: Component<{
   /** The text view's pinch size, forwarded to the field. */
@@ -215,6 +239,25 @@ export const Composer: Component<{
   const working = (): boolean => !!props.live && !props.live.waiting;
   /** A turn runs by both readings: the transcript's row and the hook state. */
   const turnRunning = (): boolean => working() && props.claudeState === "running";
+
+  // ---- Stop, once per turn ---------------------------------------------------
+  const [stopping, setStopping] = createSignal(false);
+  let stopTimer: ReturnType<typeof setTimeout> | undefined;
+  const settled = (): void => {
+    clearTimeout(stopTimer);
+    stopTimer = undefined;
+    setStopping(false);
+  };
+  createEffect(() => {
+    if (props.claudeState !== "running") settled();
+  });
+  onCleanup(settled);
+  const stop = (): void => {
+    if (stopping()) return;
+    setStopping(true);
+    stopTimer = setTimeout(settled, STOP_SETTLE_MS);
+    props.onStop();
+  };
   /** Background work, once no turn is open ("2 agents"). */
   const background = (): string | undefined =>
     props.live || props.inertReason ? undefined : props.background;
@@ -438,7 +481,8 @@ export const Composer: Component<{
         danger={danger()}
         tools={tools()}
         canStop={turnRunning() && !props.inertReason}
-        onStop={props.onStop}
+        onStop={stop}
+        stopping={stopping()}
         // Not while the plan card is up: that send answers the dialog, and
         // the live row can still say working before the plan call is recorded.
         queues={turnRunning() && !props.planOpen}

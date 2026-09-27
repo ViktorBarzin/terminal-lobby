@@ -106,19 +106,6 @@ export interface PromptFieldSinks {
 }
 
 /**
- * How long one press of Stop holds the button before it takes another, when
- * the turn has not visibly settled by then.
- *
- * Stop is `Injector.Cancel` (sessionio/tmux.go), which sends C-c without
- * reading the pane, and a second C-c at an idle Claude prompt exits the CLI.
- * So a press holds the button until `canStop` goes false (the session
- * re-stamps `done` after an interrupt, and the list carries that within ~10s,
- * ADR-0001), or until this bound passes, after which the session really is
- * still running and a second press is the reader's to make.
- */
-const STOP_SETTLE_MS = 20_000;
-
-/**
  * The words the watching pill shows: who is being watched, from the session
  * view's one sentence ("Watching alice — take control to type in their
  * session", "Watching: this device does not type into the session"). The whole
@@ -213,11 +200,14 @@ export const PromptField: Component<{
   /**
    * Something is running that Stop would interrupt, and how to stop it. While
    * this is true and the field is empty with nothing attached, the round
-   * button IS Stop; typing turns it back into Send. One press per turn: see
-   * `STOP_SETTLE_MS`.
+   * button IS Stop; typing turns it back into Send.
    */
   canStop?: boolean;
   onStop?: () => void;
+  /** Stop was pressed and the turn has not settled: Stop shows greyed as
+   *  "Stopping…" and takes no press. The caller decides when it settles
+   *  (Composer `STOP_SETTLE_MS`). */
+  stopping?: boolean;
   /** Hand the session back to this device, from the watching pill. */
   onTakeControl?: () => void;
   /**
@@ -1124,22 +1114,7 @@ export const PromptField: Component<{
     (queueing()
       ? "Send (Enter). Claude is working, so this queues until the turn ends"
       : "Send (Enter)");
-
-  /**
-   * Stop was pressed and the turn has not settled yet. Cleared when `canStop`
-   * goes false, or after `STOP_SETTLE_MS`, whichever comes first.
-   */
-  const [stopping, setStopping] = createSignal(false);
-  let stopTimer: ReturnType<typeof setTimeout> | undefined;
-  const settled = (): void => {
-    clearTimeout(stopTimer);
-    stopTimer = undefined;
-    setStopping(false);
-  };
-  createEffect(() => {
-    if (!props.canStop) settled();
-  });
-  onCleanup(settled);
+  const stopping = (): boolean => props.stopping === true;
 
   /**
    * Which the button is. Stop only with an empty field and nothing attached:
@@ -1169,13 +1144,8 @@ export const PromptField: Component<{
    */
   const press = (): void => {
     if (buttonDisabled()) return;
-    if (kind() === "send") {
-      submit();
-      return;
-    }
-    setStopping(true);
-    stopTimer = setTimeout(settled, STOP_SETTLE_MS);
-    props.onStop?.();
+    if (kind() === "send") submit();
+    else props.onStop?.();
   };
 
   return (

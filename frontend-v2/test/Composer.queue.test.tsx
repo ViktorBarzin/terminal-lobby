@@ -208,6 +208,37 @@ describe("<Composer> round button: one Stop per turn", () => {
     expect(onStop).toHaveBeenCalledTimes(2);
   });
 
+  // Found live on 2026-09-27: after an interrupt the transcript closed the turn
+  // and showed it running again while the session list still read `running`,
+  // and a second tap sent a second C-c. The hook state is what says the turn
+  // has settled, because Cancel re-stamps it `done`.
+  it("holds Stopping while the transcript flickers and the hook state still says running", () => {
+    const onStop = vi.fn();
+    const [state, setState] = createSignal<ClaudeState>("running");
+    const [live, setLive] = createSignal<WorkingRow | undefined>(WORKING);
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={onStop}
+        onResolve={noop}
+        live={live()}
+        claudeState={state()}
+      />
+    ));
+    const button = () => r.container.querySelector<HTMLButtonElement>(".tl-send")!;
+    fireEvent.click(button());
+    setLive(undefined);
+    setLive({ ...WORKING, key: "w-t1b" });
+    expect(button().dataset.kind).toBe("stop");
+    expect(button().disabled).toBe(true);
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(1);
+    setState("done");
+    setState("running");
+    expect(button().disabled).toBe(false);
+  });
+
   it("gives Stop back after a bounded wait if the turn never settles", () => {
     vi.useFakeTimers();
     const onStop = vi.fn();
