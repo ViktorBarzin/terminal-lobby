@@ -16,6 +16,7 @@ import { toolImageUrl } from "../lib/config";
 import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import {
+  declinedCall,
   groupSummary,
   planHeader,
   planSummary,
@@ -930,7 +931,9 @@ const WorkCallRow: Component<{
   const status = () => {
     const c = call();
     if (!c) return "ok";
-    return !c.done ? "running" : c.isError ? "error" : "ok";
+    if (!c.done) return "running";
+    if (declinedCall(c)) return "declined";
+    return c.isError ? "error" : "ok";
   };
   const label = () => {
     const leaf = props.leaf;
@@ -965,6 +968,9 @@ const WorkCallRow: Component<{
           </Show>
           <Show when={status() === "error"}>
             <span class="tl-group-call-err">✗</span>
+          </Show>
+          <Show when={status() === "declined"}>
+            <span class="tl-group-call-declined">declined</span>
           </Show>
           {/* Thinking is not a call: it neither passes nor fails. */}
           <Show when={status() === "ok" && call()}>
@@ -1134,8 +1140,22 @@ export const WorkGroupRowView: Component<{
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const live = () => openLive(props.live);
-  const status = () => (props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok");
-  const summary = createMemo(() => groupSummary(props.row.calls));
+  /** A call with no result in a group that is not the live one, and not
+   *  stopped, is waiting on the reader: the card docked below asks about it,
+   *  and the live state stays off the group while a card says it. */
+  const waiting = () =>
+    !live() &&
+    !props.row.stopped &&
+    props.row.calls.some((c) => c.kind === "tool" && !c.done);
+  const status = () =>
+    props.row.hasError
+      ? "error"
+      : props.row.stopped
+        ? "stopped"
+        : waiting()
+          ? "waiting"
+          : "ok";
+  const summary = createMemo(() => groupSummary(props.row.calls, { waiting: waiting() }));
   const took = () => formatDuration(props.row.durationMs);
   /** Every event the group stands for, so a search hit on a folded call lands here. */
   const eids = () => props.row.calls.map((c) => c.id).join(" ");
@@ -1173,6 +1193,10 @@ export const WorkGroupRowView: Component<{
                     {took() ? " · " : ""}
                   </Show>
                   <Show when={status() === "stopped"}>stopped{took() ? " · " : ""}</Show>
+                  <Show when={status() === "waiting"}>
+                    <span class="tl-group-waiting">waiting</span>
+                    {took() ? " · " : ""}
+                  </Show>
                   <Show when={status() === "ok"}>
                     <span class="tl-group-okm">
                       <span class="tl-group-ok">✓</span>

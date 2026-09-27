@@ -409,9 +409,22 @@ function groupTurns(events: Event[]): Turn[] {
 function leafFailed(row: LeafRow): boolean {
   return (
     row.kind === "error" ||
-    (row.kind === "tool" && row.isError) ||
+    (row.kind === "tool" && row.isError && !declinedCall(row)) ||
     (row.kind === "meta" && row.meta === "hook-error")
   );
+}
+
+/** What the CLI writes as the result of a call the reader said no to, on the
+ *  permission prompt or with "Type your own answer" (CLI 2.1.283). */
+const DECLINED_RESULT = "The user doesn't want to proceed with this tool use";
+
+/**
+ * Whether the reader said no to this call on its permission prompt. The CLI
+ * records it as an error result, but nothing failed: the reader chose, and a
+ * work group says "declined" rather than turning red.
+ */
+export function declinedCall(call: ToolRow): boolean {
+  return call.done && call.isError && (call.result ?? "").trimStart().startsWith(DECLINED_RESULT);
 }
 
 /**
@@ -1202,7 +1215,7 @@ function workGroup(
     key: `group-${run[0]!.key}`,
     turnKey,
     calls: run,
-    hasError: calls.some((c) => c.isError),
+    hasError: calls.some((c) => c.isError && !declinedCall(c)),
     stopped,
     pictures: calls.flatMap(picturesOf),
     ...(duration !== undefined ? { durationMs: duration } : {}),
@@ -1276,21 +1289,74 @@ function tallyOf(call: ToolRow): Tally {
 
 const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
 
+/** What a declined call is called, one and many. */
+const DECLINED_NOUN: Record<Tally, [string, string]> = {
+  command: ["command", "commands"],
+  edit: ["edit", "edits"],
+  read: ["read", "reads"],
+  search: ["search", "searches"],
+  picture: ["picture", "pictures"],
+  tool: ["tool call", "tool calls"],
+  agent: ["agent", "agents"],
+  skill: ["skill", "skills"],
+};
+
+/** What a call waiting on the reader is waiting to do. */
+function waitingPhrase(t: Tally, n: number): string {
+  switch (t) {
+    case "command":
+      return `run ${plural(n, "command", "commands")}`;
+    case "edit":
+      return `edit ${plural(n, "file", "files")}`;
+    case "read":
+      return `read ${plural(n, "file", "files")}`;
+    case "search":
+      return n === 1 ? "search" : `search ${n} times`;
+    case "picture":
+      return `view ${plural(n, "picture", "pictures")}`;
+    case "tool":
+      return `use ${plural(n, "tool", "tools")}`;
+    case "agent":
+      return `run ${plural(n, "agent", "agents")}`;
+    case "skill":
+      return `load ${plural(n, "skill", "skills")}`;
+  }
+}
+
 /**
  * A work group's one-line summary: "Ran 3 commands, edited 2 files".
  *
  * One phrase per kind of call, in the order each kind first appears. Edits and
  * reads count FILES, since Claude reads a long file in pages and edits one
  * file in several places; everything else counts calls. Thinking says nothing.
+ *
+ * A call the reader declined is not counted as done: it goes in a "declined 1
+ * edit" phrase after the rest. With `waiting` (the turn is waiting on the
+ * reader), a call with no result yet is the one the permission prompt asks
+ * about, and goes in a "waiting to edit 1 file" phrase last, so a group never
+ * says an edit landed before the reader allowed it (found live 2026-09-27).
  */
-export function groupSummary(calls: readonly WorkLeaf[]): string {
+export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boolean } = {}): string {
   const order: Tally[] = [];
   const counts = new Map<Tally, number>();
   const files = new Map<Tally, Set<string>>();
   const skills: string[] = [];
+  const declined = new Map<Tally, number>();
+  const pending = new Map<Tally, number>();
+  const bump = (m: Map<Tally, number>, t: Tally): void => {
+    m.set(t, (m.get(t) ?? 0) + 1);
+  };
   for (const c of calls) {
     if (c.kind !== "tool") continue;
     const t = tallyOf(c);
+    if (declinedCall(c)) {
+      bump(declined, t);
+      continue;
+    }
+    if (opts.waiting && !c.done) {
+      bump(pending, t);
+      continue;
+    }
     if (!counts.has(t)) order.push(t);
     counts.set(t, (counts.get(t) ?? 0) + 1);
     if (t === "edit" || t === "read") {
@@ -1325,7 +1391,13 @@ export function groupSummary(calls: readonly WorkLeaf[]): string {
         return `loaded ${plural(skills.length || n, "skill", "skills")}`;
     }
   };
-  const text = order.map(phrase).join(", ");
+  const said = order.map(phrase);
+  for (const [t, n] of declined) {
+    const [one, many] = DECLINED_NOUN[t];
+    said.push(`declined ${plural(n, one, many)}`);
+  }
+  for (const [t, n] of pending) said.push(`waiting to ${waitingPhrase(t, n)}`);
+  const text = said.join(", ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 

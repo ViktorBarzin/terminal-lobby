@@ -157,6 +157,61 @@ describe("<WorkGroupRowView> folded", () => {
     expect(container.querySelector(".tl-group-meta")!.textContent).toContain("stopped");
   });
 
+  it("does not read a call that waits for permission as done", () => {
+    // Found live on 2026-09-27: "Edited 1 file ✓" sat over the card asking
+    // whether to create that file, and the file did not exist yet.
+    const waiting = groupOf([
+      ev({ id: 1, kind: "user", body: "go", at: 500 }),
+      bash(2, "b1", "ls", 1_000),
+      result(3, "b1", "a.txt", { at: 2_000 }),
+      ev({
+        id: 4,
+        kind: "tool_use",
+        tool: "Write",
+        toolId: "w1",
+        body: JSON.stringify({ file_path: "/r/hello.txt", content: "hi" }),
+        at: 3_000,
+      }),
+    ]);
+    const { container } = mount(waiting);
+    expect(container.querySelector(".tl-group-sum")!.textContent).toBe(
+      "Ran 1 command, waiting to edit 1 file",
+    );
+    expect(container.querySelector(".tl-group-meta")!.textContent).not.toContain("✓");
+    expect(container.querySelector(".tl-group-meta")!.textContent).toContain("waiting");
+    expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("waiting");
+  });
+
+  it("says a call the reader declined was declined, not that it failed", () => {
+    const declined = groupOf([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "b1", "ls", 1_000),
+      result(3, "b1", "a.txt", { at: 2_000 }),
+      ev({
+        id: 4,
+        kind: "tool_use",
+        tool: "Edit",
+        toolId: "e1",
+        body: JSON.stringify({ file_path: "/r/calc.py", old_string: "a", new_string: "b" }),
+        at: 3_000,
+      }),
+      result(
+        5,
+        "e1",
+        "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said: use a docstring",
+        { isError: true, at: 4_000 },
+      ),
+      ev({ id: 6, kind: "turn_end", at: 5_000 }),
+    ]);
+    expect(declined.hasError).toBe(false);
+    const { container } = mount(declined);
+    expect(container.querySelector(".tl-group-sum")!.textContent).toBe(
+      "Ran 1 command, declined 1 edit",
+    );
+    expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("ok");
+    expect(container.querySelector(".tl-group-meta")!.textContent).not.toContain("failed");
+  });
+
   it("answers for its calls' events, so a search hit inside it can find it", () => {
     const { container } = mount(groupOf(WORK));
     const eids = container.querySelector(".tl-row-group")!.getAttribute("data-eids");

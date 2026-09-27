@@ -2356,6 +2356,14 @@ label.tl-set-row-label {
 .tl-group-dot[data-status="error"] {
   background: var(--danger);
 }
+/* A call in the group waits on the reader's permission: the awaiting colour,
+   and "waiting" where the tick would be. */
+.tl-group-dot[data-status="waiting"] {
+  background: var(--state-awaiting);
+}
+.tl-group-waiting {
+  color: var(--state-awaiting);
+}
 .tl-group-ico {
   flex: none;
   width: 16px;
@@ -2483,6 +2491,9 @@ label.tl-set-row-label {
 .tl-group-call-st .tl-diff-del,
 .tl-group-call-err {
   color: var(--danger);
+}
+.tl-group-call-declined {
+  color: var(--text-muted);
 }
 /* An opened call: the detail a tool row opens into, indented to the label. */
 .tl-group-call-detail {
