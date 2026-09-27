@@ -60,11 +60,13 @@ function serve(): Call[] {
 const dial = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-model-btn");
 /** The exact model and level, which the model button's title carries. */
 const shown = (c: HTMLElement) => dial(c)?.getAttribute("title");
-const modelRows = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-ms-model"));
+/** The popover is drawn in the document's body (ModelSheet.tsx), so its rows
+ *  are found there rather than under the view. */
+const modelRows = (_c: HTMLElement) =>
+  Array.from(document.querySelectorAll<HTMLButtonElement>(".tl-ms-model"));
 const labels = (c: HTMLElement) => [
   ...modelRows(c).map((b) => b.querySelector(".tl-ms-name")?.textContent ?? ""),
-  ...Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-ms-seg button")).map(
+  ...Array.from(document.querySelectorAll<HTMLButtonElement>(".tl-ms-seg button")).map(
     (b) => b.textContent ?? "",
   ),
 ];

@@ -846,6 +846,9 @@ src/
                          reading, with its staleness in settled turns and the
                          line's hover words. Nothing runs the command, and a
                          model with no known window and no reading has no line
+    reveal.logic.ts      PURE: how far a card's scroll box moves to show its
+                         own field row whole, Send included, when the phone's
+                         keyboard shrinks it
     QuestionCard.tsx     The question card, in the composer's place while
                          Claude waits, after T3 Code's question panel
                          (ADR-0034): one question at a time with an i/N

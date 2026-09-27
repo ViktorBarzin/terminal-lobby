@@ -156,9 +156,10 @@ describe("the system font", () => {
     expect(decl(appCss, "body", "font-family")).toBe("var(--font-ui)");
   });
 
-  // Three exceptions. The model sheet's phone layer is drawn into the
-  // document's body, because the composer's blurred surface would pin a fixed
-  // sheet to the box (ModelSheet.tsx), so it names the face itself. The
+  // Three exceptions. The model sheet's phone layer and its desktop popover
+  // are drawn into the document's body, because the composer's blurred surface
+  // would pin a fixed float to the box (ModelSheet.tsx), so each names the
+  // face itself. The
   // session bar heads both views and keeps one face across them. The
   // new-session screen is drawn as the Text view is (prototype 6-new).
   it("is read only under the Text view", () => {
@@ -166,7 +167,8 @@ describe("the system font", () => {
       s.startsWith(".tl-textview") ||
       s.startsWith(".tl-new-view") ||
       s === ".tl-session-bar" ||
-      s === ".tl-ms-layer";
+      s === ".tl-ms-layer" ||
+      s === ".tl-ms-pop";
     const offenders = [appCss, sidebarCss].flatMap((css) =>
       rules(css)
         .filter((r) => /var\(--font-text\)/.test(r.body))

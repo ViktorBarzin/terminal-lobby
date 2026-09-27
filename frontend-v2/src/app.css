@@ -3205,7 +3205,7 @@ label.tl-set-row-label {
   box-sizing: border-box;
   overflow-y: auto;
   font-family: var(--font-text);
-  font-size: 14px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
   padding: 8px 10px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
