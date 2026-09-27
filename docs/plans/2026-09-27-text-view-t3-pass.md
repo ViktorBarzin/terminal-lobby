@@ -111,7 +111,7 @@ What the pass changes per owner, in short:
 - `NewSessionComposer.tsx` moves its project and command pickers from dials on
   a line above the field to a strip under the box.
 
-## What changes from Quiet line (0.78.0, live now)
+## What changes from Quiet line (0.78.0 to 0.79.x)
 
 | Area | Quiet line, live in 0.78.0 | This pass |
 |---|---|---|
