@@ -224,6 +224,13 @@ The T3 pass on the Text view (`docs/plans/2026-09-27-text-view-t3-pass.md` on
 own answer" as its last option; that part of the draft is dropped, and the
 question card's layout here is the one it builds on.
 
+Viktor, 2026-09-27, later the same evening, superseding the note above: the
+card takes the composer's place, as the T3 pass builds it. Asked to choose
+between the two when the clash surfaced before release, he chose "Card
+replaces the composer" for all three blocking cards (question, permission,
+plan). The hook that holds the question, and the way this doc answers it, stay
+as designed; only where the card sits changes, and the T3 pass carries it.
+
 ## Open questions
 
 - Whether a managed-settings change reaches sessions already running is still
