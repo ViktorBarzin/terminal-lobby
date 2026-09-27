@@ -23,7 +23,7 @@
  */
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
-import type { ComponentProps } from "solid-js";
+import { createSignal, type ComponentProps } from "solid-js";
 import { Composer } from "../src/components/Composer";
 import type { WorkingRow } from "../src/components/timeline.logic";
 
@@ -317,6 +317,72 @@ describe("<Composer>: a watching device", () => {
   it("keeps the field mounted under it, so a draft survives the watch", () => {
     const { ta } = mount({ inertReason: REASON, onTakeControl: noop });
     expect(ta.isConnected).toBe(true);
+  });
+
+  it.each(["desktop", "phone"] as const)(
+    "reads Watching with Take control and has no textbox, + or round button on a %s",
+    (device) => {
+      const onTakeControl = vi.fn();
+      const r = mount(
+        {
+          inertReason: REASON,
+          onTakeControl,
+          mode: "manual",
+          onPickMode: noop,
+          harness: "claude",
+          model: { model: "claude-opus-5-5", effort: "high" },
+          onPickModel: noop,
+        },
+        device,
+      );
+      expect(r.queryByRole("textbox")).toBeNull();
+      // The one control left is Take control: no +, no model button, no Send.
+      const buttons = r.queryAllByRole("button");
+      expect(buttons.map((b) => b.textContent)).toEqual(["Take control"]);
+      expect(r.container.querySelector(".tl-watch")?.textContent).toMatch(/^Watching/);
+      fireEvent.click(buttons[0]!);
+      expect(onTakeControl).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("gives the field back when this device takes control", () => {
+    const [reason, setReason] = createSignal<string | undefined>(REASON);
+    stubDevice("desktop");
+    const r = render(() => (
+      <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} inertReason={reason()} />
+    ));
+    expect(r.queryByRole("textbox")).toBeNull();
+    setReason(undefined);
+    expect(r.getByRole("textbox")).toBeDefined();
+    expect(r.container.querySelector(".tl-watch")).toBeNull();
+  });
+
+  it("closes an open + menu and model sheet when the watch starts", () => {
+    const [reason, setReason] = createSignal<string | undefined>();
+    stubDevice("desktop");
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={noop}
+        onResolve={noop}
+        inertReason={reason()}
+        onAttach={async () => []}
+        harness="claude"
+        model={{ model: "claude-opus-5-5", effort: "high" }}
+        onPickModel={noop}
+      />
+    ));
+    fireEvent.click(r.container.querySelector(".tl-plus")!);
+    expect(r.container.querySelector(".tl-plus-menu")).not.toBeNull();
+    setReason(REASON);
+    expect(r.container.querySelector(".tl-plus-menu")).toBeNull();
+
+    setReason(undefined);
+    fireEvent.click(r.container.querySelector(".tl-model-btn")!);
+    expect(r.container.querySelector(".tl-ms-pop")).not.toBeNull();
+    setReason(REASON);
+    expect(r.container.querySelector(".tl-ms-pop")).toBeNull();
   });
 
   it("offers no Take control when there is no way to take it", () => {

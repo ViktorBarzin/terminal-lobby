@@ -97,6 +97,16 @@ function mount(initial: Event[]) {
 const prompt = ev({ id: 1, kind: "user", body: "hello", at: 1000 });
 
 describe("a watching Text view", () => {
+  it("reads Watching with Take control in the composer's place, and has no textbox", () => {
+    const v = mount([prompt]);
+    const pill = v.r.container.querySelector(".tl-pill[data-watch]")!;
+    expect(pill.querySelector(".tl-watch")?.textContent).toMatch(/^Watching/);
+    expect(v.r.queryByRole("textbox")).toBeNull();
+    const take = v.r.getByRole("button", { name: "Take control" });
+    fireEvent.click(take);
+    expect(v.onTakeControl).toHaveBeenCalledTimes(1);
+  });
+
   it("does not send the field, keeps the words, and says why", async () => {
     const v = mount([prompt]);
     v.type("Reply with the word watched");
@@ -136,7 +146,8 @@ describe("a watching Text view", () => {
 
   it("draws the question card's rows inert and answers nothing", async () => {
     const v = mount([prompt, held(2, QUESTION)]);
-    const options = () => v.rows(".tl-qcard").filter((b) => b.classList.contains("tl-qcard-option"));
+    const options = () =>
+      v.rows(".tl-qcard").filter((b) => b.classList.contains("tl-qcard-option"));
     await waitFor(() => expect(options().length).toBeGreaterThan(0));
     for (const b of options()) expect(b.disabled).toBe(true);
     fireEvent.click(options()[0]!);

@@ -1,4 +1,4 @@
-import { createSignal, For, Show, type Component, type JSX } from "solid-js";
+import { createEffect, createSignal, For, Show, untrack, type Component, type JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
@@ -182,6 +182,11 @@ export const ModelSheet: Component<{
     setOpen(false);
     if (refocus) btn?.focus();
   };
+
+  // A watch hides the model button, so a sheet it had open closes with it.
+  createEffect(() => {
+    if (props.inertReason) untrack(() => close(false));
+  });
 
   dismissFloat({
     open,

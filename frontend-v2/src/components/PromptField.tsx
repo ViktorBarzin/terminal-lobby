@@ -1079,6 +1079,10 @@ export const PromptField: Component<{
       if (why === "escape") plusEl?.focus();
     },
   });
+  // The watch hides the `+`, so a menu it had open goes with it.
+  createEffect(() => {
+    if (watching()) setPlusOpen(false);
+  });
   const togglePlus = (e: MouseEvent): void => {
     // Watching: the `+` explains itself in its title and opens nothing, the
     // way the Attach button it replaced was disabled with the same reason.
@@ -1236,6 +1240,7 @@ export const PromptField: Component<{
               aria-label="Add a photo, a file or a command"
               aria-disabled={props.inertReason ? "true" : undefined}
               aria-busy={attaching() ? "true" : undefined}
+              hidden={watching()}
               // What it opens, and where a file goes. A title is all a mouse
               // gets before pressing; the menu's rows carry the words for a
               // phone, which shows no titles at all.
@@ -1262,7 +1267,14 @@ export const PromptField: Component<{
               It owns no state and takes no clicks; if it were ever wrong the
               message would still read correctly, which is why the token says
               `[img: chart.png]` rather than relying on the paint. */}
-          <div class="tl-field" data-thumbs={hasThumb() ? "on" : undefined}>
+          <div
+            class="tl-field"
+            data-thumbs={hasThumb() ? "on" : undefined}
+            // Hidden, not unmounted, while another device drives: the draft
+            // and its attachments survive the watch. `hidden` takes it out of
+            // the accessibility tree as well as the paint.
+            hidden={watching()}
+          >
             {/* A folded draft's first line, drawn over the field whose own
                 text the pill hides. Takes no presses: they belong to the
                 field under it, which opens the box. */}
@@ -1370,11 +1382,16 @@ export const PromptField: Component<{
               state to agree before `canStop` is true, and typing anything
               turns the button back into Send. */}
           <Show when={props.tools}>
-            <div class="tl-box-tools">{props.tools}</div>
+            <div class="tl-box-tools" hidden={watching()}>
+              {props.tools}
+            </div>
           </Show>
           {/* Watching: another device drives. The pill says so and offers the
-              session back; everything else in it is hidden but stays mounted,
-              so a draft and its attachments survive the watch. */}
+              session back, and that button is its only control: no field, no
+              +, no model button, no round button. Those are hidden but stay
+              mounted, so a draft and its attachments survive the watch. The
+              refusal in TextView (refuseWatching) stays the authority on
+              sending; this is what the reader sees. */}
           <Show when={watching()}>
             <div class="tl-watch" title={props.inertReason}>
               <span class="tl-watch-eye" aria-hidden="true">
@@ -1393,7 +1410,7 @@ export const PromptField: Component<{
               </Show>
             </div>
           </Show>
-          <div class="tl-pill-end">
+          <div class="tl-pill-end" hidden={watching()}>
             <button
               type="button"
               class="tl-send"

@@ -176,6 +176,29 @@ describe("a watching device", () => {
     expect(rule(".tl-pill[data-watch] > :not(.tl-watch)")).toMatch(/display:\s*none/);
     expect(rule(".tl-pill[data-watch]")).toMatch(/grid-template-columns:\s*minmax\(0, 1fr\)/);
   });
+
+  // The prototype's 6-watching: a 50px pill, the eye and the word 14px in
+  // from the left, a 38px accent-outline Take control 11px in from the right,
+  // the word at 14px on a desktop and 15px on a phone.
+  it("is a 50px pill with the prototype's insets and a 38px Take control", () => {
+    const pill = rule(".tl-pill[data-watch]");
+    expect(pill).toMatch(/height:\s*50px/);
+    expect(pill).toMatch(/border-radius:\s*25px/);
+    expect(pill).toMatch(/padding:\s*0 5px 0 3px/);
+    expect(rule(".tl-watch")).toMatch(/padding:\s*0 6px 0 14px/);
+    const take = rule(".tl-take");
+    expect(take).toMatch(/height:\s*38px/);
+    expect(take).toMatch(/border-radius:\s*19px/);
+    expect(take).toMatch(
+      /border:\s*1px solid color-mix\(in srgb, var\(--accent\) 45%, transparent\)/,
+    );
+  });
+
+  it("sets the word at 15px on a phone", () => {
+    expect(rule(".tl-watch", coarse())).toMatch(
+      /font-size:\s*calc\(15px \* var\(--tl-text-scale, 1\)\)/,
+    );
+  });
 });
 
 describe("a reader who asked for less motion", () => {

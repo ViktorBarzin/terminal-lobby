@@ -347,8 +347,9 @@ export const TextView: Component<{
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
   /** watching: the controls that type, and attaching, are inert. */
   inertReason?: string;
-  /** stop watching and drive the session from this device: the thin line's
-   *  Take control, the same toggle as the header's Watch button. */
+  /** stop watching and drive the session from this device: the watching
+   *  pill's Take control and a card head's, the same toggle as the header's
+   *  Watch button. */
   onTakeControl?: () => void;
   /** receive the composer's sinks, for gestures that land outside it. */
   register?: (api: ComposerSinks) => void;
@@ -543,7 +544,9 @@ export const TextView: Component<{
    * prompt or an answer from any client. Found in review on 2026-09-27: with
    * the line reading "Watching", Enter sent the prompt, Send over a plan went
    * out as feedback, and the permission card answered the CLI's prompt. Every
-   * way this view writes to the session goes through here first.
+   * way this view writes to the session goes through here first. The watching
+   * pill hides the field, + and the round button since the T3 pass, which is
+   * what the reader sees; this refusal stays the authority.
    */
   const refuseWatching = (): boolean => {
     const why = props.inertReason;

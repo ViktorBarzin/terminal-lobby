@@ -173,7 +173,7 @@ export const Composer: Component<{
    * while no card is docked.
    */
   onPermissionDigit?: (row: number) => boolean;
-  /** Hand the session back to this device, from the line's watching state. */
+  /** Hand the session back to this device, from the watching pill. */
   onTakeControl?: () => void;
   /** Hand the caller the sinks a message can be filled from OUTSIDE this
    *  component (a window drop, a gallery tile, a paste). */
