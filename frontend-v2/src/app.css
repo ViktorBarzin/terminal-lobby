@@ -6492,6 +6492,17 @@ body.tl-kb-up {
 .tl-plancard-plan h4 {
   font-size: 1em;
 }
+/* The prototype's 18px list indent (6-t3.html `.cd-plan ol`). The browser's
+   40px took a tenth of a phone's width from every step. */
+.tl-plancard-plan ul,
+.tl-plancard-plan ol {
+  margin: 0.25em 0;
+  padding-left: 18px;
+}
+.tl-plancard-plan li > ul,
+.tl-plancard-plan li > ol {
+  margin: 0;
+}
 /* Five lines on a phone, where the card has about 290px of a 465px pane once
    the keyboard is up, and the three choices need 140px of it. */
 @media (pointer: coarse) {
