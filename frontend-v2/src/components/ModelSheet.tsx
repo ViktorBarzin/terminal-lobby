@@ -86,6 +86,9 @@ import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
 /** The float's accessible name, on the popover and the bottom sheet alike. */
 const SHEET_NAME = "Model, effort and mode";
 
+/** Why No ask cannot be picked by a session not already in it. */
+const NO_ASK_WHY = "Set when the session starts. Shift+Tab cannot reach it";
+
 /** What the arrow keys walk in the sheet. */
 const NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
 
@@ -334,9 +337,7 @@ export const ModelSheet: Component<{
     if (props.modesUnavailable?.has(id)) return "Not offered in this session";
     // No ask is not a stop on Shift+Tab: a session can start in it, and the
     // first press leaves it for good (CLI 2.1.281, memory #13911).
-    if (id === "dontAsk" && current() !== "dontAsk") {
-      return "Set when the session starts. Shift+Tab cannot reach it";
-    }
+    if (id === "dontAsk" && current() !== "dontAsk") return NO_ASK_WHY;
     return "";
   };
   const pickMode = (id: ModeId): void => {
@@ -479,9 +480,13 @@ export const ModelSheet: Component<{
                   </span>
                   {/* A row held for its own reason says it here, where a
                       phone can read it; the hold on every row is said once,
-                      under the list. */}
+                      under the list. No ask's standing reason is the row's
+                      title, and its settled line stays, as the prototype
+                      draws it. */}
                   <span class="tl-ms-desc">
-                    {why(m.id) && why(m.id) !== modeHold() ? why(m.id) : m.line}
+                    {why(m.id) && why(m.id) !== modeHold() && why(m.id) !== NO_ASK_WHY
+                      ? why(m.id)
+                      : m.line}
                   </span>
                   <span class="tl-ms-tick" aria-hidden="true">
                     <Show when={current() === m.id}>

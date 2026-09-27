@@ -581,7 +581,12 @@ describe("the Mode section", () => {
     open();
     const noAsk = modeRow("No ask");
     expect(noAsk.getAttribute("aria-disabled")).toBe("true");
-    expect(noAsk.querySelector(".tl-ms-desc")?.textContent).toMatch(/set when the session starts/i);
+    // The settled line stays under the name, as the prototype draws it; the
+    // reason is the row's title.
+    expect(noAsk.querySelector(".tl-ms-desc")?.textContent).toBe(
+      "Nothing asks. Anything that would ask is refused",
+    );
+    expect(noAsk.getAttribute("title")).toMatch(/set when the session starts/i);
     fireEvent.click(noAsk);
     expect(onPickMode).not.toHaveBeenCalled();
     cleanup();
