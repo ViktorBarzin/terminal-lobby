@@ -4,6 +4,7 @@ import {
   createMemo,
   createSignal,
   For,
+  on,
   onCleanup,
   onMount,
   Show,
@@ -327,6 +328,15 @@ export const MessagesTimeline: Component<{
    * published, which is what this did before.
    */
   pinned?: boolean;
+  /**
+   * A count the parent bumps each time the reader sends something. Each change
+   * brings the view to the latest message and pins it there, so the sent
+   * message and the reply to it come into sight. Scrolling up lets go of the
+   * live end on purpose, and nothing else in this view takes it back: found
+   * live on 2026-09-27, a send from 145px up left the view 509px above the
+   * bottom with only "Latest" showing.
+   */
+  follow?: number;
   /**
    * The effective OS user. Attachments in a message are drawn only when this
    * says the file is ours to fetch: the clipboard read-back routes resolve inside
@@ -887,6 +897,20 @@ export const MessagesTimeline: Component<{
     }
     requestAnimationFrame(() => setPinned(atBottom()));
   };
+
+  createEffect(
+    on(
+      () => props.follow,
+      () => {
+        setPinned(true);
+        const el = scroller;
+        // A hidden box takes no scroll. The pin is set, so the effect below
+        // brings the reader to the live end the moment the timeline shows.
+        if (el && !untrack(() => props.hidden)) stickToBottom(el);
+      },
+      { defer: true },
+    ),
+  );
 
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not

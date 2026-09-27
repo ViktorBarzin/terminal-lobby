@@ -1058,7 +1058,17 @@ export const TextView: Component<{
    * words go as the prompt they would otherwise have been. Any other refusal
    * keeps the words in the field (a false return) and says why.
    */
-  const send = async (text: string): Promise<boolean> => {
+  /**
+   * Bumped on each send that went in, so the timeline brings the reader back
+   * to the latest message (MessagesTimeline's `follow`).
+   */
+  const [sends, setSends] = createSignal(0);
+  const followed = (ok: boolean): boolean => {
+    if (ok) setSends((n) => n + 1);
+    return ok;
+  };
+  const send = async (text: string): Promise<boolean> => followed(await sendNow(text));
+  const sendNow = async (text: string): Promise<boolean> => {
     // A permission prompt's menu takes keys, not a prompt: its Enter picks
     // the highlighted row, "Yes". The words stay in the field.
     if (permission()) {
@@ -1283,7 +1293,9 @@ export const TextView: Component<{
    * context in the one session where it was measured, whose option 1 cleared
    * it, so the row says what option 1 says it does.
    */
-  const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> => {
+  const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> =>
+    followed(await sendPlanFeedbackNow(text, approve));
+  const sendPlanFeedbackNow = async (text: string, approve: boolean): Promise<boolean> => {
     if (!planDocked() || planReplyNow()?.notice === "gone") return props.onSend(text);
     if (planSending()) {
       sayOnPlanCard("busy");
@@ -1515,6 +1527,7 @@ export const TextView: Component<{
           hasEarlier={props.hasEarlier}
           onPinned={props.onPinned}
           pinned={props.pinned}
+          follow={sends()}
           me={props.me}
           session={props.session}
           queued={queued()}
@@ -1599,7 +1612,11 @@ export const TextView: Component<{
         {(_prompt) => {
           const reading = permission();
           return reading ? (
-            <PermissionCard reading={reading} onPick={pickPermission} onTerminal={props.onOpenTerminal} />
+            <PermissionCard
+              reading={reading}
+              onPick={pickPermission}
+              onTerminal={props.onOpenTerminal}
+            />
           ) : null;
         }}
       </Show>
