@@ -176,7 +176,7 @@ describe("a held call", () => {
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
     expect(
       (v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).placeholder,
-    ).toBe("Type your own answer, or leave this blank to use the selected option");
+    ).toBe("Or type your own answer…");
 
     v.sendFromComposer("green,\nactually");
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick fruits"));

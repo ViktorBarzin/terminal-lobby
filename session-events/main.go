@@ -358,7 +358,7 @@ func main() {
 // parser that reads the same screens.
 type answerDriver interface {
 	Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest,
-		known []sessionio.DialogQuestion) (sessionio.AnswerResponse, error)
+	) (sessionio.AnswerResponse, error)
 }
 
 // answerBodyLimit bounds one AnswerRequest.
@@ -376,13 +376,10 @@ type answerDriver interface {
 const answerBodyLimit = 8 << 10
 
 // answerKnownTurns is how far back the transcript is read for the call a
-// request answers.
-//
-// A pending AskUserQuestion belongs to the turn that is still running, so one
-// turn would do and two is slack for a transcript whose turn boundary lands
-// awkwardly. Folding the whole log instead would copy every event of a
-// transcript that reaches 28.9 MB on this box, per request, to read a fact
-// that is always in the last thing that happened.
+// request answers. A pending call belongs to the turn that is still running, so
+// one turn would do and two is slack for a turn boundary that lands awkwardly.
+// Folding the whole log instead would copy every event of a transcript that
+// reaches 28.9 MB on this box, per request.
 const answerKnownTurns = 2
 
 // askQuestionTool is the tool whose recorded input carries the question list.
@@ -446,63 +443,43 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 			// would take that class to zero at the cutover and read as a
 			// failure that had stopped happening.
 			emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerNoSession},
-				sessionio.AnswerAction(req, nil, nil))
+				sessionio.AnswerAction(req))
 			return
 		}
 		// A HELD CALL IS ANSWERED AS DATA (ADR-0034). The whole call's answers,
 		// or "Chat about this", go to the hook that is holding it, and nothing
-		// is typed. With no hold there is nothing else to try: the pane-driven
-		// path below answers one question at a time and is not this request.
+		// is typed. With no hold there is nothing else to try: the terminal
+		// is the only place left to answer it.
 		if req.Answers != nil || req.Chat != nil {
+			held := rg.heldQuestions(osUser, fs.Path())
 			resp := rg.settleHeld(osUser, fs.Path(), req)
-			action := sessionio.AnswerAction(req, nil, nil)
-			emitAnswer(osUser, session, nil, resp, action)
+			action := sessionio.AnswerAction(req)
+			emitAnswer(osUser, session, held, resp, action)
 			if resp.Applied {
 				emitAnswered(osUser, session, req)
 			}
 			writeJSON(w, resp)
 			return
 		}
-		// The call's question list rides along because the pane cannot supply
-		// it: a multi-question dialog draws no per-question header and marks
-		// the current tab in colour, which `capture-pane -p` does not carry.
-		// With it the driver can prove which question is on screen and walk ←
-		// to a named one; without it both fall back to weaker checks.
-		known := pendingQuestions(fs)
-		resp, err := drv.Answer(r.Context(), osUser, session, req, known)
+		// The plan approval, answered by keys (ADR-0010). The driver refuses
+		// anything else as not-held without reading the pane.
+		resp, err := drv.Answer(r.Context(), osUser, session, req)
 		if err != nil {
 			// The pane could not be read at all, which is a session that has
-			// gone away — the same 502 GET /pane answers for the same failure.
+			// gone away, the same 502 GET /pane answers for the same failure.
 			http.Error(w, "cannot read the pane", http.StatusBadGateway)
 			// A reader who navigated away mid-request is not a failure of this
-			// route. The driver polls to a 600 ms ceiling, so a dropped phone
-			// connection part-way through is ordinary, and recording each one
-			// would put the building's connection quality into the reason
-			// breakdown this event exists to measure.
-			//
-			// The request's own context is checked as well as the error,
-			// because a cancel can reach us as whatever the killed tmux
-			// subprocess reported rather than as context.Canceled.
+			// route, so it is not recorded. The request's own context is
+			// checked as well as the error, because a cancel can reach us as
+			// whatever the killed tmux subprocess reported.
 			if r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
-				emitAnswer(osUser, session, known, sessionio.AnswerResponse{Reason: answerUnreadable},
-					sessionio.AnswerAction(req, nil, known))
+				emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerUnreadable},
+					sessionio.AnswerAction(req))
 			}
 			return
 		}
-		// The driver names the action from the question it saw before typing,
-		// which is the only way to tell a one-pick commit from a single-select
-		// pick while the call's record has not landed. A driver that says
-		// nothing gets the same reading made from the request and the record.
-		action := resp.Action
-		if action == "" {
-			action = sessionio.AnswerAction(req, nil, known)
-		}
-		emitAnswer(osUser, session, known, resp, action)
-		// A TOGGLE IS NOT AN ANSWER. Since 2026-09-23 a multi-select is
-		// answered by several toggles and one commit, and ADR-0006's record
-		// counts blocking prompts answered, so it goes out once, at the
-		// commit. text.answer_sent above still records every toggle.
-		if resp.Applied && action != sessionio.ActionToggle {
+		emitAnswer(osUser, session, nil, resp, resp.Action)
+		if resp.Applied {
 			emitAnswered(osUser, session, req)
 		}
 		writeJSON(w, resp)
@@ -553,123 +530,27 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
-	case len(req.Keys) > 0:
-		count = len(req.Keys)
 	case req.Chat != nil:
 		client, count = "api-text", len(*req.Chat)
 	case req.Plan != nil && req.Plan.Feedback != "":
 		client, count = "api-text", len(req.Plan.Feedback)
-	case req.Text != "":
-		client, count = "api-text", len(req.Text)
 	}
 	events.Emit("claude.answered", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": count, "tl.client": client,
 	})
 }
 
-// pendingQuestions is the call's own question list, as the transcript records
-// it: the newest AskUserQuestion whose result has not arrived.
-//
-// It is a HINT, and the driver treats it as one — but it is the ONLY supplier
-// of that hint, and what a MISSING one costs is worth stating plainly here,
-// because this is the function that decides whether there is one.
-//
-// A multi-question dialog draws no per-question header: verified 2026-09-11
-// against the real parser, both sessionio/testdata/dialog-multi.txt and
-// dialog-multi-second.txt parse to Questions[0].Header == "" with Headers
-// ["Fruit" "Drink"]. So with no list, nothing on the pane says WHICH question
-// of the call is on screen, and placement falls back to the weaker checks the
-// driver's own comment sets out — the header being one the tab bar carries,
-// and the option being one the drawn question offers. The window is real:
-// measured 2026-08-28 over five consecutive calls, two records were not
-// written until after the question had been answered, one of them 112 s
-// later. An earlier version of this comment claimed a missing list cost only
-// a ← walk that refuses; it does not, and placement while the record is late
-// is the driver's to get right rather than something this route can prove.
-// tl.source on the event says which of the two branches a request ran under,
-// so how often that happens is a query rather than a guess.
-//
-// The frontend's extra rule — that the call must also be the last thing that
-// happened (timeline.logic.ts pendingQuestion) — is deliberately not copied.
-// There it stops a card docking over a question Claude Code abandoned,
-// re-asked and never resolved; here the reply is a fresh reading either way,
-// so the rule would only withhold a list the driver can use.
-func pendingQuestions(fs *sessionio.FileSource) []sessionio.DialogQuestion {
-	var known []sessionio.DialogQuestion
-	var from string // the tool id the list was read out of
-	for _, e := range fs.ReplayWindow(0, answerKnownTurns) {
-		switch {
-		case e.Kind == sessionio.KindToolUse && e.Tool == askQuestionTool:
-			// Body is the tool's raw input, uncapped for a tool_use
-			// (normalize.go), and AskUserQuestion's input is shaped exactly
-			// like DialogQuestion down to the option descriptions.
-			var input struct {
-				Questions []sessionio.DialogQuestion `json:"questions"`
-			}
-			if json.Unmarshal([]byte(e.Body), &input) == nil && len(input.Questions) > 0 {
-				known, from = input.Questions, e.ToolID
-			}
-		case from != "" && e.Kind == sessionio.KindToolResult && e.ToolID == from:
-			known, from = nil, ""
-		}
-	}
-	return known
-}
-
 // emitAnswer records the SHAPE of what happened, never what was on screen.
 //
-// A dialog quotes whatever the session was working on — a file path, a
-// customer's name, a diff — so nothing here carries the question, an option
-// label or the free text. That is the rule POST /answer-text follows above and
-// the one ADR-0006 sets for every usage record.
+// A dialog quotes whatever the session was working on, so nothing here carries
+// a question, an option label or the words typed (ADR-0006). tl.session ties a
+// failure back to its transcript, tl.action says what kind of request it was
+// (answers, chat, plan-approve, plan-feedback), and a held call adds how many
+// questions it asked and whether any was multi-select.
 //
-// tl.session is the addition this route makes. The browser emitted the same
-// pair with user.id and tl.device and no session name, so a recorded failure
-// could not be tied back to the transcript it came from; the design doc lists
-// that as the thing that would have made the investigation short.
-//
-// tl.action says what kind of request this was: choose, toggle, commit, back,
-// submit or keys (sessionio.AnswerAction), and since 2026-09-24 plan-approve
-// or plan-feedback for the plan approval, which carry no tl.questions or
-// tl.multi because they answered no question. Since 2026-09-23 a multi-select
-// takes several requests, toggles and then one commit, so the series counts
-// requests rather than answers, and a query that means answers splits on this.
-// Every request records exactly one of the two names, whatever its action. The
-// mode dial records into the same two names with tl.action mode and tl.client
-// api-mode (emitMode), so a query over answers reads tl.client api-answer.
-//
-// The two NAMES are the browser's, so its records and these stay one series —
-// but tl.client has to be read in every query over them. The historical
-// failures are failures of the walk this route replaces, and 3 of the 5 were
-// multi-question calls, which never once succeeded; a panel that folds both
-// surfaces together renders a rewrite as a trend. tl.reason spans two
-// vocabularies for the same reason: the walk had three words (refused,
-// desync, unreadable) and this path has sessionio's five Answer* constants
-// plus answerUnreadable, of which `refused` and `unreadable` still mean what
-// they always did.
-//
-// tl.markers_missing is the drift signal, and the reason this route emits
-// anything sessionio computed. Claude Code ships roughly daily and the captures
-// under testdata/ do not, so a restyle that moves a string the parser hangs off
-// passes CI and arrives as a reader stuck on a dialog. Recording which
-// landmarks the screen carried makes the next one a query instead, at the cost
-// of nothing: it rides on dialogs that are happening anyway, and it is our own
-// names for the CLI's furniture, never a fragment of what was drawn.
-//
-// It answers "which landmark has been missing since Tuesday", NOT "how often is
-// it missing". sessionio takes a fingerprint only when the parse failed
-// (answerdrive.go reply), so a healthy dialog contributes no reading at all and
-// the denominator a rate needs is not in this series. The attribute is also
-// absent when every landmark was lit, which is a parser bug rather than drift
-// and is already described by tl.reason.
-//
-// Readings either side of 2026-09-11 are not the same measurement. Before that
-// date ParseDialogMarkers read the whole capture, so a marker could be lit by
-// the wording appearing anywhere in the scrollback. It now reads only the
-// dialog's own lines (markerScope), the footer included, so a dark marker means
-// the dialog did not draw it. That is stricter than what came before, and a
-// panel spanning the cutover will show a step that is the parser changing, not
-// the CLI.
+// The two NAMES are the ones the browser walk emitted before 2026-09-10, so
+// tl.client has to be read in every query over them: api-answer is this route,
+// and the mode dial records into the same names as api-mode (emitMode).
 func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp sessionio.AnswerResponse, action string) {
 	// `event` rather than `name`: frontend-v2/test/docs.truth.test.ts checks
 	// every event name a Go service emits against the catalog in
@@ -684,16 +565,13 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 		event = "text.answer_failed"
 	}
 	attrs := telemetry.Attrs{"tl.session": session, "tl.client": "api-answer"}
-	// A plan answer carries no question shape. It answered no question, and
-	// `known` is whatever AskUserQuestion the transcript still holds open, an
-	// abandoned call's included, which says nothing about the plan.
-	plan := action == sessionio.ActionPlanApprove || action == sessionio.ActionPlanFeedback
-	if !plan {
-		count, multi, source := answerShape(known, resp)
-		attrs["tl.questions"], attrs["tl.multi"] = count, multi
-		if source != "" {
-			attrs["tl.source"] = source
+	// A plan answer carries no question shape; a held call's is the call's.
+	if len(known) > 0 {
+		multi := false
+		for _, q := range known {
+			multi = multi || q.MultiSelect
 		}
+		attrs["tl.questions"], attrs["tl.multi"] = len(known), multi
 	}
 	if action != "" {
 		attrs["tl.action"] = action
@@ -701,141 +579,5 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 	if resp.Reason != "" {
 		attrs["tl.reason"] = resp.Reason
 	}
-	// Recorded only when the TRANSCRIPT says a question is open and the
-	// fingerprint came back partial. Both halves were measured rather than
-	// reasoned about, and the first replaced a filter on tl.reason that threw
-	// away the readings this attribute exists for.
-	//
-	// Why not the reason. AnswerNoDialog does not mean what answerapi.go's
-	// comment says: answerdrive.go returns it for `before.dialog == nil`,
-	// which covers "no dialog on the pane" AND "a dialog the parser could not
-	// read". The second is drift itself. Measured live 2026-09-11 against a
-	// real pane holding a frame the parser refuses: reason no-dialog, with
-	// openBox, footer and numberedList lit against six dark. Skipping
-	// no-dialog dropped exactly that.
-	//
-	// Why `known`. An operator menu is the noise this has to exclude: /model,
-	// /effort and the resume picker are the same select widget, and
-	// markerScope falls back to the option list when it finds no footer, so
-	// they light numberedList the way a dialog does. The fingerprint narrows
-	// them and does not settle them. Measured 2026-09-11 over every capture
-	// in sessionio/testdata: six of the nine non-dialog screens light
-	// numberedList and nothing else, three light nothing at all, and a
-	// restyled dialog — dialog-single.txt with its free-text and chat rows
-	// renamed — lights openBox, footer and numberedList against six dark. So
-	// "a dialog-only landmark is lit" would sort today's captures correctly
-	// and would file a restyle total enough to drop all of them as a picker,
-	// which is the reading this attribute most wants to keep. What separates
-	// the two without depending on which landmarks survived is that nobody is
-	// waiting on an AskUserQuestion when a picker is on screen. A non-empty
-	// `known` is the transcript saying a call is open and unresolved, so a
-	// screen we cannot read while one is means the dialog moved. The cost is
-	// a false negative in the window where Claude Code has not written the
-	// record yet, measured 2026-08-28 at up to 112 s; drift is a multi-day
-	// signal, so losing the readings inside that window changes nothing.
-	//
-	// Why partial. All nine dark is markerScope finding no dialog at all, a
-	// pane that has scrolled or a restyle so total the answer path cannot
-	// drive the screen anyway. None dark is every landmark present and the
-	// parse still failing, which is a parser bug that tl.reason already
-	// names. Neither is a landmark going missing.
-	if !plan && resp.Markers != nil && len(known) > 0 {
-		if dark := darkMarkers(*resp.Markers); len(dark) > 0 && len(dark) < markerCount {
-			attrs["tl.markers_missing"] = strings.Join(dark, ",")
-		}
-	}
 	events.Emit(event, osUser, attrs)
-}
-
-// markerCount is how many landmarks DialogMarkers carries. A reading with all
-// of them dark is markerScope failing to find a dialog, not a dialog that lost
-// its furniture, so the emit site tells the two apart by this number.
-const markerCount = 9
-
-// darkMarkers names the CLI landmarks a capture did NOT carry, comma-joined in
-// the order DialogMarkers declares them: "reviewTitle,chatOption".
-//
-// The names are the JSON field names, so a query over this series, the response
-// body a stuck reader is looking at, and the field the client declares
-// (answer-api.ts) all say the marker the same way.
-//
-// One joined string rather than nine booleans. Attributes do not become Loki
-// labels here — promtail strips them to hold the 5000-stream cap — so the
-// cardinality that would normally argue against a joined value costs nothing,
-// while nine bools would spend nine of the 48 an event is allowed
-// (telemetry.MaxAttrs) on one reading.
-func darkMarkers(m sessionio.DialogMarkers) []string {
-	var dark []string
-	for _, mk := range []struct {
-		name string
-		lit  bool
-	}{
-		{"tabBar", m.TabBar},
-		{"answeredBox", m.AnsweredBox},
-		{"openBox", m.OpenBox},
-		{"reviewTitle", m.ReviewTitle},
-		{"readyPrompt", m.ReadyPrompt},
-		{"footer", m.Footer},
-		{"numberedList", m.NumberedList},
-		{"freeText", m.FreeText},
-		{"chatOption", m.ChatOption},
-	} {
-		if !mk.lit {
-			dark = append(dark, mk.name)
-		}
-	}
-	return dark
-}
-
-// answerShape is how many questions the call carries and whether any of them
-// is multi-select — the two numbers the browser's own records carried, so a
-// query can still compare like with like — plus the word for WHERE the two
-// came from.
-//
-// The source is not decoration, because the two branches below do not compute
-// the same thing. From the call's record, `multi` is "any question in this
-// call is multi-select", which is what the name suggests. From the reply's
-// reading it can only be "the question the pane was drawing when the reply
-// was taken is multi-select": the reading happens AFTER the keys went in, and
-// a multi-question dialog draws one question at a time. Folded together under
-// one name, the same call reports multi=true or multi=false depending only on
-// whether Claude Code had written the record yet, and a panel splitting on
-// tl.multi would be reading transcript freshness rather than call shape. The
-// walk this route replaces had the same two branches and the same word for
-// them, "transcript" or "pane" (TextView.tsx:384 in the build being deleted),
-// so the series still splits the way it always did.
-//
-// The record wins when there is one: it does not move under the request, and
-// it holds every question of the call with its multiSelect flag. The reading
-// is the fallback for the window where Claude Code has not written the record
-// yet — measured 2026-08-28 over five consecutive calls, two were not written
-// until the question had been answered, 112 s later in one case — and there
-// the tab bar's count is the only description of the call there is.
-//
-// With neither, the shape is unknown rather than zero and the caller leaves
-// the attribute off. Two requests land there, and a query wanting answered
-// calls should exclude both: one against a session this box does not have,
-// and a Submit that worked, whose reply carries no reading at all because the
-// dialog it describes has gone.
-func answerShape(known []sessionio.DialogQuestion, resp sessionio.AnswerResponse) (int, bool, string) {
-	multi := func(qs []sessionio.DialogQuestion) bool {
-		for _, q := range qs {
-			if q.MultiSelect {
-				return true
-			}
-		}
-		return false
-	}
-	if len(known) > 0 {
-		return len(known), multi(known), "transcript"
-	}
-	if resp.Dialog == nil {
-		return 0, false, ""
-	}
-	// Count comes from the tab bar, which a single-question call does not
-	// draw, so it can read lower than the questions actually in hand.
-	if resp.Dialog.Count < len(resp.Dialog.Questions) {
-		return len(resp.Dialog.Questions), multi(resp.Dialog.Questions), "pane"
-	}
-	return resp.Dialog.Count, multi(resp.Dialog.Questions), "pane"
 }

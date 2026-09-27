@@ -106,24 +106,24 @@ describe("the live row while the session is blocked on the human", () => {
     expect(live(decided).waiting).toBeUndefined();
   });
 
-  it("believes the pane while the transcript has not written the question yet", () => {
+  it("believes the held question while the transcript has not written it yet", () => {
     // Two of five consecutive AskUserQuestion calls in one session were written
     // only when the question was ANSWERED, 112 s later in one case (measured
-    // 2026-08-28). The pane watcher reports the dialog through that window and
-    // the answer card already uses it; the live row has to agree with the card
-    // sitting under it.
+    // 2026-08-28). The lobby's hook holds the question through that window
+    // (ADR-0034) and the question card already uses it; the live row has to
+    // agree with the card sitting under it.
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "pick one", at: 1000 }),
-      ev({ id: 2, kind: "meta", meta: "asking", body: askBody, at: 3000 }),
+      ev({ id: 2, kind: "meta", meta: "held", body: askBody, at: 3000 }),
     ]);
     expect(live(rows).waiting).toBe(true);
   });
 
-  it("lets go of the pane's reading the moment the dialog does", () => {
+  it("lets go of the held question the moment the hold ends", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "pick one", at: 1000 }),
-      ev({ id: 2, kind: "meta", meta: "asking", body: askBody, at: 3000 }),
-      ev({ id: 3, kind: "meta", meta: "asking", body: "", at: 4000 }),
+      ev({ id: 2, kind: "meta", meta: "held", body: askBody, at: 3000 }),
+      ev({ id: 3, kind: "meta", meta: "held", body: "", at: 4000 }),
     ]);
     expect(live(rows).waiting).toBeUndefined();
   });

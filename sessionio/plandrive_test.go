@@ -57,7 +57,7 @@ func planKeys(t *testing.T, in *Injector, osUser, want string, keys ...string) {
 
 func planAnswer(t *testing.T, in *Injector, osUser string, p PlanAnswer) AnswerResponse {
 	t.Helper()
-	res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{Plan: &p}, nil)
+	res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{Plan: &p})
 	if err != nil {
 		t.Fatalf("Answer: %v", err)
 	}
@@ -252,31 +252,26 @@ func TestAnswerRefusesBlankPlanFeedback(t *testing.T) {
 	}
 }
 
-// A request for the other dialog is refused with nothing typed, carrying the
-// reading of the one that IS drawn, so the card re-renders as the right one.
+// A request for the other dialog is refused with nothing typed. The driver
+// reads only the plan approval: an AskUserQuestion is answered through the
+// lobby's hook as data (ADR-0034), never by keys.
 func TestAnswerKeepsPlanAndQuestionRequestsApart(t *testing.T) {
 	t.Run("a plan answer while a question is drawn", func(t *testing.T) {
 		in, osUser := dialogSession(t)
 		res := planAnswer(t, in, osUser, PlanAnswer{Option: 1, Label: "Apple"})
-		if res.Applied || res.Reason != AnswerNotDrawn {
-			t.Fatalf("applied=%v reason=%q, want not-drawn", res.Applied, res.Reason)
-		}
-		if res.Dialog == nil || len(res.Dialog.Questions) == 0 {
-			t.Fatalf("the refusal must carry the question: %+v", res.Dialog)
+		if res.Applied || res.Reason != AnswerNoDialog {
+			t.Fatalf("applied=%v reason=%q, want no-dialog", res.Applied, res.Reason)
 		}
 	})
 	t.Run("a question answer while the plan is drawn", func(t *testing.T) {
 		in, osUser := planSession(t, "")
 		res, err := in.Answer(context.Background(), osUser, "demo",
-			AnswerRequest{Header: "Fruit", Choice: "Yes, and use auto mode"}, nil)
+			AnswerRequest{Answers: map[string][]string{"Pick fruits": {"Pear"}}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if res.Applied || res.Reason != AnswerNotDrawn {
-			t.Fatalf("applied=%v reason=%q, want not-drawn", res.Applied, res.Reason)
-		}
-		if res.Dialog == nil || res.Dialog.Kind != DialogKindPlan {
-			t.Fatalf("the refusal must carry the plan: %+v", res.Dialog)
+		if res.Applied || res.Reason != AnswerNotHeld {
+			t.Fatalf("applied=%v reason=%q, want not-held", res.Applied, res.Reason)
 		}
 		if pane := paneOf(t, in, osUser); strings.Contains(pane, "PLAN ") {
 			t.Fatalf("a refused request typed something:\n%s", pane)
@@ -285,8 +280,9 @@ func TestAnswerKeepsPlanAndQuestionRequestsApart(t *testing.T) {
 	t.Run("a plan answer that also names a question", func(t *testing.T) {
 		in, osUser := planSession(t, "")
 		res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{
-			Header: "Fruit", Plan: &PlanAnswer{Option: 2, Label: "Yes, and use auto mode"},
-		}, nil)
+			Answers: map[string][]string{"Pick fruits": {"Pear"}},
+			Plan:    &PlanAnswer{Option: 2, Label: "Yes, and use auto mode"},
+		})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -342,7 +338,7 @@ func TestConcurrentPlanAnswersTakeTurns(t *testing.T) {
 		go func(i int, words string) {
 			defer wg.Done()
 			res, err := in.Answer(context.Background(), osUser, "demo",
-				AnswerRequest{Plan: &PlanAnswer{Feedback: words}}, nil)
+				AnswerRequest{Plan: &PlanAnswer{Feedback: words}})
 			if err != nil {
 				t.Errorf("Answer: %v", err)
 			}

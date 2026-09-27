@@ -146,7 +146,7 @@ describe("<PlanCard> never answers by accident", () => {
 
   it("never falls back to a raw keypad, even when the choices cannot be read", () => {
     const { container } = mount({ reading: null });
-    // PaneKeypad draws the capture as `.tl-code` with tappable rows.
+    // A raw capture would draw as `.tl-code` with tappable rows.
     expect(container.querySelector(".tl-code")).toBeNull();
     expect(options(container)).toHaveLength(0);
   });

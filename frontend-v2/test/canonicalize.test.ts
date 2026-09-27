@@ -143,32 +143,6 @@ describe("structured payloads", () => {
   // what the CLI's own appended rows hold, and the answer card builds every
   // multi-select request from it: a set without the free-text row asks the
   // server to clear the words out of it.
-  it("carries what a pane reading says about the free-text row and the commit row", () => {
-    const [q] = questions({
-      questions: [
-        {
-          question: "Pick fruits",
-          header: "Fruit",
-          multiSelect: true,
-          options: [{ label: "Apple", checked: true }],
-          commit: "Submit",
-          typed: "Mango",
-          typedChecked: true,
-        },
-      ],
-    });
-    expect(q).toMatchObject({ commit: "Submit", typed: "Mango", typedChecked: true });
-  });
-
-  it("adds none of them to a question the transcript recorded", () => {
-    const [q] = questions({
-      questions: [{ question: "Which?", header: "Pick", multiSelect: true, options: [] }],
-    });
-    expect(q).not.toHaveProperty("commit");
-    expect(q).not.toHaveProperty("typed");
-    expect(q).not.toHaveProperty("typedChecked");
-  });
-
   it("returns null for a TodoWrite with no todos", () => {
     expect(extractTodoSteps({ todos: [] })).toBeNull();
     expect(extractTodoSteps(null)).toBeNull();

@@ -161,6 +161,39 @@ func TestPromptSubmitsOnlyItsOwnTextWhenThePaneHoldsADraft(t *testing.T) {
 	}
 }
 
+// A prompt of any length reaches the pane. set-buffer carried the text as a
+// command argument, and tmux 3.4 refuses a client command over ~16 KB
+// ("command too long", measured 2026-09-27: 16,000 bytes passed, 17,000
+// failed), so a long paste came back from /prompt as "inject failed" and the
+// composer handed it back. The pane here is raw-mode cat, because a
+// canonical-mode tty would truncate a line at 4 KB on its own and hide the
+// thing being tested; Claude Code reads its input raw too.
+func TestPromptDeliversTextLongerThanATmuxCommand(t *testing.T) {
+	in, osUser, sock := scratchSession(t)
+	out := filepath.Join(t.TempDir(), "received")
+	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "long",
+		"sh", "-c", "stty raw -echo; exec cat > "+out).Run(); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+
+	text := "BEGIN" + strings.Repeat("0123456789abcdef", 4096) + "END"
+	if err := in.Prompt(osUser, "long", text); err != nil {
+		t.Fatalf("Prompt of %d bytes: %v", len(text), err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got, _ := os.ReadFile(out)
+		if strings.Contains(string(got), text) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pane received %d bytes, want the whole %d-byte prompt", len(got), len(text))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 // scratchServer starts an EMPTY isolated tmux server and returns an Injector
 // bound to it. The lifecycle verbs below are destructive, so they are only ever
 // pointed at a server of their own: a `-L` socket no real session lives on.

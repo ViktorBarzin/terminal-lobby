@@ -50,7 +50,7 @@ var (
 // A pane with no Claude input box (a shell, pi, codex) is not checked at all
 // and gets exactly the one Enter it always did.
 func (in *Injector) pasteAndSubmit(osUser, session, text string) error {
-	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+	if err := in.loadBuffer(osUser, text); err != nil {
 		return err
 	}
 	// -p = bracketed paste, -d = delete the buffer afterwards.

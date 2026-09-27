@@ -562,7 +562,17 @@ func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
 		for range ch {
 		}
 	}()
+	// A question is not read off the pane any more: the lobby's hook holds it
+	// and publishes it as `held` (hold.go, ADR-0034).
 	pane.set(paneWithQuestion)
+	rg.watchPanes()
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking && e.Body != "" {
+			t.Fatalf("a question on the pane was published: %q", e.Body)
+		}
+	}
+
+	pane.set(planCapture(t))
 	rg.watchPanes()
 
 	var asking *sessionio.Event
@@ -575,7 +585,7 @@ func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
 	if asking == nil {
 		t.Fatalf("the dialog on the pane was not reported; events = %+v", fs.Replay(0))
 	}
-	if !strings.Contains(asking.Body, "Which colour should the badge be?") {
+	if !strings.Contains(asking.Body, `"kind":"plan"`) {
 		t.Fatalf("asking event = %q", asking.Body)
 	}
 
@@ -721,7 +731,7 @@ func TestRegistryClearsTheDialogWhenASessionStopsWorking(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	pane := &fakePane{text: paneWithQuestion}
+	pane := &fakePane{text: planCapture(t)}
 	rg.panes = pane
 	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
 	fs, ok := rg.source(osUser, tmux)
@@ -850,4 +860,14 @@ func sourceCached(rg *registry, osUser, session string) bool {
 	defer us.mu.Unlock()
 	_, ok := us.srcs[session]
 	return ok
+}
+
+// planCapture is a real capture of Claude Code's plan approval (CLI 2.1.281).
+func planCapture(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "plan-first.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
 }

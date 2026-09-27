@@ -274,6 +274,20 @@ func (s *settleWatch) after(e sessionio.Event) bool {
 	return e.At == 0 || !time.UnixMilli(e.At).Before(s.h.since)
 }
 
+// heldQuestions is the shape of the session's held call, for the answer
+// record's tl.questions and tl.multi, or nil when nothing is held.
+func (rg *registry) heldQuestions(osUser, transcript string) []sessionio.DialogQuestion {
+	h := rg.holds.get(holdKey(osUser, transcript))
+	if h == nil {
+		return nil
+	}
+	out := make([]sessionio.DialogQuestion, len(h.questions))
+	for i, q := range h.questions {
+		out[i] = sessionio.DialogQuestion{Question: q.Question, MultiSelect: q.MultiSelect}
+	}
+	return out
+}
+
 // settleHeld answers the session's held call with the request's Answers or
 // Chat. The reply carries no dialog: once the hook has the answer the CLI takes
 // its menu down and the transcript records the result.

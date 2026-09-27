@@ -117,7 +117,12 @@ func (e *holdEnv) hook(tool, input string, since int64) *hookCall {
 		defer close(c.done)
 		e.rg.handleQuestionHook()(c.rec, req)
 	}()
-	e.t.Cleanup(cancel)
+	// Wait for the request to return, so no hold outlives its test and emits
+	// into the next one's sink.
+	e.t.Cleanup(func() {
+		cancel()
+		<-c.done
+	})
 	return c
 }
 
@@ -229,6 +234,7 @@ func decodeHook(t *testing.T, rec *httptest.ResponseRecorder) hookOutput {
 }
 
 func TestAHeldQuestionIsAnsweredFromTheCard(t *testing.T) {
+	sink := captureEvents(t)
 	e := newHoldEnv(t)
 	c := e.hook("AskUserQuestion", holdInput, holdSince)
 
@@ -248,6 +254,12 @@ func TestAHeldQuestionIsAnsweredFromTheCard(t *testing.T) {
 	resp := e.answer(`{"answers":{"Pick a colour":["Blue"],"Pick fruits":["Apple","Plum"]}}`)
 	if !resp.Applied || !resp.Done {
 		t.Fatalf("answer: %+v", resp)
+	}
+	// The record says what shape of call was answered, as the pane-driven
+	// answers always did.
+	if got := sink.only(t, "text.answer_sent"); got["tl.questions"] != float64(2) || got["tl.multi"] != true ||
+		got["tl.action"] != "answers" {
+		t.Fatalf("text.answer_sent attrs = %v", got)
 	}
 
 	out := decodeHook(t, c.wait(t))
