@@ -296,6 +296,11 @@ func main() {
 	// loopback authenticates a host, and every lobby user has a shell on this
 	// host, so the "user" in the body was previously anyone's to choose.
 	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
+	// An AskUserQuestion held by the PermissionRequest hook until the question
+	// card or the terminal answers it (hold.go, ADR-0034). The request stays
+	// open for as long as the question does. Same two gates as its neighbour:
+	// the hook runs as the session's owner, and the held question is theirs.
+	root.HandleFunc("POST /hooks/question", localhostOnly(peerOwnsClaim(rg.handleQuestionHook())))
 	// What a Claude Code session has spent, posted by devvm/tl-usage-record from
 	// the statusLine slot (usage.go). Same two gates as its neighbour, for the
 	// same reason. The readings land in /var/lib/tmux-api/spend/<user>.json,
@@ -444,6 +449,20 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 				sessionio.AnswerAction(req, nil, nil))
 			return
 		}
+		// A HELD CALL IS ANSWERED AS DATA (ADR-0034). The whole call's answers,
+		// or "Chat about this", go to the hook that is holding it, and nothing
+		// is typed. With no hold there is nothing else to try: the pane-driven
+		// path below answers one question at a time and is not this request.
+		if req.Answers != nil || req.Chat != nil {
+			resp := rg.settleHeld(osUser, fs.Path(), req)
+			action := sessionio.AnswerAction(req, nil, nil)
+			emitAnswer(osUser, session, nil, resp, action)
+			if resp.Applied {
+				emitAnswered(osUser, session, req)
+			}
+			writeJSON(w, resp)
+			return
+		}
 		// The call's question list rides along because the pane cannot supply
 		// it: a multi-question dialog draws no per-question header and marks
 		// the current tab in colour, which `capture-pane -p` does not carry.
@@ -536,6 +555,8 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	switch {
 	case len(req.Keys) > 0:
 		count = len(req.Keys)
+	case req.Chat != nil:
+		client, count = "api-text", len(*req.Chat)
 	case req.Plan != nil && req.Plan.Feedback != "":
 		client, count = "api-text", len(req.Plan.Feedback)
 	case req.Text != "":

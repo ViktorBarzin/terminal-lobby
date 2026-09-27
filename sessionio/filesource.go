@@ -38,6 +38,9 @@ type FileSource struct {
 	// The last pane reading of a blocking question, so only CHANGES are
 	// recorded (see SetAsking).
 	asking string
+	// The question the lobby's hook is holding, so only CHANGES are recorded
+	// (see SetHeld).
+	held string
 
 	// norm is written by the tail AND by Interrupt (an HTTP handler), so it has
 	// its own lock. Order is always normMu -> mu, never the reverse.
@@ -297,6 +300,24 @@ func (f *FileSource) SetAsking(body string) bool {
 	return true
 }
 
+// SetHeld records the question the lobby's hook is holding for this session —
+// `{"questions": [...]}`, or "" once the hold has ended — and returns whether
+// that CHANGED. It reaches a client the way SetAsking's reading does, as one
+// meta event per change.
+func (f *FileSource) SetHeld(body string) bool {
+	f.mu.Lock()
+	if body == f.held {
+		f.mu.Unlock()
+		return false
+	}
+	f.held = body
+	f.mu.Unlock()
+
+	e := Event{Kind: KindMeta, Meta: MetaHeld, Body: body, At: time.Now().UnixMilli()}
+	f.Append(e)
+	return true
+}
+
 // WorthWatching reports whether reading this session's pane could tell anyone
 // anything: somebody is reading the stream, and the last turn has not settled.
 //
@@ -315,7 +336,7 @@ func (f *FileSource) WorthWatching() bool {
 	// look like it was working again — and be polled for the rest of its life.
 	for i := len(f.logbuf) - 1; i >= 0; i-- {
 		e := f.logbuf[i]
-		if e.Kind == KindMeta && e.Meta == MetaAsking {
+		if e.Kind == KindMeta && (e.Meta == MetaAsking || e.Meta == MetaHeld) {
 			continue
 		}
 		return e.Kind != KindTurnEnd

@@ -90,13 +90,15 @@ type registry struct {
 	// agentEvery is how often a watched session's agent files are listed,
 	// AgentScanInterval outside tests.
 	agentEvery time.Duration
+	// holds are the questions the lobby's hook is waiting on (hold.go).
+	holds *holdSet
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
 	return &registry{
 		users: map[string]*userState{}, ctx: ctx,
 		poll: poll, homeBase: homeBase, opts: opts, self: self,
-		now: time.Now, agentEvery: AgentScanInterval,
+		now: time.Now, agentEvery: AgentScanInterval, holds: newHoldSet(),
 	}
 }
 

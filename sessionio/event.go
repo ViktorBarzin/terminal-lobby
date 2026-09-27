@@ -52,6 +52,13 @@ const (
 	// dialog is up (see dialog.go); the transcript's own record still wins
 	// whenever it has one.
 	MetaAsking Meta = "asking"
+	// MetaHeld carries an AskUserQuestion that the lobby's question hook is
+	// holding (ADR-0034), as `{"questions": [...]}` in Body exactly as the tool
+	// was called, previews included, or an empty Body once the hold has ended.
+	// Session state like MetaAsking: the newest one wins, and it is what makes
+	// the question card answerable. It also carries the questions through the
+	// window before Claude Code writes the call's record.
+	MetaHeld Meta = "held"
 	// MetaModel carries the model the session is answering on, and the effort
 	// it is answering at, in Event.Model. Emitted only when the pair CHANGES,
 	// because every assistant record names it and a marker per turn would say

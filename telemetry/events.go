@@ -64,8 +64,12 @@ var knownEvents = map[string]bool{
 	// api-answer; the mode dial answers no prompt and sends no claude.answered.
 	"text.answer_failed": true,
 	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps, tl.action
-	"session.detached":   true,
-	"session.renamed":    true,
+	// A question the PermissionRequest hook held for the card (ADR-0034):
+	// tl.outcome is held when it begins, then answered, terminal, hung-up,
+	// replaced, gone, expired or already; tl.questions and tl.held_ms.
+	"question.hold":    true,
+	"session.detached": true,
+	"session.renamed":  true,
 	// A title someone chose, replacing whatever the session had. Emitted
 	// server-side at POST /sessions/{n}/title, so tl.client says which surface
 	// asked. One arriving soon after a session.autonamed is how a rejected

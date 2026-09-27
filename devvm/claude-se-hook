@@ -5,6 +5,13 @@
 #   session-start -> register (user, tmux session) -> transcript mapping so
 #                    /events/<session> can find the transcript to tail.
 #   prompt-submit -> re-register when the binding has moved since we last looked.
+#   question      -> PermissionRequest for AskUserQuestion (ADR-0034): hand the
+#                    question to session-events and wait until the lobby's
+#                    question card answers it, then print the decision for the
+#                    CLI. The CLI draws its own menu meanwhile and whichever
+#                    answers first wins; a 204 means the terminal won, or
+#                    nothing could hold the question, and printing nothing
+#                    leaves the menu as it is.
 #
 # Why the second event: the registry is keyed by tmux session NAME, but the name
 # is captured once at SessionStart, and a session can be renamed afterwards —
@@ -19,7 +26,8 @@
 # alongside claude-tmux-state. Contract with the hook runner:
 #   - MUST exit 0 — a non-zero hook exit can block the tool call.
 #   - session-start and prompt-submit MUST stay silent — stdout of both is
-#     injected into the conversation as context.
+#     injected into the conversation as context. question prints only the
+#     decision session-events hands it, which the CLI reads as the answer.
 #   - No-ops outside tmux ($TMUX unset) — headless / t3 Claude run these too.
 #   - session-events unreachable -> connect-timeout fails fast -> silent no-op.
 #   - prompt-submit is on the hot path of every turn, so it does no network work
@@ -33,7 +41,8 @@
 # prompt on every tool call in every session. Only session registration remains.
 set -u
 
-SE="http://localhost:7685"
+# TL_SE_URL is the test harness's override; the managed settings set nothing.
+SE="${TL_SE_URL:-http://localhost:7685}"
 event="${1:-}"
 
 # Outside a tmux pane there is no lobby session to bind to.
@@ -96,6 +105,40 @@ prompt-submit)
     cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
     [ -n "$cwd" ] || cwd="$PWD"
     register "$sid" "$cwd" "$tp"
+    ;;
+question)
+    # When this hook first ran, carried on every retry so a hold that begins
+    # after a session-events restart can tell a result the terminal wrote in
+    # the gap from an older call asking the same thing.
+    since="$(date +%s%3N)"
+    body="$(printf '%s' "$input" | jq -c --arg u "$USER" --arg t "$tmux_session" --argjson s "$since" \
+        '. + {user:$u, tmux_session:$t, since:$s}' 2>/dev/null || true)"
+    [ -n "$body" ] || exit 0
+    out="$(mktemp)" code="$(mktemp)"
+    pid=""
+    # The CLI SIGTERMs a hook that reaches its timeout. curl goes with it, so
+    # the held question is withdrawn rather than left waiting on a dead hook.
+    trap '[ -n "$pid" ] && kill "$pid" 2>/dev/null; rm -f "$out" "$code"; exit 0' TERM INT HUP
+    trap 'rm -f "$out" "$code"' EXIT
+    # A restarting session-events refuses connections for a few seconds; ask
+    # again until it is back, but give up on one that stays away, since the CLI
+    # does not stop this hook when the terminal answers first.
+    give_up=$(( $(date +%s) + 600 ))
+    while :; do
+        printf '%s' "$body" | curl -s --connect-timeout 2 -o "$out" -w '%{http_code}' \
+            -X POST -H 'Content-Type: application/json' --data-binary @- \
+            "$SE/hooks/question" >"$code" 2>/dev/null &
+        pid=$!
+        wait "$pid"
+        pid=""
+        case "$(cat "$code" 2>/dev/null)" in
+        200) cat "$out"; exit 0 ;;
+        000|502|503|504)
+            [ "$(date +%s)" -lt "$give_up" ] || exit 0
+            sleep 2 ;;
+        *) exit 0 ;; # 204, or a service without the route: the menu stays
+        esac
+    done
     ;;
 esac
 exit 0

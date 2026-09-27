@@ -42,6 +42,15 @@ import "strings"
 // the call shape the field data says fails most, so the looser rule is
 // deliberate (TextView.tsx callAddress).
 type AnswerRequest struct {
+	// Answers is a whole AskUserQuestion call answered at once, keyed by each
+	// question's text, for a call the lobby's hook is holding (ADR-0034). A
+	// single-select question carries one label, a multi-select the labels
+	// picked, and a free-text answer its words. Nothing is typed into the pane:
+	// the hook hands the answers to the CLI as data.
+	Answers map[string][]string `json:"answers,omitempty"`
+	// Chat declines a held call and hands Claude these words instead, the
+	// card's "Chat about this". Present and empty declines with no words.
+	Chat *string `json:"chat,omitempty"`
 	// Header of the question this choice belongs to, as the tab bar draws it.
 	// Required for Choice; ignored for Submit.
 	Header string `json:"header,omitempty"`
@@ -169,6 +178,14 @@ const (
 	// answering that question changes it, or, for a toggle, did not come to
 	// show the set it asked for. Nothing further is typed.
 	AnswerUnverified = "unverified"
+	// AnswerNotHeld: the request answers a call as data (Answers or Chat) and
+	// no hook is holding one for the session, so the terminal is the only
+	// place left to answer it.
+	AnswerNotHeld = "not-held"
+	// AnswerIncomplete: the request answers a held call and leaves one of its
+	// questions without an answer. Claude reads a missing answer as a skipped
+	// question, so nothing is sent.
+	AnswerIncomplete = "incomplete"
 )
 
 // AnswerResponse is what the pane shows once the request has been applied, or
@@ -220,6 +237,10 @@ const (
 	ActionBack   = "back"   // ← to an earlier question
 	ActionSubmit = "submit" // the review screen's Submit
 	ActionKeys   = "keys"   // the raw-key hatch
+	// A held call (ADR-0034): every question answered in one request, or the
+	// call declined with "Chat about this". Each is one answer.
+	ActionAnswers = "answers"
+	ActionChat    = "chat"
 	// The plan approval. An approve option is plan-approve; words typed into
 	// the feedback row are plan-feedback, whether they go back for more
 	// planning or approve the plan with them (docs/adr/0006, the 2026-09-24
@@ -240,6 +261,10 @@ const (
 // multi-select. `drawn` and `known` may both be nil.
 func AnswerAction(req AnswerRequest, drawn *Dialog, known []DialogQuestion) string {
 	switch {
+	case req.Chat != nil:
+		return ActionChat
+	case req.Answers != nil:
+		return ActionAnswers
 	case len(req.Keys) > 0:
 		return ActionKeys
 	case req.Plan != nil && req.Plan.Option != 0:
