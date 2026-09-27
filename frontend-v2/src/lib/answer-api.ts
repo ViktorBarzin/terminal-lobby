@@ -1,16 +1,6 @@
 /**
- * Answering an AskUserQuestion: one choice, one request.
- *
- * The browser no longer plans a walk. It renders the question the pane is
- * drawing, sends the reader's choice, and renders whatever comes back. The
- * server answers that one question and takes the next reading, so nothing here
- * predicts a screen.
- *
- * That prediction is what this replaces. The old client set each step's
- * expectation to the NEXT question's text and the last step's to the review
- * screen's title, then stopped when it did not find one. Over 10 days of field
- * data four-question answers failed 4 times in 5, every failure a `desync`
- * (docs/plans/2026-09-10-text-mode-answers-dialogs-design.md).
+ * POST /answer: a held AskUserQuestion answered as data (ADR-0034), or Claude
+ * Code's plan approval answered one action at a time.
  *
  * The Go types this mirrors are in `sessionio/answerapi.go`; keep the two in
  * step.
@@ -18,61 +8,6 @@
 
 import { answerUrl } from "./config";
 import { fetchWithDeadline } from "./http";
-
-/** One option a question offers. */
-export interface DialogOptionView {
-  label: string;
-  description?: string;
-  /**
-   * The multi-select box the pane drew FILLED. Always absent on a
-   * single-select question, which draws no boxes.
-   *
-   * This is what lets a second pick add to a multi-select rather than replace
-   * it. Space is a toggle, so the server answers one by diffing the set it is
-   * asked for against the boxes on screen, and the card can only ask for the
-   * right set if it can see what the CLI is already holding
-   * (`sessionio.DialogOption.Checked`).
-   */
-  checked?: boolean;
-}
-
-/**
- * One question, shaped as the tool was called so the card needs no special case.
- *
- * The last three fields describe the two rows the CLI appends to a
- * multi-select under its options, and only a reading of the PANE carries them;
- * the transcript records the call, not the answering of it
- * (`sessionio.DialogQuestion`).
- */
-export interface DialogQuestionView {
-  question: string;
-  header?: string;
-  multiSelect?: boolean;
-  options: DialogOptionView[];
-  /**
-   * The label of the unnumbered commit row the CLI draws under a
-   * multi-select's free-text row: "Next" on every question but the last and
-   * "Submit" on the last, so a one-question call says "Submit". Measured on
-   * CLI 2.1.280. Empty or absent when the pane drew none.
-   *
-   * The card labels its commit button with it, because that button presses
-   * this row. On 2.1.250 the parser read the row as the description of the
-   * option above it, which is why it is a field of its own now.
-   */
-  commit?: string;
-  /**
-   * The words in a multi-select's free-text row. Empty or absent while the
-   * row still reads "Type something".
-   *
-   * That row is an INLINE field on a multi-select: typing goes straight into
-   * it, ticks its box, and the row then reads "[✔] Mango" in place of its
-   * label (CLI 2.1.280). So its label cannot identify it, and the words are
-   * reported here rather than as an option.
-   */
-  typed?: string;
-  /** The free-text row's box, drawn filled. */
-  typedChecked?: boolean;
-}
 
 /**
  * One approve row of Claude Code's plan approval: the digit that selects it,
@@ -84,30 +19,15 @@ export interface PlanOptionView {
 }
 
 /**
- * A reading of the dialog, mirroring `sessionio.Dialog`.
- *
- * One type covers two dialogs. A question reading has no `kind` and carries
- * `questions` and `count`; a plan reading has `kind: "plan"`, the approve
- * `options`, the `feedbackRow` and the `planPath`, and no questions. The Go
- * side omits whichever half is empty, which is why both halves are optional
- * here. `planFromPane` (components/timeline.logic.ts) is the checked way to
- * read the plan half.
- *
- * `answered` is how many boxes the tab bar marks `☒`. It is a PROGRESS signal
- * and not a position: measured 2026-09-10, a multi-select question's box fills
- * on the first Space, before the Enter that leaves the question, so `answered`
- * runs one ahead there. Which question is on screen comes from `questions[0]`,
- * which is what the pane is actually drawing.
+ * A reading of a dialog on the pane, mirroring `sessionio.Dialog`: the plan
+ * approval (`kind: "plan"`) or a tool permission prompt (`kind:
+ * "permission"`). An AskUserQuestion is not read off the pane any more; the
+ * lobby's hook holds it and it arrives as a `held` event (ADR-0034).
+ * `planFromPane` (components/timeline.logic.ts) is the checked way to read the
+ * plan half.
  */
 export interface DialogView {
-  /** "plan" for the plan approval, "permission" for a tool permission prompt,
-   *  absent for an AskUserQuestion. */
   kind?: "plan" | "permission";
-  questions?: DialogQuestionView[];
-  headers?: string[];
-  count?: number;
-  partial?: boolean;
-  answered?: number;
   /**
    * The plan approval's approve rows, as drawn. The labels change between
    * sessions ("(6% used)" climbs, and auto mode or the clear context option
@@ -126,16 +46,6 @@ export interface DialogView {
   prompt?: string;
 }
 
-/**
- * A question reading as the card draws it: the questions always present.
- *
- * The wire type above leaves `questions` optional because a plan reading has
- * none. The card only ever draws a question reading, and TextView builds this
- * from whatever came in (`drawnQuestions` fills a missing list with an empty
- * one), so the card reads `questions[0]` without guarding it.
- */
-export type QuestionDialogView = DialogView & { questions: DialogQuestionView[] };
-
 /** Why a request was not applied. Empty means it was. */
 export type AnswerReason =
   | "not-drawn"
@@ -148,99 +58,29 @@ export type AnswerReason =
   /** A held call was answered with a question left empty. */
   | "incomplete";
 
-/**
- * Which of the CLI's landmarks a capture carried, for a screen the parser could
- * not fully read. Structure only, never screen text (ADR-0008).
- */
-export interface DialogMarkers {
-  tabBar: boolean;
-  answeredBox: boolean;
-  openBox: boolean;
-  reviewTitle: boolean;
-  readyPrompt: boolean;
-  footer: boolean;
-  numberedList: boolean;
-  freeText: boolean;
-  chatOption: boolean;
-}
-
-/** What the pane shows once the request has been applied, or refused. */
+/** The outcome of one request, and for a plan answer what the pane shows next. */
 export interface AnswerResponse {
   applied: boolean;
   reason?: AnswerReason;
-  /** The reading taken AFTER the request; absent when the screen was unreadable. */
+  /** The plan approval as read AFTER the request; absent when none is on screen. */
   dialog?: DialogView;
-  /** The pane is on the review screen, where the only action left is Submit. */
-  review?: boolean;
-  /** The dialog is gone. A successful Submit reports itself this way. */
+  /** The dialog is gone: the answer landed. */
   done?: boolean;
-  /** The raw capture, sent only when `dialog` is absent and `done` is false. */
-  pane?: string;
-  markers?: DialogMarkers;
 }
 
-/** One request: a choice, a navigation, a submit, or raw keys. */
+/** One request: a held call's answers, a decline, or a plan answer. */
 export interface AnswerRequest {
   /**
    * A whole AskUserQuestion call answered at once, keyed by each question's
-   * text, for a call the lobby's hook is holding (ADR-0034,
-   * `sessionio.AnswerRequest.Answers`). One label for a single-select, the
+   * text, for a call the lobby's hook is holding
+   * (`sessionio.AnswerRequest.Answers`). One label for a single-select, the
    * labels picked for a multi-select, or the free-text answer's words.
    */
   answers?: Record<string, string[]>;
   /** Decline a held call and hand Claude these words instead ("Chat about
    *  this"). An empty string declines with no words. */
   chat?: string;
-  header?: string;
-  /** One label. Shorthand for a `choices` of exactly one. */
-  choice?: string;
-  /**
-   * Every label the question should be left holding.
-   *
-   * A MULTI-SELECT REQUEST IS THE DESIRED FINAL STATE, NOT A DELTA. The
-   * server diffs it against the boxes the pane has ticked and toggles only
-   * the rows that differ, so a reader adding a second fruit sends both of
-   * them and the first survives. Measured 2026-09-11 with Apple ticked and
-   * the cursor on its row: naming Pear alone plans [Space Down Space], and
-   * that first Space unticks Apple.
-   *
-   * Sending one label is still how a pick is REPLACED, which is what the
-   * revisit flow is for. `choice` and `choices` may both be sent only when
-   * they name the same single row; a request that means two different things
-   * is refused rather than resolved (`sessionio/answerapi.go`).
-   *
-   * On a multi-select the set covers the free-text row too: "Type something"
-   * next to the option labels, with `text` as the words that row should hold.
-   * A set without it asks the server to clear any words in the row.
-   *
-   * A multi-select set WITHOUT `stay` is a commit: the server applies the
-   * set, then presses the CLI's commit row, so it has to name at least one
-   * row and an empty one is refused with nothing typed.
-   */
-  choices?: string[];
-  /** The words for the free-text row, when the set names it. */
-  text?: string;
-  /**
-   * Apply `choices` to the multi-select on screen and STAY on it: no walk to
-   * the commit row and no Enter. It is applied when a fresh reading shows
-   * every box as requested, and the reply carries that reading either way.
-   *
-   * This is what a click on a multi-select row sends. From 2026-09-11 to
-   * 2026-09-23 there was no such flag, every click also committed the
-   * question, and a one-question call reached the review screen on its first
-   * click with no way to tick a second answer. An empty set is valid here and
-   * unticks everything; on a single-select question the flag is refused as
-   * `unknown-option` with nothing typed.
-   */
-  stay?: boolean;
-  back?: string;
-  submit?: boolean;
-  keys?: string[];
-  /**
-   * An answer to the plan approval rather than a question. A request carrying
-   * it carries nothing else: the server refuses one that also names a
-   * question as `unknown-option`, with nothing typed.
-   */
+  /** An answer to the plan approval. */
   plan?: PlanAnswer;
 }
 
@@ -257,34 +97,6 @@ export interface AnswerRequest {
  * feedback". It is one line of at most 2,000 bytes and must not be blank.
  */
 export type PlanAnswer = { option: number; label: string } | { feedback: string; approve: boolean };
-
-/**
- * The label the CLI gives its free-text option.
- *
- * Measured on CLI 2.1.267: the row reads "Type something." The frontend called
- * it "Other" until 2026-09-10, which was harmless only because the digit
- * position happened to match. Both are accepted so a client and a server on
- * different builds still agree.
- */
-export const FREE_TEXT_LABEL = "Type something";
-export const LEGACY_FREE_TEXT_LABEL = "Other";
-export const CHAT_LABEL = "Chat about this";
-
-/** Whether this option label opens the free-text field rather than answering. */
-export function isFreeText(label: string): boolean {
-  const l = label.replace(/\.$/, "");
-  return l === FREE_TEXT_LABEL || l === LEGACY_FREE_TEXT_LABEL;
-}
-
-/**
- * What the CARD offers as an answer: the dialog's list without the chat escape.
- *
- * "Chat about this" is not an answer — it abandons the question and hands the
- * reader the composer — so it belongs with the actions, not in the option list.
- */
-export function answerableOptions(q: DialogQuestionView): DialogOptionView[] {
-  return q.options.filter((o) => o.label !== CHAT_LABEL);
-}
 
 /**
  * Send one request and return the reading that came back.

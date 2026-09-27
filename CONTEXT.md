@@ -446,7 +446,7 @@ is drawn from its first character and clipped at the far edges, with no
 ring — the clipping says it already. One session can occupy at most one
 tile: keepalive mounts a single live view per session, and two tiles of one
 session would contend for its Grid. _Avoid_: pane (tmux's word for the
-splits inside a session, which `PaneKeypad` drives), cell, window, slot
+splits inside a session), cell, window, slot
 (the DOM node a session hangs off, which a tile positions but never moves)
 
 **Workspace**:
@@ -936,34 +936,6 @@ sends every answer together once each question has one; while it is up the
 composer is the free-text answer to the question on show.
 _Avoid_: answer card, dialog (the CLI's own, in the pane)
 
-**Drawn question**:
-The one question of an `AskUserQuestion` call that the pane is showing. A
-multi-question call draws them one at a time, so the drawn question is what
-decides where a dialog is, and it is the only question an answer may address.
-_Avoid_: current question, active question; and do not infer it from the tab
-bar's `☒` tally, which is a **dialog progress** count.
-
-**Dialog progress**:
-How many of a call's questions the tab bar marks `☒`. A progress signal, not a
-position: a multi-select question's box fills on its first toggle, before the
-question is left, so the tally can run one ahead of the **drawn question**.
-
-**Free-text row**:
-The CLI's own numbered row under an `AskUserQuestion` question's options, where
-the reader types an answer of their own; it reads `Type something` until
-something is typed. On a multi-select question it is an inline field and one
-more pick: typing ticks it and replaces the label with the text.
-_Avoid_: Other, free-text option (it is the CLI's row, not one of the options
-Claude offered)
-
-**Commit row**:
-The unnumbered row a multi-select question draws directly under its
-**free-text row**, labelled `Next` on every question but the last and `Submit`
-on the last. `Enter` on it leaves the question; `Enter` on a numbered row only
-toggles that row. The answer card's commit button presses it.
-_Avoid_: Next button, submit row (the review screen's `Submit answers` is a
-different control)
-
 **Plan approval**:
 The **blocking prompt** Claude Code draws when an `ExitPlanMode` call presents
 a plan: the plan, a numbered list of ways to approve it, and the **feedback
@@ -1014,12 +986,6 @@ the origin `auto-continuation`, and the text view draws it as a rule reading
 "Context cleared · carrying out the plan", the approved plan, and any feedback
 the approval carried, in place of that message.
 _Avoid_: continuation message, auto prompt (it is not a prompt anyone sent)
-
-**Marker fingerprint**:
-Which of the CLI's known landmarks a capture carried — the tab bar, the box
-glyphs, the two review wordings, the footer, the free-text and chat rows.
-Recorded when the parser cannot fully read a screen, so a CLI restyle shows up
-as a signal rather than as a bug report. Structure only, never screen text.
 
 ### Data used
 

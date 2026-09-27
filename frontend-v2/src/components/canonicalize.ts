@@ -265,18 +265,6 @@ export function commandOutput(result: unknown, fallback: string): CommandOutput 
 export interface QuestionOption {
   label: string;
   description: string;
-  /**
-   * The multi-select box the PANE drew filled. Never present from the
-   * transcript, which records the call and not the answering of it: it
-   * arrives only on a reading the pane watcher took (`sessionio.Dialog`,
-   * marshalled whole into the `asking` meta event).
-   *
-   * It is carried through rather than dropped because the answer card needs
-   * it to add a pick to a multi-select instead of replacing one, and a reader
-   * who loads the page onto a half-answered question has no other source for
-   * it — there is no reply from this session to read it off.
-   */
-  checked?: boolean;
   /** The option's preview, when Claude gave one: monospace content (a code
    *  snippet, an ASCII mockup) that the question card shows for the option
    *  in focus. */
@@ -287,21 +275,6 @@ export interface Question {
   header: string;
   multiSelect: boolean;
   options: QuestionOption[];
-  /**
-   * What a PANE reading says about the two rows the CLI appends to a
-   * multi-select: the commit row's label, and the words and box of the inline
-   * free-text row (`DialogQuestionView` in lib/answer-api has the detail).
-   * Never present from the transcript, for the reason `checked` above is not.
-   *
-   * Carried rather than dropped because the answer card builds every
-   * multi-select request from them. A reader who opens the page onto a
-   * question whose free-text row already holds words has only the watcher's
-   * reading to learn that from, and a request built without them asks the
-   * server to clear those words.
-   */
-  commit?: string;
-  typed?: string;
-  typedChecked?: boolean;
 }
 
 export function questions(input: unknown): Question[] {
@@ -319,17 +292,11 @@ export function questions(input: unknown): Question[] {
             .map((o) => ({
               label: str(o.label),
               description: str(o.description),
-              checked: o.checked === true,
               // What the option looks like, as Claude drew it for comparing
               // code or layouts. Spread only when present.
               ...(str(o.preview) ? { preview: str(o.preview) } : {}),
             }))
         : [],
-      // Spread only when present, so a transcript question keeps exactly the
-      // four fields the tool was called with.
-      ...(str(q.commit) ? { commit: str(q.commit) } : {}),
-      ...(str(q.typed) ? { typed: str(q.typed) } : {}),
-      ...(q.typedChecked === true ? { typedChecked: true } : {}),
     }));
 }
 

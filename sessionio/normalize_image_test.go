@@ -459,3 +459,11 @@ func TestNormalizeImageSourceLookalikesKeepTheirRows(t *testing.T) {
 	typed := pasteLine("u-4", "[Image: source: /tmp/a.png]", "")
 	onlyKind(t, n.Line([]byte(typed)), KindUser)
 }
+
+// itoa is strconv.Itoa for the small counts these tests build names from.
+func itoa(n int) string {
+	if n < 10 {
+		return string(rune('0' + n))
+	}
+	return itoa(n/10) + string(rune('0'+n%10))
+}

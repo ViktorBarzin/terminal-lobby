@@ -54,9 +54,8 @@ import (
 // answerPlan applies one plan request against the reading taken before it.
 func (in *Injector) answerPlan(ctx context.Context, osUser, session string, before answerReading, req AnswerRequest) (AnswerResponse, error) {
 	p := *req.Plan
-	// A request that names a question as well says two things at once.
-	if req.Header != "" || req.Choice != "" || len(req.Choices) > 0 || req.Text != "" ||
-		req.Stay || req.Back != "" || req.Submit {
+	// A request that answers a question as well says two things at once.
+	if req.Answers != nil || req.Chat != nil {
 		return before.reply(AnswerUnknownOption), nil
 	}
 	switch {

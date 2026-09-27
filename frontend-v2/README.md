@@ -846,12 +846,6 @@ src/
                          Terminal
     question.logic.ts    PURE drafts for the question card (T3's rules) and the
                          held question read off the stream (`held` meta)
-    PaneKeypad.tsx       The half of the card for a screen ParseDialog refused:
-                         the capture as monospaced text with the lines that
-                         look like numbered rows made tappable. Detecting rows
-                         is a guess and only ever runs on screens we do not
-                         understand; it replaced sending the reader to the
-                         Terminal, which was 22.4% of this box's calls
     PlanCard.tsx         The docked card for Claude Code's plan approval: the
                          plan from the transcript as markdown, clamped behind
                          "Show all", and the approve rows as the pane draws

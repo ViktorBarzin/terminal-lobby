@@ -390,34 +390,19 @@ func (rg *registry) watchPanes() {
 	}
 }
 
-// paneDialog is the blocking dialog a pane shows: Claude Code's plan approval,
-// a tool permission prompt, or an AskUserQuestion, or nil.
+// paneDialog is the blocking dialog a pane shows that the Text view answers
+// from the pane: Claude Code's plan approval or a tool permission prompt, or
+// nil. An AskUserQuestion is not read here any more: the lobby's hook holds it
+// and publishes it as a `held` event (hold.go, ADR-0034).
 //
-// THE PLAN APPROVAL IS ASKED FIRST, and not for speed. Since 2026-09-24 the
-// Text view answers it too (sessionio/plandialog.go), and the watcher is what
-// docks its card: the transcript does not always hold a blocking call while
-// its dialog is up, for the reason this file's watchPanes gives. Its parser is
-// anchored to the bottom of the pane, where the dialog replaces the input box,
-// whereas ParseDialog takes the last select-widget footer anywhere in the
-// capture. On the default renderer the conversation stays above the dialog,
-// and one that quotes a question's footer would otherwise publish a question
-// over the plan.
-//
-// The reading goes out in the same event either way, and its Kind says which
-// dialog it is. A client from before the plan existed parses a plan reading as
-// a question with no questions in it and docks nothing (timeline.logic.ts
-// askingFromPane returns null for an empty list), which is the behaviour it
-// had for this dialog before.
+// Both parsers are anchored to the bottom of the pane, footer last, where the
+// dialog replaces the input box, and their footers differ, so the two cannot
+// both match.
 func paneDialog(pane string) *sessionio.Dialog {
 	if d := sessionio.ParsePlanDialog(pane); d != nil {
 		return d
 	}
-	// A tool permission prompt is anchored the same way, footer last, and its
-	// footer is not the select widget's, so the two cannot both match.
-	if d := sessionio.ParsePermissionDialog(pane); d != nil {
-		return d
-	}
-	return sessionio.ParseDialog(pane)
+	return sessionio.ParsePermissionDialog(pane)
 }
 
 // watchPanesEvery runs watchPanes on a ticker until ctx is done.

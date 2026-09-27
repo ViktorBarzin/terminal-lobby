@@ -67,7 +67,7 @@ export function planReadingKey(reading: PlanReading): string {
  *
  * The reading is the newest `asking` meta body. A question reading or an
  * empty body withdraws it, since the two kinds share the meta. Transcript
- * events do not withdraw it, unlike `askingFromPane`: two plan dialogs in a
+ * events do not withdraw it, unlike the held question: two plan dialogs in a
  * row can draw byte-identical readings, and the watcher then publishes once,
  * so the reading has to outlive the first dialog's result for the second
  * dialog to dock.

@@ -11,7 +11,6 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  askingFromPane,
   deriveRows,
   permissionFromPane,
   planFromPane,
@@ -111,8 +110,7 @@ describe("permissionFromPane", () => {
     expect(permissionFromPane([asking(skipped)])).toBeNull();
   });
 
-  it("is not a question, and not the plan", () => {
-    expect(askingFromPane([asking(reading)])).toBeNull();
+  it("is not the plan", () => {
     expect(planFromPane(reading)).toBeNull();
   });
 });

@@ -11,6 +11,7 @@ import {
 import type { PendingPrompt } from "../logic/compose.logic";
 import type { DialogView, PlanOptionView } from "../lib/answer-api";
 import { modeId, modeTitle } from "../logic/modes";
+import { heldFromEvents } from "./question.logic";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -853,8 +854,8 @@ function collectTurnRows(turn: Turn): {
         // prompt left the queue tells the reader nothing the queue itself
         // does not already say by shrinking.
         if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;
-        // What the PANE says about a blocking question is state too, and the
-        // answer card is where it shows (askingFromPane). It is also the one
+        // What the PANE says about a blocking dialog is state too, and its
+        // card is where it shows (planFromPane, permissionFromPane). It is the one
         // reading that repeats: a dialog sits on screen for as long as nobody
         // answers it, and a row per reading would bury the conversation.
         if (meta === "asking") break;
@@ -1070,11 +1071,10 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
       break;
     }
   }
-  // The pane covers the window the transcript misses: Claude Code does not
-  // always write the AskUserQuestion record while its dialog is up (see
-  // askingFromPane). The answer card already docks off this reading, so the
-  // row above it has to agree with it.
-  const paneAsking = !live && !waitingFor && askingFromPane(turn.events) !== null;
+  // The held question covers the window the transcript misses: Claude Code
+  // does not always write the AskUserQuestion record while its dialog is up.
+  // The question card already docks off it, so the row above it has to agree.
+  const paneAsking = !live && !waitingFor && heldFromEvents(turn.events) !== null;
   // A tool permission prompt holds the call it is about in flight, so it
   // waits with `live` set: the call has not run, and will not until somebody
   // answers (permissionFromPane).
@@ -1433,58 +1433,6 @@ export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
   return newest && newest.kind === "question" && newest.pending ? newest : null;
 }
 
-/**
- * The blocking question the PANE is showing, if any — the newest `asking`
- * reading the server took (session-events registry.watchPanes).
- *
- * This is a FALLBACK, and only for the window where Claude Code has not written
- * the AskUserQuestion record yet. Measured 2026-08-28 over five consecutive
- * calls in one session: two records landed within 3-8 s of the dialog appearing
- * and two were not written until the question was ANSWERED, 112 s later in one
- * case. Through that window the transcript says nothing while the terminal sits
- * blocked, and the reader is left watching "Working…".
- *
- * The transcript still wins wherever it has the call: it carries every question
- * of a multi-question call, the descriptions, and the multi-select flags exactly
- * as the tool was called, while the pane can only show what is drawn on it.
- */
-export function askingFromPane(events: Event[]): PaneAsking | null {
-  let latest = "";
-  // Only while nothing has happened since — the same rule the transcript's own
-  // questions follow (see pendingQuestion). The server withdraws a reading when
-  // the dialog goes, but a client that reconnects mid-flight, or a server a tick
-  // behind, must not dock a card over a question the session has moved past.
-  // Meta events are exempt: the mode markers and the watcher's own bookkeeping
-  // say nothing about whether the question is still on screen.
-  for (const e of events) {
-    if (e.kind === "meta") {
-      if (e.meta === "asking") latest = e.body ?? "";
-      continue;
-    }
-    latest = "";
-  }
-  if (!latest) return null;
-  const raw = parseJSON(latest) as {
-    questions?: unknown;
-    headers?: unknown;
-    count?: unknown;
-    answered?: unknown;
-    partial?: unknown;
-  } | null;
-  // A plan reading shares the meta and is told apart by its kind (sessionio
-  // Dialog.Kind). It carries no questions, so this only states the rule.
-  if (raw && (raw as { kind?: unknown }).kind === DIALOG_KIND_PLAN) return null;
-  const qs = questions(raw);
-  if (qs.length === 0) return null;
-  return {
-    questions: qs,
-    headers: Array.isArray(raw?.headers) ? (raw!.headers as string[]) : [],
-    count: typeof raw?.count === "number" ? raw.count : qs.length,
-    answered: typeof raw?.answered === "number" ? raw.answered : 0,
-    partial: raw?.partial === true,
-  };
-}
-
 /** `DialogView.kind` on a plan reading (sessionio DialogKindPlan). */
 const DIALOG_KIND_PLAN = "plan";
 
@@ -1496,7 +1444,7 @@ const DIALOG_KIND_PERMISSION = "permission";
  *
  * The transcript holds the tool call and nothing about the prompt, so the pane
  * is the only source (sessionio permdialog.go). The newest reading wins, and
- * only while nothing has happened since, the rule askingFromPane follows: the
+ * only while nothing has happened since, the rule the held question follows: the
  * call's result, or anything else Claude writes, means the prompt was
  * answered. A reading whose rows do not count up from 1 is refused whole,
  * because the card presses a row's number.
@@ -1615,26 +1563,6 @@ export interface PlanReading {
   feedbackRow: number;
   /** The plan file the footer names, or "" when it names none. */
   planPath: string;
-}
-
-/** A blocking question as the pane shows it (see askingFromPane). */
-export interface PaneAsking {
-  questions: Question[];
-  /** Every question's header, when the call has more than one. */
-  headers: string[];
-  /** How many questions the call carries. */
-  count: number;
-  /**
-   * How many the tab bar marks answered (sessionio.Dialog.Answered). The walk's
-   * only honest progress signal: read from what the terminal is showing, so it
-   * cannot drift from it the way a count the client kept would.
-   */
-  answered: number;
-  /**
-   * The pane shows one question at a time, so the call is answered one question
-   * at a time — each next one drawn only once the one before it lands.
-   */
-  partial: boolean;
 }
 
 /** The mode in force, from the most recent mode marker. */

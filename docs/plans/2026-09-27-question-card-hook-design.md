@@ -1,6 +1,6 @@
 # Answering Claude's questions the way T3 Code does
 
-**Status:** approved 2026-09-27, not built yet.
+**Status:** built and deployed 2026-09-27 (v0.79.0, with the removal in the release after it), and checked live.
 **Owner:** wizard. **Repos touched:** terminal-lobby (devvm hook script, session-events, sessionio, frontend-v2) and infra (managed settings).
 **Decisions from:** Viktor's request on 2026-09-27 and the four rounds of questions he answered the same day. The decision record is ADR-0034.
 
@@ -186,11 +186,38 @@ Each check runs against a real session on the devvm:
 - A hold left for more than 10 minutes, then answered.
 - The card on a phone: the shared Android emulator and `homelab ios shot`.
 
+## What the live checks showed
+
+Run on 2026-09-27 against v0.79.0 on the devvm, with a scratch Claude session
+in an 80x23 pane driven through `scripts/qa-harness.py`.
+
+| Check | Result |
+|---|---|
+| Hook fires as the menu draws | Held 33-38 ms after Claude asked, every time |
+| The screenshot's case: a four-option multi-select with 35-word descriptions in 80x23, answered from the card | Landed. Claude received "A. Pages how-to into publish-page, C. Merge the short Memory section into M" and "After", and the transcript `toolUseResult.answers` matches |
+| The terminal answers first | Hold released as `terminal`, the card left, no hook process remained |
+| "Chat about this" with words in the composer | The CLI showed "Denied by PermissionRequest hook", Claude answered the words and did not ask again |
+| session-events restarted during a hold | The hook re-held the question 2 s after the restart and the card's answer landed |
+| A hold left for 11 minutes | Answered from the card after 672 s. The 86400 s timeout holds past 10 minutes |
+| A phone | The card on the shared Android emulator's Chrome (1080x2400), answered by a tap |
+| Real use | Another session on the box had a question released as `terminal` and a four-question call held, within minutes of the release |
+
+Found and fixed during the checks: the answer record's `tl.questions` read 0
+for a held call, and the composer's placeholder wrapped to a cut-off second line
+on the phone.
+
+Not checked: an iPhone. The `homelab ios` rig was unreachable (its Mac did not
+answer ssh), so Safari is unverified.
+
+## What was kept
+
+- `ParseDialog`, for detection only: the prompt guard (`session-events/plan.go`)
+  and the mode dial (`sessionio/setmode.go`) ask it whether a question is on
+  screen before they type anything.
+- `POST /answer-text`, which types free text and reads no screen.
+
 ## Open questions
 
-- The probes accepted a timeout of 86400 without complaint, but no hold ran past
-  10 minutes. If Claude Code caps it, a question left longer drops back to the
-  terminal line. The check above settles it.
-- Whether a managed-settings change reaches sessions already running is not
-  known. If it does not, sessions started before step 5 answer through the
-  terminal until they restart.
+- Whether a managed-settings change reaches sessions already running is still
+  not known. Sessions started before the hook was installed answer through the
+  terminal, and the card says so after four seconds.

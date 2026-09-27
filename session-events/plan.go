@@ -78,8 +78,7 @@ const exitPlanTool = "ExitPlanMode"
 //
 // A question is read the same way, parse first and the net under it: the
 // marker names the AskUserQuestion that drew the dialog, and a question whose
-// top the pane has cut off does not parse (sessionio clippedQuestion needs the
-// call's list, which this has only through the net).
+// top the pane has cut off does not parse, so only the net catches it.
 //
 // It names the screen, as the reason the refusal carries, or "".
 func promptRefusal(rg *registry, p planPane, osUser, session string) string {

@@ -63,7 +63,9 @@ two ways that matter:
 - A question with no hold behind it (a session started before the hook was
   installed, or a hook that has timed out) cannot be answered from the card. The
   card says so and offers the terminal. The pane-reading answer path for
-  `AskUserQuestion` is removed rather than kept as a fallback.
+  `AskUserQuestion` is removed rather than kept as a fallback. `ParseDialog`
+  stays for detection only, because the prompt guard and the mode dial ask it
+  whether a question is on screen before they type anything.
 - The hook ships in the managed settings (`infra/scripts/workstation/managed-settings.json`),
   so it reaches every user on the box at once.
 
