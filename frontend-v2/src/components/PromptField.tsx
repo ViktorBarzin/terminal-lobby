@@ -90,6 +90,10 @@ export interface PromptFieldSinks {
   focus: () => void;
 }
 
+/** The least a phone keyboard shrinks the visual viewport by: 150px, where
+ *  the URL bar folding away moves it by about 56px. */
+const KEYBOARD_MIN_PX = 150;
+
 /**
  * The words the watching pill shows: who is being watched, from the session
  * view's one sentence ("Watching alice — take control to type in their
@@ -476,6 +480,29 @@ export const PromptField: Component<{
     };
     document.addEventListener("pointerdown", onPress, true);
     onCleanup(() => document.removeEventListener("pointerdown", onPress, true));
+  });
+
+  /**
+   * Fold back into the pill when the phone's keyboard goes away with the field
+   * still focused. Android Chrome keeps the focus when the keyboard is put
+   * away with the back gesture, so the box stayed open with no keyboard under
+   * it (found on the emulator, 2026-09-27). The keyboard's leaving is read off
+   * the visual viewport: it grows back by at least a keyboard's height from
+   * the smallest it was while the box was open. The URL bar folding away moves
+   * it by about 56px, so that is not mistaken for it.
+   */
+  createEffect(() => {
+    const vv = window.visualViewport;
+    if (props.fold !== true || !phone() || !opened() || !vv) return;
+    let least = vv.height;
+    const onResize = (): void => {
+      least = Math.min(least, vv.height);
+      if (vv.height - least < KEYBOARD_MIN_PX) return;
+      setOpened(false);
+      ta?.blur();
+    };
+    vv.addEventListener("resize", onResize);
+    onCleanup(() => vv.removeEventListener("resize", onResize));
   });
 
   onMount(() => {

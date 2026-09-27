@@ -119,6 +119,43 @@ describe("<Composer>: pill or box", () => {
     expect(document.activeElement).not.toBe(ta);
   });
 
+  // Found on the Android emulator on 2026-09-27: Chrome keeps the focus in the
+  // field when the keyboard is put away with the back gesture, so the box
+  // stayed open with no keyboard under it. The keyboard going away is the sign.
+  it("folds back into the pill when the phone's keyboard goes away", () => {
+    const vv = Object.assign(new EventTarget(), { height: 783 });
+    vi.stubGlobal("visualViewport", vv);
+    try {
+      const { ta, surface } = mount({}, "phone");
+      ta.focus();
+      expect(surface().getAttribute("data-shape")).toBe("box");
+      vv.height = 471; // the keyboard comes up
+      vv.dispatchEvent(new Event("resize"));
+      expect(surface().getAttribute("data-shape")).toBe("box");
+      vv.height = 783; // and goes away
+      vv.dispatchEvent(new Event("resize"));
+      expect(surface().getAttribute("data-shape")).toBe("pill");
+      expect(document.activeElement).not.toBe(ta);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stays the box when the viewport moves by less than a keyboard", () => {
+    const vv = Object.assign(new EventTarget(), { height: 471 });
+    vi.stubGlobal("visualViewport", vv);
+    try {
+      const { ta, surface } = mount({}, "phone");
+      ta.focus();
+      vv.height = 527; // the URL bar folding away
+      vv.dispatchEvent(new Event("resize"));
+      expect(surface().getAttribute("data-shape")).toBe("box");
+      expect(document.activeElement).toBe(ta);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   // The box grows upward from where the pill was, so the finger that opened
   // it is over the box's bottom row by the time its click fires. Measured in
   // Chromium's phone emulation on 2026-09-27: a tap on the pill opened the
