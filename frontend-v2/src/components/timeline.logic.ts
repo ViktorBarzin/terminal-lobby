@@ -2103,9 +2103,17 @@ export function withoutQueued<T extends { text: string }>(
 }
 
 /**
- * What a Stop hands back to the composer: the prompts Claude has queued (the
- * ghosts), then the prose sent from here that the transcript has not shown yet,
- * which a mid-turn send is on its way into that queue. Oldest first.
+ * What a Stop hands back to the composer, oldest first: the prompts Claude has
+ * queued (the ghosts), and the prose sent from here that the transcript has not
+ * recorded at all, which never reached the queue or is still on its way.
+ *
+ * `held` is the store's pending prompts, in send order, and that order is kept.
+ * Each queued prompt stands for the oldest held one with the same text, and a
+ * held prompt the queue does not have goes back before the next queued one
+ * that was sent after it. Found in the live check on 2026-09-27: two sends
+ * 100ms apart, the CLI recorded only the second one's enqueue, and the first
+ * came back after it. Queued prompts nothing here sent (typed in the terminal)
+ * keep their place in the queue.
  *
  * A slash command is left out: it may never be recorded at all
  * (store/session.ts), so a held one says nothing about the queue.
@@ -2114,10 +2122,25 @@ export function withoutQueued<T extends { text: string }>(
  * `<pasted_content id="bae7">\n…\n</pasted_content id="bae7">` (CLI 2.1.283,
  * seen 2026-09-27), and the reader gets back what they pasted, not the marker.
  */
-export function handedBack(queued: readonly string[], sent: readonly PendingPrompt[]): string[] {
-  const back = queued.map(unwrapPasted);
-  for (const p of sent) if (!p.command && p.text.trim()) back.push(p.text.trim());
-  return back;
+export function handedBack(queued: readonly string[], held: readonly PendingPrompt[]): string[] {
+  const prose = held.map((p) => (p.command ? "" : p.text.trim()));
+  const matched = new Set<number>();
+  const out: string[] = [];
+  let next = 0;
+  const flushTo = (limit: number): void => {
+    for (; next < limit; next++) if (prose[next] && !matched.has(next)) out.push(prose[next]!);
+  };
+  for (const q of queued) {
+    const text = unwrapPasted(q);
+    const at = prose.findIndex((t, n) => t !== "" && !matched.has(n) && t === text.trim());
+    if (at >= 0) {
+      matched.add(at);
+      flushTo(at);
+    }
+    out.push(text);
+  }
+  flushTo(prose.length);
+  return out;
 }
 
 /** The CLI's pasted_content markers taken off, keeping what they held. */

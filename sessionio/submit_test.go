@@ -132,6 +132,23 @@ func submittedLines(t *testing.T, in *Injector, osUser string) []string {
 	return got
 }
 
+// A Stop that lands before Claude's first token puts the interrupted prompt
+// back on the input line, and a long one wraps. C-u kills one visual line, so
+// the old C-e C-u prelude left the first line behind and the next prompt was
+// submitted onto it. Found in the live check of the T3 pass on 2026-09-27: the
+// draft a Stop handed back went out as "...about the history of the " followed
+// by the draft, on an 80-column pane.
+func TestPromptClearsALeftoverThatSpansLines(t *testing.T) {
+	in, osUser := fakeInputSession(t,
+		`FAKEINPUT_LINE='Without using any tools, write a 3000-word essay about the history of the \ntelephone.'`)
+	if err := in.Prompt(osUser, "demo", "say banana"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if got := submittedLines(t, in, osUser); len(got) != 1 || got[0] != "say banana" {
+		t.Fatalf("submitted = %q, want only the prompt", got)
+	}
+}
+
 // The defect: POST /prompt answered OK, the text sat on Claude's input line,
 // and the Enter that should have submitted it was gone. Prompt now reads the
 // box back and presses Enter again while its own text is still there.

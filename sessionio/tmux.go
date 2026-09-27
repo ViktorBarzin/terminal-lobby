@@ -6,7 +6,9 @@ import (
 	"log"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Claude turn states, as stamped into @claude_state by the org-wide hooks
@@ -278,11 +280,12 @@ func exactSession(session string) string { return "=" + session }
 // cancelled work re-ran and the new prompt was mangled. A draft left in the
 // pane from the Terminal view did the same thing.
 //
-// C-e then C-u, not C-u alone: in Claude Code's input C-u kills only to the
-// start of the line, so a cursor left mid-text (measured) leaves the tail
-// behind. Going to the end first makes the kill total. In a plain shell the
-// C-e is a literal control character in the line buffer, which the C-u then
-// erases along with everything else.
+// C-e first, not C-u alone: in Claude Code's input C-u kills only to the start
+// of the line, so a cursor left mid-text (measured) leaves the tail behind.
+// Going to the end first makes the kill total. Claude's box is then emptied
+// with Backspaces rather than C-u, which kills one visual line of a wrapped
+// prompt (clearInput). In a plain shell the C-e is a literal control character
+// in the line buffer, which the C-u then erases along with everything else.
 //
 // The Enter is confirmed: Prompt reads Claude Code's input box back and
 // presses Enter again while the text is still sitting there, and answers
@@ -313,8 +316,30 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 	return in.enter(osUser, session)
 }
 
-// clearInput is the C-e C-u prelude Prompt's comment explains.
+// clearInput empties the pane's input line before a paste, as Prompt's
+// comment explains.
+//
+// On a pane with Claude's input box it presses C-e, then one Backspace for
+// every character the box shows plus queueClearMargin, as one repeated key. C-u
+// alone kills one visual line of the box, and what a Stop leaves there is
+// often longer: an interrupt before Claude's first token puts the prompt back
+// on the input line, wrapped. Found in the live check of the T3 pass on
+// 2026-09-27, where the next prompt was submitted onto the first line of it on
+// an 80-column pane. The box reads the same whether it holds text or only its
+// dim placeholder, so an empty box gets a few Backspaces it takes as nothing.
+//
+// Anywhere else (a shell, a pane that cannot be read) it is the C-e C-u it
+// always was.
 func (in *Injector) clearInput(osUser, session string) error {
+	if pane, err := in.CapturePane(osUser, session); err == nil {
+		if box, ok := inputBoxUpTo(pane, strings.Count(pane, "\n")); ok && strings.TrimSpace(box) != "" {
+			presses := utf8.RuneCountInString(box) + queueClearMargin
+			if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
+				return err
+			}
+			return in.Command(osUser, "send-keys", "-N", strconv.Itoa(presses), "-t", exactPane(session), "BSpace").Run()
+		}
+	}
 	return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 }
 

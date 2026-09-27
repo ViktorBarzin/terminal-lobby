@@ -682,8 +682,8 @@ export const TextView: Component<{
   /**
    * Stop, handing any queued messages back to the field (the T3 pass, item 8).
    *
-   * The ghosts' texts, and prose sent from here that has not reached the
-   * transcript yet, go back as a draft: oldest first, a blank line between
+   * The ghosts' texts, and prose sent from here that the transcript never
+   * recorded, go back as a draft (`handedBack`): oldest first, a blank line between
    * each, in front of whatever the field holds by then. Nothing is sent. They
    * go back only once the server says it took them off Claude's queue, since
    * CLI 2.1.283 runs every queued prompt as the next turn on an interrupt;
@@ -692,7 +692,7 @@ export const TextView: Component<{
    */
   const stopHandingBack = async (): Promise<void> => {
     if (props.inertReason) return;
-    const back = handedBack(queued(), sent());
+    const back = handedBack(queued(), props.pendingPrompts?.() ?? []);
     if (back.length === 0) {
       void props.onStop();
       return;

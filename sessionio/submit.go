@@ -134,6 +134,11 @@ const boxMaxLines = 12
 // box in the pane. The rule is what tells it from Claude's echo of an earlier
 // prompt, which starts with the same mark in the conversation above.
 func inputBox(pane string) (string, bool) {
+	return inputBoxUpTo(pane, boxMaxLines)
+}
+
+// inputBoxUpTo is inputBox reading up to maxLines continuation lines.
+func inputBoxUpTo(pane string, maxLines int) (string, bool) {
 	lines := strings.Split(pane, "\n")
 	for i := len(lines) - 1; i > 0; i-- {
 		rest, ok := strings.CutPrefix(lines[i], promptMark)
@@ -142,7 +147,7 @@ func inputBox(pane string) (string, bool) {
 		}
 		var b strings.Builder
 		b.WriteString(rest)
-		for j := i + 1; j < len(lines) && j <= i+boxMaxLines && !isBoxRule(lines[j]); j++ {
+		for j := i + 1; j < len(lines) && j <= i+maxLines && !isBoxRule(lines[j]); j++ {
 			b.WriteString(" ")
 			b.WriteString(lines[j])
 		}

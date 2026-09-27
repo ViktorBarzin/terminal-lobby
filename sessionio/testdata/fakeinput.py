@@ -19,6 +19,10 @@ C-c interrupts and SUBMITS whatever is still queued as the next turn. The
 interrupt is printed as INTERRUPTED, and each prompt still waiting as
 QUEUED=<text>.
 
+FAKEINPUT_LINE seeds the box with text already on it, backslash-n again
+standing for a break: the interrupted prompt Claude Code puts back on its input
+line after a Stop, which wraps over more than one line when it is long.
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -75,7 +79,7 @@ def main():
     interrupted = False
     try:
         submitted = []
-        line = ""
+        line = os.environ.get("FAKEINPUT_LINE", "").replace("\\n", "\n")
         draw(submitted, line, queue, interrupted)
         while True:
             ch = read1()

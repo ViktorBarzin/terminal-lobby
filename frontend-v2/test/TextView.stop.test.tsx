@@ -13,6 +13,7 @@ import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { Event } from "../src/types/events";
 import type { ClaudeState } from "../src/types/lobby";
+import type { PendingPrompt } from "../src/logic/compose.logic";
 
 const g = globalThis as unknown as { EventSource: unknown };
 const realES = g.EventSource;
@@ -37,7 +38,12 @@ type StopFn = (restoreQueue?: readonly string[]) => Promise<boolean> | void;
 function mount(
   state: () => ClaudeState | undefined,
   onStop: ReturnType<typeof vi.fn<StopFn>> = vi.fn<StopFn>(),
-  opts: { events?: Event[]; inertReason?: string; onSend?: (t: string) => Promise<boolean> } = {},
+  opts: {
+    events?: Event[];
+    inertReason?: string;
+    onSend?: (t: string) => Promise<boolean>;
+    pendingPrompts?: PendingPrompt[];
+  } = {},
 ) {
   g.EventSource = class {
     onopen = null;
@@ -59,6 +65,7 @@ function mount(
       onResolve={() => {}}
       claudeState={state}
       inertReason={opts.inertReason}
+      pendingPrompts={() => opts.pendingPrompts ?? []}
     />
   ));
   const button = () => r.container.querySelector<HTMLButtonElement>(".tl-composer .tl-send")!;
@@ -159,6 +166,27 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
     expect(onStop.mock.calls[0]).toEqual([]);
     await Promise.resolve();
     expect(field().value).toBe("");
+  });
+
+  // Found in the live check on 2026-09-27: two sends 100ms apart, and the CLI
+  // recorded only the second one's enqueue. The first was still held by the
+  // store, so it came back, but after the second. Send order is the store's.
+  it("keeps send order when a held prompt never reached the queue", async () => {
+    const onStop = vi.fn<StopFn>(async () => true);
+    const held = (id: number, text: string): PendingPrompt => ({
+      id,
+      text,
+      at: 2_500,
+      command: false,
+      afterId: 2,
+    });
+    const { button, field } = mount(() => "running", onStop, {
+      events: [...RUNNING_TURN, queued(3, "second\nline two")],
+      pendingPrompts: [held(-1, "first"), held(-2, "second\nline two"), held(-3, "third")],
+    });
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(["first", "second\nline two", "third"]);
+    await waitFor(() => expect(field().value).toBe("first\n\nsecond\nline two\n\nthird"));
   });
 
   it("unwraps a paste the CLI queued inside its pasted_content marker", async () => {
