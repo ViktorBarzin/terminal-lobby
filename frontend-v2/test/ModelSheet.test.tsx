@@ -219,6 +219,12 @@ describe("the sheet, on a desktop", () => {
     expect(pop.hasAttribute("data-more")).toBe(false);
   });
 
+  it("keeps the models in one column on a desktop, as the prototype draws them", () => {
+    mount({ model: { model: "claude-opus-5-5" } });
+    open();
+    expect(document.querySelector(".tl-ms-models")!.getAttribute("data-cols")).toBeNull();
+  });
+
   it("has Model, Effort and Mode sections, in that order", () => {
     mount({ model: { model: "claude-opus-5-5", effort: "high" }, context: CTX });
     open();
@@ -322,6 +328,17 @@ describe("the sheet, with a coarse pointer", () => {
     expect(sheet.contains(document.activeElement)).toBe(true);
     fireEvent.click(document.querySelector(".tl-ms-scrim")!);
     expect(document.activeElement).toBe(button());
+  });
+
+  it("lays more than three models in two columns, so the whole sheet fits a phone", () => {
+    // Found live on 2026-09-27: six models at 48px each pushed Bypass, No ask
+    // and the context line below a 412x783 screen's sheet.
+    coarse();
+    mount({ model: { model: "claude-opus-5-5" } });
+    open();
+    const list = document.querySelector<HTMLElement>(".tl-ms-models")!;
+    expect(modelRows().length).toBeGreaterThan(3);
+    expect(list.getAttribute("data-cols")).toBe("2");
   });
 
   it("closes after a pick, which applies it", () => {

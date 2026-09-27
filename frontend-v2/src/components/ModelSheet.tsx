@@ -94,8 +94,8 @@ const NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
 
 /**
  * The tallest the popover gets. The prototype drew 620px for three models;
- * the box offers six, and the whole sheet is about 690px, so the cap leaves
- * room for all of it where the window has the room.
+ * the box offers six, and the rows are drawn tighter than the prototype's so
+ * the whole sheet fits above the box in an 800px window (app.css .tl-ms-model).
  */
 const POP_MAX = 720;
 /** The popover's width, as the prototype draws it. */
@@ -359,7 +359,17 @@ export const ModelSheet: Component<{
         <div class="tl-ms-h" aria-hidden="true">
           {fieldHeading(h()!, "model")}
         </div>
-        <div role="radiogroup" aria-label={props.names?.model ?? "Model"} title={props.modelTitle}>
+        {/* Six models at a finger's 48px pushed Bypass, No ask and the
+            context line below a phone's sheet (412x783, 2026-09-27), so the
+            phone lays more than three in two columns. The prototype's one
+            column held three. */}
+        <div
+          role="radiogroup"
+          class="tl-ms-models"
+          data-cols={sheet() && modelRows().length > 3 ? "2" : undefined}
+          aria-label={props.names?.model ?? "Model"}
+          title={props.modelTitle}
+        >
           <For each={modelRows()}>
             {(o) => (
               <button

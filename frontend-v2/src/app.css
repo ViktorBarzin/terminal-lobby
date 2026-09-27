@@ -3288,7 +3288,7 @@ label.tl-set-row-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin: 10px 4px 4px;
+  margin: 8px 4px 4px;
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   font-weight: 600;
@@ -3320,6 +3320,18 @@ label.tl-set-row-label {
   font-size: calc(13.5px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
+}
+/* The sheet has to fit whole above the box in an 800px window: six model
+   rows, not the prototype's three, left No ask cut in half and the context
+   line out of view (measured 2026-09-27, 723px of sheet in a 660px box). So
+   the model rows are one line at 32px, and a mode row's two lines sit on 4px
+   of padding. */
+.tl-ms-model {
+  min-height: 32px;
+  padding-block: 4px;
+}
+.tl-ms-mode {
+  padding-block: 4px;
 }
 .tl-ms-row:focus-visible {
   background: var(--hover-tint);
@@ -3354,15 +3366,17 @@ label.tl-set-row-label {
   font-size: calc(12px * var(--tl-text-scale, 1));
   font-weight: 400;
 }
+/* The line under a row runs under the tick's column too: No ask's settled
+   line fits on one line that way, which the sheet's height needs. */
 .tl-ms-desc {
-  grid-column: 1;
+  grid-column: 1 / -1;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 16px;
 }
 .tl-ms-tick {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
   display: grid;
   place-items: center;
   color: var(--accent);
@@ -3436,8 +3450,8 @@ label.tl-set-row-label {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 10px 4px 0;
-  padding-top: 10px;
+  margin: 8px 4px 0;
+  padding-top: 8px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -3466,8 +3480,27 @@ label.tl-set-row-label {
 /* The bottom sheet at a finger's sizes: 48px rows and 16px names. */
 .tl-ms-sheet .tl-ms-row {
   min-height: 48px;
-  padding: 7px 12px;
+  padding: 6px 12px;
   font-size: calc(16px * var(--tl-text-scale, 1));
+}
+/* More than three models go in two columns (ModelSheet), each cell a name
+   over its slug, so Bypass, No ask and the context line fit a phone's sheet
+   with six models on offer. */
+.tl-ms-sheet .tl-ms-models[data-cols="2"] {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px 6px;
+}
+.tl-ms-models[data-cols="2"] .tl-ms-row {
+  padding-inline: 10px 8px;
+}
+.tl-ms-models[data-cols="2"] .tl-ms-lab {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+.tl-ms-models[data-cols="2"] .tl-ms-slug {
+  flex-basis: 100%;
+  padding-left: 21px;
 }
 .tl-ms-sheet .tl-ms-desc {
   font-size: calc(13px * var(--tl-text-scale, 1));
@@ -3481,7 +3514,7 @@ label.tl-set-row-label {
   font-size: calc(14px * var(--tl-text-scale, 1));
 }
 .tl-ms-sheet .tl-ms-h {
-  margin: 14px 4px 6px;
+  margin: 12px 4px 4px;
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-ms-sheet .tl-ms-ctx,
