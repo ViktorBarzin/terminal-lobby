@@ -44,6 +44,28 @@ func TestAnswerDeclinesThePermissionWithTheWords(t *testing.T) {
 	}
 }
 
+// Two tool calls sent together ask in turn: the next prompt is up the moment
+// the first is answered. That prompt is not the one declined, so the decline
+// has landed, and the reply carries the new prompt rather than reporting a
+// failure (seen live 2026-09-27, an Edit declined with words and a Bash
+// prompt drawn under it).
+func TestAnswerDeclineLandsWhenTheNextCallAsksAtOnce(t *testing.T) {
+	in, osUser := permSession(t, "FAKEDIALOG_PERM_NEXT='printf bye'")
+
+	res := permDecline(t, in, osUser, "print the date instead")
+
+	if !res.Applied || res.Reason != "" {
+		t.Fatalf("applied=%v reason=%q, want the decline reported as landed", res.Applied, res.Reason)
+	}
+	if res.Dialog == nil || res.Dialog.Kind != DialogKindPermission {
+		t.Fatalf("the reply must carry the next prompt: %+v", res.Dialog)
+	}
+	pane := paneOf(t, in, osUser)
+	if !strings.Contains(pane, "PERMISSION DECLINED WITH print the date instead") || !strings.Contains(pane, "printf bye") {
+		t.Fatalf("the first prompt was not declined with the words, or the second is not up:\n%s", pane)
+	}
+}
+
 // Long words wrap under the row, and the reading joins them back before the
 // Enter goes in.
 func TestAnswerDeclinesWithWordsThatWrap(t *testing.T) {

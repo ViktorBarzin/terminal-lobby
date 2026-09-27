@@ -33,7 +33,12 @@ import (
 //
 // Enter goes in only on a reading whose No row holds exactly the words asked
 // for, so it is never Enter on an empty field, whose outcome is not measured.
-// The answer has landed when the prompt has gone (awaitGone).
+// The answer has landed when the prompt has gone (awaitGone): when no prompt
+// is drawn, or when the one drawn no longer holds the words on its No row.
+// Two tool calls Claude sent together ask one after the other, and the second
+// prompt is up the moment the first is answered (an Edit declined with words
+// and a Bash prompt under it, seen live 2026-09-27), so "still a permission
+// prompt" is not "still the prompt that was answered".
 
 // answerPermission applies one permission request against the reading taken
 // before it.
@@ -78,7 +83,9 @@ func (in *Injector) answerPermission(ctx context.Context, osUser, session string
 	if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
 		return typed.reply(AnswerRefused), nil
 	}
-	return in.awaitGone(ctx, osUser, session, typed, onPerm)
+	return in.awaitGone(ctx, osUser, session, typed, func(r answerReading) bool {
+		return onPerm(r) && r.perm.cursor == no && r.perm.amended && typedMatches(r.perm.typed, text)
+	})
 }
 
 // permFocusNo walks the cursor onto the No row, one arrow per press, each read

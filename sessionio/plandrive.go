@@ -269,9 +269,10 @@ func (in *Injector) planAwaitGone(ctx context.Context, osUser, session string, b
 
 // awaitGone reads the pane after a committing key until the dialog `on`
 // recognises has counted as gone, or the window runs out with it still up.
-// The permission prompt uses the plan's window and polls (permdrive.go): the
-// next prompt a decline leads to comes after a round trip to the model,
-// seconds rather than milliseconds.
+// The permission prompt uses the plan's window and polls (permdrive.go), and
+// its `on` recognises only the prompt it answered, since the next call's
+// prompt can be up at once. The done reply carries whatever dialog is drawn by
+// then, nil when none is.
 func (in *Injector) awaitGone(ctx context.Context, osUser, session string, before answerReading, on func(answerReading) bool) (AnswerResponse, error) {
 	deadline := time.Now().Add(planGoneWindow)
 	cur, absent := before, 0
@@ -287,7 +288,9 @@ func (in *Injector) awaitGone(ctx context.Context, osUser, session string, befor
 		if on(cur) {
 			absent = 0
 		} else if absent++; absent >= planGonePolls {
-			return cur.replyDone(), nil
+			done := cur.replyDone()
+			done.Dialog = cur.dialog
+			return done, nil
 		}
 		if !time.Now().Before(deadline) {
 			return cur.reply(AnswerUnverified), nil

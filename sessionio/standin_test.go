@@ -679,6 +679,11 @@ perm_cursor = int(os.environ.get("FAKEDIALOG_PERM_CURSOR", "1"))
 perm_open = os.environ.get("FAKEDIALOG_PERM_FIELD") is not None
 perm_field = os.environ.get("FAKEDIALOG_PERM_FIELD", "")
 perm_caret = 0
+# FAKEDIALOG_PERM_NEXT draws a second prompt, for this command, the moment the
+# first is answered: the second of two tool calls Claude sent together, each
+# asking in turn.
+perm_next = os.environ.get("FAKEDIALOG_PERM_NEXT", "")
+perm_command = "ls -la"
 
 
 def perm_no():
@@ -690,8 +695,10 @@ def draw_perm():
     # The conversation quotes the prompt's question, as a capture does.
     out("❯ Run ls. It will ask: Do you want to proceed?\r\n\r\n")
     out("─" * WIDTH + "\r\n")
+    if outcome:
+        out("● " + outcome + "\r\n\r\n")
     out(" Bash command\r\n\r\n")
-    out("   ls -la\r\n")
+    out("   " + perm_command + "\r\n")
     out("   List the files\r\n\r\n")
     out(" Do you want to proceed?\r\n")
     n = perm_no()
@@ -710,9 +717,13 @@ def draw_perm():
 
 
 def perm_close(what):
-    global perm_up, outcome
-    perm_up = False
+    global perm_up, outcome, perm_next, perm_command, perm_cursor, perm_open, perm_field, perm_caret
     outcome = what
+    if perm_next:
+        perm_command, perm_next = perm_next, ""
+        perm_cursor, perm_open, perm_field, perm_caret = 1, False, "", 0
+        return
+    perm_up = False
 
 
 def perm_pick(i):
