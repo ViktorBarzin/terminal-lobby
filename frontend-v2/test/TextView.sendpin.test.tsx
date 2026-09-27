@@ -69,7 +69,7 @@ function mount(onSend: (text: string) => Promise<boolean>) {
     ta.dispatchEvent(new Event("input", { bubbles: true }));
     r.container.querySelector<HTMLButtonElement>(".tl-send")!.click();
   };
-  const latest = () => r.container.querySelector(".tl-scroll-end");
+  const latest = () => r.container.querySelector(".tl-latest");
   return { ...r, geom, scrollUp, send, latest };
 }
 

@@ -21,7 +21,10 @@ import { createSignal } from "solid-js";
 import type { Event } from "../src/types/events";
 import { MessagesTimeline } from "../src/components/MessagesTimeline";
 
-const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "s", ...e });
+const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
+  session: "s",
+  ...e,
+});
 
 const TRANSCRIPT: Event[] = [
   ev({ id: 1, kind: "user", body: "first prompt" }),
@@ -47,7 +50,11 @@ function installResizeObserver(): void {
       this.cb = cb;
     }
     observe(target: Element) {
-      watches.push({ target, fire: () => this.cb(), disconnected: () => this.off });
+      watches.push({
+        target,
+        fire: () => this.cb(),
+        disconnected: () => this.off,
+      });
     }
     unobserve() {}
     disconnect() {
@@ -63,15 +70,22 @@ function installResizeObserver(): void {
  * every measurement is 0 and the view reads as pinned whatever happens.
  */
 function geometry(el: HTMLElement, g: { content: number; client: number }) {
-  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => g.content });
-  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => g.client });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => g.content,
+  });
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => g.client,
+  });
   return g;
 }
 
 function mount(hidden?: () => boolean) {
   installResizeObserver();
+  let atEnd = true;
   const { container, unmount } = render(() => (
-    <MessagesTimeline events={TRANSCRIPT} hidden={hidden?.()} />
+    <MessagesTimeline events={TRANSCRIPT} hidden={hidden?.()} onAtEnd={(v) => (atEnd = v)} />
   ));
   const tl = container.querySelector<HTMLElement>(".tl-timeline");
   if (!tl) throw new Error("no timeline");
@@ -79,8 +93,9 @@ function mount(hidden?: () => boolean) {
   const resized = () => {
     for (const w of watches) if (w.target === tl && !w.disconnected()) w.fire();
   };
-  const latest = () => tl.querySelector(".tl-scroll-end");
-  return { tl, resized, latest, unmount };
+  /** Whether the view offers "Latest": it reports leaving the live end. */
+  const offered = () => !atEnd;
+  return { tl, resized, offered, unmount };
 }
 
 afterEach(() => {
@@ -90,7 +105,7 @@ afterEach(() => {
 
 describe("<MessagesTimeline> when its own box changes size", () => {
   it("keeps a reader at the live end there when the column narrows and its rows wrap taller", () => {
-    const { tl, resized, latest } = mount();
+    const { tl, resized, offered } = mount();
     const g = geometry(tl, { content: 1000, client: 300 });
     tl.scrollTop = 700; // at the bottom: 1000 - 700 - 300 = 0
     fireEvent.scroll(tl);
@@ -100,8 +115,8 @@ describe("<MessagesTimeline> when its own box changes size", () => {
     resized();
 
     expect(tl.scrollTop).toBe(1120);
-    expect(latest(), "the reader is at the live end, so nothing offers to take them there").toBe(
-      null,
+    expect(offered(), "the reader is at the live end, so nothing offers to take them there").toBe(
+      false,
     );
   });
 
@@ -119,18 +134,18 @@ describe("<MessagesTimeline> when its own box changes size", () => {
   });
 
   it("leaves a reader who scrolled up where they were", () => {
-    const { tl, resized, latest } = mount();
+    const { tl, resized, offered } = mount();
     const g = geometry(tl, { content: 1000, client: 300 });
     fireEvent.wheel(tl, { deltaY: -120 }); // the reader scrolls up
     tl.scrollTop = 100;
     fireEvent.scroll(tl);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
 
     g.content = 1420;
     resized();
 
     expect(tl.scrollTop).toBe(100);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 
   it("writes nothing while it is hidden behind the drill-in", () => {

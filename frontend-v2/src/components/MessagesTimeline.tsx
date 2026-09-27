@@ -177,7 +177,10 @@ const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
 );
 
 /** What a permission row says happened: the reader's answer, or that Claude asked. */
-const PERMISSION_NOTE: Record<string, string> = { allow: "Allowed", deny: "Denied" };
+const PERMISSION_NOTE: Record<string, string> = {
+  allow: "Allowed",
+  deny: "Denied",
+};
 
 /**
  * A permission prompt, once it is in the conversation, as one note: "Allowed:
@@ -406,9 +409,21 @@ export const MessagesTimeline: Component<{
   live?: WorkingRow | null;
   /** This device's plan answer is clearing the context (TextView planClearing). */
   clearing?: boolean;
-  /** A card Claude is waiting on holds the bottom of the view, so "Latest"
-   *  stays away while it is up. */
-  latestHidden?: boolean;
+  /**
+   * Whether the view is at the live end, from its own pin: once at mount and
+   * then on every change. The owner draws "Latest" from it, in a band of its
+   * own above the composer (the T3 pass, prototype 6-scrolled). The button sat
+   * inside this scroller until 2026-09-27, sticky above its foot, and covered
+   * whichever row was passing under it.
+   *
+   * Not `onPinned`: that one dedupes against the store's pin, which
+   * `loadEarlier` moves on its own, so it can stay quiet while this view's pin
+   * changes. The band has to follow the view.
+   */
+  onAtEnd?: (atEnd: boolean) => void;
+  /** Hands the owner the call that brings the reader to the latest message
+   *  and pins the view there: what "Latest" does when pressed. */
+  registerToEnd?: (toEnd: () => void) => void;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -577,7 +592,9 @@ export const MessagesTimeline: Component<{
       cancelIdleCallback?: (h: number) => void;
     };
     if (typeof ric.requestIdleCallback === "function") {
-      const handle = ric.requestIdleCallback(() => growMounted(total), { timeout: 200 });
+      const handle = ric.requestIdleCallback(() => growMounted(total), {
+        timeout: 200,
+      });
       onCleanup(() => ric.cancelIdleCallback?.(handle));
       return;
     }
@@ -1000,19 +1017,18 @@ export const MessagesTimeline: Component<{
     requestAnimationFrame(() => setPinned(atBottom()));
   };
 
-  createEffect(
-    on(
-      () => props.follow,
-      () => {
-        setPinned(true);
-        const el = scroller;
-        // A hidden box takes no scroll. The pin is set, so the effect below
-        // brings the reader to the live end the moment the timeline shows.
-        if (el && !untrack(() => props.hidden)) stickToBottom(el);
-      },
-      { defer: true },
-    ),
-  );
+  /** Bring the reader to the latest message and pin the view there: a send
+   *  (`follow`) and the owner's "Latest" (`registerToEnd`). */
+  const toEnd = (): void => {
+    setPinned(true);
+    const el = scroller;
+    // A hidden box takes no scroll. The pin is set, so the effect below
+    // brings the reader to the live end the moment the timeline shows.
+    if (el && !untrack(() => props.hidden)) stickToBottom(el);
+  };
+  createEffect(on(() => props.follow, toEnd, { defer: true }));
+  props.registerToEnd?.(toEnd);
+  createEffect(on(pinned, (atEnd) => props.onAtEnd?.(atEnd)));
 
   createEffect(() => {
     derived(); // the TRANSCRIPT grew — follow it. Expanding a fold must not
@@ -1235,20 +1251,6 @@ export const MessagesTimeline: Component<{
           me={props.me}
           onOpenPreview={props.onOpenPreview}
         />
-      </Show>
-      <Show when={!pinned() && !props.latestHidden}>
-        <button
-          type="button"
-          class="tl-scroll-end"
-          onClick={() => {
-            const el = scroller;
-            if (!el) return;
-            el.scrollTop = el.scrollHeight;
-            setPinned(true);
-          }}
-        >
-          ↓ Latest
-        </button>
       </Show>
       <span class="tl-sr-only tl-timeline-live" aria-live="polite">
         {announce()}

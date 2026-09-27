@@ -230,3 +230,43 @@ describe("drilling into an agent", () => {
     expect(v.entry("a1")?.querySelector("button")?.hasAttribute("disabled")).toBe(true);
   });
 });
+
+/** Stub a scroller's geometry (jsdom lays nothing out) and scroll it up the
+ *  way a reader does, with a wheel turn first. */
+function scrolledUp(el: HTMLElement): { top: number } {
+  const geom = { top: 700 };
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => geom.top,
+    set: (v: number) => {
+      geom.top = Math.max(0, Math.min(v, 700));
+    },
+  });
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => 1000 });
+  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => 300 });
+  fireEvent.wheel(el, { deltaY: -120 });
+  geom.top = 100;
+  fireEvent.scroll(el);
+  return geom;
+}
+
+describe("the Latest band while an agent is open", () => {
+  it("follows the drill-in's own timeline, and takes that one to its end", () => {
+    const v = mount({ agents: snap([agent("a1")]) });
+    scrolledUp(v.session());
+    expect(v.q(".tl-latest"), "the session's reader scrolled up").not.toBeNull();
+
+    v.tap("a1");
+    expect(v.q(".tl-latest"), "the agent's transcript opens at its end").toBeNull();
+
+    const drill = v.q(".tl-drill .tl-timeline")!;
+    const geom = scrolledUp(drill);
+    expect(v.q(".tl-latest")).not.toBeNull();
+    fireEvent.click(v.q(".tl-latest")!);
+    expect(geom.top).toBe(700);
+    expect(v.q(".tl-latest")).toBeNull();
+
+    fireEvent.click(v.q("button.tl-drill-back")!);
+    expect(v.q(".tl-latest"), "back at the session, still scrolled up").not.toBeNull();
+  });
+});

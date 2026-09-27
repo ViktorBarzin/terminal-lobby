@@ -1224,6 +1224,21 @@ export const TextView: Component<{
   const composerHidden = createMemo(() => questionUp() || permissionUp() || planUp());
   const cardUp = createMemo(() => questionUp() || permissionUp() || planDocked() !== null);
 
+  // ---- following: the "Latest" band ------------------------------------------
+  // Each timeline says whether its reader is at the live end, and hands over
+  // the call that takes them there. The drill-in's own timeline answers while
+  // it is on screen; it mounts at the end, so it starts true.
+  const [atEnd, setAtEnd] = createSignal(true);
+  const [drillAtEnd, setDrillAtEnd] = createSignal(true);
+  let toEnd: (() => void) | undefined;
+  let drillToEnd: (() => void) | undefined;
+  const latestShown = createMemo(() => !cardUp() && !(drill() !== null ? drillAtEnd() : atEnd()));
+  /** Claude is working: the live group at the end reads the same row. */
+  const latestWorking = (): boolean => {
+    const l = lineLive();
+    return !!l && !l.waiting;
+  };
+
   /** Whether a key from this target is this view's to act on: the view is on
    *  screen and the one being typed into, and the focus is inside it on
    *  something that does not take text. */
@@ -1311,8 +1326,10 @@ export const TextView: Component<{
           // for you" there too, and a pending slash command draws nothing.
           live={lineLive() ?? null}
           clearing={planAnswered()?.action === "clear"}
-          // The card is at the bottom and says what Claude is waiting on.
-          latestHidden={cardUp()}
+          onAtEnd={setAtEnd}
+          registerToEnd={(fn) => {
+            toEnd = fn;
+          }}
         />
         <Show when={drill()} keyed>
           {(id) => (
@@ -1327,6 +1344,10 @@ export const TextView: Component<{
               onOpenPreview={props.onOpenPreview}
               me={props.me}
               notify={props.notify}
+              onAtEnd={setDrillAtEnd}
+              registerToEnd={(fn) => {
+                drillToEnd = fn;
+              }}
             />
           )}
         </Show>
@@ -1342,6 +1363,40 @@ export const TextView: Component<{
           )}
         </Show>
       </div>
+      {/* "Latest", in a band of its own between the transcript and the
+          composer (prototype 6-scrolled). The band takes its 42px from the
+          transcript while it shows, so the button covers no row, which it did
+          from inside the scroller. It follows whichever timeline is on screen,
+          the session's or the drill-in's. A card Claude is waiting on holds the
+          bottom of the view and says what it is waiting on, so the band stays
+          away while one is up. */}
+      <Show when={latestShown()}>
+        <div class="tl-latest-band">
+          <button
+            type="button"
+            class="tl-latest"
+            onClick={() => (drill() !== null ? drillToEnd : toEnd)?.()}
+          >
+            <svg viewBox="0 0 16 16" aria-hidden="true">
+              <path
+                d="M8 3v10M3.5 8.5 8 13l4.5-4.5"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <span>
+              Latest
+              <Show when={latestWorking()}>
+                {" · "}
+                <span class="tl-latest-working">working</span>
+              </Show>
+            </span>
+          </button>
+        </div>
+      </Show>
       {/* In the composer's place, not inline: on a phone the timeline scrolls
           and the keyboard covers it, and a walk that slides out from under a
           thumb mid-answer is worse than no walk. The permanent record is the
@@ -1444,7 +1499,11 @@ export const TextView: Component<{
         onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel
-          ? { harness: props.harness, onPickModel: pickModel, modelOffer: props.modelOffer }
+          ? {
+              harness: props.harness,
+              onPickModel: pickModel,
+              modelOffer: props.modelOffer,
+            }
           : {})}
         {...(modelState() ? { model: modelState()! } : {})}
         modelBusy={modelBusy()}

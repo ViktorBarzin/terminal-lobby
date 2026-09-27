@@ -43,7 +43,10 @@ const TRANSCRIPT: Event[] = [
  * with a wheel turn so the move counts as the reader's.
  */
 function geometry(el: HTMLElement, scrollTop: number): void {
-  Object.defineProperty(el, "scrollHeight", { value: 1000, configurable: true });
+  Object.defineProperty(el, "scrollHeight", {
+    value: 1000,
+    configurable: true,
+  });
   Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
   // The reader moves it: only the reader's own scroll lets go of the live end.
   fireEvent.wheel(el, { deltaY: -120 });
@@ -97,14 +100,29 @@ describe("<MessagesTimeline> — telling the store where the reader is", () => {
     expect(log).toEqual([false, true]);
   });
 
-  it("reports the pin the ↓ Latest button restores", () => {
-    const { log, scroller } = mount();
+  it("reports the pin the owner's Latest restores", () => {
+    const log: boolean[] = [];
+    const atEnd: boolean[] = [];
+    let toEnd: (() => void) | undefined;
+    const { container } = render(() => (
+      <MessagesTimeline
+        events={TRANSCRIPT}
+        onPinned={(p) => log.push(p)}
+        onAtEnd={(v) => atEnd.push(v)}
+        registerToEnd={(fn) => {
+          toEnd = fn;
+        }}
+      />
+    ));
+    const scroller = container.querySelector<HTMLElement>(".tl-timeline")!;
     geometry(scroller, 0);
     fireEvent.scroll(scroller);
-    const latest = scroller.parentElement?.querySelector<HTMLElement>(".tl-scroll-end");
-    if (!latest) throw new Error("no ↓ Latest button while unpinned");
-    fireEvent.click(latest);
+    expect(scroller.querySelector("button.tl-scroll-end, .tl-latest")).toBeNull();
+    if (!toEnd) throw new Error("the timeline handed over no way to the end");
+    toEnd();
     expect(log).toEqual([false, true]);
+    expect(atEnd, "at mount, the scroll up, and the way back").toEqual([true, false, true]);
+    expect(scroller.scrollTop).toBe(700);
   });
 
   /**

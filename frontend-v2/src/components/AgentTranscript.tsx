@@ -40,8 +40,14 @@ export const AgentTranscript: Component<{
   onOpenPreview?: (path: string) => void;
   me?: string;
   notify?: (message: string, kind: NotifyKind) => void;
+  /** Its timeline's pin and its way to the end, for the view's "Latest" band
+   *  (MessagesTimeline `onAtEnd`, `registerToEnd`). */
+  onAtEnd?: (atEnd: boolean) => void;
+  registerToEnd?: (toEnd: () => void) => void;
 }> = (props) => {
-  const stream = createAgentStream(props.session, props.agent, { notify: props.notify });
+  const stream = createAgentStream(props.session, props.agent, {
+    notify: props.notify,
+  });
   createEffect(() => (props.parked ? stream.park() : stream.unpark()));
   const rows = createMemo(() => deriveRows(stream.events, { fold: false, group: false }));
   const head = createMemo(() => (props.info ? drillHead(props.info, props.run) : undefined));
@@ -122,6 +128,8 @@ export const AgentTranscript: Component<{
           // No composer under it, so no status line to say the agent is still
           // working: the timeline draws the live row itself.
           workingRow
+          onAtEnd={props.onAtEnd}
+          registerToEnd={props.registerToEnd}
         />
       </Show>
     </section>

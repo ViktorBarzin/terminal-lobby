@@ -29,7 +29,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "s", ...e });
+const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
+  session: "s",
+  ...e,
+});
 
 const TRANSCRIPT: Event[] = [
   ev({ id: 1, kind: "user", body: "first prompt" }),
@@ -41,38 +44,52 @@ const TRANSCRIPT: Event[] = [
 
 /** The scroll geometry a browser would report, which the test then moves. */
 function geometry(el: HTMLElement, g: { content: number; client: number }) {
-  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => g.content });
-  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => g.client });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => g.content,
+  });
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => g.client,
+  });
   return g;
 }
 
 function mount() {
   const log: boolean[] = [];
+  let atEnd = true;
   const { container } = render(() => (
-    <MessagesTimeline events={TRANSCRIPT} me="wizard" session="s" onPinned={(p) => log.push(p)} />
+    <MessagesTimeline
+      events={TRANSCRIPT}
+      me="wizard"
+      session="s"
+      onPinned={(p) => log.push(p)}
+      onAtEnd={(v) => (atEnd = v)}
+    />
   ));
   const tl = container.querySelector<HTMLElement>(".tl-timeline");
   if (!tl) throw new Error("no timeline");
   const g = geometry(tl, { content: 1000, client: 300 });
   tl.scrollTop = 700; // at the bottom: 1000 - 700 - 300 = 0
   fireEvent.scroll(tl);
-  const latest = () => tl.querySelector(".tl-scroll-end");
-  return { tl, g, log, latest };
+  /** Whether the view offers "Latest": it reports leaving the live end. */
+  const offered = () => !atEnd;
+  return { tl, g, log, offered };
 }
 
 describe("<MessagesTimeline> keeps the live end through scrolls the reader did not make", () => {
   it("follows the bottom when the content grew before the pin's scroll event came in", () => {
-    const { tl, g, log, latest } = mount();
+    const { tl, g, log, offered } = mount();
     g.content = 1900; // rows and pictures landed between the write and its event
     fireEvent.scroll(tl); // still at 700, now 900px short of the bottom
 
     expect(tl.scrollTop).toBe(1600);
-    expect(latest(), "nobody scrolled away, so nothing offers the way back").toBe(null);
+    expect(offered(), "nobody scrolled away, so nothing offers the way back").toBe(false);
     expect(log, "the store is not told the reader left").toEqual([]);
   });
 
   it("follows the bottom when the browser clamps the position while the box changes", () => {
-    const { tl, g, latest } = mount();
+    const { tl, g, offered } = mount();
     // The composer grew by a line: the box is 24px shorter, and the browser's
     // clamp left scrollTop where the shorter maximum had been a moment before.
     g.client = 276;
@@ -80,53 +97,53 @@ describe("<MessagesTimeline> keeps the live end through scrolls the reader did n
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(724);
-    expect(latest()).toBe(null);
+    expect(offered()).toBe(false);
   });
 
   it("lets go when the reader scrolls up with a wheel", () => {
-    const { tl, log, latest } = mount();
+    const { tl, log, offered } = mount();
     fireEvent.wheel(tl, { deltaY: -120 });
     tl.scrollTop = 200;
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(200);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
     expect(log).toEqual([false]);
   });
 
   it("lets go when the reader drags the transcript with a finger", () => {
-    const { tl, latest } = mount();
+    const { tl, offered } = mount();
     fireEvent.touchStart(tl);
     tl.scrollTop = 200;
     fireEvent.scroll(tl);
     fireEvent.touchEnd(tl);
 
     expect(tl.scrollTop).toBe(200);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 
   it("lets go when the reader drags the scrollbar", () => {
-    const { tl, latest } = mount();
+    const { tl, offered } = mount();
     fireEvent.pointerDown(tl);
     tl.scrollTop = 200;
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(200);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 
   it("lets go when the reader pages up from the keyboard", () => {
-    const { tl, latest } = mount();
+    const { tl, offered } = mount();
     fireEvent.keyDown(tl, { key: "PageUp" });
     tl.scrollTop = 200;
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(200);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 
   it("does not count typing in a field as the reader scrolling", () => {
-    const { tl, g, latest } = mount();
+    const { tl, g, offered } = mount();
     const field = document.createElement("textarea");
     document.body.appendChild(field);
     fireEvent.keyDown(field, { key: "ArrowUp" });
@@ -135,12 +152,12 @@ describe("<MessagesTimeline> keeps the live end through scrolls the reader did n
     field.remove();
 
     expect(tl.scrollTop).toBe(1000);
-    expect(latest()).toBe(null);
+    expect(offered()).toBe(false);
   });
 
   it("stops counting a gesture once it is over", () => {
     const now = vi.spyOn(performance, "now").mockReturnValue(10_000);
-    const { tl, g, latest } = mount();
+    const { tl, g, offered } = mount();
     fireEvent.wheel(tl, { deltaY: 120 });
     fireEvent.touchStart(tl);
     fireEvent.touchEnd(tl);
@@ -149,11 +166,11 @@ describe("<MessagesTimeline> keeps the live end through scrolls the reader did n
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(1100);
-    expect(latest()).toBe(null);
+    expect(offered()).toBe(false);
   });
 
   it("leaves a reader who already let go where they are", () => {
-    const { tl, g, latest } = mount();
+    const { tl, g, offered } = mount();
     fireEvent.wheel(tl, { deltaY: -120 });
     tl.scrollTop = 200;
     fireEvent.scroll(tl);
@@ -163,6 +180,6 @@ describe("<MessagesTimeline> keeps the live end through scrolls the reader did n
     fireEvent.scroll(tl);
 
     expect(tl.scrollTop).toBe(200);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 });

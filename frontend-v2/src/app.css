@@ -6224,20 +6224,50 @@ body.tl-kb-up {
   color: var(--text-muted);
   user-select: none;
 }
-.tl-scroll-end {
-  position: sticky;
-  /* Clear of the 26px fade at the timeline's foot, or the button would sit in
-     the part of the transcript that is fading out. */
-  bottom: 30px;
-  align-self: center;
-  padding: 5px 12px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+/* "Latest", in a band of its own between the transcript and the composer
+   (the T3 pass, prototype 6-scrolled): 42px that the transcript gives up while
+   the button shows, so it covers no row. It sat inside the scroller until
+   2026-09-27, sticky above its foot, over whatever row was passing. A 32px
+   pill 2px down the band, which leaves 8px above the composer's box. */
+.tl-latest-band {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  box-sizing: border-box;
+  height: 42px;
+  padding-top: 2px;
+}
+.tl-latest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 16px;
   background: var(--bg-card);
+  box-shadow: var(--pop-shadow);
   color: var(--text-primary);
-  font-size: calc(12px * var(--tl-text-scale, 1));
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  font-weight: 560;
+  white-space: nowrap;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  animation: tl-rise 0.18s ease-out;
+}
+.tl-latest svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+.tl-latest-working {
+  color: var(--state-running);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-latest {
+    animation: none;
+  }
 }
 
 /* The composer's completion menu. */

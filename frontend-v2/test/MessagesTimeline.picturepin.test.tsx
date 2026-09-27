@@ -20,11 +20,18 @@ import { MessagesTimeline } from "../src/components/MessagesTimeline";
 
 afterEach(() => cleanup());
 
-const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "s", ...e });
+const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
+  session: "s",
+  ...e,
+});
 
 const TRANSCRIPT: Event[] = [
   ev({ id: 1, kind: "user", body: "plot it" }),
-  ev({ id: 2, kind: "text", body: "I wrote the chart to /tmp/claude-1000/x/plot.png for you." }),
+  ev({
+    id: 2,
+    kind: "text",
+    body: "I wrote the chart to /tmp/claude-1000/x/plot.png for you.",
+  }),
   ev({ id: 3, kind: "turn_end" }),
 ];
 
@@ -34,14 +41,27 @@ const TRANSCRIPT: Event[] = [
  * as pinned whatever happens.
  */
 function geometry(el: HTMLElement, g: { content: number; client: number }) {
-  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => g.content });
-  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => g.client });
+  Object.defineProperty(el, "scrollHeight", {
+    configurable: true,
+    get: () => g.content,
+  });
+  Object.defineProperty(el, "clientHeight", {
+    configurable: true,
+    get: () => g.client,
+  });
   return g;
 }
 
 function mount(hidden?: () => boolean) {
+  let atEnd = true;
   const { container } = render(() => (
-    <MessagesTimeline events={TRANSCRIPT} me="wizard" session="s" hidden={hidden?.()} />
+    <MessagesTimeline
+      events={TRANSCRIPT}
+      me="wizard"
+      session="s"
+      hidden={hidden?.()}
+      onAtEnd={(v) => (atEnd = v)}
+    />
   ));
   const tl = container.querySelector<HTMLElement>(".tl-timeline");
   if (!tl) throw new Error("no timeline");
@@ -50,8 +70,9 @@ function mount(hidden?: () => boolean) {
     if (!found) throw new Error("no picture drawn");
     return found;
   };
-  const latest = () => tl.querySelector(".tl-scroll-end");
-  return { tl, img, latest };
+  /** Whether the view offers "Latest": it reports leaving the live end. */
+  const offered = () => !atEnd;
+  return { tl, img, offered };
 }
 
 /** Let the re-pin a picture's load schedules run. */
@@ -59,7 +80,7 @@ const settle = () => new Promise<void>((resolve) => queueMicrotask(resolve));
 
 describe("<MessagesTimeline> while its pictures load", () => {
   it("keeps a reader at the live end there when a picture arrives and grows the content", async () => {
-    const { tl, img, latest } = mount();
+    const { tl, img, offered } = mount();
     const g = geometry(tl, { content: 1000, client: 300 });
     tl.scrollTop = 700; // at the bottom: 1000 - 700 - 300 = 0
     fireEvent.scroll(tl);
@@ -69,8 +90,8 @@ describe("<MessagesTimeline> while its pictures load", () => {
     await settle();
 
     expect(tl.scrollTop).toBe(1020);
-    expect(latest(), "the reader is at the live end, so nothing offers to take them there").toBe(
-      null,
+    expect(offered(), "the reader is at the live end, so nothing offers to take them there").toBe(
+      false,
     );
   });
 
@@ -138,19 +159,19 @@ describe("<MessagesTimeline> while its pictures load", () => {
   });
 
   it("leaves a reader who scrolled up where they were", async () => {
-    const { tl, img, latest } = mount();
+    const { tl, img, offered } = mount();
     const g = geometry(tl, { content: 1000, client: 300 });
     fireEvent.wheel(tl, { deltaY: -120 }); // the reader scrolls up
     tl.scrollTop = 100;
     fireEvent.scroll(tl);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
 
     g.content = 1320;
     img().dispatchEvent(new window.Event("load"));
     await settle();
 
     expect(tl.scrollTop).toBe(100);
-    expect(latest()).not.toBe(null);
+    expect(offered()).toBe(true);
   });
 
   it("writes nothing while it is hidden behind the drill-in", async () => {
