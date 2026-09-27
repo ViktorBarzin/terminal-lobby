@@ -157,28 +157,32 @@ func ParsePermissionDialog(pane string) *Dialog {
 			d.Title, d.Detail = permissionHead(head)
 			return d
 		}
-		if t := strings.TrimSpace(line); t != "" && !reDottedRule.MatchString(line) {
-			head = append([]string{t}, head...)
+		// Blank lines are kept, as "", because they end the tip's paragraph.
+		if !reDottedRule.MatchString(line) {
+			head = append([]string{strings.TrimSpace(line)}, head...)
 		}
 	}
 	return d
 }
 
 // permissionHead splits the lines between the rule and the question into the
-// title and what the tool will do, leaving out the CLI's own tips.
+// title and what the tool will do, leaving out the CLI's own tip. The tip runs
+// to the next blank line, since a narrow pane wraps it.
 func permissionHead(head []string) (string, []string) {
-	if len(head) == 0 {
-		return "", nil
-	}
+	title := ""
 	var detail []string
-	for _, l := range head[1:] {
-		if strings.HasPrefix(l, "Tip:") {
-			continue
+	tip := false
+	for _, l := range head {
+		switch {
+		case l == "":
+			tip = false
+		case title == "":
+			title = l
+		case tip || strings.HasPrefix(l, "Tip:"):
+			tip = true
+		case len(detail) < maxPermissionDetail:
+			detail = append(detail, l)
 		}
-		if len(detail) == maxPermissionDetail {
-			break
-		}
-		detail = append(detail, l)
 	}
-	return head[0], detail
+	return title, detail
 }

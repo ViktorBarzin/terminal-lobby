@@ -99,6 +99,34 @@ func TestParsePermissionDialogJoinsWrappedLines(t *testing.T) {
 	}
 }
 
+// On an 80-column pane the tip wraps, and its second line is still the tip,
+// not what the tool will do (seen live 2026-09-27: "below" read as the first
+// line of the command).
+func TestParsePermissionDialogLeavesAWrappedTipOut(t *testing.T) {
+	pane := strings.Join([]string{
+		"────────────────────────────────────────────────────────────────────────────────",
+		" Bash command",
+		` Tip: auto mode handles these prompts for you — choose "switch to auto mode"`,
+		" below",
+		"",
+		`   printf 'x\n' > c.txt`,
+		`   Write "x" to c.txt`,
+		"",
+		" Do you want to proceed?",
+		" ❯ 1. Yes",
+		"   2. No",
+		"",
+		" Esc to cancel · Tab to amend",
+	}, "\n")
+	d := ParsePermissionDialog(pane)
+	if d == nil {
+		t.Fatal("did not parse")
+	}
+	if d.Title != "Bash command" || !reflect.DeepEqual(d.Detail, []string{`printf 'x\n' > c.txt`, `Write "x" to c.txt`}) {
+		t.Errorf("title %q, detail %q", d.Title, d.Detail)
+	}
+}
+
 // Not a prompt: the footer is not the last line (a copy of the prompt in the
 // conversation has the input box under it), the rows skip a number, no row
 // carries the cursor, or nothing asks a question.
