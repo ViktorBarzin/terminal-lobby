@@ -44,7 +44,7 @@ export function dismissOnPress(
  * (components/menu.ts): a press that lands on a control with a handler of its
  * own still has to reach this first, and Escape must not also reach whatever
  * sits under the float. Shared by every float the composer opens: the + menu,
- * the model sheet, and the new-session composer's dials.
+ * the model sheet, and the new-session strip's project and command lists.
  *
  * It is written here rather than borrowed from `createDismissableMenu`, whose
  * Escape closes without saying so and so cannot give the focus back.

@@ -205,10 +205,9 @@ describe("<Composer>: the modes that ask nothing", () => {
   });
 });
 
-describe("<Composer>: no status line", () => {
+describe("<Composer>: the dock", () => {
   it("draws nothing above the surface, and puts no state on the dock", () => {
     const { container } = mount({ live: WORKING, mode: "manual", onCycleMode: noop });
-    expect(container.querySelector(".tl-statusline")).toBeNull();
     const dock = container.querySelector(".tl-composer")!;
     expect(dock.hasAttribute("data-status")).toBe(false);
     expect(firstClass(dock.lastElementChild!)).toBe("tl-pillwrap");
@@ -241,7 +240,7 @@ describe("<Composer>: what the box holds", () => {
     }
   });
 
-  it("holds the one model button in the model slot, and no dials", () => {
+  it("holds the one model button in the model slot", () => {
     const { surface } = mount({
       mode: "manual",
       onCycleMode: noop,
@@ -253,7 +252,6 @@ describe("<Composer>: what the box holds", () => {
     const tools = surface().querySelector(".tl-box-tools")!;
     expect(tools.querySelectorAll(".tl-model-btn")).toHaveLength(1);
     expect(tools.querySelector(".tl-model-name")?.textContent).toBe("Opus 5.5");
-    expect(surface().querySelector(".tl-dial")).toBeNull();
   });
 
   // A plain shell has no model, no mode and no /context reading.

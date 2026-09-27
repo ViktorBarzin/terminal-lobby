@@ -1,9 +1,10 @@
 /**
- * The permission modes the mode dial lists, and the words it uses for them.
+ * The permission modes the model sheet lists, and the words it uses for them.
  *
- * The dial replaced a chip that stepped the mode on every click. A click now
- * opens a list of every mode with one line on what it does, and picking one
- * asks the server to walk Shift+Tab until the pane shows it (wire contract 1,
+ * The Quiet line's mode dial replaced a chip that stepped the mode on every
+ * click, and the T3 pass (2026-09-27) moved its list into the model sheet. A
+ * click opens a list of every mode with one line on what it does, and picking
+ * one asks the server to walk Shift+Tab until the pane shows it (wire contract 1,
  * decided 2026-09-24). What is pinned here is the table that list is drawn
  * from and the words it borrows from the CLI's own mode titles.
  */

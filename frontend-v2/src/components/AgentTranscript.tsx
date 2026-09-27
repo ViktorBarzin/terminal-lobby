@@ -125,8 +125,8 @@ export const AgentTranscript: Component<{
           onLoadFull={stream.fullResult}
           onOpenPreview={props.onOpenPreview}
           me={props.me}
-          // No composer under it, so no status line to say the agent is still
-          // working: the timeline draws the live row itself.
+          // No composer under it and no work groups in an agent's transcript,
+          // so the timeline draws the working row itself.
           workingRow
           onAtEnd={props.onAtEnd}
           registerToEnd={props.registerToEnd}

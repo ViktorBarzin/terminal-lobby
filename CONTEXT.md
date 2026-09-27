@@ -813,7 +813,7 @@ list that changes it: mode, model with effort, and context in the **Composer**;
 project, command, and model with effort in the **New-session composer**. With a
 mouse each dial opens its own popover; on a phone every dial opens one sheet
 with a tab per dial.
-Retired by the T3 pass (2026-09-27, draft), in both composers: the settings
+Retired by the T3 pass (2026-09-27), in both composers: the settings
 move into the sheet the model button opens, and the new-session project and
 command into a strip under the box.
 _Avoid_: chip (the old mode and model chips), picker (the list a dial opens)
@@ -821,8 +821,8 @@ _Avoid_: chip (the old mode and model chips), picker (the list a dial opens)
 **+ tray**:
 The menu behind the "+" at the start of a composer's pill: attach a file, add a
 photo, a `/` command, and in a live **Composer** an `@` file path. It took over
-from the Attach button on 2026-09-24. Retired by the T3 pass (2026-09-27,
-draft): "+" opens a plain menu of Photo library, Camera, File and Commands.
+from the Attach button on 2026-09-24. Retired by the T3 pass (2026-09-27):
+"+" opens a plain menu of Photo library, Camera, File and Commands.
 _Avoid_: tray on its own (the strip of chips that **Inline chips** replaced),
 attach menu, plus menu
 
@@ -902,7 +902,8 @@ elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text. It was the
 timeline's last row until 2026-09-24, then the left side of the **status line**,
 and since the T3 pass (2026-09-27) the live **Work group** at the end of the
-conversation shows it.
+conversation shows it. An agent's drill-in, whose transcript has no work
+groups, still draws it as its last row.
 
 **Picture**:
 An image the **Text view** draws in the conversation, whichever way it

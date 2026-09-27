@@ -60,10 +60,8 @@ describe("the dock", () => {
   });
 
   // The live state is the conversation's to show now (the live work group).
-  it("carries no state edge and no status line", () => {
+  it("carries no state edge on the dock", () => {
     expect(css).not.toMatch(/\.tl-composer[^{]*::before/);
-    expect(css).not.toMatch(/@keyframes tl-sweep\s*\{/);
-    expect(css).not.toMatch(/\.tl-statusline/);
   });
 
   it("leaves 14px under the box on a desktop and 8px under the pill on a phone", () => {

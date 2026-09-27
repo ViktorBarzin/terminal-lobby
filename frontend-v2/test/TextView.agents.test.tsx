@@ -4,11 +4,11 @@
  * agents.logic): something in the set is running AND either the turn is open
  * or the session list still counts background work.
  *
- * The status line's "Still working in the background: 2 agents" says what the
- * panel already shows, so it is left out while the panel is, and says it as
- * before whenever the panel is absent. It was a strip between the timeline and
- * the composer until the Quiet line moved it onto the status line
- * (2026-09-24).
+ * The background note beside the composer's model button ("2 agents") says
+ * what the panel already shows, so it is left out while the panel is, and says
+ * it as before whenever the panel is absent. It was a strip between the
+ * timeline and the composer until the Quiet line moved it onto the status line
+ * (2026-09-24), and the T3 pass (2026-09-27) moved it into the box's row.
  *
  * An open turn is a user record with nothing settling it: the text view reads
  * the turn off the transcript rather than taking a `working` flag.
@@ -149,7 +149,7 @@ describe("the agent panel in the text view", () => {
   });
 });
 
-/** What the status line names as still running. */
+/** What the background note names as still running. */
 const STRIP = (what: string): string => what;
 
 describe("the background line, folded into the panel", () => {

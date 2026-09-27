@@ -3,7 +3,7 @@ import { fetchWithDeadline } from "./http";
 import type { ModeId } from "../logic/modes";
 
 /**
- * Putting a session in a permission mode, from the Text view's mode dial.
+ * Putting a session in a permission mode, from the Text view's model sheet.
  *
  * The CLI has no command for it: Shift+Tab is the only way a running session
  * changes mode, one stop per press. So the server walks it (wire contract 1,
@@ -24,7 +24,7 @@ import type { ModeId } from "../logic/modes";
  *
  * WHAT TO BELIEVE. The reply's `mode` is what the pane showed when the walk
  * ended, whether or not it got where it was asked to go. A refusal is an
- * ordinary reply carrying that reading, and the dial shows it.
+ * ordinary reply carrying that reading, and the model button shows it.
  */
 
 /** What the server says about a mode request. */
@@ -78,13 +78,13 @@ export async function setSessionMode(o: {
     });
   } catch {
     // Deliberately not "nothing changed": a dropped reply cannot say whether
-    // the walk ran, and the dial keeps the mode it last read until a reading
+    // the walk ran, and the model button keeps the mode it last read until a reading
     // says otherwise.
     return { ok: false, reason: "Couldn't reach the session to change the mode." };
   }
   const text = (await res.text().catch(() => "")).trim();
   // A refusal can come back under an error status and still carry the pane's
-  // reading, which is worth more than the status: the dial shows it.
+  // reading, which is worth more than the status: the model button shows it.
   const read = asReply(text);
   if (read) return { ok: true, reply: read };
   // A sentence from the server is worth passing on. A page is not: a route the

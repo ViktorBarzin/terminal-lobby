@@ -24,7 +24,7 @@ export type CommandAvailability = Record<string, boolean>;
 export const NEW_SESSION_COMMANDS: readonly NewCommand[] = ["claude", "codex", "pi", "shell"];
 
 /** The command names, here rather than in one of the two pickers that show
- *  them, so the new-session dial and the Settings page cannot disagree. */
+ *  them, so the new-session strip and the Settings page cannot disagree. */
 export const COMMAND_LABELS: Record<NewCommand, string> = {
   claude: "Claude",
   codex: "Codex",

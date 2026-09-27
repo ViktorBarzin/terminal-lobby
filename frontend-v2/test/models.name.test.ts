@@ -1,5 +1,5 @@
 /**
- * What the model dial calls a model.
+ * What the model button calls a model.
  *
  * The chip it replaced showed the slug verbatim, `claude-opus-5-5 · medium`,
  * and on a phone it ran under Send and read "claude-opus-5-5 · ı" (measured on

@@ -30,8 +30,8 @@ const round = (n: number): number => Math.round(n * 100) / 100;
 /**
  * One line over a series of numbers, oldest on the left.
  *
- * Built rather than installed: this project draws nothing today beyond three
- * CSS-width bars (`.tl-netusage-bar`, `.tl-ctx-bar`, `.tl-spend-meter-bar`),
+ * Built rather than installed: this project draws nothing today beyond two
+ * CSS-width bars (`.tl-netusage-bar`, `.tl-spend-meter-bar`),
  * and a charting library would be the largest dependency in the frontend for
  * the sake of forty lines of arithmetic.
  *
@@ -183,7 +183,9 @@ export const Sparkline: Component<{
           a dashed swatch labelled "busy line", pointing at a rule that is not
           drawn, on an axis with no time on it. A label for something absent is
           worse than no label. */}
-      <Show when={readings().length > 0 && (props.startLabel || props.endLabel || props.thresholdLabel)}>
+      <Show
+        when={readings().length > 0 && (props.startLabel || props.endLabel || props.thresholdLabel)}
+      >
         <div class="tl-spark-axis">
           <span class="tl-spark-axis-start">{props.startLabel}</span>
           <Show when={props.thresholdLabel && thresholdY() !== null}>

@@ -455,7 +455,7 @@ export interface ModelState {
  * a box carrying the managed `modelPicker` rows even that receipt says the
  * slug, because the picker's label is the display name the CLI reaches for.
  *
- * It is NOT what the model dial shows. Displaying the family threw away the
+ * It is NOT what the model button shows. Displaying the family threw away the
  * version, which is half of what "which model is this" means (`modelName`).
  */
 export function modelFamily(h: ModelHarness, model: string): string {
@@ -522,7 +522,7 @@ export function isCurrentModel(h: ModelHarness, id: string, reported: string | u
  * The model is reported VERBATIM. `claude-opus-5` and
  * `claude-haiku-4-5-20251001` are different answers to which model this is, and
  * a label that said "opus" and "haiku" could not tell two builds of one family
- * apart. This is what the model dial's title carries; the dial itself shows
+ * apart. This is what the model button's title carries; the button itself shows
  * `modelName` below, which keeps the version and drops the rest of the slug.
  *
  * Between a change and the session's next turn the only source is the CLI's own
@@ -535,12 +535,13 @@ export function summarise(state: ModelState | undefined): string {
 }
 
 /**
- * What the model dial calls a model: `claude-opus-5-5` is "Opus 5.5".
+ * What the model button calls a model: `claude-opus-5-5` is "Opus 5.5".
  *
- * The chip before the dial showed the slug and nothing else, which on a 390px
+ * The chip before the Quiet line's dial showed the slug and nothing else, which on a 390px
  * phone ran under Send and read "claude-opus-5-5 · ı" (measured on 0.71.2,
  * memory #13886). The Quiet line composer (2026-09-24) shows a name and moves
- * the slug into the picker and the dial's title. The rule `summarise` states
+ * the slug into the picker and the dial's title; the T3 pass (2026-09-27)
+ * kept both on the one model button. The rule `summarise` states
  * still holds, because the version stays in the name: Opus 5 and Opus 5.5 are
  * two answers, as are Opus 5 and Opus 5 · 1M.
  *

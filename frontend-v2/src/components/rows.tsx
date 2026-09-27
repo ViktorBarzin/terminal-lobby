@@ -698,7 +698,7 @@ export const ContinuationRowView: Component<{ row: ContinuationRow }> = (props) 
 
 /* Keyed by the whole MetaKind because the wire contract carries all of them.
    `mode` and `permission-mode` no longer reach this view: deriveRows drops
-   them, since the composer's mode dial already shows the mode in force. The
+   them, since the model sheet already shows the mode in force. The
    record stays total so a new kind cannot be added without a label. */
 const META_LABEL: Record<MetaRow["meta"], string> = {
   mode: "mode",
@@ -720,12 +720,12 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   asking: "waiting for an answer",
   // deriveRows drops it: the question card is where a held question shows.
   held: "held",
-  // Dropped by deriveRows too: the reading belongs to the context dial on the
-  // composer's line, and one row per settled turn would divide the whole
+  // Dropped by deriveRows too: the reading belongs to the model sheet's
+  // context line, and one row per settled turn would divide the whole
   // transcript.
   context: "context",
   // Dropped by deriveRows for the same reason as the mode: which model is
-  // answering is state, and the model dial on the composer's line shows it.
+  // answering is state, and the composer's model button shows it.
   model: "model",
   // Dropped by deriveRows as well: a command the CLI ran itself shows where
   // its effect lands, and the event is there for the pending bubble.

@@ -1,13 +1,13 @@
 /**
  * A pi session's model button reads what the session STAMPED.
  *
- * Claude's dial reads its model off the transcript and codex's off its pane.
+ * Claude's model button reads its model off the transcript and codex's off its pane.
  * Pi has neither: the lobby's pi extension stamps the model, the thinking level
  * and the levels that model supports on the pane (`@tl_pi_model`,
  * `@tl_pi_thinking`, `@tl_pi_levels`), and GET /sessions carries them as
- * `piModel`, `piThinking` and `piLevels`. So that is the reading the dial
+ * `piModel`, `piThinking` and `piLevels`. So that is the reading the button
  * starts from, and after a change it holds the session's own reply until the
- * next stamp says something new, the same way a Claude dial holds the reply
+ * next stamp says something new, the same way a Claude button holds the reply
  * until the transcript does.
  */
 import { describe, it, expect, vi } from "vitest";

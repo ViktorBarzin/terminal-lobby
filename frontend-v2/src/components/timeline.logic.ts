@@ -886,10 +886,10 @@ function collectTurnRows(turn: Turn): {
       case "meta": {
         const meta = e.meta ?? "mode";
         // `mode` and `permission-mode` are STATE, not events: the composer's
-        // mode dial always shows the mode in force, so a divider announcing
+        // model sheet always shows the mode in force, so a divider announcing
         // each change interrupts the conversation to repeat what is already on
         // screen (Viktor, 2026-08-17). The EVENTS still flow, since
-        // currentMode() reads them for that dial; only the row is dropped, and dropped
+        // currentMode() reads them for that sheet; only the row is dropped, and dropped
         // outright rather than folded, since expanding a turn would put the
         // divider back.
         //
@@ -901,23 +901,23 @@ function collectTurnRows(turn: Turn): {
           awaitingMode = null;
         }
         if (meta === "mode" || meta === "permission-mode") break;
-        // A `/context` reading is state for the same reason, and the context
-        // dial on the composer's line is where it shows. A reading also arrives as a
+        // A `/context` reading is state for the same reason, and the model
+        // sheet's context line is where it shows. A reading also arrives as a
         // 15 KB block of markdown the CLI already rendered in the pane, so a
         // row per reading would be the biggest thing in the log.
         if (meta === "context") break;
-        // Which model is answering is state as well, and the model dial on the
-        // composer's line is where it shows. A change made from the lobby leaves its
+        // Which model is answering is state as well, and the composer's
+        // model button is where it shows. A change made from the lobby leaves its
         // own visible mark anyway: applying one types `/model` into the pane,
         // and that line arrives as an ordinary row.
         if (meta === "model") break;
         // A command the CLI answered itself (Claude Code 2.1.283 writes /context
         // as a local_command record). Its effect already shows where it lands,
-        // the context dial for /context, and the event exists so the store can
+        // the sheet's context line for /context, and the event exists so the store can
         // let go of the command's pending bubble.
         if (meta === "command") break;
         // The queue's departures are bookkeeping for queuedPrompts(), the
-        // same way the mode events are for the dial: a divider saying a
+        // same way the mode events are for the sheet: a divider saying a
         // prompt left the queue tells the reader nothing the queue itself
         // does not already say by shrinking.
         if (meta === "unqueued" || meta === "dequeued" || meta === "queue-cleared") break;

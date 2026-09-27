@@ -904,8 +904,6 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     const box = m.container.querySelector(".tl-pill")!;
     expect(box.querySelector(".tl-box-tools .tl-model-btn")).not.toBeNull();
     expect(box.querySelector(".tl-plus")).not.toBeNull();
-    // The Quiet line's dials are gone from this screen.
-    expect(m.container.querySelector(".tl-dial")).toBeNull();
     m.store.dispose();
   });
 

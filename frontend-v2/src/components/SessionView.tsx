@@ -874,8 +874,8 @@ export const SessionView: Component<{
   // cost a console error per session per load.
   //
   // Only the FIRST connect is deferred, and only to the view. Once open the
-  // stream stays open while the TERMINAL is showing too, because the [Text]
-  // segment's activity dot is precisely the promise that the timeline keeps
+  // stream stays open while the TERMINAL is showing too, because the Text
+  // icon's activity dot is precisely the promise that the timeline keeps
   // filling behind it. What it does not survive is the session leaving the
   // screen: the park effect above closes it after a grace and reopens it on
   // return, and the dot below says so while that is in flight. `start()` is
@@ -927,7 +927,7 @@ export const SessionView: Component<{
     if (mode() === "text") setSeenText(maxId());
   });
   /**
-   * The [Text] segment's activity dot: has the timeline moved since you last
+   * The Text icon's activity dot: has the timeline moved since you last
    * read it?
    *
    * `maxId() > seenText()` can only answer that while something is listening,
@@ -935,7 +935,7 @@ export const SessionView: Component<{
    * returning to a session until its resume lands — where the newest id held is
    * as old as the park. Answering "nothing new" from it would be a guess, and
    * the guess is wrong in the direction that costs something: a quiet-looking
-   * segment over a turn that finished while you were elsewhere. So the dot
+   * icon over a turn that finished while you were elsewhere. So the dot
    * declines to go dark until the stream has spoken, and it stays lit if the
    * resume never lands at all, which is the honest answer to "I do not know".
    *

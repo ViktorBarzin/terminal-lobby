@@ -43,8 +43,8 @@ import { PlusMenu } from "./PlusMenu";
  * after it.
  *
  * Shared by the two composers, which want the same writing surface and nothing
- * else in common: `Composer` writes to a LIVE session and puts a permission
- * panel and the thin status line with its dials above this; the new-session
+ * else in common: `Composer` writes to a LIVE session and puts the +, the
+ * model button and the round button in a row beside this; the new-session
  * composer writes the prompt a session will be CREATED with and puts a
  * project, a command and a model above it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
@@ -1049,7 +1049,7 @@ export const PromptField: Component<{
    * The box grows upward from where the pill sat, so by the time that tap's
    * click fires the finger is over the box's bottom row. Measured in
    * Chromium's phone emulation on 2026-09-27: the click landed on the model
-   * dial and opened its sheet, which then held the focus, so typing went
+   * button and opened its sheet, which then held the focus, so typing went
    * nowhere. One click, within the time a tap takes, and nothing after it.
    */
   const swallowNextClick = (): void => {

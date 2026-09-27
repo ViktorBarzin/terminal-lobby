@@ -92,7 +92,7 @@ import { isDangerMode, modeTitle, type ModeId } from "../logic/modes";
  * The applied reading holds only until the TRANSCRIPT moves, and this is how it
  * notices: the reading is stored alongside the transcript's value at the moment
  * it was taken, and it simply stops matching when a turn writes a new one. The
- * same trick the mode dial uses for its pane reading, and it needs no
+ * same trick the mode reading uses for the pane, and it needs no
  * bookkeeping to expire.
  */
 const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.effort ?? ""}`;
@@ -103,7 +103,7 @@ const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.
  * the first delay is that with room to spare, the second is the retry.
  *
  * This is Shift+Tab's own read-back, and the last one left in this file. A
- * pick from the mode dial's list does not wait on the pane from here: the
+ * pick from the sheet's Mode list does not wait on the pane from here: the
  * server walks and reads in one local sequence and replies with the mode it
  * read (lib/mode-api.ts), and answering a dialog works the same way
  * (sessionio/answerdrive.go).
@@ -117,11 +117,11 @@ const PANE_READ_DELAYS_MS = [150, 600];
  * key the dialog reads. On the plan approval's feedback row it APPROVES the
  * plan with whatever was typed (measured on CLI 2.1.281, memory #13896). What
  * it does in a question or a permission dialog was not measured, so those hold
- * the dial too, as a precaution (spec section 5.5).
+ * the mode too, as a precaution (spec section 5.5).
  */
 const MODE_HELD_BY_DIALOG =
   "Answer Claude first: a mode change now would type into the open dialog";
-/** The same hold for the model dial: `/model` is typed into the pane too, and
+/** The same hold for a model pick: `/model` is typed into the pane too, and
  *  the server already refuses it while a question is up. */
 const MODEL_HELD_BY_DIALOG =
   "Answer Claude first: a model change now would type into the open dialog";
@@ -149,7 +149,7 @@ function findPlanRow(rows: TimelineRow[], toolId: string): PlanRow | undefined {
 /**
  * What a refused mode pick says, and how loudly.
  *
- * The dial already shows the mode the reply read, so these say why it is not
+ * The model button already shows the mode the reply read, so these say why it is not
  * the one picked. `unsafe-path` comes in two shapes: refused before a single
  * press (the pane is still on the start), or stopped mid-walk because a mode
  * that asks nothing showed while Claude worked, in which case the session IS
@@ -237,7 +237,7 @@ const HOLD_GRACE_MS = 4_000;
  * as keys from here. A QUESTION does not, since 2026-09-10: each choice is
  * one request to the server, which types beside the parser and replies with a
  * reading of the screen that resulted (docs/plans/2026-09-10-text-mode-
- * answers-dialogs-design.md). A pick from the mode dial's list works the same
+ * answers-dialogs-design.md). A pick from the sheet's Mode list works the same
  * way since 2026-09-24: one request, and the server walks the keys and reads
  * the pane itself (lib/mode-api.ts).
  */
@@ -273,7 +273,7 @@ export const TextView: Component<{
   onOpenPreview?: (path: string) => void;
   /** type keys into the session's pane: Shift+Tab in the message field. */
   onKeys?: (keys: string[]) => Promise<boolean>;
-  /** put the session in a permission mode picked from the mode dial's list;
+  /** put the session in a permission mode picked from the sheet's Mode list;
    *  the server walks Shift+Tab to it and replies with the mode it read. */
   onSetMode?: (mode: ModeId) => Promise<SetModeResult>;
   /** read what the session's pane currently shows — the live permission mode. */
@@ -394,7 +394,7 @@ export const TextView: Component<{
    *
    * So the pane is read at the moments the answer can have changed without a
    * turn behind it: when this view opens, and right after Shift+Tab. A pick
-   * from the dial's list comes back with a reading of its own, the mode the
+   * from the sheet's Mode list comes back with a reading of its own, the mode the
    * server's walk ended on, and is stored the same way. A pane reading holds
    * until the transcript reports a mode of its own, at which point the
    * transcript is the fresher of the two and takes over.
@@ -414,7 +414,7 @@ export const TextView: Component<{
    * Re-read the pane, twice when the first read still shows what was there
    * before. The status line repaints ~40ms after the keystroke (measured), so
    * one read is normally enough; the second covers a pane that was mid-repaint
-   * at that instant rather than leaving the dial showing the old mode.
+   * at that instant rather than leaving the model button showing the old mode.
    */
   const readMode = async (was: string): Promise<void> => {
     for (const wait of PANE_READ_DELAYS_MS) {
@@ -450,7 +450,7 @@ export const TextView: Component<{
    * idle until a reload, and a Terminal Shift+Tab left it stale on return.
    */
   const onScreen = (): boolean => props.onScreen !== false && props.textShown !== false;
-  // Not while a pick from the dial is walking: its reply is the reading that
+  // Not while a pick from the sheet is walking: its reply is the reading that
   // counts, and a read taken mid-walk could land after it.
   const rereadMode = (): void => {
     if (!untrack(modeBusy)) void readMode("");
@@ -1057,9 +1057,9 @@ export const TextView: Component<{
   /**
    * What the session is answering as.
    *
-   * Two sources, for the same reason the mode dial has two. The TRANSCRIPT is
+   * Two sources, for the same reason the mode has two. The TRANSCRIPT is
    * authoritative and is what an arriving reader has, but it only moves when a
-   * turn ends, so a change made from the model dial would not show until the
+   * turn ends, so a change made from the model sheet would not show until the
    * session next answered. The APPLY reports what the session said about
    * itself immediately afterwards, and that reading holds until the transcript
    * reports a pair of its own.
@@ -1088,7 +1088,7 @@ export const TextView: Component<{
    *
    * The reply is the session's own reading, not an echo: an effort change can
    * be refused without anything failing — an `env.CLAUDE_CODE_EFFORT_LEVEL` in
-   * the account's settings pins one and the slider still moves — so a dial
+   * the account's settings pins one and the slider still moves — so a button
    * that trusted the request would show a level the session is not on
    * (lib/model-api.ts).
    */
@@ -1110,7 +1110,7 @@ export const TextView: Component<{
         // MERGED, not replaced. The reply carries only what the change could
         // establish: an effort pass reads the effort back off the pane and
         // says nothing about the model, because a stock Claude pane does not
-        // report one. Replacing wholesale blanked half the dial until the
+        // report one. Replacing wholesale blanked half the model button until the
         // session next answered.
         const was = modelState();
         setAppliedModel({
@@ -1144,8 +1144,8 @@ export const TextView: Component<{
   });
 
   /**
-   * Whether a dialog is on the pane, which holds the mode dial, Shift+Tab and
-   * the model dial: Shift+Tab is a key the dialog reads (on the plan's
+   * Whether a dialog is on the pane, which holds a mode pick, Shift+Tab and
+   * a model pick: Shift+Tab is a key the dialog reads (on the plan's
    * feedback row it approves the plan), and `/model` would be typed into it.
    *
    * Five ways to know one is up. A question the card is answering, the tool
@@ -1164,7 +1164,7 @@ export const TextView: Component<{
       planDocked() !== null,
   );
   const modeHeld = (): string => (dialogUp() ? MODE_HELD_BY_DIALOG : "");
-  /** The model dial is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
+  /** A model pick is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
   const modelHeld = (): string => (dialogUp() ? MODEL_HELD_BY_DIALOG : "");
   /** Modes the server has said this session does not offer. They stay out of
    *  reach until the view remounts, since launch flags do not change mid-run. */
@@ -1184,7 +1184,7 @@ export const TextView: Component<{
   };
 
   /**
-   * Put the session in a mode picked from the dial's list.
+   * Put the session in a mode picked from the sheet's Mode list.
    *
    * One request: the server walks Shift+Tab and replies with the mode it read
    * at the end, whether or not the walk got there (lib/mode-api.ts). That

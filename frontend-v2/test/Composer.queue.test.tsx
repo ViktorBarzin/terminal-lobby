@@ -130,11 +130,11 @@ describe("<Composer> round button: its three states", () => {
     expect(button().disabled).toBe(false);
   });
 
-  it("retires the 'queues' hint beside Send", () => {
+  it("keeps one round button while a message would queue", () => {
     const { container, type } = mount(RUNNING);
     type("and then this");
-    expect(container.querySelector(".tl-send-hint")).toBeNull();
-    expect(container.querySelector(".tl-stop"), "no second button").toBeNull();
+    const end = container.querySelector(".tl-pill-end")!;
+    expect(end.querySelectorAll("button"), "no second button beside Send").toHaveLength(1);
   });
 });
 

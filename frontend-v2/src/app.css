@@ -3989,16 +3989,6 @@ label.tl-set-row-label {
     transform: none;
   }
 }
-@keyframes tl-pop-in {
-  from {
-    opacity: 0.4;
-    transform: scale(0.9);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
 @keyframes tl-fade-in {
   from {
     opacity: 0;
@@ -7064,7 +7054,7 @@ body.tl-kb-up {
 
    Every colour here is a theme token, and the choice of which one is the whole
    of the styling decision. The alarm colour in this codebase is --danger and it
-   carries one meaning, "you are disconnected" (.tl-line-dot above); a busy
+   carries one meaning, "you are disconnected" (the down .tl-status-dot); a busy
    machine never reaches that, so the threshold rule borrows --state-running,
    the amber the degraded dot already uses. The same colour then means the same
    thing in both places. */

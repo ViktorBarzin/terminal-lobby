@@ -32,10 +32,11 @@ tmux/Claude session:
   command, **project dir**, owner — lives in `lib/terminal-url.ts`. xterm stays
   **external** (never bundled), per the deploy decision.
 
-The switch is a segmented **`[ Text | Terminal ]`** control: **full-swap XOR**,
-both views **permanently mounted** (CSS-hidden, never unmounted), `Cmd/Ctrl-J`
-toggles, per-session/per-device `{mode}` in localStorage, activity dot on the
-inactive segment.
+The switch is one icon in the session header's icon group, naming the view it
+switches to (`>_` in the Text view, a Text icon in the Terminal view):
+**full-swap XOR**, both views **permanently mounted** (CSS-hidden, never
+unmounted), `Cmd/Ctrl-J` toggles, per-session/per-device `{mode}` in
+localStorage, and an activity dot on the icon for the hidden view.
 
 ### Reading a `term.html:NNNN` citation
 
@@ -756,8 +757,10 @@ src/
                          body folds to the first line behind "Show plan", and
                          while the plan card is docked a pending row shrinks
                          to one line pointing at it. WorkingRowView draws the
-                         open turn's live row for the drill-in only, which has
-                         no composer and so no status line. ContinuationRowView draws
+                         open turn's live row for the drill-in only, whose
+                         transcript has no work groups. WorkGroupRowView draws
+                         a run of tool calls as one bordered row with its
+                         pictures under it. ContinuationRowView draws
                          the "Context cleared" rule, the approved plan and any
                          feedback in place of the message the CLI wrote
     timeline.logic.ts    PURE transcript→rows derivation (unit-tested, no DOM).
@@ -778,8 +781,9 @@ src/
                          card's words as one line of feedback
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / question / …),
                          with Claude's queued prompts drawn after the last row
-                         as dashed ghost bubbles. The working row is the
-                         composer's line now, not a row
+                         as dashed ghost bubbles. What the open turn is doing
+                         shows on the live work group at the end, not on a
+                         row of its own
     Markdown.tsx         solid-markdown + remark-gfm + rehype-sanitize, plus a
                          rehype pass that draws a picture Claude names by its
                          absolute path (plain, in backticks, or as a link's
@@ -795,22 +799,15 @@ src/
                          picture in a bubble, in Claude's prose or on a tool row
                          opens it full size. Escape closes it and goes no further
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
-    Composer.tsx         The LIVE session's composer, the Quiet line: the
-                         permission panel, the thin status line with its dials,
-                         and the pill. The dock's top edge carries the state:
-                         a sweep while Claude works, the awaiting colour while
-                         it waits, a dashed danger rule in bypass or no ask.
+    Composer.tsx         The LIVE session's composer, after the T3 pass: a
+                         50px pill on a phone at rest, a box when focused and
+                         always on a desktop, with +, the one model button and
+                         the round button (Send, Stop, or a Send that queues).
+                         A danger border in Bypass or No ask, and background
+                         work as a quiet note beside the model button.
                          While a card is docked the composer is hidden and the
                          model button is held; the text view refuses a send
                          that still reaches it (TextView `send`)
-    StatusLine.tsx       The line above the pill: what the session is doing
-                         (the call in flight, its target, how long, the steps)
-                         with Stop beside it, "Waiting for you", work still
-                         running in the background, or who is watching. Owns
-                         the 1s clock, and folds by `data-room` from its own
-                         width, since Safari 15.6 has no container queries
-    statusline.logic.ts  PURE the line's state and precedence, a target's
-                         short form, and the width bands it folds at
     ModelSheet.tsx       The live composer's one model button ("✳ Opus 5.5 ⌄",
                          a red shield in Bypass and No ask) and the sheet it
                          opens: a 360px popover on a desktop, a bottom sheet

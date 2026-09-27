@@ -9,12 +9,12 @@ import type { ContextReading, Event, SessionState } from "../types/events";
  * and is not a constant (a session on this box reads 65.2k of 1m), which is why
  * reading what the CLI published beats deriving a worse version of it.
  *
- * A reading is a point in time, and nothing refreshes it: the dial shows what
+ * A reading is a point in time, and nothing refreshes it: the sheet shows what
  * the last `/context` in the session said, and a session where nobody has run
- * one has no dial at all. Automating that was built and then removed on
+ * one has no context line at all. Automating that was built and then removed on
  * 2026-08-19 — keeping the number current meant typing into somebody's pane on
  * a schedule, and the text view does not write to a terminal unattended. So the
- * panel says how old its reading is, in settled turns, and a stale one reads as
+ * sheet says how old its reading is, in settled turns, and a stale one reads as
  * stale rather than as live.
  */
 export interface ContextState {
@@ -47,7 +47,7 @@ export function contextState(events: Event[], seed?: SessionState | null): Conte
   return { reading: seed.context, turnsAgo };
 }
 
-/** `65.2k`, the way the CLI writes it, so the context dial and the pane agree. */
+/** `65.2k`, the way the CLI writes it, so the sheet's context line and the pane agree. */
 export function formatTokens(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "0";
   if (n >= 1_000_000) return trimZero(n / 1_000_000) + "m";
@@ -69,7 +69,7 @@ export function percentFull(r: ContextReading): number {
 }
 
 /**
- * How the context dial reads its fill. Compaction is the thing worth noticing before it
+ * How full the context reads, as a band. Compaction is the thing worth noticing before it
  * happens, so the bands are about how much room is left rather than about a
  * neat gradient.
  */

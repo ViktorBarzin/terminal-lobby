@@ -11,7 +11,7 @@ import { CameraGlyph, FileGlyph, PhotoGlyph, SlashBoxIcon } from "./Icons";
  * path) with a footer saying where files end up. The T3 pass (2026-09-27)
  * split the photo row into the library and the camera, dropped the `@` row
  * (typing `@` still opens the path menu) and folded the footer into the `+`'s
- * title. Composer.tray.test.tsx was rewritten on purpose to pin this list.
+ * title. Composer.plus.test.tsx was rewritten on purpose to pin this list.
  *
  * The rows DO nothing themselves. The file inputs, the caret and the
  * completion menu all belong to PromptField, which renders this and is handed
