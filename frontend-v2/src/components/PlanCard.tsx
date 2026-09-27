@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, type Component } from "solid-js";
 import type { PlanOptionView } from "../lib/answer-api";
 import { Markdown } from "./Markdown";
-import type { PlanNotice, PlanSending } from "./plan.logic";
+import { feedbackClearsContext, type PlanNotice, type PlanSending } from "./plan.logic";
 import type { PlanReading } from "./timeline.logic";
 
 /** The words for each notice (docs/plans/2026-09-24-text-composer-redesign.md). */
@@ -202,7 +202,9 @@ export const PlanCard: Component<{
             </button>
           </Show>
           {/* The CLI's Shift+Tab on its feedback row: approve, carrying the
-              composer's text. Offered only while there is text to carry. */}
+              composer's text. Offered only while there is text to carry. It
+              approves through option 1, so when option 1 clears the context
+              the button says so: that cannot be undone from here. */}
           <Show when={props.hasInput && answerable()}>
             <button
               type="button"
@@ -210,7 +212,9 @@ export const PlanCard: Component<{
               disabled={held()}
               onClick={() => props.onApproveWithFeedback()}
             >
-              Approve with this feedback
+              {feedbackClearsContext(props.reading ?? null)
+                ? "Approve with this feedback and clear context"
+                : "Approve with this feedback"}
             </button>
           </Show>
         </div>

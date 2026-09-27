@@ -280,12 +280,28 @@ describe("<PlanCard> clamps a long plan behind 'Show all'", () => {
 });
 
 describe("<PlanCard> 'Approve with this feedback'", () => {
+  /* Found live 2026-09-27 on the Android emulator: with option 1 "Yes, clear
+     context (9% used) and use auto mode", the button approved through option 1
+     and the context meter went from 9% to 5%. The CLI's Shift+Tab takes option
+     1, as the first measured session did too, so the button says it clears the
+     context whenever option 1 does. */
+  it("says it clears the context when option 1 does", () => {
+    const { container } = mount({ hasInput: true });
+    expect(button(container, "Approve with this feedback")).toBeUndefined();
+    expect(button(container, "Approve with this feedback and clear context")).toBeDefined();
+  });
+
+  it("stays plain when option 1 keeps the context", () => {
+    const { container } = mount({ reading: NO_AUTO, hasInput: true });
+    expect(button(container, "Approve with this feedback")).toBeDefined();
+  });
+
   it("is offered only while the composer holds text", () => {
     const [has, setHas] = createSignal(false);
     const onApproveWithFeedback = vi.fn();
     const { container } = render(() => (
       <PlanCard
-        reading={READING}
+        reading={NO_AUTO}
         plan={PLAN}
         hasInput={has()}
         onApprove={() => {}}
@@ -319,7 +335,7 @@ describe("<PlanCard> while an answer is in flight", () => {
     const { container } = mount({ sending: { kind: "feedback" }, hasInput: true });
     expect(notice(container)).toBe("Sending your feedback…");
     for (const row of options(container)) expect(row.disabled).toBe(true);
-    expect(button(container, "Approve with this feedback")?.disabled).toBe(true);
+    expect(button(container, "Approve with this feedback and clear context")?.disabled).toBe(true);
   });
 
   it("says the last answer is still going when Send is pressed again", () => {

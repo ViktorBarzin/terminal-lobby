@@ -303,9 +303,13 @@ The reading travels on the session stream's `asking` meta with `kind: "plan"`.
 A plain `POST /prompt` sent while the dialog is up gets the 409 `plan-open`
 refusal of contract 4 and never reaches the menu.
 
-"Approve with this feedback" cleared context in the one session where it was
-measured, whose option 1 was "Yes, clear context … and use auto mode". Whether
-it always does, or follows whatever option 1 does in a session, is not measured.
+"Approve with this feedback" approves through option 1. It cleared the
+context in both sessions where it was measured (2026-09-24, and on the Android
+emulator on 2026-09-27, where the context meter went from 9% to 5%), and in
+both, option 1 was "Yes, clear context … and use auto mode". A session whose
+option 1 keeps the context has not been measured with it. While option 1
+clears the context, the button reads "Approve with this feedback and clear
+context", since that cannot be undone from the Text view.
 
 ### When the card docks, and what it shows
 
@@ -349,7 +353,7 @@ shown below", so a long plan is not on screen twice.
 |---|---|
 | Placeholder | "Tell Claude what to change…" |
 | Send, Enter, the phone's send key | `POST /answer` with `plan: {feedback, approve: false}` instead of a prompt. The field clears only when the reply is applied, and an empty field sends nothing. |
-| "Approve with this feedback" | The same path with `approve: true`, offered while the field holds non-blank text. |
+| "Approve with this feedback" | The same path with `approve: true`, offered while the field holds non-blank text. Reads "Approve with this feedback and clear context" while option 1 clears the context. |
 | Line breaks | Become spaces before sending, with a line under the card saying so. |
 | Over 2,000 bytes | Not sent, and the card says why. |
 | Attachments | Sent as their paths, as a prompt would carry them. |

@@ -186,3 +186,24 @@ export function planFeedback(raw: string): { text: string; joined: boolean; tooL
   const tooLong = new TextEncoder().encode(text).length > PLAN_FEEDBACK_MAX_BYTES;
   return { text, joined: /\n/.test(trimmed), tooLong };
 }
+
+/**
+ * Whether an approve row clears the context before Claude starts on the plan,
+ * read from the label the pane draws ("Yes, clear context (6% used) and use
+ * auto mode"). The labels change between sessions, so this is the only way to
+ * tell.
+ */
+export function clearsContext(label: string): boolean {
+  return /\bclear context\b/i.test(label);
+}
+
+/**
+ * Whether "Approve with this feedback" clears the context. The CLI's Shift+Tab
+ * on its feedback row approves through option 1: measured in two sessions
+ * whose option 1 cleared the context (2026-09-24, and on the Android emulator
+ * on 2026-09-27, where the context meter went from 9% to 5%).
+ */
+export function feedbackClearsContext(reading: PlanReading | null): boolean {
+  const first = reading?.options.find((o) => o.number === 1);
+  return first !== undefined && clearsContext(first.label);
+}

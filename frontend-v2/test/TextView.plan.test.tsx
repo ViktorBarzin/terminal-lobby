@@ -372,7 +372,7 @@ describe("feedback through the composer", () => {
     fireEvent.input(v.field(), { target: { value: "and add tests" } });
     const approve = await waitFor(() => {
       const b = [...v.card()!.querySelectorAll<HTMLButtonElement>("button")].find(
-        (x) => x.textContent === "Approve with this feedback",
+        (x) => x.textContent === "Approve with this feedback and clear context",
       );
       expect(b).toBeDefined();
       return b!;
@@ -385,7 +385,7 @@ describe("feedback through the composer", () => {
     await waitFor(() => expect(v.card()).toBeNull());
     expect(v.field().value).toBe("");
     // Option 1 clears context in this session, and approving with feedback
-    // did too where it was measured.
+    // approves through option 1, so the button said so and the row does too.
     expect(v.header()).toBe("Clearing context…");
   });
 });

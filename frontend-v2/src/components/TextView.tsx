@@ -57,7 +57,9 @@ import { QuestionCard, type TypedAnswer } from "./QuestionCard";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard } from "./PermissionCard";
 import {
+  clearsContext,
   decidePlanDock,
+  feedbackClearsContext,
   planDockFacts,
   planFeedback,
   planReadingKey,
@@ -137,14 +139,6 @@ const MODEL_HELD_BY_DIALOG =
  * what the transcript and the pane say.
  */
 const PLAN_SETTLE_MS = 20_000;
-
-/**
- * Whether an approve row clears the context before Claude starts on the plan,
- * read from the label the pane draws ("Yes, clear context (6% used) and use
- * auto mode"). The labels change between sessions, so this is the only way to
- * tell, and it only decides what the row and the status line say meanwhile.
- */
-const clearsContext = (label: string): boolean => /\bclear context\b/i.test(label);
 
 /** Every plan row in a fold of the transcript, folded away or not. */
 function findPlanRow(rows: TimelineRow[], toolId: string): PlanRow | undefined {
@@ -1289,9 +1283,9 @@ export const TextView: Component<{
    * the text otherwise.
    *
    * Once the card has said the plan is gone, the next Send goes out as the
-   * prompt it would otherwise have been. An approval with feedback cleared the
-   * context in the one session where it was measured, whose option 1 cleared
-   * it, so the row says what option 1 says it does.
+   * prompt it would otherwise have been. An approval with feedback approves
+   * through option 1 (feedbackClearsContext), so the row says what option 1
+   * says it does, as the card's button did.
    */
   const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> =>
     followed(await sendPlanFeedbackNow(text, approve));
@@ -1307,10 +1301,9 @@ export const TextView: Component<{
       sayOnPlanCard("too-long");
       return false;
     }
-    const first = planCardReading()?.options.find((o) => o.number === 1);
     const action: PlanTransient = !approve
       ? "feedback"
-      : first && clearsContext(first.label)
+      : feedbackClearsContext(planCardReading())
         ? "clear"
         : "approve";
     const resp = await answerPlan({ feedback: f.text, approve }, { kind: "feedback" }, action);
