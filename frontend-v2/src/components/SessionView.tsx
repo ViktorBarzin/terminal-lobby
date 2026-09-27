@@ -1364,7 +1364,10 @@ export const SessionView: Component<{
           which is where the top of a lone session's view is. */}
       <Show when={focused()}>
         <BarSlot>
-          <div class="tl-session-bar">
+          {/* The view's own data-mode cannot reach the bar once BarSlot has
+              portalled it into the shell, so the bar carries it too: it takes
+              the Text view's font while it heads one. */}
+          <div class="tl-session-bar" data-mode={mode()}>
             {props.leading}
             {/* The session name doubles as the switcher on a phone: tapping it
               lists the others, so changing session does not mean going back to

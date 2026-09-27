@@ -1323,11 +1323,33 @@ label.tl-set-row-label {
      the same mismatch that made the first attempt feel wrong. Rules that set
      their own size are absolute and unaffected by this. */
   font-size: calc(14px * var(--tl-text-scale, 1));
+  /* The system font for the whole view: conversation, composer and cards (the
+     T3 pass, 2026-09-27). Code, commands and tool labels name --font-mono on
+     their own rules, so they keep it. */
+  font-family: var(--font-text);
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   width: 100%;
+}
+/* Rules that name DM Sans for themselves would beat the face the view hands
+   down, and each of these also renders outside the Text view (the prompt field
+   and its completion menu on the new-session screen), so the override is
+   scoped here rather than made on the rule. */
+.tl-textview .tl-user-text,
+.tl-textview .tl-composer-input,
+.tl-textview .tl-composer-mirror,
+.tl-textview .tl-skill-kind,
+.tl-textview .tl-complete-desc,
+.tl-textview .tl-complete-source,
+.tl-textview .tl-complete-note {
+  font-family: var(--font-text);
+}
+/* The session bar takes the same face while it heads a Text view, so the title
+   and the conversation under it read as one surface. */
+.tl-session-bar[data-mode="text"] {
+  font-family: var(--font-text);
 }
 .tl-timeline {
   flex: 1 1 auto;
@@ -1366,7 +1388,12 @@ label.tl-set-row-label {
   padding: 16px clamp(12px, 6vw, 80px) 26px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  /* The prose, as the prototype's `.col` sets it: 14px on 22.75px with 18px
+     between rows. A ratio rather than a length, so a code block that sets its
+     own smaller size gets a line height to match rather than 22.75px. */
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  line-height: calc(22.75 / 14);
+  gap: 18px;
   /* The conversation slides under the composer rather than meeting a band.
      The dock had a fill and a top border until the Quiet line composer
      (2026-09-24); it is transparent now, and the last 26px of the transcript
@@ -1374,6 +1401,15 @@ label.tl-set-row-label {
      VISIBLE foot that fades and never a row the reader scrolled up to. */
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
   mask-image: linear-gradient(to bottom, #000 calc(100% - 26px), transparent);
+}
+/* A phone reads it a size up, 15.5px on 24px, as the prototype's phone does.
+   The phone query (mobile/pointer.ts FLIP_QUERY), not a width, so a desktop
+   window shrunk on purpose keeps the desktop size. */
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  .tl-timeline {
+    font-size: calc(15.5px * var(--tl-text-scale, 1));
+    line-height: calc(24 / 15.5);
+  }
 }
 /* The size a pinch has reached, while it is being made. Mirrors the terminal's
    own #font-pill: it appears on the claim and fades when the fingers lift. */
@@ -1872,7 +1908,7 @@ label.tl-set-row-label {
 }
 /* The reading column's own width, as the timeline's rows have it. */
 .tl-drill-inner {
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto;
 }
 .tl-drill-back {
@@ -1946,7 +1982,7 @@ label.tl-set-row-label {
 /* Content-box, so the line starts where the header's column does. */
 .tl-drill-missing {
   box-sizing: content-box;
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 24px clamp(12px, 6vw, 80px);
   color: var(--text-muted);
@@ -1995,7 +2031,7 @@ label.tl-set-row-label {
   font-style: italic;
 }
 .tl-row {
-  max-width: 860px;
+  max-width: 760px;
   width: 100%;
   margin: 0 auto;
 }
@@ -2561,7 +2597,7 @@ label.tl-set-row-label {
    controls can mean anything: today, pi with no provider signed in. */
 .tl-new-hint {
   width: 100%;
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto;
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
@@ -2575,7 +2611,7 @@ label.tl-set-row-label {
 .tl-new-composer > .tl-pill,
 .tl-new-composer > .tl-new-line {
   width: 100%;
-  max-width: 860px;
+  max-width: 760px;
   margin-left: auto;
   margin-right: auto;
 }
@@ -2656,13 +2692,13 @@ label.tl-set-row-label {
 /* The state light along the dock's top: nothing at rest, a slow sweep of the
    running colour while Claude works, the awaiting colour, still, while it
    waits for the reader, and a dashed danger rule while the mode asks nothing.
-   It spans the 860px column the line and the pill sit in, not the gutters. */
+   It spans the 760px column the line and the pill sit in, not the gutters. */
 .tl-composer::before {
   content: "";
   position: absolute;
   top: 0;
-  left: max(clamp(12px, 6vw, 80px), calc(50% - 430px));
-  right: max(clamp(12px, 6vw, 80px), calc(50% - 430px));
+  left: max(clamp(12px, 6vw, 80px), calc(50% - 380px));
+  right: max(clamp(12px, 6vw, 80px), calc(50% - 380px));
   height: 1px;
   pointer-events: none;
 }
@@ -2711,7 +2747,7 @@ label.tl-set-row-label {
   align-items: center;
   gap: 10px;
   height: 28px;
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto 2px;
   font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
@@ -3051,7 +3087,7 @@ label.tl-set-row-label {
    box the + tray and the completion menu float above. */
 .tl-pillwrap {
   position: relative;
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto;
 }
 .tl-pill {
@@ -3368,7 +3404,7 @@ label.tl-set-row-label {
 
 /* ---- the permission panel, docked above the line ---------------------- */
 .tl-permpanel {
-  max-width: 860px;
+  max-width: 760px;
   margin: 0 auto 8px;
   border: 1px solid var(--state-awaiting);
   border-radius: var(--radius);
@@ -5907,10 +5943,11 @@ body.tl-kb-up {
   display: flex;
   flex-direction: column;
   /* Line up with the transcript. Every row above this is `.tl-row`, capped at
-     860px and centred; the card was full-width — 1004px against 860 at a 1280px
-     window, starting 80px to their left — which is part of why it read as
+     760px and centred (860px until the T3 pass); the card was full-width —
+     1004px against 860 at a 1280px window, starting 80px to their left — which
+     is part of why it read as
      something that had landed on the page rather than part of it. */
-  max-width: 860px;
+  max-width: 760px;
   width: calc(100% - 16px);
   box-sizing: border-box;
   align-self: center;

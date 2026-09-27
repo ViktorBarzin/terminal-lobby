@@ -695,7 +695,7 @@ describe("the chain this module deliberately does not duplicate", () => {
     expect(sidebar).toMatch(/\n\.tl-session-bar \{[^}]*flex: 0 0 auto;/);
     // The bar comes first in that column, so the views start below it.
     const view = read("frontend-v2/src/components/SessionView.tsx");
-    const bar = view.indexOf('<div class="tl-session-bar">');
+    const bar = view.indexOf('<div class="tl-session-bar"');
     const views = view.indexOf('<main class="tl-views"');
     expect(bar).toBeGreaterThan(-1);
     expect(views).toBeGreaterThan(bar);

@@ -116,6 +116,11 @@
   --font-ui:
     "DM Sans Variable", "DM Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui,
     sans-serif;
+  /* The Text view's face: conversation, composer, cards, and the session bar
+     while it heads a Text view (the T3 pass, 2026-09-27). The system font, as
+     T3 Code and the iPhone's own apps use; the sidebar and the rest of the
+     lobby keep DM Sans, and code, commands and tool labels keep --font-mono. */
+  --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   /* T3 radius scale: buttons/menus/inputs = --radius, cards/dialog = +8. */
   --radius: 10px;
 }
@@ -444,6 +449,13 @@ body {
      settings sheet (the Quiet line composer, 2026-09-24). Deeper than
      --surface-shadow, which lies on the page rather than over it. */
   --pop-shadow: 0 18px 40px -14px rgb(0 0 0 / 60%), 0 2px 8px rgb(0 0 0 / 28%);
+  /* The Text view's three derived colours (the T3 pass prototype, 6-t3.html),
+     mixed from each theme's own tokens so every theme has them without a value
+     of its own: the reader's message bubble, the composer's fill, which lets
+     the conversation show faintly through, and the model button's sparkle. */
+  --bubble: color-mix(in srgb, var(--text-primary) 8%, var(--bg-page));
+  --field-bg: color-mix(in srgb, var(--bg-card) 80%, transparent);
+  --sparkle: color-mix(in srgb, var(--terminal-ansi-red) 55%, var(--terminal-ansi-yellow));
   /* HOW A WORKSPACE COLOUR LANDS ON THIS THEME. The HUE comes from the
      workspace's id (components/lobby.logic.ts workspaceHue) and is the same on
      every theme, because it is the group's identity; only how light and how
@@ -470,4 +482,6 @@ body.theme-catppuccin-latte {
   --skeleton-highlight: rgba(255, 255, 255, 0.64);
   --hover-tint: rgba(0, 0, 0, 0.04);
   --pop-shadow: 0 18px 40px -14px rgb(0 0 0 / 22%), 0 2px 8px rgb(0 0 0 / 7%);
+  /* Lighter on white: 8% of a dark text colour reads as a panel, not a bubble. */
+  --bubble: color-mix(in srgb, var(--text-primary) 6%, var(--bg-page));
 }

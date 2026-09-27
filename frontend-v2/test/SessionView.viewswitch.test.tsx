@@ -241,6 +241,22 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(mode(container)).not.toBe(before);
   });
 
+  // The bar takes the Text view's system font while it heads one, so it says
+  // which view it heads. It is portalled out of the view in the shell, where
+  // the view's own data-mode cannot reach it.
+  it("marks the session bar with the view it heads", () => {
+    const { container } = render(() => <SessionView session="qa-vs" />);
+    const bar = (): string | null =>
+      container.querySelector(".tl-session-bar")?.getAttribute("data-mode") ?? null;
+    expect(bar()).toBe("terminal");
+
+    fireEvent.click(segments(container)[0]!); // [Text]
+    expect(bar()).toBe("text");
+
+    fireEvent.click(segments(container)[1]!); // [Terminal]
+    expect(bar()).toBe("terminal");
+  });
+
   it("dots the [Terminal] segment when output arrives while you're in text mode", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
     // Terminal is the default view now, so switch to Text first — the [Terminal]
