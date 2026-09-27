@@ -3497,6 +3497,13 @@ label.tl-set-row-label {
   text-overflow: ellipsis;
   color: transparent;
 }
+/* The placeholder on one line, cut with an ellipsis rather than mid-letter
+   where the pill is narrow (seen in iPhone-sized Chromium). */
+.tl-pill[data-shape="pill"] .tl-composer-input::placeholder {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
 .tl-pill-draft {
   position: absolute;
   inset: 0;
