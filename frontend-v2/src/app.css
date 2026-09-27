@@ -1417,11 +1417,12 @@ label.tl-set-row-label {
 }
 .tl-agents {
   color: var(--text-muted);
-  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
 }
 .tl-agents[data-form="rail"] {
   flex: none;
-  width: 260px;
+  width: 280px;
   min-height: 0;
   border-left: 1px solid var(--border);
   overflow-y: auto;
@@ -1477,9 +1478,8 @@ label.tl-set-row-label {
 .tl-agents-more {
   align-self: center;
   margin-left: 1px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(9.5px * var(--tl-text-scale, 1));
-  opacity: 0.55;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  opacity: 0.7;
 }
 .tl-agents-head {
   display: flex;
@@ -1489,15 +1489,13 @@ label.tl-set-row-label {
 .tl-agents-count {
   flex: 1;
   min-width: 0;
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 82%, transparent);
 }
 .tl-agents-tokens {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  font-variant-numeric: tabular-nums;
-  opacity: 0.65;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  opacity: 0.8;
 }
 .tl-agents-list {
   display: flex;
@@ -1563,10 +1561,10 @@ label.tl-set-row-label {
 .tl-agent-title {
   flex: 1;
   min-width: 0;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  line-height: 1.33;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  line-height: 1.35;
   font-weight: 500;
-  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1575,15 +1573,14 @@ label.tl-set-row-label {
   overflow: hidden;
 }
 .tl-agent[data-ended="true"] .tl-agent-title {
-  color: color-mix(in srgb, var(--text-primary) 46%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 62%, transparent);
 }
 .tl-agent-line {
   display: flex;
   align-items: baseline;
   gap: 8px;
   margin-top: 2px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 /* The volatile string truncates, never wraps, so a new tool call cannot
    change the height of a row. */
@@ -1601,21 +1598,19 @@ label.tl-set-row-label {
 .tl-agent-time {
   flex: none;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  opacity: 0.72;
+  opacity: 0.8;
 }
 .tl-agent-time {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 /* The faint chevron that says an entry opens, brighter under the pointer. It
    keeps its cell when there is nothing to open, so the elapsed cell beside it
    does not shift the moment a queued agent starts. */
 .tl-agent-go {
   flex: none;
-  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1;
-  opacity: 0.22;
+  opacity: 0.3;
 }
 .tl-agent-open:enabled:hover .tl-agent-go,
 .tl-agent-open:focus-visible .tl-agent-go,
@@ -1651,26 +1646,25 @@ label.tl-set-row-label {
   display: flex;
   align-items: baseline;
   gap: 7px;
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  color: color-mix(in srgb, var(--text-primary) 72%, transparent);
 }
 .tl-agents-run-num {
   flex: none;
   margin-left: auto;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-variant-numeric: tabular-nums;
-  text-transform: none;
-  letter-spacing: 0;
-  opacity: 0.62;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-weight: 400;
+  color: var(--text-muted);
+  opacity: 0.85;
 }
 .tl-agents-run-title {
   margin-top: 3px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  line-height: 1.33;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  line-height: 1.35;
   font-weight: 500;
-  color: color-mix(in srgb, var(--text-primary) 88%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 90%, transparent);
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -1682,20 +1676,18 @@ label.tl-set-row-label {
    one rather than as a description. */
 .tl-agents-run-title[data-id="true"] {
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
   font-weight: 400;
   color: inherit;
-  opacity: 0.6;
+  opacity: 0.8;
 }
 .tl-agents-phase {
   position: relative;
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 8px 2px 2px 16px;
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  padding: 9px 2px 3px 16px;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
 .tl-agents-phase::before,
 .tl-agents-fold::before {
@@ -1708,14 +1700,16 @@ label.tl-set-row-label {
   background: var(--border-strong);
 }
 .tl-agents-phase[data-state="done"] {
-  opacity: 0.45;
+  opacity: 0.7;
 }
 .tl-agents-phase[data-state="waiting"] {
-  opacity: 0.3;
+  opacity: 0.55;
 }
 .tl-agents-phase-name {
   flex: 1;
   min-width: 0;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1723,11 +1717,7 @@ label.tl-set-row-label {
 .tl-agents-phase-status {
   flex: none;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-variant-numeric: tabular-nums;
-  text-transform: none;
-  letter-spacing: 0;
-  opacity: 0.8;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 /* Here the figure follows words, "3 running · 15s", so it starts at the left
    of its cell: right-aligned, a figure under a minute left a gap inside the
@@ -1743,7 +1733,7 @@ label.tl-set-row-label {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 2px 2px 2px 14px;
+  padding: 3px 2px 3px 14px;
 }
 .tl-agents-member[data-open="true"] .tl-agents-member-title {
   color: var(--text-primary);
@@ -1764,8 +1754,8 @@ label.tl-set-row-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  color: color-mix(in srgb, var(--text-primary) 80%, transparent);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  color: color-mix(in srgb, var(--text-primary) 86%, transparent);
 }
 .tl-agents-member-act {
   flex: none;
@@ -1773,9 +1763,7 @@ label.tl-set-row-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10px * var(--tl-text-scale, 1));
-  opacity: 0.8;
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-agents-member[data-failed="true"] .tl-agents-member-act {
   color: var(--danger);
@@ -1783,10 +1771,9 @@ label.tl-set-row-label {
 }
 .tl-agents-fold {
   position: relative;
-  padding: 3px 2px 3px 16px;
-  font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(10px * var(--tl-text-scale, 1));
-  opacity: 0.62;
+  padding: 4px 2px 4px 16px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  opacity: 0.85;
 }
 /* Everything finished, as one line that opens. */
 .tl-agents-donebar {
@@ -1801,9 +1788,8 @@ label.tl-set-row-label {
   background: none;
   color: inherit;
   font: inherit;
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
@@ -1814,9 +1800,8 @@ label.tl-set-row-label {
   flex: 1;
 }
 .tl-agents-caret {
-  font-family: var(--font-mono, ui-monospace, monospace);
-  text-transform: none;
-  opacity: 0.6;
+  font-weight: 400;
+  opacity: 0.7;
 }
 /* The narrow form: the tally and a label on one line, opening into the list. */
 .tl-agents-bar {
@@ -1846,7 +1831,7 @@ label.tl-set-row-label {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 .tl-agents-open {
   max-height: min(46vh, 320px);

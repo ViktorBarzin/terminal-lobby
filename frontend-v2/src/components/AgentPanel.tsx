@@ -36,7 +36,7 @@ import type { AgentInfo } from "../types/events";
  * (docs/plans/2026-09-12-agent-workflow-visualisation-design.md, "Chosen:
  * Marginalia", prototype docs/plans/assets/agent-panel/p1-ambient.html).
  *
- * Two forms. The RAIL is the right margin of the reading column, 260px, no
+ * Two forms. The RAIL is the right margin of the reading column, 280px, no
  * card, no background, no badges: each entry is text on the page with a 2px
  * spine in the agent's own colour, and indenting that spine is how nesting is
  * drawn. The STRIP is the same thing for a column too narrow for a margin: one
@@ -142,7 +142,7 @@ const AgentEntry: Component<{ row: AgentRow; tick: Ticking; open: Opening }> = (
         aria-current={isOpen() ? "true" : undefined}
         onClick={() => props.open.onOpen?.(props.row.agent.id)}
       >
-        {/* Both lines clip at 260px, so each carries its whole text for hover.
+        {/* Both lines clip at 280px, so each carries its whole text for hover.
             The elapsed cell sits by the title rather than with the counts: all
             three figures on one line left the activity 96px, about thirteen
             characters, and the activity is what the row is for. */}
