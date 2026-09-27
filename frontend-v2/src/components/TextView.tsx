@@ -448,6 +448,20 @@ export const TextView: Component<{
     if (onScreen()) rereadMode();
   });
   const turnOpen = createMemo(() => live() !== undefined);
+  // And when the transcript's own mode moves. That is usually a new turn's
+  // record, which the pane agrees with; but on opening it can be the window
+  // arriving after the first read, carrying an old record that would
+  // otherwise replace a fresher reading of the pane. Seen on the emulator on
+  // 2026-09-27: "Manual" on the dial over a pane in Plan.
+  createEffect(
+    on(
+      transcriptMode,
+      () => {
+        if (untrack(onScreen)) rereadMode();
+      },
+      { defer: true },
+    ),
+  );
   createEffect(
     on(
       turnOpen,

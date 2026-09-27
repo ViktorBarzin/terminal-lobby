@@ -169,6 +169,25 @@ describe("<TextView>: the mode dial follows changes it did not make", () => {
     await waitFor(() => expect(v.shown()).toBe("Edits"));
   });
 
+  it("keeps the pane's mode when the opening window lands after the first read", async () => {
+    // On the phone the first read can come back before the transcript does.
+    // The reading was taken against no transcript mode, so the transcript's
+    // old record arriving discarded it and the dial showed that record's mode
+    // (seen 2026-09-27 on the emulator: "Manual" over a pane in Plan).
+    const v = mount({ events: [] });
+    await v.opened();
+    expect(v.shown()).toBe("Plan");
+
+    v.setEvents([
+      modeEvent(1, "default"),
+      ev({ id: 2, kind: "user", body: "old", at: 2000 }),
+      ev({ id: 3, kind: "turn_end", at: 3000 }),
+    ]);
+
+    await waitFor(() => expect(v.onPane.mock.calls.length).toBeGreaterThan(1));
+    await waitFor(() => expect(v.shown()).toBe("Plan"));
+  });
+
   it("does not read the pane for a view nobody is looking at", async () => {
     const v = mount({ events: [modeEvent(1, "plan")], onScreen: false });
     v.setEvents([...v.events(), ev({ id: 2, kind: "user", body: "go", at: 2000 })]);
