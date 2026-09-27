@@ -111,8 +111,16 @@ export interface SessionStore {
    *  suspended one, store/wake-send.ts). Its 503, "not ready yet", is tried
    *  again up to READY_TRIES times in all. */
   send: (text: string, opts?: { awaitReady?: boolean }) => Promise<boolean>;
-  /** Interrupt the running turn (provisional control endpoint). */
-  interrupt: () => Promise<void>;
+  /**
+   * Interrupt the running turn. `restoreQueue` is the prompts Claude has
+   * queued behind it, oldest first, for a Stop that hands them back to the
+   * composer: session-events takes them off Claude's queue before the
+   * interrupt, which would otherwise run them as the next turn (CLI 2.1.283,
+   * measured 2026-09-27). Resolves true only when the server says they came
+   * off; the prompts this store was still holding for them are let go then,
+   * since the transcript will never record them.
+   */
+  interrupt: (restoreQueue?: readonly string[]) => Promise<boolean>;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
@@ -984,15 +992,33 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     }
   };
 
-  const interrupt = async (): Promise<void> => {
+  const interrupt = async (restoreQueue?: readonly string[]): Promise<boolean> => {
+    const restoring = !!restoreQueue && restoreQueue.length > 0;
     try {
-      const res = await fetchWithDeadline(cancelUrl(session), {
-        method: "POST",
-      });
-      if (!res.ok) opts.notify?.(`Couldn't interrupt (HTTP ${res.status})`, "error");
+      const res = await fetchWithDeadline(
+        cancelUrl(session),
+        restoring
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ restoreQueue }),
+            }
+          : { method: "POST" },
+      );
+      if (!res.ok) {
+        opts.notify?.(`Couldn't interrupt (HTTP ${res.status})`, "error");
+        return false;
+      }
+      if (!restoring) return false;
+      const reply = (await res.json().catch(() => null)) as { restored?: unknown } | null;
+      if (reply?.restored !== true) return false;
+      const back = new Set(restoreQueue.map((t) => t.trim()));
+      setPendingPrompts((cur) => cur.filter((p) => p.command || !back.has(p.text)));
+      return true;
     } catch {
       /* best-effort cancel */
       opts.notify?.("Couldn't interrupt the session", "error");
+      return false;
     }
   };
 

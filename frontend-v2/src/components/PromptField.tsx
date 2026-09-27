@@ -85,6 +85,9 @@ export interface PromptFieldSinks {
   add: (items: DraftAttachment[]) => void;
   /** Insert text at the caret (a clipboard paste that is not an image). */
   insertText: (text: string) => void;
+  /** Put text at the START of the message, a blank line before whatever the
+   *  field already holds: the queued prompts a Stop hands back. */
+  prependText: (text: string) => void;
   /** Put the caret in the field. */
   focus: () => void;
   /** Whether a send would carry anything: prose, a held file, or both. */
@@ -592,6 +595,20 @@ export const PromptField: Component<{
   const insertText = (text: string): void => splice(text, false);
 
   /**
+   * Put text in front of the message, with a blank line between it and what
+   * was already written. For a Stop that hands queued prompts back: they were
+   * written first, so they read first, and a line typed while the Stop was in
+   * flight stays after them. The caret goes to the end and the field is not
+   * focused, which on a phone would raise the keyboard under the reader.
+   */
+  const prependText = (text: string): void => {
+    if (!ta || !text) return;
+    ta.value = ta.value ? `${text}\n\n${ta.value}` : text;
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+    sync();
+  };
+
+  /**
    * Put a completion trigger at the caret and open its menu: the tray's
    * "Commands and skills" and "A file path" rows.
    *
@@ -627,6 +644,7 @@ export const PromptField: Component<{
     props.register?.({
       add: addAttachments,
       insertText,
+      prependText,
       focus: () => ta?.focus(),
       hasInput: sendable,
       lineBreaks: () => draft().includes("\n"),

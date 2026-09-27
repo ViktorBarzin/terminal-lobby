@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -151,10 +150,13 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 type cancelDriver interface {
 	CancelHarness(osUser, session string, h sessionio.Harness) error
 	HarnessOf(osUser, session string) sessionio.Harness
+	ClearQueue(osUser, session string, queued []string) (bool, error)
 }
 
-// cancelBodyLimit bounds the optional body, which carries one short field.
-const cancelBodyLimit = 4 << 10
+// cancelBodyLimit bounds the optional body. It carries the harness's name and,
+// for a Stop that hands queued prompts back, their text, which can be as long
+// as a prompt: a paste into the composer reaches a couple of MB.
+const cancelBodyLimit = 4 << 20
 
 // handleCancel interrupts the session's turn with its harness's own key:
 // Ctrl-C for Claude and Codex, Escape for pi, whose Ctrl-C clears its editor
@@ -164,18 +166,48 @@ const cancelBodyLimit = 4 << 10
 // from before pi sends none, so with no tool named the pane is asked: pi titles
 // its pane, and nothing else does, so the title is enough to tell pi from the
 // rest without the caller's help.
+//
+// {"restoreQueue": [...]} is a Stop that hands the prompts Claude queued
+// mid-turn back to the composer, oldest first. On an interrupt CLI 2.1.283
+// submits every queued prompt as the next turn (measured 2026-09-27), so the
+// queue is taken off first (sessionio.ClearQueue) and the reply is 200 with
+// {"restored": bool}: whether it came off, which is when the caller puts the
+// text back in its field. Otherwise the queued prompts run, as they did
+// before. Only Claude's queue is popped this way. Without the field the reply
+// is the empty 204 every earlier caller reads.
 func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
-			Tool string `json:"tool"`
+			Tool         string   `json:"tool"`
+			RestoreQueue []string `json:"restoreQueue"`
 		}
 		// An empty body is the ordinary case, and a malformed one names nothing,
-		// which is what asking the pane is for.
-		_ = json.NewDecoder(io.LimitReader(r.Body, cancelBodyLimit)).Decode(&body)
+		// which is what asking the pane is for. One over the limit is refused
+		// rather than read as empty: that would interrupt and run the queue the
+		// caller asked to have back.
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, cancelBodyLimit)).Decode(&body); err != nil {
+			var tooBig *http.MaxBytesError
+			if errors.As(err, &tooBig) {
+				http.Error(w, "body too large", http.StatusRequestEntityTooLarge)
+				return
+			}
+		}
 		h := sessionio.Harness(body.Tool)
 		if h == "" {
 			h = drv.HarnessOf(osUser, session)
+		}
+		restoring := len(body.RestoreQueue) > 0
+		restored := false
+		if restoring && (h == "" || h == sessionio.HarnessClaude) {
+			took, err := drv.ClearQueue(osUser, session, body.RestoreQueue)
+			if err != nil {
+				// The pop may have left the queue drawn in the box, where the
+				// interrupt would not stop the turn. The caller keeps its ghosts.
+				http.Error(w, "cancel failed", http.StatusBadGateway)
+				return
+			}
+			restored = took
 		}
 		if err := drv.CancelHarness(osUser, session, h); err != nil {
 			http.Error(w, "cancel failed", http.StatusBadGateway)
@@ -192,8 +224,18 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		if h != "" {
 			attrs["tl.tool"] = string(h)
 		}
+		if restored {
+			attrs["tl.count"] = len(body.RestoreQueue)
+		}
 		events.Emit("claude.cancelled", osUser, attrs)
-		w.WriteHeader(http.StatusNoContent)
+		if !restoring {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(struct {
+			Restored bool `json:"restored"`
+		}{restored})
 	}
 }
 

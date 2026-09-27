@@ -2102,6 +2102,32 @@ export function withoutQueued<T extends { text: string }>(
   return dropped ? kept : sent;
 }
 
+/**
+ * What a Stop hands back to the composer: the prompts Claude has queued (the
+ * ghosts), then the prose sent from here that the transcript has not shown yet,
+ * which a mid-turn send is on its way into that queue. Oldest first.
+ *
+ * A slash command is left out: it may never be recorded at all
+ * (store/session.ts), so a held one says nothing about the queue.
+ *
+ * A paste the CLI queued comes wrapped in its own marker,
+ * `<pasted_content id="bae7">\n…\n</pasted_content id="bae7">` (CLI 2.1.283,
+ * seen 2026-09-27), and the reader gets back what they pasted, not the marker.
+ */
+export function handedBack(queued: readonly string[], sent: readonly PendingPrompt[]): string[] {
+  const back = queued.map(unwrapPasted);
+  for (const p of sent) if (!p.command && p.text.trim()) back.push(p.text.trim());
+  return back;
+}
+
+/** The CLI's pasted_content markers taken off, keeping what they held. */
+function unwrapPasted(text: string): string {
+  return text.replace(
+    /<pasted_content id="([^"]*)">\n?([\s\S]*?)\n?<\/pasted_content id="\1">/g,
+    (_m, _id: string, inner: string) => inner,
+  );
+}
+
 /** The harness's own injected notices, which nobody queued and nobody reads. */
 function isHarnessNotice(text: string): boolean {
   return /^<(task-notification|system-reminder|local-command-stdout)\b/.test(text);

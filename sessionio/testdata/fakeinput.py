@@ -11,6 +11,14 @@ box holds text. That is the defect being guarded against: measured 2026-09-27,
 a prompt pasted into a live session stayed on its input line with the Enter
 gone, and the send reported success.
 
+FAKEINPUT_QUEUE holds prompts Claude Code has queued mid-turn, separated by
+"|", with a literal backslash-n standing for a line break inside one. They
+behave as CLI 2.1.283 was measured to on 2026-09-27: Up on an empty box pops
+them all into the box, joined by line breaks (the transcript's "popAll"), and
+C-c interrupts and SUBMITS whatever is still queued as the next turn. The
+interrupt is printed as INTERRUPTED, and each prompt still waiting as
+QUEUED=<text>.
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -20,6 +28,11 @@ import termios
 import tty
 
 SWALLOW = int(os.environ.get("FAKEINPUT_SWALLOW", "0"))
+QUEUE = [
+    q.replace("\\n", "\n")
+    for q in os.environ.get("FAKEINPUT_QUEUE", "").split("|")
+    if q
+]
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
@@ -30,13 +43,20 @@ def out(s):
     sys.stdout.flush()
 
 
-def draw(submitted, line):
+def draw(submitted, line, queue, interrupted):
     out("\x1b[2J\x1b[H")
     out(READY + "\r\n")
     for s in submitted:
-        out("SUBMITTED=%s\r\n" % s)
+        out("SUBMITTED=%s\r\n" % s.replace("\n", "⏎"))
+    for q in queue:
+        out("QUEUED=%s\r\n" % q.replace("\n", "⏎"))
+    if interrupted:
+        out("INTERRUPTED\r\n")
     out("\r\n" + RULE + " ↯ ─\r\n")
-    out("❯ %s\r\n" % line)
+    rows = line.split("\n")
+    out("❯ %s\r\n" % rows[0])
+    for row in rows[1:]:
+        out("  %s\r\n" % row)
     out(RULE + "\r\n")
     out("  ⏸ manual mode on\r\n")
 
@@ -51,10 +71,12 @@ def main():
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
     swallow = SWALLOW
+    queue = list(QUEUE)
+    interrupted = False
     try:
         submitted = []
         line = ""
-        draw(submitted, line)
+        draw(submitted, line, queue, interrupted)
         while True:
             ch = read1()
             if ch == "":
@@ -65,17 +87,35 @@ def main():
                 elif line:
                     submitted.append(line)
                     line = ""
-            elif ch == "\x15":  # C-u
-                line = ""
+            elif ch == "\x15":  # C-u kills the last line only, as Claude's does
+                line = line[: line.rfind("\n") + 1]
             elif ch == "\x05":  # C-e: the cursor is always at the end here
                 pass
+            elif ch == "\x7f":  # Backspace
+                line = line[:-1]
+            elif ch == "\x03":  # C-c: interrupt, and run what is queued
+                submitted.extend(queue)
+                queue = []
+                interrupted = True
             elif ch == "\x1b":
-                # A bracketed-paste marker, ESC [ 2 0 0 ~ or ESC [ 2 0 1 ~.
-                while read1() not in ("~", ""):
-                    pass
+                # A CSI sequence: ESC [ params final. Up is ESC [ A; the
+                # bracketed-paste markers are ESC [ 2 0 0 ~ and ESC [ 2 0 1 ~.
+                if read1() != "[":
+                    continue
+                seq = ""
+                while True:
+                    c = read1()
+                    if c == "":
+                        return
+                    seq += c
+                    if "\x40" <= c <= "\x7e":
+                        break
+                if seq == "A" and not line and queue:
+                    line = "\n".join(queue)
+                    queue = []
             else:
                 line += ch
-            draw(submitted, line)
+            draw(submitted, line, queue, interrupted)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 

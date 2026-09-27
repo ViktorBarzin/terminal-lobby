@@ -26,6 +26,7 @@ import {
   liveRowOf,
   pendingQuestion,
   promptHistory,
+  handedBack,
   queuedPrompts,
   withoutQueued,
   withPendingPrompts,
@@ -259,7 +260,12 @@ export const TextView: Component<{
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
-  onStop: () => void;
+  /**
+   * Interrupt the turn. Handed the prompts to take back when any are queued
+   * (store/session.ts `interrupt`), and resolving whether they came off
+   * Claude's queue, which is when the view puts them back in the field.
+   */
+  onStop: (restoreQueue?: readonly string[]) => Promise<boolean> | void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
@@ -672,6 +678,27 @@ export const TextView: Component<{
   /** The same handle as a signal, for what renders from it: the plan card
    *  offers "Approve with this feedback" only while the field holds text. */
   const [composerSinks, setComposerSinks] = createSignal<ComposerSinks>();
+
+  /**
+   * Stop, handing any queued messages back to the field (the T3 pass, item 8).
+   *
+   * The ghosts' texts, and prose sent from here that has not reached the
+   * transcript yet, go back as a draft: oldest first, a blank line between
+   * each, in front of whatever the field holds by then. Nothing is sent. They
+   * go back only once the server says it took them off Claude's queue, since
+   * CLI 2.1.283 runs every queued prompt as the next turn on an interrupt;
+   * when the server could not, they run, and the field is left alone. A
+   * watching device does not stop the session at all.
+   */
+  const stopHandingBack = async (): Promise<void> => {
+    if (props.inertReason) return;
+    const back = handedBack(queued(), sent());
+    if (back.length === 0) {
+      void props.onStop();
+      return;
+    }
+    if ((await props.onStop(back)) === true) composerSinks()?.prependText(back.join("\n\n"));
+  };
 
   /** The docked card's handle, while a card is docked. */
   let cardApi: QuestionCardApi | undefined;
@@ -1333,7 +1360,7 @@ export const TextView: Component<{
         onPlanFeedback={(text) => sendPlanFeedback(text, false)}
         pending={props.pending}
         onSend={send}
-        onStop={props.onStop}
+        onStop={() => void stopHandingBack()}
         onResolve={props.onResolve}
         sendToTerminal={props.sendToTerminal}
         history={history()}

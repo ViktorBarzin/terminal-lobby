@@ -34,6 +34,8 @@ type fakeTurns struct {
 	harnessOf    sessionio.Harness
 	promptErr    error
 	cancelErr    error
+	clearTook    bool  // ClearQueue
+	clearErr     error // ClearQueue
 	setModelOut  sessionio.ModelState
 	setModelErr  error
 	pane         string // CapturePane
@@ -44,6 +46,7 @@ type fakeTurns struct {
 	setModelFor sessionio.Harness
 	setModelReq sessionio.ModelState
 	prompted    string
+	cleared     []string
 }
 
 func (f *fakeTurns) called(name string) bool {
@@ -110,6 +113,12 @@ func (f *fakeTurns) CancelHarness(_, _ string, h sessionio.Harness) error {
 	f.calls = append(f.calls, "CancelHarness")
 	f.cancelledAs = h
 	return f.cancelErr
+}
+
+func (f *fakeTurns) ClearQueue(_, _ string, queued []string) (bool, error) {
+	f.calls = append(f.calls, "ClearQueue")
+	f.cleared = queued
+	return f.clearTook, f.clearErr
 }
 
 func (f *fakeTurns) SetModel(_ context.Context, _, _ string, h sessionio.Harness, want sessionio.ModelState) (sessionio.ModelState, error) {
@@ -406,6 +415,90 @@ func TestCancelReportsAFailedInterrupt(t *testing.T) {
 	f := &fakeTurns{cancelErr: errors.New("no such session")}
 	if rec := postTurn(t, turnMux(t, f), "/cancel/demo", ``); rec.Code != http.StatusBadGateway {
 		t.Fatalf("status %d, want 502", rec.Code)
+	}
+}
+
+// Stop with prompts queued mid-turn hands them back to the composer. CLI
+// 2.1.283 submits every queued prompt as the next turn on an interrupt, so the
+// queue comes off FIRST (sessionio.ClearQueue), and the reply says whether it
+// did: the Text view puts the text back in the field only then.
+func TestCancelTakesTheQueueOffBeforeTheInterrupt(t *testing.T) {
+	f := &fakeTurns{clearTook: true}
+	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"restoreQueue":["first","second\nline two"]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	var got struct {
+		Restored bool `json:"restored"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || !got.Restored {
+		t.Fatalf("body %q, want {\"restored\":true}", rec.Body.String())
+	}
+	if strings.Join(f.cleared, "|") != "first|second\nline two" {
+		t.Fatalf("cleared %q", f.cleared)
+	}
+	clear, cancel := -1, -1
+	for i, c := range f.calls {
+		switch c {
+		case "ClearQueue":
+			clear = i
+		case "CancelHarness":
+			cancel = i
+		}
+	}
+	if clear < 0 || cancel < clear {
+		t.Fatalf("calls = %q, want ClearQueue before CancelHarness", f.calls)
+	}
+}
+
+// A queue the pane would not give up is still interrupted, and the caller is
+// told nothing came back, so it leaves the ghosts alone: they run.
+func TestCancelSaysWhenTheQueueStayed(t *testing.T) {
+	f := &fakeTurns{clearTook: false}
+	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"restoreQueue":["first"]}`)
+	if rec.Code != http.StatusOK || !f.called("CancelHarness") {
+		t.Fatalf("status %d, calls %q, want 200 and an interrupt", rec.Code, f.calls)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"restored":false}` {
+		t.Fatalf("body %q, want restored false", rec.Body.String())
+	}
+}
+
+// Only Claude has the queue this pops. pi and Codex are interrupted as before.
+func TestCancelRestoresOnlyClaudesQueue(t *testing.T) {
+	for _, body := range []string{`{"tool":"pi","restoreQueue":["x"]}`, `{"tool":"codex","restoreQueue":["x"]}`} {
+		f := &fakeTurns{clearTook: true}
+		rec := postTurn(t, turnMux(t, f), "/cancel/demo", body)
+		if f.called("ClearQueue") || !f.called("CancelHarness") {
+			t.Fatalf("body %s: calls %q, want the interrupt alone", body, f.calls)
+		}
+		if strings.TrimSpace(rec.Body.String()) != `{"restored":false}` {
+			t.Fatalf("body %s: reply %q, want restored false", body, rec.Body.String())
+		}
+	}
+}
+
+// A cancel with no queue to hand back is the cancel it always was: no pop, and
+// the same empty 204 every earlier caller reads.
+func TestCancelWithoutAQueueDoesNotTouchIt(t *testing.T) {
+	for _, body := range []string{``, `{}`, `{"restoreQueue":[]}`} {
+		f := &fakeTurns{}
+		if rec := postTurn(t, turnMux(t, f), "/cancel/demo", body); rec.Code != http.StatusNoContent {
+			t.Fatalf("body %q: status %d, want 204", body, rec.Code)
+		}
+		if f.called("ClearQueue") {
+			t.Fatalf("body %q: calls %q, want no pop", body, f.calls)
+		}
+	}
+}
+
+// A pop that failed in tmux may have left the queue half-drawn in the box, so
+// the interrupt is not sent over it.
+func TestCancelStopsWhenThePopFails(t *testing.T) {
+	f := &fakeTurns{clearErr: errors.New("tmux gone")}
+	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"restoreQueue":["first"]}`)
+	if rec.Code != http.StatusBadGateway || f.called("CancelHarness") {
+		t.Fatalf("status %d, calls %q, want 502 and no interrupt", rec.Code, f.calls)
 	}
 }
 

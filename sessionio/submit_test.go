@@ -75,6 +75,13 @@ var inputSeq atomic.Int64
 // ignore the first `swallow` Enters that arrive while its box holds text.
 func inputSession(t *testing.T, swallow int) (*Injector, string) {
 	t.Helper()
+	return fakeInputSession(t, fmt.Sprintf("FAKEINPUT_SWALLOW=%d", swallow))
+}
+
+// fakeInputSession runs testdata/fakeinput.py with env, a shell-quoted
+// VAR=value prefix, in an isolated tmux server.
+func fakeInputSession(t *testing.T, env string) (*Injector, string) {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -91,7 +98,7 @@ func inputSession(t *testing.T, swallow int) (*Injector, string) {
 	}
 	sock := fmt.Sprintf("sio-input-%d-%d", os.Getpid(), inputSeq.Add(1))
 	t.Cleanup(func() { killSock(sock) })
-	cmd := fmt.Sprintf("FAKEINPUT_SWALLOW=%d python3 %s", swallow, script)
+	cmd := fmt.Sprintf("%s python3 %s", env, script)
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo",
 		"-x", "120", "-y", "40", cmd).Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
