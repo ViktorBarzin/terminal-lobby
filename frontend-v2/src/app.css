@@ -2868,8 +2868,11 @@ label.tl-set-row-label {
   padding: 16px clamp(12px, 6vw, 80px);
   overflow-y: auto;
 }
-/* The shell's name box, in the pill where the prompt field would be: one line,
+/* The shell's name box, in the box where the prompt field would be: one line,
    the height of the field at rest. */
+.tl-pill-name > .tl-new-name {
+  grid-area: field;
+}
 .tl-new-name {
   flex: 1 1 auto;
   height: calc(22px * var(--tl-text-scale, 1) + 10px);
@@ -3087,7 +3090,7 @@ label.tl-set-row-label {
    One element for +, the field and the round button, as the pill or the box
    (PromptField writes `data-shape`). The field is transparent inside it, so
    the surface carries the border, the fill and the focus edge. The wrap is
-   the positioned box the + tray and the completion menu float above. */
+   the positioned box the + menu and the completion menu float above. */
 .tl-pillwrap {
   position: relative;
   max-width: 760px;
@@ -3691,6 +3694,11 @@ label.tl-set-row-label {
 .tl-plus[aria-disabled="true"] {
   cursor: not-allowed;
 }
+/* Held out of sight where the box takes no files (the shell's name box),
+   keeping its room so nothing beside it moves. */
+.tl-plus[data-hidden] {
+  visibility: hidden;
+}
 .tl-plus[aria-disabled="true"] .tl-disc {
   opacity: 0.38;
   background: none;
@@ -3978,10 +3986,10 @@ label.tl-set-row-label {
   color: var(--text-muted);
 }
 
-/* ---- the composer's floats: the + tray, the dial popovers, the sheet -----
+/* ---- the composer's floats: the + menu, the dial popovers, the sheet -----
    One float at a time, each above what opened it, each on the card surface
    with the shadow the theme defines for floats (--pop-shadow). */
-.tl-tray,
+.tl-plus-menu,
 .tl-dial-pop {
   position: absolute;
   z-index: 30;
@@ -3993,62 +4001,64 @@ label.tl-set-row-label {
      muted tier; what they list is read at full weight. */
   color: var(--text-primary);
 }
-/* The + tray, over the pill's left end where the + is. */
-.tl-tray {
+/* The + menu, over the left end of the pill or the box, where the + is
+   (prototype 6-plus): 38px rows at 13.5px, a phone's are 48px at 16px (the
+   coarse-pointer block). */
+.tl-plus-menu {
   left: 0;
   bottom: calc(100% + 8px);
-  min-width: 250px;
+  min-width: 232px;
   padding: 5px;
-  transform-origin: 18px 100%;
+  transform-origin: 20px 100%;
   animation: tl-pop-up 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
-.tl-tray-item {
+.tl-plus-item {
   display: grid;
   grid-template-columns: 18px 1fr auto;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  height: 36px;
-  padding: 0 10px;
+  height: 38px;
+  padding: 0 11px;
   border: 0;
   border-radius: 9px;
   background: none;
   color: var(--text-primary);
   font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
 }
-.tl-tray-item:hover,
-.tl-tray-item:focus-visible {
+.tl-plus-item:focus-visible {
   background: var(--hover-tint);
   outline-offset: -2px;
 }
-.tl-tray-item svg {
-  width: 16px;
-  height: 16px;
+@media (hover: hover) {
+  .tl-plus-item:hover {
+    background: var(--hover-tint);
+  }
+}
+.tl-plus-item svg {
+  width: 17px;
+  height: 17px;
   color: var(--text-muted);
 }
-.tl-tray-item[aria-disabled="true"] {
+.tl-plus-item[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
 }
-.tl-tray-kbd {
+.tl-plus-kbd {
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
   font-family: var(--font-mono);
-  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-muted);
 }
-.tl-tray-sep {
+.tl-plus-sep {
   height: 1px;
   margin: 4px 8px;
   background: var(--border);
-}
-.tl-tray-note {
-  margin-top: 4px;
-  padding: 6px 10px 3px;
-  border-top: 1px solid var(--border);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
 }
 
 /* A dial's popover: above the line, its right edge on its dial's (Dial.tsx
@@ -4419,7 +4429,7 @@ label.tl-set-row-label {
   .tl-ms-pop,
   .tl-ms-sheet,
   .tl-ms-scrim,
-  .tl-tray,
+  .tl-plus-menu,
   .tl-dial-pop,
   .tl-complete,
   .tl-row-user[data-queued] .tl-bubble-user,
@@ -4940,16 +4950,12 @@ body.tl-kb-up {
   .tl-dial-div {
     display: none;
   }
-  .tl-tray {
-    min-width: 264px;
+  .tl-plus-menu {
+    min-width: 250px;
   }
-  .tl-tray-item {
+  .tl-plus-item {
     height: 48px;
-    font-size: calc(15px * var(--tl-text-scale, 1));
-  }
-  /* "or drop" and "or paste" name gestures a phone does not make. */
-  .tl-tray-kbd-fine {
-    display: none;
+    font-size: calc(16px * var(--tl-text-scale, 1));
   }
   /* The same floor for the palette's search field (15px on desktop), which is
      where search in the text view opens. */
@@ -6841,7 +6847,6 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
     background: transparent;
   }
 }
-
 
 @media (pointer: coarse) {
   /* Everything answerable is a finger target. */

@@ -43,7 +43,7 @@ export function dismissOnPress(
  * Capturing, on the document, for the same reasons the sidebar's menus do
  * (components/menu.ts): a press that lands on a control with a handler of its
  * own still has to reach this first, and Escape must not also reach whatever
- * sits under the float. Shared by every float the composer opens: the + tray,
+ * sits under the float. Shared by every float the composer opens: the + menu,
  * the model sheet, and the new-session composer's dials.
  *
  * It is written here rather than borrowed from `createDismissableMenu`, whose

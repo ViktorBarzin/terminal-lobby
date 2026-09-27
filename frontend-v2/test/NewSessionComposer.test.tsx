@@ -678,6 +678,32 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
     m.store.dispose();
   });
 
+  // Prototype 6-shell: the same box, with its + held out of sight so the
+  // name field and the round button keep the places they have for a prompt.
+  it("holds the + out of sight, keeping its room, since a name takes no files", async () => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
+    const held = m.container.querySelector<HTMLElement>(".tl-pill-name .tl-plus")!;
+    expect(held).not.toBeNull();
+    expect(held.hasAttribute("data-hidden")).toBe(true);
+    expect(held.getAttribute("aria-hidden")).toBe("true");
+    expect(held.tabIndex).toBe(-1);
+    expect(m.container.querySelector(".tl-pill-name")!.getAttribute("data-shape")).toBe("box");
+    m.store.dispose();
+  });
+
+  it("says in the + where files go before the session exists", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    await waitFor(() => expect(field(m.container)).not.toBeNull());
+    expect(m.container.querySelector(".tl-plus")!.getAttribute("title")).toMatch(
+      /upload when the session starts/i,
+    );
+    m.store.dispose();
+  });
+
   it("stamps the typed name as the title, because no summary is coming", async () => {
     localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
     const api = new FakeApi();
@@ -1242,7 +1268,7 @@ describe("<NewSessionComposer> — the / menu", () => {
  * "uploading image (via paste) on new session screen doesn't work".
  *
  * Reproduced against a local build before the fix: a paste carrying an 8x8 PNG
- * onto the focused field left `.tl-tray-item` at 0.
+ * onto the focused field left `.tl-plus-item` at 0.
  *
  * Both intakes land in the same memory-only tray the Attach button fills —
  * there is no session to upload into until Enter is pressed.
@@ -1339,7 +1365,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     document.dispatchEvent(e);
 
     expect(e.defaultPrevented).toBe(false);
-    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    expect(m.container.querySelector(".tl-plus-item")).toBeNull();
     m.store.dispose();
   });
 
@@ -1354,7 +1380,7 @@ describe("<NewSessionComposer> — pasted and dropped files", () => {
     // Nowhere to put it: better to leave the paste to the browser than to
     // swallow it into a tray that is not on screen.
     expect(e.defaultPrevented).toBe(false);
-    expect(m.container.querySelector(".tl-tray-item")).toBeNull();
+    expect(m.container.querySelector(".tl-plus-item")).toBeNull();
     m.store.dispose();
   });
 });

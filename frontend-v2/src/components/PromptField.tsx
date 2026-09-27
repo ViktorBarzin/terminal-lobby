@@ -37,7 +37,7 @@ import {
 import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
 import { createMobileFlip } from "../mobile/pointer";
 import { dismissFloat, dismissOnPress } from "./overlay";
-import { PlusTray } from "./PlusTray";
+import { PlusMenu } from "./PlusMenu";
 
 /**
  * The field a prompt is written in: the pill, with `+` before it and Send
@@ -184,10 +184,11 @@ export const PromptField: Component<{
    * decides it on the same two readings as `canStop` (Composer.queue.test.tsx).
    */
   queues?: boolean;
-  /** The + tray's footer: where an attached file ends up. */
-  trayNote?: string;
+  /** Where an attached file ends up, said in the `+`'s title (the + menu
+   *  has no footer). */
+  attachNote?: string;
   /** No `+` at all: a field that takes no files and offers no triggers. */
-  noTray?: boolean;
+  noPlus?: boolean;
   /**
    * Rest as the 50px pill on a phone, opening into the box on focus. The live
    * composer asks for it; the new-session screen is the box at full size.
@@ -251,8 +252,9 @@ export const PromptField: Component<{
   let pillEl: HTMLDivElement | undefined;
   let fileInput: HTMLInputElement | undefined;
   let photoInput: HTMLInputElement | undefined;
+  let cameraInput: HTMLInputElement | undefined;
   let plusEl: HTMLButtonElement | undefined;
-  let trayEl: HTMLDivElement | undefined;
+  let menuPlusEl: HTMLDivElement | undefined;
   /** The chip layer behind the field — see `mirror` and the JSX below. */
   let mirrorEl: HTMLDivElement | undefined;
   const [draft, setDraft] = createSignal("");
@@ -608,8 +610,8 @@ export const PromptField: Component<{
   };
 
   /**
-   * Put a completion trigger at the caret and open its menu: the tray's
-   * "Commands and skills" and "A file path" rows.
+   * Put a `/` at the caret and open the command menu: the + menu's Commands
+   * row. (`@` has no row; it is typed.)
    *
    * A space goes before it when the word before would otherwise swallow it,
    * and none after, since the caret has to sit right behind the trigger for
@@ -617,10 +619,9 @@ export const PromptField: Component<{
    * `/` is a command the CLI will run; anywhere else it mentions one, which is
    * the distinction `completionFor` already draws.
    */
-  const insertTrigger = (trigger: "/" | "@"): void => {
-    splice(trigger, true, false);
+  const insertSlash = (): void => {
+    splice("/", true, false);
     setPicked(0);
-    void refreshPaths();
   };
 
   /**
@@ -1087,32 +1088,40 @@ export const PromptField: Component<{
     document.addEventListener("click", eat, true);
   };
 
-  // ---- the + tray ----------------------------------------------------------
-  // One float at a time: a press outside the tray and the `+` closes it, and so
+  // ---- the + menu ----------------------------------------------------------
+  // One float at a time: a press outside the menu and the `+` closes it, and so
   // does Escape, which hands the focus back to the `+`. Typing closes it too
   // (the input handler), since a reader who types has chosen the field.
-  const [trayOpen, setTrayOpen] = createSignal(false);
+  const [plusOpen, setPlusOpen] = createSignal(false);
   dismissFloat({
-    open: trayOpen,
-    inside: (t) => !!trayEl?.contains(t) || !!plusEl?.contains(t),
+    open: plusOpen,
+    inside: (t) => !!menuPlusEl?.contains(t) || !!plusEl?.contains(t),
     close: (why) => {
-      setTrayOpen(false);
+      setPlusOpen(false);
       if (why === "escape") plusEl?.focus();
     },
   });
-  const toggleTray = (e: MouseEvent): void => {
+  const togglePlus = (e: MouseEvent): void => {
     // Watching: the `+` explains itself in its title and opens nothing, the
     // way the Attach button it replaced was disabled with the same reason.
     if (props.inertReason) return;
-    const opening = !trayOpen();
-    setTrayOpen(opening);
+    const opening = !plusOpen();
+    setPlusOpen(opening);
     // From the keyboard the first row takes the focus, so the arrows work.
     if (opening && e.detail === 0)
-      trayEl?.querySelector<HTMLButtonElement>(".tl-tray-item")?.focus();
+      menuPlusEl?.querySelector<HTMLButtonElement>(".tl-plus-item")?.focus();
   };
-  /** Close the tray, then act: every row leaves the reader in the field. */
-  const fromTray = (act: () => void): void => {
-    setTrayOpen(false);
+  /** A picker delivered files: attach them, and clear it so the same file
+   *  can be picked again. */
+  const onPicked = (e: Event & { currentTarget: HTMLInputElement }): void => {
+    const el = e.currentTarget;
+    const files = [...(el.files ?? [])];
+    el.value = "";
+    void attach(files);
+  };
+  /** Close the menu, then act. */
+  const fromMenu = (act: () => void): void => {
+    setPlusOpen(false);
     act();
   };
 
@@ -1168,17 +1177,15 @@ export const PromptField: Component<{
   return (
     <>
       <div class="tl-pillwrap">
-        <Show when={trayOpen()}>
-          <PlusTray
-            ref={(el) => (trayEl = el)}
+        <Show when={plusOpen()}>
+          <PlusMenu
+            ref={(el) => (menuPlusEl = el)}
             canAttach={!!props.onAttach}
             attaching={attaching()}
-            paths={!!props.onListDir}
-            note={props.trayNote}
-            onFile={() => fromTray(() => fileInput?.click())}
-            onPhoto={() => fromTray(() => photoInput?.click())}
-            onSlash={() => fromTray(() => insertTrigger("/"))}
-            onAt={() => fromTray(() => insertTrigger("@"))}
+            onPhoto={() => fromMenu(() => photoInput?.click())}
+            onCamera={() => fromMenu(() => cameraInput?.click())}
+            onFile={() => fromMenu(() => fileInput?.click())}
+            onSlash={() => fromMenu(insertSlash)}
           />
         </Show>
         {/* Above the pill rather than below it, and floating: the menu is a
@@ -1186,7 +1193,7 @@ export const PromptField: Component<{
             the whole composer up by its own height every time it opened. */}
         <Show
           when={
-            !trayOpen() && completion() && (completion()!.items.length > 0 || slashUnreadable())
+            !plusOpen() && completion() && (completion()!.items.length > 0 || slashUnreadable())
           }
         >
           <div class="tl-complete" role="listbox" ref={menuEl}>
@@ -1241,24 +1248,26 @@ export const PromptField: Component<{
           data-danger={props.danger ? "" : undefined}
           data-watch={watching() ? "" : undefined}
         >
-          <Show when={!props.noTray}>
+          <Show when={!props.noPlus}>
             <button
               ref={plusEl}
               type="button"
               class="tl-plus"
               aria-haspopup="menu"
-              aria-expanded={trayOpen()}
-              aria-label="Add a file, a photo, a command or a path"
+              aria-expanded={plusOpen()}
+              aria-label="Add a photo, a file or a command"
               aria-disabled={props.inertReason ? "true" : undefined}
               aria-busy={attaching() ? "true" : undefined}
-              // What it opens, and where an image goes. A title is all a mouse
-              // gets before pressing; the tray's rows carry the words for a
+              // What it opens, and where a file goes. A title is all a mouse
+              // gets before pressing; the menu's rows carry the words for a
               // phone, which shows no titles at all.
               title={
                 props.inertReason ||
-                "Attach a file or a photo, or insert a / command or an @ path. Images join this session's gallery"
+                ["Add a photo or a file, or insert a / command", props.attachNote]
+                  .filter(Boolean)
+                  .join(". ")
               }
-              onClick={toggleTray}
+              onClick={togglePlus}
             >
               <span class="tl-disc">
                 <PlusIcon />
@@ -1355,7 +1364,7 @@ export const PromptField: Component<{
               enterkeyhint="send"
               aria-label={props.label}
               onInput={() => {
-                setTrayOpen(false);
+                setPlusOpen(false);
                 sync();
                 setPicked(0);
                 void refreshPaths();
@@ -1426,29 +1435,26 @@ export const PromptField: Component<{
           </div>
         </div>
         <Show when={props.onAttach}>
-          {/* Both pickers stay mounted while the tray comes and goes: a picker
-              opened from a row that has since unmounted still has to deliver
-              its files somewhere. The any-file input comes first, which is the
-              one a bare `input[type=file]` finds.
+          {/* The three pickers stay mounted while the + menu comes and goes: a
+              picker opened from a row that has since unmounted still has to
+              deliver its files somewhere. The any-file input comes first,
+              which is the one a bare `input[type=file]` finds.
 
               Present on EVERY device, which is the point: the soft-key row
               carries Copy and Paste only, so a phone had no file picker in
               either view, and the text view is the default view on a coarse
-              pointer. `capture` is deliberately absent from both so iOS offers
-              Photo Library, Take Photo and Choose File rather than jumping
-              straight to the camera. */}
+              pointer. Photo library's input has no `capture`, so iOS still
+              offers its own sheet (Photo Library, Take Photo, Choose File);
+              Camera's has `capture=environment`, which opens the back camera
+              directly. Each clears its value after a pick, so the same file
+              can be picked again. */}
           <input
             ref={fileInput}
             type="file"
             multiple
             hidden
             aria-hidden="true"
-            onChange={(e) => {
-              const el = e.currentTarget;
-              const files = [...(el.files ?? [])];
-              el.value = ""; // let the same file be picked again
-              void attach(files);
-            }}
+            onChange={onPicked}
           />
           <input
             ref={photoInput}
@@ -1457,12 +1463,16 @@ export const PromptField: Component<{
             multiple
             hidden
             aria-hidden="true"
-            onChange={(e) => {
-              const el = e.currentTarget;
-              const files = [...(el.files ?? [])];
-              el.value = "";
-              void attach(files);
-            }}
+            onChange={onPicked}
+          />
+          <input
+            ref={cameraInput}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            aria-hidden="true"
+            onChange={onPicked}
           />
         </Show>
       </div>

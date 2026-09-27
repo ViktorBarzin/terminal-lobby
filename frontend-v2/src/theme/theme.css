@@ -445,7 +445,7 @@ body {
   --skeleton-highlight: rgba(255, 255, 255, 0.04);
   --hover-tint: rgba(255, 255, 255, 0.04);
   --ring: var(--accent);
-  /* What a float wears: the composer's + tray, a dial's popover, the phone's
+  /* What a float wears: the composer's + menu, a dial's popover, the phone's
      settings sheet (the Quiet line composer, 2026-09-24). Deeper than
      --surface-shadow, which lies on the page rather than over it. */
   --pop-shadow: 0 18px 40px -14px rgb(0 0 0 / 60%), 0 2px 8px rgb(0 0 0 / 28%);

@@ -338,7 +338,7 @@ export const Composer: Component<{
         // Not while the plan card is up: that send answers the dialog, and
         // the live row can still say working before the plan call is recorded.
         queues={turnRunning() && !props.planOpen}
-        trayNote="Images join this session's gallery"
+        attachNote="Images join this session's gallery"
         sendTitle={sendTitle()}
       />
     </div>

@@ -24,7 +24,7 @@ import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
  *
  * ONE FLOAT AT A TIME. Pressing another dial moves the float to it, a press
  * anywhere outside closes it, and so does Escape, which also hands focus back
- * to the dial (overlay.ts `dismissFloat`, shared with the + tray and the
+ * to the dial (overlay.ts `dismissFloat`, shared with the + menu and the
  * model sheet).
  */
 

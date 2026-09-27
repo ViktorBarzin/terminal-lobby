@@ -220,19 +220,36 @@ export const LockIcon: Component = () => (
   </Glyph>
 );
 
-/** The tray's "Commands and skills" row. */
+/** The + menu's "Photo library" row (prototype 6-t3's `photo`). */
+export const PhotoGlyph: Component = () => (
+  <Glyph box="0 0 16 16">
+    <rect x="1.8" y="2.8" width="12.4" height="10.4" rx="2" />
+    <circle cx="5.7" cy="6.3" r="1.2" />
+    <path d="m2.4 12 3.8-3.6 2.6 2.4 2.1-1.8 3 2.6" />
+  </Glyph>
+);
+
+/** The + menu's "Camera" row. */
+export const CameraGlyph: Component = () => (
+  <Glyph box="0 0 16 16">
+    <path d="M2 5.4c0-.8.6-1.4 1.4-1.4h1.8l1.1-1.6h3.4L10.8 4h1.8c.8 0 1.4.6 1.4 1.4v6.4c0 .8-.6 1.4-1.4 1.4H3.4c-.8 0-1.4-.6-1.4-1.4z" />
+    <circle cx="8" cy="8.4" r="2.4" />
+  </Glyph>
+);
+
+/** The + menu's "File" row. */
+export const FileGlyph: Component = () => (
+  <Glyph box="0 0 16 16">
+    <path d="M9 1.8H4.6a1.4 1.4 0 0 0-1.4 1.4v9.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.6L9 1.8Z" />
+    <path d="M9 1.8v3.8h3.8" />
+  </Glyph>
+);
+
+/** The + menu's "Commands" row. */
 export const SlashBoxIcon: Component = () => (
   <Glyph box="0 0 16 16">
     <rect x="1.8" y="1.8" width="12.4" height="12.4" rx="3" />
     <path d="M9.8 4.6 6.2 11.4" />
-  </Glyph>
-);
-
-/** The tray's "A file path" row. */
-export const AtIcon: Component = () => (
-  <Glyph box="0 0 16 16">
-    <circle cx="8" cy="8" r="2.6" />
-    <path d="M10.6 8v1a1.9 1.9 0 0 0 3.8 0V8A6.4 6.4 0 1 0 12 13" />
   </Glyph>
 );
 

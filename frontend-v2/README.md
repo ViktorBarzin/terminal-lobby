@@ -830,9 +830,10 @@ src/
                          new-session composer: "leave it alone" answers a
                          question only a session that does not exist yet can
                          be asked
-    PlusTray.tsx         What the pill's + opens: attach a file, add a photo,
-                         / commands, @ a file path. The rows only report the
-                         press; the inputs and the caret stay in PromptField
+    PlusMenu.tsx         What the composer's + opens: Photo library, Camera,
+                         File, Commands (/). `@` is typed only. The rows only
+                         report the press; the inputs and the caret stay in
+                         PromptField
     PromptField.tsx      The writing surface both composers share, as a pill:
                          + first, Send last. Multi-line with Enter to send and
                          Shift+Enter for a newline, `/` and `@` completion,

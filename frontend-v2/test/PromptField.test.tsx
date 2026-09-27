@@ -114,7 +114,7 @@ describe("<PromptField>: the pill", () => {
   });
 
   it("drops the + for a field that takes nothing but words", () => {
-    const { container } = render(() => <PromptField onSend={onSend} label="Message" noTray />);
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" noPlus />);
     expect(container.querySelector(".tl-plus")).toBeNull();
     expect(
       container.querySelector(".tl-pill")!.firstElementChild!.classList.contains("tl-field"),

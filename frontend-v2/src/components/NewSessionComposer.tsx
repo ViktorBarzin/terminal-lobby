@@ -38,7 +38,7 @@ import { modelChoiceFor, modelChoicePatch } from "../store/prefs";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { DialBar, type DialSpec } from "./Dial";
 import { ModelPanel } from "./ModelPanel";
-import { CheckIcon, SendArrowIcon } from "./Icons";
+import { CheckIcon, PlusIcon, SendArrowIcon } from "./Icons";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt, firstPromptDelivery } from "../lib/first-prompt";
@@ -585,7 +585,15 @@ export const NewSessionComposer: Component<{
         <Show
           when={!naming()}
           fallback={
-            <div class="tl-pill tl-pill-name">
+            <div class="tl-pill tl-pill-name" data-shape="box">
+              {/* The + a prompt box carries, held out of sight: a name takes
+                  no files, and hiding it by visibility keeps the name field
+                  and the round button where they sit for a prompt (6-shell). */}
+              <span class="tl-plus" data-hidden aria-hidden="true" tabIndex={-1}>
+                <span class="tl-disc">
+                  <PlusIcon />
+                </span>
+              </span>
               <input
                 ref={nameEl}
                 class="tl-composer-input tl-new-name"
@@ -637,7 +645,7 @@ export const NewSessionComposer: Component<{
               // reached into.
               sinks = api;
             }}
-            trayNote="Files upload when the session starts"
+            attachNote="Files upload when the session starts"
           />
         </Show>
         {/* Under the box rather than in its row of controls, which has no

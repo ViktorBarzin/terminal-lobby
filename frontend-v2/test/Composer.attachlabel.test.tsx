@@ -15,6 +15,10 @@
  * the `+` opens, and the `+` keeps an accessible name and a title that say
  * what it opens and where an image goes. The complaint the word fixed still
  * holds; the place that answers it changed.
+ *
+ * The T3 pass (2026-09-27) rewrote them again, to the + menu's four rows:
+ * Photo library, Camera, File, Commands. `@` is typed only, and the footer
+ * that said where files go folded into the `+`'s title.
  */
 import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "node:fs";
@@ -42,7 +46,7 @@ const mount = (props: Partial<ComponentProps<typeof Composer>> = {}) =>
 
 const plus = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-plus")!;
 const rows = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll(".tl-tray-item")).map((r) =>
+  Array.from(c.querySelectorAll(".tl-plus-item")).map((r) =>
     (r.querySelector("span")?.textContent ?? "").trim(),
   );
 
@@ -50,21 +54,15 @@ describe("the + says what it opens", () => {
   it("opens rows that say what each one takes, in words", () => {
     const { container } = mount();
     fireEvent.click(plus(container));
-    expect(rows(container)).toEqual([
-      "Attach a file",
-      "Add a photo",
-      "Commands and skills",
-      "A file path",
-    ]);
+    expect(rows(container)).toEqual(["Photo library", "Camera", "File", "Commands"]);
   });
 
   it("keeps an accessible name, and a title that says where an image goes", () => {
     const { container } = mount();
-    expect(plus(container).getAttribute("aria-label")).toBe(
-      "Add a file, a photo, a command or a path",
-    );
+    expect(plus(container).getAttribute("aria-label")).toBe("Add a photo, a file or a command");
     // "Attach a file" said nothing about what happens to it. Images go to the
-    // session's gallery; anything else rides /tmp.
+    // session's gallery; anything else rides /tmp. The menu has no footer to
+    // say so, so the title does.
     expect(plus(container).getAttribute("title")).toMatch(/gallery/i);
   });
 
@@ -76,7 +74,7 @@ describe("the + says what it opens", () => {
     expect(btn.getAttribute("aria-disabled")).toBe("true");
     expect(btn.getAttribute("title")).toMatch(/watching/i);
     fireEvent.click(btn);
-    expect(container.querySelector(".tl-tray")).toBeNull();
+    expect(container.querySelector(".tl-plus-menu")).toBeNull();
   });
 
   it("says when it is busy rather than looking idle", async () => {
@@ -96,7 +94,12 @@ describe("the + says what it opens", () => {
     fireEvent.change(input);
     await waitFor(() => expect(plus(container).getAttribute("aria-busy")).toBe("true"));
     fireEvent.click(plus(container));
-    expect(rows(container)[0]).toBe("Attaching…");
+    // The File row says so, and no picker opens a second upload meanwhile.
+    expect(rows(container)).toEqual(["Photo library", "Camera", "Attaching…", "Commands"]);
+    const disabled = Array.from(container.querySelectorAll(".tl-plus-item")).map(
+      (r) => r.getAttribute("aria-disabled") === "true",
+    );
+    expect(disabled).toEqual([true, true, true, false]);
     release();
     await waitFor(() => expect(plus(container).getAttribute("aria-busy")).toBeNull());
   });
