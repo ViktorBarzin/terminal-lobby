@@ -117,6 +117,16 @@ func (in *Injector) read(osUser, session string) (answerReading, error) {
 	return r, nil
 }
 
+// placed reads a question the parser could not, because the pane has cut its
+// top off, by the call's own question list (clippedQuestion). A reading that
+// parsed, or that carries no dialog at all, is returned as it is.
+func (r answerReading) placed(known []DialogQuestion) answerReading {
+	if r.dialog == nil && r.plan == nil && len(r.region) > 0 {
+		r.dialog = clippedQuestion(r.region, known)
+	}
+	return r
+}
+
 // gone reports that THIS CAPTURE carries no dialog at all, as opposed to
 // carrying one the parser could not read. The difference matters: the first is
 // what a finished dialog looks like, and calling the second one Done would tell
@@ -192,6 +202,7 @@ func (in *Injector) Answer(ctx context.Context, osUser, session string, req Answ
 	if err != nil {
 		return AnswerResponse{}, err
 	}
+	before = before.placed(known)
 	resp, err := in.answer(ctx, osUser, session, before, req, known)
 	// Stamped from the reading taken BEFORE the keys: the reply's own reading
 	// is of whatever came next, which for a commit is another question.
@@ -276,7 +287,7 @@ func (in *Injector) answerSubmit(ctx context.Context, osUser, session string, be
 	if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
 		return before.reply(AnswerRefused), nil
 	}
-	after, ok, err := in.awaitMoved(ctx, osUser, session, before)
+	after, ok, err := in.awaitMoved(ctx, osUser, session, before, nil)
 	if err != nil {
 		return AnswerResponse{}, err
 	}
@@ -417,7 +428,7 @@ func (in *Injector) answerChoice(ctx context.Context, osUser, session string, be
 		}
 	}
 
-	after, ok, err := in.awaitMoved(ctx, osUser, session, before)
+	after, ok, err := in.awaitMoved(ctx, osUser, session, before, known)
 	if err != nil {
 		return AnswerResponse{}, err
 	}
@@ -665,7 +676,7 @@ func (in *Injector) commitMulti(ctx context.Context, osUser, session string, cur
 	if err := in.Keys(osUser, session, []string{"Enter"}); err != nil {
 		return on.reply(AnswerRefused), nil
 	}
-	after, ok, err := in.awaitMoved(ctx, osUser, session, on)
+	after, ok, err := in.awaitMoved(ctx, osUser, session, on, nil)
 	if err != nil {
 		return AnswerResponse{}, err
 	}
@@ -931,7 +942,10 @@ func rowShows(before answerReading, text string) func(beforeTyping, cur answerRe
 // It polls the CONDITION rather than sleeping a guessed duration: a fixed
 // sleep returns success at the same moment whether the dialog moved, failed,
 // or never got the keys.
-func (in *Injector) awaitMoved(ctx context.Context, osUser, session string, before answerReading) (answerReading, bool, error) {
+//
+// `known` places a next question the pane has cut the top off (placed), and is
+// nil where the caller has no call to place it by.
+func (in *Injector) awaitMoved(ctx context.Context, osUser, session string, before answerReading, known []DialogQuestion) (answerReading, bool, error) {
 	deadline := time.Now().Add(answerVerify)
 	for {
 		if err := answerWait(ctx, keySettle); err != nil {
@@ -953,6 +967,7 @@ func (in *Injector) awaitMoved(ctx context.Context, osUser, session string, befo
 			// that says what the keys actually did.
 			after = last
 		}
+		after = after.placed(known)
 		if answerMoved(before, after) {
 			return after, true, nil
 		}

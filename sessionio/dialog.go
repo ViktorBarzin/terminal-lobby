@@ -77,6 +77,12 @@ type Dialog struct {
 	Title  string   `json:"title,omitempty"`
 	Detail []string `json:"detail,omitempty"`
 	Prompt string   `json:"prompt,omitempty"`
+
+	// clipped marks a question whose top the pane has cut off, read from the
+	// call's own question list rather than from the screen (clippedQuestion).
+	// The driver then counts rows from the first one drawn, and presses the
+	// call's own number for an option the pane no longer shows.
+	clipped bool
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.

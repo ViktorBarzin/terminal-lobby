@@ -832,6 +832,9 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 		return choicePlan{}, errUnknownOption
 	}
 	rows := answerRows(region)
+	if d.clipped {
+		rows = clippedRows(region)
+	}
 	if len(rows) == 0 {
 		return choicePlan{}, errUnknownOption
 	}
@@ -857,10 +860,108 @@ func planChoice(d *Dialog, region []string, choices []string, text string) (choi
 		return choicePlan{}, errUnknownOption
 	}
 	at := rowIndex(rows, choices[0])
+	if at < 0 && d.clipped {
+		// Cut off above the first row drawn. The widget lists the options in
+		// the call's order, so the call's number is the widget's digit, and
+		// clippedQuestion has checked that against every row still drawn.
+		if n := optionNumber(q, choices[0]); n >= 1 && n <= 9 {
+			return choicePlan{Batches: [][]string{{strconv.Itoa(n)}}}, nil
+		}
+	}
 	if at < 0 {
 		return choicePlan{}, errUnknownOption
 	}
 	return choicePlan{Batches: selectRow(rows, at)}, nil
+}
+
+// optionNumber is the 1-based position of an option in the question, or 0.
+func optionNumber(q DialogQuestion, label string) int {
+	for i, o := range q.Options {
+		if sameLabel(o.Label, label) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// clippedRows is answerRows for a single-select question whose top the pane
+// has cut off: the numbering starts at the first row drawn, whatever its
+// number, and runs on by one from there. It reads nothing else a multi-select
+// draws, so a row with a box ends the reading.
+func clippedRows(region []string) []answerRow {
+	var rows []answerRow
+	for _, line := range region {
+		clean := stripDialogBorder(line)
+		m := reOption.FindStringSubmatch(clean)
+		if m == nil {
+			continue
+		}
+		n := atoi(m[1])
+		if len(rows) > 0 && n != rows[0].digit+len(rows) {
+			continue
+		}
+		if m[2] != "" {
+			return nil
+		}
+		_, focused := cutCursor(clean)
+		rows = append(rows, answerRow{
+			digit:   n,
+			label:   trimLabel(m[3]),
+			focused: focused,
+			free:    isFreeTextLabel(m[3]),
+		})
+	}
+	return rows
+}
+
+// clippedQuestion reads a single-select question whose header, question and
+// first options the pane has cut off, by the call's own question list, or
+// returns nil when the call does not explain the screen.
+//
+// WHY. Claude Code draws a dialog on the alternate screen and cuts one taller
+// than the pane off at the top: nothing of it is in the capture or in any
+// scrollback. Measured 2026-09-27 on CLI 2.1.283 at 80x23, a four-option
+// question with descriptions of about 60 words left "2. Salad" as the pane's
+// first line, and every answer to it came back no-dialog while the card showed
+// the question from the transcript.
+//
+// WHAT HAS TO HOLD. The last two rows are the CLI's own free-text and chat
+// rows, the free-text row's number is one past the question's option count,
+// at least one of the question's options is still drawn, and every option row
+// drawn carries the label the call has at that number. Exactly one of the
+// call's questions may fit: two that fit are two the screen cannot tell apart.
+func clippedQuestion(region []string, known []DialogQuestion) *Dialog {
+	rows := clippedRows(region)
+	if len(rows) < 3 {
+		return nil
+	}
+	chat, free := rows[len(rows)-1], rows[len(rows)-2]
+	opts := rows[:len(rows)-2]
+	if chat.label != optionChat || !free.free {
+		return nil
+	}
+	at, ok := onlyMatch(known, func(k DialogQuestion) bool {
+		if k.MultiSelect || free.digit != len(k.Options)+1 {
+			return false
+		}
+		for _, r := range opts {
+			if !sameLabel(r.label, k.Options[r.digit-1].Label) {
+				return false
+			}
+		}
+		return true
+	})
+	if !ok {
+		return nil
+	}
+	d := &Dialog{Count: len(known), Questions: []DialogQuestion{known[at]}, clipped: true}
+	if len(known) > 1 {
+		d.Partial = true
+		for _, k := range known {
+			d.Headers = append(d.Headers, k.Header)
+		}
+	}
+	return d
 }
 
 // multiWant is the state a multi-select request asks its question to be left
