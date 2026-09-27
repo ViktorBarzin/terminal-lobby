@@ -63,7 +63,7 @@ function floorPx(value: string): number | null {
 const fontSize = (r: Rule) => r.body.match(/font-size:\s*([^;]+);/)?.[1]?.trim();
 
 describe("a focused field does not make iOS zoom the page", () => {
-  it.each(["tl-qcard-other", "tl-cp-input", "tl-composer-input", "tl-add-input", "tl-card-rename"])(
+  it.each(["tl-cp-input", "tl-composer-input", "tl-add-input", "tl-card-rename"])(
     ".%s is at least 16px on a coarse pointer",
     (cls) => {
       const sel = `.${cls}`;

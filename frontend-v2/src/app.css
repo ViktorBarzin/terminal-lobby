@@ -5915,25 +5915,75 @@ body.tl-kb-up {
   box-sizing: border-box;
   align-self: center;
 }
+/* The head follows T3 Code's question panel: a quiet label, the i/N counter,
+   and on the question card a chevron that collapses the card to this one line
+   so the conversation above it can be read (ADR-0034). On the question card it
+   is a button, so the reset below keeps it looking like the plan and
+   permission cards' plain heads. */
 .tl-qcard-head {
   flex: none;
   display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: 4px 10px;
-  /* At a large pinch size three items on one line squeeze into columns two
-     words wide. Let the state text drop below instead. */
+  align-items: center;
+  gap: 4px 8px;
+  /* At a large pinch size the items squeeze into columns two words wide. Let
+     them drop below instead. */
   flex-wrap: wrap;
-  margin-bottom: 8px;
+  margin: 0 0 6px;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.tl-qcard-head {
+  width: 100%;
+  flex-wrap: nowrap;
+  cursor: pointer;
+  border-radius: 6px;
+}
+button.tl-qcard-head:hover .tl-qcard-title,
+button.tl-qcard-head:hover .tl-qcard-chevron {
+  color: var(--text-primary);
 }
 .tl-qcard-title {
   font-weight: 600;
-  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
 }
 .tl-qcard-step,
 .tl-qcard-hint {
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
+}
+.tl-qcard-step {
+  font-variant-numeric: tabular-nums;
+}
+/* Collapsed, the question itself stands in for the body as a one-line
+   reminder of what is being asked. */
+.tl-qcard-peek {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+/* Points at the body: down while it is open below the head, up once the card
+   is collapsed into it. */
+.tl-qcard-chevron {
+  flex: none;
+  margin-left: auto;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--text-muted);
+  border-bottom: 1.5px solid var(--text-muted);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 150ms;
+}
+.tl-qcard-chevron[data-collapsed="true"] {
+  transform: translateY(2px) rotate(-135deg);
 }
 .tl-qcard-question {
   font-size: calc(13.5px * var(--tl-text-scale, 1));
@@ -5954,12 +6004,17 @@ body.tl-kb-up {
   gap: 4px;
   margin-top: 8px;
 }
+/* A row per option, T3's shape: the label with its description under it, and
+   on the right the digit that picks it, or a tick once it is picked. Grid
+   placement is by class, so the plan and permission cards, which put the digit
+   first in their markup, draw the same way. */
 .tl-qcard-option {
   display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 2px 6px;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 10px;
   padding: 7px 8px;
-  border: 1px solid var(--border);
+  border: 1px solid transparent;
   border-radius: 7px;
   background: transparent;
   color: inherit;
@@ -5968,19 +6023,23 @@ body.tl-kb-up {
   text-align: left;
   cursor: pointer;
 }
-.tl-qcard-option:hover {
-  border-color: var(--accent);
+.tl-qcard-option:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 .tl-qcard-option[data-chosen="true"] {
-  border-color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.tl-qcard-option:disabled {
+  cursor: default;
+  opacity: 0.6;
 }
 /* The digit the CLI is listening for, in the chip the recorded row already
    uses. Filled once chosen, so the selection reads at a glance rather than from
    a 10px dot — and on a desktop it doubles as the key to press. */
 .tl-qcard-key {
-  grid-column: 1;
-  grid-row: 1;
+  grid-column: 2;
+  grid-row: 1 / span 2;
   width: 18px;
   height: 18px;
   display: inline-flex;
@@ -5999,6 +6058,8 @@ body.tl-kb-up {
   border-color: var(--accent);
   color: #fff;
 }
+/* The question card draws its tick as text; the digit-to-tick swap below is
+   for the permission card's multi rows, which have none. */
 /* Multi-select is a different promise — several of these travel together — so
    the chip carries a tick rather than pretending to be a radio.
    It is drawn IN the chip, not over it. The first version of this rule was
@@ -6016,7 +6077,7 @@ body.tl-kb-up {
   line-height: 1;
 }
 .tl-qcard-label {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1;
   font-weight: 500;
 }
@@ -6028,7 +6089,7 @@ body.tl-kb-up {
    is worst on the phone this is mostly read on. Two lines gives the gist of all
    of them and the whole of the one being considered. */
 .tl-qcard-desc {
-  grid-column: 2;
+  grid-column: 1;
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   line-height: 1.35;
@@ -6046,6 +6107,21 @@ body.tl-kb-up {
 }
 /* "Show all" / "Show less". A quiet control: it changes how much is on screen,
    not what anything means. */
+/* The preview Claude gave the option in focus: a code snippet or an ASCII
+   mockup, so it keeps its own line breaks and scrolls rather than wraps. */
+.tl-qcard-preview {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  max-height: calc(12px * 1.4 * 10 * var(--tl-text-scale, 1));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-page);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  white-space: pre;
+}
 .tl-qcard-full,
 .tl-question-full {
   border: 0;
@@ -6065,91 +6141,6 @@ body.tl-kb-up {
 .tl-qcard-full {
   margin-left: auto;
 }
-.tl-qcard-other {
-  width: 100%;
-  margin-top: 6px;
-  padding: 7px 8px;
-  border: 1px solid var(--accent);
-  border-radius: 7px;
-  background: var(--bg-page);
-  color: inherit;
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-}
-/* 16px on a phone or iOS Safari zooms the page when the free-text answer takes
-   focus and leaves it zoomed (reported 2026-09-26). After the rule above so it
-   wins at equal specificity. */
-@media (pointer: coarse) {
-  .tl-qcard-other {
-    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
-  }
-}
-.tl-qcard-review {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.tl-qcard-reviewrow {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-}
-.tl-qcard-reviewq {
-  color: var(--text-muted);
-}
-.tl-qcard-reviewa {
-  text-align: right;
-}
-/* A send that stopped partway. The wording carries the whole state, so it is
-   body text rather than an error banner: nothing is broken, an answer is simply
-   half-delivered and the Terminal is where the rest of it lives. */
-/* The tab bar, as the card shows it: the same progress the terminal is drawing,
-   so `2 of 4` above can be checked against something. A filled box is a question
-   already answered — the card reads the count from those glyphs rather than from
-   its own tally (sessionio dialog.go tabAnswered). */
-.tl-qcard-tabs {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  margin-top: 8px;
-}
-.tl-qcard-tab {
-  padding: 2px 7px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  font-family: var(--font-ui);
-  font-size: calc(10.5px * var(--tl-text-scale, 1));
-}
-.tl-qcard-tab[data-done="true"] {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-}
-.tl-qcard-tab[data-done="true"]::before {
-  content: "\2713";
-  margin-right: 4px;
-}
-.tl-qcard-stopped {
-  flex: 1 1 auto;
-  min-width: 0;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  line-height: 1.45;
-  color: var(--text-muted);
-}
-.tl-qcard-terminal {
-  flex: none;
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  font-weight: 500;
-  color: #fff;
-  background: var(--accent);
-  border: 0;
-  border-radius: var(--radius);
-  padding: 7px 12px;
-  cursor: pointer;
-}
 /* Leaves the question rather than answering it, so it reads as a link and sits
    away from the button that commits. */
 .tl-qcard-chat {
@@ -6164,8 +6155,12 @@ body.tl-kb-up {
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.tl-qcard-chat:hover {
+.tl-qcard-chat:hover:not(:disabled) {
   color: var(--text-primary);
+}
+.tl-qcard-chat:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 .tl-qcard-actions {
   flex: none;
@@ -6274,7 +6269,7 @@ body.tl-kb-up {
   overflow-wrap: anywhere;
 }
 .tl-plancard-flight {
-  grid-column: 2;
+  grid-column: 1;
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   font-style: italic;

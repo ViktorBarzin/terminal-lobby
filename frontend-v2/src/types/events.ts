@@ -178,6 +178,7 @@ export type MetaKind =
   | "hook-error"
   | "context"
   | "asking"
+  | "held"
   | "model"
   | "command";
 

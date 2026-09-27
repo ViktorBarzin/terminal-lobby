@@ -19,7 +19,6 @@ import type {
   WorkflowInfo,
 } from "../types/events";
 import {
-  askingFromPane,
   permissionFromPane,
   currentMode,
   currentModel,
@@ -42,18 +41,14 @@ import { modeFromPane, type PendingPrompt, type SlashCommand } from "../logic/co
 import type { Catalogue } from "../store/catalogue";
 import { contextState } from "./context.logic";
 import {
-  sameDrawnQuestion,
   type AnswerRequest,
   type AnswerResponse,
-  type DialogOptionView,
-  type DialogQuestionView,
-  type DialogView,
   type PlanAnswer,
   type PlanOptionView,
-  type QuestionDialogView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
-import { QuestionCard, type TypedAnswer } from "./QuestionCard";
+import { QuestionCard, type QuestionCardApi, type QuestionCardState } from "./QuestionCard";
+import { heldFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard } from "./PermissionCard";
 import {
@@ -222,6 +217,14 @@ function refusal(
  * column, and below it the panel folds into a strip above the transcript.
  */
 const RAIL_MIN_PX = 900;
+
+/**
+ * How long a question the transcript shows waits for the lobby's hook to hold
+ * it before the card says the Terminal is the place to answer. The hook fires as
+ * the CLI draws its menu, usually before the record is written, so this only
+ * runs out for a session whose Claude started before the hook was installed.
+ */
+const HOLD_GRACE_MS = 4_000;
 
 /**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
@@ -473,27 +476,51 @@ export const TextView: Component<{
   /**
    * The question the session is blocked on, if any.
    *
-   * Derived from the transcript, which records the questions, their options and
-   * their descriptions — so only the SELECTION is ever inferred, which is the
-   * low-risk half of ADR-0010. The card is dismissed the moment the transcript
-   * shows a result — whether it was answered from here or from the Terminal —
-   * and equally the moment anything else happens after the question, since
-   * Claude Code takes a dialog down when something claims the turn and leaves
-   * that call unresolved for good (timeline.logic `markSuperseded`).
+   * Two sources for one call. `held` is the question the lobby's hook is
+   * holding for the card (ADR-0034); it is what makes the card answerable, and
+   * it arrives before the transcript's record, which Claude Code sometimes
+   * writes only once the question is answered (measured 2026-08-28, 112 s late
+   * in one case). `recorded` is the transcript's call, which stands in for a
+   * session whose question no hook is holding, so the reader still sees what is
+   * being asked and where to answer it.
    */
   const recorded = createMemo(() => pendingQuestion(baseRows()));
+  const held = createMemo(() => heldFromEvents(props.events));
+  const asked = createMemo((): Question[] => held() ?? recorded()?.questions ?? []);
+  /** WHAT is being asked, as the call's question texts; empty when nothing is. */
+  const asking = createMemo(() => asked().map((q) => q.question).join("\u0000"));
   /**
-   * What the PANE says, for the window where the record has not been written.
-   *
-   * Claude Code writes the AskUserQuestion record when it gets round to it:
-   * measured 2026-08-28 over five consecutive calls in one session, two landed
-   * within 3-8 s of the dialog appearing and two were not written until the
-   * question was ANSWERED — 112 s later in one case. Through that window the
-   * transcript says only "working" while the terminal sits blocked, so the
-   * server reads the pane and reports what it finds (session-events
-   * registry.watchPanes).
+   * WHICH CALL the card belongs to: a count that moves when something starts
+   * asking after nothing was, or the call being asked changes. The card holds
+   * the reader's drafts and keys on this, so one call's picks never carry
+   * into the next, even when the next asks the same thing.
    */
-  const fromPane = createMemo(() => askingFromPane(props.events));
+  const callSerial = createMemo<{ n: number; asking: string }>(
+    (was) => {
+      const a = asking();
+      return { n: a !== "" && a !== was.asking ? was.n + 1 : was.n, asking: a };
+    },
+    { n: 0, asking: "" },
+  );
+  const [answering, setAnswering] = createSignal(false);
+  /** The server said nothing holds the question: the Terminal is the way. */
+  const [notHeld, setNotHeld] = createSignal(false);
+  /** A call with no hold yet gets a moment for the hold to arrive before the
+   *  card sends the reader to the Terminal. */
+  const [graceOver, setGraceOver] = createSignal(false);
+  createEffect(
+    on(
+      () => callSerial().n,
+      () => {
+        setNotHeld(false);
+        setGraceOver(false);
+        const t = setTimeout(() => setGraceOver(true), HOLD_GRACE_MS);
+        onCleanup(() => clearTimeout(t));
+      },
+    ),
+  );
+  const cardState = (): QuestionCardState =>
+    held() && !notHeld() ? "open" : graceOver() || notHeld() ? "terminal" : "connecting";
   /** The tool permission prompt on the pane, answered by its own card. */
   const permission = createMemo(() => permissionFromPane(props.events));
   /** Press a permission row's number. */
@@ -502,282 +529,6 @@ export const TextView: Component<{
     if (!ok) props.notify?.("Couldn't answer Claude's prompt. Answer it in the Terminal.", "error");
     return ok;
   };
-  /**
-   * The watcher's current reading, as one comparable string.
-   *
-   * It answers one question only: has the watcher said anything NEW since a
-   * reply was stored. The watcher appends a reading when the reading CHANGES,
-   * so the content of the last one it reported is the whole of its identity —
-   * there is no sequence number on the wire to use instead, and the event id
-   * moves for reasons that have nothing to do with the dialog.
-   *
-   * THE TICKS ARE PART OF IT, and so is the free-text row. A multi-select
-   * toggle leaves the question on screen, so after its first tick a reading
-   * with one more box ticked has the same count, the same tally, the same
-   * question and the same labels. Without the boxes in the key that reading
-   * was no news, and a toggle whose reply could not read the screen kept its
-   * capture up for the rest of the question (found in review, 2026-09-24).
-   * Until the toggle change every multi-select click left the question, so
-   * the next reading always differed somewhere else.
-   */
-  const paneKey = createMemo(() => {
-    const p = fromPane();
-    if (!p) return "";
-    const q = p.questions[0];
-    return JSON.stringify([
-      p.count,
-      p.answered,
-      q?.header ?? "",
-      q?.question ?? "",
-      q?.options.map((o) => [o.label, o.checked === true]) ?? [],
-      q?.typed ?? "",
-      q?.typedChecked === true,
-    ]);
-  });
-  /** The transcript wins wherever it has the call, for CONTENT: it carries
-   *  every question of a multi-question call, the descriptions and the
-   *  multi-select flags exactly as the tool was called, and the pane only what
-   *  is drawn on it. What it no longer supplies is POSITION — which question of
-   *  the call is on screen — because it does not know: the record is written
-   *  once, and the reader is somewhere in the dialog by now. That comes from
-   *  `view()` below, and ultimately from the pane. */
-  const blocking = createMemo(() => recorded() ?? fromPane());
-  const asked = createMemo(() => blocking()?.questions ?? []);
-  /**
-   * WHAT is being asked, as the call's CONTENT rather than the transcript's
-   * tool id.
-   *
-   * A stored reply is stamped with it (`replied` below), so no reading
-   * outlives the call it describes, and an empty one means nothing is asking.
-   * Content is what lets a reply survive the HANDOVER. The same question
-   * arrives first from the pane and then from the transcript, and the pane's
-   * reading has no tool id at all. It does not key the card, because it
-   * changes within a call (`callSerial` below).
-   */
-  const asking = createMemo(() =>
-    asked()
-      .map((q) => `${q.header}|${q.question}|${q.options.map((o) => o.label).join(",")}`)
-      .join("~"),
-  );
-  /**
-   * WHICH RECORD is being answered: the key of the transcript's question row,
-   * or "" while only the pane describes the call.
-   *
-   * Content keys the card, for the handover above. It cannot tell a call
-   * from the next one asking the same thing, and the record can, so every
-   * stored reply carries both (`replied` below).
-   */
-  const callKey = createMemo(() => recorded()?.key ?? "");
-  /**
-   * WHICH CALL the card belongs to, as a count that moves only when a
-   * different call takes over: something starts asking after nothing was, or
-   * the record being answered gives way to another one. This, and not the
-   * content above, keys the card.
-   *
-   * The card holds state that belongs to the call: the multi-select clicks
-   * waiting behind a toggle in flight, the toggle itself, the half-typed
-   * free-text words. Content changes WITHIN a call, and keying the card on it
-   * built a new card at each change and dropped all of that. It changes at the
-   * handover, because the pane's reading carries only the drawn question, and
-   * with no header on a multi-question call, while the record carries every
-   * question with its header. And it changes each time the watcher first
-   * reports the next question of a call the record has not reached. The review
-   * of 2026-09-24 found a click waiting when the record landed never sent, and
-   * the new card, with no toggle of its own to wait on, working its first
-   * click out against the record and unticking what the reply it was queued
-   * behind had just ticked.
-   *
-   * What still separates two calls is the moment between them when nothing is
-   * asking. A call's result, or anything else that happens in the session,
-   * withdraws both the record's question and the watcher's reading. Two calls
-   * whose records follow each other with no such moment are told apart by the
-   * record. The same moment can fall inside a call the record has not reached,
-   * when the watcher reads the pane mid-repaint and withdraws its reading until
-   * the next tick, and the card built after it starts empty; `put` storing its
-   * reply and ending the request together is what keeps that card's first
-   * click honest. Within a call, the card's state is stamped with the question
-   * it belongs to (QuestionCard), so nothing made for one question is spent on
-   * another.
-   */
-  const callSerial = createMemo<{ n: number; asking: boolean; record: string }>(
-    (was) => {
-      const asks = asking() !== "";
-      const record = asks ? callKey() : "";
-      const another = asks && (!was.asking || (was.record !== "" && record !== was.record));
-      return { n: another ? was.n + 1 : was.n, asking: asks, record };
-    },
-    { n: 0, asking: false, record: "" },
-  );
-  const [answering, setAnswering] = createSignal(false);
-
-  /**
-   * The newest reading the server sent back, and what was being asked when
-   * it was sent.
-   *
-   * The same pairing the mode and model dials above use: a reading is stored
-   * with the value it was taken against and stops counting the moment that
-   * value moves, so nothing has to expire it. Here the value is `asking()`, so
-   * a reply arriving after the session has moved to another call renders on
-   * nothing. Content moves within a call too, and the exception below, for a
-   * reply sent before the call had a record, is how a reply survives that.
-   *
-   * CONTENT IS NOT ENOUGH ON ITS OWN, so `call` stamps the record as well: the
-   * key of the transcript's question row the reply was sent for, "" while
-   * only the pane described the call. Two calls asking the same thing have
-   * the same content key, and seen live on 2026-09-23 (CLI 2.1.280) the fifth
-   * call of a session repeated the fourth and docked no card for over a
-   * minute. The fourth call's last reply was its Submit's, `done` with no
-   * dialog, and it still matched: the new call's record had withdrawn the
-   * watcher's reading, so the watcher was back to saying nothing, as it had
-   * been when that reply was stored. The new card drew that reply, a dialog
-   * that had gone, and stayed empty until a reload.
-   */
-  const [replied, setReplied] = createSignal<{
-    at: string;
-    pane: string;
-    call: string;
-    resp: AnswerResponse;
-  } | null>(null);
-  const reading = createMemo((): AnswerResponse | null => {
-    const r = replied();
-    if (!r) return null;
-    // A reply CARRYING NO DIALOG is a failure to read the screen, not a
-    // reading of it, and it expires against the watcher.
-    //
-    // The driver polls for 600ms (answerVerify) and then answers with whatever
-    // it has, so a capture taken mid-repaint comes back as a pane and no
-    // dialog. That is the freshest thing there is at the time and the card
-    // shows it — the design's "a screen we cannot read". But `replied` is
-    // written in one place and never cleared, so preferring it for the life of
-    // the call left the card sitting on a half-drawn capture while a perfectly
-    // readable dialog was on the pane, with the Terminal the only way out.
-    // Comparing the watcher's reading against the one current when the reply
-    // landed is what ends it: a reading the watcher has ALREADY reported is
-    // not new and cannot displace a capture taken milliseconds ago, and the
-    // next tick that says something different does.
-    //
-    // A reply that DID read the screen keeps its precedence outright, for the
-    // reason the comment below gives: it was captured milliseconds after the
-    // keys went in and the watcher ticks every 2s.
-    if (!r.resp.dialog && paneKey() !== r.pane) return null;
-    if (r.at === asking() && r.call === callKey()) return r.resp;
-    // A reply sent for one record is over once another record is asking, or
-    // none is, whatever the two asked.
-    if (r.call !== "") return null;
-    // The HANDOVER is the exception, for a reply sent before the call had a
-    // record. The same dialog arrives first from the pane and then from the
-    // transcript, which changes both keys without changing what is on screen.
-    // The pane's reading has no per-question header and the record does. A
-    // reading whose drawn question is one of the call's own still describes
-    // the call, so it survives that; anything else is a reading of a call
-    // nobody is being asked any more.
-    const q = r.resp.dialog?.questions?.[0];
-    return q && placeQuestion(q, asked()) ? r.resp : null;
-  });
-
-  /**
-   * WHAT THE CARD DRAWS: the question the pane is showing, with the call's own
-   * content filled in.
-   *
-   * Two sources, and each supplies only what it actually knows.
-   *
-   * POSITION is the pane's wherever the pane has spoken. The reply wins
-   * outright once there is one, including when it carries no dialog at all —
-   * a screen the parser could not read, or a dialog that has gone — because
-   * it was captured milliseconds after the keys went in, while the pane
-   * watcher ticks every 2s (session-events registry PaneWatchInterval).
-   * Preferring the older of the two is how a card ends up showing a question
-   * that has already been answered. The one bound on that is in `reading()`
-   * above: a reply that read NOTHING steps aside for a watcher reading taken
-   * after it, so an unreadable capture cannot stand for the whole call.
-   *
-   * The TRANSCRIPT is the floor, and it has to be one. A watcher reading is
-   * withdrawn the moment anything else happens in the session (timeline.logic
-   * askingFromPane), the AskUserQuestion record IS something happening, and
-   * the watcher only appends when the reading CHANGES — so between the record
-   * landing and the reader's next answer there can be no pane reading at all,
-   * indefinitely. With nothing to draw the card would render nothing and no
-   * request could be made to get a reading, which is a dead end rather than a
-   * delay. So the call's own questions stand in, at the first one, which is
-   * what the CLI draws when a call opens.
-   *
-   * That is a starting point and never a prediction: every request names the
-   * question it answers and the server refuses one the pane is not drawing,
-   * replying with the real screen (sessionio/answerdrive.go). A reader who
-   * arrives midway through a call therefore pays one refused tap, not a wrong
-   * answer.
-   *
-   * CONTENT is the transcript's where it has it, merged in by
-   * `withCallContent` below. The pane carries only what was drawn — no
-   * per-question header on a multi-question dialog, and a description cut to
-   * the width — and the header is what every request is addressed by, so that
-   * merge is what makes a multi-question call answerable at all. Where the
-   * transcript has nothing to merge yet, `callAddress` addresses the call by a
-   * chip instead; the question keeps the empty header the pane gave it, so
-   * nothing here claims a position it cannot see.
-   */
-  const view = createMemo((): QuestionDialogView | null => {
-    const known = asked();
-    const seen = ((): DialogView | undefined => {
-      const r = reading();
-      if (r) return r.dialog;
-      const p = fromPane();
-      if (p) {
-        return {
-          questions: p.questions,
-          headers: p.headers,
-          count: p.count,
-          answered: p.answered,
-          partial: p.partial,
-        };
-      }
-      if (known.length === 0) return undefined;
-      return {
-        questions: known,
-        headers: known.map((q) => q.header),
-        count: known.length,
-        answered: 0,
-      };
-    })();
-    if (!seen) return null;
-    return {
-      ...seen,
-      questions: drawnQuestions(seen).map((q) => withCallContent(q, known)),
-    };
-  });
-
-  /**
-   * The pane is on the CLI's review screen, where the only thing left is
-   * Submit.
-   *
-   * The reply says so directly, because the server reads both wordings out of
-   * the dialog's own region: "Review your answers" and "Ready to submit your
-   * answers?" are ordinary English that a session discussing its own dialogs
-   * puts on the pane — this feature's design doc quotes both — and matching
-   * them anywhere in the capture turns a question into a Submit
-   * (sessionio reviewOnScreen).
-   *
-   * Where it does not say so, the screen's own SHAPE does: the CLI's Submit
-   * screen offers nothing to choose, and ParseDialog never returns a question
-   * with an empty option list (it returns nil rather than a question with no
-   * answers, dialog.go). So no options means the review screen whatever the
-   * reply said about it — which is the case where `reviewOnScreen` read the
-   * dialog's region and the parse fell back to the whole capture, and the two
-   * disagreed. A `review` the pane does not agree with costs one refused
-   * Submit and a fresh reading (answerdrive answerSubmit); the alternative is
-   * a card with nothing to choose and no way to finish.
-   *
-   * NOT `answered` against `count`, which looks like the same question and is
-   * not — measured 2026-09-10, a multi-select question's box fills on the
-   * FIRST Space, before the Enter that leaves it, so a two-question call reads
-   * as answered=2 while question 2 is still on screen.
-   */
-  const review = createMemo((): boolean => {
-    if (reading()?.review === true) return true;
-    const v = view();
-    return !!v && v.questions.length > 0 && v.questions[0]!.options.length === 0;
-  });
-
   // Pinch to size the transcript, the way a pinch sizes the terminal. The
   // arithmetic and the guards are ported from term.html so both views answer
   // the gesture identically; see mobile/textzoom.ts. The size is device-local,
@@ -892,165 +643,62 @@ export const TextView: Component<{
     });
     onCleanup(stop);
   });
-  // The composer's own handle, so "Chat about this" can hand the reader the
-  // message field rather than an answer they did not want to give.
-  let sinks: ComposerSinks | undefined;
-  const focusComposer = () => sinks?.focus();
   /** The same handle as a signal, for what renders from it: the plan card
    *  offers "Approve with this feedback" only while the field holds text. */
   const [composerSinks, setComposerSinks] = createSignal<ComposerSinks>();
 
+  /** The docked card's handle, while a card is docked. */
+  let cardApi: QuestionCardApi | undefined;
+
   /**
-   * Put one request to the dialog and render whatever comes back.
-   *
-   * There is no plan here and nothing is predicted. The server answers the
-   * question the pane is drawing and replies with a reading taken after it, so
-   * the card renders the screen rather than a forecast of it. That is the
-   * whole of the fix: over 10 days of field data the walk this replaces failed
-   * 4 four-question answers in 5, and all six recorded failures were a
-   * prediction that did not turn up
-   * (docs/plans/2026-09-10-text-mode-answers-dialogs-design.md).
-   *
-   * A REFUSAL IS NOT AN ERROR. `applied: false` — the reader tapped a question
-   * the pane has moved past, or an option it no longer offers — comes back
-   * with the current reading, and the card re-renders against it and carries
-   * on. Nothing latches, and nobody is sent to the Terminal by it.
+   * Answer the held call, or decline it with "Chat about this", as data
+   * (ADR-0034): the hook holding the question hands it to the CLI and nothing
+   * is typed. Resolves true once the session has it; otherwise the card stays
+   * as it was and a toast says why.
    */
-  const put = async (req: AnswerRequest): Promise<AnswerResponse | null> => {
-    if (!props.onAnswer || answering()) return null;
-    // Stamped with the card that asked, taken BEFORE the await: a reply that
-    // lands after the session has moved to another call describes neither, and
-    // pairing it with the key it was sent under is what drops it.
-    const at = asking();
-    const call = callKey();
+  const answerHeld = async (req: AnswerRequest): Promise<boolean> => {
+    if (!props.onAnswer || answering()) return false;
     setAnswering(true);
     let resp: AnswerResponse | null;
     try {
       resp = await props.onAnswer(req);
-    } catch (err) {
+    } finally {
       setAnswering(false);
-      throw err;
     }
     if (!resp) {
-      setAnswering(false);
-      // The CALL failed — no reply, so there is nothing to render and no way
-      // to know whether the keys landed. Deliberately not "nothing was typed":
-      // a dropped reply cannot tell us that, and the next request re-reads the
-      // pane anyway, as does the watcher within its 2s tick.
       props.notify?.("Couldn't reach the session to answer that.", "error");
-      return null;
+      return false;
     }
-    // `pane` is read HERE rather than next to `at`, so it is the watcher's
-    // last word as of the reply landing. A tick that fired while the request
-    // was in flight was captured before the keys went in, and counting it as
-    // news would hand the card back the question that has just been answered.
-    const pane = paneKey();
-    // The reading and the end of the request land TOGETHER. Lowering
-    // `answering` first ran every effect watching it inside that one write,
-    // while the reading on screen was still the one from before the request.
-    // The card's queue of multi-select clicks is such an effect, and a card
-    // with no toggle of its own in flight worked its next click out against
-    // that stale reading and asked the server to untick what the reply had
-    // just ticked (found in review, 2026-09-24).
-    batch(() => {
-      setReplied({ at, pane, call, resp });
-      setAnswering(false);
-    });
-    return resp;
+    if (resp.applied) return followed(true);
+    if (resp.reason === "not-held") {
+      setNotHeld(true);
+      props.notify?.("The question is no longer waiting on this card. Answer it in the Terminal.", "error");
+    } else if (resp.reason === "incomplete") {
+      props.notify?.("Every question needs an answer before it can be sent.", "error");
+    }
+    return false;
   };
-
-  /**
-   * How a choice is addressed when the card cannot NAME the question on
-   * screen: by the call, using one of the tab bar's own chips.
-   *
-   * This is the window before Claude Code writes the AskUserQuestion record —
-   * measured 2026-08-28 over five consecutive calls, two records were not
-   * written until after the question was answered, one of them 112 s later.
-   * Through it the only thing describing the call is the tab bar, a
-   * multi-question dialog draws no per-question header, and `capture-pane -p`
-   * carries no colour to say which tab is current. So the question genuinely
-   * cannot be named, and an empty header is refused outright
-   * (answerdrive.go answerChoice) — every tap comes back not-drawn, forever,
-   * on exactly the call shape the field data says fails most.
-   *
-   * A chip is a claim about the CALL and not about the position, and the
-   * driver reads it as one: with no known question list it cannot place the
-   * pane either, so `drawnHeader` answers drawnUnsure and the keys are planned
-   * from the question the pane is DRAWING, with the option check standing in
-   * for the placement (answerplan.go). Tapping "Tea" while the pane draws
-   * "Pick a drink" therefore answers that question, whichever chip named the
-   * call. Nothing here is marked current on the strength of it.
-   *
-   * Once the record lands the card names the question properly, so this only
-   * ever fires in that window. If the SERVER has the record while the card
-   * does not, it places the pane, finds the chip is a different question and
-   * refuses with the current reading — one wasted tap, and the record reaches
-   * the card on the same transcript within 200 ms.
-   */
-  const callAddress = (): string => view()?.headers?.find((h) => h.trim() !== "") ?? "";
-
-  // One handler per thing the card can do. Each is one request and one fresh
-  // reading; none of them works out what the next screen will say.
-  // One label goes on the wire as `choice` and several as `choices`, which is
-  // the shorthand the contract defines rather than two code paths: the server
-  // reads a lone `choice` as a set of one (sessionio/answerapi.go). Keeping
-  // the single-select spelling is what leaves every existing client, and this
-  // package's own tests, sending exactly what they sent before. An EMPTY set
-  // still goes as `choices: []`, which is how a toggle asks for a
-  // multi-select with nothing ticked.
-  //
-  // `stay` is the multi-select toggle: apply the set and stay on the
-  // question. Without it a multi-select request is the commit, and until
-  // 2026-09-23 every click was one, so the first click left the question.
-  const choiceRequest = (
-    header: string,
-    choices: string[],
-    text?: string,
-    stay?: boolean,
-  ): AnswerRequest => ({
-    header: header || callAddress(),
-    ...(choices.length === 1 ? { choice: choices[0] } : { choices }),
-    ...(text ? { text } : {}),
-    ...(stay ? { stay: true } : {}),
-  });
-  const chooseOption = async (
-    header: string,
-    choices: string[],
-    text?: string,
-    stay?: boolean,
-  ): Promise<void> => {
-    await put(choiceRequest(header, choices, text, stay));
+  const submitAnswers = (answers: Record<string, string[]>): Promise<boolean> =>
+    answerHeld({ answers });
+  /** "Chat about this": the composer's words, if it holds any, go to Claude
+   *  with the refusal, and the field clears only if they were taken. */
+  const chatInstead = (): void => {
+    const sinks = composerSinks();
+    if (sinks?.hasInput()) {
+      void sinks.submitVia((text) => answerHeld({ chat: text }));
+      return;
+    }
+    void answerHeld({ chat: "" });
   };
-  const toggleOptions = (header: string, choices: string[], text?: string): Promise<void> =>
-    chooseOption(header, choices, text, true);
-  const goBackTo = async (header: string): Promise<void> => {
-    await put({ back: header });
-  };
-  const submitAnswers = async (): Promise<void> => {
-    await put({ submit: true });
-  };
-  const pressKeys = async (keys: string[]): Promise<void> => {
-    await put({ keys });
-  };
-
-  /** The docked card's way of turning typed words into an answer, while a card
-   *  is docked. */
-  let typedAnswer: ((words: string) => TypedAnswer | null) | undefined;
 
   /**
    * The composer's Send. With a question docked it ANSWERS the question with
-   * what was typed, the way the card's own free-text field does.
+   * what was typed, as the free-text answer to the question on show, the way
+   * T3 Code's composer does.
    *
    * Reported 2026-09-26 (Viktor): he typed his answer into the message field
-   * and pressed Send, and it went in as a prompt. A prompt is typed into the
-   * pane and closed with Enter, and with the dialog up that Enter picked the
-   * highlighted option and the words were lost. A person who types while being
-   * asked something is answering it.
-   *
-   * The CLI's free-text row is a single line, so line breaks become spaces.
-   * When the server finds no dialog on screen the question has gone and the
-   * words go as the prompt they would otherwise have been. Any other refusal
-   * keeps the words in the field (a false return) and says why.
+   * and pressed Send, and it went in as a prompt. A person who types while
+   * being asked something is answering it.
    */
   /**
    * Bumped on each send that went in, so the timeline brings the reader back
@@ -1069,14 +717,12 @@ export const TextView: Component<{
       props.notify?.("Claude is asking to use a tool. Answer it from the card first.", "warning");
       return false;
     }
-    if (!asking() || !props.onAnswer || !typedAnswer) return props.onSend(text);
-    const words = text.replace(/\s*\n\s*/g, " ").trim();
-    const answer = typedAnswer(words);
-    if (!answer) {
+    if (!asking() || !props.onAnswer || !cardApi) return props.onSend(text);
+    if (cardState() !== "open") {
       props.notify?.(
-        review()
-          ? "Claude's question is waiting on Submit. Submit it from the card first."
-          : "The card can't read Claude's question. Answer it from the card or the Terminal.",
+        cardState() === "terminal"
+          ? "Claude's question can only be answered in the Terminal right now."
+          : "Still connecting to Claude's question. Send again in a moment.",
         "error",
       );
       return false;
@@ -1085,17 +731,7 @@ export const TextView: Component<{
       props.notify?.("Still sending the last answer. Send again in a moment.", "error");
       return false;
     }
-    const resp = await put(choiceRequest(answer.header, answer.choices, answer.text));
-    if (!resp) return false;
-    if (resp.applied) return true;
-    if (resp.reason === "no-dialog") return props.onSend(text);
-    props.notify?.(
-      resp.reason === "unverified"
-        ? "Couldn't confirm your answer went in. Check the card before sending again."
-        : "The question changed before your answer went in. Check the card and send again.",
-      "error",
-    );
-    return false;
+    return cardApi.typed(text.replace(/\s*\n\s*/g, " ").trim());
   };
 
   // ---- The plan approval ----
@@ -1582,19 +1218,19 @@ export const TextView: Component<{
       <Show when={props.onAnswer && asking() ? callSerial().n : 0} keyed>
         {(_call) => (
           <QuestionCard
-            dialog={view()}
-            pane={reading()?.pane}
-            review={review()}
+            questions={asked()}
+            state={cardState()}
             busy={answering()}
-            onChoose={chooseOption}
-            onToggle={toggleOptions}
-            onBack={goBackTo}
+            hasInput={composerSinks()?.hasInput() ?? false}
+            keysActive={props.onScreen !== false && tileFocused()}
             onSubmit={submitAnswers}
-            onKeys={pressKeys}
-            onChat={focusComposer}
+            onChat={chatInstead}
+            onUseTyped={() => {
+              void composerSinks()?.submitVia(send);
+            }}
             onTerminal={props.onOpenTerminal}
-            register={(fn) => {
-              typedAnswer = fn;
+            register={(api) => {
+              cardApi = api;
             }}
           />
         )}
@@ -1678,7 +1314,6 @@ export const TextView: Component<{
         onAttach={props.onAttach}
         inertReason={props.inertReason}
         register={(api) => {
-          sinks = api;
           setComposerSinks(api);
           props.register?.(api);
         }}
@@ -1686,110 +1321,3 @@ export const TextView: Component<{
     </div>
   );
 };
-
-/**
- * A reading's questions, in the shape the card's own types promise.
- *
- * THE WIRE IS LOOSER THAN THE TYPE. `sessionio.DialogQuestion.Options` is
- * tagged `json:"options"` with no omitempty, so a nil list marshals as
- * `"options": null` while `DialogQuestionView.options` is declared as an
- * array. That is not hypothetical: `reviewScreen` builds its pseudo-question
- * with no options at all, so every review screen already puts a null on the
- * wire today (sessionio/dialog.go). It goes unnoticed while `review` is true,
- * because every read of the list sits behind that flag in the card — and a
- * reply carrying the same dialog with `review` false, which is what a capture
- * the region parse could not read produces, reached `q.options.length` and
- * took the whole text view down with a TypeError mid-render.
- *
- * Repairing it here rather than at the parse is deliberate: this is the one
- * place a reply becomes something the card renders, and the card should not
- * have to hold an opinion about which fields the server omits.
- */
-function drawnQuestions(d: DialogView): DialogQuestionView[] {
-  const qs: DialogQuestionView[] | null | undefined = d.questions;
-  if (!qs) return [];
-  return qs.map((q) => {
-    const options: DialogOptionView[] | null = q.options;
-    return options ? q : { ...q, options: [] };
-  });
-}
-
-/**
- * One drawn question, with the call's own content filled in.
- *
- * The pane is the only honest source for WHICH question is on screen, and a
- * poor one for what the question SAYS: `capture-pane -p` carries what fitted
- * the width and no colour, so a multi-question dialog draws no per-question
- * header at all and a long description arrives cut. The transcript has the
- * call exactly as the tool was called. So the drawn question keeps its
- * identity and borrows the rest.
- *
- * The header matters most. Every request is addressed by it — the server
- * refuses one that names no question, which is what stops a stale client
- * answering the wrong one (sessionio/answerapi.go) — so without this merge a
- * multi-question call would not be answerable from here at all.
- *
- * THE WORDS ARE THE RECORD'S too, once it has placed the question. The pane
- * parses back less than the tool was called with whenever the CLI draws the
- * question in pieces. A blank line inside it reads as the question's top, so
- * only the last paragraph comes back (measured on CLI 2.1.280, 2026-09-24),
- * and a long one keeps its last twelve lines (dialog.go maxQuestionLines).
- * Until the first reply the card draws the record, whose words are whole, and
- * handing it the pane's after that changed the question under the reader. The
- * card took it for another question, dropped the click waiting behind the
- * first toggle, and scrolled back to the top. The reader gets the whole
- * question throughout instead.
- *
- * Nothing is invented: a question that cannot be placed is returned exactly as
- * it was drawn, and the reader still gets the screen and its options.
- */
-function withCallContent(drawn: DialogQuestionView, known: Question[]): DialogQuestionView {
-  const from = placeQuestion(drawn, known);
-  if (!from) return drawn;
-  return {
-    ...drawn,
-    question: from.question || drawn.question,
-    header: drawn.header || from.header,
-    multiSelect: drawn.multiSelect || from.multiSelect,
-    options: drawn.options.map((o) => ({
-      ...o,
-      description: o.description || describedBy(from, o.label),
-    })),
-  };
-}
-
-/** What the call said about an option the pane drew, matched by label. */
-function describedBy(q: Question, label: string): string {
-  const want = label.trim().toLowerCase();
-  return q.options.find((o) => o.label.trim().toLowerCase() === want)?.description ?? "";
-}
-
-/**
- * Which of the call's questions the pane is drawing, or undefined for "cannot
- * say".
- *
- * The TypeScript half of sessionio's `questionOnScreen`, and deliberately the
- * same rule: the header the dialog draws for itself when there is one, and
- * otherwise the question text matched against the call. Two matches are no
- * match — a call asking the same thing twice cannot be placed by its text, and
- * guessing between them is the failure this whole change exists to stop.
- *
- * It never reads the answered count. Measured 2026-09-10 against CLI 2.1.267,
- * a multi-select question's tab-bar box flips to ☒ on the FIRST Space, before
- * the Enter that leaves the question, so the tally runs one ahead of the
- * position, and using it as an index is how question 1's choice lands in
- * question 2.
- */
-function placeQuestion(drawn: DialogQuestionView, known: Question[]): Question | undefined {
-  const header = (drawn.header ?? "").trim().toLowerCase();
-  if (header) {
-    return onlyOne(known, (k) => k.header.trim().toLowerCase() === header);
-  }
-  return onlyOne(known, (k) => sameDrawnQuestion(drawn.question, k.question));
-}
-
-/** The single element that matches, or undefined when none or several do. */
-function onlyOne<T>(xs: T[], is: (x: T) => boolean): T | undefined {
-  const hits = xs.filter(is);
-  return hits.length === 1 ? hits[0] : undefined;
-}

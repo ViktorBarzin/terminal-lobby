@@ -340,7 +340,11 @@ export const Composer: Component<{
   const send = (text: string, held: readonly DraftAttachment[]): Promise<boolean> =>
     props.planOpen && props.onPlanFeedback ? props.onPlanFeedback(text) : props.onSend(text, held);
   const placeholder = (): string =>
-    props.planOpen ? "Tell Claude what to change…" : placeholderFor(props.mode ?? "");
+    props.planOpen
+      ? "Tell Claude what to change…"
+      : props.asking
+        ? "Type your own answer, or leave this blank to use the selected option"
+        : placeholderFor(props.mode ?? "");
 
   /** What Send's tooltip warns of, when a send would do more than send. */
   const sendTitle = (): string | undefined => {

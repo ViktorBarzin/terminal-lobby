@@ -673,6 +673,8 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // Dropped by deriveRows as well: what the pane says about a blocking question
   // is state, and the answer card is where it shows.
   asking: "waiting for an answer",
+  // deriveRows drops it: the question card is where a held question shows.
+  held: "held",
   // Dropped by deriveRows too: the reading belongs to the context dial on the
   // composer's line, and one row per settled turn would divide the whole
   // transcript.

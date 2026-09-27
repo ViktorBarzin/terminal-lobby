@@ -137,7 +137,16 @@ export interface DialogView {
 export type QuestionDialogView = DialogView & { questions: DialogQuestionView[] };
 
 /** Why a request was not applied. Empty means it was. */
-export type AnswerReason = "not-drawn" | "no-dialog" | "unknown-option" | "refused" | "unverified";
+export type AnswerReason =
+  | "not-drawn"
+  | "no-dialog"
+  | "unknown-option"
+  | "refused"
+  | "unverified"
+  /** Nothing holds a question for this session: answer it in the Terminal. */
+  | "not-held"
+  /** A held call was answered with a question left empty. */
+  | "incomplete";
 
 /**
  * Which of the CLI's landmarks a capture carried, for a screen the parser could
@@ -172,6 +181,16 @@ export interface AnswerResponse {
 
 /** One request: a choice, a navigation, a submit, or raw keys. */
 export interface AnswerRequest {
+  /**
+   * A whole AskUserQuestion call answered at once, keyed by each question's
+   * text, for a call the lobby's hook is holding (ADR-0034,
+   * `sessionio.AnswerRequest.Answers`). One label for a single-select, the
+   * labels picked for a multi-select, or the free-text answer's words.
+   */
+  answers?: Record<string, string[]>;
+  /** Decline a held call and hand Claude these words instead ("Chat about
+   *  this"). An empty string declines with no words. */
+  chat?: string;
   header?: string;
   /** One label. Shorthand for a `choices` of exactly one. */
   choice?: string;

@@ -277,6 +277,10 @@ export interface QuestionOption {
    * it — there is no reply from this session to read it off.
    */
   checked?: boolean;
+  /** The option's preview, when Claude gave one: monospace content (a code
+   *  snippet, an ASCII mockup) that the question card shows for the option
+   *  in focus. */
+  preview?: string;
 }
 export interface Question {
   question: string;
@@ -316,6 +320,9 @@ export function questions(input: unknown): Question[] {
               label: str(o.label),
               description: str(o.description),
               checked: o.checked === true,
+              // What the option looks like, as Claude drew it for comparing
+              // code or layouts. Spread only when present.
+              ...(str(o.preview) ? { preview: str(o.preview) } : {}),
             }))
         : [],
       // Spread only when present, so a transcript question keeps exactly the

@@ -858,6 +858,9 @@ function collectTurnRows(turn: Turn): {
         // reading that repeats: a dialog sits on screen for as long as nobody
         // answers it, and a row per reading would bury the conversation.
         if (meta === "asking") break;
+        // The question the lobby's hook is holding is state as well: the
+        // question card is where it shows (heldFromEvents).
+        if (meta === "held") break;
         // A background task finishing is delivered THROUGH the queue, so the
         // queue reports enqueueing a wall of XML — 2,140 of them across this
         // box's transcripts, the single most common artifact in the text view

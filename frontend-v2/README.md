@@ -837,20 +837,17 @@ src/
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
                          staleness in settled turns, category breakdown).
                          Nothing runs the command — no reading, no chip
-    QuestionCard.tsx     The docked answer card. It draws the ONE question the
-                         pane is showing, the tab bar as chips that walk ←
-                         back to an answered one, and nothing else. A tap is a
-                         request and the reply is a fresh reading, which is
-                         what gets drawn next. A single-select tap answers. A
-                         multi-select tap toggles one row, ticked once the
-                         pane shows it, and a tap made while one is in flight
-                         waits its turn, pulsing. The button at the right of
-                         the actions row, labelled with the pane's own Next or
-                         Submit, is what leaves a multi-select; every tap did
-                         until 2026-09-23. The CLI's own review screen is where
-                         everything is seen before Submit. It held a whole
-                         four-question draft until 2026-09-10, and predicting
-                         each next screen is what failed 4 of those 5 answers
+    QuestionCard.tsx     The docked question card, after T3 Code's question
+                         panel (ADR-0034): one question at a time with an i/N
+                         counter, a single-select pick that moves on by
+                         itself, a multi-select that toggles, keys 1-9, a head
+                         that collapses the card, and option previews. The
+                         composer is the free-text answer. The whole call goes
+                         out in one request once every question has an answer,
+                         to the hook holding it; with no hold it points at the
+                         Terminal
+    question.logic.ts    PURE drafts for the question card (T3's rules) and the
+                         held question read off the stream (`held` meta)
     PaneKeypad.tsx       The half of the card for a screen ParseDialog refused:
                          the capture as monospaced text with the lines that
                          look like numbered rows made tappable. Detecting rows
