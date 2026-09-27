@@ -27,8 +27,16 @@ import (
 // refused prompts while Claude worked, and a mid-turn prompt belongs in
 // Claude's own queue. This refuses the screens on which a prompt is not queued
 // at all but typed into a menu: the plan approval, and since 2026-09-27 the
-// tool permission prompt (reason permission-open). A question on the pane does
-// not refuse a prompt, and neither does a running turn.
+// tool permission prompt (reason permission-open) and a question (reason
+// question-open). A running turn does not refuse a prompt.
+//
+// A QUESTION WAS LET THROUGH until 2026-09-27, on the belief that a prompt
+// dismissed it. It answers it: the Enter at the end of Injector.Prompt picks
+// the highlighted row. Measured on 0.78.0, a prompt sent the moment the
+// dialog drew answered "Shape?" with Circle, which nobody chose, and the words
+// were lost. The Text view routes Send to POST /answer once its card docks,
+// about 1.4 s after the dialog draws, so a Send inside that window, or with
+// the event stream stalled, reached this route.
 
 // planPane is what the guard reads: the pane, and the options the hooks stamp.
 // An interface so the guard is tested without tmux; production passes the
@@ -41,8 +49,8 @@ type planPane interface {
 // exitPlanTool is the tool whose dialog is the plan approval.
 const exitPlanTool = "ExitPlanMode"
 
-// promptRefusal reports whether the plan approval, or a tool permission
-// prompt, is up on the session's pane.
+// promptRefusal reports whether the plan approval, a tool permission prompt,
+// or a question is up on the session's pane.
 //
 // TWO READINGS, EITHER ENOUGH. The first is the pane parsed, which is what
 // the contract names and what every measured layout satisfies: both
@@ -68,6 +76,11 @@ const exitPlanTool = "ExitPlanMode"
 // and a restyled one leaves a prompt going through, as every prompt did before
 // 2026-09-27.
 //
+// A question is read the same way, parse first and the net under it: the
+// marker names the AskUserQuestion that drew the dialog, and a question whose
+// top the pane has cut off does not parse (sessionio clippedQuestion needs the
+// call's list, which this has only through the net).
+//
 // It names the screen, as the reason the refusal carries, or "".
 func promptRefusal(rg *registry, p planPane, osUser, session string) string {
 	if pane, err := p.CapturePane(osUser, session); err == nil {
@@ -77,26 +90,36 @@ func promptRefusal(rg *registry, p planPane, osUser, session string) string {
 		if sessionio.ParsePermissionDialog(pane) != nil {
 			return permissionOpenReason
 		}
+		if sessionio.ParseDialog(pane) != nil {
+			return questionOpenReason
+		}
 	}
 	ask, _ := p.Option(osUser, session, sessionio.OptionAsk)
 	if ask == "" {
 		return ""
 	}
-	if fs, ok := rg.source(osUser, session); ok && pendingPlan(fs) == ask {
+	fs, ok := rg.source(osUser, session)
+	if !ok {
+		return ""
+	}
+	switch ask {
+	case pendingCall(fs, exitPlanTool):
 		return planOpenReason
+	case pendingCall(fs, askQuestionTool):
+		return questionOpenReason
 	}
 	return ""
 }
 
-// pendingPlan is the tool id of the newest ExitPlanMode whose result has not
+// pendingCall is the tool id of the newest call of `tool` whose result has not
 // arrived, or "" when there is none. It reads as far back as pendingQuestions
 // does, and for the same reason: a blocking call belongs to the turn that is
 // still running.
-func pendingPlan(fs *sessionio.FileSource) string {
+func pendingCall(fs *sessionio.FileSource, tool string) string {
 	id := ""
 	for _, e := range fs.ReplayWindow(0, answerKnownTurns) {
 		switch {
-		case e.Kind == sessionio.KindToolUse && e.Tool == exitPlanTool:
+		case e.Kind == sessionio.KindToolUse && e.Tool == tool:
 			id = e.ToolID
 		case id != "" && e.Kind == sessionio.KindToolResult && e.ToolID == id:
 			id = ""
@@ -109,6 +132,7 @@ func pendingPlan(fs *sessionio.FileSource) string {
 const (
 	planOpenReason       = "plan-open"
 	permissionOpenReason = "permission-open"
+	questionOpenReason   = "question-open"
 )
 
 // writePromptRefusal is the refusal: 409, in the shape the answer routes use.

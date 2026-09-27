@@ -282,8 +282,8 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
 
 /**
  * The prompt guard's reason, when this is its refusal: 409 with `{"applied":
- * false, "reason": "plan-open"}`, or "permission-open" for a tool permission
- * prompt (session-events plan.go). "" for a 409 with any other body, JSON or
+ * false, "reason": "plan-open"}`, "permission-open" for a tool permission
+ * prompt, or "question-open" for a question (session-events plan.go). "" for a 409 with any other body, JSON or
  * not, and for a body that fails to read.
  */
 async function promptRefusal(res: Response): Promise<string> {
@@ -934,6 +934,10 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         } else if (refused === "permission-open") {
           // A tool permission prompt, whose menu an Enter would answer "Yes".
           opts.notify?.("Claude is asking to use a tool. Answer it first.", "warning");
+        } else if (refused === "question-open") {
+          // A question, whose menu an Enter would answer with the highlighted
+          // option. Once the card docks, Send answers it with these words.
+          opts.notify?.("Claude is asking a question. Send again to answer it from the card.", "warning");
         } else {
           opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
         }

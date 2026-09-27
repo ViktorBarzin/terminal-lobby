@@ -81,8 +81,8 @@ func TestPlanOpenReadsThePane(t *testing.T) {
 		// waiting for exactly this prompt.
 		{"plan-quoted-in-conversation.txt", false},
 		{"status-claude-idle.txt", false},
-		// A question does not refuse a prompt. Sending one while a question
-		// is up is allowed, and the composer says it dismisses the question.
+		// A question refuses a prompt too, but with a reason of its own
+		// (TestQuestionOpenRefusesAPrompt).
 		{"dialog-single.txt", false},
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -142,5 +142,66 @@ func TestThePlanRefusalSaysWhy(t *testing.T) {
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
 		t.Errorf("Content-Type = %q", ct)
+	}
+}
+
+// A question is the third screen a prompt must not reach. Injector.Prompt ends
+// with Enter, and on a question Enter picks the highlighted row: measured on
+// 0.78.0 on 2026-09-27, a prompt sent the moment the dialog drew answered
+// "Shape?" with Circle, which nobody chose, and the words were lost. The
+// Text view routes Send to POST /answer once its card docks, about 1.4 s after
+// the dialog draws, and a Send inside that window, or with the event stream
+// stalled, went here.
+func TestQuestionOpenRefusesAPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    string
+	}{
+		{"dialog-single.txt", questionOpenReason},
+		{"dialog-multi-second.txt", questionOpenReason},
+		{"dialog-narrow-footer.txt", questionOpenReason},
+		{"dialog-review-nofooter.txt", questionOpenReason},
+		{"dialog-review-tall-clipped.txt", questionOpenReason},
+		{"plan-first.txt", planOpenReason},
+		{"permission-bash.txt", permissionOpenReason},
+		{"status-claude-idle.txt", ""},
+		// The model picker draws the same widget and is no question.
+		{"picker-claude-model.txt", ""},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			rg, p := planEnv(t, capture(t, tc.fixture), answerUserLine)
+			if got := promptRefusal(rg, p, "wizard", "demo"); got != tc.want {
+				t.Errorf("refusal = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The net under the parse, as for the plan: a question whose top the pane has
+// cut off does not parse, and the hooks' marker naming the AskUserQuestion the
+// transcript holds open is the dialog on screen.
+func TestQuestionOpenFallsBackToTheMarkerAndTheTranscript(t *testing.T) {
+	unreadable := "❯ \n"
+	for _, tc := range []struct {
+		name  string
+		ask   string
+		lines []string
+		want  string
+	}{
+		{"the marker names the open question", "tu_1", []string{answerUserLine, answerAskLine}, questionOpenReason},
+		{"the question has its result", "tu_1", []string{answerUserLine, answerAskLine, answerResultLine}, ""},
+		{"no marker", "", []string{answerUserLine, answerAskLine}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rg, p := planEnv(t, unreadable, tc.lines...)
+			if tc.ask != "" {
+				if err := p.SetOption("wizard", "demo", sessionio.OptionAsk, tc.ask); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := promptRefusal(rg, p, "wizard", "demo"); got != tc.want {
+				t.Errorf("refusal = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
