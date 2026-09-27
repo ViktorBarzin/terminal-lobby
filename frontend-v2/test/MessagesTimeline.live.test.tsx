@@ -6,7 +6,9 @@
  * counts the calls done and the time so far ("Running sleep 6 && echo b · 2
  * done · 14s"). Before the first call a row in the same place says "Working…";
  * while Claude is stopped on the reader it says "Waiting for you" with a still
- * dot; while this device's plan answer clears the context it says so.
+ * dot, unless a docked card is what it waits on (the card says so, and the
+ * TextView tests cover that); while this device's plan answer clears the
+ * context it says so.
  *
  * One clock for the whole timeline, running only while a turn is open, and one
  * live indicator per open turn. A screen reader hears the kind of state

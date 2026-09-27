@@ -1328,6 +1328,7 @@ export const TextView: Component<{
           session={props.session}
           queued={queued()}
           planDocked={planDocked()?.call ?? null}
+          cardDocked={cardUp()}
           planAnswer={(() => {
             const a = planAnswered();
             return a ? { toolId: a.toolId, action: a.action } : null;

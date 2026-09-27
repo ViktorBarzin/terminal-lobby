@@ -189,9 +189,9 @@ describe("when the plan card docks", () => {
     expect(v.labels()).toEqual(PLAN_FIRST.options.map((o) => o.label));
     // The last row is the card's own field for the dialog's feedback row.
     expect(v.ownRow()?.textContent).toBe("Tell Claude what to change");
-    // The plan is on screen once: the row shrinks to its stub.
-    expect(v.row()!.getAttribute("data-docked")).toBe("true");
-    expect(v.row()!.textContent).toContain("shown below");
+    // The plan is on screen once, in the card: the conversation draws no row
+    // for it while the card is up (prototype 6-plan).
+    expect(v.row()).toBeNull();
   });
 
   it("reads 'Loading the plan…' while the transcript has no call yet", async () => {
@@ -315,7 +315,8 @@ describe("the transient after an applied answer", () => {
     // dialog the pane still draws is answerable again.
     await vi.advanceTimersByTimeAsync(10_500);
     expect(v.card()).not.toBeNull();
-    expect(v.row()!.getAttribute("data-outcome")).toBe("pending");
+    // Docked again, so the card holds the plan and the row waits for the record.
+    expect(v.row()).toBeNull();
   });
 });
 
@@ -335,8 +336,9 @@ describe("a refused option", () => {
     expect(v.card()!.textContent).toContain(
       "The Terminal now shows different choices. Pick again.",
     );
-    // Still docked, nothing transient, and the next tap names the new row.
-    expect(v.row()!.getAttribute("data-outcome")).toBe("pending");
+    // Still docked, so no row carries a transient, and the next tap names the
+    // new row.
+    expect(v.row()).toBeNull();
     v.option(1)!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(2));
     expect(onAnswer.mock.calls[1]![0]).toEqual({
@@ -644,17 +646,20 @@ describe("the model button while the card is docked", () => {
 });
 
 describe("the live group while the card is docked", () => {
-  it("reads 'Waiting for you' before the transcript has the call", async () => {
+  // The card is the one place that says Claude is waiting (prototype 6-plan):
+  // the conversation does not echo it with a "Waiting for you" row.
+  it("draws no waiting row before the transcript has the call", async () => {
     // The prompt opened a turn, so the transcript alone says Claude works.
     const v = mount([prompt(1), asking(2, PLAN_FIRST)]);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    expect(v.status()).toBe("Waiting for you");
+    expect(v.status()).toBeNull();
+    expect(v.container.querySelector(".tl-timeline")!.textContent).not.toContain("Waiting for you");
   });
 
-  it("reads 'Waiting for you' with the call pending, and moves on once answered", async () => {
+  it("draws no waiting row with the call pending, and moves on once answered", async () => {
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)]);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    expect(v.status()).toBe("Waiting for you");
+    expect(v.status()).toBeNull();
     v.option(2)!.click();
     await waitFor(() => expect(v.card()).toBeNull());
     v.setEvents([...v.events(), asking(4, ""), approved(5, "p1")]);

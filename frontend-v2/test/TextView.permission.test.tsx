@@ -68,7 +68,7 @@ function mount(
 }
 
 describe("the permission card", () => {
-  it("docks with the prompt's own rows, and the live group says Claude is waiting", async () => {
+  it("docks with the prompt's own rows, and the conversation does not echo it", async () => {
     const { r, card } = mount([
       ...base,
       ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
@@ -85,9 +85,10 @@ describe("the permission card", () => {
       "2Yes, and always allow access to /tmp/x from this project",
       "3No",
     ]);
-    const live = r.container.querySelector(".tl-timeline .tl-group-box[data-live]");
-    expect(live?.getAttribute("data-live")).toBe("waiting");
-    expect(live?.querySelector(".tl-group-sum")?.textContent).toBe("Waiting for you");
+    // The card says Claude is waiting; the group it interrupted reads settled,
+    // as prototype 6-permission draws it, and no "Waiting for you" row echoes it.
+    expect(r.container.querySelector(".tl-timeline .tl-group-box[data-live]")).toBeNull();
+    expect(r.container.querySelector(".tl-timeline")!.textContent).not.toContain("Waiting for you");
     expect(r.container.querySelector('.tl-composer .tl-send[data-kind="stop"]')).toBeNull();
   });
 

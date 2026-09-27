@@ -436,6 +436,18 @@ describe("a held call", () => {
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
   });
 
+  it("draws no row for the question while its card is up, and the record once answered", async () => {
+    // Prototype 6-question: the card asks, and the conversation does not echo
+    // it with an "answering below…" row.
+    const v = mount([ask("t1", [colour]), held([colour])]);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    expect(v.container.querySelector(".tl-row-question")).toBeNull();
+    expect(v.container.querySelector(".tl-timeline")!.textContent).not.toContain("answering below");
+    v.setEvents([...v.events(), held(null), result("t1")]);
+    await waitFor(() => expect(v.card()).toBeNull());
+    await waitFor(() => expect(v.container.querySelector(".tl-row-question")).not.toBeNull());
+  });
+
   it("collapses to one line and opens again", async () => {
     const v = mount([held([colour])]);
     await waitFor(() => expect(v.option("Red")).toBeTruthy());

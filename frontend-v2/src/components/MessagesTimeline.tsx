@@ -379,6 +379,14 @@ export const MessagesTimeline: Component<{
   /** The ExitPlanMode call whose plan the docked plan card is showing
    *  (decidePlanDock). Its row shrinks to one line meanwhile. */
   planDocked?: string | null;
+  /**
+   * A card Claude is waiting on has the composer's place (a question, a
+   * permission prompt or the plan). The card is then the one place that says
+   * so, as the prototype draws it: the live group reads settled rather than
+   * "Waiting for you", and the pending question or docked plan draws no row
+   * until it becomes the record.
+   */
+  cardDocked?: boolean;
   /** This client's plan answer, applied and not in the transcript yet, and the
    *  call it answered (shownPlanOutcome). */
   planAnswer?: { toolId: string; action: PlanTransient } | null;
@@ -691,14 +699,20 @@ export const MessagesTimeline: Component<{
     const live = props.live === undefined ? liveRow(all) : (props.live ?? undefined);
     return liveGroupState({ live, last, clearing: props.clearing });
   });
+  /** What the conversation draws of the live state: nothing while a docked
+   *  card is what Claude waits on, since the card says it. */
+  const shownLive = createMemo<LiveGroupState>(() => {
+    const s = liveState();
+    return props.cardDocked && s.kind === "waiting" ? { kind: "idle" } : s;
+  });
   /** The running group's key, which the group's view compares its own to. */
   const liveGroupKey = createMemo(() => {
-    const s = liveState();
+    const s = shownLive();
     return s.kind === "working" || s.kind === "waiting" ? s.groupKey : undefined;
   });
   /** The live state for a row of its own, when no running group carries it. */
   const liveRowState = createMemo((): LiveGroupState | undefined => {
-    const s = liveState();
+    const s = shownLive();
     if (s.kind === "idle") return undefined;
     if (s.kind !== "clearing" && s.groupKey !== undefined) return undefined;
     return s;
@@ -783,19 +797,28 @@ export const MessagesTimeline: Component<{
       case "todo":
         return <TodoRowView row={row() as TodoRow} />;
       case "question":
-        return <QuestionRowView row={row() as QuestionRow} />;
-      case "plan":
         return (
-          <PlanRowView
-            row={row() as PlanRow}
-            docked={props.planDocked != null && planToolId(row()) === props.planDocked}
-            transient={
-              props.planAnswer && props.planAnswer.toolId === planToolId(row())
-                ? props.planAnswer.action
-                : undefined
-            }
-          />
+          <Show when={!(props.cardDocked && (row() as QuestionRow).pending)}>
+            <QuestionRowView row={row() as QuestionRow} />
+          </Show>
         );
+      case "plan": {
+        const docked = (): boolean =>
+          props.planDocked != null && planToolId(row()) === props.planDocked;
+        return (
+          <Show when={!(props.cardDocked && docked() && (row() as PlanRow).pending)}>
+            <PlanRowView
+              row={row() as PlanRow}
+              docked={docked()}
+              transient={
+                props.planAnswer && props.planAnswer.toolId === planToolId(row())
+                  ? props.planAnswer.action
+                  : undefined
+              }
+            />
+          </Show>
+        );
+      }
       case "meta":
         return <MetaRowView row={row() as MetaRow} />;
       case "permission":
@@ -815,7 +838,7 @@ export const MessagesTimeline: Component<{
             onOpenPreview={props.onOpenPreview}
             onLoadFull={props.onLoadFull}
             renderChild={renderLeaf}
-            live={liveGroupKey() === row().key ? liveState() : undefined}
+            live={liveGroupKey() === row().key ? shownLive() : undefined}
             now={now()}
           />
         );
