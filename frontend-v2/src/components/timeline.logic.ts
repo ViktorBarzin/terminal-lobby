@@ -1497,18 +1497,28 @@ const DIALOG_KIND_PERMISSION = "permission";
  * call's result, or anything else Claude writes, means the prompt was
  * answered. A reading whose rows do not count up from 1 is refused whole,
  * because the card presses a row's number.
+ *
+ * "Since" is by the time each event was written, not by where it lands in the
+ * stream. The pane watcher and the transcript tail tick apart, so the reading
+ * can come in ahead of the transcript's record of the very call that raised
+ * the prompt (1 prompt in 6 on 2026-09-27). That record was written before the
+ * prompt was drawn, so it says nothing about whether it was answered. An event
+ * with no time on it is taken to be after.
  */
 export function permissionFromPane(events: Event[]): PermissionReading | null {
   let latest = "";
-  let at = 0;
+  let id = 0;
+  let readAt = 0;
   for (const e of events) {
     if (e.kind === "meta") {
       if (e.meta === "asking") {
         latest = e.body ?? "";
-        at = e.id;
+        id = e.id;
+        readAt = e.at ?? 0;
       }
       continue;
     }
+    if (e.at !== undefined && e.at <= readAt) continue;
     latest = "";
   }
   if (!latest) return null;
@@ -1530,7 +1540,7 @@ export function permissionFromPane(events: Event[]): PermissionReading | null {
   }
   if (options.length < 2) return null;
   return {
-    id: at,
+    id,
     title: typeof raw.title === "string" ? raw.title : "",
     detail: Array.isArray(raw.detail) ? raw.detail.filter((l): l is string => typeof l === "string") : [],
     prompt: typeof raw.prompt === "string" ? raw.prompt : "",
