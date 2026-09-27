@@ -216,6 +216,8 @@ export const PromptField: Component<{
   const [paths, setPaths] = createSignal<string[]>([]);
   const [picked, setPicked] = createSignal(0);
   let menuEl: HTMLDivElement | undefined;
+  /** The composer's outer box, held at its height while the field is measured. */
+  let boxEl: HTMLDivElement | undefined;
 
   /**
    * Follow the selection with the scroller.
@@ -256,12 +258,23 @@ export const PromptField: Component<{
    * Re-measured whenever the pinch size changes as well as on input: the height
    * is written in px at the moment of typing, so without that the text grows
    * inside a box that stays where it was.
+   *
+   * The composer's box holds its height while the field is set to auto. Left
+   * free, it collapsed with the field for one layout, the transcript above grew
+   * into the space, and the browser clamped the transcript's scroll position to
+   * the shorter maximum. Measured on 2026-09-27 on a phone with the keyboard
+   * up: each line the field grew left a reader at the live end 24px short of
+   * it, with the latest message behind the composer.
    */
   const autosize = () => {
     if (!ta) return;
+    const box = boxEl;
+    const held = box?.style.minHeight ?? "";
+    if (box) box.style.minHeight = `${box.offsetHeight}px`;
     ta.style.height = "auto";
     const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
     ta.style.height = Math.min(ta.scrollHeight + chrome, 200) + "px";
+    if (box) box.style.minHeight = held;
   };
 
   /**
@@ -941,7 +954,7 @@ export const PromptField: Component<{
           with an unbordered bar loose underneath it, which read as an input
           that had lost its buttons. The border and the fill live here now and
           the field goes transparent, so the whole thing is one control. */}
-      <div class="tl-composer-box">
+      <div class="tl-composer-box" ref={boxEl}>
         <div class="tl-composer-row">
           {/* The chip layer.
 

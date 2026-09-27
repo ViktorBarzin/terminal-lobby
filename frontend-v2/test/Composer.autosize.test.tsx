@@ -96,6 +96,47 @@ describe("the compose field fits its own text", () => {
   });
 });
 
+/**
+ * Measuring the field must not shrink the composer, even for one layout.
+ *
+ * Measured on 2026-09-27 on a phone with the keyboard up, reading at the live
+ * end: every line the field grew left the conversation 24px further behind the
+ * composer, with "Latest" showing. Setting `height: auto` to measure collapsed
+ * the field, and the composer with it, for one layout. The transcript above got
+ * taller for that moment, the browser clamped its scroll position to the
+ * shorter maximum, and the position it kept was short of the live end once the
+ * field grew back.
+ */
+describe("measuring the field holds the composer's height", () => {
+  it("keeps the composer box at its height while the field is set to auto", () => {
+    const { getByLabelText } = render(() => (
+      <Composer working={false} pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
+    ));
+    const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    const box = ta.closest<HTMLElement>(".tl-composer-box");
+    if (!box) throw new Error("no composer box");
+    Object.defineProperty(box, "offsetHeight", { configurable: true, get: () => 120 });
+    stubBox(ta, () => 24, () => 2);
+    // What the composer's box was held at whenever the field was collapsed.
+    const heldWhileCollapsed: string[] = [];
+    const scrollHeight = Object.getOwnPropertyDescriptor(ta, "scrollHeight")!.get!;
+    Object.defineProperty(ta, "scrollHeight", {
+      configurable: true,
+      get: () => {
+        if (ta.style.height === "auto") heldWhileCollapsed.push(box.style.minHeight);
+        return scrollHeight();
+      },
+    });
+
+    fireEvent.input(ta, { target: { value: "a first line\nand a second" } });
+
+    expect(heldWhileCollapsed.length, "the field was measured").toBeGreaterThan(0);
+    expect(heldWhileCollapsed.every((h) => h === "120px")).toBe(true);
+    expect(box.style.minHeight, "and let go once the field has its height").toBe("");
+    expect(parseFloat(ta.style.height)).toBe(2 * 24 + 18 + 2);
+  });
+});
+
 describe("the field does not draw a second box inside the composer's", () => {
   it("has no border of its own", async () => {
     const { readFileSync } = await import("node:fs");
