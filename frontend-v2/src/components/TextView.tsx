@@ -511,6 +511,9 @@ export const TextView: Component<{
     props.notify?.(why, "info");
     return true;
   };
+  /** The docked permission card's press, for a row number typed on the
+   *  keyboard (PermissionCard `register`). */
+  let pressPermissionRow: ((row: number) => boolean) | undefined;
   /** Press a permission row's number. */
   const pickPermission = async (n: number): Promise<boolean> => {
     if (refuseWatching()) return false;
@@ -1628,6 +1631,9 @@ export const TextView: Component<{
               reading={reading}
               onPick={pickPermission}
               inert={props.inertReason}
+              register={(press) => {
+                pressPermissionRow = press;
+              }}
               onTerminal={props.onOpenTerminal}
             />
           ) : null;
@@ -1698,6 +1704,7 @@ export const TextView: Component<{
         session={props.session}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
+        onPermissionDigit={(row) => (permission() ? (pressPermissionRow?.(row) ?? false) : false)}
         register={(api) => {
           sinks = api;
           setComposerSinks(api);

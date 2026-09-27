@@ -115,6 +115,42 @@ describe("the permission card", () => {
     await waitFor(() => expect(card()).toBeNull());
   });
 
+  /**
+   * The spec keeps "1 or 2 on an empty field answers a pending permission".
+   * Found in review on 2026-09-27: the digit went into the field, because the
+   * shortcut only knew the hook-fed list, which nothing fills in production.
+   * The card's rows carry the CLI's own numbers as keycaps, so a digit presses
+   * the row it names: 2 here is "always allow", not the old list's "deny".
+   */
+  it("presses the row a digit names on an empty field", async () => {
+    const { r, card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    const typed = fireEvent.keyDown(field, { key: "2" });
+    expect(typed).toBe(false); // the digit is not typed
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["2"]));
+    // The card is inert once a row went in, from the keyboard as from a tap.
+    fireEvent.keyDown(field, { key: "1" });
+    expect(onKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a digit to be typed when the field has text or the card has no such row", async () => {
+    const { r, card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(fireEvent.keyDown(field, { key: "7" })).toBe(true);
+    fireEvent.input(field, { target: { value: "row " } });
+    expect(fireEvent.keyDown(field, { key: "1" })).toBe(true);
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
   it("keeps the composer's text out of the prompt's menu", async () => {
     const { r, card, onSend, notify } = mount([
       ...base,

@@ -122,6 +122,8 @@ describe("a watching Text view", () => {
     await waitFor(() => expect(v.rows(".tl-permcard")).toHaveLength(3));
     for (const b of v.rows(".tl-permcard")) expect(b.disabled).toBe(true);
     fireEvent.click(v.rows(".tl-permcard")[2]!);
+    fireEvent.keyDown(v.field(), { key: "1" });
+    await waitFor(() => expect(v.notify).toHaveBeenCalledWith(WATCHING, "info"));
     expect(v.onKeys).not.toHaveBeenCalled();
   });
 

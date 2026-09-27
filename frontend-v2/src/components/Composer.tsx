@@ -162,6 +162,12 @@ export const Composer: Component<{
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
   /** Watching: the controls that type are inert, and so is attaching. */
   inertReason?: string;
+  /**
+   * The docked permission card's row for a digit typed into an empty field:
+   * true when the card has a row with that number and took the press. Absent
+   * while no card is docked.
+   */
+  onPermissionDigit?: (row: number) => boolean;
   /** Hand the session back to this device, from the line's watching state. */
   onTakeControl?: () => void;
   /** Hand the caller the sinks a message can be filled from OUTSIDE this
@@ -169,10 +175,22 @@ export const Composer: Component<{
   register?: (api: ComposerSinks) => void;
 }> = (props) => {
   /**
-   * 1 approves the oldest pending permission, 2 denies it — but only on an
-   * empty field, and only when there IS one, so the digits stay typable.
+   * A digit on an empty field answers a pending permission, and only when
+   * there IS one, so the digits stay typable.
+   *
+   * The docked card comes first: its rows are the CLI's own, drawn with their
+   * numbers as keycaps, so a digit presses the row it names. What row 2 means
+   * changes with the prompt ("always allow", "switch to auto mode"), which is
+   * why the card's numbers are used rather than a fixed meaning. Found in
+   * review on 2026-09-27: the shortcut only read the hook-fed list below,
+   * which nothing fills in production, so the digit went into the field.
+   *
+   * The hook-fed list keeps its own rule: 1 approves the oldest request, 2
+   * denies it.
    */
   const onEmptyDigit = (digit: string): boolean => {
+    if (props.onPermissionDigit?.(Number(digit))) return true;
+    if (digit !== "1" && digit !== "2") return false;
     const p = props.pending[0];
     if (!p) return false;
     props.onResolve(p.reqId, digit === "1" ? "allow" : "deny");

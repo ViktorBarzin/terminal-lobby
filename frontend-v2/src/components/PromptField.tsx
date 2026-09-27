@@ -151,9 +151,9 @@ export const PromptField: Component<{
   /** Cycle the permission mode (Shift+Tab in the CLI). */
   onCycleMode?: () => void;
   /**
-   * A digit typed into an EMPTY field. Return true when it was consumed — the
-   * live composer's number-key permission affordance (1 approves, 2 denies) is
-   * the only caller, and returning false leaves the digit to be typed.
+   * A digit 1-9 typed into an EMPTY field. Return true when it was consumed —
+   * the composer's number-key permission affordance is the only caller, and
+   * returning false leaves the digit to be typed.
    */
   onEmptyDigit?: (digit: string) => boolean;
   /**
@@ -850,9 +850,9 @@ export const PromptField: Component<{
       }
     }
 
-    // A digit on an empty field, offered to the caller (the live composer's
-    // 1-approves / 2-denies affordance) before it is treated as typing.
-    if (empty && (e.key === "1" || e.key === "2") && props.onEmptyDigit?.(e.key)) {
+    // A digit on an empty field, offered to the caller (the composer's
+    // permission affordance) before it is treated as typing.
+    if (empty && /^[1-9]$/.test(e.key) && props.onEmptyDigit?.(e.key)) {
       e.preventDefault();
       return;
     }
