@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -171,6 +172,21 @@ func TestPromptCanWaitForThePaneToBeReady(t *testing.T) {
 	}
 	if f.prompted != "hello" {
 		t.Fatalf("prompted %q", f.prompted)
+	}
+}
+
+// A prompt the pane kept on its input line did not reach Claude, so the sender
+// is told so, by name, and nothing records it as sent (sessionio.Prompt
+// confirms the Enter; measured 2026-09-27, a send answered OK while its text
+// sat unsubmitted).
+func TestAPromptLeftOnTheInputLineIsNotReportedAsSent(t *testing.T) {
+	f := &fakeTurns{promptErr: fmt.Errorf("wrapped: %w", sessionio.ErrPromptNotSubmitted)}
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`)
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status %d, want 502", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "not submitted") {
+		t.Fatalf("body %q, want it to say the prompt was not submitted", rec.Body.String())
 	}
 }
 

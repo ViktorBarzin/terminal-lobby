@@ -253,11 +253,13 @@ func (in *Injector) setCodexModel(ctx context.Context, osUser, session string, w
 }
 
 // openPicker types the command that opens a picker and waits for the screen it
-// names. The command goes through Prompt — a bracketed paste rather than typed
+// names. The command is pasted the way Prompt pastes, a bracketed paste rather than typed
 // keystrokes — which is also what keeps codex's slash-command popup out of the
-// way: typed, `/model` raises a completion list that eats the first Enter.
+// way: typed, `/model` raises a completion list that eats the first Enter. It
+// takes one Enter and no more (promptUnconfirmed): the picker it opens saves
+// the account default on Enter.
 func (in *Injector) openPicker(ctx context.Context, osUser, session, command, screen string) error {
-	if err := in.Prompt(osUser, session, command); err != nil {
+	if err := in.promptUnconfirmed(osUser, session, command); err != nil {
 		return fmt.Errorf("opening %s: %w", command, err)
 	}
 	return in.awaitPane(ctx, osUser, session, screen)

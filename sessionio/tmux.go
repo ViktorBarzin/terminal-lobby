@@ -268,8 +268,24 @@ func exactSession(session string) string { return "=" + session }
 // behind. Going to the end first makes the kill total. In a plain shell the
 // C-e is a literal control character in the line buffer, which the C-u then
 // erases along with everything else.
+//
+// The Enter is confirmed: Prompt reads Claude Code's input box back and
+// presses Enter again while the text is still sitting there, and answers
+// ErrPromptNotSubmitted if it never leaves (pasteAndSubmit).
 func (in *Injector) Prompt(osUser, session, text string) error {
-	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run(); err != nil {
+	if err := in.clearInput(osUser, session); err != nil {
+		return err
+	}
+	return in.pasteAndSubmit(osUser, session, text)
+}
+
+// promptUnconfirmed is Prompt with a single, unchecked Enter, for a command
+// whose submit opens a screen of its own. openPicker is the caller: a second
+// Enter that reached the model picker would save the account default, which
+// the driver must never do, so a lost Enter there is left to the picker wait
+// to report.
+func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
+	if err := in.clearInput(osUser, session); err != nil {
 		return err
 	}
 	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
@@ -279,7 +295,12 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
 		return err
 	}
-	return in.Command(osUser, "send-keys", "-t", exactPane(session), "Enter").Run()
+	return in.enter(osUser, session)
+}
+
+// clearInput is the C-e C-u prelude Prompt's comment explains.
+func (in *Injector) clearInput(osUser, session string) error {
+	return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 }
 
 // PromptUncleared is Prompt without the C-e C-u prelude, for a pane that has
@@ -297,15 +318,10 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // pane that has never drawn a prompt has no input line to clear. Callers that
 // know the pane is live must keep using Prompt, or they reintroduce the
 // concatenation bug its prelude exists to prevent.
+//
+// The Enter is confirmed the same way Prompt's is.
 func (in *Injector) PromptUncleared(osUser, session, text string) error {
-	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
-		return err
-	}
-	// -p = bracketed paste, -d = delete the buffer afterwards.
-	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
-		return err
-	}
-	return in.Command(osUser, "send-keys", "-t", exactPane(session), "Enter").Run()
+	return in.pasteAndSubmit(osUser, session, text)
 }
 
 // Cancel sends Ctrl-C (interrupt) to the session, then re-derives

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -122,6 +123,13 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			return
 		}
 		if err := drv.Prompt(osUser, session, body.Text); err != nil {
+			// The paste landed and no Enter took it: the text is on Claude's
+			// input line, unsent. Said by name so the sender keeps its text
+			// rather than reading a generic failure as a transport problem.
+			if errors.Is(err, sessionio.ErrPromptNotSubmitted) {
+				http.Error(w, "prompt not submitted: it is still on the session's input line", http.StatusBadGateway)
+				return
+			}
 			http.Error(w, "inject failed", http.StatusBadGateway)
 			return
 		}
