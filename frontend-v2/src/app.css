@@ -6162,6 +6162,17 @@ body.tl-kb-up {
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
 }
+/* What the tool will do, from the permission prompt (PermissionCard): four
+   lines, then it scrolls, so a Write's file cannot push the rows off the card. */
+.tl-permcard-detail {
+  max-height: calc(12px * 1.4 * 4 * var(--tl-text-scale, 1));
+  margin: 0 0 6px;
+  overflow: auto;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .tl-plancard-flight {
   grid-column: 2;
   color: var(--text-muted);

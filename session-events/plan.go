@@ -25,9 +25,10 @@ import (
 //
 // THIS IS NOT THE TURN GATE gate_test.go keeps out of the route. That gate
 // refused prompts while Claude worked, and a mid-turn prompt belongs in
-// Claude's own queue. This refuses exactly one screen, on which a prompt is not
-// queued at all but typed into a menu. A question on the pane does not refuse
-// a prompt, and neither does a running turn.
+// Claude's own queue. This refuses the screens on which a prompt is not queued
+// at all but typed into a menu: the plan approval, and since 2026-09-27 the
+// tool permission prompt (reason permission-open). A question on the pane does
+// not refuse a prompt, and neither does a running turn.
 
 // planPane is what the guard reads: the pane, and the options the hooks stamp.
 // An interface so the guard is tested without tmux; production passes the
@@ -40,7 +41,8 @@ type planPane interface {
 // exitPlanTool is the tool whose dialog is the plan approval.
 const exitPlanTool = "ExitPlanMode"
 
-// planOpen reports whether the plan approval is up on the session's pane.
+// promptRefusal reports whether the plan approval, or a tool permission
+// prompt, is up on the session's pane.
 //
 // TWO READINGS, EITHER ENOUGH. The first is the pane parsed, which is what
 // the contract names and what every measured layout satisfies: both
@@ -58,16 +60,32 @@ const exitPlanTool = "ExitPlanMode"
 // A pane that cannot be read falls through to the net and then lets the
 // prompt go. Prompt itself fails on a session that is gone, and refusing
 // every prompt whenever tmux hiccups would be a worse trade than the net.
-func planOpen(rg *registry, p planPane, osUser, session string) bool {
-	if pane, err := p.CapturePane(osUser, session); err == nil && sessionio.ParsePlanDialog(pane) != nil {
-		return true
+//
+// The same capture answers for the tool permission prompt, the other screen a
+// prompt must not reach (sessionio/permdialog.go): a paste lands on its menu, a
+// digit in the text picks a row, and the Enter picks the highlighted one, which
+// is "Yes". It has no net under it. Its dialog draws no marker the hooks stamp,
+// and a restyled one leaves a prompt going through, as every prompt did before
+// 2026-09-27.
+//
+// It names the screen, as the reason the refusal carries, or "".
+func promptRefusal(rg *registry, p planPane, osUser, session string) string {
+	if pane, err := p.CapturePane(osUser, session); err == nil {
+		if sessionio.ParsePlanDialog(pane) != nil {
+			return planOpenReason
+		}
+		if sessionio.ParsePermissionDialog(pane) != nil {
+			return permissionOpenReason
+		}
 	}
 	ask, _ := p.Option(osUser, session, sessionio.OptionAsk)
 	if ask == "" {
-		return false
+		return ""
 	}
-	fs, ok := rg.source(osUser, session)
-	return ok && pendingPlan(fs) == ask
+	if fs, ok := rg.source(osUser, session); ok && pendingPlan(fs) == ask {
+		return planOpenReason
+	}
+	return ""
 }
 
 // pendingPlan is the tool id of the newest ExitPlanMode whose result has not
@@ -87,21 +105,24 @@ func pendingPlan(fs *sessionio.FileSource) string {
 	return id
 }
 
-// planOpenReason is the refusal's reason, as the client matches it.
-const planOpenReason = "plan-open"
+// The refusal's reasons, as the client matches them.
+const (
+	planOpenReason       = "plan-open"
+	permissionOpenReason = "permission-open"
+)
 
-// writePlanOpen is the refusal: 409, in the shape the answer routes use.
+// writePromptRefusal is the refusal: 409, in the shape the answer routes use.
 //
 // Not a 2xx: a client from before the plan card counts a 2xx as sent and clears
 // its field, and on anything else it keeps the text and says the send failed
 // (frontend-v2 store/session.ts send).
-func writePlanOpen(w http.ResponseWriter) {
+func writePromptRefusal(w http.ResponseWriter, reason string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusConflict)
 	if err := json.NewEncoder(w).Encode(struct {
 		Applied bool   `json:"applied"`
 		Reason  string `json:"reason"`
-	}{false, planOpenReason}); err != nil {
-		log.Printf("writePlanOpen: %v", err)
+	}{false, reason}); err != nil {
+		log.Printf("writePromptRefusal: %v", err)
 	}
 }

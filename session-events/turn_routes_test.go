@@ -206,7 +206,7 @@ func TestWaitingIsOptIn(t *testing.T) {
 // not come back by reflex: a prompt that arrives mid-turn belongs in Claude's
 // own queue, and a 409 loses it. The driver POST /prompt is handed cannot even
 // read the turn state; a drawn question does not stop it either. The plan guard
-// reads OptionAsk, but only to name the plan approval (plan.go planOpen), so a
+// reads OptionAsk, but only to name the plan approval (plan.go promptRefusal), so a
 // question that is not a plan refuses nothing.
 func TestPromptDoesNotGateOnTheTurnState(t *testing.T) {
 	f := &fakeTurns{state: sessionio.StateRunning, options: map[string]string{sessionio.OptionAsk: "toolu_1"}}
@@ -232,6 +232,23 @@ func TestPromptRefusesWhileThePlanIsOpen(t *testing.T) {
 	}
 	if f.called("Prompt") {
 		t.Fatal("a prompt was typed into the plan approval")
+	}
+}
+
+// A tool permission prompt is the same kind of screen: a paste lands on its
+// menu, a digit in the text picks a row, and the Enter picks the highlighted
+// one, which is "Yes". So it refuses the same way, with a reason of its own.
+func TestPromptRefusesWhileAPermissionPromptIsOpen(t *testing.T) {
+	f := &fakeTurns{pane: capture(t, "permission-bash.txt")}
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"actually, don't"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 while the permission prompt is drawn", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"permission-open"}` {
+		t.Errorf("body = %s", got)
+	}
+	if f.called("Prompt") {
+		t.Fatal("a prompt was typed into the permission prompt")
 	}
 }
 

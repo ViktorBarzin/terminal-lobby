@@ -1,0 +1,40 @@
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝   ⛁ Messages: 10 tokens (0.0%)
+                                               ⛶ Free space: 926.1k (92.6%)
+                                               ⛝ Autocompact buffer: 33k tokens (3.3%)
+
+     Auto-compact window: 1m tokens
+
+     MCP tools · /mcp (loaded on-demand)
+     └ 23 tools · 0 tokens
+
+     Memory files · /memory
+     └ 2 files · 14.9k tokens
+
+     Skills · /skills
+     └ 37 skills · 4.9k tokens
+
+     /context all to expand
+
+● Unknown command: /zzqa
+
+● Args from unknown skill: hello
+
+❯ Use the Bash tool to run exactly: printf 'hi\n' > a.txt
+
+  Writing "hi" to a.txt
+  ⎿  $ printf 'hi\n' > a.txt
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+
+   printf 'hi\n' > a.txt
+   Write "hi" to a.txt
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, and always allow access to /var/tmp/quiet-line-fix/proj from this project
+   3. Yes, and switch to auto mode · auto mode handles these prompts for you
+   4. No
+
+ Esc to cancel · Tab to amend

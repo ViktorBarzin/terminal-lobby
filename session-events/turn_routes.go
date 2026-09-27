@@ -31,7 +31,7 @@ type promptDriver interface {
 	PiTrustPending(osUser, session string) bool
 	Option(osUser, session, name string) (string, bool)
 	Prompt(osUser, session, text string) error
-	// CapturePane is for the plan guard (plan.go planOpen), which reads the
+	// CapturePane is for the plan guard (plan.go promptRefusal), which reads the
 	// pane for the plan approval and nothing else.
 	CapturePane(osUser, session string) (string, error)
 }
@@ -116,11 +116,14 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 		// Enter at its end would select the menu's highlighted row, which
 		// approves the plan (plan.go). The Text view sends feedback there
 		// through POST /answer instead; this refuses everything else, with the
-		// reason, so the sender keeps its text. Claude Code draws the dialog,
-		// so a pi session is not read for it.
-		if !pi && planOpen(rg, drv, osUser, session) {
-			writePlanOpen(w)
-			return
+		// reason, so the sender keeps its text. A tool permission prompt is
+		// refused the same way. Claude Code draws both, so a pi session is not
+		// read for them.
+		if !pi {
+			if reason := promptRefusal(rg, drv, osUser, session); reason != "" {
+				writePromptRefusal(w, reason)
+				return
+			}
 		}
 		if err := drv.Prompt(osUser, session, body.Text); err != nil {
 			// The paste landed and no Enter took it: the text is on Claude's

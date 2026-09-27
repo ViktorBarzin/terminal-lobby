@@ -72,6 +72,17 @@ describe("session store: prompt refused while the plan approval is up", () => {
     expect(notes[0]?.msg).not.toMatch(/couldn't send/i);
   });
 
+  it("keeps the text and says Claude is asking to use a tool", async () => {
+    // A tool permission prompt refuses a prompt the same way (2026-09-27).
+    g.fetch = respond(409, '{"applied":false,"reason":"permission-open"}\n', "application/json");
+    const { ok, notes, pending } = await sendOnce("actually, don't");
+    expect(ok).toBe(false);
+    expect(pending).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.kind).toBe("warning");
+    expect(notes[0]?.msg).toMatch(/asking to use a tool/i);
+  });
+
   it("treats a plain-text 409 as any other failed send", async () => {
     g.fetch = respond(409, "conflict\n", "text/plain");
     const { ok, notes, pending } = await sendOnce("hi");

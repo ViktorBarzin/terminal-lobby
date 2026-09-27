@@ -1,0 +1,40 @@
+
+     /context all to expand
+
+● Unknown command: /zzqa
+
+● Args from unknown skill: hello
+
+❯ Use the Bash tool to run exactly: printf 'hi\n' > a.txt
+
+  Ran 1 shell command
+
+● I ran the command and it finished without errors, so a.txt in /var/tmp/quiet-line-fix/proj should now contain the
+  single line hi. I didn't open the file to check.
+
+✻ Sautéed for 7s · done 2:01 AM
+
+❯ Use the Read tool to read /etc/hostname
+
+  Read 1 file
+
+● /etc/hostname contains one line: devvm.
+
+✻ Brewed for 6s · done 2:02 AM
+
+❯ Use the Write tool to create b.txt containing the word bee
+
+● Write(b.txt)
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Create file
+ b.txt
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+  1 bee
+╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
+ Do you want to create b.txt?
+ ❯ 1. Yes
+   2. Yes, and switch to accept edits (auto-approve file edits and common file commands) for this session (shift+tab)
+   3. No
+
+ Esc to cancel · Tab to amend

@@ -389,7 +389,7 @@ func (rg *registry) watchPanes() {
 }
 
 // paneDialog is the blocking dialog a pane shows: Claude Code's plan approval,
-// or an AskUserQuestion, or nil.
+// a tool permission prompt, or an AskUserQuestion, or nil.
 //
 // THE PLAN APPROVAL IS ASKED FIRST, and not for speed. Since 2026-09-24 the
 // Text view answers it too (sessionio/plandialog.go), and the watcher is what
@@ -408,6 +408,11 @@ func (rg *registry) watchPanes() {
 // had for this dialog before.
 func paneDialog(pane string) *sessionio.Dialog {
 	if d := sessionio.ParsePlanDialog(pane); d != nil {
+		return d
+	}
+	// A tool permission prompt is anchored the same way, footer last, and its
+	// footer is not the select widget's, so the two cannot both match.
+	if d := sessionio.ParsePermissionDialog(pane); d != nil {
 		return d
 	}
 	return sessionio.ParseDialog(pane)

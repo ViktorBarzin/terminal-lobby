@@ -66,6 +66,17 @@ type Dialog struct {
 	// PlanPath is the plan file the footer names, "~/.claude/plans/<slug>.md",
 	// empty when the footer names none.
 	PlanPath string `json:"planPath,omitempty"`
+
+	// The tool permission prompt's own reading, set only when Kind is
+	// DialogKindPermission (permdialog.go). Its rows are in Options, numbered
+	// as drawn, since a digit is what picks one.
+	//
+	// Title is the prompt's first line ("Bash command", "Read file"), Detail
+	// what the tool will do as drawn under it, and Prompt the question over
+	// the rows ("Do you want to proceed?").
+	Title  string   `json:"title,omitempty"`
+	Detail []string `json:"detail,omitempty"`
+	Prompt string   `json:"prompt,omitempty"`
 }
 
 // DialogQuestion mirrors one question of an AskUserQuestion call.

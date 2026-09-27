@@ -1072,6 +1072,10 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
   // askingFromPane). The answer card already docks off this reading, so the
   // row above it has to agree with it.
   const paneAsking = !live && !waitingFor && askingFromPane(turn.events) !== null;
+  // A tool permission prompt holds the call it is about in flight, so it
+  // waits with `live` set: the call has not run, and will not until somebody
+  // answers (permissionFromPane).
+  const panePermission = permissionFromPane(turn.events) !== null;
   const anchor = waitingFor?.at ?? live?.at;
   return {
     kind: "working",
@@ -1081,7 +1085,7 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
     ...(turn.events[0]?.at !== undefined ? { startedAt: turn.events[0]!.at } : {}),
     ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
     ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
-    ...(waitingFor || paneAsking ? { waiting: true } : {}),
+    ...(waitingFor || paneAsking || panePermission ? { waiting: true } : {}),
   };
 }
 
@@ -1480,6 +1484,73 @@ export function askingFromPane(events: Event[]): PaneAsking | null {
 
 /** `DialogView.kind` on a plan reading (sessionio DialogKindPlan). */
 const DIALOG_KIND_PLAN = "plan";
+
+/** `DialogView.kind` on a tool permission reading (sessionio DialogKindPermission). */
+const DIALOG_KIND_PERMISSION = "permission";
+
+/**
+ * The tool permission prompt the PANE is showing, or null.
+ *
+ * The transcript holds the tool call and nothing about the prompt, so the pane
+ * is the only source (sessionio permdialog.go). The newest reading wins, and
+ * only while nothing has happened since, the rule askingFromPane follows: the
+ * call's result, or anything else Claude writes, means the prompt was
+ * answered. A reading whose rows do not count up from 1 is refused whole,
+ * because the card presses a row's number.
+ */
+export function permissionFromPane(events: Event[]): PermissionReading | null {
+  let latest = "";
+  let at = 0;
+  for (const e of events) {
+    if (e.kind === "meta") {
+      if (e.meta === "asking") {
+        latest = e.body ?? "";
+        at = e.id;
+      }
+      continue;
+    }
+    latest = "";
+  }
+  if (!latest) return null;
+  const raw = parseJSON(latest) as {
+    kind?: unknown;
+    title?: unknown;
+    detail?: unknown;
+    prompt?: unknown;
+    options?: unknown;
+  } | null;
+  if (!raw || raw.kind !== DIALOG_KIND_PERMISSION || !Array.isArray(raw.options)) return null;
+  const options: PlanOptionView[] = [];
+  for (const item of raw.options as unknown[]) {
+    const opt = item as { number?: unknown; label?: unknown } | null;
+    if (!opt || opt.number !== options.length + 1 || typeof opt.label !== "string" || !opt.label) {
+      return null;
+    }
+    options.push({ number: opt.number, label: opt.label });
+  }
+  if (options.length < 2) return null;
+  return {
+    id: at,
+    title: typeof raw.title === "string" ? raw.title : "",
+    detail: Array.isArray(raw.detail) ? raw.detail.filter((l): l is string => typeof l === "string") : [],
+    prompt: typeof raw.prompt === "string" ? raw.prompt : "",
+    options,
+  };
+}
+
+/** A tool permission prompt as the pane shows it (see permissionFromPane). */
+export interface PermissionReading {
+  /** The `asking` event this reading came in, which tells one prompt from the next. */
+  id: number;
+  /** The prompt's first line, "Bash command" or "Read file". */
+  title: string;
+  /** What the tool will do, as drawn under the title. */
+  detail: string[];
+  /** The question over the rows, "Do you want to proceed?". */
+  prompt: string;
+  /** The rows, numbered from 1, labels exactly as drawn. */
+  options: PlanOptionView[];
+}
 
 /**
  * Claude Code's plan approval as the pane draws it, or null when `reading` is

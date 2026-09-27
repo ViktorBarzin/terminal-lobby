@@ -100,8 +100,9 @@ export interface PlanOptionView {
  * which is what the pane is actually drawing.
  */
 export interface DialogView {
-  /** "plan" for the plan approval, absent for an AskUserQuestion. */
-  kind?: "plan";
+  /** "plan" for the plan approval, "permission" for a tool permission prompt,
+   *  absent for an AskUserQuestion. */
+  kind?: "plan" | "permission";
   questions?: DialogQuestionView[];
   headers?: string[];
   count?: number;
@@ -117,6 +118,12 @@ export interface DialogView {
   feedbackRow?: number;
   /** The plan file the footer names, "~/.claude/plans/<slug>.md". */
   planPath?: string;
+  /** A permission prompt's first line, "Bash command" (sessionio permdialog.go). */
+  title?: string;
+  /** What the tool will do, as the permission prompt draws it. */
+  detail?: string[];
+  /** The permission prompt's question, "Do you want to proceed?". */
+  prompt?: string;
 }
 
 /**

@@ -281,19 +281,20 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
 }
 
 /**
- * Is this the prompt guard's refusal: 409 with `{"applied": false, "reason":
- * "plan-open"}` (session-events plan.go)? A 409 with any other body, JSON or
- * not, is not, and neither is a body that fails to read.
+ * The prompt guard's reason, when this is its refusal: 409 with `{"applied":
+ * false, "reason": "plan-open"}`, or "permission-open" for a tool permission
+ * prompt (session-events plan.go). "" for a 409 with any other body, JSON or
+ * not, and for a body that fails to read.
  */
-async function isPlanOpenRefusal(res: Response): Promise<boolean> {
-  if (res.status !== 409) return false;
+async function promptRefusal(res: Response): Promise<string> {
+  if (res.status !== 409) return "";
   try {
     const body: unknown = await res.json();
-    return (
-      typeof body === "object" && body !== null && "reason" in body && body.reason === "plan-open"
-    );
+    return typeof body === "object" && body !== null && "reason" in body && typeof body.reason === "string"
+      ? body.reason
+      : "";
   } catch {
-    return false;
+    return "";
   }
 }
 
@@ -927,8 +928,12 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         // answered 409 was removed on 2026-08-15, so any other refusal (400 for
         // an empty body, 502 for a failed injection) means one thing to a
         // reader: it did not land.
-        if (await isPlanOpenRefusal(res)) {
+        const refused = await promptRefusal(res);
+        if (refused === "plan-open") {
           opts.notify?.("The plan approval is up. The message box answers it now.", "warning");
+        } else if (refused === "permission-open") {
+          // A tool permission prompt, whose menu an Enter would answer "Yes".
+          opts.notify?.("Claude is asking to use a tool. Answer it first.", "warning");
         } else {
           opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
         }

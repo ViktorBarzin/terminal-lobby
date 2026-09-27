@@ -651,6 +651,58 @@ func TestRegistryPublishesThePlanApproval(t *testing.T) {
 	}
 }
 
+// A tool permission prompt is published the same way, as its own kind. The
+// capture is a real Bash prompt from CLI 2.1.283 in manual mode. Until
+// 2026-09-27 nothing read it, and the Text view said "Working" with Stop over a
+// session waiting on a person.
+func TestRegistryPublishesThePermissionPrompt(t *testing.T) {
+	const (
+		osUser = "wizard"
+		cwd    = "/home/wizard/qa"
+		tmux   = "qa-permission"
+	)
+	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "permission-bash.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	homeBase := t.TempDir()
+	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-PERMISSION")
+	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
+	rg.panes = &fakePane{text: string(raw)}
+	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
+	fs, ok := rg.source(osUser, tmux)
+	if !ok {
+		t.Fatal("session does not resolve")
+	}
+	waitForMarker(t, fs, "MARKER-PERMISSION")
+	ch, release := fs.Subscribe()
+	defer release()
+	go func() {
+		for range ch {
+		}
+	}()
+
+	rg.watchPanes()
+
+	body := ""
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
+			body = e.Body
+		}
+	}
+	var got sessionio.Dialog
+	if err := json.Unmarshal([]byte(body), &got); err != nil {
+		t.Fatalf("the permission prompt was not reported (%v): %q", err, body)
+	}
+	if got.Kind != sessionio.DialogKindPermission || got.Title != "Bash command" || len(got.Options) != 4 {
+		t.Fatalf("asking event = %s", body)
+	}
+}
+
 // Answering in the terminal ENDS the turn, and a watcher that only looks at
 // working sessions would stop looking at exactly that moment — leaving the last
 // reading, the one with the dialog in it, standing for good. Measured in the

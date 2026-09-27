@@ -34,7 +34,7 @@ const (
 		`"uuid":"p2","timestamp":"2026-09-24T07:21:09Z"}`
 )
 
-// guardPane is the pane and the hooks' options, as planOpen reads them.
+// guardPane is the pane and the hooks' options, as promptRefusal reads them.
 type guardPane struct {
 	*fakePane
 	*siotest.FakeOptions
@@ -87,8 +87,8 @@ func TestPlanOpenReadsThePane(t *testing.T) {
 	} {
 		t.Run(tc.fixture, func(t *testing.T) {
 			rg, p := planEnv(t, capture(t, tc.fixture), answerUserLine)
-			if got := planOpen(rg, p, "wizard", "demo"); got != tc.open {
-				t.Errorf("planOpen = %v, want %v", got, tc.open)
+			if got := promptRefusal(rg, p, "wizard", "demo") == planOpenReason; got != tc.open {
+				t.Errorf("plan open = %v, want %v", got, tc.open)
 			}
 		})
 	}
@@ -121,8 +121,8 @@ func TestPlanOpenFallsBackToTheMarkerAndTheTranscript(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if got := planOpen(rg, p, "wizard", "demo"); got != tc.open {
-				t.Errorf("planOpen = %v, want %v", got, tc.open)
+			if got := promptRefusal(rg, p, "wizard", "demo") == planOpenReason; got != tc.open {
+				t.Errorf("plan open = %v, want %v", got, tc.open)
 			}
 		})
 	}
@@ -133,7 +133,7 @@ func TestPlanOpenFallsBackToTheMarkerAndTheTranscript(t *testing.T) {
 // field, and the contract is that the text comes back.
 func TestThePlanRefusalSaysWhy(t *testing.T) {
 	rec := httptest.NewRecorder()
-	writePlanOpen(rec)
+	writePromptRefusal(rec, planOpenReason)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("status %d, want 409", rec.Code)
 	}

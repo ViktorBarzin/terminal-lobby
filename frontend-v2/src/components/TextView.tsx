@@ -20,6 +20,7 @@ import type {
 } from "../types/events";
 import {
   askingFromPane,
+  permissionFromPane,
   currentMode,
   currentModel,
   deriveRows,
@@ -54,6 +55,7 @@ import {
 import type { Question } from "./canonicalize";
 import { QuestionCard, type TypedAnswer } from "./QuestionCard";
 import { PlanCard } from "./PlanCard";
+import { PermissionCard } from "./PermissionCard";
 import {
   decidePlanDock,
   planDockFacts,
@@ -498,6 +500,14 @@ export const TextView: Component<{
    * registry.watchPanes).
    */
   const fromPane = createMemo(() => askingFromPane(props.events));
+  /** The tool permission prompt on the pane, answered by its own card. */
+  const permission = createMemo(() => permissionFromPane(props.events));
+  /** Press a permission row's number. */
+  const pickPermission = async (n: number): Promise<boolean> => {
+    const ok = (await props.onKeys?.([String(n)])) ?? false;
+    if (!ok) props.notify?.("Couldn't answer Claude's prompt. Answer it in the Terminal.", "error");
+    return ok;
+  };
   /**
    * The watcher's current reading, as one comparable string.
    *
@@ -1049,6 +1059,12 @@ export const TextView: Component<{
    * keeps the words in the field (a false return) and says why.
    */
   const send = async (text: string): Promise<boolean> => {
+    // A permission prompt's menu takes keys, not a prompt: its Enter picks
+    // the highlighted row, "Yes". The words stay in the field.
+    if (permission()) {
+      props.notify?.("Claude is asking to use a tool. Answer it from the card first.", "warning");
+      return false;
+    }
     if (!asking() || !props.onAnswer || !typedAnswer) return props.onSend(text);
     const words = text.replace(/\s*\n\s*/g, " ").trim();
     const answer = typedAnswer(words);
@@ -1576,6 +1592,16 @@ export const TextView: Component<{
             }}
           />
         )}
+      </Show>
+      {/* The tool permission prompt docks there too, keyed on the reading so
+          each prompt gets a card of its own (PermissionCard says why). */}
+      <Show when={props.onKeys ? (permission()?.id ?? 0) : 0} keyed>
+        {(_prompt) => {
+          const reading = permission();
+          return reading ? (
+            <PermissionCard reading={reading} onPick={pickPermission} onTerminal={props.onOpenTerminal} />
+          ) : null;
+        }}
       </Show>
       {/* The plan approval docks in the same place. It holds no state of its
           own that belongs to one dialog, beyond whether the plan is shown in

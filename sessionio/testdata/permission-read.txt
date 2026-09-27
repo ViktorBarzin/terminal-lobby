@@ -1,0 +1,40 @@
+     MCP tools · /mcp (loaded on-demand)
+     └ 23 tools · 0 tokens
+
+     Memory files · /memory
+     └ 2 files · 14.9k tokens
+
+     Skills · /skills
+     └ 37 skills · 4.9k tokens
+
+     /context all to expand
+
+● Unknown command: /zzqa
+
+● Args from unknown skill: hello
+
+❯ Use the Bash tool to run exactly: printf 'hi\n' > a.txt
+
+  Ran 1 shell command
+
+● I ran the command and it finished without errors, so a.txt in /var/tmp/quiet-line-fix/proj should now contain the
+  single line hi. I didn't open the file to check.
+
+✻ Sautéed for 7s · done 2:01 AM
+
+❯ Use the Read tool to read /etc/hostname
+
+● Reading /etc/hostname
+  ⎿  /etc/hostname
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Read file
+
+  Read(/etc/hostname)
+
+ Do you want to proceed?
+ ❯ 1. Yes
+   2. Yes, allow reading from /etc during this session
+   3. No
+
+ Esc to cancel · Tab to amend
