@@ -252,3 +252,23 @@ or `text.answer_failed` with `tl.action` = `plan-approve` or `plan-feedback`,
 and one `claude.answered` when it lands (ADR-0006). The measurements, the wire
 contracts and the key sequences are in
 `docs/plans/2026-09-24-text-composer-redesign.md`.
+
+## Amendment, 2026-09-27: the permission prompt's "No" with words
+
+The permission card (the T3 pass, prototype 6-permission) ends with "Type your
+own answer", which declines the tool call and tells Claude what to do instead.
+Measured on Claude Code 2.1.283 on 2026-09-27, the prompt supports this
+directly: Tab on its No row opens a field ("No, and tell Claude what to do
+differently"), and Enter there rejects the tool call with a result that reads
+"To tell you how to proceed, the user said: <words>". Claude carries on in the
+same turn. The captures are `sessionio/testdata/permission-amend-*.txt`.
+
+`POST /answer/{session}` takes it as `{"permission": {"decline": "<words>"}}`,
+and the server drives the row with the plan feedback row's rules
+(`sessionio/permdrive.go`): the cursor walks onto the No row one arrow at a
+time, since the row's digit declines at once with no words; Tab opens the
+field; words already in it are cleared with C-e and Backspaces, because walking
+back onto the field puts its text cursor in front of them; the words are pasted
+and read back off the row; and only then does Enter go in. A refusal types
+nothing further and carries the prompt as it stands. A row picked by its number
+is still one digit through `POST /keys`.

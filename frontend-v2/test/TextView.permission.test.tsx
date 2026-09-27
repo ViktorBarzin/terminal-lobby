@@ -13,6 +13,7 @@ import { render, waitFor, fireEvent } from "@solidjs/testing-library";
 import { createSignal, type ComponentProps } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { Event } from "../src/types/events";
+import type { AnswerRequest } from "../src/lib/answer-api";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "qa", ...e });
 
@@ -229,6 +230,110 @@ describe("the permission card", () => {
     fireEvent.input(field, { target: { value: "row " } });
     expect(fireEvent.keyDown(field, { key: "1" })).toBe(true);
     expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The T3 pass (prototype 6-permission): the card's last row is "Type your
+   * own answer". Measured on CLI 2.1.283 on 2026-09-27, Tab on the prompt's
+   * No row opens a field, and Enter there declines the tool call with the
+   * words, which Claude reads as "the user said: <words>" and carries on. The
+   * server drives that row (sessionio permdrive.go), so the card hands it the
+   * words in one request, and it is the one press this prompt gets.
+   */
+  it("declines with the reader's words once, and goes inert", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
+    const { card, onKeys, r } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    const own = card()!.querySelector<HTMLButtonElement>(".tl-qcard-own")!;
+    expect(own.querySelector(".tl-qcard-label")?.textContent).toBe("Type your own answer");
+    expect(own.querySelector(".tl-qcard-desc")?.textContent).toBe(
+      "Says no, and tells Claude what to do instead",
+    );
+    // The CLI's own rows stay as they are, No included, with the own row last.
+    const rows = [...card()!.querySelectorAll(".tl-qcard-option")];
+    expect(rows.at(-1)).toBe(own);
+    expect(rows.slice(0, -1).map((b) => b.textContent)).toEqual([
+      "1Yes",
+      "2Yes, and always allow access to /tmp/x from this project",
+      "3No",
+    ]);
+
+    fireEvent.click(own);
+    const field = await waitFor(() => {
+      const f = card()!.querySelector<HTMLTextAreaElement>(".tl-qcard-owninput");
+      expect(f).not.toBeNull();
+      return f!;
+    });
+    fireEvent.input(field, { target: { value: "use ls\ninstead " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer).toHaveBeenCalledWith({ permission: { decline: "use ls instead" } });
+
+    // Inert from here: no row, no second Enter, no digit.
+    await waitFor(() => expect(field.disabled).toBe(true));
+    for (const b of card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")) {
+      expect(b.disabled).toBe(true);
+    }
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.click(card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!);
+    fireEvent.keyDown(card()!, { key: "1" });
+    expect(onAnswer).toHaveBeenCalledTimes(1);
+    expect(onKeys).not.toHaveBeenCalled();
+    // The composer's own field never took the words.
+    expect(r.container.querySelector<HTMLTextAreaElement>(".tl-composer textarea")!.value).toBe("");
+  });
+
+  it("keeps the words and the card live when the decline did not land", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({
+      applied: false,
+      reason: "unverified" as const,
+    }));
+    const { card, notify } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    fireEvent.click(card()!.querySelector<HTMLButtonElement>(".tl-qcard-own")!);
+    const field = await waitFor(
+      () => card()!.querySelector<HTMLTextAreaElement>(".tl-qcard-owninput")!,
+    );
+    fireEvent.input(field, { target: { value: "use ls instead" } });
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.any(String), "error"));
+    await waitFor(() => expect(field.disabled).toBe(false));
+    expect(field.value).toBe("use ls instead");
+    expect(card()!.querySelector<HTMLButtonElement>(".tl-qcard-option")!.disabled).toBe(false);
+  });
+
+  it("offers no typed answer while this device watches, or when the prompt has no No row", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
+    const watching = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer, inertReason: "Watching. Take control to answer." },
+    );
+    await waitFor(() => expect(watching.card()).not.toBeNull());
+    expect(watching.card()!.querySelector<HTMLButtonElement>(".tl-qcard-own")!.disabled).toBe(true);
+    watching.r.unmount();
+
+    const noNo = JSON.parse(READING) as { options: { number: number; label: string }[] };
+    noNo.options = noNo.options.slice(0, 2);
+    const { card } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: JSON.stringify(noNo) })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(card()!.querySelector(".tl-qcard-own")).toBeNull();
   });
 
   it("keeps the composer's text out of the prompt's menu", async () => {

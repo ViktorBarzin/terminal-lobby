@@ -461,8 +461,9 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 			writeJSON(w, resp)
 			return
 		}
-		// The plan approval, answered by keys (ADR-0010). The driver refuses
-		// anything else as not-held without reading the pane.
+		// The plan approval, answered by keys (ADR-0010), and the permission
+		// prompt declined with words. The driver refuses anything else as
+		// not-held without reading the pane.
 		resp, err := drv.Answer(r.Context(), osUser, session, req)
 		if err != nil {
 			// The pane could not be read at all, which is a session that has
@@ -526,7 +527,9 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 // The plan approval, since 2026-09-24, counts the same way: an approve option
 // is one digit, and words typed into its feedback row are free text, api-text
 // with their length, whether they went back for more planning or approved the
-// plan with them. Either is one answer.
+// plan with them. Either is one answer. A permission prompt declined with words
+// (since 2026-09-27) is free text the same way; a permission row picked by its
+// number is a key and comes from POST /keys.
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
@@ -534,6 +537,8 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 		client, count = "api-text", len(*req.Chat)
 	case req.Plan != nil && req.Plan.Feedback != "":
 		client, count = "api-text", len(req.Plan.Feedback)
+	case req.Permission != nil:
+		client, count = "api-text", len(req.Permission.Decline)
 	}
 	events.Emit("claude.answered", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.count": count, "tl.client": client,
@@ -545,8 +550,8 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 // A dialog quotes whatever the session was working on, so nothing here carries
 // a question, an option label or the words typed (ADR-0006). tl.session ties a
 // failure back to its transcript, tl.action says what kind of request it was
-// (answers, chat, plan-approve, plan-feedback), and a held call adds how many
-// questions it asked and whether any was multi-select.
+// (answers, chat, plan-approve, plan-feedback, permission-decline), and a held
+// call adds how many questions it asked and whether any was multi-select.
 //
 // The two NAMES are the ones the browser walk emitted before 2026-09-10, so
 // tl.client has to be read in every query over them: api-answer is this route,

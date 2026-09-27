@@ -18,6 +18,22 @@ type AnswerRequest struct {
 	Chat *string `json:"chat,omitempty"`
 	// Plan answers Claude Code's plan approval (plandialog.go).
 	Plan *PlanAnswer `json:"plan,omitempty"`
+	// Permission answers Claude Code's tool permission prompt (permdialog.go)
+	// with words. A row picked by its number goes as a key (POST /keys).
+	Permission *PermissionAnswer `json:"permission,omitempty"`
+}
+
+// PermissionAnswer declines the tool permission prompt and tells Claude what to
+// do instead, the card's "Type your own answer" (permdrive.go).
+//
+// Decline is typed into the No row's field: the cursor walks onto the row,
+// Tab opens its field, whatever the field holds is cleared, the words are
+// pasted and read back off the row, and only then does Enter go in. Claude
+// gets the tool call rejected with "the user said: <words>" and carries on in
+// the same turn (measured on CLI 2.1.283, 2026-09-27). The words must not be
+// blank, and nothing presses Enter on an empty field.
+type PermissionAnswer struct {
+	Decline string `json:"decline"`
 }
 
 // PlanAnswer is one answer to the plan approval: an approve row, or words for
@@ -74,15 +90,16 @@ const (
 	AnswerIncomplete = "incomplete"
 )
 
-// AnswerResponse is the outcome of one request, and for the plan approval
-// what the pane shows once it has been applied or refused.
+// AnswerResponse is the outcome of one request, and for the plan approval or
+// the permission prompt what the pane shows once it has been applied or
+// refused.
 type AnswerResponse struct {
 	// Applied is true when the request took effect.
 	Applied bool `json:"applied"`
 	// Reason is one of the Answer* constants, empty when Applied.
 	Reason string `json:"reason,omitempty"`
-	// Dialog is the plan approval as read AFTER the request, nil when there is
-	// none on screen.
+	// Dialog is the plan approval or the permission prompt as read AFTER the
+	// request, nil when there is none on screen.
 	Dialog *Dialog `json:"dialog,omitempty"`
 	// Done is true when the dialog is gone, which is how an answer that landed
 	// reports itself. The transcript carries the result from here.
@@ -104,6 +121,9 @@ const (
 	// amendment). Each is one answer.
 	ActionPlanApprove  = "plan-approve"
 	ActionPlanFeedback = "plan-feedback"
+	// The permission prompt declined with words (since 2026-09-27). One
+	// answer.
+	ActionPermissionDecline = "permission-decline"
 	// The mode dial (setmode.go), which session-events records into the same
 	// two event names. Answer never returns it.
 	ActionMode = "mode"
@@ -120,6 +140,8 @@ func AnswerAction(req AnswerRequest) string {
 		return ActionPlanApprove
 	case req.Plan != nil:
 		return ActionPlanFeedback
+	case req.Permission != nil:
+		return ActionPermissionDecline
 	}
 	return ""
 }

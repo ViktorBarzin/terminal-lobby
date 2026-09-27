@@ -561,6 +561,33 @@ export const TextView: Component<{
     if (!ok) props.notify?.("Couldn't answer Claude's prompt. Answer it in the Terminal.", "error");
     return ok;
   };
+  /**
+   * Decline the permission prompt with the reader's words (the card's "Type
+   * your own answer"). The server drives the prompt's No row and reads the
+   * words back before its Enter (sessionio permdrive.go). The CLI's field is
+   * one line, so line breaks go out as spaces, as plan feedback does.
+   */
+  const declinePermission = async (raw: string): Promise<boolean> => {
+    if (refuseWatching() || !props.onAnswer) return false;
+    const f = planFeedback(raw);
+    if (f.text === "") return false;
+    if (f.tooLong) {
+      props.notify?.(
+        "That answer is too long for Claude's prompt. Keep it under 2,000 characters.",
+        "warning",
+      );
+      return false;
+    }
+    const resp = await props.onAnswer({ permission: { decline: f.text } }).catch(() => null);
+    if (resp?.applied) return true;
+    props.notify?.(
+      resp?.reason === "no-dialog" || resp?.reason === "not-drawn"
+        ? "Claude's prompt has already gone."
+        : "Couldn't answer Claude's prompt. Answer it in the Terminal.",
+      "error",
+    );
+    return false;
+  };
   // Pinch to size the transcript, the way a pinch sizes the terminal. The
   // arithmetic and the guards are ported from term.html so both views answer
   // the gesture identically; see mobile/textzoom.ts. The size is device-local,
@@ -1348,6 +1375,7 @@ export const TextView: Component<{
             <PermissionCard
               reading={reading}
               onPick={pickPermission}
+              {...(props.onAnswer ? { onDecline: declinePermission } : {})}
               inert={props.inertReason}
               onTakeControl={props.onTakeControl}
               register={(press) => {

@@ -192,3 +192,81 @@ func TestPermissionParserAndTheOthersKeepApart(t *testing.T) {
 		t.Fatalf("only %d permission and %d other captures found", perms, others)
 	}
 }
+
+// "Tab to amend" on the No row turns it into a field (measured on CLI 2.1.283,
+// 2026-09-27, testdata/permission-amend-*.txt): the row reads "No, and tell
+// Claude what to do differently" while the field is empty and "No, <words>"
+// once something is typed, the footer drops "Tab to amend", and long words
+// wrap under the row at the words' own column. The reading says which row is
+// the No row, where the cursor is, and what the field holds.
+func TestParsePermissionReadsTheNoRowAndItsField(t *testing.T) {
+	for _, tc := range []struct {
+		fixture string
+		want    permScreen
+	}{
+		{"permission-bash.txt", permScreen{cursor: 1, no: 4}},
+		{"permission-read.txt", permScreen{cursor: 1, no: 3}},
+		{"permission-amend-empty.txt", permScreen{cursor: 4, no: 4, amended: true}},
+		{"permission-amend-typed.txt", permScreen{cursor: 4, no: 4, amended: true, typed: "print the date instead"}},
+		{"permission-amend-wrapped.txt", permScreen{cursor: 4, no: 4, amended: true,
+			typed: "Do not write anything to a.txt at all, instead please print the current date with the date command and then list the directory contents with ls -la so I can see what is there before we go on"}},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			s, ok := parsePermission(strings.Split(fixture(t, tc.fixture), "\n"))
+			if !ok || s.dialog == nil || s.dialog.Kind != DialogKindPermission {
+				t.Fatalf("did not parse: %+v", s)
+			}
+			s.dialog = nil
+			if s != tc.want {
+				t.Errorf("got  %+v\nwant %+v", s, tc.want)
+			}
+		})
+	}
+}
+
+// The field keeps its words when the cursor walks off the row (measured: ↑
+// from the field left "4. No, print the date instead" with the cursor on 3),
+// and a prompt with no No row has nothing to decline with.
+func TestParsePermissionReadsAFieldTheCursorLeft(t *testing.T) {
+	lines := []string{
+		"──────────",
+		" Bash command",
+		"   ls",
+		" Do you want to proceed?",
+		"   1. Yes",
+		" ❯ 2. Yes, and always allow access to /tmp/x from this project",
+		"   3. No, print the date instead",
+		"",
+		" Esc to cancel",
+	}
+	s, ok := parsePermission(lines)
+	if !ok {
+		t.Fatal("did not parse")
+	}
+	if s.cursor != 2 || s.no != 3 || !s.amended || s.typed != "print the date instead" {
+		t.Errorf("got %+v", s)
+	}
+	lines[6] = "   3. Maybe"
+	if s, ok := parsePermission(lines); !ok || s.no != 0 {
+		t.Errorf("a prompt without a No row read no=%d ok=%v", s.no, ok)
+	}
+}
+
+// Lines under the bottom row belong to it only at its label column or deeper;
+// anything else between the rows and the footer is not a prompt.
+func TestParsePermissionRefusesStrayLinesUnderTheRows(t *testing.T) {
+	pane := strings.Join([]string{
+		"──────────",
+		" Bash command",
+		"   ls",
+		" Do you want to proceed?",
+		" ❯ 1. Yes",
+		"   2. No, a long answer",
+		"   wrapped too far left",
+		"",
+		" Esc to cancel",
+	}, "\n")
+	if d := ParsePermissionDialog(pane); d != nil {
+		t.Errorf("parsed as %+v", d)
+	}
+}

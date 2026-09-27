@@ -121,8 +121,9 @@ func standIn(t *testing.T, env, ready string) (*Injector, string) {
 // Since 2026-09-24 it also draws Claude Code's plan approval
 // (FAKEDIALOG_CALL=plan, for plandrive_test.go) and the idle input box with its
 // permission mode (FAKEDIALOG_CALL=composer, for setmode_test.go), each as CLI
-// 2.1.281 drew it that day. What each models is listed in the script, beside
-// the code that models it.
+// 2.1.281 drew it that day, and since 2026-09-27 the tool permission prompt
+// (FAKEDIALOG_CALL=permission, for permdrive_test.go) as CLI 2.1.283 draws it.
+// What each models is listed in the script, beside the code that models it.
 const fakeDialogPy = `#!/usr/bin/env python3
 """A stand-in AskUserQuestion dialog for answerdrive_test.go.
 
@@ -163,8 +164,9 @@ QS = [
      "opts": ["Tea", "Coffee"]},
 ]
 # Which screen to draw: a two-question call by default, "one" for the
-# multi-select alone, "plan" for the plan approval and "composer" for the idle
-# input box with its permission mode.
+# multi-select alone, "plan" for the plan approval, "composer" for the idle
+# input box with its permission mode and "permission" for the tool permission
+# prompt.
 CALL = os.environ.get("FAKEDIALOG_CALL", "")
 # A one-question call: the multi-select alone. Its commit row says "Submit",
 # and it still goes to the review screen.
@@ -400,7 +402,7 @@ def byte():
         if not data:
             return None
         run = bytearray(data)
-        run_on_chat = CALL not in ("plan", "composer") and multi() and cursor == chat_row()
+        run_on_chat = CALL not in ("plan", "composer", "permission") and multi() and cursor == chat_row()
     b = run[0]
     del run[0]
     return b
@@ -646,6 +648,122 @@ def draw_plan():
     out("   ctrl+g to edit in Vim · ~/.claude/plans/fake-plan.md\r\n")
 
 
+# ---- The tool permission prompt ---------------------------------------------
+#
+# FAKEDIALOG_CALL=permission draws "Do you want to proceed?" the way CLI
+# 2.1.283 draws it (testdata/permission-bash.txt), and answers keys the way
+# that build answers them, measured on 2026-09-27:
+#
+#   - a digit picks its row at once, the No row's declining with no words;
+#   - Tab on the No row opens its field: the row reads "No, and tell Claude
+#     what to do differently" and the footer drops "Tab to amend";
+#   - the open field takes typing and a paste, and the row reads "No, <words>",
+#     long words wrapping under the row at the words' column;
+#   - walking onto the field puts its text cursor at the START of the words (a
+#     typed X landed as "No, Xprint the date instead"); C-e takes it to the
+#     end, Backspace takes out the character before it, and walking off keeps
+#     the words;
+#   - Enter on the No row declines, with the words when the field holds any;
+#     Enter on another row picks it.
+#
+# Not measured, and nothing in the driver relies on them: ↑ and ↓ stop at the
+# ends here; Tab on another row does nothing here; a digit with the cursor on
+# the open field goes into it here, as it does on the plan's feedback row.
+
+PERM_OPTS = os.environ.get(
+    "FAKEDIALOG_PERM_OPTS",
+    "Yes|Yes, and always allow access to /tmp/proj from this project|No",
+).split("|")
+perm_up = CALL == "permission"
+perm_cursor = int(os.environ.get("FAKEDIALOG_PERM_CURSOR", "1"))
+perm_open = os.environ.get("FAKEDIALOG_PERM_FIELD") is not None
+perm_field = os.environ.get("FAKEDIALOG_PERM_FIELD", "")
+perm_caret = 0
+
+
+def perm_no():
+    return len(PERM_OPTS)
+
+
+def draw_perm():
+    out("\x1b[2J\x1b[H")
+    # The conversation quotes the prompt's question, as a capture does.
+    out("❯ Run ls. It will ask: Do you want to proceed?\r\n\r\n")
+    out("─" * WIDTH + "\r\n")
+    out(" Bash command\r\n\r\n")
+    out("   ls -la\r\n")
+    out("   List the files\r\n\r\n")
+    out(" Do you want to proceed?\r\n")
+    n = perm_no()
+    for i, label in enumerate(PERM_OPTS, 1):
+        mark_ = "❯" if perm_cursor == i else " "
+        if i == n and perm_open:
+            text = perm_field if perm_field != "" else "and tell Claude what to do differently"
+            parts = wrap_words(text, WIDTH - 12)
+            out((" %s %d. No, %s" % (mark_, i, parts[0])).rstrip() + "\r\n")
+            for p in parts[1:]:
+                out("          " + p + "\r\n")
+            continue
+        out(" %s %d. %s\r\n" % (mark_, i, label))
+    out("\r\n")
+    out(" Esc to cancel\r\n" if perm_open else " Esc to cancel · Tab to amend\r\n")
+
+
+def perm_close(what):
+    global perm_up, outcome
+    perm_up = False
+    outcome = what
+
+
+def perm_pick(i):
+    if i == perm_no():
+        words = perm_field.strip() if perm_open else ""
+        perm_close("PERMISSION DECLINED WITH " + words if words else "PERMISSION DECLINED")
+    else:
+        perm_close("PERMISSION %d" % i)
+
+
+def perm_arrow(code):
+    global perm_cursor, perm_caret
+    was = perm_cursor
+    if code == "A":
+        perm_cursor = max(1, perm_cursor - 1)
+    elif code == "B":
+        perm_cursor = min(perm_no(), perm_cursor + 1)
+    if perm_cursor == perm_no() and perm_cursor != was:
+        perm_caret = 0
+
+
+def perm_key(ch):
+    global perm_open, perm_field, perm_caret
+    on_field = perm_open and perm_cursor == perm_no()
+    if in_paste and DROP_PASTE:
+        return
+    if ch == "\t":
+        if perm_cursor == perm_no() and not perm_open:
+            perm_open = True
+            perm_caret = 0
+        return
+    if ch == "\x05":
+        if on_field:
+            perm_caret = len(perm_field)
+        return
+    if ch in ("\x7f", "\x08"):
+        if on_field and perm_caret > 0:
+            perm_field = perm_field[:perm_caret - 1] + perm_field[perm_caret:]
+            perm_caret -= 1
+        return
+    if ch in ("\r", "\n"):
+        perm_pick(perm_cursor)
+        return
+    if on_field and ch.isprintable():
+        perm_field = perm_field[:perm_caret] + ch + perm_field[perm_caret:]
+        perm_caret += 1
+        return
+    if ch.isdigit() and ch != "0" and int(ch) <= perm_no():
+        perm_pick(int(ch))
+
+
 def draw_composer():
     out("\x1b[2J\x1b[H")
     out("❯ Plan hello.txt.\r\n")
@@ -662,6 +780,8 @@ def draw_composer():
 def redraw():
     if plan_up:
         draw_plan()
+    elif perm_up:
+        draw_perm()
     else:
         draw_composer()
 
@@ -787,6 +907,8 @@ def plan_main():
                     continue
                 if plan_up:
                     plan_arrow(code)
+                elif perm_up:
+                    perm_arrow(code)
                 elif code == "Z":
                     next_mode()
                     if MODE_LAG:
@@ -795,6 +917,8 @@ def plan_main():
                 continue
             if plan_up:
                 plan_key(ch)
+            elif perm_up:
+                perm_key(ch)
             elif ch == "!":
                 plan_up = True
             redraw()
@@ -804,7 +928,7 @@ def plan_main():
 
 def main():
     global cursor, fpos
-    if CALL in ("plan", "composer"):
+    if CALL in ("plan", "composer", "permission"):
         plan_main()
         return
     fd = sys.stdin.fileno()

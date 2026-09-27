@@ -264,6 +264,15 @@ const (
 // mode can put a permission prompt up straight away, and that is Claude
 // starting on the plan, not the plan still waiting.
 func (in *Injector) planAwaitGone(ctx context.Context, osUser, session string, before answerReading) (AnswerResponse, error) {
+	return in.awaitGone(ctx, osUser, session, before, onPlan)
+}
+
+// awaitGone reads the pane after a committing key until the dialog `on`
+// recognises has counted as gone, or the window runs out with it still up.
+// The permission prompt uses the plan's window and polls (permdrive.go): the
+// next prompt a decline leads to comes after a round trip to the model,
+// seconds rather than milliseconds.
+func (in *Injector) awaitGone(ctx context.Context, osUser, session string, before answerReading, on func(answerReading) bool) (AnswerResponse, error) {
 	deadline := time.Now().Add(planGoneWindow)
 	cur, absent := before, 0
 	for {
@@ -275,7 +284,7 @@ func (in *Injector) planAwaitGone(ctx context.Context, osUser, session string, b
 			return AnswerResponse{}, err
 		}
 		cur = next
-		if onPlan(cur) {
+		if on(cur) {
 			absent = 0
 		} else if absent++; absent >= planGonePolls {
 			return cur.replyDone(), nil

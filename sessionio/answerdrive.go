@@ -12,7 +12,9 @@ import (
 // An AskUserQuestion is not answered here any more: the lobby's hook holds it
 // and the answers go to the CLI as data (ADR-0034, session-events hold.go).
 // What is left is Claude Code's plan approval, still answered by keys
-// (ADR-0010).
+// (ADR-0010), and since 2026-09-27 the tool permission prompt declined with
+// words (permdrive.go). A permission row picked by its number is one digit
+// and goes through POST /keys.
 //
 // The rule this file is built on: NOTHING IS PREDICTED. Every reply is a
 // reading taken after the action, and every check compares that reading
@@ -38,11 +40,15 @@ type answerReading struct {
 	// one: where the cursor is and what the feedback row holds, which the
 	// driver needs and the wire does not carry.
 	plan *planScreen
+	// perm is the whole reading of a tool permission prompt, set whenever
+	// dialog is one: the cursor, the No row and what its field holds.
+	perm *permScreen
 }
 
 // read takes a reading. Every step of every request goes through here, so
 // there is exactly one place where the pane becomes a decision. Only the plan
-// approval is read: it is the one dialog this driver answers.
+// approval and the permission prompt are read: they are the dialogs this
+// driver answers.
 func (in *Injector) read(osUser, session string) (answerReading, error) {
 	pane, err := in.CapturePane(osUser, session)
 	if err != nil {
@@ -51,6 +57,9 @@ func (in *Injector) read(osUser, session string) (answerReading, error) {
 	lines := strings.Split(pane, "\n")
 	if s, ok := parsePlan(lines); ok {
 		return answerReading{pane: pane, region: lines[s.top:s.end], dialog: s.dialog, plan: &s}, nil
+	}
+	if s, ok := parsePermission(lines); ok {
+		return answerReading{pane: pane, dialog: s.dialog, perm: &s}, nil
 	}
 	return answerReading{pane: pane}, nil
 }
@@ -68,23 +77,24 @@ func (r answerReading) replyDone() AnswerResponse {
 	return AnswerResponse{Applied: true, Done: true}
 }
 
-// Answer applies one plan answer to the session's plan approval and answers
-// with a fresh reading of whatever the pane shows afterwards. A request that
-// answers no plan is refused as not-held without reading anything: the
-// AskUserQuestion it would answer goes through the hook or the terminal.
+// Answer applies one plan answer to the session's plan approval, or one decline
+// to its permission prompt, and answers with a fresh reading of whatever the
+// pane shows afterwards. A request that answers neither is refused as not-held
+// without reading anything: the AskUserQuestion it would answer goes through
+// the hook or the terminal.
 //
 // The error return is for a pane that could not be read at all, which is a
 // session that has gone away. Every other outcome, refusals included, is a
 // normal response carrying the current reading.
 func (in *Injector) Answer(ctx context.Context, osUser, session string, req AnswerRequest) (AnswerResponse, error) {
-	if req.Plan == nil {
+	if req.Plan == nil && req.Permission == nil {
 		return AnswerResponse{Reason: AnswerNotHeld, Action: AnswerAction(req)}, nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// A plan answer takes its turn with any other plan answer or mode walk on
-	// the same session, and reads the pane only once it has it (plandrive.go).
+	// An answer takes its turn with any other answer or mode walk on the same
+	// session, and reads the pane only once it has it (plandrive.go).
 	unlock, err := in.lockSession(ctx, osUser, session)
 	if err != nil {
 		return AnswerResponse{}, err
@@ -99,10 +109,25 @@ func (in *Injector) Answer(ctx context.Context, osUser, session string, req Answ
 	return resp, err
 }
 
-// answer dispatches one plan answer against the reading taken before it.
+// answer dispatches one answer against the reading taken before it. A request
+// for a dialog the pane is not drawing is refused as not-drawn with nothing
+// typed.
 func (in *Injector) answer(ctx context.Context, osUser, session string, before answerReading, req AnswerRequest) (AnswerResponse, error) {
 	if before.dialog == nil {
 		return before.reply(AnswerNoDialog), nil
+	}
+	// A request that answers two dialogs at once says two things.
+	if req.Plan != nil && req.Permission != nil {
+		return before.reply(AnswerUnknownOption), nil
+	}
+	if req.Permission != nil {
+		if before.perm == nil {
+			return before.reply(AnswerNotDrawn), nil
+		}
+		return in.answerPermission(ctx, osUser, session, before, req)
+	}
+	if before.plan == nil {
+		return before.reply(AnswerNotDrawn), nil
 	}
 	return in.answerPlan(ctx, osUser, session, before, req)
 }

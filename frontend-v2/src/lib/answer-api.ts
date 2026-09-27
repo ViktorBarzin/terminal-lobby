@@ -62,13 +62,15 @@ export type AnswerReason =
 export interface AnswerResponse {
   applied: boolean;
   reason?: AnswerReason;
-  /** The plan approval as read AFTER the request; absent when none is on screen. */
+  /** The plan approval or the permission prompt as read AFTER the request;
+   *  absent when none is on screen. */
   dialog?: DialogView;
   /** The dialog is gone: the answer landed. */
   done?: boolean;
 }
 
-/** One request: a held call's answers, a decline, or a plan answer. */
+/** One request: a held call's answers, a decline, a plan answer, or a
+ *  permission prompt declined with words. */
 export interface AnswerRequest {
   /**
    * A whole AskUserQuestion call answered at once, keyed by each question's
@@ -82,6 +84,22 @@ export interface AnswerRequest {
   chat?: string;
   /** An answer to the plan approval. */
   plan?: PlanAnswer;
+  /** The tool permission prompt declined with words. */
+  permission?: PermissionAnswer;
+}
+
+/**
+ * The tool permission prompt declined with words, mirroring
+ * `sessionio.PermissionAnswer`: the card's "Type your own answer".
+ *
+ * The server walks the cursor onto the prompt's No row, opens its field with
+ * Tab, types the words, reads them back off the row and only then presses
+ * Enter. Claude gets the tool call rejected with "the user said: <words>" and
+ * carries on (measured on CLI 2.1.283, 2026-09-27). One line of at most 2,000
+ * bytes, never blank. A row picked by its number goes as a key instead.
+ */
+export interface PermissionAnswer {
+  decline: string;
 }
 
 /**

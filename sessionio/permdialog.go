@@ -45,6 +45,13 @@ import (
 //
 // A digit picks a row at once (measured: "1" ran the Bash command with no
 // Enter), so the card answers with the row's number.
+//
+// "Tab to amend" on the No row opens a field in it (measured on 2.1.283 on
+// 2026-09-27, testdata/permission-amend-*.txt): the row reads "No, and tell
+// Claude what to do differently" while the field is empty and "No, <words>"
+// once something is typed, the footer drops "Tab to amend", and words longer
+// than the pane wrap under the row at the words' column, below the bottom
+// row. permdrive.go drives that field for the card's "Type your own answer".
 
 // DialogKindPermission is Dialog.Kind for the tool permission prompt.
 const DialogKindPermission = "permission"
@@ -70,10 +77,69 @@ var (
 // line, the rows numbered from 1 with the cursor on one of them, and a
 // question directly over them.
 func ParsePermissionDialog(pane string) *Dialog {
-	lines := strings.Split(pane, "\n")
+	s, ok := parsePermission(strings.Split(pane, "\n"))
+	if !ok {
+		return nil
+	}
+	return s.dialog
+}
+
+// permScreen is the whole reading of a permission prompt: the dialog the wire
+// carries, and what the decline driver (permdrive.go) needs besides.
+type permScreen struct {
+	dialog *Dialog
+	// cursor is the number of the row the ❯ is on.
+	cursor int
+	// no is the number of the No row, 0 when the prompt draws none.
+	no int
+	// amended is true once Tab has turned the No row into a field: it reads
+	// "No, and tell Claude what to do differently" or "No, <words>".
+	amended bool
+	// typed is what the field holds, "" while it shows its placeholder or
+	// only spaces ("No,").
+	typed string
+}
+
+// The No row's label at rest, and the placeholder its field shows once Tab has
+// opened it, both as CLI 2.1.283 draws them.
+const (
+	permNoLabel       = "No"
+	permNoPlaceholder = "No, and tell Claude what to do differently"
+)
+
+// minPermLabelCol is the shallowest indent a line wrapped from the bottom row
+// can have: the row's label starts after " ❯ 1. ", column 6.
+const minPermLabelCol = 4
+
+// parsePermission is ParsePermissionDialog's work, returning the whole
+// reading.
+func parsePermission(lines []string) (permScreen, bool) {
+	s, ok := parsePermissionRows(lines)
+	if !ok {
+		return permScreen{}, false
+	}
+	for _, o := range s.dialog.Options {
+		switch {
+		case o.Label == permNoLabel:
+			s.no, s.amended, s.typed = o.Number, false, ""
+		case o.Label == permNoLabel+",", strings.HasPrefix(o.Label, permNoLabel+", "):
+			// "No," alone is a field holding only spaces: the capture keeps
+			// no trailing ones.
+			s.no, s.amended = o.Number, true
+			s.typed = strings.TrimSpace(strings.TrimPrefix(o.Label, permNoLabel+","))
+			if o.Label == permNoPlaceholder {
+				s.typed = ""
+			}
+		}
+	}
+	return s, true
+}
+
+// parsePermissionRows reads the prompt and where its cursor is.
+func parsePermissionRows(lines []string) (permScreen, bool) {
 	last := skipBlankUp(lines, len(lines)-1)
 	if last < 0 {
-		return nil
+		return permScreen{}, false
 	}
 	foot := -1
 	for n := 1; n <= footerWrapLines && last-n+1 >= 0; n++ {
@@ -83,7 +149,7 @@ func ParsePermissionDialog(pane string) *Dialog {
 		}
 	}
 	if foot < 0 {
-		return nil
+		return permScreen{}, false
 	}
 
 	// The rows, bottom-up, each with any lines its label wrapped onto. The
@@ -98,10 +164,20 @@ func ParsePermissionDialog(pane string) *Dialog {
 			break
 		}
 		if n, label, focused, col, ok := planRow(line); ok && (labelCol < 0 || col == labelCol) {
+			if labelCol < 0 {
+				// Lines already collected sit under the bottom row: its
+				// words wrapped, which an amended No row's do. They have to
+				// start at its label column or deeper to be part of it.
+				for _, c := range cont {
+					if leadingSpace(c) < col {
+						return permScreen{}, false
+					}
+				}
+			}
 			labelCol = col
 			parts := []string{label}
 			for j := len(cont) - 1; j >= 0; j-- {
-				parts = append(parts, cont[j])
+				parts = append(parts, strings.TrimSpace(cont[j]))
 			}
 			rows = append(rows, planRowAt{n: n, parts: parts, focused: focused})
 			cont = nil
@@ -111,25 +187,32 @@ func ParsePermissionDialog(pane string) *Dialog {
 			cont = append(cont, strings.TrimSpace(line))
 			continue
 		}
+		if labelCol < 0 && leadingSpace(line) >= minPermLabelCol {
+			// Kept whole until the row over it fixes the label column.
+			cont = append(cont, line)
+			continue
+		}
 		break
 	}
 	if len(cont) > 0 || len(rows) < 2 {
-		return nil
+		return permScreen{}, false
 	}
 	d := &Dialog{Kind: DialogKindPermission}
+	s := permScreen{dialog: d}
 	focused := 0
 	for k := len(rows) - 1; k >= 0; k-- {
 		r := rows[k]
 		if r.n != len(d.Options)+1 {
-			return nil
+			return permScreen{}, false
 		}
 		if r.focused {
 			focused++
+			s.cursor = r.n
 		}
 		d.Options = append(d.Options, PlanOption{Number: r.n, Label: joinWrapped(r.parts)})
 	}
 	if focused != 1 {
-		return nil
+		return permScreen{}, false
 	}
 
 	// The question, wrapped over as many lines as it needs.
@@ -143,7 +226,7 @@ func ParsePermissionDialog(pane string) *Dialog {
 	}
 	d.Prompt = joinWrapped(q)
 	if !strings.HasSuffix(d.Prompt, "?") {
-		return nil
+		return permScreen{}, false
 	}
 
 	// What is over the question, up to the rule that opens the prompt: the
@@ -155,14 +238,14 @@ func ParsePermissionDialog(pane string) *Dialog {
 		line := lines[i]
 		if isRuleLine(line) {
 			d.Title, d.Detail = permissionHead(head)
-			return d
+			return s, true
 		}
 		// Blank lines are kept, as "", because they end the tip's paragraph.
 		if !reDottedRule.MatchString(line) {
 			head = append([]string{strings.TrimSpace(line)}, head...)
 		}
 	}
-	return d
+	return s, true
 }
 
 // permissionHead splits the lines between the rule and the question into the

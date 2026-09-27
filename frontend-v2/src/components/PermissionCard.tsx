@@ -1,10 +1,15 @@
 import { For, Show, createSignal, type Component } from "solid-js";
 import { CardDot, CardHead } from "./CardHead";
+import { OwnAnswer } from "./OwnAnswer";
 import type { PermissionReading } from "./timeline.logic";
 
 /** A Bash prompt is titled "Bash command"; every other tool is titled by what
  *  it does ("Edit file"), which the head then names beside its words. */
 const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
+
+/** The prompt's No row, as it reads at rest ("No") or with its field open
+ *  ("No, and tell Claude what to do differently", "No, <words>"). */
+const isNoRow = (label: string): boolean => label === "No" || label.startsWith("No,");
 
 /**
  * The card that answers Claude Code's tool permission prompt, in the
@@ -16,15 +21,24 @@ const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
  * than its own. A tap presses the row's number, which picks the row with no
  * Enter (measured on CLI 2.1.283, 2026-09-27).
  *
- * One press per prompt. The caller keys the card on the reading, so a new
- * prompt gets a new card, and once a press has landed this one stays inert:
- * a second tap would reach the pane after the prompt has gone, and type a
- * digit into Claude's input line.
+ * The last row is "Type your own answer" (`OwnAnswer`), under the CLI's own
+ * rows, No included. Its words decline the tool call and tell Claude what to
+ * do instead: the server drives the prompt's No row, whose Tab opens a field
+ * the CLI hands Claude as "the user said: <words>" (sessionio permdrive.go).
+ * It is offered only when the prompt draws a No row to drive.
+ *
+ * One press per prompt, a row or the words. The caller keys the card on the
+ * reading, so a new prompt gets a new card, and once a press has landed this
+ * one stays inert: a second tap would reach the pane after the prompt has
+ * gone, and type a digit into Claude's input line.
  */
 export const PermissionCard: Component<{
   reading: PermissionReading;
   /** Press the row's number; false when the key did not reach the session. */
   onPick: (option: number) => Promise<boolean>;
+  /** Decline with these words; false when the decline did not land. Absent
+   *  means this view cannot, and the card offers no typed answer. */
+  onDecline?: (words: string) => Promise<boolean>;
   /** Show the Terminal view. */
   onTerminal?: () => void;
   /** Why this device may not answer (it is watching), or empty when it may. */
@@ -38,7 +52,10 @@ export const PermissionCard: Component<{
    */
   register?: (press: (row: number) => boolean) => void;
 }> = (props) => {
-  const [pressed, setPressed] = createSignal<number | null>(null);
+  /** The row pressed, "own" for the typed answer, null before either. */
+  const [pressed, setPressed] = createSignal<number | "own" | null>(null);
+  const [ownOpen, setOwnOpen] = createSignal(false);
+  const [words, setWords] = createSignal("");
   // The refusal while watching is the caller's (onPick), so a key press is
   // told why; a tap cannot reach here, the rows being disabled.
   const pick = async (n: number): Promise<void> => {
@@ -46,6 +63,13 @@ export const PermissionCard: Component<{
     setPressed(n);
     if (!(await props.onPick(n))) setPressed(null);
   };
+  const decline = async (): Promise<void> => {
+    if (pressed() !== null || !props.onDecline) return;
+    setPressed("own");
+    if (!(await props.onDecline(words()))) setPressed(null);
+  };
+  const canDecline = (): boolean =>
+    !!props.onDecline && props.reading.options.some((o) => isNoRow(o.label));
   props.register?.((row) => {
     if (!props.reading.options.some((o) => o.number === row)) return false;
     void pick(row);
@@ -110,6 +134,18 @@ export const PermissionCard: Component<{
               </button>
             )}
           </For>
+          <Show when={canDecline()}>
+            <OwnAnswer
+              label="Type your own answer"
+              sub="Says no, and tells Claude what to do instead"
+              open={ownOpen()}
+              value={words()}
+              disabled={pressed() !== null || !!props.inert}
+              onOpen={() => setOwnOpen(true)}
+              onInput={setWords}
+              onSend={() => void decline()}
+            />
+          </Show>
         </div>
       </div>
     </div>

@@ -58,9 +58,10 @@ var knownEvents = map[string]bool{
 	// is one claude.answered, sent at the commit.
 	//
 	// Since 2026-09-24 the same two names carry the plan approval, tl.action
-	// plan-approve | plan-feedback with no tl.questions or tl.multi, and the
-	// mode dial, tl.client api-mode and tl.action mode with tl.from, tl.to and
-	// tl.count (the Shift+Tab presses). A query over answers reads tl.client
+	// plan-approve | plan-feedback with no tl.questions or tl.multi (and
+	// since 2026-09-27 permission-decline, the permission prompt declined
+	// with words), and the mode dial, tl.client api-mode and tl.action mode
+	// with tl.from, tl.to and tl.count (the Shift+Tab presses). A query over answers reads tl.client
 	// api-answer; the mode dial answers no prompt and sends no claude.answered.
 	"text.answer_failed": true,
 	"text.answer_sent":   true, // tl.multi, tl.questions, tl.steps, tl.action

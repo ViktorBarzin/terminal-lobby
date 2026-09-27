@@ -124,7 +124,8 @@ describe("a watching Text view", () => {
 
   it("draws the permission card's rows inert and presses nothing", async () => {
     const v = mount([prompt, asking(2, PERMISSION)]);
-    await waitFor(() => expect(v.rows(".tl-permcard")).toHaveLength(3));
+    // The prompt's rows and the card's "Type your own answer", all inert.
+    await waitFor(() => expect(v.rows(".tl-permcard")).toHaveLength(4));
     for (const b of v.rows(".tl-permcard")) expect(b.disabled).toBe(true);
     fireEvent.click(v.rows(".tl-permcard")[2]!);
     fireEvent.keyDown(v.field(), { key: "1" });
