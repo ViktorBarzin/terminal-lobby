@@ -866,6 +866,10 @@ src/
                          a stray 1 would clear context. It draws no feedback
                          row either: while it is up, the composer below is
                          that row
+    PermissionCard.tsx   The docked card for Claude Code's tool permission
+                         prompt, read off the pane: the prompt's title, what
+                         the tool will do, and its rows as drawn. A tap
+                         presses the row's number, once per prompt
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns
