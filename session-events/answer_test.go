@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -123,9 +124,24 @@ func planReading(t *testing.T) *sessionio.Dialog {
 }
 
 // eventSink keeps the lines the emitter would have written to the journal.
-type eventSink struct{ lines []string }
+// Locked, because a held question emits from the hook's own request goroutine.
+type eventSink struct {
+	mu    sync.Mutex
+	lines []string
+}
 
-func (s *eventSink) Write(line string) { s.lines = append(s.lines, line) }
+func (s *eventSink) Write(line string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.lines = append(s.lines, line)
+}
+
+// snapshot is the lines written so far.
+func (s *eventSink) snapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.lines...)
+}
 
 // captureEvents points this service's emitter at a sink for the test.
 func captureEvents(t *testing.T) *eventSink {
@@ -146,8 +162,9 @@ type recorded struct {
 // all decodes what the sink holds, in order.
 func (s *eventSink) all(t *testing.T) []recorded {
 	t.Helper()
-	out := make([]recorded, 0, len(s.lines))
-	for _, line := range s.lines {
+	lines := s.snapshot()
+	out := make([]recorded, 0, len(lines))
+	for _, line := range lines {
 		var rec recorded
 		raw := strings.TrimPrefix(line, telemetry.Marker+" ")
 		if err := json.Unmarshal([]byte(raw), &rec); err != nil {
@@ -352,7 +369,7 @@ func TestAnswerRecordsNothingWhenTheReaderHangsUp(t *testing.T) {
 
 	postAnswer(t, h, "demo", `{"plan":{"option":1,"label":"Yes"}}`)
 
-	if len(sink.lines) != 0 {
-		t.Fatalf("an abandoned request was recorded as an answer: %v", sink.lines)
+	if lines := sink.snapshot(); len(lines) != 0 {
+		t.Fatalf("an abandoned request was recorded as an answer: %v", lines)
 	}
 }

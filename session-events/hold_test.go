@@ -117,7 +117,12 @@ func (e *holdEnv) hook(tool, input string, since int64) *hookCall {
 		defer close(c.done)
 		e.rg.handleQuestionHook()(c.rec, req)
 	}()
-	e.t.Cleanup(cancel)
+	// Wait for the request to return, so no hold outlives its test and emits
+	// into the next one's sink.
+	e.t.Cleanup(func() {
+		cancel()
+		<-c.done
+	})
 	return c
 }
 
@@ -229,6 +234,7 @@ func decodeHook(t *testing.T, rec *httptest.ResponseRecorder) hookOutput {
 }
 
 func TestAHeldQuestionIsAnsweredFromTheCard(t *testing.T) {
+	sink := captureEvents(t)
 	e := newHoldEnv(t)
 	c := e.hook("AskUserQuestion", holdInput, holdSince)
 
@@ -245,7 +251,6 @@ func TestAHeldQuestionIsAnsweredFromTheCard(t *testing.T) {
 		t.Fatalf("the held questions lost the option preview: %s", held)
 	}
 
-	sink := captureEvents(t)
 	resp := e.answer(`{"answers":{"Pick a colour":["Blue"],"Pick fruits":["Apple","Plum"]}}`)
 	if !resp.Applied || !resp.Done {
 		t.Fatalf("answer: %+v", resp)
