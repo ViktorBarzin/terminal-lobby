@@ -621,7 +621,7 @@ describe("the model button while the card is docked", () => {
       "Answer Claude first: a model change now would type into the open dialog",
     );
     fireEvent.click(model);
-    expect(v.container.querySelector(".tl-ms-pop")).toBeNull();
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
     expect(onSetModel).not.toHaveBeenCalled();
   });
 

@@ -3193,16 +3193,17 @@ label.tl-set-row-label {
 }
 
 /* The desktop's popover: 360px, above the box, its left edge just past the
-   +, pulled left in a tile too narrow for that. `max-height` is written on
-   open to the room above the box. */
+   +. It is drawn in the document's body, over the page, so a short pane does
+   not cut it off; ModelSheet writes its place and its `max-height`, the
+   window's room above the box. Like the bottom sheet it names the Text
+   view's face itself, and sits with it above the soft keys. */
 .tl-ms-pop {
-  position: absolute;
-  z-index: 30;
-  bottom: calc(100% + 8px);
-  left: clamp(0px, calc(100% - 360px), 36px);
-  width: 360px;
-  max-width: 100%;
+  position: fixed;
+  z-index: 50;
+  box-sizing: border-box;
   overflow-y: auto;
+  font-family: var(--font-text);
+  font-size: 14px;
   padding: 8px 10px 10px;
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -3212,6 +3213,13 @@ label.tl-set-row-label {
   scrollbar-width: thin;
   transform-origin: 40px 100%;
   animation: tl-pop-up 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* More of the sheet is below the edge: its last rows fade out, so the reader
+   knows to scroll. */
+.tl-ms-pop[data-more] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
 }
 
 /* The phone's bottom sheet, in the document's body (see BottomSheet), so it

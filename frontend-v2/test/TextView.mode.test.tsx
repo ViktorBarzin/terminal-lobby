@@ -84,7 +84,7 @@ function mount(opts: {
     field: () => r.container.querySelector<HTMLTextAreaElement>("textarea")!,
     pick: (name: string) => {
       fireEvent.click(dial()!);
-      const row = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
+      const row = Array.from(document.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
         (b) => b.querySelector(".tl-ms-name")?.textContent === name,
       )!;
       fireEvent.click(row);
@@ -208,7 +208,7 @@ describe("<TextView>: a pick the server would not complete", () => {
     expect(v.shown()).toBe("Manual");
     // And the list remembers, so the row says so the next time it opens.
     fireEvent.click(v.dial()!);
-    const auto = Array.from(v.container.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
+    const auto = Array.from(document.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
       (b) => b.querySelector(".tl-ms-name")?.textContent === "Auto",
     )!;
     expect(auto.getAttribute("aria-disabled")).toBe("true");
@@ -383,7 +383,7 @@ describe("<TextView>: the mode is held while a dialog is up", () => {
       expect(v.dial()!.getAttribute("aria-disabled")).toBe("true");
       expect(v.dial()!.getAttribute("title")).toMatch(/Answer Claude first/);
       fireEvent.click(v.dial()!);
-      expect(v.container.querySelector(".tl-ms-pop")).toBeNull();
+      expect(document.querySelector(".tl-ms-pop")).toBeNull();
       fireEvent.keyDown(v.field(), { key: "Tab", shiftKey: true });
       await new Promise((r) => setTimeout(r, 0));
       expect(onKeys).not.toHaveBeenCalled();

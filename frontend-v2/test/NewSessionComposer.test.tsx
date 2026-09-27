@@ -1029,7 +1029,7 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     choose(m.container, "Model for new session", "claude-sonnet-5");
-    expect(m.container.querySelector(".tl-ms-pop")).toBeNull();
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
     m.store.dispose();
   });
 
@@ -1038,7 +1038,7 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     pick(m.container, "Model for new session");
-    const pop = m.container.querySelector(".tl-ms-pop")!;
+    const pop = document.querySelector(".tl-ms-pop")!;
     expect(pop.querySelector('[aria-label="Permission mode"]')).toBeNull();
     expect(pop.querySelector(".tl-ms-ctx")).toBeNull();
     const heads = Array.from(pop.querySelectorAll(".tl-ms-h")).map(
@@ -1053,15 +1053,16 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     await m.store.refresh();
     choose(m.container, "Model for new session", "claude-haiku-4-5-20251001");
     pick(m.container, "Model for new session");
-    const pop = m.container.querySelector(".tl-ms-pop")!;
+    const pop = document.querySelector(".tl-ms-pop")!;
     expect(pop.querySelector(".tl-ms-seg")).toBeNull();
     expect(pop.querySelector(".tl-ms-none")!.textContent).toBe("Haiku 4.5 has one effort level.");
     m.store.dispose();
   });
 
-  // The composer scrolls (overflow-y: auto), so a popover taller than the room
-  // above the box is cut off at the composer's top, under the session bar.
-  it("caps the model popover at the room above the box inside the composer", async () => {
+  // The composer scrolls (overflow-y: auto), so a popover inside it was cut
+  // off at the composer's top, under the session bar. It is drawn over the
+  // page now, capped at the window's room above the box.
+  it("draws the model popover over the page, capped at the room above the box", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
     const at = (top: number) => (): DOMRect =>
@@ -1069,9 +1070,9 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     m.container.querySelector<HTMLElement>(".tl-new-composer")!.getBoundingClientRect = at(80);
     m.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = at(402);
     fireEvent.click(opener(m.container, "Model for new session")!);
-    expect(m.container.querySelector<HTMLElement>(".tl-ms-pop")!.style.maxHeight).toBe(
-      `${402 - 80 - 16}px`,
-    );
+    const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    expect(m.container.querySelector(".tl-new-composer")!.contains(pop)).toBe(false);
+    expect(pop.style.maxHeight).toBe(`${402 - 16}px`);
     m.store.dispose();
   });
 
@@ -1084,7 +1085,7 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     choose(m.container, "Effort for new session", "max");
     expect(m.prefs.prefs().session.newEffort).toBe("max");
     pick(m.container, "Effort for new session");
-    const pop = m.container.querySelector(".tl-ms-pop")!;
+    const pop = document.querySelector(".tl-ms-pop")!;
     expect(pop.querySelector(".tl-ms-note")?.textContent).toMatch(/this one session/i);
     m.store.dispose();
   });

@@ -1,4 +1,13 @@
-import { createEffect, createSignal, For, Show, untrack, type Component, type JSX } from "solid-js";
+import {
+  createEffect,
+  createSignal,
+  For,
+  onCleanup,
+  Show,
+  untrack,
+  type Component,
+  type JSX,
+} from "solid-js";
 import { Portal } from "solid-js/web";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
@@ -80,8 +89,27 @@ const SHEET_NAME = "Model, effort and mode";
 /** What the arrow keys walk in the sheet. */
 const NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
 
-/** The tallest the popover gets, as the prototype draws it. */
-const POP_MAX = 620;
+/**
+ * The tallest the popover gets. The prototype drew 620px for three models;
+ * the box offers six, and the whole sheet is about 690px, so the cap leaves
+ * room for all of it where the window has the room.
+ */
+const POP_MAX = 720;
+/** The popover's width, as the prototype draws it. */
+const POP_W = 360;
+/** How far past the box's left edge the popover starts: just past the +. */
+const POP_INSET = 36;
+/** The gap between the popover and the box, and its least distance from the
+ *  window's edges. */
+const POP_GAP = 8;
+
+/** Where the popover sits over the page, in the window's pixels. */
+interface PopPlace {
+  left: number;
+  bottom: number;
+  width: number;
+  maxHeight: number;
+}
 
 export const ModelSheet: Component<{
   /** Which CLI the session runs. Absent: no Model or Effort section. */
@@ -104,7 +132,7 @@ export const ModelSheet: Component<{
   modeHeld?: string;
   /** Why the model cannot change right now, for the same dialogs. */
   modelHeld?: string;
-  /** The newest `/context` reading, for the context line. */
+  /** How full the context is, for the context line (context.logic.ts). */
   context?: ContextState;
   /** Watching: the sheet reads, and every row is inert. */
   inertReason?: string;
@@ -126,7 +154,8 @@ export const ModelSheet: Component<{
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [sheet, setSheet] = createSignal(false);
-  const [popMax, setPopMax] = createSignal(POP_MAX);
+  const [place, setPlace] = createSignal<PopPlace | null>(null);
+  const [more, setMore] = createSignal(false);
   let root: HTMLSpanElement | undefined;
   let btn: HTMLButtonElement | undefined;
   let popEl: HTMLDivElement | undefined;
@@ -190,22 +219,49 @@ export const ModelSheet: Component<{
 
   dismissFloat({
     open,
-    inside: (t) => !!(root?.contains(t) || layerEl?.contains(t)),
+    inside: (t) => !!(root?.contains(t) || popEl?.contains(t) || layerEl?.contains(t)),
     close: (why) => close(why === "escape"),
   });
 
   /**
-   * Cap the popover at the room above the box: in a workspace tile the pane
-   * above the composer can be shorter than the sheet's 620px.
+   * Place the popover over the page, above the box, capped at the WINDOW's
+   * room above it. It used to sit inside the pane, capped at the pane's room:
+   * found live on 2026-09-27, a 700px or 450px window stacks the sidebar above
+   * the pane, and the popover was 227px tall with Effort and Mode out of view.
+   * It is drawn in the document's body for the reason BottomSheet is: the
+   * box's surface blurs what is behind it, which pins a fixed child to the box.
    */
   const placePop = (): void => {
-    const pill = root?.closest(".tl-pill");
-    // The new-session composer scrolls, so its own top is the ceiling there.
-    const view = root?.closest(".tl-textview, .tl-new-composer");
+    const pill = root?.closest(".tl-pill") ?? root;
     if (!pill) return;
-    const room = pill.getBoundingClientRect().top - (view?.getBoundingClientRect().top ?? 0) - 16;
-    setPopMax(Math.min(POP_MAX, Math.max(160, room)));
+    const r = pill.getBoundingClientRect();
+    const vw = window.innerWidth;
+    const width = Math.min(POP_W, vw - 2 * POP_GAP);
+    const left = r.left + Math.min(POP_INSET, Math.max(0, r.width - width));
+    setPlace({
+      left: Math.max(POP_GAP, Math.min(left, vw - POP_GAP - width)),
+      bottom: window.innerHeight - r.top + POP_GAP,
+      width,
+      maxHeight: Math.min(POP_MAX, Math.max(160, r.top - 2 * POP_GAP)),
+    });
   };
+  /** Whether part of the sheet is below the popover's edge, for the fade that
+   *  says so. */
+  const checkMore = (): void => {
+    const el = popEl;
+    setMore(!!el && el.scrollTop + el.clientHeight < el.scrollHeight - 1);
+  };
+  // A window that changes size moves the box; the popover follows it.
+  createEffect(() => {
+    if (!open() || sheet()) return;
+    const follow = (): void => {
+      placePop();
+      checkMore();
+    };
+    window.addEventListener("resize", follow);
+    requestAnimationFrame(checkMore);
+    onCleanup(() => window.removeEventListener("resize", follow));
+  });
 
   const press = (e: MouseEvent): void => {
     if (held() || busy()) return;
@@ -479,16 +535,30 @@ export const ModelSheet: Component<{
         <ChevronDownIcon class="tl-model-chev" />
       </button>
       <Show when={open() && !sheet()}>
-        <div
-          ref={popEl}
-          class="tl-ms-pop"
-          role="dialog"
-          aria-label={sheetName()}
-          style={{ "max-height": `${popMax()}px` }}
-          onKeyDown={(e) => walkNav(e, NAV)}
-        >
-          {body()}
-        </div>
+        <Portal>
+          <div
+            ref={popEl}
+            class="tl-ms-pop"
+            role="dialog"
+            aria-label={sheetName()}
+            data-more={more() ? "" : undefined}
+            style={(() => {
+              const p = place();
+              return p
+                ? {
+                    left: `${p.left}px`,
+                    bottom: `${p.bottom}px`,
+                    width: `${p.width}px`,
+                    "max-height": `${p.maxHeight}px`,
+                  }
+                : { "max-height": `${POP_MAX}px` };
+            })()}
+            onScroll={checkMore}
+            onKeyDown={(e) => walkNav(e, NAV)}
+          >
+            {body()}
+          </div>
+        </Portal>
       </Show>
       <Show when={open() && sheet()}>
         <Portal>

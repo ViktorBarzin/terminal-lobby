@@ -46,7 +46,7 @@ function mount(o: { stamp: ModelState | undefined; offer?: PiOffer; reply?: SetM
   const exact = () => dial()?.getAttribute("title");
   const pick = (name: string) => {
     fireEvent.click(dial()!);
-    const b = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-ms-model")).find(
+    const b = Array.from(document.querySelectorAll<HTMLButtonElement>(".tl-ms-model")).find(
       (x) => x.querySelector(".tl-ms-name")?.textContent === name,
     );
     fireEvent.click(b!);

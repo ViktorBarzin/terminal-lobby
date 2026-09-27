@@ -108,7 +108,7 @@ describe("the composer's affordances", () => {
     const button = container.querySelector<HTMLButtonElement>(".tl-model-btn")!;
     expect(button.getAttribute("data-mode")).toBe("bypassPermissions");
     fireEvent.click(button);
-    expect(container.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
+    expect(document.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
     expect(onCycleMode).toHaveBeenCalledTimes(1);
   });
 });

@@ -84,7 +84,7 @@ describe("<Composer> model button held while a dialog is up", () => {
     expect(b.getAttribute("title")).toBe(MODEL_REASON);
     expect(b.getAttribute("aria-label")).toContain(MODEL_REASON);
     fireEvent.click(b);
-    expect(container.querySelector(".tl-ms-pop")).toBeNull();
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
   });
 
   it("holds it for the mode's reason alone, too", () => {

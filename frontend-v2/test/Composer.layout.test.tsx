@@ -290,7 +290,7 @@ describe("<Composer>: every control still does its job", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
 
     fireEvent.click(container.querySelector(".tl-model-btn")!);
-    expect(container.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
+    expect(document.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
     expect(onCycleMode).not.toHaveBeenCalled();
 
     fireEvent.keyDown(ta, { key: "Tab", shiftKey: true });
@@ -378,9 +378,9 @@ describe("<Composer>: a watching device", () => {
 
     setReason(undefined);
     fireEvent.click(r.container.querySelector(".tl-model-btn")!);
-    expect(r.container.querySelector(".tl-ms-pop")).not.toBeNull();
+    expect(document.querySelector(".tl-ms-pop")).not.toBeNull();
     setReason(REASON);
-    expect(r.container.querySelector(".tl-ms-pop")).toBeNull();
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
   });
 
   it("offers no Take control when there is no way to take it", () => {

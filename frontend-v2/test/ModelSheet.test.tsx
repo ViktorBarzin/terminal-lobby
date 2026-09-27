@@ -175,6 +175,50 @@ describe("the sheet, on a desktop", () => {
     expect(document.querySelector(".tl-ms-sheet")).toBeNull();
   });
 
+  /**
+   * Found live on 2026-09-27: in a 700px or 450px window the lobby stacks its
+   * sidebar above the pane, and the popover, capped at the pane's room above
+   * the box, was 227px tall and showed five of six models with Effort and
+   * Mode out of view. It is drawn over the page now, so the window's room
+   * above the box is what caps it.
+   */
+  it("reaches above a short pane, capped by the window's room above the box", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 450);
+    const r = render(() => (
+      <div class="tl-textview">
+        <div class="tl-pill">
+          <ModelSheet harness="claude" mode="manual" onPickMode={() => {}} onPickModel={() => {}} />
+        </div>
+      </div>
+    ));
+    const rect = (top: number, left: number, width: number) => (): DOMRect =>
+      ({ top, left, width, right: left + width, bottom: top + 110, height: 110 }) as DOMRect;
+    r.container.querySelector<HTMLElement>(".tl-textview")!.getBoundingClientRect = rect(444, 0, 450);
+    r.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = rect(671, 16, 418);
+    open();
+    const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    expect(r.container.contains(pop)).toBe(false);
+    expect(pop.style.maxHeight).toBe(`${671 - 16}px`);
+    expect(pop.style.bottom).toBe(`${800 - 671 + 8}px`);
+    // Its left edge just past the +.
+    expect(pop.style.left).toBe(`${16 + 36}px`);
+  });
+
+  it("says there is more below while the rest of the sheet is out of view", () => {
+    mount({ model: { model: "claude-opus-5-5", effort: "high" } });
+    open();
+    const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    Object.defineProperty(pop, "scrollHeight", { value: 684, configurable: true });
+    Object.defineProperty(pop, "clientHeight", { value: 561, configurable: true });
+    pop.scrollTop = 0;
+    fireEvent.scroll(pop);
+    expect(pop.hasAttribute("data-more")).toBe(true);
+    pop.scrollTop = 123;
+    fireEvent.scroll(pop);
+    expect(pop.hasAttribute("data-more")).toBe(false);
+  });
+
   it("has Model, Effort and Mode sections, in that order", () => {
     mount({ model: { model: "claude-opus-5-5", effort: "high" }, context: CTX });
     open();
