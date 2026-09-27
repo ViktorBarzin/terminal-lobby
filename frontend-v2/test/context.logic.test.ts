@@ -67,6 +67,69 @@ describe("contextState", () => {
   });
 });
 
+/**
+ * Found live on 2026-09-27: the sheet had no context line in an ordinary
+ * session, only after someone ran /context, while the session's own status
+ * line showed 5% and then 9%. The CLI's status line works its figure out from
+ * the last request's usage over the model's window, rounded
+ * (input + cache writes + cache reads), so the sheet does the same from the
+ * turn_end's usage, with the window the caller knows for the model.
+ */
+describe("contextState from the last turn's usage", () => {
+  const usage = { input_tokens: 9, cache_creation_input_tokens: 40_012, cache_read_input_tokens: 80_479, output_tokens: 31 };
+
+  it("reads the context off the turn that settled last when nobody ran /context", () => {
+    const got = contextState(
+      [ev({ kind: "user", body: "hi" }), ev({ kind: "turn_end", usage })],
+      null,
+      { model: "claude-opus-5-5", window: 1_000_000 },
+    );
+    expect(got?.reading).toEqual({
+      model: "claude-opus-5-5",
+      usedTokens: 120_500,
+      maxTokens: 1_000_000,
+      percent: 12,
+    });
+    expect(got?.turnsAgo).toBe(0);
+  });
+
+  it("draws nothing from usage when the model's window is not known", () => {
+    expect(contextState([ev({ kind: "turn_end", usage })], null, { model: "gpt-5" })).toBeNull();
+  });
+
+  it("keeps a /context reading newer than the last turn", () => {
+    const got = contextState(
+      [ev({ kind: "turn_end", usage }), ev({ kind: "meta", meta: "context", context: reading() })],
+      null,
+      { model: "claude-opus-5", window: 1_000_000 },
+    );
+    expect(got?.reading.usedTokens).toBe(65_200);
+  });
+
+  it("prefers the turn's usage over an older /context reading, on its window", () => {
+    const got = contextState(
+      [
+        ev({ kind: "meta", meta: "context", context: reading({ maxTokens: 400_000 }) }),
+        ev({ kind: "turn_end", usage }),
+      ],
+      null,
+      { model: "claude-opus-5" },
+    );
+    expect(got?.reading.usedTokens).toBe(120_500);
+    expect(got?.reading.maxTokens).toBe(400_000);
+    expect(got?.turnsAgo).toBe(0);
+  });
+
+  it("leaves a subagent's turn out, since its context is not the session's", () => {
+    const got = contextState(
+      [ev({ kind: "turn_end", usage, sidechain: true })],
+      null,
+      { model: "claude-opus-5-5", window: 1_000_000 },
+    );
+    expect(got).toBeNull();
+  });
+});
+
 describe("formatTokens", () => {
   // The chip should read the way the pane reads, so the two never look like
   // they disagree.

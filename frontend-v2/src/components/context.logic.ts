@@ -3,19 +3,23 @@ import type { ContextReading, Event, SessionState } from "../types/events";
 /**
  * The context line's data, in the model sheet.
  *
- * The reading itself comes from the CLI: `/context` writes its own markdown into
- * the transcript and the normalizer turns it into a `meta` event carrying the
- * numbers. Nothing here computes a context size — the ceiling is not on the wire
- * and is not a constant (a session on this box reads 65.2k of 1m), which is why
- * reading what the CLI published beats deriving a worse version of it.
+ * Two sources. A `/context` reading is the CLI's own markdown in the
+ * transcript, which the normalizer turns into a `meta` event carrying the
+ * numbers, ceiling included. It is a point in time, and nothing refreshes it:
+ * automating it was built and then removed on 2026-08-19, since keeping it
+ * current meant typing into somebody's pane on a schedule.
  *
- * A reading is a point in time, and nothing refreshes it: the sheet shows what
- * the last `/context` in the session said, and a session where nobody has run
- * one has no context line at all. Automating that was built and then removed on
- * 2026-08-19 — keeping the number current meant typing into somebody's pane on
- * a schedule, and the text view does not write to a terminal unattended. So the
- * sheet says how old its reading is, in settled turns, and a stale one reads as
- * stale rather than as live.
+ * So the line also reads the last settled turn's usage, which every turn
+ * carries on its `turn_end`. That is the CLI status line's own arithmetic
+ * (2.1.283: input + cache writes + cache reads over the window, rounded), and
+ * it is why the line is there in an ordinary session: found live on
+ * 2026-09-27, the sheet had no context line until someone ran /context, while
+ * the pane's status line read 5% and then 9%. The usage gives the numerator;
+ * the WINDOW is not on the wire and is not a constant (1m on most models here,
+ * 200k on Haiku 4.5), so it comes from a `/context` reading on the same model
+ * when there is one, and otherwise from what the caller measured for the model
+ * (lib/models.ts `contextWindow`). With neither, the line draws nothing rather
+ * than guess.
  */
 export interface ContextState {
   reading: ContextReading;
@@ -23,9 +27,39 @@ export interface ContextState {
   turnsAgo: number;
 }
 
-/** The newest reading in the log, with its age in settled turns. */
-export function contextState(events: Event[], seed?: SessionState | null): ContextState | null {
-  // A reading the state frame does not account for is the fresher one.
+/** What the caller knows about the session's model, for the usage reading. */
+export interface ContextModel {
+  /** The model the session is answering as. */
+  model?: string;
+  /** Its context window in tokens, where it has been measured. */
+  window?: number;
+}
+
+/** The newest reading, with its age in settled turns. */
+export function contextState(
+  events: Event[],
+  seed?: SessionState | null,
+  now?: ContextModel,
+): ContextState | null {
+  const logged = loggedReading(events, seed);
+  const end = lastTurnWithUsage(events);
+  if (logged && logged.index > end) return logged.state;
+  const seeded = seededReading(events, seed);
+  if (end >= 0) {
+    // A reading from the frame that no turn has settled since is newer than
+    // any turn in the log.
+    if (!logged && seeded?.turnsAgo === 0) return seeded;
+    const fromUsage = usageReading(events[end]!, logged?.state.reading ?? seeded?.reading, now);
+    if (fromUsage) return { reading: fromUsage, turnsAgo: 0 };
+  }
+  return logged?.state ?? seeded;
+}
+
+/** The newest `/context` reading the state frame does not account for. */
+function loggedReading(
+  events: Event[],
+  seed?: SessionState | null,
+): { state: ContextState; index: number } | null {
   const at = seed?.at ?? -1;
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]!;
@@ -35,16 +69,53 @@ export function contextState(events: Event[], seed?: SessionState | null): Conte
     for (let j = i + 1; j < events.length; j++) {
       if (events[j]!.kind === "turn_end") turnsAgo++;
     }
-    return { reading: e.context, turnsAgo };
+    return { state: { reading: e.context, turnsAgo }, index: i };
   }
-  // Otherwise the frame's, aged by the turns that have settled since — the
-  // reading itself is usually far outside a bounded backfill.
+  return null;
+}
+
+/** The frame's reading, aged by the turns that have settled since. The reading
+ *  itself is usually far outside a bounded backfill. */
+function seededReading(events: Event[], seed?: SessionState | null): ContextState | null {
   if (!seed?.context) return null;
+  const at = seed.at ?? -1;
   let turnsAgo = seed.contextTurnsAgo ?? 0;
   for (const e of events) {
     if (e.id > at && e.kind === "turn_end") turnsAgo++;
   }
   return { reading: seed.context, turnsAgo };
+}
+
+/** Where the session's own newest settled turn with a usage is, or -1. A
+ *  subagent's turn is its own context, not the session's. */
+function lastTurnWithUsage(events: Event[]): number {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]!;
+    if (e.kind === "turn_end" && !e.sidechain && e.usage) return i;
+  }
+  return -1;
+}
+
+/** A reading worked out from a turn's usage, or null without a window. */
+function usageReading(
+  end: Event,
+  known: ContextReading | undefined,
+  now?: ContextModel,
+): ContextReading | null {
+  const u = end.usage;
+  if (!u) return null;
+  const sameModel = !!known && (!known.model || !now?.model || known.model === now.model);
+  const window = (sameModel ? known.maxTokens : 0) || now?.window || 0;
+  if (window <= 0) return null;
+  const used =
+    (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
+  const model = now?.model ?? known?.model;
+  return {
+    ...(model ? { model } : {}),
+    usedTokens: used,
+    maxTokens: window,
+    percent: Math.min(100, Math.max(0, Math.round((used / window) * 100))),
+  };
 }
 
 /** `65.2k`, the way the CLI writes it, so the sheet's context line and the pane agree. */

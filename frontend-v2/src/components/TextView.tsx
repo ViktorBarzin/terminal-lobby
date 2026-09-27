@@ -76,6 +76,7 @@ import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
 import {
+  contextWindow,
   isCurrentModel,
   type ModelField,
   type ModelHarness,
@@ -1048,12 +1049,6 @@ export const TextView: Component<{
     };
   });
 
-  // How full the context is, from the CLI's own `/context` reading — whenever
-  // one is in the transcript, because somebody ran the command. Nothing injects
-  // it and nothing here computes a context size: the ceiling is not on the wire
-  // and is not a constant.
-  const context = createMemo(() => contextState(props.events, props.sessionState));
-
   /**
    * What the session is answering as.
    *
@@ -1072,6 +1067,16 @@ export const TextView: Component<{
   const transcriptModel = createMemo(
     () => currentModel(props.events, props.sessionState) ?? props.stampedModel,
   );
+  // The sheet's context line: a /context reading, or the last turn's usage
+  // over the window measured for the model the session answers as.
+  const context = createMemo(() => {
+    const model = transcriptModel()?.model;
+    const window = contextWindow(model);
+    return contextState(props.events, props.sessionState, {
+      ...(model ? { model } : {}),
+      ...(window ? { window } : {}),
+    });
+  });
   const [appliedModel, setAppliedModel] = createSignal<{
     state: ModelState;
     against: string;

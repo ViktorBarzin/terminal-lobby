@@ -285,6 +285,30 @@ const CLAUDE_EFFORTS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /**
+ * Each Claude model's context window in tokens, for the model sheet's context
+ * line when the session has no `/context` reading on its model.
+ *
+ * Measured with `/context` on this box, Claude Code 2.1.283, 2026-09-27: 1m on
+ * every row but Haiku 4.5, which read 200k. The CLI decides the window from
+ * its catalogue, the `[1m]` suffix and the environment, which is why this is
+ * a measured table rather than a rule. A `[1m]` slug is 1m by its name.
+ */
+const CLAUDE_WINDOWS: Readonly<Record<string, number>> = {
+  "claude-opus-5-5": 1_000_000,
+  "claude-opus-5": 1_000_000,
+  "claude-sonnet-5": 1_000_000,
+  "claude-opus-4-8": 1_000_000,
+  "claude-haiku-4-5-20251001": 200_000,
+};
+
+/** The model's context window, or undefined where it has not been measured. */
+export function contextWindow(model: string | undefined): number | undefined {
+  if (!model) return undefined;
+  if (/\[1m\]$/i.test(model)) return 1_000_000;
+  return CLAUDE_WINDOWS[model];
+}
+
+/**
  * The effort levels a live session's model offers, without `default` (which
  * only a session not yet started can mean).
  *

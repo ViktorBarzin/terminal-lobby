@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { currentModel } from "../src/components/timeline.logic";
 import type { Event, SessionState } from "../src/types/events";
 import {
+  contextWindow,
   adoptModelId,
   chipName,
   DEFAULT_CHOICE,
@@ -609,5 +610,27 @@ describe("the efforts a new session can start on", () => {
       "xhigh",
       "max",
     ]);
+  });
+});
+
+/**
+ * Each model's context window, as `/context` reported it on this box with
+ * Claude Code 2.1.283 on 2026-09-27: 1m for every row but Haiku 4.5 (200k).
+ */
+describe("contextWindow", () => {
+  it.each([
+    ["claude-opus-5-5", 1_000_000],
+    ["claude-opus-5", 1_000_000],
+    ["claude-opus-5[1m]", 1_000_000],
+    ["claude-sonnet-5", 1_000_000],
+    ["claude-opus-4-8", 1_000_000],
+    ["claude-haiku-4-5-20251001", 200_000],
+  ])("reads %s as %i", (model, want) => {
+    expect(contextWindow(model)).toBe(want);
+  });
+
+  it("does not guess a window for a model it has not measured", () => {
+    expect(contextWindow("gpt-5-codex")).toBeUndefined();
+    expect(contextWindow(undefined)).toBeUndefined();
   });
 });

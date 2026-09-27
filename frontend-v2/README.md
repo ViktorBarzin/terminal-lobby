@@ -840,11 +840,12 @@ src/
                          picture, and opens full size when pressed), the unsent
                          draft, ↑ history, and the mobile input attributes that
                          restore QuickType and swipe typing
-    context.logic.ts     PURE reading of the `/context` meter (newest reading,
-                         staleness in settled turns, the line's hover words).
-                         Figures are the CLI's own, because the ceiling is not
-                         on the wire. Nothing runs the command — no reading,
-                         no context line
+    context.logic.ts     PURE reading of the context line: the last settled
+                         turn's usage over the model's measured window (the
+                         CLI status line's own sum), or a newer `/context`
+                         reading, with its staleness in settled turns and the
+                         line's hover words. Nothing runs the command, and a
+                         model with no known window and no reading has no line
     QuestionCard.tsx     The question card, in the composer's place while
                          Claude waits, after T3 Code's question panel
                          (ADR-0034): one question at a time with an i/N

@@ -801,8 +801,9 @@ _Avoid_: status bar, status row (the timeline row it took over from), footer
 The one sheet behind the **Composer**'s model button ("✳ Opus 5.5 ⌄"): the
 models by name with each exact slug beside it, the effort levels the session's
 model offers, the six permission modes (Bypass and No ask below a rule, in the
-danger tone), and a quiet "Context N% used" line once a `/context` reading
-exists. A popover above the box on a desktop, a bottom sheet on a phone. A
+danger tone), and a quiet "Context N% used" line, read off the last settled
+turn's usage over the model's window, or off a newer `/context` reading. A
+popover over the page above the box on a desktop, a bottom sheet on a phone. A
 model or effort pick drives the CLI's own picker; a mode pick asks the server
 to walk Shift+Tab to it. The button carries a small red shield in Bypass and No
 ask, and is held while a dialog is on the pane.
