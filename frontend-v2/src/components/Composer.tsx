@@ -361,7 +361,7 @@ export const Composer: Component<{
     props.planOpen
       ? "Tell Claude what to change…"
       : props.asking
-        ? "Type your own answer, or leave this blank to use the selected option"
+        ? "Or type your own answer…"
         : placeholderFor(props.mode ?? "");
 
   /** What Send's tooltip warns of, when a send would do more than send. */
