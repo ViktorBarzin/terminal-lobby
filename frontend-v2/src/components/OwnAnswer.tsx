@@ -1,5 +1,6 @@
-import { Show, type Component } from "solid-js";
+import { Show, onCleanup, type Component } from "solid-js";
 import { PenIcon, SendArrowIcon } from "./Icons";
+import { revealBy } from "./reveal.logic";
 
 /**
  * A card's last row, "Type your own answer" (the T3 pass, prototype
@@ -24,6 +25,33 @@ export const OwnAnswer: Component<{
   onSend: () => void;
 }> = (props) => {
   let field: HTMLTextAreaElement | undefined;
+  /**
+   * Keep the whole row, Send included, in the card's scroll box while the
+   * field has the focus. The browser's own scroll on focus lands before the
+   * phone's keyboard shrinks the box, and measured on Android Chrome on
+   * 2026-09-27 it left the row 18px short with Send cut through the middle.
+   * So the row is shown again whenever the box or the row changes size.
+   */
+  const keepInView = (row: HTMLDivElement): void => {
+    const reveal = (): void => {
+      if (document.activeElement !== field) return;
+      const box = row.closest<HTMLElement>(".tl-qcard-body");
+      if (!box) return;
+      const b = box.getBoundingClientRect();
+      const top = b.top + box.clientTop;
+      const by = revealBy({ top, bottom: top + box.clientHeight }, row.getBoundingClientRect());
+      if (by !== 0) box.scrollTop += by;
+    };
+    row.addEventListener("focusin", () => requestAnimationFrame(reveal));
+    if (typeof ResizeObserver === "undefined") return;
+    const watch = new ResizeObserver(reveal);
+    queueMicrotask(() => {
+      const box = row.closest<HTMLElement>(".tl-qcard-body");
+      if (box) watch.observe(box);
+      watch.observe(row);
+    });
+    onCleanup(() => watch.disconnect());
+  };
   const canSend = () => !props.disabled && props.value.trim() !== "";
   const send = (): void => {
     if (canSend()) props.onSend();
@@ -53,7 +81,7 @@ export const OwnAnswer: Component<{
         </button>
       }
     >
-      <div class="tl-qcard-ownfield">
+      <div class="tl-qcard-ownfield" ref={keepInView}>
         <textarea
           ref={field}
           class="tl-qcard-owninput"
