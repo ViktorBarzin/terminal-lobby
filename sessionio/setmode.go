@@ -264,7 +264,7 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 			res.Reason = ModeDialogOpen
 			return res, nil
 		}
-		busy := in.busy(osUser, session)
+		busy := in.busy(osUser, session, stale != "")
 		if busy && passesDanger(cur, target) {
 			res.Reason = ModeUnsafePath
 			return res, nil
@@ -327,9 +327,18 @@ func (in *Injector) awaitModeChange(ctx context.Context, osUser, session, was st
 // busy reports whether Claude is working in the session, in the sense the
 // safety rule means: a turn running or waiting on a person, or a background
 // agent still going after the turn ended (OptionBackground).
-func (in *Injector) busy(osUser, session string) bool {
-	if st := in.State(osUser, session); st == StateRunning || st == StateAwaiting {
+//
+// staleAsk drops the awaiting half. The hook script stamps awaiting for as long
+// as OptionAsk stands, so a marker dialogPending found stale holds an awaiting
+// that nobody is waiting behind: Esc interrupted the turn, and no Stop came.
+func (in *Injector) busy(osUser, session string, staleAsk bool) bool {
+	switch in.State(osUser, session) {
+	case StateRunning:
 		return true
+	case StateAwaiting:
+		if !staleAsk {
+			return true
+		}
 	}
 	bg, _ := in.Option(osUser, session, OptionBackground)
 	return strings.TrimSpace(bg) != ""

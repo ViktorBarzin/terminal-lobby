@@ -304,6 +304,26 @@ func TestSetModeWalksPastAMarkerNoDialogFollowed(t *testing.T) {
 	}
 }
 
+// The escaped question's marker also holds the session at awaiting: the hook
+// script stamps awaiting for as long as the marker stands, and Esc fires no
+// Stop. That awaiting is the stale marker's, not a person being waited on, so
+// it does not make the walk through bypass unsafe (seen live on 2026-09-27:
+// plan to auto refused as unsafe-path at an idle prompt).
+func TestSetModeDoesNotCountAStaleMarkersAwaitingAsWork(t *testing.T) {
+	was := dialogDraw
+	dialogDraw = 600 * time.Millisecond
+	t.Cleanup(func() { dialogDraw = was })
+	in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cycleBypass+" FAKEDIALOG_MODE=plan ")
+	stamp(t, in, osUser, OptionAsk, "toolu_escaped")
+	stamp(t, in, osUser, OptionState, StateAwaiting)
+
+	res := setMode(t, in, osUser, ModeAuto)
+
+	if !res.Applied || res.Mode != ModeAuto || res.Presses != 2 {
+		t.Fatalf("got %+v, want auto after two presses", res)
+	}
+}
+
 // A press the status line does not answer ends the walk: pressing again
 // without knowing where the first one went could land anywhere.
 func TestSetModeStopsWhenAPressDoesNotMove(t *testing.T) {
