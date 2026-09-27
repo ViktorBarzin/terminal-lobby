@@ -886,6 +886,10 @@ src/
                          tool will do and its rows as drawn. A tap, or the
                          row's digit from inside the Text view, presses the
                          row's number, once per prompt
+    permission.logic.ts  PURE what the permission card's well shows: the
+                         waiting call the prompt names, read from the
+                         transcript (an Edit's changed lines, a Bash command
+                         and its description), or null for the pane's lines
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns
