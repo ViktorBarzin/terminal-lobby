@@ -130,8 +130,6 @@ describe("the permission card", () => {
     expect(well.querySelector(".tl-permcard-file")?.textContent).toBe("calc.py");
     expect(lines).toEqual([
       [" ", "      return a + b"],
-      ["+", "+ "],
-      ["+", "+ "],
       ["+", "+ def subtract(a, b):"],
       ["+", "+     return a - b"],
     ]);

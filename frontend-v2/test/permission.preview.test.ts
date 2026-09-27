@@ -44,8 +44,6 @@ describe("permissionPreview", () => {
       file: "calc.py",
       lines: [
         { sign: " ", text: "    return a + b" },
-        { sign: "+", text: "" },
-        { sign: "+", text: "" },
         { sign: "+", text: "def subtract(a, b):" },
         { sign: "+", text: '    """Subtract b from a."""' },
         { sign: "+", text: "    return a - b" },
@@ -86,6 +84,21 @@ describe("permissionPreview", () => {
       command,
       description: "Run subtract and print its docstring",
     });
+  });
+
+  it("leaves out blank lines, which say nothing about where the change is", () => {
+    const p = permissionPreview(EDIT, [
+      use(1, "Edit", "e1", {
+        file_path: "/tmp/proj/calc.py",
+        old_string: "    return a + b\n",
+        new_string: "    return a + b\n\ndef divide(a, b):\n    return a / b\n",
+      }),
+    ]);
+    expect(p?.kind === "diff" ? p.lines.map((l) => l.sign + l.text) : null).toEqual([
+      "     return a + b",
+      "+def divide(a, b):",
+      "+    return a / b",
+    ]);
   });
 
   it("picks the call the prompt names when two wait together", () => {

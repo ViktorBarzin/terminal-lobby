@@ -70,13 +70,27 @@ function diffLines(from: string, to: string): DiffLine[] {
     a[a.length - 1 - tail] === b[b.length - 1 - tail]
   )
     tail++;
-  const out: DiffLine[] = [];
-  for (const text of a.slice(Math.max(0, head - CONTEXT), head)) out.push({ sign: " ", text });
-  for (const text of a.slice(head, a.length - tail)) out.push({ sign: "-", text });
-  for (const text of b.slice(head, b.length - tail)) out.push({ sign: "+", text });
-  for (const text of a.slice(a.length - tail, a.length - tail + CONTEXT))
-    out.push({ sign: " ", text });
-  return out;
+  // A blank line says nothing about where the change sits or what it is, and
+  // takes a line of a small well: the kept lines shown are the nearest ones
+  // with words in them, and each changed block drops blank lines at its ends.
+  const words = (text: string): boolean => text.trim() !== "";
+  const kept = (lines: string[]): DiffLine[] =>
+    lines.filter(words).map((text) => ({ sign: " ", text }));
+  const block = (lines: string[], sign: "-" | "+"): DiffLine[] => {
+    let from = 0;
+    let to = lines.length;
+    while (from < to && !words(lines[from]!)) from++;
+    while (to > from && !words(lines[to - 1]!)) to--;
+    return lines.slice(from, to).map((text) => ({ sign, text }));
+  };
+  const before = kept(a.slice(0, head)).slice(-CONTEXT);
+  const after = kept(a.slice(a.length - tail)).slice(0, CONTEXT);
+  return [
+    ...before,
+    ...block(a.slice(head, a.length - tail), "-"),
+    ...block(b.slice(head, b.length - tail), "+"),
+    ...after,
+  ];
 }
 
 /** An Edit's or MultiEdit's change, each edit's lines one after another. */

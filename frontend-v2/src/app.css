@@ -6583,11 +6583,12 @@ body.tl-kb-up {
   line-height: 1.4;
 }
 /* What the tool will do, from the permission prompt (PermissionCard), in the
-   prototype's command well: eight lines on a desktop and six on a phone, then
-   it scrolls, so a Write's file cannot push the rows off the card. Four hid
-   an Edit's change below the fold (found live on 2026-09-27). */
+   prototype's command well: eight lines, then it scrolls, so a Write's file
+   cannot push the rows off the card. Four hid an Edit's change below the fold
+   on desktop and phone alike (found live on 2026-09-27). The 18px is the
+   well's own padding, which the height includes. */
 .tl-permcard-detail {
-  max-height: calc(19px * 8 * var(--tl-text-scale, 1));
+  max-height: calc(19px * 8 * var(--tl-text-scale, 1) + 18px);
   margin: 8px 4px 10px;
   padding: 9px 11px;
   border-radius: 10px;
@@ -6596,11 +6597,6 @@ body.tl-kb-up {
   line-height: calc(19px * var(--tl-text-scale, 1));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-}
-@media (pointer: coarse) {
-  .tl-permcard-detail {
-    max-height: calc(19px * 6 * var(--tl-text-scale, 1));
-  }
 }
 /* An Edit's change, from the call itself (permission.logic): the file's name,
    then one line each, kept lines muted, taken-out lines in the danger colour
