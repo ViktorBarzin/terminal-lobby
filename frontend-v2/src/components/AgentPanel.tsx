@@ -338,6 +338,8 @@ export const AgentPanel: Component<{
   onOpen?: (id: string) => void;
   /** The agent whose transcript is open now, if any. */
   openId?: string | null;
+  /** Close the open transcript. The rail offers it while one is open. */
+  onBack?: () => void;
 }> = (props) => {
   const [doneOpen, setDoneOpen] = createSignal(false);
   const [stripOpen, setStripOpen] = createSignal(false);
@@ -423,6 +425,17 @@ export const AgentPanel: Component<{
         fallback={
           <>
             <div class="tl-agents-tally">
+              {/* The drill-in's own Back sits at the far left of the reading
+                  column, a trip across the screen from the rail the reader
+                  just tapped, so the rail carries one too. The strip needs
+                  none: the drill-in's header is right under it. */}
+              <Show when={props.openId ? props.onBack : undefined}>
+                {(back) => (
+                  <button type="button" class="tl-agents-back" onClick={() => back()()}>
+                    <span aria-hidden="true">←</span> Back to session
+                  </button>
+                )}
+              </Show>
               {ticks()}
               <div class="tl-agents-head">
                 <span class="tl-agents-count">{tally().running} running</span>
