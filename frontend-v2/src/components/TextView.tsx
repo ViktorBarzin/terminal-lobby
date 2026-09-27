@@ -1213,6 +1213,7 @@ export const TextView: Component<{
               // An agent's transcript is read through its session's routes.
               onOpen={props.session ? (id) => setDrill(id) : undefined}
               openId={drill()}
+              onBack={() => closeDrill(true)}
             />
           )}
         </Show>

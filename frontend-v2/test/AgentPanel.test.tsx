@@ -431,6 +431,29 @@ describe("tapping an agent", () => {
     expect(v.opened).toEqual([]);
   });
 
+  it("puts a way back at the top of the rail while a transcript is open", () => {
+    const back = vi.fn();
+    const [openId, setOpenId] = createSignal<string | null>(null);
+    const r = render(() => (
+      <AgentPanel snapshot={snap([agent("a1")])} form="rail" openId={openId()} onBack={back} />
+    ));
+    const q = () => r.container.querySelector<HTMLButtonElement>("button.tl-agents-back");
+    expect(q()).toBeNull();
+    setOpenId("a1");
+    // In the sticky tally, so it stays on screen however far the list scrolls.
+    expect(q()?.closest(".tl-agents-tally")).not.toBeNull();
+    expect(q()?.textContent).toContain("Back to session");
+    fireEvent.click(q()!);
+    expect(back).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves the strip without one: the drill-in's own Back sits just under it", () => {
+    const r = render(() => (
+      <AgentPanel snapshot={snap([agent("a1")])} form="strip" openId="a1" onBack={() => {}} />
+    ));
+    expect(r.container.querySelector("button.tl-agents-back")).toBeNull();
+  });
+
   it("closes the strip's list on a tap, so what the tap opened is what shows", () => {
     const v = mountOpenable(snap([agent("a1")]), "strip");
     fireEvent.click(v.all(".tl-agents-bar")[0]!);

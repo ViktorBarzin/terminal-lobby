@@ -137,6 +137,20 @@ describe("drilling into an agent", () => {
     expect(document.activeElement).toBe(v.entry("a1")?.querySelector("button"));
   });
 
+  it("goes back from the margin too, beside the agents", () => {
+    // Reported 2026-09-27 (Viktor): the only Back sat at the far left of the
+    // reading column, a trip across the screen from the rail he had just
+    // tapped. The rail carries one of its own while a transcript is open.
+    const v = mount({ agents: snap([agent("a1")]) });
+    expect(v.q(".tl-agents button.tl-agents-back")).toBeNull();
+    v.tap("a1");
+    fireEvent.click(v.q(".tl-agents button.tl-agents-back")!);
+    expect(v.q(".tl-drill")).toBeNull();
+    expect(v.session().classList.contains("tl-hidden")).toBe(false);
+    expect(document.activeElement).toBe(v.entry("a1")?.querySelector("button"));
+    expect(v.q(".tl-agents button.tl-agents-back")).toBeNull();
+  });
+
   it("goes back on Escape, but not while the reader is typing", () => {
     const v = mount({ agents: snap([agent("a1")]) });
     v.tap("a1");
