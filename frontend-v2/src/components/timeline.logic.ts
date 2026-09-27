@@ -414,8 +414,19 @@ function leafFailed(row: LeafRow): boolean {
   );
 }
 
+/**
+ * How long a turn worked: its first event to its last `turn_end`. Anything after the
+ * end is left out, since a local command typed once the turn settled (/context
+ * writes into the transcript with no turn of its own) joins the turn before it,
+ * and it stretched "Worked for" to the minute the command ran (found live on
+ * 2026-09-27).
+ */
 function turnDuration(turn: Turn): number | undefined {
-  const ats = turn.events
+  let end = -1;
+  turn.events.forEach((e, i) => {
+    if (e.kind === "turn_end") end = i;
+  });
+  const ats = (end >= 0 ? turn.events.slice(0, end + 1) : turn.events)
     .map((e) => e.at)
     .filter((n): n is number => typeof n === "number" && n > 0);
   if (ats.length < 2) return undefined;

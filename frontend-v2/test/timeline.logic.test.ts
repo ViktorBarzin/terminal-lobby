@@ -804,6 +804,23 @@ describe("work groups", () => {
     expect(groups(rows)[0]!.stopped).toBe(stopped);
   });
 
+  // Found live on 2026-09-27: a local command typed after a turn settled
+  // (/context, which writes into the transcript with no turn of its own)
+  // joined the turn before it and stretched its "Worked for" to the minute
+  // the command ran.
+  it("ends a settled turn's fold at its turn_end, not at a later local command", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go", at: 1_000 }),
+      bash(2, "t1", "ls", 2_000),
+      done(3, "t1", { at: 3_000 }),
+      ev({ id: 4, kind: "text", body: "done", at: 9_000 }),
+      ev({ id: 5, kind: "turn_end", at: 9_000 }),
+      ev({ id: 6, kind: "meta", meta: "context", body: "", at: 60_000 }),
+    ]);
+    const fold = rows.find((r) => r.kind === "turn-fold");
+    expect(fold?.kind === "turn-fold" ? fold.durationMs : null).toBe(8_000);
+  });
+
   it("measures a group from its first call to its last result", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go", at: 500 }),
