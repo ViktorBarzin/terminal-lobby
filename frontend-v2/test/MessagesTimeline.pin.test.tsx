@@ -39,11 +39,14 @@ const TRANSCRIPT: Event[] = [
 
 /**
  * jsdom lays nothing out, so every scroll measurement is 0 and the view reads
- * as pinned. These fix a geometry the test can then move the reader around in.
+ * as pinned. These fix a geometry the test can then move the reader around in,
+ * with a wheel turn so the move counts as the reader's.
  */
 function geometry(el: HTMLElement, scrollTop: number): void {
   Object.defineProperty(el, "scrollHeight", { value: 1000, configurable: true });
   Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
+  // The reader moves it: only the reader's own scroll lets go of the live end.
+  fireEvent.wheel(el, { deltaY: -120 });
   el.scrollTop = scrollTop;
 }
 

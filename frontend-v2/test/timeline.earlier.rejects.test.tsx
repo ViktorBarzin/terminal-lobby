@@ -81,6 +81,7 @@ describe("a rejecting onLoadEarlier", () => {
 
     const seen = await unhandledDuring(async () => {
       const geom = stubScroller(el, 4000, 400);
+      fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
       geom.top = 10;
       fireEvent.scroll(el);
       await Promise.resolve();
@@ -124,6 +125,7 @@ describe("a rejecting onLoadEarlier", () => {
 
     await unhandledDuring(async () => {
       const geom = stubScroller(el, 4000, 400);
+      fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
       geom.top = 10;
       fireEvent.scroll(el);
       await Promise.resolve();
