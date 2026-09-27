@@ -172,6 +172,23 @@ describe("the permission card", () => {
     expect(card()!.querySelector(".tl-permcard-prompt")?.textContent).toBe("Build the frontend");
   });
 
+  it("tells the header Claude is waiting the moment the card docks", async () => {
+    const onLiveState = vi.fn();
+    const { setEvents, card } = mount(base, undefined, undefined, { onLiveState });
+    await waitFor(() => expect(onLiveState).toHaveBeenLastCalledWith("running"));
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(onLiveState).toHaveBeenLastCalledWith("awaiting");
+    setEvents([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+      ev({ id: 4, kind: "tool_result", toolId: "b1", body: "", at: 3000 }),
+      ev({ id: 5, kind: "text", body: "Done.", at: 3100 }),
+      ev({ id: 6, kind: "turn_end", at: 3200 }),
+    ]);
+    await waitFor(() => expect(onLiveState).toHaveBeenLastCalledWith("done"));
+  });
+
   it("takes the composer's place, which stays mounted with its draft", async () => {
     const { r, card, composer, setEvents } = mount(base);
     const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;

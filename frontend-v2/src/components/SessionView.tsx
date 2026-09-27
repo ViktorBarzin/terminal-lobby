@@ -1116,11 +1116,15 @@ export const SessionView: Component<{
   // contract belongs to the sidebar's menus, whose list a poll can rebuild
   // underneath them.
   const barMenu = createDismissableMenu(() => () => {});
+  /** What the Text view's conversation says the session is doing, while it
+   *  is on screen (TextView onLiveState). */
+  const [textLive, setTextLive] = createSignal<"running" | "awaiting" | "done" | undefined>();
   /** The line under the title: "code · working · 2 agents" (header.logic.ts). */
   const subtitle = createMemo(() =>
     headerSubtitle({
       project: props.project?.(),
       state: props.claudeState?.(),
+      live: mode() === "text" ? textLive() : undefined,
       watching: watch(),
       background: props.background?.(),
       tool: props.tool?.(),
@@ -1664,6 +1668,7 @@ export const SessionView: Component<{
           <TextView
             onScreen={onScreen()}
             textShown={mode() === "text"}
+            onLiveState={setTextLive}
             parked={store.parked()}
             events={store.events}
             rows={rows}

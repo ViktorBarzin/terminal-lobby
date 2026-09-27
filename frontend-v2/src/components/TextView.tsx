@@ -309,6 +309,11 @@ export const TextView: Component<{
   /** FALSE while the session's Terminal is the view on screen in its place.
    *  Coming back from it re-reads the mode, which a Shift+Tab there moves. */
   textShown?: boolean;
+  /** Told what the conversation says the session is doing, for the header's
+   *  subtitle: it moves with the transcript, where the session list's state
+   *  waits for its next poll. Undefined while the view is not on screen or
+   *  still opening. */
+  onLiveState?: (s: "running" | "awaiting" | "done" | undefined) => void;
   /** The session's stream is parked while nobody reads it. An agent's
    *  transcript open in the drill-in parks with it. */
   parked?: boolean;
@@ -1232,6 +1237,21 @@ export const TextView: Component<{
   const planUp = (): boolean => planDocked() !== null && planReplyNow()?.notice !== "gone";
   const composerHidden = createMemo(() => questionUp() || permissionUp() || planUp());
   const cardUp = createMemo(() => questionUp() || permissionUp() || planDocked() !== null);
+
+  // The header's subtitle follows the conversation while it is on screen: a
+  // card that docks says "waiting for you" at once, where the session list's
+  // state lagged it by a poll (found live on 2026-09-27).
+  createEffect(() => {
+    const tell = props.onLiveState;
+    if (!tell) return;
+    if (props.opening || props.textShown === false || props.onScreen === false) {
+      tell(undefined);
+      return;
+    }
+    const l = lineLive();
+    tell(cardUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
+  });
+  onCleanup(() => props.onLiveState?.(undefined));
 
   // ---- following: the "Latest" band ------------------------------------------
   // Each timeline says whether its reader is at the live end, and hands over

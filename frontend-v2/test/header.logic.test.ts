@@ -19,6 +19,24 @@ describe("headerSubtitle", () => {
     expect(headerSubtitle({ ...base, state })).toEqual({ dot, text });
   });
 
+  it("follows the conversation's state while the Text view has one", () => {
+    // Found live on 2026-09-27: the plan card was up and the header still
+    // read "working" for a few seconds, until the session list's next poll.
+    expect(headerSubtitle({ ...base, state: "running", live: "awaiting" })).toEqual({
+      dot: "waiting",
+      text: "code · waiting for you",
+    });
+    expect(headerSubtitle({ ...base, state: "awaiting", live: "done" }).text).toBe("code · idle");
+    // A suspended session has no process, whatever the transcript last said.
+    expect(headerSubtitle({ ...base, state: "suspended", live: "running" }).text).toBe(
+      "code · suspended",
+    );
+    // A session no Claude reported on keeps its own word.
+    expect(headerSubtitle({ ...base, state: "", live: "running", tool: "shell" }).text).toBe(
+      "code · shell",
+    );
+  });
+
   it("says watching over whatever the session is doing, since this device cannot act", () => {
     expect(headerSubtitle({ ...base, state: "awaiting", watching: true })).toEqual({
       dot: "watching",

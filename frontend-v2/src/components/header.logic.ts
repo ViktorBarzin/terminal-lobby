@@ -38,11 +38,18 @@ export function headerSubtitle(input: {
   watching: boolean;
   background?: BackgroundWork;
   tool?: SessionTool;
+  /** What the open Text view's conversation says the session is doing. It
+   *  moves with the transcript, where `state` waits for the session list's
+   *  next poll, so it wins while there is one. Not over a suspended session,
+   *  and not for a session no Claude reported on. */
+  live?: "running" | "awaiting" | "done";
 }): HeaderSubtitle {
+  const state =
+    input.live && input.state && input.state !== "suspended" ? input.live : input.state;
   const [dot, word]: [HeaderDot, string] = input.watching
     ? ["watching", "watching"]
-    : input.state
-      ? WORDS[input.state]
+    : state
+      ? WORDS[state]
       : ["idle", input.tool === "shell" ? "shell" : "idle"];
   // A suspended session has no process, so nothing it launched is running.
   const owed = input.state === "suspended" ? "" : backgroundLabel(input.background);
