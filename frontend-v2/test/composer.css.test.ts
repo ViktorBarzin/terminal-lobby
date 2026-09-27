@@ -95,10 +95,22 @@ describe("one surface", () => {
     expect(box).toMatch(/grid-template-areas:\s*"field field field"\s*"plus tools end"/);
   });
 
-  it("turns the box's border to the accent at 55% while focused", () => {
+  it("turns the box's border to the accent at 55% while focused, or the theme's own edge", () => {
     expect(rule('.tl-pill[data-shape="box"]:focus-within')).toMatch(
-      /border-color:\s*color-mix\(in srgb, var\(--accent\) 55%, var\(--border-strong\)\)/,
+      /border-color:\s*var\(--focus-edge, color-mix\(in srgb, var\(--accent\) 55%, var\(--border-strong\)\)\)/,
     );
+  });
+
+  // Found on 2026-09-27: Ink's accent is its danger colour, so a focused box
+  // looked the same as Bypass's danger border.
+  it("gives every theme whose accent is its danger colour an edge of its own", () => {
+    const theme = readFileSync(resolve(process.cwd(), "src/theme/theme.css"), "utf8");
+    for (const m of theme.matchAll(/(body\.theme-[\w-]+)[^{]*\{([^}]*)\}/g)) {
+      const accent = /--accent:\s*([^;]+);/.exec(m[2]!)?.[1];
+      const danger = /--danger:\s*([^;]+);/.exec(m[2]!)?.[1];
+      if (!accent || accent !== danger) continue;
+      expect(m[2], m[1]).toMatch(/--focus-edge:/);
+    }
   });
 
   it("hides the model slot, the chips and the pictures in the pill", () => {

@@ -253,6 +253,9 @@ body.theme-ink,
   --border-strong: #b8b0a0;
   --accent: #b5482d;
   --danger: #b5482d;
+  /* The accent IS the danger colour here, so the focused box's edge is drawn
+     in ink instead, or it would read as Bypass's danger border. */
+  --focus-edge: color-mix(in srgb, var(--text-primary) 55%, var(--border-strong));
   --success: #3d6b3d;
   --state-running: #b5482d;
   --state-awaiting: #6f42c1; /* deep purple (light bg) */

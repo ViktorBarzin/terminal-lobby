@@ -3037,8 +3037,10 @@ label.tl-set-row-label {
   border-radius: 22px;
   padding: 4px 6px 6px;
 }
+/* The focus edge is the accent, unless the theme names its own: Ink's accent
+   is its danger colour, which would read as Bypass. */
 .tl-pill[data-shape="box"]:focus-within {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+  border-color: var(--focus-edge, color-mix(in srgb, var(--accent) 55%, var(--border-strong)));
 }
 /* Bypass and No ask: the border turns the danger colour, focused or not, and
    a ring joins it while the field is focused. Nothing else changes. */
