@@ -216,6 +216,14 @@ answer ssh), so Safari is unverified.
   screen before they type anything.
 - `POST /answer-text`, which types free text and reads no screen.
 
+## Decided after the build
+
+Viktor, 2026-09-27: the blocking cards keep the composer under them, as shipped.
+The T3 pass on the Text view (`docs/plans/2026-09-27-text-view-t3-pass.md` on
+`wizard/t3-pass`) drafted the card taking the composer's place with "Type your
+own answer" as its last option; that part of the draft is dropped, and the
+question card's layout here is the one it builds on.
+
 ## Open questions
 
 - Whether a managed-settings change reaches sessions already running is still
