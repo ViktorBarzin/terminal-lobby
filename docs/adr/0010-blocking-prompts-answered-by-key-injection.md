@@ -1,5 +1,10 @@
 # Blocking prompts are answered by injecting keys, not by a hook broker
 
+> **2026-09-27:** `AskUserQuestion` is no longer answered this way. ADR-0034
+> answers it through a `PermissionRequest` hook that runs alongside the CLI's
+> menu. Plan approvals and permission prompts still use key injection as
+> described here.
+
 A Claude session blocks on two things a text-view reader cannot answer: a
 permission prompt, and an `AskUserQuestion` menu. Both are drawn by the CLI in
 its own pane, and neither is an event the transcript reports while it is

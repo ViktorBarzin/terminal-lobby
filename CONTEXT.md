@@ -910,13 +910,31 @@ subsession
 **Blocking prompt**:
 Something the CLI is waiting on a human for, which the transcript does not
 report while it is pending: a permission prompt, an `AskUserQuestion` menu, or
-a **plan approval**. The text view mirrors it as a card; `session-events`
-answers it by injecting keys into the pty (ADR-0010). Distinct from **Session
+a **plan approval**. The text view mirrors it as a card. An `AskUserQuestion`
+is answered through its **held question** (ADR-0034); a plan approval and a
+permission prompt are answered by injecting keys into the pty (ADR-0010).
+Distinct from **Session
 state** *awaiting input*, which is the sidebar's coarser signal that some prompt
 exists. The two kinds the hooks can see as they are drawn, an `AskUserQuestion`
 and an `ExitPlanMode`, hold the session at *awaiting input* for as long as the
 menu stands, rather than for the instant the notification about it arrives
 (ADR-0001).
+
+**Held question**:
+An `AskUserQuestion` call that the lobby's question hook has handed to
+`session-events` and is waiting on. The CLI draws its own menu at the same
+time, so a held question has two answerers, the **question card** and the pane,
+and the first answer settles it. A question with no hold behind it cannot be
+answered from the card.
+_Avoid_: pending question (any unanswered `AskUserQuestion` in the transcript,
+held or not), parked question
+
+**Question card**:
+The text view's mirror of an `AskUserQuestion`, docked above the **Composer**
+where the plan card docks. It shows the call's questions one at a time and
+sends every answer together once each question has one; while it is up the
+composer is the free-text answer to the question on show.
+_Avoid_: answer card, dialog (the CLI's own, in the pane)
 
 **Drawn question**:
 The one question of an `AskUserQuestion` call that the pane is showing. A
