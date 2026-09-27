@@ -2777,6 +2777,7 @@ export const App: Component = () => {
                       // lookup exists: your `auth` and emo's `auth` are two
                       // rows in one list.
                       suspended={() => tileSession()?.state === SUSPENDED}
+                      resume={() => store.resume(k.name)}
                       // THE SESSION'S OWN WINDOW SIZE, for a tile that is
                       // WATCHING: it never claims the Grid, so this is the only
                       // thing that can tell its terminal how big the session it

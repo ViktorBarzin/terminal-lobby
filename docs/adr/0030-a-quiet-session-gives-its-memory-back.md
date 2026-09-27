@@ -124,9 +124,15 @@ session. Every layer below it reports success otherwise: measured on tmux 3.4,
 2026-09-19, `send-keys` into a dead pane exits 0 and the text vanishes, and
 into a pane whose wrapper shell outlived its claude the message is typed at a
 bash prompt and run as a command. The lobby's composer does not rely on that
-answer. It holds the message and sends it when the session is back
-(`frontend-v2/src/store/suspend-queue.ts`), so the 409 is for every other
-caller.
+answer. A Send there resumes the session and then posts the prompt with
+`awaitReady`, so it goes in once the resumed Claude has drawn its input line
+(`frontend-v2/src/store/wake-send.ts`), and the 409 is for every other caller.
+
+- *Was (until 2026-09-27):* the composer held the message in module memory and
+  sent it when the session list next reported the session live. Nothing but a
+  click on the sidebar row started the resume, a reload lost the held text, and
+  the flush posted it while `claude --resume` was still starting, where it sat
+  unsent in Claude's input box.
 
 ### The threshold, and the evidence for it
 

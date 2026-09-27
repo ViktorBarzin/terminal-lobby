@@ -55,7 +55,7 @@ import { modelHarness, piLevels, type ModelState, type PiOffer } from "../lib/mo
 import { setSessionModel } from "../lib/model-api";
 import { setSessionMode } from "../lib/mode-api";
 import { ensurePiModels, piModels } from "../lib/pi-models";
-import { flushHeldWhenAwake, holdForSuspended } from "../store/suspend-queue";
+import { sendWaking } from "../store/wake-send";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -182,6 +182,10 @@ export const SessionView: Component<{
    * the sweep existed.
    */
   suspended?: () => boolean;
+  /** Bring a suspended session back (tmux-api resume); false when it would
+   *  not. A Send at a suspended session calls it (store/wake-send.ts). Absent
+   *  on callers with no session list, where nothing is ever suspended. */
+  resume?: () => Promise<boolean>;
   /** TRUE when someone is already DRIVING this session (a read-write client is
    *  attached). With no explicit Watch choice recorded, this view joins as a
    *  viewer — read ONCE when the view takes the session on, never after, since
@@ -1042,34 +1046,15 @@ export const SessionView: Component<{
   const picker = createDismissableMenu(() => () => {});
 
   /**
-   * Send a message — or hold it, while the session has no claude to send it to.
-   *
-   * A suspended session's pane holds a dead shell behind a frozen scrollback,
-   * and session-events would inject the prompt into it and report success. So
-   * while the row says suspended the text waits in `store/suspend-queue.ts`
-   * and goes out when the poll says the session is back, which is 1.7-3.1s of
-   * resume plus up to 5s of poll.
-   *
-   * It resolves TRUE, which is what clears the composer. The message has been
-   * accepted — it is just not on the wire yet — and false is the composer's
-   * signal to put the text back in the field, which would leave a person
-   * looking at a message they thought they had sent.
+   * Send a message, waking the session first while the idle sweep has it
+   * suspended (store/wake-send.ts says why the send then waits on the server).
+   * False puts the text back in the field, for a wake or a send that failed.
    */
-  const send = (t: string): Promise<boolean> => {
-    if (props.suspended?.()) {
-      holdForSuspended(session, t);
-      props.notify?.("Waiting for the session to come back", "info");
-      return Promise.resolve(true);
-    }
-    return store.send(t);
-  };
-  flushHeldWhenAwake({
-    session: () => session,
+  const send = sendWaking({
     suspended: () => props.suspended?.() ?? false,
-    // The STORE's send, never the one above: by the time this runs the session
-    // is awake, and routing a flush back through the hold could only hold it
-    // again.
-    send: (t) => store.send(t),
+    resume: () => props.resume?.() ?? Promise.resolve(false),
+    send: (t, o) => store.send(t, o),
+    notify: (msg, kind) => props.notify?.(msg, kind),
   });
   const stop = () => void store.interrupt();
 
