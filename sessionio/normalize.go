@@ -573,6 +573,8 @@ func (n *Normalizer) meta(rec Record) []Event {
 			// Drains the whole queue; the content names what it took.
 			return emit(MetaQueueCleared, rec.Content)
 		}
+	case RecordAttachment:
+		return n.absorbed(rec)
 	case RecordSystem:
 		if s := string(rec.HookErrors); s != "" && s != "[]" && s != "null" {
 			return emit(MetaHookError, s)
