@@ -1,4 +1,4 @@
-import { createMemo, createSignal, For, Show, type Component } from "solid-js";
+import { createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js";
 import { Markdown } from "./Markdown";
 import { Picture } from "./Attachment";
 import { contentUrlFor } from "../lib/attachments";
@@ -555,6 +555,19 @@ export const PlanRowView: Component<{
   const stub = () => open() && props.docked === true;
   const summary = createMemo(() => planSummary(props.row.body));
   const [expanded, setExpanded] = createSignal(false);
+  /* The folded line is cut off with an ellipsis. A plan written as one long
+     paragraph has no second line for `summary().more` to see, yet on a phone
+     most of it sits past the ellipsis, so the row measures its own line. The
+     value holds while the plan is expanded and the line is not in the DOM. */
+  const [cut, setCut] = createSignal(false);
+  const watchSummary = (el: HTMLDivElement) => {
+    const measure = () => setCut(el.scrollWidth > el.clientWidth + 1);
+    queueMicrotask(measure);
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
+  };
   const feedback = () => {
     const o = outcome();
     return o.kind === "sent-back" ? o.feedback : "";
@@ -587,13 +600,17 @@ export const PlanRowView: Component<{
       <Show when={!stub()}>
         <Show
           when={open() || expanded()}
-          fallback={<div class="tl-plan-summary">{summary().line}</div>}
+          fallback={
+            <div class="tl-plan-summary" ref={watchSummary}>
+              {summary().line}
+            </div>
+          }
         >
           <div class="tl-plan-body">
             <Markdown text={props.row.body} />
           </div>
         </Show>
-        <Show when={!open() && summary().more}>
+        <Show when={!open() && (summary().more || cut())}>
           <button
             type="button"
             class="tl-linkbtn tl-plan-toggle"

@@ -375,7 +375,9 @@ call, from the result's text, its error flag and `toolUseResult`.
 
 An approved row's body becomes the plan that was approved
 (`toolUseResult.plan`), so edits made in the CLI with ctrl+g show. Once
-resolved, the body collapses to its first line behind "Show plan".
+resolved, the body collapses to its first line behind "Show plan". The
+toggle shows when the plan has more lines, and also when that first line is
+cut off, so a plan written as one long paragraph can still be read in full.
 
 ### After clear context
 

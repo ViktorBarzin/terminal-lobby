@@ -180,6 +180,52 @@ describe("a resolved plan's body", () => {
     expect(container.querySelector(".tl-plan-summary")?.textContent).toBe("Rename the flag.");
     expect(container.querySelector(".tl-plan-toggle")).toBeNull();
   });
+
+  /* Found live 2026-09-27: a plan written as one long paragraph folded to a
+     line cut off with an ellipsis, and no toggle, since the plan had only one
+     line. On a 412px phone that hid most of the plan for good. The row now
+     offers Show plan whenever the folded line does not fit its box. */
+  it("offers Show plan when a one-line plan is cut off", async () => {
+    const proto = HTMLElement.prototype;
+    const saved = (["scrollWidth", "clientWidth"] as const).map(
+      (k) => [k, Object.getOwnPropertyDescriptor(proto, k)] as const,
+    );
+    Object.defineProperty(proto, "scrollWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains("tl-plan-summary") ? 900 : 0;
+      },
+    });
+    Object.defineProperty(proto, "clientWidth", {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains("tl-plan-summary") ? 380 : 0;
+      },
+    });
+    try {
+      const para =
+        "Delete the empty file /var/tmp/ql-r4/work/go with rm, then list the directory to confirm it is gone and nothing else moved.";
+      const { container } = render(() => (
+        <PlanRowView row={planRow({ kind: "approved", mode: "auto" }, para)} />
+      ));
+      await Promise.resolve();
+      const toggle = container.querySelector<HTMLButtonElement>(".tl-plan-toggle");
+      expect(toggle?.textContent).toBe("Show plan");
+      fireEvent.click(toggle!);
+      expect(container.querySelector(".tl-plan-body")?.textContent).toContain(
+        "nothing else moved.",
+      );
+      expect(toggle!.textContent).toBe("Hide plan");
+      fireEvent.click(toggle!);
+      expect(container.querySelector(".tl-plan-summary")).not.toBeNull();
+      expect(container.querySelector(".tl-plan-toggle")?.textContent).toBe("Show plan");
+    } finally {
+      for (const [k, d] of saved) {
+        if (d) Object.defineProperty(proto, k, d);
+        else delete (proto as unknown as Record<string, unknown>)[k];
+      }
+    }
+  });
 });
 
 describe("the timeline hands a plan row its dock and answer state", () => {
