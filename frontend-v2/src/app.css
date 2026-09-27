@@ -3219,7 +3219,28 @@ label.tl-set-row-label {
   cursor: pointer;
   transition: background 0.15s;
 }
-.tl-model-btn:hover,
+/* Hover only where a pointer can hover: a phone keeps :hover on whatever
+   sits under the finger after a tap, and the box grows up under it. */
+@media (hover: hover) {
+  .tl-model-btn:hover {
+    background: var(--hover-tint);
+  }
+  .tl-ms-row:hover {
+    background: var(--hover-tint);
+  }
+  .tl-ms-row[aria-checked="true"]:hover {
+    background: color-mix(in srgb, var(--accent) 11%, transparent);
+  }
+  .tl-ms-row[data-danger][aria-checked="true"]:hover {
+    background: color-mix(in srgb, var(--danger) 11%, transparent);
+  }
+  .tl-ms-row[aria-disabled="true"]:hover {
+    background: none;
+  }
+  .tl-ms-seg button:hover {
+    color: var(--text-primary);
+  }
+}
 .tl-model-btn[aria-expanded="true"] {
   background: var(--hover-tint);
 }
@@ -3368,7 +3389,6 @@ label.tl-set-row-label {
   text-align: left;
   cursor: pointer;
 }
-.tl-ms-row:hover,
 .tl-ms-row:focus-visible {
   background: var(--hover-tint);
   outline-offset: -2px;
@@ -3379,9 +3399,6 @@ label.tl-set-row-label {
 .tl-ms-row[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
-}
-.tl-ms-row[aria-disabled="true"]:hover {
-  background: none;
 }
 .tl-ms-row[aria-disabled="true"][aria-checked="true"] {
   background: color-mix(in srgb, var(--accent) 11%, transparent);
@@ -3455,9 +3472,6 @@ label.tl-set-row-label {
   font-size: calc(12.5px * var(--tl-text-scale, 1));
   white-space: nowrap;
   cursor: pointer;
-}
-.tl-ms-seg button:hover {
-  color: var(--text-primary);
 }
 .tl-ms-seg button[aria-checked="true"] {
   background: var(--bg-card-hover);
