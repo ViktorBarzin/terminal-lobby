@@ -454,9 +454,10 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 		// is typed. With no hold there is nothing else to try: the pane-driven
 		// path below answers one question at a time and is not this request.
 		if req.Answers != nil || req.Chat != nil {
+			held := rg.heldQuestions(osUser, fs.Path())
 			resp := rg.settleHeld(osUser, fs.Path(), req)
 			action := sessionio.AnswerAction(req, nil, nil)
-			emitAnswer(osUser, session, nil, resp, action)
+			emitAnswer(osUser, session, held, resp, action)
 			if resp.Applied {
 				emitAnswered(osUser, session, req)
 			}

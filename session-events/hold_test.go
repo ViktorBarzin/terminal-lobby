@@ -245,9 +245,16 @@ func TestAHeldQuestionIsAnsweredFromTheCard(t *testing.T) {
 		t.Fatalf("the held questions lost the option preview: %s", held)
 	}
 
+	sink := captureEvents(t)
 	resp := e.answer(`{"answers":{"Pick a colour":["Blue"],"Pick fruits":["Apple","Plum"]}}`)
 	if !resp.Applied || !resp.Done {
 		t.Fatalf("answer: %+v", resp)
+	}
+	// The record says what shape of call was answered, as the pane-driven
+	// answers always did.
+	if got := sink.only(t, "text.answer_sent"); got["tl.questions"] != float64(2) || got["tl.multi"] != true ||
+		got["tl.action"] != "answers" {
+		t.Fatalf("text.answer_sent attrs = %v", got)
 	}
 
 	out := decodeHook(t, c.wait(t))
