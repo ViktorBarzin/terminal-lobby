@@ -103,10 +103,6 @@ export const Composer: Component<{
   claudeState?: ClaudeState;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
-  /** Claude is asking a blocking question right now. The text view sends what
-   *  is typed as the question's free-text answer then (TextView `send`), so
-   *  Send says so. */
-  asking?: boolean;
   /**
    * The plan-approval dialog is on the pane. The field then answers the plan:
    * its placeholder says so and Send goes to `onPlanFeedback`, which types the
@@ -264,18 +260,12 @@ export const Composer: Component<{
   const send = (text: string, held: readonly DraftAttachment[]): Promise<boolean> =>
     props.planOpen && props.onPlanFeedback ? props.onPlanFeedback(text) : props.onSend(text, held);
   const placeholder = (): string =>
-    props.planOpen
-      ? "Tell Claude what to change…"
-      : props.asking
-        ? "Or type your own answer…"
-        : "Ask Claude, or run a command…";
+    props.planOpen ? "Tell Claude what to change…" : "Ask Claude, or run a command…";
 
   /** What Send's tooltip warns of, when a send would do more than send. */
   const sendTitle = (): string | undefined => {
     if (props.planOpen)
       return "Send (Enter). Tells Claude what to change in its plan, and it keeps planning";
-    if (props.asking)
-      return "Send (Enter). Answers the question Claude is asking with what you typed";
     return undefined;
   };
 

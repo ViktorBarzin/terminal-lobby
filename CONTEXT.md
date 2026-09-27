@@ -973,7 +973,9 @@ The text view's mirror of an `AskUserQuestion`. It takes the **Composer**'s
 place while Claude waits, as the plan card and the permission card do: the
 composer stays mounted but hidden, so its draft survives and never becomes an
 answer. It shows the call's questions one at a time and sends every answer
-together once each question has one.
+together once each question has one. Its last row, "Type your own answer",
+opens into a field with its own Send; those words are the question's answer,
+and "Chat about this" hands them to Claude instead.
 _Avoid_: answer card, dialog (the CLI's own, in the pane)
 
 **Plan approval**:

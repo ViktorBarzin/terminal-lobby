@@ -266,3 +266,10 @@ export const CloseIcon: Component = () => (
     <path d="m4 4 8 8M12 4l-8 8" />
   </Glyph>
 );
+
+/** The pen on a card's "Type your own answer" row (prototype 6-question). */
+export const PenIcon: Component = () => (
+  <Glyph box="0 0 16 16" size={12} width={1.6}>
+    <path d="M10.8 2.6 13.4 5.2 6 12.6l-3.2.6.6-3.2z" />
+  </Glyph>
+);

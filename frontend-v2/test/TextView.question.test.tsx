@@ -10,7 +10,10 @@
  *
  * Since the T3 pass the card takes the composer's place: the composer is
  * hidden while the card is up but stays mounted, so its draft survives, and
- * nothing the reader cannot see goes out as an answer.
+ * nothing the reader cannot see goes out as an answer. The free-text answer is
+ * the card's own "Type your own answer" row, which opens into a field with its
+ * own Send (prototype 6-question), and "Chat about this" hands Claude that
+ * field's words.
  *
  * What these cover is the WIRING, with the real card mounted: what each tap
  * puts on the wire and what the card shows for each state of the hold.
@@ -48,7 +51,13 @@ const ask = (toolId: string, questions: unknown[]): Event =>
   }) as unknown as Event;
 
 const result = (toolId: string): Event =>
-  ({ id: nextId++, kind: "tool_result", toolId, session: "qa", body: "answered" }) as unknown as Event;
+  ({
+    id: nextId++,
+    kind: "tool_result",
+    toolId,
+    session: "qa",
+    body: "answered",
+  }) as unknown as Event;
 
 const held = (questions: unknown[] | null): Event =>
   ({
@@ -99,6 +108,26 @@ function mount(
     ta.dispatchEvent(new Event("input", { bubbles: true }));
     r.container.querySelector<HTMLButtonElement>(".tl-send")!.click();
   };
+  /** The card's last row, "Type your own answer", while it is still a row. */
+  const ownRow = () =>
+    r.container.querySelector<HTMLButtonElement>(".tl-qcard .tl-qcard-own") ?? undefined;
+  const ownField = () =>
+    r.container.querySelector<HTMLTextAreaElement>(
+      '.tl-qcard textarea[aria-label="Type your own answer"]',
+    ) ?? undefined;
+  const ownSend = () =>
+    r.container.querySelector<HTMLButtonElement>(".tl-qcard-ownfield .tl-send") ?? undefined;
+  /** Open the row if it is still a row, and type into its field. */
+  const typeOwn = (words: string) => {
+    if (!ownField()) ownRow()!.click();
+    const ta = ownField()!;
+    ta.value = words;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  };
+  const sendOwn = (words: string) => {
+    typeOwn(words);
+    ownSend()!.click();
+  };
   const typeInComposer = (words: string) => {
     const ta = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
     ta.value = words;
@@ -116,6 +145,11 @@ function mount(
     button,
     sendFromComposer,
     typeInComposer,
+    ownRow,
+    ownField,
+    ownSend,
+    typeOwn,
+    sendOwn,
   };
 }
 
@@ -174,23 +208,96 @@ describe("a held call", () => {
     expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Red"] } });
   });
 
-  it("answers the question on show with what the composer sends", async () => {
+  it("ends the options with a Type your own answer row", async () => {
+    const v = mount([held([colour, fruits])]);
+    await waitFor(() => expect(v.ownRow()).toBeTruthy());
+    const rows = v.card()!.querySelectorAll(".tl-qcard-options > *");
+    expect(rows[rows.length - 1]).toBe(v.ownRow());
+    expect(v.ownRow()!.textContent).toBe("Type your own answer");
+    expect(v.ownRow()!.querySelector(".tl-qcard-key svg")).toBeTruthy();
+    expect(v.ownField()).toBeUndefined();
+  });
+
+  it("turns the row into a focused field with its own Send", async () => {
+    const v = mount([held([colour, fruits])]);
+    await waitFor(() => expect(v.ownRow()).toBeTruthy());
+    v.ownRow()!.click();
+    await waitFor(() => expect(document.activeElement).toBe(v.ownField()));
+    expect(v.ownRow()).toBeUndefined();
+    expect(v.ownField()!.placeholder).toBe("Type your own answer…");
+    expect(v.ownSend()!.disabled).toBe(true);
+    v.typeOwn("green");
+    expect(v.ownSend()!.disabled).toBe(false);
+  });
+
+  it("answers the question on show with the words typed in its field", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const onSend = vi.fn(async (_t: string) => true);
     const v = mount([held([colour, fruits])], onAnswer, onSend);
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
-    expect(
-      (v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).placeholder,
-    ).toBe("Or type your own answer…");
 
-    v.sendFromComposer("green,\nactually");
+    v.sendOwn("green,\nactually");
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick fruits"));
-    v.sendFromComposer("mango");
+    // The next question opens on its row, not on the last question's field.
+    expect(v.ownField()).toBeUndefined();
+    v.sendOwn("mango");
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
       answers: { "Pick a colour": ["green, actually"], "Pick fruits": ["mango"] },
     });
     expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("sends the field's words with Enter, and Shift+Enter leaves them", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([held([colour])], onAnswer);
+    await waitFor(() => expect(v.ownRow()).toBeTruthy());
+    v.typeOwn("teal");
+    fireEvent.keyDown(v.ownField()!, { key: "Enter", shiftKey: true });
+    expect(onAnswer).not.toHaveBeenCalled();
+    fireEvent.keyDown(v.ownField()!, { key: "Enter" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["teal"] } });
+  });
+
+  it("keeps multi-select ticks under typed words, and submits them once", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([held([fruits])], onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeTruthy());
+    v.option("Apple")!.click();
+    v.option("Pear")!.click();
+
+    // Words in the field are the answer while they are there.
+    v.typeOwn("mango");
+    expect(v.option("Apple")!.getAttribute("aria-pressed")).toBe("false");
+    // Cleared, the ticks come back.
+    v.typeOwn("");
+    expect(v.option("Apple")!.getAttribute("aria-pressed")).toBe("true");
+    expect(v.option("Pear")!.getAttribute("aria-pressed")).toBe("true");
+
+    // A transcript event arriving rebuilds the question list, not the ticks.
+    v.setEvents([
+      ...v.events(),
+      { id: nextId++, kind: "text", session: "qa", body: "still here" } as unknown as Event,
+    ]);
+    expect(v.option("Apple")!.getAttribute("aria-pressed")).toBe("true");
+
+    const submit = v.button("Submit")!;
+    submit.click();
+    submit.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick fruits": ["Apple", "Pear"] } });
+    await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
+    expect(onAnswer).toHaveBeenCalledTimes(1);
+  });
+
+  it("drops the typed words on a pick, since a pick is a change of mind", async () => {
+    const v = mount([held([fruits])]);
+    await waitFor(() => expect(v.option("Plum")).toBeTruthy());
+    v.typeOwn("mango");
+    v.option("Plum")!.click();
+    expect(v.ownField()!.value).toBe("");
+    expect(v.option("Plum")!.getAttribute("aria-pressed")).toBe("true");
   });
 
   it("takes the composer's place, which stays mounted with its draft", async () => {
@@ -227,6 +334,16 @@ describe("a held call", () => {
     expect(field().value).toBe("half a thought");
   });
 
+  it("hands Claude the field's words on Chat about this", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([held([colour])], onAnswer);
+    await waitFor(() => expect(v.button("Chat about this")).toBeTruthy());
+    v.typeOwn("  neither, let's talk about contrast  ");
+    v.button("Chat about this")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "neither, let's talk about contrast" });
+  });
+
   it("declines without the hidden composer's words on Chat about this", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const v = mount([held([colour])], onAnswer);
@@ -235,9 +352,9 @@ describe("a held call", () => {
     v.button("Chat about this")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "" });
-    expect(
-      (v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).value,
-    ).toBe("a draft for later");
+    expect((v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).value).toBe(
+      "a draft for later",
+    );
   });
 
   it("answers a one-question single-select on the pick, with no Submit to press", async () => {
@@ -255,7 +372,7 @@ describe("a held call", () => {
     expect(v.onOpenTerminal).toHaveBeenCalled();
   });
 
-  it("declines with no words when the composer is empty", async () => {
+  it("declines with no words when the field is empty", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const v = mount([held([colour])], onAnswer);
     await waitFor(() => expect(v.button("Chat about this")).toBeTruthy());
@@ -323,7 +440,9 @@ describe("a held call", () => {
   });
 
   it("sends the reader to the Terminal when the server says nothing holds it", async () => {
-    const onAnswer = vi.fn(async (_req: AnswerRequest) => ({ applied: false, reason: "not-held" }) as AnswerResponse);
+    const onAnswer = vi.fn(
+      async (_req: AnswerRequest) => ({ applied: false, reason: "not-held" }) as AnswerResponse,
+    );
     const v = mount([held([colour])], onAnswer);
     await waitFor(() => expect(v.option("Red")).toBeTruthy());
     v.option("Red")!.click();
@@ -334,6 +453,19 @@ describe("a held call", () => {
   });
 });
 
+describe("the hidden composer while a card is up", () => {
+  it("is not an answer route: its send is refused, not answered or prompted", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const onSend = vi.fn(async (_t: string) => true);
+    const v = mount([held([colour])], onAnswer, onSend);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    v.sendFromComposer("blue");
+    await waitFor(() => expect(v.notify).toHaveBeenCalled());
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
 describe("a call no hook is holding", () => {
   it("shows the question, then points at the Terminal once the hold does not come", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
@@ -341,6 +473,7 @@ describe("a call no hook is holding", () => {
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
     expect(v.container.textContent).toContain("Connecting to the question…");
     expect(v.option("Red")!.disabled).toBe(true);
+    expect(v.ownRow()!.disabled).toBe(true);
 
     await waitFor(() => expect(v.button("Open Terminal")).toBeTruthy(), { timeout: 6000 });
     expect(v.container.textContent).toContain("can only be answered in the Terminal");

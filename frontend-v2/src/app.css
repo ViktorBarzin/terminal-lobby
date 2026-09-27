@@ -6649,6 +6649,55 @@ body.tl-kb-up {
   line-clamp: unset;
   overflow: visible;
 }
+/* The last row, "Type your own answer" (prototype `.cd-opt[data-own]`): muted,
+   with a pen in the keycap where the digit would be. */
+.tl-qcard-own .tl-qcard-label {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.tl-qcard-own .tl-qcard-key svg {
+  display: block;
+}
+/* The row opened into a field with its own round Send (prototype `.cd-own`):
+   the accent edge says this is where the typing goes. */
+.tl-qcard-ownfield {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  padding: 4px 4px 4px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border));
+  border-radius: 12px;
+}
+.tl-qcard-owninput {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+  height: calc(40px * var(--tl-text-scale, 1));
+  max-height: calc(22px * 5 * var(--tl-text-scale, 1));
+  field-sizing: content;
+  padding: 9px 0;
+  border: 0;
+  outline: 0;
+  resize: none;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  line-height: calc(22px * var(--tl-text-scale, 1));
+}
+.tl-qcard-owninput::placeholder {
+  color: var(--text-muted);
+}
+/* 16px on any finger, or iOS Safari zooms the page when the field takes focus
+   and leaves it zoomed (reported 2026-09-26). After the rule above so it wins
+   at equal specificity. */
+@media (pointer: coarse) {
+  .tl-qcard-owninput {
+    height: calc(44px * var(--tl-text-scale, 1));
+    padding: 11px 0;
+    font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  }
+}
 /* The preview Claude gave the option in focus: a code snippet or an ASCII
    mockup, so it keeps its own line breaks and scrolls rather than wraps. */
 .tl-qcard-preview {

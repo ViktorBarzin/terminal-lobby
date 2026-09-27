@@ -852,10 +852,16 @@ src/
                          counter, a single-select pick that moves on by
                          itself, a multi-select that toggles, keys 1-9 from
                          inside the Text view, a head that folds the card,
-                         and option previews. The whole call goes out in one
+                         option previews, and a last row, "Type your own
+                         answer", that opens into a field with its own Send
+                         (Chat about this hands Claude its words). The whole
+                         call goes out in one
                          request once every question has an answer, to the
                          hook holding it; with no hold it points at the
                          Terminal
+    OwnAnswer.tsx        A card's "Type your own answer" row: muted, a pen in
+                         the keycap, and a tap turns it into a field with its
+                         own round Send
     CardHead.tsx         The head row the three cards share: the awaiting dot,
                          what Claude waits on, quiet links on the right, and
                          Take control on a watching device

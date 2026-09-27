@@ -28,14 +28,23 @@ export function toggle(q: Question, d: Draft | undefined, label: string): Draft 
   };
 }
 
-/** Set the custom answer. Words in it set the picks aside; a blank one keeps them. */
+/**
+ * Set the custom answer, which is what the card's "Type your own answer" field
+ * holds. Words in it set the picks aside without dropping them: the answer is
+ * the words while there are any, and clearing the field brings the ticks back.
+ */
 export function setCustom(d: Draft | undefined, custom: string): Draft {
-  return { selected: custom.trim() ? [] : (d?.selected ?? []), custom };
+  return { selected: d?.selected ?? [], custom };
+}
+
+/** Typed words as they go out: on one line, trimmed. */
+function oneLine(words: string): string {
+  return words.replace(/\s*\n\s*/g, " ").trim();
 }
 
 /** The answer a draft gives, or null while it gives none. */
 export function resolveAnswer(q: Question, d: Draft | undefined): string[] | null {
-  const custom = d?.custom.trim() ?? "";
+  const custom = oneLine(d?.custom ?? "");
   if (custom) return [custom];
   const picks = (d?.selected ?? []).filter((l) => l.trim() !== "");
   if (picks.length === 0) return null;

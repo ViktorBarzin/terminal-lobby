@@ -298,28 +298,4 @@ describe("<Composer> round button: sending mid-turn", () => {
     fireEvent.click(button());
     expect(onSend).toHaveBeenCalledWith("the next thing", []);
   });
-
-  it("says what sending will cost while Claude is asking a question", () => {
-    // A prompt arriving mid-dialog takes the dialog DOWN and Claude re-asks —
-    // measured in a real session on 2026-08-16. ADR-0010 says whoever answers
-    // first wins, so this warns rather than refusing.
-    const { button, type } = mount({ live: WAITING, asking: true });
-    type("an answer");
-    expect(button().getAttribute("title")).toMatch(/question/i);
-  });
-
-  it("carries no such warning when nothing is being asked", () => {
-    const { button, type } = mount(RUNNING);
-    type("next");
-    expect(button().getAttribute("title") ?? "").not.toMatch(/question/i);
-  });
-
-  it("sends anyway when asked to — the warning does not disable the button", () => {
-    const onSend = vi.fn(sent);
-    const { button, type } = mount({ live: WAITING, asking: true, onSend });
-    type("never mind the question");
-    expect(button().disabled).toBe(false);
-    fireEvent.click(button());
-    expect(onSend).toHaveBeenCalledWith("never mind the question", []);
-  });
 });

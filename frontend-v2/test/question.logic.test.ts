@@ -59,7 +59,21 @@ describe("toggle", () => {
   });
 });
 
+describe("setCustom", () => {
+  it("sets the picks aside under typed words, so clearing the words brings them back", () => {
+    const ticked = toggle(fruits, toggle(fruits, undefined, "Apple"), "Pear");
+    const typed = setCustom(ticked, "mango");
+    expect(resolveAnswer(fruits, typed)).toEqual(["mango"]);
+    expect(resolveAnswer(fruits, setCustom(typed, ""))).toEqual(["Apple", "Pear"]);
+  });
+});
+
 describe("resolveAnswer", () => {
+  it("sends typed words on one line", () => {
+    expect(resolveAnswer(colour, setCustom(undefined, " green,\n  actually "))).toEqual([
+      "green, actually",
+    ]);
+  });
   it("prefers the custom answer over any pick", () => {
     const d = setCustom(toggle(fruits, undefined, "Pear"), "  mango  ");
     expect(resolveAnswer(fruits, d)).toEqual(["mango"]);
@@ -86,24 +100,24 @@ describe("buildAnswers", () => {
     });
   });
   it("is null while any question is unanswered", () => {
-    expect(buildAnswers([colour, fruits], { "Pick a colour": toggle(colour, undefined, "Red") })).toBeNull();
+    expect(
+      buildAnswers([colour, fruits], { "Pick a colour": toggle(colour, undefined, "Red") }),
+    ).toBeNull();
   });
 });
 
 let id = 0;
 const ev = (e: Partial<Event> & { kind: string }): Event =>
   ({ id: ++id, session: "qa", ...e }) as unknown as Event;
-const held = (body: string): Event => ev({ kind: "meta", meta: "held", body } as Partial<Event> & { kind: string });
+const held = (body: string): Event =>
+  ev({ kind: "meta", meta: "held", body } as Partial<Event> & { kind: string });
 
 const heldBody = JSON.stringify({
   questions: [
     {
       question: "Pick a colour",
       header: "Colour",
-      options: [
-        { label: "Red", description: "Warm.", preview: "#f00" },
-        { label: "Blue" },
-      ],
+      options: [{ label: "Red", description: "Warm.", preview: "#f00" }, { label: "Blue" }],
     },
   ],
 });
@@ -121,7 +135,9 @@ describe("heldFromEvents", () => {
   it("outlives other events, since the record lands while the question waits", () => {
     const qs = heldFromEvents([
       held(heldBody),
-      ev({ kind: "tool_use", tool: "AskUserQuestion", toolId: "t1" } as Partial<Event> & { kind: string }),
+      ev({ kind: "tool_use", tool: "AskUserQuestion", toolId: "t1" } as Partial<Event> & {
+        kind: string;
+      }),
       ev({ kind: "meta", meta: "asking", body: "" } as Partial<Event> & { kind: string }),
     ]);
     expect(qs).not.toBeNull();
@@ -133,7 +149,9 @@ describe("heldFromEvents", () => {
     expect(
       heldFromEvents([
         held(heldBody),
-        ev({ kind: "tool_use", tool: "AskUserQuestion", toolId: "t1" } as Partial<Event> & { kind: string }),
+        ev({ kind: "tool_use", tool: "AskUserQuestion", toolId: "t1" } as Partial<Event> & {
+          kind: string;
+        }),
         ev({ kind: "tool_result", toolId: "t1" } as Partial<Event> & { kind: string }),
       ]),
     ).toBeNull();

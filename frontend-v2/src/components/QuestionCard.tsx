@@ -1,18 +1,12 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js";
 import type { Question, QuestionOption } from "./canonicalize";
 import { CardDot, CardHead } from "./CardHead";
+import { OwnAnswer } from "./OwnAnswer";
 import { buildAnswers, resolveAnswer, setCustom, toggle, type Draft } from "./question.logic";
 
 /** How long a single-select pick shows as chosen before the card moves on:
  *  T3 Code's 200 ms, long enough to see the tap land. */
 const ADVANCE_MS = 200;
-
-/** What the text view can ask of a docked card. */
-export interface QuestionCardApi {
-  /** Words from the composer, as the free-text answer to the question on show.
-   *  Moves on the way Next does. False when the card cannot take them. */
-  typed: (words: string) => boolean;
-}
 
 /**
  * Whether the card can answer: `open` while the lobby's hook holds the
@@ -37,12 +31,15 @@ export type QuestionCardState = "open" | "connecting" | "terminal";
  * nothing is typed into the pane.
  *
  * The composer is hidden while the card is up, so its draft is out of sight
- * and never becomes an answer; `hasInput` and `onUseTyped` are for a field the
- * reader can see.
+ * and never becomes an answer. The free-text answer is the card's own last
+ * row, "Type your own answer", which opens into a field with its own Send
+ * (`OwnAnswer`). Its words are the question's custom answer: they win over the
+ * ticks while there are any, a pick clears them, and Next or Submit use them
+ * like a pick.
  *
  * Two things differ from T3 on purpose. Option previews are shown, because
  * Claude uses them to compare code and layouts, and "Chat about this" declines
- * the question, as the CLI's own row does.
+ * the question with the field's words, as the CLI's own row does.
  */
 export const QuestionCard: Component<{
   questions: Question[];
@@ -52,21 +49,16 @@ export const QuestionCard: Component<{
   /** Why this device may not answer (it is watching), or empty when it may.
    *  The rows then draw disabled. */
   inert?: string;
-  /** A field on show holds words, so Next and Submit use them as the answer. */
-  hasInput?: boolean;
   /** Keys 1-9 reach this card: its view is the one being typed into. */
   keysActive: boolean;
   /** Send the whole call. Resolves true once the session has it. */
   onSubmit: (answers: Record<string, string[]>) => Promise<boolean>;
-  /** Decline the question and talk instead. */
-  onChat: () => void;
-  /** Next or Submit with words in that field: the text view hands them to
-   *  `typed`, so the field clears only if they are taken. */
-  onUseTyped?: () => void;
+  /** Decline the question and talk instead, handing Claude these words (the
+   *  own-answer field's, or empty). */
+  onChat: (words: string) => void;
   onTerminal?: () => void;
   /** Stop watching and answer from this device. */
   onTakeControl?: () => void;
-  register?: (api: QuestionCardApi) => void;
 }> = (props) => {
   const [index, setIndex] = createSignal(0);
   const [drafts, setDrafts] = createSignal<Record<string, Draft>>({});
@@ -76,6 +68,9 @@ export const QuestionCard: Component<{
   /** The option whose preview shows: the last one pointed at or picked. */
   const [focused, setFocused] = createSignal<string | null>(null);
   const [sent, setSent] = createSignal(false);
+  /** The questions whose "Type your own answer" row has been opened into its
+   *  field, by question text. Each question opens on its row. */
+  const [ownOpen, setOwnOpen] = createSignal<Record<string, true>>({});
   let advanceTimer: ReturnType<typeof setTimeout> | undefined;
   onCleanup(() => clearTimeout(advanceTimer));
 
@@ -131,23 +126,15 @@ export const QuestionCard: Component<{
     advanceTimer = setTimeout(advance, ADVANCE_MS);
   };
 
-  const next = (): void => {
-    if (props.hasInput && props.onUseTyped) {
-      props.onUseTyped();
-      return;
-    }
-    advance();
+  const typed = (): string => draft()?.custom ?? "";
+  const openOwn = (): void => {
+    const q = question();
+    if (q) setOwnOpen((all) => ({ ...all, [q.question]: true }));
   };
-
-  props.register?.({
-    typed: (words) => {
-      const q = question();
-      if (!q || !answerable() || !words.trim()) return false;
-      put(q, setCustom(draft(), words));
-      advance();
-      return true;
-    },
-  });
+  const typeOwn = (words: string): void => {
+    const q = question();
+    if (q) put(q, setCustom(draft(), words));
+  };
 
   let cardEl: HTMLDivElement | undefined;
   // Keys 1-9 pick, when the focus is in this card's Text view, nothing editable
@@ -188,10 +175,10 @@ export const QuestionCard: Component<{
   });
 
   const nextLabel = () => (last() ? "Submit" : "Next");
-  const canNext = () => answerable() && (props.hasInput === true || current() !== null);
-  /** A lone single-select question answers on the pick, so Submit would only
-   *  ever sit there disabled; it shows while a field on show can answer it. */
-  const offerNext = () => count() > 1 || question()?.multiSelect === true || props.hasInput === true;
+  const canNext = () => answerable() && current() !== null;
+  /** A lone single-select question answers on the pick, or on its own field's
+   *  Send, so Submit would only ever repeat one of them. */
+  const offerNext = () => count() > 1 || question()?.multiSelect === true;
 
   return (
     <div
@@ -208,7 +195,9 @@ export const QuestionCard: Component<{
             class="tl-qcard-fold"
             aria-expanded={!collapsed()}
             title={
-              collapsed() ? "Show the question and its options" : "Hide the question and its options"
+              collapsed()
+                ? "Show the question and its options"
+                : "Hide the question and its options"
             }
             onClick={() => setCollapsedAt(collapsed() ? null : (question()?.question ?? null))}
           >
@@ -280,6 +269,15 @@ export const QuestionCard: Component<{
                   </button>
                 )}
               </For>
+              <OwnAnswer
+                label="Type your own answer"
+                open={ownOpen()[question()?.question ?? ""] === true}
+                value={typed()}
+                disabled={!answerable()}
+                onOpen={openOwn}
+                onInput={typeOwn}
+                onSend={advance}
+              />
             </div>
             <Show when={preview()}>
               <pre class="tl-qcard-preview">{preview()}</pre>
@@ -310,7 +308,7 @@ export const QuestionCard: Component<{
               class="tl-qcard-chat"
               disabled={!answerable()}
               title="Decline the question and talk to Claude about it instead"
-              onClick={() => props.onChat()}
+              onClick={() => props.onChat(typed().trim())}
             >
               Chat about this
             </button>
@@ -333,7 +331,7 @@ export const QuestionCard: Component<{
                 type="button"
                 class={last() ? "tl-qcard-send" : "tl-qcard-next"}
                 disabled={!canNext()}
-                onClick={next}
+                onClick={advance}
               >
                 {nextLabel()}
               </button>

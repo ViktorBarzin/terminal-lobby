@@ -48,7 +48,7 @@ import {
   type PlanOptionView,
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
-import { QuestionCard, type QuestionCardApi, type QuestionCardState } from "./QuestionCard";
+import { QuestionCard, type QuestionCardState } from "./QuestionCard";
 import { heldFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard } from "./PermissionCard";
@@ -700,9 +700,6 @@ export const TextView: Component<{
     if ((await props.onStop(back)) === true) composerSinks()?.prependText(back.join("\n\n"));
   };
 
-  /** The docked card's handle, while a card is docked. */
-  let cardApi: QuestionCardApi | undefined;
-
   /**
    * Answer the held call, or decline it with "Chat about this", as data
    * (ADR-0034): the hook holding the question hands it to the CLI and nothing
@@ -736,21 +733,13 @@ export const TextView: Component<{
   };
   const submitAnswers = (answers: Record<string, string[]>): Promise<boolean> =>
     answerHeld({ answers });
-  /** "Chat about this": decline the question and talk instead. The composer
-   *  is hidden behind the card, so its draft stays in it and goes nowhere. */
-  const chatInstead = (): void => {
-    void answerHeld({ chat: "" });
+  /** "Chat about this": decline the question and hand Claude the words typed
+   *  in the card's own field. The composer is hidden behind the card, so its
+   *  draft stays in it and goes nowhere. */
+  const chatInstead = (words: string): void => {
+    void answerHeld({ chat: words });
   };
 
-  /**
-   * The composer's Send. With a question docked it ANSWERS the question with
-   * what was typed, as the free-text answer to the question on show, the way
-   * T3 Code's composer does.
-   *
-   * Reported 2026-09-26 (Viktor): he typed his answer into the message field
-   * and pressed Send, and it went in as a prompt. A person who types while
-   * being asked something is answering it.
-   */
   /**
    * Bumped on each send that went in, so the timeline brings the reader back
    * to the latest message (MessagesTimeline's `follow`).
@@ -769,21 +758,20 @@ export const TextView: Component<{
       props.notify?.("Claude is asking to use a tool. Answer it from the card first.", "warning");
       return false;
     }
-    if (!asking() || !props.onAnswer || !cardApi) return props.onSend(text);
-    if (cardState() !== "open") {
+    // A question's free-text answer is the card's own field since the T3
+    // pass (reported 2026-09-26: an answer typed in the message field went in
+    // as a prompt). The composer is hidden behind the card, so a send that
+    // still reaches here keeps its words rather than taking the dialog down.
+    if (asking() && props.onAnswer) {
       props.notify?.(
         cardState() === "terminal"
           ? "Claude's question can only be answered in the Terminal right now."
-          : "Still connecting to Claude's question. Send again in a moment.",
-        "error",
+          : "Claude is asking a question. Answer it from the card first.",
+        "warning",
       );
       return false;
     }
-    if (answering()) {
-      props.notify?.("Still sending the last answer. Send again in a moment.", "error");
-      return false;
-    }
-    return cardApi.typed(text.replace(/\s*\n\s*/g, " ").trim());
+    return props.onSend(text);
   };
 
   // ---- The plan approval ----
@@ -1348,9 +1336,6 @@ export const TextView: Component<{
             onChat={chatInstead}
             onTerminal={props.onOpenTerminal}
             onTakeControl={props.onTakeControl}
-            register={(api) => {
-              cardApi = api;
-            }}
           />
         )}
       </Show>
@@ -1402,11 +1387,6 @@ export const TextView: Component<{
         live={lineLive()}
         claudeState={props.claudeState?.()}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
-        // The composer is hidden while a question is docked. Its send still
-        // routes a question's free-text answer through `send`, and only falls
-        // back to a prompt when the pane has no dialog left. `asking()` is the
-        // same signal the card itself is keyed on, so the two cannot disagree.
-        asking={!!asking()}
         planOpen={planDocked() !== null}
         onPlanFeedback={(text) => sendPlanFeedback(text, false)}
         pending={props.pending}

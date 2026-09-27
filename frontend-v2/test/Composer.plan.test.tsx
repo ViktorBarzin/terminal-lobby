@@ -187,7 +187,6 @@ describe("Send is never greyed out once something is written", () => {
     ["working", { live: WORKING, claudeState: "running" }],
     ["working by the transcript alone", { live: WORKING, claudeState: "done" }],
     ["waiting", { live: WAITING }],
-    ["asking", { live: WAITING, asking: true }],
     ["with the plan open", { live: WAITING, planOpen: true, onPlanFeedback: async () => true }],
     ["idle", {}],
   ] as [string, Partial<ComponentProps<typeof Composer>>][])("while %s", (_what, props) => {

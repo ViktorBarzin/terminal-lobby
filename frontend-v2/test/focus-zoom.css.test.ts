@@ -63,24 +63,25 @@ function floorPx(value: string): number | null {
 const fontSize = (r: Rule) => r.body.match(/font-size:\s*([^;]+);/)?.[1]?.trim();
 
 describe("a focused field does not make iOS zoom the page", () => {
-  it.each(["tl-cp-input", "tl-composer-input", "tl-add-input", "tl-card-rename"])(
-    ".%s is at least 16px on a coarse pointer",
-    (cls) => {
-      const sel = `.${cls}`;
-      const hits = files.flatMap((f) =>
-        rules(f)
-          .filter((r) => r.selectors.includes(sel) && fontSize(r))
-          .map((r) => ({ ...r, file: f })),
-      );
-      const winner = hits.filter((r) => r.coarse).at(-1);
-      expect(winner, `no coarse-pointer font-size for ${sel}`).toBeDefined();
-      expect(floorPx(fontSize(winner!)!)).toBeGreaterThanOrEqual(16);
+  it.each([
+    "tl-cp-input",
+    "tl-composer-input",
+    "tl-add-input",
+    "tl-card-rename",
+    "tl-qcard-owninput",
+  ])(".%s is at least 16px on a coarse pointer", (cls) => {
+    const sel = `.${cls}`;
+    const hits = files.flatMap((f) =>
+      rules(f)
+        .filter((r) => r.selectors.includes(sel) && fontSize(r))
+        .map((r) => ({ ...r, file: f })),
+    );
+    const winner = hits.filter((r) => r.coarse).at(-1);
+    expect(winner, `no coarse-pointer font-size for ${sel}`).toBeDefined();
+    expect(floorPx(fontSize(winner!)!)).toBeGreaterThanOrEqual(16);
 
-      for (const base of hits.filter((r) => !r.coarse && r.file === winner!.file)) {
-        expect(base.at, `${sel}'s own rule comes after its coarse override`).toBeLessThan(
-          winner!.at,
-        );
-      }
-    },
-  );
+    for (const base of hits.filter((r) => !r.coarse && r.file === winner!.file)) {
+      expect(base.at, `${sel}'s own rule comes after its coarse override`).toBeLessThan(winner!.at);
+    }
+  });
 });
