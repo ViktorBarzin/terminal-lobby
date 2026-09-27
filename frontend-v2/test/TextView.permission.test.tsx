@@ -92,6 +92,86 @@ describe("the permission card", () => {
     expect(r.container.querySelector('.tl-composer .tl-send[data-kind="stop"]')).toBeNull();
   });
 
+  it("shows an Edit's change in its well, not the unchanged lines above it", async () => {
+    // Found live on 2026-09-27: the well showed "calc.py", "def add" and
+    // "return a + b", and the added function sat below its fold.
+    const edit = JSON.stringify({
+      kind: "permission",
+      title: "Edit file",
+      detail: ["calc.py", "1 def add(a, b):", "2     return a + b", "3 +"],
+      prompt: "Do you want to make this edit to calc.py?",
+      options: [
+        { number: 1, label: "Yes" },
+        { number: 2, label: "No" },
+      ],
+    });
+    const { card } = mount([
+      ev({ id: 1, kind: "user", body: "add subtract", at: 1000 }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Edit",
+        toolId: "e1",
+        body: JSON.stringify({
+          file_path: "/tmp/proj/calc.py",
+          old_string: "    return a + b",
+          new_string: "    return a + b\n\n\ndef subtract(a, b):\n    return a - b",
+        }),
+        at: 2000,
+      }),
+      ev({ id: 3, kind: "meta", meta: "asking", body: edit }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    const well = card()!.querySelector(".tl-permcard-detail")!;
+    const lines = [...well.querySelectorAll(".tl-permcard-line")].map((l) => [
+      l.getAttribute("data-sign"),
+      l.textContent,
+    ]);
+    expect(well.querySelector(".tl-permcard-file")?.textContent).toBe("calc.py");
+    expect(lines).toEqual([
+      [" ", "      return a + b"],
+      ["+", "+ "],
+      ["+", "+ "],
+      ["+", "+ def subtract(a, b):"],
+      ["+", "+     return a - b"],
+    ]);
+    expect(well.textContent).not.toContain("def add");
+    expect(card()!.textContent).toContain("Do you want to make this edit to calc.py?");
+  });
+
+  it("shows a Bash call's command in its well and its description under it", async () => {
+    const bash = JSON.stringify({
+      kind: "permission",
+      title: "Bash command",
+      detail: ["│ npm run build --workspace frontend-v2", "Build the frontend", "This command requires approval"],
+      prompt: "Do you want to proceed?",
+      options: [
+        { number: 1, label: "Yes" },
+        { number: 2, label: "No" },
+      ],
+    });
+    const { card } = mount([
+      ev({ id: 1, kind: "user", body: "build it", at: 1000 }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "b1",
+        body: JSON.stringify({
+          command: "npm run build --workspace frontend-v2",
+          description: "Build the frontend",
+        }),
+        at: 2000,
+      }),
+      ev({ id: 3, kind: "meta", meta: "asking", body: bash }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(card()!.querySelector(".tl-permcard-detail")?.textContent).toBe(
+      "npm run build --workspace frontend-v2",
+    );
+    expect(card()!.querySelector(".tl-permcard-prompt")?.textContent).toBe("Build the frontend");
+  });
+
   it("takes the composer's place, which stays mounted with its draft", async () => {
     const { r, card, composer, setEvents } = mount(base);
     const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;

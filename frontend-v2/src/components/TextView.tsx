@@ -52,6 +52,7 @@ import { QuestionCard, type QuestionCardState } from "./QuestionCard";
 import { heldFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard } from "./PermissionCard";
+import { permissionPreview } from "./permission.logic";
 import {
   clearsContext,
   decidePlanDock,
@@ -1455,6 +1456,7 @@ export const TextView: Component<{
           return reading ? (
             <PermissionCard
               reading={reading}
+              preview={permissionPreview(reading, props.events)}
               onPick={pickPermission}
               {...(props.onAnswer ? { onDecline: declinePermission } : {})}
               inert={props.inertReason}

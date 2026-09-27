@@ -1,6 +1,7 @@
-import { For, Show, createSignal, type Component } from "solid-js";
+import { For, Match, Show, Switch, createSignal, type Component } from "solid-js";
 import { CardDot, CardHead } from "./CardHead";
 import { OwnAnswer } from "./OwnAnswer";
+import type { PermissionPreview } from "./permission.logic";
 import type { PermissionReading } from "./timeline.logic";
 
 /** A Bash prompt is titled "Bash command"; every other tool is titled by what
@@ -34,6 +35,10 @@ const isNoRow = (label: string): boolean => label === "No" || label.startsWith("
  */
 export const PermissionCard: Component<{
   reading: PermissionReading;
+  /** The call the prompt asks about, from the transcript (permission.logic):
+   *  an Edit's change or a Bash command in the well, in place of the pane's
+   *  lines. Absent or null, the well shows what the pane drew. */
+  preview?: PermissionPreview | null;
   /** Press the row's number; false when the key did not reach the session. */
   onPick: (option: number) => Promise<boolean>;
   /** Decline with these words; false when the decline did not land. Absent
@@ -75,6 +80,11 @@ export const PermissionCard: Component<{
     void pick(row);
     return true;
   });
+  const diff = () => (props.preview?.kind === "diff" ? props.preview : undefined);
+  const command = () => (props.preview?.kind === "command" ? props.preview : undefined);
+  /** The quiet line under the well: a command's description, as the
+   *  prototype draws it, else the prompt's own question. */
+  const why = (): string => command()?.description || props.reading.prompt;
   /** The tool's own title, when the head's words do not already say it. */
   const tag = (): string => (isCommand(props.reading.title) ? "" : props.reading.title.trim());
   return (
@@ -109,11 +119,33 @@ export const PermissionCard: Component<{
         onTakeControl={props.onTakeControl}
       />
       <div class="tl-qcard-body">
-        <Show when={props.reading.detail.length > 0}>
-          <pre class="tl-code tl-permcard-detail">{props.reading.detail.join("\n")}</pre>
-        </Show>
-        <Show when={props.reading.prompt}>
-          <div class="tl-permcard-prompt">{props.reading.prompt}</div>
+        <Switch
+          fallback={
+            <Show when={props.reading.detail.length > 0}>
+              <pre class="tl-code tl-permcard-detail">{props.reading.detail.join("\n")}</pre>
+            </Show>
+          }
+        >
+          <Match when={diff()}>
+            {(d) => (
+              <pre class="tl-code tl-permcard-detail">
+                <span class="tl-permcard-file">{d().file}</span>
+                <For each={d().lines}>
+                  {(l) => (
+                    <span class="tl-permcard-line" data-sign={l.sign}>
+                      {`${l.sign} ${l.text}`}
+                    </span>
+                  )}
+                </For>
+              </pre>
+            )}
+          </Match>
+          <Match when={command()}>
+            {(c) => <pre class="tl-code tl-permcard-detail">{c().command}</pre>}
+          </Match>
+        </Switch>
+        <Show when={why()}>
+          <div class="tl-permcard-prompt">{why()}</div>
         </Show>
         <div class="tl-qcard-options">
           <For each={props.reading.options}>

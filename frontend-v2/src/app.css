@@ -6566,10 +6566,11 @@ body.tl-kb-up {
   line-height: 1.4;
 }
 /* What the tool will do, from the permission prompt (PermissionCard), in the
-   prototype's command well: four lines, then it scrolls, so a Write's file
-   cannot push the rows off the card. */
+   prototype's command well: eight lines on a desktop and six on a phone, then
+   it scrolls, so a Write's file cannot push the rows off the card. Four hid
+   an Edit's change below the fold (found live on 2026-09-27). */
 .tl-permcard-detail {
-  max-height: calc(19px * 4 * var(--tl-text-scale, 1));
+  max-height: calc(19px * 8 * var(--tl-text-scale, 1));
   margin: 8px 4px 10px;
   padding: 9px 11px;
   border-radius: 10px;
@@ -6578,6 +6579,32 @@ body.tl-kb-up {
   line-height: calc(19px * var(--tl-text-scale, 1));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+@media (pointer: coarse) {
+  .tl-permcard-detail {
+    max-height: calc(19px * 6 * var(--tl-text-scale, 1));
+  }
+}
+/* An Edit's change, from the call itself (permission.logic): the file's name,
+   then one line each, kept lines muted, taken-out lines in the danger colour
+   and put-in lines in the success colour, each on a faint wash of it. */
+.tl-permcard-file,
+.tl-permcard-line {
+  display: block;
+}
+.tl-permcard-file {
+  color: var(--text-muted);
+}
+.tl-permcard-line[data-sign=" "] {
+  color: var(--text-muted);
+}
+.tl-permcard-line[data-sign="-"] {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.tl-permcard-line[data-sign="+"] {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
 }
 /* The prompt's own question ("Do you want to proceed?", "Do you want to
    create b.txt?"), quiet under the well, as the prototype's `.cd-why`. */
