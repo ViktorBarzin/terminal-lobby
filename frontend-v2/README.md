@@ -21,9 +21,13 @@ session's surface — where each session has **two views** over the same
 tmux/Claude session:
 
 - **Text mode (primary)** — a MessagesTimeline-style structured render of the
-  session's normalized event stream: turn folding, collapsed tool rows with
-  expand-to-raw, full-width assistant **markdown with mermaid + inline images**,
-  user bubbles, and a composer that injects prompts and cancels the running turn.
+  session's normalized event stream, drawn in the system font since the T3 pass
+  (0.80.0): turn folding, work groups that gather each run of tool calls into
+  one row and open into per-call rows with expand-to-raw, Claude's replies as
+  plain **markdown with mermaid + inline images**, the user's messages as grey
+  bubbles, and a composer that injects prompts and cancels the running turn.
+  The live work group at the end says what Claude is doing, and a card Claude
+  is waiting on takes the composer's place.
 - **Terminal mode** — a live pty attach to the *same* tmux session, drawn by
   this app: `TerminalNative.tsx` mounts xterm (a lazy import) and speaks ttyd's
   binary WebSocket protocol over `/token` and `/ws`. It was an iframe pointed at
@@ -736,9 +740,12 @@ src/
                          subtitle, one group with the view icon and "…"
     header.logic.ts      PURE header subtitle: the state word and dot, the
                          project and any background work
-    TextView.tsx         Text mode: timeline above the composer, with the
-                         question card or the plan card docked between. It
-                         holds each answer in flight and, for a plan, the
+    TextView.tsx         Text mode in one centred 760px column: the
+                         timeline, the Latest band above the bottom slot,
+                         and the slot itself, which holds the composer or,
+                         while Claude waits, the question, permission or
+                         plan card in its place. It holds each answer in
+                         flight and, for a plan, the
                          20 s the row reads "Approving…" or "Clearing
                          context…" before the transcript records the result
     AgentPanel.tsx       The agent panel beside the timeline: the session's
@@ -805,8 +812,9 @@ src/
                          the round button (Send, Stop, or a Send that queues).
                          A danger border in Bypass or No ask, and background
                          work as a quiet note beside the model button.
-                         While a card is docked the composer is hidden and the
-                         model button is held; the text view refuses a send
+                         While a card is up the composer is hidden but stays
+                         mounted, so its draft and attachments come back, and
+                         the model button is held; the text view refuses a send
                          that still reaches it (TextView `send`)
     ModelSheet.tsx       The live composer's one model button ("✳ Opus 5.5 ⌄",
                          a red shield in Bypass and No ask) and the sheet it
@@ -1087,6 +1095,16 @@ test/                    logic, store, sidebar render, SSE client, event-parse,
   integration/             + a REAL session-events SSE integration test
 ```
 
+The T3 pass (0.80.0, `docs/plans/2026-09-27-text-view-t3-pass.md`) retired
+the Quiet line's composer pieces, and their jobs moved:
+
+| Retired | Where its job went |
+|---|---|
+| `StatusLine.tsx`, `statusline.logic.ts` | What the turn is doing: the live work group at the end of the timeline (`WorkGroupRowView` in `rows.tsx`, `liveGroupState` in `timeline.logic.ts`). Stop: the composer's round button. Watching: the composer's pill. |
+| `Dial.tsx`, `ModePanel.tsx`, `ModelPanel.tsx`, `ContextPanel.tsx` | `ModelSheet.tsx`, and in the new-session composer its strip. |
+| `PlusTray.tsx` | `PlusMenu.tsx`. |
+| `ViewSwitch.tsx` | One view icon in the header's icon group (`SessionView.tsx`). |
+
 ## Wire contract
 
 `src/types/events.ts` mirrors the Go `Event` struct in
@@ -1144,8 +1162,8 @@ All of the following ship in the deployed build:
 - **Pictures in the Text view** — a picture Claude names by its absolute path
   (plain, in backticks, `![](…)` or `[x](…)`) is drawn under the text naming it,
   a picture pasted into the terminal is drawn where its `[Image #N]` stood, and
-  a Read of an image or a browser screenshot shows a 96px thumbnail on its tool
-  row. Every one opens one shared lightbox, and one that cannot be read stays
+  a Read of an image or a browser screenshot shows a 76px thumbnail under its
+  work group, folded or open. Every one opens one shared lightbox, and one that cannot be read stays
   text. Files come from file-api's picture route, which reads any path the user
   can read; a transcript's own image blocks come back from session-events by
   index.

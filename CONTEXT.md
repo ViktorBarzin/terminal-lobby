@@ -668,7 +668,7 @@ reload does not lose a half-written message. In the **New-session
 composer** only the text persists: its files are still `File` objects in
 the tab, which JSON cannot carry, so a reloaded tab shows the prose with
 the orphaned tokens cut out of it.
-_Avoid_: tray (the old strip; the **+ tray** is the menu behind "+"),
+_Avoid_: tray (the old strip; the **+ menu** is what "+" opens),
 attachment bar, dropzone (the drop target is the whole window)
 
 ### Skills
@@ -791,9 +791,10 @@ working in the background, or why this device only watches; its right side
 holds the **dials**. Not Claude Code's own status line in the pane, where the
 permission mode is read, nor its statusLine setting, where the **Recorder**
 sits.
-Retired by the T3 pass on 2026-09-27: what the turn is doing is the live
-**Work group**'s to say, the watching state is the **Composer**'s pill, and the
-dials move into the model sheet.
+Retired by the T3 pass, shipped in 0.80.0 (2026-09-27): what the turn is doing
+is the live **Work group**'s to say, Stop is a state of the **Round button**,
+the watching state is the **Composer**'s pill, and the dials move into the
+**Model sheet**.
 _Avoid_: status bar, status row (the timeline row it took over from), footer
 
 **Model sheet**:
@@ -813,18 +814,28 @@ list that changes it: mode, model with effort, and context in the **Composer**;
 project, command, and model with effort in the **New-session composer**. With a
 mouse each dial opens its own popover; on a phone every dial opens one sheet
 with a tab per dial.
-Retired by the T3 pass (2026-09-27), in both composers: the settings
-move into the sheet the model button opens, and the new-session project and
-command into a strip under the box.
+Retired in both composers by the T3 pass, shipped in 0.80.0 (2026-09-27): the
+settings move into the **Model sheet**, and the new-session project and command
+into the **New-session strip**.
 _Avoid_: chip (the old mode and model chips), picker (the list a dial opens)
 
 **+ tray**:
 The menu behind the "+" at the start of a composer's pill: attach a file, add a
 photo, a `/` command, and in a live **Composer** an `@` file path. It took over
-from the Attach button on 2026-09-24. Retired by the T3 pass (2026-09-27):
-"+" opens a plain menu of Photo library, Camera, File and Commands.
+from the Attach button on 2026-09-24. Retired by the T3 pass, shipped in
+0.80.0 (2026-09-27): "+" opens the **+ menu** instead.
 _Avoid_: tray on its own (the strip of chips that **Inline chips** replaced),
-attach menu, plus menu
+attach menu
+
+**+ menu**:
+The small menu the "+" at the start of the **Composer** opens: Photo library
+(the device's own picker, so iOS still offers its sheet), Camera (straight to
+the back camera), File (any files, several at once) and Commands, which puts a
+`/` in the field and opens its completion. `@` has no row: it is typed. What
+each row picks lands in the message as an **Inline chip**. It replaced the
+**+ tray** in the T3 pass, shipped in 0.80.0 (2026-09-27). `PlusMenu.tsx` in
+code.
+_Avoid_: + tray (the retired menu), attach menu, plus tray
 
 **New-session composer**:
 The prompt field for a session that does not exist yet, shown wherever nothing
@@ -892,18 +903,24 @@ Each entry carries a **tone** (`info` / `tool` / `approval` / `error`).
 _Avoid_: activity feed, events (Event is the wire type)
 
 **Work group**:
-A run of **Work log** entries between two replies, drawn as one row. The live
-one, at the end of the conversation, shows what Claude is doing now.
+A run of **Work log** entries between two replies, drawn as one row ("Ran 3
+commands, edited 2 files · 28s") that opens into one compact row per call. The
+pictures its calls returned show under it, folded or open. The live one, at the
+end of the conversation, shows what Claude is doing now: the call in flight,
+how many are done and the time so far, with a spinner.
 _Avoid_: tool group, fold (the "Worked for Ns" row folds a whole turn)
 
 **Working row**:
 The live row standing for a turn in flight: the tool currently running, an
 elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text. It was the
-timeline's last row until 2026-09-24, then the left side of the **status line**,
-and since the T3 pass (2026-09-27) the live **Work group** at the end of the
-conversation shows it. An agent's drill-in, whose transcript has no work
-groups, still draws it as its last row.
+timeline's last row until 2026-09-24, then the left side of the **status line**.
+Since the T3 pass, shipped in 0.80.0 (2026-09-27), the session's conversation
+draws it as the live **Work group** at its end: the call in flight, the calls
+done and the elapsed time, with a spinner. Before the first call, while Claude
+waits on the reader, or while a plan answer clears the context, a row in the
+same box says so instead. An agent's drill-in, whose transcript has no work
+groups, still draws the Working row as its last row.
 
 **Picture**:
 An image the **Text view** draws in the conversation, whichever way it

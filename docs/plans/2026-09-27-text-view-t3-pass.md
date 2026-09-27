@@ -1,7 +1,7 @@
 # Text view: a T3 pass
 
-**Status:** draft, prototype for review (2026-09-27).
-**Owner:** wizard. **Repos touched:** none yet. The prototype lives beside the published page on pages.viktorbarzin.me, under `composer/`; no lobby code has changed.
+**Status:** shipped in 0.80.0 (2026-09-27). Viktor approved the prototype the same day ("yea looks good. go and build it"); what the build measured and where it differs from the prototype is under [What shipped](#what-shipped).
+**Owner:** wizard. **Repos touched:** terminal-lobby (`frontend-v2`, `sessionio`, `session-events`). The prototype lives beside the published page on pages.viktorbarzin.me, under `composer/`.
 **Decisions from:** Viktor's request on 2026-09-27 and the answers he settled the same day, listed under [Decisions](#decisions).
 **Builds on:** `docs/plans/2026-09-24-text-composer-redesign.md` (Quiet line, live since 0.78.0).
 
@@ -102,9 +102,9 @@ What the pass changes per owner, in short:
   already live here; Latest moves into a band above the composer.
 - `Composer.tsx` and `PromptField.tsx` draw the pill and the box and own the
   round button's three states. The status line above them goes.
-- The sheet replaces the dials' popovers and the phone's tabbed sheet.
-  `ModelPanel.tsx` and `ModePanel.tsx` look like candidates to reuse inside it;
-  that has not been checked.
+- The sheet replaces the dials' popovers and the phone's tabbed sheet. It was
+  built as `ModelSheet.tsx`; `ModelPanel.tsx` and `ModePanel.tsx` were retired
+  rather than reused, and their behaviour is covered by the sheet's tests.
 - `QuestionCard.tsx`, `PermissionCard.tsx` and `PlanCard.tsx` render in the
   composer's place instead of docking above it, and each gains the typed answer
   as its last row.
@@ -222,11 +222,109 @@ Viktor answered four questions the prototype raised, on 2026-09-27:
 | Text and Terminal on desktop | One icon in the header group on phone and desktop. The Terminal view shows a Text icon in the same place. |
 | Reach of the system font | The whole Text view: conversation, composer, cards and header. The sidebar and the rest of the lobby keep DM Sans. |
 
-## Open questions
+## Open questions, answered in the build
 
 1. **A multi-select question in the composer's place.** The prototype answers a
-   single-select on the first tap. The card's existing multi-select flow (ticks,
-   then a Next or Submit button) carries over; the prototype does not draw it.
-2. **Effort per model.** The sheet shows the efforts each model offers (the
-   prototype assumes Sonnet has no xhigh and Haiku has one level). The real
-   list comes from what the box reports per model, to be read during the build.
+   single-select on the first tap. The card's existing multi-select flow
+   carried over unchanged: ticks, then Next or Submit, one question at a time
+   with an i/N counter. The card's own "Type your own answer" field joins it:
+   its words win over the ticks while there are any, and Next or Submit use
+   them like a pick. Checked live against a scratch session, where a typed
+   answer plus two ticks went out as one call.
+2. **Effort per model.** Read from the Claude Code 2.1.283 binary's built-in
+   model catalogue (the `effort`, `xhigh_effort` and `max_effort` capabilities,
+   which the CLI's own model list filters on). The prototype assumed Sonnet has
+   no xhigh; it does. The table lives in `frontend-v2/src/lib/models.ts`
+   (`effortsForModel`).
+
+   | Model | Efforts the sheet offers |
+   |---|---|
+   | `claude-opus-5-5` | low, medium, high, xhigh, max. The CLI's default is medium; this box's managed `effortLevel` is high. |
+   | `claude-opus-5`, `claude-opus-5[1m]` | low, medium, high, xhigh, max. Default high. |
+   | `claude-sonnet-5` | low, medium, high, xhigh, max. |
+   | `claude-opus-4-8` | low, medium, high, xhigh, max. Default high. |
+   | `claude-haiku-4-5-20251001` | None: the model has no effort capability, and the sheet says "Haiku 4.5 has one effort level." |
+   | Codex | Its existing catalogue (low, medium, high, xhigh, max, ultra); the repo has no per-model data for it. |
+   | Pi | The levels the session stamps, under the heading "Thinking". |
+
+   Ultracode is xhigh plus dynamic workflows rather than a level of thinking,
+   so the live sheet's Effort row leaves it out; a session already running on
+   it still sees it ticked. The new-session sheet keeps it on every model that
+   has xhigh.
+
+## What shipped
+
+The build follows the prototype and the decisions above. These are the places
+where it measured something first or differs from what the prototype draws.
+
+**Stop.** Stop is the large round button now, and a second C-c at an idle
+Claude prompt exits the CLI, so it has three guards. It shows only when the
+session's hook-stamped state and the transcript's live row both read running:
+the live row alone lags the pane, and Stop showed on a finished session in 98
+of 100 samples. One press holds the button as "Stopping..." until the
+hook-stamped state leaves running or 20s pass, after a live check found a
+double tap sending two interrupts. Enter in an empty field does nothing; the
+prototype stops on it, and the build does not copy that.
+
+**Stop with queued messages.** Measured on Claude Code 2.1.283 on a scratch
+session with two prompts queued mid-turn: C-c interrupts and then submits every
+queued prompt as the next turn, and Escape does the same. Up on an empty input
+box pops the whole queue into the box (the transcript's `popAll`), and an
+interrupt after that leaves the text there unsent. So `POST /cancel` takes an
+optional `{"restoreQueue": [...]}`: the server presses Up, waits for the box to
+show the queue, clears it with C-e and one repeated run of Backspaces, and only
+then sends C-c. The reply says whether the queue came off, and the Text view
+fills the field only then; otherwise the prompts run as before. A dialog on the
+pane, a pane with no input box, pi and Codex keep the plain interrupt. The live
+check found two more things, both fixed: an interrupt before Claude's first
+token puts a long prompt back on the input line wrapped, so the next Send now
+clears every line of the box rather than one; and of two sends 100ms apart the
+CLI recorded only the second's enqueue, so the hand-back merges the queue into
+the order the prompts were sent. Re-run live on desktop and in iPhone
+emulation: both prompts came back in order, nothing was submitted, and the
+folded pill showed the draft's first line. `claude.cancelled` gains `tl.count`
+for the prompts handed back (ADR-0006).
+
+**The permission card's typed answer.** Measured on Claude Code 2.1.283 on a
+scratch session: Tab on the prompt's No row opens a field ("No, and tell Claude
+what to do differently"), and Enter there rejects the tool call with "the user
+said: <words>". Claude carries on in the same turn; told "write bye instead of
+hi", it asked to run the bye command next. So the words go through that row
+rather than as a later prompt, as `POST /answer` with `{"permission":
+{"decline": "<words>"}}`. The driver walks onto the No row one arrow at a time,
+because the row's digit declines with no words, then presses Tab, pastes, reads
+the words back off the row, and only then presses Enter. ADR-0010 and ADR-0006
+carry the amendments.
+
+**The question and plan cards.** With the card in the composer's place, the
+question card's free-text answer and "Chat about this" read the card's own
+field, and the plan card's "Approve with this feedback" moves under its "Tell
+Claude what to change" field. The composer stays mounted behind a card, so its
+draft and attachments come back as they were.
+
+**Smaller differences.**
+
+- A finished turn folded to its last reply carries the pictures of its hidden
+  work groups under the fold row, so pictures stay in view when folded. The
+  prototype does not draw a turn fold.
+- The mode list's order is Manual, Edits, Auto, Plan, where Quiet line had
+  Manual, Plan, Edits, Auto.
+- Model rows show each model's exact slug as the small note.
+- The header uses the system font in both views, so the title keeps its face
+  when the view switches. It has a fixed height, 56px on a desktop pane and
+  58px on a phone, in both views, because a height change resizes the terminal
+  under it. Find in session, Images, Files and the Watch toggle live in "…".
+- Latest sits in a 42px band and reads "Latest · working" while Claude works.
+  It stays away while a card is up.
+- Card rows are 48px on a phone and 40px under any other finger.
+
+**How the build was checked.** Unit tests for each item, then live checks: the
+cards, Stop and the queue hand-back against scratch Claude sessions; desktop at
+1280px and the phone at 390px in Chromium, in slate and T3 Light, beside the
+prototype's shots; and the composer, header and switcher in real Chrome on the
+Android emulator.
+
+**What we don't know yet.** The build's commits record iPhone emulation and the
+Android emulator, not the real iPhone. The keyboard-up layout in iOS Safari
+from the home screen is the case to settle with `homelab ios shot` against the
+deployed page.
