@@ -574,6 +574,9 @@ func (n *Normalizer) meta(rec Record) []Event {
 			return emit(MetaQueueCleared, rec.Content)
 		}
 	case RecordAttachment:
+		if mode, ok := autoModeAttachment(rec); ok {
+			return emit(MetaPermissionMode, mode)
+		}
 		return n.absorbed(rec)
 	case RecordSystem:
 		if rec.Subtype == "local_command" {
