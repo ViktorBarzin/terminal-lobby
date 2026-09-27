@@ -345,6 +345,8 @@ func (n *Normalizer) conversation(rec Record) []Event {
 		// A path pasted into the terminal becomes a picture on the prompt,
 		// which the bubble draws, and this note of where it came from. Shown,
 		// it read as Claude speaking and drew the same picture again under it.
+		// A large picture Claude read gets a note of how it was scaled, which
+		// read as a reply under the work group the same way.
 		if imageSourceNote(text) {
 			return nil
 		}
@@ -695,15 +697,21 @@ func imageRef(bl Block, n int) (ImageRef, bool) {
 // pasted file path as a picture: "[Image: source: <path>]", one per picture.
 var imageSourceRE = regexp.MustCompile(`^\[Image: source: [^\]\n]+\]$`)
 
+// imageScaleRE is the note it writes after a Read of a picture larger than the
+// model takes (CLI 2.1.273 to 2.1.283): "[Image: original 2880x1760, displayed
+// at 2000x1222. Multiply coordinates by 1.44 to map to original image.]".
+var imageScaleRE = regexp.MustCompile(`^\[Image: original \d+x\d+, displayed at \d+x\d+\.[^\]\n]*\]$`)
+
 // imageSourceNote reports whether a meta record's text is nothing but such
-// notes. Text around one is something else, and keeps its row.
+// notes, of either kind. Text around one is something else, and keeps its row.
 func imageSourceNote(text string) bool {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return false
 	}
 	for _, line := range strings.Split(text, "\n") {
-		if !imageSourceRE.MatchString(strings.TrimSpace(line)) {
+		line = strings.TrimSpace(line)
+		if !imageSourceRE.MatchString(line) && !imageScaleRE.MatchString(line) {
 			return false
 		}
 	}

@@ -447,6 +447,26 @@ func TestNormalizeImageSourceNoteLeavesNoRow(t *testing.T) {
 	}
 }
 
+// A Read of a picture larger than the model takes is followed by an isMeta
+// record, with plain string content, saying how it was scaled: "[Image:
+// original 2880x1760, displayed at 2000x1222. Multiply coordinates by 1.44 to
+// map to original image.]". The live check on 2026-09-27 found it drawn as a
+// reply from Claude under the work group. It is the harness's note to the
+// model, so it leaves no row.
+func TestNormalizeImageScaleNoteLeavesNoRow(t *testing.T) {
+	n := NewNormalizer("demo")
+	for _, text := range []string{
+		"[Image: original 2880x1760, displayed at 2000x1222. Multiply coordinates by 1.44 to map to original image.]",
+		"[Image: original 1170x2532, displayed at 924x2000. Multiply coordinates by 1.27 to map to original image.]",
+	} {
+		note := `{"type":"user","isMeta":true,"turnCompanion":true,"uuid":"m-9","message":{"role":"user",` +
+			`"content":` + jsonString(text) + `}}`
+		if out := n.Line([]byte(note)); len(out) != 0 {
+			t.Fatalf("the scale note %q became %v", text, kinds(out))
+		}
+	}
+}
+
 // Only the note itself goes. Meta text that merely mentions one, or a person
 // typing the same words, keeps the row it always had.
 func TestNormalizeImageSourceLookalikesKeepTheirRows(t *testing.T) {
