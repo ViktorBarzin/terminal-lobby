@@ -33,12 +33,16 @@ describe("queued prompts in the timeline", () => {
     const g = ghosts(container);
     expect(g).toHaveLength(1);
     expect(g[0]!.classList.contains("tl-row-user")).toBe(true);
+    // The attribute the stylesheet draws the dashed outline from
+    // (textview.conversation.css.test.ts).
+    expect(g[0]!.hasAttribute("data-queued")).toBe(true);
     const bubble = g[0]!.querySelector(".tl-bubble-ghost")!;
     expect(bubble.querySelector(".tl-ghost-tag")?.textContent).toBe("Queued");
-    expect(bubble.textContent).toContain("also check the phone");
-    expect(bubble.querySelector(".tl-ghost-when")?.textContent).toBe(
-      "Sends when Claude finishes this turn",
-    );
+    expect(bubble.textContent).toBe("Queuedalso check the phone");
+    // The T3 pass (2026-09-27) drops the second line, "Sends when Claude
+    // finishes this turn", as the prototype's ghost does: the tag says it.
+    expect(bubble.querySelector(".tl-ghost-when")).toBeNull();
+    expect(bubble.getAttribute("title")).toBe("also check the phone");
     // After every row of the conversation, where the message will land.
     const timeline = container.querySelector(".tl-timeline")!;
     const rows = Array.from(timeline.querySelectorAll(".tl-row"));

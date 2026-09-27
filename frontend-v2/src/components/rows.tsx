@@ -689,11 +689,12 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
   <div class="tl-row tl-row-meta" data-eid={props.row.id} data-meta={props.row.meta}>
-    <span class="tl-meta-rule" />
-    {/* `title` because the text is clamped to three lines (app.css): a marker
-        row is not where a reader should have to read a long value. The
-        `queued` rows that carried whole prompts were the reason for the clamp,
-        and are ghost bubbles now (MessagesTimeline). */}
+    {/* One centred muted line, the T3 pass's note (2026-09-27); it was a rule
+        either side of the words until then. `title` because the text is
+        clamped to three lines (app.css): a marker row is not where a reader
+        should have to read a long value. The `queued` rows that carried whole
+        prompts were the reason for the clamp, and are ghost bubbles now
+        (MessagesTimeline). */}
     <span class="tl-meta-text" title={props.row.body || undefined}>
       {META_LABEL[props.row.meta]}
       <Show when={props.row.body && props.row.meta !== "compact"}>
@@ -701,7 +702,6 @@ export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
         <span class="tl-meta-value">{props.row.body}</span>
       </Show>
     </span>
-    <span class="tl-meta-rule" />
   </div>
 );
 

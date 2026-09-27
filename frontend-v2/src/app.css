@@ -2036,29 +2036,34 @@ label.tl-set-row-label {
   margin: 0 auto;
 }
 
-/* user bubble — right aligned */
+/* The user's message: a rounded grey bubble on the right, with no outline
+   (the T3 pass, 2026-09-27; the prototype's `.m-user`). It was a bordered card
+   at the lobby's 10px radius until then. */
 .tl-row-user {
   display: flex;
   justify-content: flex-end;
 }
 .tl-bubble-user {
-  background: var(--bg-card-hover);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 8px 12px;
-  max-width: 85%;
+  min-width: 0;
+  max-width: 84%;
+  padding: 9px 15px;
+  border-radius: 20px;
+  background: var(--bubble);
 }
 .tl-user-text {
   margin: 0;
   font-family: var(--font-ui);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: anywhere;
 }
 /* A queued prompt: the reader's own message that has not left yet, drawn where
-   it will land as an outline of the bubble it will become. They were chips in
-   the composer until 2026-09-24. Long ones are cut at six lines; the title
+   it will land as a dashed outline of the bubble it will become. They were
+   chips in the composer until 2026-09-24. Keyed on the row's `data-queued`
+   (GhostRowsView). The border takes one pixel of the bubble's padding, so the
+   text sits where the bubble's will. Long ones are cut at six lines; the title
    carries the whole message. */
-.tl-bubble-ghost {
+.tl-row-user[data-queued] .tl-bubble-user {
+  padding: 8px 14px;
   border: 1px dashed var(--border-strong);
   background: transparent;
   color: var(--text-muted);
@@ -2073,24 +2078,18 @@ label.tl-set-row-label {
 }
 .tl-ghost-tag {
   display: inline-block;
-  margin-right: 7px;
-  padding: 0 6px;
+  margin-right: 8px;
+  padding: 0 7px;
   border-radius: 999px;
   vertical-align: 1px;
-  font-size: calc(10px * var(--tl-text-scale, 1));
+  font-size: calc(10.5px * var(--tl-text-scale, 1));
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
   color: var(--accent);
 }
 .tl-ghost-text {
   display: inline;
-}
-.tl-ghost-when {
-  display: block;
-  margin-top: 2px;
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  opacity: 0.85;
 }
 .tl-ghost-more {
   text-align: right;
@@ -2236,9 +2235,44 @@ label.tl-set-row-label {
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
 
-/* assistant message */
+/* Claude's reply: plain text with no bubble, paragraphs and code blocks 10px
+   apart (the prototype's `.m-asst`). Inline code a size down, and a code block
+   on the card fill at radius 10, 12.5px on 19px (12px on a phone, below).
+   Scoped to the reply, since `.tl-code` and `.tl-inline-code` also draw the
+   file preview and the cards. */
 .tl-row-message {
   color: var(--text-primary);
+}
+.tl-row-message .tl-markdown p,
+.tl-row-message .tl-code-block {
+  margin-block: 10px;
+}
+.tl-row-message .tl-code-block > .tl-code {
+  margin-block: 0;
+}
+/* Nothing above the first block or below the last: the row is a flex item, so
+   its children's margins stay inside it and would add to the timeline's 18px
+   gap. solid-markdown wraps the blocks in a div of its own, hence `> div`. */
+.tl-row-message .tl-markdown > div > :first-child {
+  margin-top: 0;
+}
+.tl-row-message .tl-markdown > div > :last-child {
+  margin-bottom: 0;
+}
+.tl-row-message .tl-inline-code {
+  font-size: 0.84em;
+}
+.tl-row-message .tl-code {
+  border-radius: 10px;
+  background: var(--bg-card);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  line-height: calc(19 / 12.5);
+}
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  .tl-row-message .tl-code {
+    font-size: calc(12px * var(--tl-text-scale, 1));
+    line-height: calc(19 / 12);
+  }
 }
 /* tool row */
 .tl-row-tool {
@@ -2392,30 +2426,18 @@ label.tl-set-row-label {
     transform: scale(1);
   }
 }
+/* A permission prompt left in the conversation, as a note: "Allowed: Bash",
+   centred and muted with the tool in the text colour (the prototype's
+   `.m-note`). A bordered card with a coloured edge until the T3 pass. */
 .tl-row-permission {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--state-awaiting);
-  border-radius: var(--radius);
-  padding: 7px 10px;
-  background: var(--bg-card);
-}
-.tl-perm-tool {
-  font-family: var(--font-mono);
-  font-weight: 500;
-}
-.tl-perm-state {
+  font-size: calc(12px * var(--tl-text-scale, 1));
   color: var(--text-muted);
-  margin-left: auto;
+  text-align: center;
+  overflow-wrap: anywhere;
 }
-.tl-row-permission[data-decision="allow"] {
-  border-left-color: var(--success);
-}
-.tl-row-permission[data-decision="deny"] {
-  border-left-color: var(--danger);
+.tl-row-permission b {
+  color: var(--text-primary);
+  font-weight: 560;
 }
 .tl-row-status {
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -3922,7 +3944,7 @@ label.tl-set-row-label {
   .tl-dial-pop,
   .tl-complete,
   .tl-send-hint,
-  .tl-bubble-ghost,
+  .tl-row-user[data-queued] .tl-bubble-user,
   .tl-sheet,
   .tl-sheet-scrim {
     animation: none;
@@ -5702,19 +5724,15 @@ body.tl-kb-up {
   color: var(--err, #f85149);
 }
 
-/* Session lifecycle: a centred rule with a word on it. */
+/* Session lifecycle: one centred muted line, the T3 pass's note (2026-09-27).
+   It was a rule either side of the words until then. The timeline's 18px gap
+   is the rhythm, so the row adds none of its own. */
 .tl-row-meta {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-block: 10px;
+  justify-content: center;
+  margin-block: 0;
   color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-}
-.tl-meta-rule {
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--border);
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 /* "A centred rule with a word on it" holds for `mode` or `skill`, whose bodies
    are a word. `queued` carries the whole prompt, which is not — and with
@@ -5736,8 +5754,10 @@ body.tl-kb-up {
   overflow-wrap: anywhere;
   text-align: center;
 }
+/* The value keeps the note's own colour and weight: it can be a long hook
+   message, and a three-line bold paragraph is louder than a note should be. */
 .tl-meta-value {
-  font-family: var(--mono, ui-monospace, monospace);
+  font-family: inherit;
 }
 .tl-row-meta[data-meta="hook-error"] {
   color: var(--err, #f85149);

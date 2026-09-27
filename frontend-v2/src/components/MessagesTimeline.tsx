@@ -121,6 +121,10 @@ const UserRowView: Component<{
  * message that has not left yet, so it goes where it will land. Three at most,
  * then a count, the same cap the chips had.
  *
+ * The T3 pass (2026-09-27) dropped their second line, "Sends when Claude
+ * finishes this turn": the Queued tag says it, as the prototype's ghost does.
+ * `data-queued` is what the stylesheet draws the outline from.
+ *
  * Not keyed rows. They are not the transcript's: they come from the queue's own
  * operations (timeline.logic `queuedPrompts`), leave the moment Claude takes
  * them, and the prompt then arrives as an ordinary user row.
@@ -133,7 +137,7 @@ const GhostRowsView: Component<{
   <>
     <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
       {(text) => (
-        <div class="tl-row tl-row-user tl-row-ghost">
+        <div class="tl-row tl-row-user tl-row-ghost" data-queued="">
           <div class="tl-bubble-user tl-bubble-ghost" title={text}>
             <div class="tl-ghost-body">
               <span class="tl-ghost-tag">Queued</span>
@@ -145,7 +149,6 @@ const GhostRowsView: Component<{
                 />
               </pre>
             </div>
-            <span class="tl-ghost-when">Sends when Claude finishes this turn</span>
           </div>
         </div>
       )}
@@ -167,17 +170,20 @@ const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
   </div>
 );
 
-const PermissionRowView: Component<{ row: PermissionRow }> = (props) => {
-  const state = () =>
-    props.row.decision ? `resolved: ${props.row.decision}` : "awaiting decision";
-  return (
-    <div class="tl-row tl-row-permission" data-decision={props.row.decision || "pending"}>
-      <span class="tl-perm-icon">🔐</span>
-      <span class="tl-perm-tool">{props.row.tool || "permission"}</span>
-      <span class="tl-perm-state">{state()}</span>
-    </div>
-  );
-};
+/** What a permission row says happened: the reader's answer, or that Claude asked. */
+const PERMISSION_NOTE: Record<string, string> = { allow: "Allowed", deny: "Denied" };
+
+/**
+ * A permission prompt, once it is in the conversation, as one note: "Allowed:
+ * Bash". It was a bordered card with a lock and a coloured edge until the T3
+ * pass (2026-09-27); the card Claude waits on is where a prompt is answered,
+ * and what is left behind is a line saying how it went.
+ */
+const PermissionRowView: Component<{ row: PermissionRow }> = (props) => (
+  <div class="tl-row tl-row-permission" data-decision={props.row.decision || "pending"}>
+    {PERMISSION_NOTE[props.row.decision ?? ""] ?? "Asked"}: <b>{props.row.tool || "permission"}</b>
+  </div>
+);
 
 const ErrorRowView: Component<{ row: ErrorRow }> = (props) => (
   <div class="tl-row tl-row-error">
