@@ -1421,7 +1421,6 @@ export const SessionView: Component<{
                     onClick={() => picker.toggle()}
                   >
                     {props.label ?? session}
-                    <span class="tl-session-caret">▾</span>
                   </button>
                   <Show when={picker.open()}>
                     <div

@@ -1264,7 +1264,7 @@
   text-overflow: ellipsis;
 }
 /* On a coarse pointer the title is the session switcher: a button that reads as
-   the title, with a small caret. */
+   the title, with no caret, as the prototype draws it. */
 .tl-bar-head > .tl-session-picker {
   display: flex;
   min-width: 0;
@@ -1277,11 +1277,9 @@
   font-family: inherit;
   text-align: left;
   cursor: pointer;
-}
-.tl-session-caret {
-  margin-left: 4px;
-  font-size: 0.7em;
-  color: var(--text-muted);
+  /* A tap on a phone must open the list, not select the title's text. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .tl-bar-sub {
   display: flex;
@@ -1369,6 +1367,17 @@
     background: var(--hover-tint);
   }
 }
+/* A press shows in the button's own round shape, not as the browser's square
+   tap flash over it. */
+.tl-bar-group-btn,
+.tl-back-btn,
+.tl-session-switch {
+  -webkit-tap-highlight-color: transparent;
+}
+.tl-bar-group-btn:active,
+.tl-session-bar .tl-back-btn:active {
+  background: var(--hover-tint);
+}
 /* The hidden view has something you have not seen. */
 .tl-bar-group-btn .tl-activity-dot {
   position: absolute;
@@ -1386,16 +1395,31 @@
   margin-top: 6px;
   min-width: 180px;
 }
-/* The switcher's list drops from the title, left-aligned under it. */
+/* The switcher's list drops from the title block, left-aligned under it and
+   as wide as its rows need, up to what is left of the screen right of the
+   title: on a phone that starts 68px in (a 14px gutter, the 44px back button
+   and a 10px gap), and 14px more keeps the right gutter. One line per
+   session: a scrolling column whose rows wrapped would squeeze them into each
+   other, so each row ellipsizes instead. */
 .tl-session-picker {
   position: relative;
 }
 .tl-session-menu {
+  top: calc(100% + 22px);
   left: 0;
   right: auto;
   z-index: 30;
+  width: max-content;
+  min-width: 220px;
+  max-width: calc(100vw - 82px);
   max-height: 60vh;
   overflow-y: auto;
+}
+.tl-session-menu .tl-menu-item {
+  flex: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* The terminal controls, grouped so they read as one cluster (as the vanilla
    page's floating group does) rather than as loose icons among the session
