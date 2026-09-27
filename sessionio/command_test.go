@@ -103,3 +103,28 @@ func TestOrdinaryPromptIsUnchanged(t *testing.T) {
 		t.Fatalf("got %+v", evs)
 	}
 }
+
+// Claude Code 2.1.283 records a command it answers itself, /context among
+// them, as a `system` record of subtype local_command rather than as a user
+// record (measured 2026-09-27). It is still the command the operator ran, and
+// the one thing a client holding it as a pending prompt can let go on. It is
+// not a prompt, though: nothing is asked of the model, so it opens no turn.
+func TestLocalCommandRecordNamesTheCommand(t *testing.T) {
+	n := &Normalizer{}
+	evs := n.Line([]byte(`{"type":"system","subtype":"local_command","content":"<command-name>/context</command-name>\n            <command-message>context</command-message>\n            <command-args></command-args>","level":"info","timestamp":"2026-09-27T01:30:45.266Z"}`))
+	if len(evs) != 1 || evs[0].Kind != KindMeta || evs[0].Meta != MetaCommand || evs[0].Body != "/context" {
+		t.Fatalf("got %+v, want one command meta naming /context", evs)
+	}
+	if evs[0].TurnID != "" {
+		t.Errorf("turn = %q, want none: a local command opens no turn", evs[0].TurnID)
+	}
+	withArgs := n.Line([]byte(`{"type":"system","subtype":"local_command","content":"<command-name>/resume</command-name><command-args>abc</command-args>"}`))
+	if len(withArgs) != 1 || withArgs[0].Body != "/resume abc" {
+		t.Errorf("got %+v, want the command with its args", withArgs)
+	}
+	// The command's captured output is the second local_command record. It
+	// names no command, and the reading it carries arrives as its own record.
+	if out := n.Line([]byte(`{"type":"system","subtype":"local_command","content":"<local-command-stdout>Context Usage</local-command-stdout>"}`)); len(out) != 0 {
+		t.Errorf("stdout record: got %+v, want none", out)
+	}
+}

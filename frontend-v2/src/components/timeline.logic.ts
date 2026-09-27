@@ -843,6 +843,11 @@ function collectTurnRows(turn: Turn): {
         // own visible mark anyway: applying one types `/model` into the pane,
         // and that line arrives as an ordinary row.
         if (meta === "model") break;
+        // A command the CLI answered itself (Claude Code 2.1.283 writes /context
+        // as a local_command record). Its effect already shows where it lands,
+        // the context dial for /context, and the event exists so the store can
+        // let go of the command's pending bubble.
+        if (meta === "command") break;
         // The queue's departures are bookkeeping for queuedPrompts(), the
         // same way the mode events are for the dial: a divider saying a
         // prompt left the queue tells the reader nothing the queue itself
@@ -1360,6 +1365,33 @@ export function liveRow(rows: TimelineRow[]): WorkingRow | undefined {
   return undefined;
 }
 
+/** The turn id a pending prompt's stand-in event carries (withPendingPrompts). */
+const PENDING_TURN = "cmd";
+
+/**
+ * The open turn's live row with the prompts still pending taken into account.
+ *
+ * `shown` are the rows drawn with the pending prompts appended, `base` the
+ * transcript's own. A pending prompt's turn is open until the transcript
+ * records the prompt, and for prose that is under a second away. A slash
+ * command may never be recorded (/help, /status, an unknown command), and a
+ * pending one held the status line on "Working" with Stop over an idle session
+ * until a reload (measured 2026-09-27). So while every pending prompt is a
+ * command, the live row is the transcript's: none at idle, and the running
+ * turn's own, call and all, when the command was sent mid-turn.
+ */
+export function liveRowOf(
+  shown: TimelineRow[],
+  base: TimelineRow[],
+  sent: ReadonlyArray<Pick<PendingPrompt, "command">>,
+): WorkingRow | undefined {
+  const row = liveRow(shown);
+  if (row && sent.length > 0 && sent.every((p) => p.command) && row.turnKey.startsWith(PENDING_TURN)) {
+    return liveRow(base);
+  }
+  return row;
+}
+
 /**
  * The newest row that says something happened — everything except the open
  * turn's working marker, which is appended after the turn's own rows and is
@@ -1710,7 +1742,7 @@ export function withPendingPrompts(events: Event[], sent: ReadonlyArray<PendingP
           id: c.id,
           kind: "user",
           session: "",
-          turnId: `cmd${c.id}`,
+          turnId: `${PENDING_TURN}${c.id}`,
           body: c.text,
           at: c.at,
         }) as Event,

@@ -64,6 +64,13 @@ const (
 	// transcript names the model on every assistant record and has since long
 	// before this existed.
 	MetaModel Meta = "model"
+	// MetaCommand names a slash command the CLI answered itself, in Body as
+	// the operator typed it ("/context"). Claude Code 2.1.283 records such a
+	// command as a `system` record of subtype local_command instead of the
+	// user record older versions wrote (measured 2026-09-27), so it is not a
+	// prompt and opens no turn. It is what lets a client stop showing the
+	// command as waiting to be recorded; it renders no row.
+	MetaCommand Meta = "command"
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the

@@ -596,12 +596,24 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         // One record accounts for ONE prompt, oldest first: sending two in
         // quick succession queues them, and the first record must not clear the
         // second prompt as well.
-        const spoken = arrived.filter((e) => e.kind === "user");
+        //
+        // A command the CLI answered itself arrives as a `command` meta since
+        // Claude Code 2.1.283, which writes /context as a system local_command
+        // record rather than a user one. It speaks for a command only, by its
+        // own text: it is no prompt, and says nothing about prose sent before.
+        const spoken = arrived.filter(
+          (e) => e.kind === "user" || (e.kind === "meta" && e.meta === "command"),
+        );
         if (spoken.length > 0) {
           setPendingPrompts((cur) => {
             let left = cur;
             const drop = (i: number) => (left = left.filter((_, n) => n !== i));
             for (const e of spoken) {
+              if (e.kind === "meta") {
+                const ran = left.findIndex((p) => p.command && sameCommand(e.body ?? "", p.text));
+                if (ran >= 0) drop(ran);
+                continue;
+              }
               // Either kind is let go when the transcript says the same thing.
               const said = left.findIndex((p) => sameCommand(e.body ?? "", p.text));
               if (said >= 0) {

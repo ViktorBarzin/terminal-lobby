@@ -576,6 +576,12 @@ func (n *Normalizer) meta(rec Record) []Event {
 	case RecordAttachment:
 		return n.absorbed(rec)
 	case RecordSystem:
+		if rec.Subtype == "local_command" {
+			if line, ok := commandLine(rec.Content); ok {
+				return emit(MetaCommand, line)
+			}
+			return nil
+		}
 		if s := string(rec.HookErrors); s != "" && s != "[]" && s != "null" {
 			return emit(MetaHookError, s)
 		}

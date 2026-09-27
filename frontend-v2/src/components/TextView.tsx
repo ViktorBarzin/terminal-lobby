@@ -23,7 +23,7 @@ import {
   currentMode,
   currentModel,
   deriveRows,
-  liveRow,
+  liveRowOf,
   pendingQuestion,
   promptHistory,
   queuedPrompts,
@@ -364,9 +364,11 @@ export const TextView: Component<{
    * The open turn's live row, off the rows the timeline draws: with a prompt
    * pending that is the pending turn, whose row reads "Working" with no tool,
    * which is what the timeline showed in that moment before the row moved onto
-   * the composer's thin line (2026-09-24).
+   * the composer's thin line (2026-09-24). A slash command pending on its own
+   * is the exception (liveRowOf): it may never be recorded, so the row is the
+   * transcript's until it is.
    */
-  const live = createMemo(() => liveRow(shownRows()));
+  const live = createMemo(() => liveRowOf(shownRows(), baseRows(), sent()));
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
   const [modeBusy, setModeBusy] = createSignal(false);
 

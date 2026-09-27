@@ -132,6 +132,27 @@ describe("letting go once the transcript has it", () => {
     dispose();
   });
 
+  it("drops a command the CLI records as its own local command", async () => {
+    // Claude Code 2.1.283 writes /context as a system local_command record,
+    // which sessionio carries as a `command` meta. Measured 2026-09-27: the
+    // bubble was never let go and held the status line on Working with Stop.
+    const { store, dispose, deliver } = mount();
+    await store.send("/context");
+    await deliver(JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }));
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("lets a command meta release only a command", async () => {
+    // Prose is never run as a local command, so a command meta says nothing
+    // about it, even one sent before.
+    const { store, dispose, deliver } = mount();
+    await store.send("deploy the api");
+    await deliver(JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }));
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["deploy the api"]);
+    dispose();
+  });
+
   it("does NOT let a later prompt sweep away a command", async () => {
     // /help is never recorded. If a later prompt released it, the only account
     // of the command would vanish the next time anything was sent.

@@ -178,7 +178,8 @@ export type MetaKind =
   | "hook-error"
   | "context"
   | "asking"
-  | "model";
+  | "model"
+  | "command";
 
 export interface TokenUsage {
   input_tokens?: number;

@@ -663,6 +663,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // Dropped by deriveRows for the same reason as the mode: which model is
   // answering is state, and the model dial on the composer's line shows it.
   model: "model",
+  // Dropped by deriveRows as well: a command the CLI ran itself shows where
+  // its effect lands, and the event is there for the pending bubble.
+  command: "command",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
