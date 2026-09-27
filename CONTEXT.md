@@ -776,7 +776,9 @@ It is Send when idle, greyed while the field is empty and nothing runs. It is
 Stop while Claude works and the field is empty with nothing attached. Once
 something is typed or attached mid-turn it is a Send that queues behind the
 turn. Stop shows only when the **Working row** and the session's hook-stamped
-state both say a turn runs, and it takes one press per turn: an interrupt is a
+state both say a turn runs (`running`, or `awaiting` once the card is answered
+and the call runs; a prompt sent from this composer speaks for the turn it
+opened until the stamp moves), and it takes one press per turn: an interrupt is a
 C-c, and a second one at an idle prompt exits Claude. Enter in an empty field
 does nothing. A watching device can neither send nor stop. Stop with queued
 messages puts them back in the field as a draft and sends nothing: the server

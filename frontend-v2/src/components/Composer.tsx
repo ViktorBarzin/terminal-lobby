@@ -1,9 +1,9 @@
-import { createEffect, createSignal, onCleanup, Show, type Component, type JSX } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, Show, type Component, type JSX } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
-import type { SlashCommand } from "../logic/compose.logic";
+import { isSlashCommand, type SlashCommand } from "../logic/compose.logic";
 import { isDangerMode, type ModeId } from "../logic/modes";
 import type { DraftAttachment } from "../store/drafts";
 import type { ContextState } from "./context.logic";
@@ -72,6 +72,18 @@ export type ComposerSinks = PromptFieldSinks;
  * the reader's to make.
  */
 const STOP_SETTLE_MS = 20_000;
+
+/**
+ * How long a prompt this composer sent speaks for the turn it opened, while
+ * the hook state still reads the last turn's `done`.
+ *
+ * The stamp reaches the page through the session list, up to ~10s behind the
+ * pane (ADR-0001), and measured live on 2026-09-27 the button stayed a greyed
+ * Send for the first ~4s of every turn while the live group already read
+ * "Working… 3s". The window closes as soon as the stamp moves, so this bound
+ * only matters when it never does.
+ */
+const SEND_TRUST_MS = 15_000;
 
 export const Composer: Component<{
   /**
@@ -203,8 +215,45 @@ export const Composer: Component<{
   };
 
   const working = (): boolean => !!props.live && !props.live.waiting;
-  /** A turn runs by both readings: the transcript's row and the hook state. */
-  const turnRunning = (): boolean => working() && props.claudeState === "running";
+
+  // ---- A send this composer made, before the stamp catches up -------------
+  const [justSent, setJustSent] = createSignal(false);
+  let sentTimer: ReturnType<typeof setTimeout> | undefined;
+  const forgetSend = (): void => {
+    clearTimeout(sentTimer);
+    sentTimer = undefined;
+    setJustSent(false);
+  };
+  // Any move of the stamp after the send is the session speaking for itself.
+  createEffect(
+    on(
+      () => props.claudeState,
+      () => forgetSend(),
+      { defer: true },
+    ),
+  );
+  onCleanup(forgetSend);
+
+  /**
+   * A turn runs by both readings: the transcript's row, and the hook state
+   * saying the session is not idle.
+   *
+   * `awaiting` counts: a permission answered from the card leaves the stamp
+   * there until the call's PostToolUse, which for a long command is the whole
+   * of the call (found live on 2026-09-27, 45s of a greyed Send with Claude
+   * running). It never means an idle prompt, since Stop and an interrupt both
+   * stamp `done`, and the row says whether anything is waiting on the reader.
+   *
+   * A prose prompt sent from here also counts while the stamp still reads the
+   * `done` it read at the send (SEND_TRUST_MS): the turn is the one this
+   * composer just opened. What it guards against is a STALE row on a finished
+   * session, and a row newer than the send is not that.
+   */
+  const turnRunning = (): boolean =>
+    working() &&
+    (props.claudeState === "running" ||
+      props.claudeState === "awaiting" ||
+      (justSent() && props.claudeState === "done"));
 
   // ---- Stop, once per turn ---------------------------------------------------
   const [stopping, setStopping] = createSignal(false);
@@ -214,8 +263,10 @@ export const Composer: Component<{
     stopTimer = undefined;
     setStopping(false);
   };
+  // Settled once the stamp says the session is idle: Cancel re-stamps `done`.
+  // A move between running and awaiting is the turn going on.
   createEffect(() => {
-    if (props.claudeState !== "running") settled();
+    if (props.claudeState !== "running" && props.claudeState !== "awaiting") settled();
   });
   onCleanup(settled);
   const stop = (): void => {
@@ -246,8 +297,15 @@ export const Composer: Component<{
    * plan card's own field since the T3 pass; the card hides this composer
    * while it waits, and the text view refuses a send that still reaches it.
    */
-  const send = (text: string, held: readonly DraftAttachment[]): Promise<boolean> =>
-    props.onSend(text, held);
+  const send = async (text: string, held: readonly DraftAttachment[]): Promise<boolean> => {
+    const ok = await props.onSend(text, held);
+    if (ok && !isSlashCommand(text)) {
+      forgetSend();
+      setJustSent(true);
+      sentTimer = setTimeout(forgetSend, SEND_TRUST_MS);
+    }
+    return ok;
+  };
 
   /** The model button's slot: the button, and background work beside it. */
   const tools = (): JSX.Element => (

@@ -20,9 +20,11 @@
  * answered another way, and the answer is these rules:
  *
  *  - Stop needs BOTH readings to agree: the transcript's live row, and the
- *    hook-stamped session state (ADR-0001) saying `running`. The hook state
+ *    hook-stamped session state (ADR-0001) saying the session is not idle
+ *    (`running`, or `awaiting` while an answered call runs). The hook state
  *    turns `done` when the session stops, including after an interrupt, which
- *    `Injector.Cancel` re-stamps itself.
+ *    `Injector.Cancel` re-stamps itself. A prompt sent from this composer
+ *    speaks for the turn it opened until the stamp moves.
  *  - Typing always turns the button back into Send, so a stale Stop can never
  *    stand between the reader and a send.
  *  - Stop takes ONE press per turn. `Injector.Cancel` (sessionio/tmux.go) sends
@@ -141,7 +143,7 @@ describe("<Composer> round button: its three states", () => {
 describe("<Composer> round button: Stop needs both readings", () => {
   // The transcript's live row lags the pane; the hook state is what the
   // session itself stamped. A stale row alone must not offer Stop.
-  for (const state of ["done", "awaiting", "suspended", undefined] as const) {
+  for (const state of ["done", "suspended", undefined] as const) {
     it(`offers no Stop while the hook state is ${state ?? "unknown"}, even with the transcript working`, () => {
       const { button } = mount({ live: WORKING, claudeState: state });
       expect(button().dataset.kind).toBe("send");
@@ -165,6 +167,92 @@ describe("<Composer> round button: Stop needs both readings", () => {
     const { button, type } = mount({ live: WORKING, claudeState: "done" });
     type("next");
     expect(button().getAttribute("aria-label")).toBe("Send");
+  });
+});
+
+describe("<Composer> round button: the hook state lags a running turn", () => {
+  // Found live on 2026-09-27. A permission answered from the card leaves the
+  // stamp at `awaiting` until the call's PostToolUse, so for the whole of a
+  // long command the button was a greyed Send, nothing could stop Claude, and
+  // a mid-turn send was not called a queue. `awaiting` never means an idle
+  // prompt: Stop and Cancel both stamp `done`.
+  it("offers Stop while the stamp still reads awaiting after a permission was answered", () => {
+    const { button, type } = mount({ live: WORKING, claudeState: "awaiting" });
+    expect(button().dataset.kind).toBe("stop");
+    expect(button().disabled).toBe(false);
+    type("and then this");
+    expect(button().getAttribute("aria-label")).toBe("Send, queues after this turn");
+  });
+
+  // The first seconds after a send: the transcript opened the turn, the stamp
+  // still reads the last turn's `done` until the list's next poll.
+  const afterSend = (onSend = vi.fn(sent)) => {
+    const [state, setState] = createSignal<ClaudeState>("done");
+    const [live, setLive] = createSignal<WorkingRow | undefined>(undefined);
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={onSend}
+        onStop={noop}
+        onResolve={noop}
+        live={live()}
+        claudeState={state()}
+      />
+    ));
+    const button = () => r.container.querySelector<HTMLButtonElement>(".tl-send")!;
+    const field = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    const sendText = async (text: string) => {
+      fireEvent.input(field, { target: { value: text } });
+      fireEvent.click(button());
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    return { button, field, sendText, setState, setLive };
+  };
+
+  it("offers Stop for a turn this device just started, before the stamp moves", async () => {
+    const { button, field, sendText, setLive } = afterSend();
+    await sendText("run the tests");
+    setLive(WORKING);
+    expect(button().dataset.kind).toBe("stop");
+    fireEvent.input(field, { target: { value: "and then this" } });
+    expect(button().getAttribute("aria-label")).toBe("Send, queues after this turn");
+  });
+
+  it("goes back to the stamp's word once the stamp has moved", async () => {
+    const { button, sendText, setState, setLive } = afterSend();
+    await sendText("run the tests");
+    setLive(WORKING);
+    setState("running");
+    expect(button().dataset.kind).toBe("stop");
+    // The turn ended and the transcript still lags: the stale row alone must
+    // not offer Stop again.
+    setState("done");
+    expect(button().dataset.kind).toBe("send");
+  });
+
+  it("stops trusting the send after a bounded wait", async () => {
+    vi.useFakeTimers();
+    const { button, sendText, setLive } = afterSend();
+    await sendText("run the tests");
+    setLive(WORKING);
+    expect(button().dataset.kind).toBe("stop");
+    vi.advanceTimersByTime(16_000);
+    expect(button().dataset.kind).toBe("send");
+  });
+
+  it("does not trust a slash command, which may never open a turn", async () => {
+    const { button, sendText, setLive } = afterSend();
+    await sendText("/context");
+    setLive(WORKING);
+    expect(button().dataset.kind).toBe("send");
+  });
+
+  it("does not trust a send the session refused", async () => {
+    const { button, sendText, setLive } = afterSend(vi.fn(async () => false));
+    await sendText("run the tests");
+    setLive(WORKING);
+    expect(button().dataset.kind).toBe("send");
   });
 });
 
@@ -237,6 +325,32 @@ describe("<Composer> round button: one Stop per turn", () => {
     setState("done");
     setState("running");
     expect(button().disabled).toBe(false);
+  });
+
+  it("holds Stopping while the stamp moves between awaiting and running", () => {
+    const onStop = vi.fn();
+    const [state, setState] = createSignal<ClaudeState>("awaiting");
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={onStop}
+        onResolve={noop}
+        live={WORKING}
+        claudeState={state()}
+      />
+    ));
+    const button = () => r.container.querySelector<HTMLButtonElement>(".tl-send")!;
+    fireEvent.click(button());
+    // The answered call's PostToolUse lands after the press, and a
+    // notification can put it back to awaiting before the interrupt lands.
+    setState("running");
+    setState("awaiting");
+    expect(button().disabled).toBe(true);
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(1);
+    setState("done");
+    expect(button().dataset.kind).toBe("send");
   });
 
   it("gives Stop back after a bounded wait if the turn never settles", () => {
