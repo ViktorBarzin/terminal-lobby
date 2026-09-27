@@ -762,7 +762,10 @@ export const PromptField: Component<{
     // old `if (!t) return` would have swallowed a photo sent on its own.
     const message = props.pendingAttachments ? raw.trim() : composeMessage(raw, held);
     if (!message && held.length === 0) return Promise.resolve(false);
-    clear();
+    // A watching device's send is refused (TextView refuseWatching), so the
+    // field is left as it is rather than emptied and put back.
+    const watching = !!props.inertReason;
+    if (!watching) clear();
     // Called in THIS tick, so a caller sees its sender run the moment Send is
     // pressed; a sender that throws before it returns a promise counts as a
     // refusal like one that rejects.
@@ -775,6 +778,10 @@ export const PromptField: Component<{
     return sending
       .catch(() => false)
       .then((ok) => {
+        if (watching) {
+          if (ok) clear();
+          return ok;
+        }
         if (ok || !ta || ta.value !== "") return ok;
         // A refusal restores BOTH halves. The text already had this guarantee;
         // an attachment needs it more, because re-attaching means finding the

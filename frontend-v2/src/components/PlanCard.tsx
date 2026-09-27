@@ -48,6 +48,8 @@ export const PlanCard: Component<{
   hasInput: boolean;
   /** The answer in flight, if any. */
   sending?: PlanSending | null;
+  /** Why this device may not answer (it is watching), or empty when it may. */
+  inert?: string;
   /** What the last reply, or an ignored press, left the card to say. */
   notice?: PlanNotice | null;
   /** The composer's text has line breaks, which go out as spaces. */
@@ -103,7 +105,7 @@ export const PlanCard: Component<{
   /** No choices to offer: the pane could not be read, and the plan has not gone. */
   const unreadable = () => !gone() && props.reading === null;
   const answerable = () => !gone() && props.reading !== null;
-  const held = () => props.sending != null;
+  const held = () => props.sending != null || !!props.inert;
 
   const noticeText = (): string => {
     if (props.notice) return NOTICE_TEXT[props.notice];

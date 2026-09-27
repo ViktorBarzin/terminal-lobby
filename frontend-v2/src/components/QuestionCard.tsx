@@ -89,6 +89,8 @@ export const QuestionCard: Component<{
   review?: boolean;
   /** A request is in flight. */
   busy: boolean;
+  /** Why this device may not answer (it is watching), or empty when it may. */
+  inert?: string;
   /** Answer the question `header` names and LEAVE it, with the labels it
    *  should be left holding, plus free text for the CLI's "Type something"
    *  row. One label for a single-select. For a multi-select this is the
@@ -373,7 +375,8 @@ export const QuestionCard: Component<{
   const multi = (): boolean => question()?.multiSelect === true;
 
   /** Anything in flight: a request of this card's, or one TextView is holding. */
-  const busy = (): boolean => props.busy || sending() !== null || flying() !== null;
+  const busy = (): boolean =>
+    props.busy || !!props.inert || sending() !== null || flying() !== null;
   /** The clicks still waiting that were made for the question on screen. */
   const waiting = createMemo(() => queue().filter((t) => onScreen(t.of)));
   /** Nothing in flight and nothing waiting to go, so the ticks on screen are final. */

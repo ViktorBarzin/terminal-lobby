@@ -22,10 +22,12 @@ export const PermissionCard: Component<{
   onPick: (option: number) => Promise<boolean>;
   /** Show the Terminal view. */
   onTerminal?: () => void;
+  /** Why this device may not answer (it is watching), or empty when it may. */
+  inert?: string;
 }> = (props) => {
   const [pressed, setPressed] = createSignal<number | null>(null);
   const pick = async (n: number): Promise<void> => {
-    if (pressed() !== null) return;
+    if (pressed() !== null || props.inert) return;
     setPressed(n);
     if (!(await props.onPick(n))) setPressed(null);
   };
@@ -51,7 +53,8 @@ export const PermissionCard: Component<{
                 class="tl-qcard-option"
                 data-chosen={pressed() === option.number ? "true" : undefined}
                 aria-busy={pressed() === option.number ? "true" : undefined}
-                disabled={pressed() !== null}
+                disabled={pressed() !== null || !!props.inert}
+                title={props.inert || undefined}
                 onClick={() => void pick(option.number)}
               >
                 <span class="tl-qcard-key" aria-hidden="true">
