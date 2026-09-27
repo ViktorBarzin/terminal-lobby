@@ -234,6 +234,21 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 	return exec.Command(in.sudo(), append([]string{"-n", "-u", osUser, in.binary()}, full...)...)
 }
 
+// loadBuffer puts text in tmux's paste buffer by feeding it on stdin, so no
+// length limit applies to what one prompt can carry.
+//
+// It replaced `set-buffer -- <text>`, which passes the text as a command
+// argument. tmux 3.4 refuses a client command over ~16 KB with "command too
+// long" (measured 2026-09-27: 16,000 bytes passed, 17,000 failed), and the
+// kernel refuses one argument over 128 KB before tmux even starts. A long
+// paste in the composer came back as "inject failed". `load-buffer -` took
+// 2 MB on the same box, and stdin passes through `sudo -u` unchanged.
+func (in *Injector) loadBuffer(osUser, text string) error {
+	cmd := in.Command(osUser, "load-buffer", "-")
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
+}
+
 // exactPane targets the named session and NOTHING ELSE, for the verbs whose
 // -t takes a pane or window: send-keys, paste-buffer, set-option,
 // display-message.
@@ -288,7 +303,7 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 	if err := in.clearInput(osUser, session); err != nil {
 		return err
 	}
-	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+	if err := in.loadBuffer(osUser, text); err != nil {
 		return err
 	}
 	// -p = bracketed paste, -d = delete the buffer afterwards.
@@ -426,7 +441,7 @@ func (in *Injector) AnswerText(osUser, session, text string) error {
 	if err := checkAnswerText(text); err != nil {
 		return err
 	}
-	if err := in.Command(osUser, "set-buffer", "--", text).Run(); err != nil {
+	if err := in.loadBuffer(osUser, text); err != nil {
 		return err
 	}
 	// -p = bracketed paste, -d = delete the buffer afterwards. No Enter.
