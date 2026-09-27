@@ -7,7 +7,8 @@
  * the dial's shield, keyed on the same attribute. What the Quiet line
  * composer (2026-09-24) added is the words, the CLI's own mode titles, and a
  * louder treatment for the two modes where nothing asks first: the dial turns
- * into a hatched danger tab and the dock takes a danger edge.
+ * into a hatched danger tab. Since the T3 pass (2026-09-27) the composer's
+ * surface takes a danger border too.
  */
 import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -60,23 +61,25 @@ describe("the mode dial", () => {
     expect(value("dontAsk")).toBe("No ask");
   });
 
-  it("marks the modes that ask nothing as danger, on the dial and on the dock", () => {
+  it("marks the modes that ask nothing as danger, on the dial and on the surface", () => {
     for (const mode of ["bypassPermissions", "dontAsk"]) {
       const { container, unmount } = mountFor(mode);
       expect(
         container.querySelector('.tl-dial[data-dial="mode"]')!.hasAttribute("data-danger"),
       ).toBe(true);
-      expect(container.querySelector(".tl-composer")!.hasAttribute("data-danger"), mode).toBe(true);
+      expect(container.querySelector(".tl-pill")!.hasAttribute("data-danger"), mode).toBe(true);
       unmount();
     }
     const { container } = mountFor("auto");
-    expect(container.querySelector(".tl-composer")!.hasAttribute("data-danger")).toBe(false);
+    expect(container.querySelector(".tl-pill")!.hasAttribute("data-danger")).toBe(false);
   });
 
-  it("says it in the field too, where the reader is about to type", () => {
+  // The Quiet line wrote the mode into the placeholder as well. The T3 pass
+  // keeps one sentence there, and the danger border is the signal.
+  it("leaves the field's placeholder alone", () => {
     const { container } = mountFor("bypassPermissions");
     expect(container.querySelector("textarea")!.getAttribute("placeholder")).toBe(
-      "Bypass is on · nothing asks first",
+      "Ask Claude, or run a command…",
     );
   });
 

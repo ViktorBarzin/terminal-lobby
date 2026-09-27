@@ -8,6 +8,7 @@ import {
   onMount,
   type Accessor,
   type Component,
+  type JSX,
 } from "solid-js";
 import {
   composeMessage,
@@ -33,7 +34,8 @@ import {
   previewContentUrl,
   storedDisplayName,
 } from "../lib/attachments";
-import { PlusIcon, QueueIcon, SendArrowIcon } from "./Icons";
+import { EyeIcon, PlusIcon, QueueIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
+import { createMobileFlip } from "../mobile/pointer";
 import { dismissOnPress } from "./overlay";
 import { PlusTray } from "./PlusTray";
 import { dismissFloat } from "./Dial";
@@ -58,14 +60,25 @@ import { dismissFloat } from "./Dial";
  * spliced in at the front on send, which is what Viktor asked to change on
  * 2026-09-13: a screenshot pasted mid-sentence belongs mid-sentence.
  *
- * THE PILL (the Quiet line composer, chosen 2026-09-24). One rounded surface
- * holds `+`, the field and Send, 42px tall at rest on a desktop and 48px on a
- * phone. It replaced a box that held the field and, on a bar beneath it,
- * Attach, the mode and model chips, the context meter, Stop and Send: 124px at
- * rest on a desktop and 127px on a phone (memory #13886). The chips moved to
- * the dials on the line above, Stop moved beside the work it stops, and
- * Attach, `/` and `@` moved behind the `+` (PlusTray). Send stays the pill's
- * last control, never greys out on a live session, and never says "Queue".
+ * ONE SURFACE, TWO SHAPES (the T3 pass, chosen 2026-09-27;
+ * docs/plans/2026-09-27-text-view-t3-pass.md). On a phone at rest it is a 50px
+ * pill: `+`, one line of the field, and the round button. Focused on the
+ * phone, and always on a desktop, it is a box: the text across the top, and
+ * beneath it `+`, the caller's tools (the model button's slot) and the round
+ * button. It replaced the Quiet line's pill (2026-09-24), which had a thin
+ * status line above it on both devices. The surface stays one element in
+ * both shapes and only its `data-shape` changes, so the field, its draft and
+ * its attachments never remount.
+ *
+ * "Phone" is the coarse-pointer flip (mobile/pointer.ts FLIP_QUERY), not width
+ * alone, and only for a caller that asks for the fold (`fold`). The pill opens
+ * when the field takes focus and folds again when the conversation is pressed,
+ * which also puts the keyboard away. It does not fold on blur: a press on `+`
+ * or the round button blurs the field on iOS, and folding under that finger
+ * would move the button before the click lands.
+ *
+ * Send stays the surface's last control, never greys out on a live session,
+ * and never says "Queue".
  */
 export interface PromptFieldSinks {
   /** Put attachments into the message (a window drop, a gallery tile). */
@@ -95,6 +108,17 @@ export interface PromptFieldSinks {
 /** A per-instance id for the "queues" hint, which Send names as its
  *  description. The lobby keeps many sessions mounted at once. */
 let hintSeq = 0;
+
+/**
+ * The words the watching pill shows: who is being watched, from the session
+ * view's one sentence ("Watching alice — take control to type in their
+ * session", "Watching: this device does not type into the session"). The whole
+ * sentence is the pill's title.
+ */
+function watchWord(reason: string): string {
+  const m = /^(.+?)\s*(?:—|:)\s+/.exec(reason.trim());
+  return m ? m[1]! : "Watching";
+}
 
 export const PromptField: Component<{
   /** The text view's pinch size. Read only to re-measure the field when it
@@ -169,6 +193,22 @@ export const PromptField: Component<{
   /** No `+` at all: a field that takes no files and offers no triggers. */
   noTray?: boolean;
   /**
+   * Rest as the 50px pill on a phone, opening into the box on focus. The live
+   * composer asks for it; the new-session screen is the box at full size.
+   */
+  fold?: boolean;
+  /** The mode lets every tool through (Bypass, No ask): the surface's border
+   *  turns the danger colour, and nothing else changes. */
+  danger?: boolean;
+  /** What sits between `+` and the round button in the box: the model
+   *  button's slot. Hidden in the pill. */
+  tools?: JSX.Element;
+  /** Something is running that Stop would interrupt, and how to stop it. */
+  canStop?: boolean;
+  onStop?: () => void;
+  /** Hand the session back to this device, from the watching pill. */
+  onTakeControl?: () => void;
+  /**
    * Draw Send as unavailable while there is nothing to send.
    *
    * An empty send is refused either way — the guard in `submit` is the same for
@@ -227,6 +267,27 @@ export const PromptField: Component<{
   let mirrorEl: HTMLDivElement | undefined;
   const hintId = `tl-send-hint-${++hintSeq}`;
   const [draft, setDraft] = createSignal("");
+
+  // ---- the shape ----------------------------------------------------------
+  const phone = createMobileFlip();
+  /** The phone's pill has been opened into the box by focusing the field. */
+  const [opened, setOpened] = createSignal(false);
+  /** Another device drives: the surface is the watching pill, on every device. */
+  const watching = (): boolean => !!props.inertReason;
+  const shape = (): "pill" | "box" =>
+    watching() || (props.fold === true && phone() && !opened()) ? "pill" : "box";
+  /**
+   * What a folded pill shows of an unsent draft: its first line with words on
+   * it. The field's own text is hidden in the pill (a textarea cannot cut a
+   * line with an ellipsis everywhere this is served), so this is drawn over it.
+   */
+  const foldedLine = (): string => {
+    if (shape() !== "pill" || watching()) return "";
+    const line = draft()
+      .split("\n")
+      .find((l) => l.trim() !== "");
+    return line ? line.trimStart() : "";
+  };
   /** The files this message carries, each anchored to its token in the text. */
   const [attached, setAttached] = createSignal<DraftAttachment[]>([]);
   const [attaching, setAttaching] = createSignal(false);
@@ -275,10 +336,16 @@ export const PromptField: Component<{
    * is written in px at the moment of typing, so without that the text grows
    * inside a box that stays where it was.
    */
-  /** The field is one visual line tall, so the pill centres `+` and Send. */
-  const [single, setSingle] = createSignal(true);
   const autosize = () => {
     if (!ta) return;
+    // The pill is one line at a fixed height, which the stylesheet sets. A px
+    // height left over from the box would hold it open.
+    if (shape() === "pill") {
+      ta.style.height = "";
+      ta.scrollTop = 0;
+      ta.scrollLeft = 0;
+      return;
+    }
     // Measuring drops the field to height:auto, one row, and the reads below
     // force a real layout at that height. The pill is held at its height
     // meanwhile, so the page never sees the composer shrink: a transcript
@@ -296,15 +363,13 @@ export const PromptField: Component<{
     ta.style.height = "auto";
     const chrome = ta.offsetHeight - ta.clientHeight; // borders, under border-box
     const need = ta.scrollHeight;
-    ta.style.height = Math.min(need + chrome, 200) + "px";
+    // The cap is the stylesheet's (220px in the desktop box, 148px in the
+    // phone's), read rather than repeated here so the two cannot disagree.
+    // Unmeasurable (jsdom) leaves it uncapped.
+    const cap = parseFloat(getComputedStyle(ta).maxHeight);
+    const want = need + chrome;
+    ta.style.height = (Number.isFinite(cap) && cap > 0 ? Math.min(want, cap) : want) + "px";
     if (box) box.style.minHeight = heldWas;
-    // One visual line, a picture's taller line included: `+` and Send centre on
-    // it. Two or more and they sit at the bottom, level with the last line,
-    // which is where the caret usually is. Unmeasurable (jsdom) leaves it be.
-    const cs = getComputedStyle(ta);
-    const one =
-      parseFloat(cs.lineHeight) + parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-    if (Number.isFinite(one) && one > 0) setSingle(need <= one + 1);
   };
 
   /**
@@ -417,7 +482,26 @@ export const PromptField: Component<{
    */
   createEffect(() => {
     props.textSize;
+    shape();
     autosize();
+  });
+
+  /**
+   * Fold the phone's box back into the pill when the conversation is pressed,
+   * and put the keyboard away with it (the prototype's `blurPhone`). Only a
+   * press on the conversation: the header, a sheet or a card is not a sign
+   * the reader is done writing.
+   */
+  createEffect(() => {
+    if (props.fold !== true || !phone() || !opened()) return;
+    const onPress = (e: Event) => {
+      const t = e.target;
+      if (!(t instanceof Element) || !t.closest(".tl-timeline")) return;
+      setOpened(false);
+      ta?.blur();
+    };
+    document.addEventListener("pointerdown", onPress, true);
+    onCleanup(() => document.removeEventListener("pointerdown", onPress, true));
   });
 
   onMount(() => {
@@ -956,8 +1040,47 @@ export const PromptField: Component<{
     // synthetic event) leaves the mouse path untouched instead of hijacking it.
     if (!ta || (e.pointerType !== "touch" && e.pointerType !== "pen")) return;
     if (document.activeElement === ta) return;
+    const opening = shape() === "pill";
     e.preventDefault();
     ta.focus();
+    if (opening) swallowNextClick();
+  };
+
+  /**
+   * Keep the keyboard up across a finger's press on Send.
+   *
+   * A press on a button blurs the field, and on a phone that puts the keyboard
+   * away. Measured on the Android emulator on 2026-09-27: after Send the box
+   * stayed open with no keyboard under it and nothing to type into. A chat app
+   * keeps the keyboard up across a send, so the press's default (moving focus)
+   * is cancelled while the field holds it; the click still sends.
+   */
+  const keepFocusOnSend = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch" && e.pointerType !== "pen") return;
+    if (ta && document.activeElement === ta) e.preventDefault();
+  };
+
+  /**
+   * Eat the click of the tap that opened the pill.
+   *
+   * The box grows upward from where the pill sat, so by the time that tap's
+   * click fires the finger is over the box's bottom row. Measured in
+   * Chromium's phone emulation on 2026-09-27: the click landed on the model
+   * dial and opened its sheet, which then held the focus, so typing went
+   * nowhere. One click, within the time a tap takes, and nothing after it.
+   */
+  const swallowNextClick = (): void => {
+    const eat = (ev: Event) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      done();
+    };
+    const done = () => {
+      clearTimeout(timer);
+      document.removeEventListener("click", eat, true);
+    };
+    const timer = setTimeout(done, 700);
+    document.addEventListener("click", eat, true);
   };
 
   // ---- the + tray ----------------------------------------------------------
@@ -1066,11 +1189,17 @@ export const PromptField: Component<{
             </Show>
           </div>
         </Show>
-        {/* One surface for `+`, the field and Send. The field goes transparent
-            inside it, so the pill carries the border, the fill and the focus
-            ring, and reads as one control rather than an input with buttons
-            parked beside it. */}
-        <div ref={pillEl} class="tl-pill" data-single={single() ? "" : undefined}>
+        {/* One surface for `+`, the field and Send, as the phone's pill or as
+            the box. The field goes transparent inside it, so the surface
+            carries the border, the fill and the focus edge, and reads as one
+            control rather than an input with buttons parked beside it. */}
+        <div
+          ref={pillEl}
+          class="tl-pill"
+          data-shape={shape()}
+          data-danger={props.danger ? "" : undefined}
+          data-watch={watching() ? "" : undefined}
+        >
           <Show when={!props.noTray}>
             <button
               ref={plusEl}
@@ -1106,6 +1235,16 @@ export const PromptField: Component<{
               message would still read correctly, which is why the token says
               `[img: chart.png]` rather than relying on the paint. */}
           <div class="tl-field" data-thumbs={hasThumb() ? "on" : undefined}>
+            {/* A folded draft's first line, drawn over the field whose own
+                text the pill hides. Takes no presses: they belong to the
+                field under it, which opens the box. */}
+            <Show when={foldedLine()}>
+              {(line) => (
+                <span class="tl-pill-draft" aria-hidden="true">
+                  {line()}
+                </span>
+              )}
+            </Show>
             <div class="tl-composer-mirror" aria-hidden="true" ref={mirrorEl}>
               {/* The pictures, in a row in the room the field leaves above
                   its text. The one thing in this layer that sits ABOVE the
@@ -1183,6 +1322,7 @@ export const PromptField: Component<{
               onKeyDown={onKeyDown}
               onBeforeInput={onBeforeInput}
               onPointerDown={onPointerDown}
+              onFocus={() => setOpened(true)}
               onClick={sync}
               // The field scrolls past 200px; the layer behind it has to go
               // with it or the chips stay where the text no longer is.
@@ -1202,7 +1342,44 @@ export const PromptField: Component<{
               the transcript, which lags the pane: measured live, a session
               whose real state was `done` showed Stop in 98 of 100 samples over
               300s, so a finished session could offer no way to send at all. */}
+          <Show when={props.tools}>
+            <div class="tl-box-tools">{props.tools}</div>
+          </Show>
+          {/* Watching: another device drives. The pill says so and offers the
+              session back; everything else in it is hidden but stays mounted,
+              so a draft and its attachments survive the watch. */}
+          <Show when={watching()}>
+            <div class="tl-watch" title={props.inertReason}>
+              <span class="tl-watch-eye" aria-hidden="true">
+                <EyeIcon size={17} />
+              </span>
+              <span class="tl-watch-word">{watchWord(props.inertReason ?? "")}</span>
+              <Show when={props.onTakeControl}>
+                <button
+                  type="button"
+                  class="tl-take"
+                  title="Stop watching, and type into this session from here"
+                  onClick={() => props.onTakeControl?.()}
+                >
+                  Take control
+                </button>
+              </Show>
+            </div>
+          </Show>
           <div class="tl-pill-end">
+            {/* Stop, while something runs. Beside the round button until that
+                button takes Stop over as its own state. */}
+            <Show when={props.canStop && props.onStop}>
+              <button
+                type="button"
+                class="tl-stop"
+                aria-label="Stop Claude"
+                title="Stop: interrupts this turn"
+                onClick={() => props.onStop?.()}
+              >
+                <StopSquareIcon />
+              </button>
+            </Show>
             <Show when={queueing()}>
               <span class="tl-send-hint" id={hintId}>
                 <QueueIcon />
@@ -1214,6 +1391,7 @@ export const PromptField: Component<{
               class="tl-send"
               aria-label="Send"
               aria-describedby={queueing() ? hintId : undefined}
+              onPointerDown={keepFocusOnSend}
               onClick={submit}
               disabled={props.sendNeedsInput && !sendable()}
               title={sendTitle()}

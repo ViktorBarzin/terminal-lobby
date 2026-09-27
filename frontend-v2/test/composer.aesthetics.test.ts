@@ -20,8 +20,9 @@
  *
  * The Quiet line also rewrote two of these on purpose. The attach button went
  * behind the pill's `+`, and the "one surface" is the pill: `+`, the field and
- * Send, with the dials on a line of plain type above it rather than a bar
- * inside the box.
+ * Send. The T3 pass (2026-09-27) kept the one surface and gave it two shapes,
+ * a 50px pill at rest on the phone and a box with a 22px radius when focused
+ * and always on a desktop, with no line above either.
  *
  * CSS text, because none of this is behaviour.
  */
@@ -72,16 +73,11 @@ describe("icons are icons", () => {
 });
 
 describe("the composer is one control", () => {
-  it("draws +, the field and Send as a single pill", () => {
-    const pill = rule(".tl-pill");
-    expect(pill).toMatch(/border:\s*1px solid/);
-    expect(pill).toMatch(/border-radius:\s*21px/);
-  });
-
-  it("leaves the status line as type on the page, with no box of its own", () => {
-    const line = rule(".tl-statusline");
-    expect(line).not.toMatch(/border/);
-    expect(line).not.toMatch(/background/);
+  it("draws +, the field and the round button on a single surface", () => {
+    const surface = rule(".tl-pill");
+    expect(surface).toMatch(/border:\s*1px solid/);
+    expect(rule('.tl-pill[data-shape="pill"]')).toMatch(/border-radius:\s*25px/);
+    expect(rule('.tl-pill[data-shape="box"]')).toMatch(/border-radius:\s*22px/);
   });
 
   it("takes the border off the field, which the surface now carries", () => {

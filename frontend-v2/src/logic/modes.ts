@@ -100,14 +100,3 @@ export function modeTitle(mode: string): string {
 export function isDangerMode(mode: string): boolean {
   return modeRow(mode)?.tone === "danger";
 }
-
-/**
- * The message field's placeholder under a mode.
- *
- * One of four signals the danger modes get (the hatched dial, the pill's
- * danger edge and the dashed rule along the dock's top are the other three),
- * and the one sitting exactly where the reader is about to type.
- */
-export function placeholderFor(mode: string): string {
-  return isDangerMode(mode) ? `${modeTitle(mode)} is on · nothing asks first` : "Message…";
-}

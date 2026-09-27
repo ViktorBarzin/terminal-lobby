@@ -99,7 +99,7 @@ function mount(opts: {
     setTool,
     panel: () => r.container.querySelector(".tl-agents"),
     strip: () =>
-      r.container.querySelector('.tl-statusline[data-kind="background"] .tl-status-target'),
+      r.container.querySelector('.tl-box-note[data-kind="background"] .tl-box-note-target'),
   };
 }
 

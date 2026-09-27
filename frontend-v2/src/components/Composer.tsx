@@ -1,9 +1,9 @@
-import { createMemo, Show, type Component } from "solid-js";
+import { createMemo, Show, type Component, type JSX } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
 import type { SlashCommand } from "../logic/compose.logic";
-import { isDangerMode, modeRow, modeTitle, placeholderFor, type ModeId } from "../logic/modes";
+import { isDangerMode, modeRow, modeTitle, type ModeId } from "../logic/modes";
 import type { DraftAttachment } from "../store/drafts";
 import {
   contextTone,
@@ -15,7 +15,6 @@ import {
 import { ContextPanel } from "./ContextPanel";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
 import { ModelPanel } from "./ModelPanel";
-import { StatusLine } from "./StatusLine";
 import { DialBar, type DialSpec } from "./Dial";
 import { ModePanel } from "./ModePanel";
 import { ContextRing, ShieldIcon, WarnIcon } from "./Icons";
@@ -32,22 +31,29 @@ import {
 
 /**
  * The LIVE session's composer, docked at the foot of the Text view: the
- * permission panel when one is pending, the thin status line with its dials,
- * and the pill a message is written in.
+ * permission panel when one is pending, and the surface a message is written
+ * in.
  *
- * THE QUIET LINE (chosen by Viktor on 2026-09-24 from five prototypes, for the
- * four complaints he named: too much at once, eats the screen, controls say
- * too little, looks generic). One line of small type above a pill. The line's
- * left side is what the session is doing, with Stop beside the work it stops;
- * its right side is the mode, model and context dials, each named for what it
- * sets. The pill is `+`, the field and Send. At rest the dock measures 86px on
- * a desktop and 92px on a phone, where the one it replaced measured 124px and
- * 127px with the session's state in a row of its own above it.
+ * THE T3 PASS (chosen by Viktor on 2026-09-27;
+ * docs/plans/2026-09-27-text-view-t3-pass.md). On a phone at rest the surface
+ * is one 50px pill: `+`, the placeholder "Ask Claude, or run a command…" and
+ * the round button. Focused on the phone, and always on a desktop, it is a
+ * box: the text on top, and a row beneath with `+`, the model button's slot
+ * and the round button. Measured on the prototype: a 108px box on a desktop,
+ * a 50px pill with 8px under it on a phone, and a 142px box when focused
+ * there. PromptField draws both shapes.
  *
- * THE DOCK'S TOP EDGE carries the state too: a slow sweep of the running
- * colour while Claude works, the awaiting colour while it waits, and a dashed
- * danger rule while the mode lets everything through. It follows the SESSION,
- * not what this device may do, so a watcher still sees the sweep.
+ * It replaced the Quiet line (2026-09-24), a thin status line above a pill.
+ * The line's jobs moved: what the turn is doing went into the live work group
+ * at the end of the conversation, the watching state into the pill, and the
+ * dock's top edge (a sweep while working, a dashed danger rule) went with it.
+ * Until the model sheet lands, the session's dials sit in the model button's
+ * slot, background work is a quiet note beside them, and Stop sits beside the
+ * round button.
+ *
+ * BYPASS AND NO ASK turn the surface's border the danger colour, with a ring
+ * while it is focused, and change nothing else: the placeholder stays the
+ * same one sentence in every mode.
  *
  * Sending goes through ONE route on every device: `onSend` (the session control
  * channel, session-events /prompt). It used to fork on `sendToTerminal` for a
@@ -72,9 +78,9 @@ export const Composer: Component<{
   textSize?: number;
   /**
    * The open turn's live row, or undefined while no turn is open. It decides
-   * whether Stop shows (while something RUNS, never while Claude waits), the
-   * "queues" hint beside Send, and the dock's top edge. What the turn is doing
-   * is the conversation's to say, in the live group at its end.
+   * whether Stop shows (while something RUNS, never while Claude waits) and
+   * the "queues" hint beside Send. What the turn is doing is the
+   * conversation's to say, in the live group at its end.
    *
    * NOT a reason to withhold Send: it is derived from the transcript and lags
    * the pane, and a mid-turn send queues rather than failing.
@@ -196,6 +202,9 @@ export const Composer: Component<{
   };
 
   const working = (): boolean => !!props.live && !props.live.waiting;
+  /** Background work, once no turn is open ("2 agents"). */
+  const background = (): string | undefined =>
+    props.live || props.inertReason ? undefined : props.background;
   const danger = (): boolean => isDangerMode(props.mode ?? "");
 
   // ---- the dials ------------------------------------------------------------
@@ -360,7 +369,7 @@ export const Composer: Component<{
       ? "Tell Claude what to change…"
       : props.asking
         ? "Or type your own answer…"
-        : placeholderFor(props.mode ?? "");
+        : "Ask Claude, or run a command…";
 
   /** What Send's tooltip warns of, when a send would do more than send. */
   const sendTitle = (): string | undefined => {
@@ -371,26 +380,31 @@ export const Composer: Component<{
     return undefined;
   };
 
+  /** The model button's slot: the dials for now, and background work. */
+  const tools = (): JSX.Element => (
+    <>
+      <Show when={dials().length > 0}>
+        <DialBar dials={dials()} sheetTitle="This session" />
+      </Show>
+      <Show when={background()}>
+        {(label) => (
+          <span class="tl-box-note" data-kind="background">
+            <span class="tl-box-note-dot" aria-hidden="true" />
+            <span class="tl-box-note-word">Background:</span>{" "}
+            <span class="tl-box-note-target" title={label()}>
+              {label()}
+            </span>
+          </span>
+        )}
+      </Show>
+    </>
+  );
+
   return (
-    <div
-      class="tl-composer"
-      data-status={props.live ? (props.live.waiting ? "waiting" : "working") : undefined}
-      data-danger={danger() ? "" : undefined}
-    >
+    <div class="tl-composer">
       <Show when={props.pending.length > 0}>
         <PermissionPanel pending={props.pending} onResolve={props.onResolve} />
       </Show>
-      <StatusLine
-        live={props.live}
-        background={props.background}
-        inertReason={props.inertReason}
-        onStop={props.onStop}
-        onTakeControl={props.onTakeControl}
-      >
-        <Show when={dials().length > 0}>
-          <DialBar dials={dials()} sheetTitle="This session" />
-        </Show>
-      </StatusLine>
       <PromptField
         textSize={props.textSize}
         onSend={send}
@@ -403,9 +417,15 @@ export const Composer: Component<{
         draftKey={props.session}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
+        onTakeControl={props.onTakeControl}
         onCycleMode={props.onCycleMode}
         onEmptyDigit={onEmptyDigit}
         register={props.register}
+        fold
+        danger={danger()}
+        tools={tools()}
+        canStop={working() && !props.inertReason}
+        onStop={props.onStop}
         // Hidden while the plan card is up: that send answers the dialog, and
         // the live row can still say working before the plan call is recorded.
         queueHint={working() && !props.planOpen}

@@ -73,7 +73,7 @@ describe("<Composer> while the plan dialog is up", () => {
   it("goes back to an ordinary message the moment the dialog is gone", () => {
     const onSend = vi.fn(async () => true);
     const { field, send } = mount({ onSend, onPlanFeedback: async () => true });
-    expect(field.getAttribute("placeholder")).toBe("Message…");
+    expect(field.getAttribute("placeholder")).toBe("Ask Claude, or run a command…");
     fireEvent.input(field, { target: { value: "carry on" } });
     fireEvent.click(send);
     expect(onSend).toHaveBeenCalledWith("carry on", []);

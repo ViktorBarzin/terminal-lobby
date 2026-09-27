@@ -1660,10 +1660,10 @@ export function sessionWorking(rows: TimelineRow[]): boolean {
 /**
  * The open turn's live row, or undefined while no turn is open.
  *
- * The timeline drew this row at its foot until 2026-09-24. It moved onto the
- * composer's thin line (components/StatusLine.tsx), where it reads the same
- * fields the row did: the call in flight, how long it has run, the step count,
- * and whether Claude is working or waiting for the reader. The last row of its
+ * The timeline drew this row at its foot until 2026-09-24, then the Quiet
+ * line's status line read it, and since the T3 pass (2026-09-27) the live
+ * work group at the end of the conversation says what the turn is doing. The
+ * composer still reads it to decide whether Stop shows. The last row of its
  * kind, because only the last turn can be open.
  */
 export function liveRow(rows: TimelineRow[]): WorkingRow | undefined {

@@ -1,26 +1,27 @@
 /**
- * Where the composer's controls live: the dials and Stop on a thin line above,
- * `+`, the field and Send in one pill below.
+ * The composer's shape: a pill at rest on the phone, a box when focused and
+ * always on a desktop (the T3 pass, docs/plans/2026-09-27-text-view-t3-pass.md).
  *
  * HISTORY. Reported 2026-08-29: "the prompt is the most important part and
- * it's only taking a small part of the row. the other buttons are
- * supplementary." Measured then at 390x844, the field was 163.8px of a 343.2px
- * row idle (47.7%) and 92.8px (27.0%) once a turn started and Stop appeared
- * beside Send. That fix put the field alone on its row and the controls on a
- * bar beneath it, with Send last so it stopped jumping 71px left when Stop was
- * inserted after it. These tests pinned that bar.
+ * it's only taking a small part of the row." That fix put the field alone on
+ * its row. The Quiet line composer (2026-09-24) then moved the controls to a
+ * thin status line above one pill. Viktor chose the T3 pass on 2026-09-27 and
+ * these tests were rewritten on purpose for it:
  *
- * The Quiet line composer (Viktor, 2026-09-24) rewrote them on purpose. A bar
- * below the field is the height that direction removes: the controls moved to
- * a line of small type ABOVE the pill, Stop moved beside the work it stops,
- * and the pill holds `+`, the field and Send. What still holds from before:
- * Send is the last control in its group, and the field takes the whole width
- * the pill has left, since nothing else shares its row but two 32px circles.
+ *  - the phone at rest shows ONE 50px pill: `+`, the field, the round button;
+ *  - focused on the phone, and always on a desktop, a box: the text on top,
+ *    then a row with `+`, the model button's slot and the round button;
+ *  - there is no status line above either;
+ *  - Bypass and No ask put a danger border on the surface and change nothing
+ *    else, the placeholder included.
  *
- * Layout is asserted structurally here; jsdom has no layout engine. Sizes were
- * measured on the prototype in Chromium at 1:1 (spec section 4.1).
+ * "Phone" is the coarse-pointer flip (mobile/pointer.ts FLIP_QUERY), not width
+ * alone: a desktop window someone shrank keeps its box, and so does a tablet.
+ *
+ * Layout is asserted structurally here; jsdom has no layout engine. The sizes
+ * are in composer.css.test.ts.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import type { ComponentProps } from "solid-js";
 import { Composer } from "../src/components/Composer";
@@ -39,84 +40,224 @@ const WORKING: WorkingRow = {
   steps: 3,
 };
 
-const mount = (props: Partial<ComponentProps<typeof Composer>> = {}) =>
-  render(() => <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} {...props} />);
+type Device = "desktop" | "tablet" | "phone";
+
+/** Answer the two pointer queries the way the device would. */
+function stubDevice(device: Device): void {
+  const coarse = device !== "desktop";
+  window.matchMedia = ((q: string) => {
+    const matches = q.includes("pointer: coarse")
+      ? coarse && (q === "(pointer: coarse)" || device === "phone")
+      : false;
+    return {
+      media: q,
+      matches,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      addListener: () => {},
+      removeListener: () => {},
+      onchange: null,
+      dispatchEvent: () => false,
+    } as unknown as MediaQueryList;
+  }) as typeof window.matchMedia;
+}
+
+const original = window.matchMedia;
+afterEach(() => {
+  window.matchMedia = original;
+  document.body.innerHTML = "";
+});
+
+const mount = (
+  props: Partial<ComponentProps<typeof Composer>> = {},
+  device: Device = "desktop",
+) => {
+  stubDevice(device);
+  const r = render(() => (
+    <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} {...props} />
+  ));
+  const ta = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+  const surface = () => r.container.querySelector<HTMLElement>(".tl-pill")!;
+  return { ...r, ta, surface };
+};
 
 const firstClass = (e: Element) => (e.className || "").toString().split(" ")[0];
 
-describe("<Composer>: one pill for writing", () => {
-  it("holds exactly +, the field and the end group, in that order", () => {
-    const { container } = mount({ live: WORKING, onAttach: async () => [] });
-    const pill = container.querySelector(".tl-pill")!;
-    expect(Array.from(pill.children).map(firstClass)).toEqual([
-      "tl-plus",
-      "tl-field",
-      "tl-pill-end",
-    ]);
-    // The field and the chip layer drawn behind it, which is not a control and
-    // takes no space of its own — see `.tl-composer-mirror`.
-    const field = pill.querySelector(".tl-field")!;
-    expect(field.querySelector("textarea.tl-composer-input")).not.toBeNull();
-    expect(field.children).toHaveLength(2);
+describe("<Composer>: pill or box", () => {
+  it("is always the box on a desktop, focused or not", () => {
+    const { ta, surface } = mount();
+    expect(surface().getAttribute("data-shape")).toBe("box");
+    fireEvent.focus(ta);
+    expect(surface().getAttribute("data-shape")).toBe("box");
+    fireEvent.blur(ta);
+    expect(surface().getAttribute("data-shape")).toBe("box");
   });
 
-  it("keeps Send the pill's last control, working or not", () => {
+  it("keeps the box on a tablet, which is coarse but not a phone", () => {
+    const { surface } = mount({}, "tablet");
+    expect(surface().getAttribute("data-shape")).toBe("box");
+  });
+
+  it("rests as the pill on a phone and opens into the box on focus", () => {
+    const { ta, surface } = mount({}, "phone");
+    expect(surface().getAttribute("data-shape")).toBe("pill");
+    ta.focus();
+    expect(surface().getAttribute("data-shape")).toBe("box");
+  });
+
+  it("folds back into the pill when the conversation is pressed, and puts the keyboard away", () => {
+    const { ta, surface } = mount({}, "phone");
+    const timeline = document.createElement("div");
+    timeline.className = "tl-timeline";
+    const line = document.createElement("p");
+    timeline.appendChild(line);
+    document.body.appendChild(timeline);
+    ta.focus();
+    expect(surface().getAttribute("data-shape")).toBe("box");
+    fireEvent.pointerDown(line);
+    expect(surface().getAttribute("data-shape")).toBe("pill");
+    expect(document.activeElement).not.toBe(ta);
+  });
+
+  // The box grows upward from where the pill was, so the finger that opened
+  // it is over the box's bottom row by the time its click fires. Measured in
+  // Chromium's phone emulation on 2026-09-27: a tap on the pill opened the
+  // dials' sheet, which then held the focus, and typing went nowhere.
+  it("swallows the click of the tap that opened it, so nothing under the finger fires", () => {
+    const { ta, surface, container } = mount(
+      { mode: "manual", onCycleMode: noop, onPickMode: noop },
+      "phone",
+    );
+    fireEvent.pointerDown(ta, { pointerType: "touch" });
+    expect(surface().getAttribute("data-shape")).toBe("box");
+    expect(document.activeElement).toBe(ta);
+    fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
+    expect(container.querySelector(".tl-dial-pop-mode, .tl-sheet")).toBeNull();
+    // The next press is the reader's own.
+    fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
+    expect(container.querySelector(".tl-dial-pop-mode, .tl-sheet")).not.toBeNull();
+  });
+
+  // Measured on the Android emulator on 2026-09-27: a tap on Send blurred the
+  // field, which put the keyboard away and left an open box with nothing to
+  // type into. A chat app keeps the keyboard up across a send.
+  it("keeps the field focused through a finger's press on Send", () => {
+    const { ta, container } = mount({}, "phone");
+    ta.focus();
+    const send = container.querySelector(".tl-send")!;
+    const press = new PointerEvent("pointerdown", {
+      bubbles: true,
+      cancelable: true,
+      pointerType: "touch",
+    });
+    send.dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(true);
+  });
+
+  it("stays open when the press lands inside the composer itself", () => {
+    // The + and the round button are pressed with the box open; folding under
+    // the finger would move them before the click lands.
+    const { ta, surface, container } = mount({ onAttach: async () => [] }, "phone");
+    ta.focus();
+    fireEvent.pointerDown(container.querySelector(".tl-plus")!);
+    expect(surface().getAttribute("data-shape")).toBe("box");
+  });
+
+  it("shows a folded draft's first line in the pill, and nothing of it in the box", () => {
+    const { ta, surface, container } = mount({}, "phone");
+    fireEvent.input(ta, { target: { value: "first line of it\nsecond line" } });
+    expect(surface().getAttribute("data-shape")).toBe("pill");
+    expect(container.querySelector(".tl-pill-draft")?.textContent).toBe("first line of it");
+    ta.focus();
+    expect(container.querySelector(".tl-pill-draft")).toBeNull();
+  });
+
+  it("shows no draft line in an empty pill, so the placeholder reads", () => {
+    const { container } = mount({}, "phone");
+    expect(container.querySelector(".tl-pill-draft")).toBeNull();
+  });
+});
+
+describe("<Composer>: the placeholder is one sentence", () => {
+  it.each(["manual", "acceptEdits", "auto", "plan", "bypassPermissions", "dontAsk", ""])(
+    "reads the same in mode %j",
+    (mode) => {
+      const { ta } = mount({ mode, onCycleMode: noop });
+      expect(ta.getAttribute("placeholder")).toBe("Ask Claude, or run a command…");
+    },
+  );
+});
+
+describe("<Composer>: the modes that ask nothing", () => {
+  it.each([
+    ["bypassPermissions", true],
+    ["dontAsk", true],
+    ["manual", false],
+    ["acceptEdits", false],
+    ["auto", false],
+    ["plan", false],
+    ["", false],
+  ] as const)("mode %j marks the surface danger: %s", (mode, danger) => {
+    const { surface } = mount({ mode, onCycleMode: noop });
+    expect(surface().hasAttribute("data-danger")).toBe(danger);
+  });
+});
+
+describe("<Composer>: no status line", () => {
+  it("draws nothing above the surface, and puts no state on the dock", () => {
+    const { container } = mount({ live: WORKING, mode: "manual", onCycleMode: noop });
+    expect(container.querySelector(".tl-statusline")).toBeNull();
+    const dock = container.querySelector(".tl-composer")!;
+    expect(dock.hasAttribute("data-status")).toBe(false);
+    expect(firstClass(dock.lastElementChild!)).toBe("tl-pillwrap");
+  });
+});
+
+describe("<Composer>: what the box holds", () => {
+  // In the DOM, + comes first; the grid draws the field across the top and the
+  // rest on the row beneath it (composer.css.test.ts).
+  it("holds +, the field, the model slot and the round button", () => {
+    const { surface } = mount({ onAttach: async () => [] });
+    expect(Array.from(surface().children).map(firstClass)).toEqual([
+      "tl-plus",
+      "tl-field",
+      "tl-box-tools",
+      "tl-pill-end",
+    ]);
+    const field = surface().querySelector(".tl-field")!;
+    expect(field.querySelector("textarea.tl-composer-input")).not.toBeNull();
+  });
+
+  it("keeps the round button the surface's last control, working or not", () => {
     for (const live of [WORKING, undefined]) {
-      const { container, unmount } = mount({ live });
-      const end = container.querySelector(".tl-pill-end")!;
-      const last = end.lastElementChild!;
-      expect(last.classList.contains("tl-send"), live ? "working" : "idle").toBe(true);
+      const { surface, unmount } = mount({ live });
+      const end = surface().lastElementChild!;
+      expect(end.lastElementChild!.classList.contains("tl-send"), live ? "working" : "idle").toBe(
+        true,
+      );
       unmount();
     }
   });
-});
 
-describe("<Composer>: the controls sit on the line above", () => {
-  it("puts the dials in the status line, before the pill, with no bar anywhere", () => {
-    const { container } = mount({
-      live: WORKING,
-      mode: "manual",
-      onCycleMode: noop,
-      onPickMode: noop,
-      onAttach: async () => [],
-    });
-    const line = container.querySelector(".tl-statusline")!;
-    const dial = line.querySelector('.tl-dial[data-dial="mode"]');
-    expect(dial, "the mode dial is on the line").not.toBeNull();
-    const pill = container.querySelector(".tl-pill")!;
-    expect(line.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(
-      container.querySelector(".tl-composer-bar"),
-      "the bar below the field is gone",
-    ).toBeNull();
+  it("holds the session's dials in the model slot until the model sheet replaces them", () => {
+    const { surface } = mount({ mode: "manual", onCycleMode: noop, onPickMode: noop });
+    const tools = surface().querySelector(".tl-box-tools")!;
+    expect(tools.querySelector('.tl-dial[data-dial="mode"]')).not.toBeNull();
   });
 
-  it("lets nothing follow the pill", () => {
-    const { container } = mount({ live: WORKING, onAttach: async () => [] });
-    const dock = container.querySelector(".tl-composer")!;
-    expect(firstClass(dock.lastElementChild!)).toBe("tl-pillwrap");
-    // Inside the wrap, only the two hidden pickers come after the pill.
-    const wrap = dock.lastElementChild!;
-    const after = Array.from(wrap.children).slice(
-      Array.from(wrap.children).indexOf(container.querySelector(".tl-pill")!) + 1,
-    );
-    expect(after.every((e) => e instanceof HTMLInputElement && e.hidden)).toBe(true);
-  });
-
-  it("puts Stop beside the work it stops, and Send in the pill", () => {
-    const { container } = mount({ live: WORKING });
-    expect(container.querySelector(".tl-status-state .tl-stop")).not.toBeNull();
-    expect(container.querySelector(".tl-pill .tl-send")).not.toBeNull();
-    expect(container.querySelector(".tl-pill .tl-stop")).toBeNull();
+  it("says what is still running in the background in the row, not on a line", () => {
+    const { surface } = mount({ background: "2 agents" });
+    const note = surface().querySelector('.tl-box-note[data-kind="background"]');
+    expect(note?.textContent).toContain("2 agents");
   });
 });
 
-describe("<Composer>: every control still does its job from its new home", () => {
+describe("<Composer>: every control still does its job", () => {
   it("sends, stops, opens the mode list, and steps the mode on Shift+Tab", () => {
     const onSend = vi.fn(sent);
     const onStop = vi.fn();
     const onCycleMode = vi.fn();
-    const { container, getByLabelText } = mount({
+    const { container, ta } = mount({
       live: WORKING,
       onSend,
       onStop,
@@ -124,20 +265,43 @@ describe("<Composer>: every control still does its job from its new home", () =>
       onCycleMode,
       onPickMode: noop,
     });
-    const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    ta.value = "hello";
-    ta.dispatchEvent(new Event("input", { bubbles: true }));
+    fireEvent.input(ta, { target: { value: "hello" } });
     fireEvent.click(container.querySelector(".tl-send")!);
     fireEvent.click(container.querySelector(".tl-stop")!);
     expect(onSend).toHaveBeenCalledWith("hello", []);
     expect(onStop).toHaveBeenCalledTimes(1);
 
-    // A click opens the list. It used to step the mode, and does not any more.
     fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
     expect(container.querySelector(".tl-dial-pop-mode")).not.toBeNull();
     expect(onCycleMode).not.toHaveBeenCalled();
 
     fireEvent.keyDown(ta, { key: "Tab", shiftKey: true });
     expect(onCycleMode).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("<Composer>: a watching device", () => {
+  const REASON = "Watching: this device does not type into the session";
+
+  it("reads Watching with Take control in the pill, on a desktop too", () => {
+    const onTakeControl = vi.fn();
+    const { surface, container } = mount({ inertReason: REASON, onTakeControl });
+    expect(surface().getAttribute("data-shape")).toBe("pill");
+    expect(surface().hasAttribute("data-watch")).toBe(true);
+    const watch = container.querySelector(".tl-watch")!;
+    expect(watch.textContent).toContain("Watching");
+    fireEvent.click(watch.querySelector(".tl-take")!);
+    expect(onTakeControl).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the field mounted under it, so a draft survives the watch", () => {
+    const { ta } = mount({ inertReason: REASON, onTakeControl: noop });
+    expect(ta.isConnected).toBe(true);
+  });
+
+  it("offers no Take control when there is no way to take it", () => {
+    const { container } = mount({ inertReason: REASON });
+    expect(container.querySelector(".tl-watch")).not.toBeNull();
+    expect(container.querySelector(".tl-take")).toBeNull();
   });
 });

@@ -761,12 +761,13 @@ _Avoid_: input box, message box
 
 **Composer**:
 The prompt field for a LIVE Session, with the things that only mean something
-once there is a session to talk to around it: the permission panel, and the
-**status line** above the field, with Stop and the **dials**. The field sits in
-a pill between the "+" that opens the **+ tray** and Send. Since 2026-09-24 the
-prompts Claude has queued are drawn as dashed ghost bubbles at the end of the
-conversation instead, and the permission-mode chip and the context meter are
-dials.
+once there is a session to talk to around it. Since the T3 pass (2026-09-27) it
+is one surface in two shapes: on a phone at rest a 50px pill with "+", one line
+of the field and the round button; focused on the phone, and always on a
+desktop, a box with the text on top and "+", the model button's slot and the
+round button beneath. Bypass and No ask turn its border the danger colour. A
+watching device's pill reads "Watching" with Take control. The prompts Claude
+has queued are drawn as ghost bubbles at the end of the conversation.
 _Avoid_: chat box, prompt bar
 
 **Status line**:
@@ -776,8 +777,9 @@ working in the background, or why this device only watches; its right side
 holds the **dials**. Not Claude Code's own status line in the pane, where the
 permission mode is read, nor its statusLine setting, where the **Recorder**
 sits.
-Retired by the T3 pass (2026-09-27, draft): what it said moves into the live
-**Work group** and the header, and its dials into the model sheet.
+Retired by the T3 pass on 2026-09-27: what the turn is doing is the live
+**Work group**'s to say, the watching state is the **Composer**'s pill, and the
+dials move into the model sheet.
 _Avoid_: status bar, status row (the timeline row it took over from), footer
 
 **Dial**:
@@ -863,8 +865,9 @@ _Avoid_: tool group, fold (the "Worked for Ns" row folds a whole turn)
 The live row standing for a turn in flight: the tool currently running, an
 elapsed timer, and the step count so far. It exists only while a turn is
 unsettled, and is what the view shows in place of streaming text. It was the
-timeline's last row until 2026-09-24; since then it is drawn on the left of the
-**status line**.
+timeline's last row until 2026-09-24, then the left side of the **status line**,
+and since the T3 pass (2026-09-27) the live **Work group** at the end of the
+conversation shows it.
 
 **Picture**:
 An image the **Text view** draws in the conversation, whichever way it

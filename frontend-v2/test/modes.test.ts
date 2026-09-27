@@ -8,14 +8,7 @@
  * from and the words it borrows from the CLI's own mode titles.
  */
 import { describe, it, expect } from "vitest";
-import {
-  MODES,
-  isDangerMode,
-  modeId,
-  modeRow,
-  modeTitle,
-  placeholderFor,
-} from "../src/logic/modes";
+import { MODES, isDangerMode, modeId, modeRow, modeTitle } from "../src/logic/modes";
 
 describe("the mode list", () => {
   it("lists six modes, the four that ask first and then the two that do not", () => {
@@ -87,12 +80,7 @@ describe("the modes where nothing asks first", () => {
     expect(isDangerMode("")).toBe(false);
   });
 
-  // One of the four signals bypass gets, and the one a reader cannot miss,
-  // since it sits where they are about to type.
-  it("put it in the field's placeholder", () => {
-    expect(placeholderFor("bypassPermissions")).toBe("Bypass is on · nothing asks first");
-    expect(placeholderFor("dontAsk")).toBe("No ask is on · nothing asks first");
-    expect(placeholderFor("manual")).toBe("Message…");
-    expect(placeholderFor("")).toBe("Message…");
-  });
+  // The Quiet line also wrote the mode into the field's placeholder. The T3
+  // pass keeps one sentence there whatever the mode, and the danger border is
+  // the signal (Composer.layout.test.tsx).
 });

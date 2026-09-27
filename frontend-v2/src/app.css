@@ -2945,202 +2945,32 @@ label.tl-set-row-label {
   .tl-new-composer > .tl-new-line {
     margin-top: auto;
   }
-  /* Room to write in. A single line under a placeholder read as a caption on
-     the card rather than the thing the screen is for. */
-  .tl-new-composer .tl-composer-input {
-    min-height: 76px;
-  }
 }
 
-/* ---- the composer: the Quiet line --------------------------------------
-   Viktor chose it on 2026-09-24 from five prototypes
-   (docs/plans/2026-09-24-text-composer-redesign.md, direction 1). One line of
-   small type, the session's state on the left and the mode, model and context
-   dials on the right, above ONE pill holding +, the field and Send.
+/* ---- the composer: the T3 pass -----------------------------------------
+   Viktor chose it on 2026-09-27 (docs/plans/2026-09-27-text-view-t3-pass.md,
+   prototype composer/6-t3.html). One surface in two shapes: a 50px pill at
+   rest on a phone, and a box when focused there and always on a desktop, the
+   text on top and +, the model button's slot and the round button beneath.
+   Measured on the prototype in Chromium at 1:1: a 108px box on a desktop
+   (1 + 4 + a 60px field + a 36px row + 6 + 1), a 50px pill with 8px under it
+   on a phone, and a 142px focused box there (1 + 4 + 86 + 44 + 6 + 1).
 
-   Measured on the prototype in Chromium at 1:1: the dock is 86px at rest on a
-   desktop (4 + a 28px line + 2 + a 42px pill + 10) and 92px on a phone (4 + 34
-   + 48 + 6), where the composer it replaced measured 124px and 127px on 0.71.2
-   with the session's state in a row of its own above it (memory #13886). */
+   It replaced the Quiet line (2026-09-24): a thin status line above a pill,
+   and a state edge along the dock's top. What the turn is doing is the live
+   work group's to say now, at the end of the conversation. */
 
-/* The dock. No fill and no top border any more: the transcript fades out
-   under it (`.tl-timeline`'s mask), and the dock's top EDGE carries the
-   session's state instead. */
+/* The dock. No fill and no top border: the transcript fades out under it
+   (`.tl-timeline`'s mask). */
 .tl-composer {
   position: relative;
   flex: 0 0 auto;
-  padding: 4px clamp(12px, 6vw, 80px) 10px;
-}
-/* The state light along the dock's top: nothing at rest, a slow sweep of the
-   running colour while Claude works, the awaiting colour, still, while it
-   waits for the reader, and a dashed danger rule while the mode asks nothing.
-   It spans the 760px column the line and the pill sit in, not the gutters. */
-.tl-composer::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: max(clamp(12px, 6vw, 80px), calc(50% - 380px));
-  right: max(clamp(12px, 6vw, 80px), calc(50% - 380px));
-  height: 1px;
-  pointer-events: none;
-}
-.tl-composer[data-status="working"]::before {
-  background:
-    linear-gradient(90deg, transparent, var(--state-running), transparent) no-repeat,
-    color-mix(in srgb, var(--state-running) 14%, transparent);
-  background-size:
-    34% 100%,
-    100% 100%;
-  animation: tl-sweep 2.6s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-}
-.tl-composer[data-status="waiting"]::before {
-  background: color-mix(in srgb, var(--state-awaiting) 55%, transparent);
-}
-/* Bypass and No ask: the rule turns dashed and red, and stays that way
-   whatever the session is doing, since it is a statement about every tool
-   call to come. One of four signals, with the hatched dial, the pill's edge
-   and the placeholder. */
-.tl-composer[data-danger]::before {
-  height: 2px;
-  animation: none;
-  background: repeating-linear-gradient(90deg, var(--danger) 0 14px, transparent 14px 20px);
-}
-@keyframes tl-sweep {
-  from {
-    background-position:
-      -60% 0,
-      0 0;
-  }
-  to {
-    background-position:
-      160% 0,
-      0 0;
-  }
-}
-
-/* ---- the line ------------------------------------------------------------
-   The positioned box the dial popovers are placed against, which is why it is
-   `relative`. It never scrolls: what does not fit folds away by `data-room`
-   (below), because a line that scrolled would clip its own popovers, which is
-   what forced the old model menu to `position: fixed`. */
-.tl-statusline {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 28px;
-  max-width: 760px;
-  margin: 0 auto 2px;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-}
-.tl-status-state {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-}
-.tl-line-dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--text-muted);
-}
-/* Background: a hollow dot that breathes slowly, for a turn that is over
-   while an agent it started is not. */
-.tl-status-state[data-kind="background"] .tl-line-dot {
-  background: transparent;
-  box-shadow: inset 0 0 0 1.6px var(--state-running);
-  animation: tl-breathe 2.4s ease-in-out infinite;
-}
-.tl-status-word {
-  flex: none;
-  color: var(--text-primary);
-  font-weight: 560;
-  font-size: calc(12.5px * var(--tl-text-scale, 1));
-}
-.tl-status-state[data-kind="background"] .tl-status-word {
-  font-weight: 500;
-  color: var(--text-muted);
-}
-.tl-status-target {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: var(--font-mono);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  color: var(--text-primary);
-}
-.tl-status-sep {
-  flex: none;
-  opacity: 0.7;
-}
-.tl-status-eye {
-  flex: none;
-  display: inline-flex;
-  color: var(--text-muted);
-}
-.tl-status-reason {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* Stop, beside the work it stops. It shows only while something runs; red
-   beside a question read as an alarm. */
-.tl-statusline .tl-stop {
-  flex: none;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 22px;
-  padding: 0 9px 0 8px;
-  margin-left: 3px;
-  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
-  color: var(--danger);
-  font: inherit;
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  cursor: pointer;
-  animation: tl-pop-in 0.18s ease-out;
-}
-.tl-statusline .tl-stop:hover {
-  background: color-mix(in srgb, var(--danger) 17%, transparent);
-}
-.tl-take {
-  flex: none;
-  position: relative;
-  height: 22px;
-  padding: 0 9px;
-  margin-left: 2px;
-  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
-  border-radius: 999px;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  cursor: pointer;
-}
-.tl-take:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  padding: 0 clamp(12px, 6vw, 80px) 14px;
 }
 
 /* ---- the dials -------------------------------------------------------------
    Each names what it sets ("mode Manual"), and each opens a list. On a wide
    line they are type with a micro-label; a hover gives one a box. */
-.tl-dials-slot {
-  flex: none;
-  display: flex;
-  margin-left: auto;
-}
 .tl-dials {
   display: flex;
   align-items: center;
@@ -3307,38 +3137,11 @@ label.tl-set-row-label {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
-/* ---- what the line keeps, by how wide it is ------------------------------
-   Container queries would say this, and Safari 15.6, the oldest engine served
-   (lib/baseline-polyfills.ts), has none. StatusLine measures itself and writes
-   `data-room` (statusline.logic `roomFor`). The micro-labels go first, then
-   the long background words, then, at a phone's width and
-   while the left side has something to say, the model and (while Claude works
-   or someone watches) the context fold into the phone's sheet, where every
-   dial keeps a tab. The mode never folds. */
-.tl-statusline[data-room="mid"] .tl-dial-label,
-.tl-statusline[data-room="narrow"] .tl-dial-label,
-.tl-statusline[data-room="tight"] .tl-dial-label {
-  display: none;
-}
-.tl-statusline[data-room="narrow"] .tl-status-long,
-.tl-statusline[data-room="tight"] .tl-status-long {
-  display: none;
-}
-.tl-statusline[data-room="wide"] .tl-status-short,
-.tl-statusline[data-room="mid"] .tl-status-short {
-  display: none;
-}
-.tl-statusline[data-room="tight"]:not([data-kind="idle"]) [data-fold],
-.tl-statusline[data-room="tight"][data-kind="working"] [data-fold2],
-.tl-statusline[data-room="tight"][data-kind="watching"] [data-fold2],
-.tl-statusline[data-room="tight"][data-kind="watching"] .tl-status-reason {
-  display: none;
-}
-
-/* ---- the pill ------------------------------------------------------------
-   One surface for +, the field and Send. The field is transparent inside it,
-   so the pill carries the border, the fill and the focus ring. The positioned
-   box the + tray and the completion menu float above. */
+/* ---- the surface ---------------------------------------------------------
+   One element for +, the field and the round button, as the pill or the box
+   (PromptField writes `data-shape`). The field is transparent inside it, so
+   the surface carries the border, the fill and the focus edge. The wrap is
+   the positioned box the + tray and the completion menu float above. */
 .tl-pillwrap {
   position: relative;
   max-width: 760px;
@@ -3346,54 +3149,203 @@ label.tl-set-row-label {
 }
 .tl-pill {
   position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  padding: 4px;
+  display: grid;
+  align-items: center;
+  column-gap: 2px;
   border: 1px solid var(--border-strong);
-  border-radius: 21px;
-  background: var(--bg-card);
+  background: var(--field-bg);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
   box-shadow: var(--surface-shadow);
   transition:
     border-color 0.15s,
-    box-shadow 0.15s;
+    box-shadow 0.15s,
+    border-radius 0.15s;
 }
-/* One visual line (PromptField writes it): + and Send centre on it. Taller,
-   they sit level with the last line, which is where the caret usually is. */
-.tl-pill[data-single] {
+.tl-pill[data-shape="pill"] {
+  grid-template-columns: 44px minmax(0, 1fr) minmax(46px, auto);
+  grid-template-areas: "plus field end";
+  height: 50px;
+  border-radius: 25px;
+  padding: 0 2px 0 3px;
+}
+.tl-pill[data-shape="box"] {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "field field field"
+    "plus tools end";
+  border-radius: 22px;
+  padding: 4px 6px 6px;
+}
+.tl-pill[data-shape="box"]:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border-strong));
+}
+/* Bypass and No ask: the border turns the danger colour, focused or not, and
+   a ring joins it while the field is focused. Nothing else changes. */
+.tl-pill[data-danger],
+.tl-pill[data-danger]:focus-within {
+  border-color: var(--danger);
+}
+.tl-pill[data-danger]:focus-within {
+  box-shadow:
+    var(--surface-shadow),
+    0 0 0 3px color-mix(in srgb, var(--danger) 18%, transparent);
+}
+.tl-pill > .tl-plus {
+  grid-area: plus;
+}
+.tl-pill > .tl-field {
+  grid-area: field;
+}
+.tl-pill > .tl-pill-end {
+  grid-area: end;
+  justify-self: end;
+}
+/* The model button's slot. It holds the session's dials until the model
+   sheet replaces them, and background work beside them. */
+.tl-box-tools {
+  grid-area: tools;
+  min-width: 0;
+  display: flex;
   align-items: center;
+  gap: 6px;
+  padding-left: 2px;
+  overflow: hidden;
 }
-.tl-pill:has(.tl-composer-input:focus) {
-  border-color: color-mix(in srgb, var(--accent) 65%, var(--border-strong));
-  box-shadow:
-    var(--surface-shadow),
-    0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+.tl-box-tools .tl-dial-label {
+  display: none;
 }
-.tl-composer[data-danger] .tl-pill {
-  border-color: color-mix(in srgb, var(--danger) 75%, var(--border-strong));
+.tl-pill[data-shape="pill"] .tl-box-tools,
+.tl-pill[data-shape="pill"] .tl-composer-mirror {
+  display: none;
 }
-.tl-composer[data-danger] .tl-pill:has(.tl-composer-input:focus) {
-  box-shadow:
-    var(--surface-shadow),
-    0 0 0 3px color-mix(in srgb, var(--danger) 20%, transparent);
+.tl-box-note {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+/* A hollow dot that breathes slowly, for a turn that is over while an agent
+   it started is not. */
+.tl-box-note-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.6px var(--state-running);
+  animation: tl-breathe 2.4s ease-in-out infinite;
+}
+.tl-box-note-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: var(--text-primary);
 }
 
-/* + and Send: 32px circles, the drawing a disc inside a box that carries no
-   border of its own. The box is what a phone grows to its 44px target while
-   the disc stays 36px (the coarse-pointer block). */
+/* The pill: one line of the field. The field fills the pill's height, so a
+   press anywhere across the middle lands in it and opens the box. Its own
+   text is hidden; `.tl-pill-draft` draws a folded draft's first line over it
+   with an ellipsis, which a textarea cannot do everywhere this is served. */
+.tl-pill[data-shape="pill"] .tl-field {
+  align-self: stretch;
+  align-items: center;
+}
+.tl-pill[data-shape="pill"] .tl-composer-input {
+  height: 48px;
+  min-height: 0;
+  max-height: none;
+  padding: 12px 4px;
+  white-space: pre;
+  overflow: hidden;
+  /* Cuts the placeholder where the engine allows it (Chromium, WebKit). */
+  text-overflow: ellipsis;
+  color: transparent;
+}
+.tl-pill-draft {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 12px 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  color: var(--text-primary);
+  font-size: max(16px, calc(16px * var(--tl-text-scale, 1)));
+  line-height: 24px;
+}
+
+/* Watching: another device drives. The pill says so and offers the session
+   back, on a desktop too; the rest of it stays mounted, hidden. */
+.tl-pill[data-watch] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: none;
+  height: 50px;
+  border-radius: 25px;
+  padding: 0 5px 0 3px;
+}
+.tl-pill[data-watch] > :not(.tl-watch) {
+  display: none;
+}
+.tl-watch {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-left: 14px;
+  color: var(--text-muted);
+  font-size: calc(14px * var(--tl-text-scale, 1));
+}
+.tl-watch-eye {
+  flex: none;
+  display: inline-flex;
+}
+.tl-watch-word {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-take {
+  flex: none;
+  position: relative;
+  margin-left: auto;
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 19px;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  cursor: pointer;
+}
+.tl-take:hover {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* + and the round button: 36px boxes round a 32px disc, the drawing a disc
+   inside a box that carries no border of its own. A phone grows the box to
+   its 44px target (the coarse-pointer block). */
 .tl-plus,
 .tl-send {
   flex: none;
   position: relative;
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: none;
-  color: var(--text-muted);
+  color: var(--text-primary);
   cursor: pointer;
 }
 .tl-disc {
@@ -3412,9 +3364,12 @@ label.tl-set-row-label {
   width: 16px;
   height: 16px;
 }
+.tl-plus .tl-disc svg {
+  width: 18px;
+  height: 18px;
+}
 .tl-plus:hover .tl-disc {
   background: var(--hover-tint);
-  color: var(--text-primary);
 }
 .tl-plus svg {
   transition: transform 0.22s cubic-bezier(0.3, 0.7, 0.4, 1);
@@ -3438,8 +3393,7 @@ label.tl-set-row-label {
   animation: tl-breathe 1.2s ease-in-out infinite;
 }
 /* Send is filled, and in the same grammar as the answer card's Submit: white
-   on the accent. The prototype drew the arrow in the page colour; white keeps
-   the two commits one grammar (composer.aesthetics). */
+   on the accent (composer.aesthetics). */
 .tl-send .tl-disc {
   background: var(--accent);
   color: #fff;
@@ -3451,16 +3405,36 @@ label.tl-set-row-label {
   transform: scale(0.9);
 }
 /* Only the new-session composer ever draws it this way: there, Send CREATES
-   the session, so an empty box has to look like it cannot. The same 0.5 and
-   default cursor every other unavailable control here uses. */
+   the session, so an empty box has to look like it cannot. */
 .tl-send:disabled {
-  opacity: 0.5;
   cursor: default;
+}
+.tl-send:disabled .tl-disc {
+  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
+  color: color-mix(in srgb, var(--text-muted) 80%, transparent);
+}
+/* Stop, while something runs, beside the round button. */
+.tl-stop {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+  color: var(--danger);
+  cursor: pointer;
+  animation: tl-pop-in 0.18s ease-out;
+}
+.tl-stop:hover {
+  background: color-mix(in srgb, var(--danger) 17%, transparent);
 }
 .tl-plus:focus-visible,
 .tl-send:focus-visible,
 .tl-dial:focus-visible,
-.tl-statusline .tl-stop:focus-visible,
+.tl-stop:focus-visible,
 .tl-take:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
@@ -3470,7 +3444,6 @@ label.tl-set-row-label {
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 32px;
 }
 /* Mid-turn a send QUEUES. The button keeps its name; this says it, quietly,
    while there is something to send. */
@@ -3499,19 +3472,20 @@ label.tl-set-row-label {
 .tl-field {
   position: relative;
   display: flex;
-  flex: 1 1 auto;
   min-width: 0;
   /* How tall an attached picture is drawn. 44 is the smallest height a
      screenshot is still recognisable at, measured against the real composer on
      2026-09-16. */
   --tl-thumb-h: 44px;
 }
+/* The box's field, which is the default shape: 14px on 22px on a desktop,
+   16px on 24px on a coarse pointer (the block near the end of this file). */
 .tl-composer-input,
 .tl-composer-mirror {
   font-family: var(--font-ui);
-  font-size: calc(14.5px * var(--tl-text-scale, 1));
+  font-size: calc(14px * var(--tl-text-scale, 1));
   line-height: calc(22px * var(--tl-text-scale, 1));
-  padding: 5px 6px;
+  padding: 10px 8px 6px;
 }
 .tl-composer-mirror {
   position: absolute;
@@ -3537,12 +3511,13 @@ label.tl-set-row-label {
   /* A long unbroken token in the draft would otherwise set a min-content
      floor and push the field past the pill. */
   min-width: 0;
-  /* One line tall at rest, the height of + and Send beside it. */
-  min-height: calc(22px * var(--tl-text-scale, 1) + 10px);
+  /* Room to write in, and a cap past which it scrolls. PromptField reads the
+     cap back when it sizes the field to its text. */
+  min-height: 60px;
   margin: 0;
   resize: none;
   color: var(--text-primary);
-  max-height: 200px;
+  max-height: 220px;
   overflow-y: auto;
   scrollbar-width: none;
   /* Above the chip layer, which is absolutely positioned in the same box. */
@@ -3555,7 +3530,7 @@ label.tl-set-row-label {
   color: var(--text-muted);
   opacity: 1;
 }
-/* The pill draws the focus ring, so the field draws none of its own. */
+/* The surface draws the focus edge, so the field draws none of its own. */
 .tl-composer-input:focus {
   outline: none;
 }
@@ -3602,8 +3577,8 @@ label.tl-set-row-label {
 .tl-thumb-strip {
   position: absolute;
   top: 6px;
-  left: 6px;
-  right: 6px;
+  left: 8px;
+  right: 8px;
   display: flex;
   gap: 6px;
   height: var(--tl-thumb-h);
@@ -3656,7 +3631,7 @@ label.tl-set-row-label {
   padding-top: calc(var(--tl-thumb-h) + 12px);
 }
 
-/* ---- the permission panel, docked above the line ---------------------- */
+/* ---- the permission panel, docked above the composer ------------------ */
 .tl-permpanel {
   max-width: 760px;
   margin: 0 auto 8px;
@@ -4148,16 +4123,11 @@ label.tl-set-row-label {
     transform: none;
   }
 }
-/* Reduced motion: every one of these stops, and the working edge holds a
-   steady running colour instead of sweeping. Scoped to the composer's own
+/* Reduced motion: every one of these stops. Scoped to the composer's own
    classes rather than the prototype's global rule, which would reach the
    whole app. */
 @media (prefers-reduced-motion: reduce) {
-  .tl-composer[data-status="working"]::before {
-    animation: none;
-    background: color-mix(in srgb, var(--state-running) 60%, transparent);
-  }
-  .tl-status-state[data-kind="background"] .tl-line-dot,
+  .tl-box-note-dot,
   .tl-plus[aria-busy="true"] .tl-disc {
     animation: none;
   }
@@ -4165,7 +4135,7 @@ label.tl-set-row-label {
     animation: none;
     background: var(--accent);
   }
-  .tl-statusline .tl-stop,
+  .tl-stop,
   .tl-dial[data-danger],
   .tl-tray,
   .tl-dial-pop,
@@ -4475,7 +4445,6 @@ body.tl-kb-up {
     max-height: 174px; /* ~4 rows rather than ~5.5 */
   }
   body.tl-kb-up .tl-composer {
-    padding-top: 4px;
     padding-bottom: 6px;
   }
 }
@@ -4648,43 +4617,32 @@ body.tl-kb-up {
   .tl-composer-input,
   .tl-composer-mirror {
     line-height: max(24px, calc(24px * var(--tl-text-scale, 1)));
-    padding: 10px 4px;
+    padding: 10px 8px 4px;
   }
+  /* The phone's box: 86px of room to write in, 148px before it scrolls, so
+     the focused box is 142px and the keyboard leaves the conversation room. */
   .tl-composer-input {
-    min-height: calc(max(24px, calc(24px * var(--tl-text-scale, 1))) + 20px);
+    min-height: 86px;
+    max-height: 148px;
   }
 
-  /* ---- the Quiet line on a phone ----------------------------------------
-     A 34px line over a 48px pill, 92px of dock at rest; the home indicator's
-     inset is `.tl-views`' own reservation (`body.has-soft-keys .tl-views`
-     above), so the dock adds none of its own. Every control is a 44px target:
-     + and Send are 44px boxes round 36px discs, and the line's 28px controls
-     press over a taller area that reaches into the dock's padding and stops
-     at the pill, so no two targets overlap. */
+  /* ---- the composer on a phone -----------------------------------------
+     A 50px pill with 8px under it at rest; the home indicator's inset is
+     `.tl-views`' own reservation (`body.has-soft-keys .tl-views` above), so
+     the dock adds none of its own. + and the round button are 44px targets
+     round the same 32px disc. */
   .tl-composer {
-    padding-bottom: 6px;
+    padding-bottom: 8px;
   }
-  .tl-statusline {
-    height: 34px;
-    margin-bottom: 0;
-    gap: 8px;
-    font-size: calc(12.5px * var(--tl-text-scale, 1));
-  }
-  .tl-status-word {
-    font-size: calc(13px * var(--tl-text-scale, 1));
-  }
-  .tl-statusline .tl-stop,
-  .tl-take {
-    height: 28px;
-    font-size: calc(12.5px * var(--tl-text-scale, 1));
-  }
-  .tl-dials {
-    gap: 5px;
+  .tl-plus,
+  .tl-send {
+    width: 44px;
+    height: 44px;
   }
   /* A finger cannot hover, so every dial wears the box a hover gives one on a
      desktop, and the micro-labels go: the sheet's tabs name them. */
   .tl-dial {
-    height: 28px;
+    height: 32px;
     padding: 0 9px;
     gap: 6px;
     font-size: calc(12.5px * var(--tl-text-scale, 1));
@@ -4695,37 +4653,6 @@ body.tl-kb-up {
   .tl-dial-label,
   .tl-dial-div {
     display: none;
-  }
-  .tl-dial::after,
-  .tl-statusline .tl-stop::after,
-  .tl-take::after {
-    content: "";
-    position: absolute;
-    left: -2px;
-    right: -2px;
-    top: -11px;
-    bottom: -5px;
-  }
-  .tl-pill {
-    padding: 1px;
-    border-radius: 24px;
-  }
-  .tl-plus,
-  .tl-send {
-    width: 44px;
-    height: 44px;
-  }
-  .tl-disc {
-    width: 36px;
-    height: 36px;
-  }
-  .tl-disc svg {
-    width: 18px;
-    height: 18px;
-  }
-  .tl-pill-end {
-    height: 44px;
-    gap: 2px;
   }
   .tl-tray {
     min-width: 264px;

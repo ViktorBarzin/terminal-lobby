@@ -114,10 +114,12 @@ describe("the + is a finger target", () => {
     return m![1]!;
   };
 
-  it("is a 32px circle beside the field", () => {
+  // A 36px box round the 32px disc on a desktop (the T3 pass's box row).
+  it("is a 36px circle round a 32px disc", () => {
     const r = rule(".tl-plus,\n.tl-send");
-    expect(r).toMatch(/width:\s*32px/);
-    expect(r).toMatch(/height:\s*32px/);
+    expect(r).toMatch(/width:\s*36px/);
+    expect(r).toMatch(/height:\s*36px/);
+    expect(rule(".tl-disc")).toMatch(/width:\s*32px/);
   });
 
   it("grows to the 44px touch target under a coarse pointer", () => {

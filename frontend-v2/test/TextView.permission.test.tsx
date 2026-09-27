@@ -82,11 +82,7 @@ describe("the permission card", () => {
     const live = r.container.querySelector(".tl-timeline .tl-group-box[data-live]");
     expect(live?.getAttribute("data-live")).toBe("waiting");
     expect(live?.querySelector(".tl-group-sum")?.textContent).toBe("Waiting for you");
-    expect(
-      r.container.querySelector(
-        ".tl-statusline button[aria-label*='Stop'], .tl-statusline .tl-stop",
-      ),
-    ).toBeNull();
+    expect(r.container.querySelector(".tl-composer .tl-stop")).toBeNull();
   });
 
   it("presses the row's number, once", async () => {

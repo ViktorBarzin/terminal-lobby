@@ -162,7 +162,12 @@ describe("the system font", () => {
   // each one that can render inside the Text view needs the scoped override.
   // The three exempt ones are overlays the session view opens, not the view.
   it("overrides every explicit DM Sans rule that renders inside the view", () => {
-    const outside = new Set(["body", ".tl-gallery-panel", ".tl-lightbox-chip", ".tl-preview-panel"]);
+    const outside = new Set([
+      "body",
+      ".tl-gallery-panel",
+      ".tl-lightbox-chip",
+      ".tl-preview-panel",
+    ]);
     const scoped = new Set(
       rules(appCss)
         .filter((r) => /font-family:\s*var\(--font-text\)/.test(r.body))
@@ -210,20 +215,11 @@ describe("one 760px column", () => {
   });
 
   it("caps what the dock holds at the same 760px, centred", () => {
-    for (const box of [".tl-pillwrap", ".tl-permpanel", ".tl-statusline"]) {
+    for (const box of [".tl-pillwrap", ".tl-permpanel"]) {
       expect(decl(appCss, box, "max-width"), box).toBe("760px");
       expect(decl(appCss, box, "margin"), box).toMatch(/^0 auto/);
     }
     expect(decl(appCss, ".tl-qcard", "max-width")).toBe("760px");
-  });
-
-  it("draws the dock's state edge across that column and not the gutters", () => {
-    expect(decl(appCss, ".tl-composer::before", "left")).toBe(
-      "max(clamp(12px, 6vw, 80px), calc(50% - 380px))",
-    );
-    expect(decl(appCss, ".tl-composer::before", "right")).toBe(
-      "max(clamp(12px, 6vw, 80px), calc(50% - 380px))",
-    );
   });
 
   it("leaves no 860px column behind", () => {
