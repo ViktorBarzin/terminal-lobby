@@ -240,6 +240,8 @@ export const PromptField: Component<{
   register?: (api: PromptFieldSinks) => void;
 }> = (props) => {
   let ta: HTMLTextAreaElement | undefined;
+  /** The surface holding `+`, the field and Send (autosize holds its height). */
+  let pillEl: HTMLDivElement | undefined;
   let fileInput: HTMLInputElement | undefined;
   let photoInput: HTMLInputElement | undefined;
   let plusEl: HTMLButtonElement | undefined;
@@ -301,13 +303,17 @@ export const PromptField: Component<{
   const autosize = () => {
     if (!ta) return;
     // Measuring drops the field to height:auto, one row, and the reads below
-    // force a real layout at that height. The box around the field is held at
-    // its height meanwhile, so the page never sees the composer shrink: a
-    // transcript parked at its bottom had its scrollTop clamped to the
-    // momentarily taller box, and nothing moved it back when the field grew
-    // again. On the emulator (2026-09-26) three typed lines left the reader
-    // 90px above the latest message with "Latest" up.
-    const box = ta.parentElement;
+    // force a real layout at that height. The pill is held at its height
+    // meanwhile, so the page never sees the composer shrink: a transcript
+    // parked at its bottom had its scrollTop clamped to the momentarily
+    // taller box, and nothing moved it back when the field grew again. On the
+    // emulator (2026-09-26) three typed lines left the reader 90px above the
+    // latest message with "Latest" up.
+    // The pill and not the field's own row: that row is a flex row that
+    // stretches the field, so holding it made height:auto read back the held
+    // height and a grown field never shrank. The pill aligns its children to
+    // an edge, so the field inside it is free to drop to one row.
+    const box = pillEl;
     const heldWas = box?.style.minHeight ?? "";
     if (box) box.style.minHeight = `${box.offsetHeight}px`;
     ta.style.height = "auto";
@@ -1110,7 +1116,7 @@ export const PromptField: Component<{
             inside it, so the pill carries the border, the fill and the focus
             ring, and reads as one control rather than an input with buttons
             parked beside it. */}
-        <div class="tl-pill" data-single={single() ? "" : undefined}>
+        <div ref={pillEl} class="tl-pill" data-single={single() ? "" : undefined}>
           <Show when={!props.noTray}>
             <button
               ref={plusEl}

@@ -108,28 +108,32 @@ describe("measuring the field does not move the page around it", () => {
   // field goes back to three lines nothing moves it down again. Measured on
   // the Android emulator on 2026-09-26: typing a three-line message left the
   // reader 90px above the latest message with the "Latest" button up.
-  it("holds the box around the field at its height while the field measures itself", () => {
-    const { getByLabelText } = render(() => (
+  it("holds the pill at its height while the field measures itself", () => {
+    const { getByLabelText, container } = render(() => (
       <Composer pending={[]} onSend={sent} onStop={noop} onResolve={noop} />
     ));
     const ta = getByLabelText("Message to send to the session") as HTMLTextAreaElement;
-    const box = ta.parentElement!;
-    Object.defineProperty(box, "offsetHeight", { configurable: true, get: () => 92 });
+    const pill = container.querySelector<HTMLElement>(".tl-pill")!;
+    const row = ta.parentElement!;
+    Object.defineProperty(pill, "offsetHeight", { configurable: true, get: () => 92 });
     const seen: string[] = [];
     Object.defineProperty(ta, "scrollHeight", {
       configurable: true,
       get: () => {
-        seen.push(box.style.minHeight);
+        seen.push(`${pill.style.minHeight}|${row.style.minHeight}`);
         return 3 * 24 + 18;
       },
     });
     fireEvent.input(ta, { target: { value: "one\ntwo\nthree" } });
     expect(seen.length, "the field measured itself").toBeGreaterThan(0);
+    // The pill, and never the field's own row: that row is a flex row that
+    // stretches the field to its height, so holding it made height:auto read
+    // back the held height and a field that had grown could never shrink.
     expect(
-      seen.every((h) => h === "92px"),
+      seen.every((h) => h === "92px|"),
       `held while measuring, saw ${seen.join(",")}`,
     ).toBe(true);
-    expect(box.style.minHeight, "and let go afterwards").toBe("");
+    expect(pill.style.minHeight, "and let go afterwards").toBe("");
   });
 });
 
