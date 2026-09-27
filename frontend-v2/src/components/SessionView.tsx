@@ -1441,7 +1441,7 @@ export const SessionView: Component<{
                               props.onSwitchSession?.(other.name, other.owner);
                             }}
                           >
-                            {other.label ?? other.name}
+                            <span class="tl-session-menu-label">{other.label ?? other.name}</span>
                           </button>
                         )}
                       </For>

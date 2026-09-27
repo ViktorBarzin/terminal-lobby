@@ -1417,7 +1417,14 @@
 }
 .tl-session-menu .tl-menu-item {
   flex: none;
+  max-width: 100%;
   white-space: nowrap;
+  overflow: hidden;
+}
+/* The ellipsis goes on a block inside the row: Chromium does not draw one on
+   a button's own text, so a long title was cut mid-word. */
+.tl-session-menu-label {
+  display: block;
   overflow: hidden;
   text-overflow: ellipsis;
 }
