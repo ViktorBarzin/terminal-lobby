@@ -1203,6 +1203,11 @@ export const MessagesTimeline: Component<{
       role="log"
       aria-label={props.label ?? "Session transcript"}
       aria-hidden={props.hidden ? "true" : undefined}
+      // A click on the transcript lands the focus here rather than on the
+      // page's body, so the keys stay the view's: a docked card's row digits
+      // work after the reader clicked the conversation, and the arrow keys
+      // scroll it.
+      tabIndex={-1}
       ref={scroller}
       onScroll={onScroll}
       onClick={recheckPinned}

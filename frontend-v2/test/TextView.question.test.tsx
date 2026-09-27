@@ -422,6 +422,20 @@ describe("a held call", () => {
     await waitFor(() => expect(document.activeElement).toBe(v.card()));
   });
 
+  it("takes the focus from the empty field the reader just sent from", async () => {
+    // Found live on 2026-09-27: the hidden field dropped the focus to the
+    // page, and "2" left the question unanswered.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([], onAnswer);
+    const ta = v.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    ta.focus();
+    v.setEvents([held([colour])]);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+  });
+
   it("collapses to one line and opens again", async () => {
     const v = mount([held([colour])]);
     await waitFor(() => expect(v.option("Red")).toBeTruthy());

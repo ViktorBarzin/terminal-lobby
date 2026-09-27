@@ -1269,14 +1269,19 @@ export const TextView: Component<{
   });
 
   // A card that docks while nothing has the focus takes it, so its keys work at
-  // once. A reader who was typing keeps theirs where it was: the field hides,
-  // and their next keys land on the page rather than on the card's rows.
+  // once. So does one that docks over the EMPTY field the reader just sent
+  // from: the card hides that field, and the focus would fall to the page,
+  // where the row digits are not the view's (found live on 2026-09-27). A
+  // reader who was typing keeps theirs where it was: the field hides, and
+  // their next keys land on the page rather than on the card's rows.
+  const emptyField = (el: Element): boolean =>
+    el instanceof HTMLTextAreaElement && !!el.closest(".tl-composer") && el.value === "";
   createEffect(
     on(cardUp, (up) => {
       if (!up) return;
       queueMicrotask(() => {
         const active = document.activeElement;
-        if (active && active !== document.body) return;
+        if (active && active !== document.body && !emptyField(active)) return;
         if (props.onScreen === false || !tileFocused()) return;
         viewEl?.querySelector<HTMLElement>(".tl-qcard")?.focus({ preventScroll: true });
       });

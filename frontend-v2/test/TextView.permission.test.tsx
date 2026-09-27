@@ -207,6 +207,49 @@ describe("the permission card", () => {
     expect(onKeys).toHaveBeenCalledTimes(1);
   });
 
+  /**
+   * Found live on 2026-09-27 (desktop, manual mode): after Send the card
+   * docked and hid the field the focus was in, so the focus fell to the page
+   * and the row digits did nothing until the reader clicked a row. A field the
+   * reader had just emptied by sending hands the card the focus.
+   */
+  it("takes the focus from an empty field when it docks, so a digit presses a row", async () => {
+    const { r, card, setEvents, onKeys } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(card()));
+    expect(fireEvent.keyDown(document.activeElement!, { key: "3" })).toBe(false);
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["3"]));
+  });
+
+  it("leaves the focus alone when the field has words in it as the card docks", async () => {
+    const { r, card, setEvents } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    fireEvent.input(field, { target: { value: "fix the " } });
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    await Promise.resolve();
+    expect(document.activeElement).not.toBe(card());
+  });
+
+  it("lets a click on the conversation give the keys to the view", async () => {
+    // Clicking the transcript left the focus on the page's body, where a digit
+    // is not the view's to take. The scroller takes the focus of a click.
+    const { r, card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    const timeline = r.container.querySelector<HTMLElement>(".tl-timeline")!;
+    expect(timeline.getAttribute("tabindex")).toBe("-1");
+    timeline.focus();
+    expect(fireEvent.keyDown(timeline, { key: "1" })).toBe(false);
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["1"]));
+  });
+
   it("leaves a digit typed on the page alone", async () => {
     // The field hides when the card docks, so the rest of a sentence being
     // typed lands on the page. "fix the 2 tests" must not allow anything.
