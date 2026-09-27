@@ -147,9 +147,14 @@ describe("the system font", () => {
     expect(decl(appCss, "body", "font-family")).toBe("var(--font-ui)");
   });
 
+  // The model sheet's phone layer is the one exception: it is drawn into the
+  // document's body, because the composer's blurred surface would pin a fixed
+  // sheet to the box (ModelSheet.tsx), so it names the face itself.
   it("is read only under the Text view", () => {
     const allowed = (s: string): boolean =>
-      s.startsWith(".tl-textview") || s.startsWith('.tl-session-bar[data-mode="text"]');
+      s.startsWith(".tl-textview") ||
+      s.startsWith('.tl-session-bar[data-mode="text"]') ||
+      s === ".tl-ms-layer";
     const offenders = [appCss, sidebarCss].flatMap((css) =>
       rules(css)
         .filter((r) => /var\(--font-text\)/.test(r.body))

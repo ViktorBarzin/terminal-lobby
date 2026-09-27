@@ -122,7 +122,8 @@ describe("<Composer>: pill or box", () => {
   // The box grows upward from where the pill was, so the finger that opened
   // it is over the box's bottom row by the time its click fires. Measured in
   // Chromium's phone emulation on 2026-09-27: a tap on the pill opened the
-  // dials' sheet, which then held the focus, and typing went nowhere.
+  // dials' sheet, which then held the focus, and typing went nowhere. The
+  // model button sits in the same row now.
   it("swallows the click of the tap that opened it, so nothing under the finger fires", () => {
     const { ta, surface, container } = mount(
       { mode: "manual", onCycleMode: noop, onPickMode: noop },
@@ -131,11 +132,11 @@ describe("<Composer>: pill or box", () => {
     fireEvent.pointerDown(ta, { pointerType: "touch" });
     expect(surface().getAttribute("data-shape")).toBe("box");
     expect(document.activeElement).toBe(ta);
-    fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
-    expect(container.querySelector(".tl-dial-pop-mode, .tl-sheet")).toBeNull();
+    fireEvent.click(container.querySelector(".tl-model-btn")!);
+    expect(document.querySelector(".tl-ms-pop, .tl-ms-sheet")).toBeNull();
     // The next press is the reader's own.
-    fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
-    expect(container.querySelector(".tl-dial-pop-mode, .tl-sheet")).not.toBeNull();
+    fireEvent.click(container.querySelector(".tl-model-btn")!);
+    expect(document.querySelector(".tl-ms-pop, .tl-ms-sheet")).not.toBeNull();
   });
 
   // Measured on the Android emulator on 2026-09-27: a tap on Send blurred the
@@ -240,10 +241,25 @@ describe("<Composer>: what the box holds", () => {
     }
   });
 
-  it("holds the session's dials in the model slot until the model sheet replaces them", () => {
-    const { surface } = mount({ mode: "manual", onCycleMode: noop, onPickMode: noop });
+  it("holds the one model button in the model slot, and no dials", () => {
+    const { surface } = mount({
+      mode: "manual",
+      onCycleMode: noop,
+      onPickMode: noop,
+      harness: "claude",
+      model: { model: "claude-opus-5-5", effort: "high" },
+      onPickModel: noop,
+    });
     const tools = surface().querySelector(".tl-box-tools")!;
-    expect(tools.querySelector('.tl-dial[data-dial="mode"]')).not.toBeNull();
+    expect(tools.querySelectorAll(".tl-model-btn")).toHaveLength(1);
+    expect(tools.querySelector(".tl-model-name")?.textContent).toBe("Opus 5.5");
+    expect(surface().querySelector(".tl-dial")).toBeNull();
+  });
+
+  // A plain shell has no model, no mode and no /context reading.
+  it("has no model button for a plain shell", () => {
+    const { surface } = mount({});
+    expect(surface().querySelector(".tl-model-btn")).toBeNull();
   });
 
   it("says what is still running in the background in the row, not on a line", () => {
@@ -254,7 +270,7 @@ describe("<Composer>: what the box holds", () => {
 });
 
 describe("<Composer>: every control still does its job", () => {
-  it("sends, stops, opens the mode list, and steps the mode on Shift+Tab", () => {
+  it("sends, stops, opens the model sheet, and steps the mode on Shift+Tab", () => {
     const onSend = vi.fn(sent);
     const onStop = vi.fn();
     const onCycleMode = vi.fn();
@@ -275,8 +291,8 @@ describe("<Composer>: every control still does its job", () => {
     expect(onSend).toHaveBeenCalledWith("hello", []);
     expect(onStop).toHaveBeenCalledTimes(1);
 
-    fireEvent.click(container.querySelector('.tl-dial[data-dial="mode"]')!);
-    expect(container.querySelector(".tl-dial-pop-mode")).not.toBeNull();
+    fireEvent.click(container.querySelector(".tl-model-btn")!);
+    expect(container.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
     expect(onCycleMode).not.toHaveBeenCalled();
 
     fireEvent.keyDown(ta, { key: "Tab", shiftKey: true });

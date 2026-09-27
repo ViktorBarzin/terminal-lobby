@@ -11,20 +11,23 @@ import { describe, it, expect } from "vitest";
 import { MODES, isDangerMode, modeId, modeRow, modeTitle } from "../src/logic/modes";
 
 describe("the mode list", () => {
-  it("lists six modes, the four that ask first and then the two that do not", () => {
+  // The T3 pass (2026-09-27) orders the four that ask first as the sheet
+  // draws them: Manual, Edits, Auto, then Plan, which changes nothing and so
+  // sits apart from the three that act.
+  it("lists six modes in the sheet's order, the four that ask first and then the two that do not", () => {
     expect(MODES.map((m) => m.id)).toEqual([
       "manual",
-      "plan",
       "acceptEdits",
       "auto",
+      "plan",
       "bypassPermissions",
       "dontAsk",
     ]);
     expect(MODES.map((m) => m.tone)).toEqual([
       "safe",
+      "caution",
+      "caution",
       "plan",
-      "caution",
-      "caution",
       "danger",
       "danger",
     ]);

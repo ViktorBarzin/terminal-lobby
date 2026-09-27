@@ -3023,10 +3023,6 @@ label.tl-set-row-label {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tl-dial-icon {
-  display: inline-flex;
-  color: var(--success);
-}
 .tl-dial-chev {
   flex: none;
   color: var(--text-muted);
@@ -3041,28 +3037,6 @@ label.tl-set-row-label {
   height: 12px;
   margin: 0 3px;
   background: var(--border-strong);
-}
-.tl-dial-num {
-  font-variant-numeric: tabular-nums;
-}
-/* The mode's colour is SEMANTIC: how much the session does without asking,
-   read as a traffic light. Manual green, plan purple, edits and auto blue. */
-.tl-dial[data-tone="plan"] .tl-dial-icon {
-  color: var(--state-awaiting);
-}
-.tl-dial[data-tone="caution"] .tl-dial-icon {
-  color: var(--accent);
-}
-/* Context by how much room is LEFT, because compaction is the thing worth
-   noticing before it happens. */
-.tl-dial[data-dial="ctx"] .tl-dial-ring {
-  color: var(--text-muted);
-}
-.tl-dial[data-dial="ctx"][data-tone="warn"] .tl-dial-ring {
-  color: var(--state-awaiting);
-}
-.tl-dial[data-dial="ctx"][data-tone="full"] .tl-dial-ring {
-  color: var(--danger);
 }
 /* A change being driven: the picker is being typed into for about a second,
    which a dial that looked idle would hide. A thin sweep under the value. */
@@ -3107,34 +3081,6 @@ label.tl-set-row-label {
 }
 .tl-dial[aria-disabled="true"] .tl-dial-lock {
   display: block;
-}
-.tl-dial[aria-disabled="true"] .tl-dial-icon {
-  color: var(--text-muted);
-}
-/* Bypass and No ask: the mode dial becomes a hatched danger tab. */
-.tl-dial[data-danger] {
-  color: var(--bg-page);
-  font-weight: 650;
-  border-color: var(--danger);
-  background: repeating-linear-gradient(
-    135deg,
-    var(--danger) 0 6px,
-    color-mix(in srgb, var(--danger) 84%, var(--bg-page)) 6px 12px
-  );
-  animation: tl-pop-in 0.22s ease-out;
-}
-.tl-dial[data-danger]:hover {
-  border-color: var(--danger);
-  filter: brightness(1.06);
-}
-.tl-dial[data-danger] .tl-dial-label,
-.tl-dial[data-danger] .tl-dial-chev,
-.tl-dial[data-danger] .tl-dial-icon {
-  color: var(--bg-page);
-  opacity: 0.9;
-}
-.tl-dial[data-danger][aria-expanded="true"] {
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--danger) 35%, transparent);
 }
 
 /* ---- the surface ---------------------------------------------------------
@@ -3201,8 +3147,7 @@ label.tl-set-row-label {
   grid-area: end;
   justify-self: end;
 }
-/* The model button's slot. It holds the session's dials until the model
-   sheet replaces them, and background work beside them. */
+/* The model button's slot: the button, and background work beside it. */
 .tl-box-tools {
   grid-area: tools;
   min-width: 0;
@@ -3245,6 +3190,353 @@ label.tl-set-row-label {
   font-family: var(--font-mono);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   color: var(--text-primary);
+}
+
+/* ---- the model button and its sheet (ModelSheet.tsx) --------------------
+   One button in the box's row, "✳ Opus 5.5 ⌄", and one sheet behind it:
+   Model, Effort, Mode and a context line. Sizes are the T3 prototype's
+   (composer/6-t3.html), in fixed pixels like the rest of the box's chrome. */
+.tl-ms {
+  display: inline-flex;
+  min-width: 0;
+}
+.tl-model-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 9px 0 8px;
+  margin-left: 2px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  font-weight: 520;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.tl-model-btn:hover,
+.tl-model-btn[aria-expanded="true"] {
+  background: var(--hover-tint);
+}
+.tl-model-btn[aria-expanded="true"] {
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.tl-model-btn[data-busy] {
+  cursor: progress;
+  color: var(--text-muted);
+}
+.tl-model-btn[aria-disabled="true"] {
+  cursor: not-allowed;
+  color: var(--text-muted);
+}
+.tl-model-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-model-spark,
+.tl-ms-spark {
+  flex: none;
+  color: var(--sparkle);
+}
+.tl-model-chev {
+  flex: none;
+  color: var(--text-muted);
+}
+/* Bypass and No ask: a small red shield, tinted inside, before the sparkle. */
+.tl-model-shield,
+.tl-ms-shield {
+  flex: none;
+  color: var(--danger);
+}
+.tl-model-shield path,
+.tl-ms-shield path {
+  fill: currentColor;
+  fill-opacity: 0.18;
+}
+
+/* The desktop's popover: 360px, above the box, its left edge just past the
+   +, pulled left in a tile too narrow for that. `max-height` is written on
+   open to the room above the box. */
+.tl-ms-pop {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: clamp(0px, calc(100% - 360px), 36px);
+  width: 360px;
+  max-width: 100%;
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  background: var(--bg-card);
+  box-shadow: var(--pop-shadow);
+  color: var(--text-primary);
+  scrollbar-width: thin;
+  transform-origin: 40px 100%;
+  animation: tl-pop-up 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+
+/* The phone's bottom sheet, in the document's body (see BottomSheet), so it
+   names the Text view's face itself and its text reads at the unpinched
+   size. Above the soft keys (40) and below settings (60), like the sheet it
+   replaced. */
+.tl-ms-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  font-family: var(--font-text);
+}
+.tl-ms-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: rgb(0 0 0 / 38%);
+  cursor: default;
+  animation: tl-fade-in 0.18s ease-out;
+}
+.tl-ms-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 90%;
+  overflow-y: auto;
+  padding: 6px 16px calc(20px + var(--safe-b, 0px));
+  border-radius: 22px 22px 0 0;
+  background: var(--bg-card);
+  box-shadow:
+    0 -1px 0 var(--border-strong),
+    var(--pop-shadow);
+  color: var(--text-primary);
+  scrollbar-width: none;
+  animation: tl-sheet-up 0.26s cubic-bezier(0.2, 0.8, 0.25, 1);
+}
+.tl-ms-sheet:focus {
+  outline: none;
+}
+.tl-ms-grab {
+  width: 38px;
+  height: 5px;
+  margin: 2px auto 8px;
+  border-radius: 3px;
+  background: var(--border-strong);
+}
+
+/* What both show. */
+.tl-ms-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 10px 4px 4px;
+  color: var(--text-muted);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.tl-ms-pop > .tl-ms-h:first-child,
+.tl-ms-grab + .tl-ms-h {
+  margin-top: 4px;
+}
+.tl-ms-aside {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.tl-ms-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 1px 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.tl-ms-row:hover,
+.tl-ms-row:focus-visible {
+  background: var(--hover-tint);
+  outline-offset: -2px;
+}
+.tl-ms-row[aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+.tl-ms-row[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.tl-ms-row[aria-disabled="true"]:hover {
+  background: none;
+}
+.tl-ms-row[aria-disabled="true"][aria-checked="true"] {
+  background: color-mix(in srgb, var(--accent) 11%, transparent);
+}
+.tl-ms-lab {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 560;
+}
+.tl-ms-name {
+  flex: none;
+}
+.tl-ms-slug {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-weight: 400;
+}
+.tl-ms-desc {
+  grid-column: 1;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: 16px;
+}
+.tl-ms-tick {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  color: var(--accent);
+}
+.tl-ms-row[data-danger] .tl-ms-lab {
+  color: var(--danger);
+}
+.tl-ms-row[data-danger][aria-checked="true"] {
+  background: color-mix(in srgb, var(--danger) 11%, transparent);
+}
+.tl-ms-row[data-danger] .tl-ms-tick {
+  color: var(--danger);
+}
+.tl-ms-rule {
+  height: 1px;
+  margin: 6px 10px;
+  background: var(--border);
+}
+/* Effort: one segmented row. Each level is as wide as its word needs and the
+   spare room is shared, so pi's seven levels and "ultracode" still fit. */
+.tl-ms-seg {
+  display: flex;
+  gap: 2px;
+  margin: 0 2px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-page);
+}
+.tl-ms-seg button {
+  flex: 1 1 auto;
+  height: 30px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+  cursor: pointer;
+}
+.tl-ms-seg button:hover {
+  color: var(--text-primary);
+}
+.tl-ms-seg button[aria-checked="true"] {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+  font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+.tl-ms-seg button[aria-disabled="true"] {
+  cursor: not-allowed;
+}
+.tl-ms-seg button[aria-disabled="true"]:not([aria-checked="true"]) {
+  opacity: 0.5;
+}
+.tl-ms-none,
+.tl-ms-note {
+  margin: 0 4px;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-ms-note {
+  margin-top: 6px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+/* The context line: quiet, one row, a 64px bar coloured by the room left. */
+.tl-ms-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 4px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  font-variant-numeric: tabular-nums;
+}
+.tl-ms-ctx i {
+  flex: 0 0 64px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-muted) 25%, transparent);
+}
+.tl-ms-ctx i::before {
+  content: "";
+  display: block;
+  width: var(--p, 0%);
+  height: 100%;
+  background: var(--text-muted);
+}
+.tl-ms-ctx[data-tone="warn"] i::before {
+  background: var(--state-awaiting);
+}
+.tl-ms-ctx[data-tone="full"] i::before {
+  background: var(--danger);
+}
+/* The bottom sheet at a finger's sizes: 48px rows and 16px names. */
+.tl-ms-sheet .tl-ms-row {
+  min-height: 48px;
+  padding: 7px 12px;
+  font-size: calc(16px * var(--tl-text-scale, 1));
+}
+.tl-ms-sheet .tl-ms-desc {
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  line-height: 17px;
+}
+.tl-ms-sheet .tl-ms-slug {
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-ms-sheet .tl-ms-seg button {
+  height: 36px;
+  font-size: calc(14px * var(--tl-text-scale, 1));
+}
+.tl-ms-sheet .tl-ms-h {
+  margin: 14px 4px 6px;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-ms-sheet .tl-ms-ctx,
+.tl-ms-sheet .tl-ms-none {
+  font-size: calc(13px * var(--tl-text-scale, 1));
 }
 
 /* The pill: one line of the field. The field fills the pill's height, so a
@@ -3757,9 +4049,6 @@ label.tl-set-row-label {
   transform-origin: 85% 100%;
   animation: tl-pop-up 0.15s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
-.tl-dial-pop-mode {
-  width: 318px;
-}
 .tl-dial-pop-model {
   width: 292px;
 }
@@ -3769,10 +4058,6 @@ label.tl-set-row-label {
 }
 .tl-dial-pop-command {
   width: 240px;
-}
-.tl-dial-pop-ctx {
-  width: 268px;
-  padding: 10px 12px;
 }
 
 /* The rows in a dial's list: the mode list, the model list. */
@@ -4047,10 +4332,6 @@ label.tl-set-row-label {
 .tl-sheet-body .tl-pick-note {
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
-.tl-sheet-body .tl-ctx-panel {
-  padding: 4px 10px;
-  font-size: calc(14px * var(--tl-text-scale, 1));
-}
 
 /* ---- the composer's motion ------------------------------------------------ */
 @keyframes tl-breathe {
@@ -4121,7 +4402,9 @@ label.tl-set-row-label {
     animation: none;
     background: var(--accent);
   }
-  .tl-dial[data-danger],
+  .tl-ms-pop,
+  .tl-ms-sheet,
+  .tl-ms-scrim,
   .tl-tray,
   .tl-dial-pop,
   .tl-complete,
@@ -4133,6 +4416,7 @@ label.tl-set-row-label {
   .tl-plus svg,
   .tl-disc,
   .tl-dial,
+  .tl-model-btn,
   .tl-pill {
     transition: none;
   }
@@ -4622,6 +4906,10 @@ body.tl-kb-up {
   .tl-send {
     width: 44px;
     height: 44px;
+  }
+  .tl-model-btn {
+    height: 44px;
+    font-size: calc(14.5px * var(--tl-text-scale, 1));
   }
   /* A finger cannot hover, so every dial wears the box a hover gives one on a
      desktop, and the micro-labels go: the sheet's tabs name them. */
@@ -6540,95 +6828,6 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   }
 }
 
-/* What fills the context window, behind the context dial: the CLI's own
-   `/context` figures, so the dial and the pane agree. It was a panel under a
-   chip beside the mode chip until 2026-09-24; it is the body of the context
-   dial's popover now, and of the Context tab in the phone's sheet. */
-.tl-ctx-panel {
-  font-size: calc(12px * var(--tl-text-scale, 1));
-}
-.tl-ctx-top {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-.tl-ctx-big {
-  font-size: calc(22px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-.tl-ctx-of {
-  color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  font-variant-numeric: tabular-nums;
-}
-/* One bar, coloured by how much room is LEFT, because compaction is the thing
-   worth noticing before it happens. */
-.tl-ctx-bar {
-  display: block;
-  height: 6px;
-  margin: 8px 0 8px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--text-muted) 22%, transparent);
-  overflow: hidden;
-}
-.tl-ctx-fill {
-  display: block;
-  height: 100%;
-  border-radius: 999px;
-  background: var(--text-muted);
-}
-.tl-ctx-panel[data-tone="warn"] .tl-ctx-fill {
-  background: var(--state-awaiting);
-}
-.tl-ctx-panel[data-tone="full"] .tl-ctx-fill {
-  background: var(--danger);
-}
-.tl-ctx-model,
-.tl-ctx-age,
-.tl-ctx-empty {
-  color: var(--text-muted);
-}
-.tl-ctx-model {
-  margin-bottom: 6px;
-  font-family: var(--font-mono);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-}
-.tl-ctx-rows {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.tl-ctx-row {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 3px 0;
-}
-.tl-ctx-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.tl-ctx-tokens {
-  flex: none;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.tl-ctx-age {
-  margin-top: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-  font-size: calc(11px * var(--tl-text-scale, 1));
-}
-/* The command that produces a newer reading, named at the size of the line it
-   sits in rather than at the browser's default for `code`. */
-.tl-ctx-age code {
-  font-family: var(--font-mono, monospace);
-  font-size: inherit;
-}
 
 @media (pointer: coarse) {
   /* Everything answerable is a finger target. */

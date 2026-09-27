@@ -1,5 +1,5 @@
 /**
- * The permission modes, as the Text view's mode dial lists them.
+ * The permission modes, as the Text view's model sheet lists them.
  *
  * WHY A LIST. The chip this replaces stepped the mode on every click, the way
  * Shift+Tab does in the CLI, so a reader who wanted plan clicked until plan
@@ -7,13 +7,16 @@
  * line composer on 2026-09-24, and with it a dial that opens every mode with
  * one line on what it does; picking one asks the server to press Shift+Tab one
  * stop at a time until the pane shows it (POST /model/{session} with a
- * "mode", lib/mode-api.ts). Shift+Tab in the message still steps once.
+ * "mode", lib/mode-api.ts). Shift+Tab in the message still steps once. The
+ * T3 pass (2026-09-27) moved the list into the model sheet, under the one
+ * model button in the composer's box.
  *
  * THE WORDS. The labels are the CLI's own mode titles from its mode table
  * (2.1.281: Manual, Plan, Accept edits, Auto, Bypass Permissions, Don't Ask),
- * cut where they run long, so the dial and the status line under the terminal
- * name the same thing. "Accept edits" becomes Edits and "Bypass Permissions"
- * becomes Bypass because the dial sits on a 390px phone beside two others.
+ * cut where they run long, so the sheet and the status line under the terminal
+ * name the same thing. "Accept edits" became Edits and "Bypass Permissions"
+ * became Bypass when the mode was a dial on a 390px phone beside two others,
+ * and the sheet kept the short words.
  *
  * No ask's line is the one that differs from the prototype, which called it
  * the same as bypass under a newer name. The CLI maps dontAsk to deny: a tool
@@ -44,15 +47,16 @@ export interface ModeRow {
 }
 
 /**
- * In the order the list draws them: the four that ask first, a rule, then the
- * two that do not. That is not the Shift+Tab order (manual, acceptEdits, plan,
- * bypassPermissions, auto, measured 2026-09-24, memory #13911); the list is
- * sorted by how much each mode lets through, which is the question a reader
- * opening it is asking.
+ * In the order the model sheet draws them (the T3 pass, 2026-09-27): the four
+ * that ask first, a rule, then the two that do not. The four run Manual,
+ * Edits, Auto by how much each lets land unasked, then Plan, which changes
+ * nothing and so sits apart from the three that act. That is not the
+ * Shift+Tab order (manual, acceptEdits, plan, bypassPermissions, auto,
+ * measured 2026-09-24, memory #13911), which the server walks whatever order
+ * this list is in.
  */
 export const MODES: readonly ModeRow[] = [
   { id: "manual", label: "Manual", line: "Asks before every edit and command", tone: "safe" },
-  { id: "plan", label: "Plan", line: "Reads and plans. Changes nothing", tone: "plan" },
   {
     id: "acceptEdits",
     label: "Edits",
@@ -60,6 +64,7 @@ export const MODES: readonly ModeRow[] = [
     tone: "caution",
   },
   { id: "auto", label: "Auto", line: "Most actions land unasked. Risky ones ask", tone: "caution" },
+  { id: "plan", label: "Plan", line: "Reads and plans. Changes nothing", tone: "plan" },
   {
     id: "bypassPermissions",
     label: "Bypass",
@@ -90,7 +95,7 @@ export function modeRow(mode: string): ModeRow | undefined {
   return id ? MODES.find((m) => m.id === id) : undefined;
 }
 
-/** What the dial calls a mode. An unfamiliar one shows as the CLI spelled it,
+/** What the sheet calls a mode. An unfamiliar one shows as the CLI spelled it,
  *  rather than as a blank the reader cannot ask about. */
 export function modeTitle(mode: string): string {
   return modeRow(mode)?.label ?? mode;

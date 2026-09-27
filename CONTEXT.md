@@ -764,8 +764,8 @@ The prompt field for a LIVE Session, with the things that only mean something
 once there is a session to talk to around it. Since the T3 pass (2026-09-27) it
 is one surface in two shapes: on a phone at rest a 50px pill with "+", one line
 of the field and the round button; focused on the phone, and always on a
-desktop, a box with the text on top and "+", the model button's slot and the
-round button beneath. Bypass and No ask turn its border the danger colour. A
+desktop, a box with the text on top and "+", the **Model sheet**'s button and
+the round button beneath. Bypass and No ask turn its border the danger colour. A
 watching device's pill reads "Watching" with Take control. The prompts Claude
 has queued are drawn as ghost bubbles at the end of the conversation.
 _Avoid_: chat box, prompt bar
@@ -795,6 +795,17 @@ Retired by the T3 pass on 2026-09-27: what the turn is doing is the live
 **Work group**'s to say, the watching state is the **Composer**'s pill, and the
 dials move into the model sheet.
 _Avoid_: status bar, status row (the timeline row it took over from), footer
+
+**Model sheet**:
+The one sheet behind the **Composer**'s model button ("✳ Opus 5.5 ⌄"): the
+models by name with each exact slug beside it, the effort levels the session's
+model offers, the six permission modes (Bypass and No ask below a rule, in the
+danger tone), and a quiet "Context N% used" line once a `/context` reading
+exists. A popover above the box on a desktop, a bottom sheet on a phone. A
+model or effort pick drives the CLI's own picker; a mode pick asks the server
+to walk Shift+Tab to it. The button carries a small red shield in Bypass and No
+ask, and is held while a dialog is on the pane.
+_Avoid_: settings sheet, model picker (the new-session dial's list)
 
 **Dial**:
 A labelled control on the **status line** that shows one setting and opens the
@@ -989,7 +1000,7 @@ where the question card docks: "Claude's plan is ready", the plan from the
 transcript, and the approve rows with the numbers and labels the pane draws.
 It draws no **feedback row**: while it is up the composer is that row, so Send
 sends the field's text back as feedback and the card's "Approve with this
-feedback" approves with it, and the mode and model **dials** are held. It has
+feedback" approves with it, and the **Model sheet**'s button is held. It has
 no Reject button and no digit shortcuts, since option 1 can clear context.
 _Avoid_: plan dialog (the CLI's own, in the pane), approval card
 

@@ -12,16 +12,18 @@
  * Shift+Tab, and a reading holds only until the transcript reports a mode of
  * its own.
  *
- * Since the Quiet line composer (2026-09-24) a click on the dial opens a list
- * of modes instead of stepping one, and a pick is one request: the server walks
+ * Since the Quiet line composer (2026-09-24) a click opens a list of modes
+ * instead of stepping one, and a pick is one request: the server walks
  * Shift+Tab to the mode and replies with the mode it read (wire contract 1).
  * That reply is a pane reading like any other, and is shown the same way.
+ * Since the T3 pass (2026-09-27) the list is the Mode section of the model
+ * sheet, and the model button carries the mode in force as `data-mode`.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { TextView } from "../src/components/TextView";
 import type { SetModeResult } from "../src/lib/mode-api";
-import type { ModeId } from "../src/logic/modes";
+import { modeTitle, type ModeId } from "../src/logic/modes";
 import type { PendingPermission } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 
@@ -70,16 +72,20 @@ function mount(opts: {
       }}
     />
   ));
-  const dial = () => r.container.querySelector<HTMLButtonElement>('.tl-dial[data-dial="mode"]');
+  const dial = () => r.container.querySelector<HTMLButtonElement>(".tl-model-btn");
   return {
     ...r,
     dial,
-    shown: () => dial()?.querySelector(".tl-dial-value")?.textContent,
+    /** The mode the model button carries, by the sheet's name for it. */
+    shown: () => {
+      const m = dial()?.getAttribute("data-mode");
+      return m ? modeTitle(m) : undefined;
+    },
     field: () => r.container.querySelector<HTMLTextAreaElement>("textarea")!,
     pick: (name: string) => {
       fireEvent.click(dial()!);
-      const row = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-pick-row")).find(
-        (b) => b.querySelector(".tl-pick-name")?.textContent === name,
+      const row = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
+        (b) => b.querySelector(".tl-ms-name")?.textContent === name,
       )!;
       fireEvent.click(row);
     },
@@ -87,7 +93,7 @@ function mount(opts: {
   };
 }
 
-describe("<TextView>: the mode dial shows the live mode", () => {
+describe("<TextView>: the model button carries the live mode", () => {
   it("shows what the PANE says, not what the transcript remembers", async () => {
     // The exact reported shape: the transcript's last record is stale bypass,
     // the session is really in auto.
@@ -167,8 +173,8 @@ describe("<TextView>: the mode dial shows the live mode", () => {
     await waitFor(() => expect(again.shown()).toBe("Plan"));
   });
 
-  it("shows no dial at all when neither source knows", async () => {
-    // Better an absent dial than a confident wrong one: this is a claim about
+  it("shows no button at all when neither source knows", async () => {
+    // Better an absent button than a confident wrong one: this is a claim about
     // what the session will do with the next tool call.
     const v = mount({ events: [], panes: [pane("  ready")] });
     await new Promise((r) => setTimeout(r, 900));
@@ -202,8 +208,8 @@ describe("<TextView>: a pick the server would not complete", () => {
     expect(v.shown()).toBe("Manual");
     // And the list remembers, so the row says so the next time it opens.
     fireEvent.click(v.dial()!);
-    const auto = Array.from(v.container.querySelectorAll<HTMLButtonElement>(".tl-pick-row")).find(
-      (b) => b.querySelector(".tl-pick-name")?.textContent === "Auto",
+    const auto = Array.from(v.container.querySelectorAll<HTMLButtonElement>(".tl-ms-mode")).find(
+      (b) => b.querySelector(".tl-ms-name")?.textContent === "Auto",
     )!;
     expect(auto.getAttribute("aria-disabled")).toBe("true");
   });
@@ -321,7 +327,7 @@ describe("<TextView>: a pick the server would not complete", () => {
  * Shift+Tab inside the plan approval dialog approves the plan with whatever
  * was typed into its feedback row (measured on CLI 2.1.281, memory #13896).
  * What it does in a question or a permission dialog was not measured, so the
- * dial is held and Shift+Tab withheld for every dialog.
+ * model button is held and Shift+Tab withheld for every dialog.
  */
 describe("<TextView>: the mode is held while a dialog is up", () => {
   const plan: Event[] = [
@@ -356,29 +362,32 @@ describe("<TextView>: the mode is held while a dialog is up", () => {
     ["the plan dialog", plan, [] as PendingPermission[]],
     ["a question", question, [] as PendingPermission[]],
     ["a permission", [] as Event[], permission],
-  ])("holds the dial and ignores Shift+Tab while %s is up", async (_what, events, pending) => {
-    const onKeys = vi.fn(async () => true);
-    const onSetMode = vi.fn(
-      async (): Promise<SetModeResult> => ({
-        ok: true,
-        reply: { applied: true, mode: "plan", presses: 1 },
-      }),
-    );
-    const v = mount({
-      events: [modeEvent("manual"), ...events],
-      panes: [pane(STATUS.manual)],
-      onKeys,
-      onSetMode,
-      pending,
-    });
-    await waitFor(() => expect(v.shown()).toBe("Manual"));
-    expect(v.dial()!.getAttribute("aria-disabled")).toBe("true");
-    expect(v.dial()!.getAttribute("title")).toMatch(/Answer Claude first/);
-    fireEvent.click(v.dial()!);
-    expect(v.container.querySelector(".tl-dial-pop")).toBeNull();
-    fireEvent.keyDown(v.field(), { key: "Tab", shiftKey: true });
-    await new Promise((r) => setTimeout(r, 0));
-    expect(onKeys).not.toHaveBeenCalled();
-    expect(onSetMode).not.toHaveBeenCalled();
-  });
+  ])(
+    "holds the model button and ignores Shift+Tab while %s is up",
+    async (_what, events, pending) => {
+      const onKeys = vi.fn(async () => true);
+      const onSetMode = vi.fn(
+        async (): Promise<SetModeResult> => ({
+          ok: true,
+          reply: { applied: true, mode: "plan", presses: 1 },
+        }),
+      );
+      const v = mount({
+        events: [modeEvent("manual"), ...events],
+        panes: [pane(STATUS.manual)],
+        onKeys,
+        onSetMode,
+        pending,
+      });
+      await waitFor(() => expect(v.shown()).toBe("Manual"));
+      expect(v.dial()!.getAttribute("aria-disabled")).toBe("true");
+      expect(v.dial()!.getAttribute("title")).toMatch(/Answer Claude first/);
+      fireEvent.click(v.dial()!);
+      expect(v.container.querySelector(".tl-ms-pop")).toBeNull();
+      fireEvent.keyDown(v.field(), { key: "Tab", shiftKey: true });
+      await new Promise((r) => setTimeout(r, 0));
+      expect(onKeys).not.toHaveBeenCalled();
+      expect(onSetMode).not.toHaveBeenCalled();
+    },
+  );
 });

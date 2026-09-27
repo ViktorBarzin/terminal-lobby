@@ -1,7 +1,7 @@
 import type { ContextReading, Event, SessionState } from "../types/events";
 
 /**
- * The context dial's data.
+ * The context line's data, in the model sheet.
  *
  * The reading itself comes from the CLI: `/context` writes its own markdown into
  * the transcript and the normalizer turns it into a `meta` event carrying the
@@ -87,14 +87,13 @@ export function readingAge(turnsAgo: number): string {
 }
 
 /**
- * The breakdown rows worth showing, largest first.
- *
- * "Free space" is dropped: it is the inverse of the meter, so it would always be
- * the biggest row and would say nothing the dial has not already said.
+ * What the model sheet's context line says on hover: the numbers behind the
+ * percentage and how old the reading is, since nothing refreshes it.
  */
-export function breakdown(r: ContextReading): ContextReading["categories"] {
-  const cats = (r.categories ?? []).filter(
-    (c) => c.name.toLowerCase() !== "free space" && c.tokens > 0,
+export function contextSummary(c: ContextState): string {
+  const r = c.reading;
+  return (
+    `${formatTokens(r.usedTokens)} of ${formatTokens(r.maxTokens)} tokens` +
+    `${r.model ? ` on ${r.model}` : ""}, read ${readingAge(c.turnsAgo)}`
   );
-  return [...cats].sort((a, b) => b.tokens - a.tokens);
 }

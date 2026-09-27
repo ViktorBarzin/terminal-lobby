@@ -1,7 +1,8 @@
-import { createSignal, For, onCleanup, onMount, Show, type Component, type JSX } from "solid-js";
+import { createSignal, For, Show, type Component, type JSX } from "solid-js";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
 import { ChevronsIcon, CloseIcon, LockIcon } from "./Icons";
+import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
 
 /**
  * The labelled dials on the composer's thin line, and the floats they open.
@@ -23,9 +24,8 @@ import { ChevronsIcon, CloseIcon, LockIcon } from "./Icons";
  *
  * ONE FLOAT AT A TIME. Pressing another dial moves the float to it, a press
  * anywhere outside closes it, and so does Escape, which also hands focus back
- * to the dial. The dismissal is written here rather than borrowed from
- * `createDismissableMenu`, whose Escape closes without saying so and so cannot
- * give the focus back, and which holds one menu rather than several dials.
+ * to the dial (overlay.ts `dismissFloat`, shared with the + tray and the
+ * model sheet).
  */
 
 /** One dial: what it shows, and the list behind it. */
@@ -71,82 +71,9 @@ export interface DialSpec {
   panel: (ctx: { close: () => void; sheet: boolean }) => JSX.Element;
 }
 
-/**
- * Close a float on a press outside it, and on Escape.
- *
- * Capturing, on the document, for the same reasons the sidebar's menus do
- * (components/menu.ts): a press that lands on a control with a handler of its
- * own still has to reach this first, and Escape must not also reach whatever
- * sits under the float. Shared with the + tray, which is the other float the
- * composer opens.
- */
-export function dismissFloat(o: {
-  open: () => boolean;
-  inside: (t: Node) => boolean;
-  close: (why: "escape" | "outside") => void;
-}): void {
-  const onDown = (e: Event): void => {
-    if (!o.open()) return;
-    const t = e.target as Node | null;
-    if (t && o.inside(t)) return;
-    o.close("outside");
-  };
-  const onKey = (e: KeyboardEvent): void => {
-    if (!o.open() || e.key !== "Escape") return;
-    e.preventDefault();
-    e.stopPropagation();
-    o.close("escape");
-  };
-  onMount(() => {
-    document.addEventListener("pointerdown", onDown, true);
-    document.addEventListener("keydown", onKey, true);
-  });
-  onCleanup(() => {
-    document.removeEventListener("pointerdown", onDown, true);
-    document.removeEventListener("keydown", onKey, true);
-  });
-}
-
 /** The rows the arrow keys walk: list rows, and the effort control's buttons. */
-const NAV = ".tl-pick-row, .tl-effort-seg button";
-
-const usable = (el: HTMLElement): boolean =>
-  el.getAttribute("aria-disabled") !== "true" && !(el as HTMLButtonElement).disabled;
-
-/**
- * ↑ and ↓ walk a list's rows, ← and → walk the effort control. Into and out of
- * the effort control the vertical walk stops only on its chosen button, so it
- * reads as one stop in the list, the way a radio group does.
- */
-function walkRows(e: KeyboardEvent): void {
-  const vertical = e.key === "ArrowDown" || e.key === "ArrowUp";
-  const horizontal = e.key === "ArrowLeft" || e.key === "ArrowRight";
-  if (!vertical && !horizontal) return;
-  const box = e.currentTarget as HTMLElement;
-  const from = e.target as HTMLElement;
-  const seg = from.closest<HTMLElement>(".tl-effort-seg");
-  if (horizontal && !seg) return;
-  const scope = horizontal ? seg! : box;
-  let items = Array.from(scope.querySelectorAll<HTMLElement>(NAV)).filter(usable);
-  if (vertical) {
-    items = items.filter(
-      (b) =>
-        !b.closest(".tl-effort-seg") || b.getAttribute("aria-checked") === "true" || b === from,
-    );
-  }
-  const i = items.indexOf(from);
-  if (i < 0) return;
-  e.preventDefault();
-  const step = e.key === "ArrowDown" || e.key === "ArrowRight" ? 1 : -1;
-  items[(i + step + items.length) % items.length]!.focus();
-}
-
-/** The chosen row in a list, or its first usable row. */
-function focusChosen(box: HTMLElement | undefined): void {
-  if (!box) return;
-  const rows = Array.from(box.querySelectorAll<HTMLElement>(NAV)).filter(usable);
-  (rows.find((r) => r.getAttribute("aria-checked") === "true") ?? rows[0])?.focus();
-}
+const NAV: RowNav = { row: ".tl-pick-row", seg: ".tl-effort-seg" };
+const walkRows = (e: KeyboardEvent): void => walkNav(e, NAV);
 
 export const DialBar: Component<{
   dials: DialSpec[];
@@ -188,7 +115,7 @@ export const DialBar: Component<{
     // the focus then, or the arrows would have nothing to walk. A pointer
     // leaves the focus where it was, as a menu does. Solid has inserted the
     // popover by the time the setter above returns.
-    if (!phone && e.detail === 0) focusChosen(popEl);
+    if (!phone && e.detail === 0) focusChosen(popEl, NAV);
   };
 
   /**

@@ -6,6 +6,7 @@ import {
   chipName,
   DEFAULT_CHOICE,
   effortsFor,
+  effortsForModel,
   fieldHeading,
   isEffortFor,
   isOneSessionEffort,
@@ -470,5 +471,78 @@ describe("pi as a harness", () => {
       effort: "high",
     });
     expect(modelRequest("pi", { model: "default", effort: "default" })).toBeNull();
+  });
+});
+
+/**
+ * The efforts each model offers, which is what the model sheet's Effort row
+ * draws.
+ *
+ * Read from the Claude Code 2.1.283 binary's own model catalogue on
+ * 2026-09-27 (memory #14201): each entry's capabilities gate effort at all,
+ * and xhigh and max on top. The prototype guessed Sonnet had no xhigh; the
+ * binary says it does.
+ */
+describe("the efforts a model offers", () => {
+  const ids = (h: ModelHarness, model: string | undefined, pi?: { levels?: string[] }) =>
+    effortsForModel(h, model, pi).map((o) => o.id);
+  const FIVE = ["low", "medium", "high", "xhigh", "max"];
+
+  it("gives Opus 5.5 its five rungs", () => {
+    expect(ids("claude", "claude-opus-5-5")).toEqual(FIVE);
+  });
+
+  it("gives Sonnet 5 the same five, xhigh included", () => {
+    expect(ids("claude", "claude-sonnet-5")).toContain("xhigh");
+    expect(ids("claude", "claude-sonnet-5")).toEqual(FIVE);
+  });
+
+  it("gives every other Claude row low to max", () => {
+    for (const m of ["claude-opus-5", "claude-opus-5[1m]", "claude-opus-4-8"]) {
+      expect(ids("claude", m), m).toEqual(FIVE);
+    }
+  });
+
+  it("gives Haiku 4.5 none, because it has no effort setting at all", () => {
+    expect(ids("claude", "claude-haiku-4-5-20251001")).toEqual([]);
+  });
+
+  // A receipt names the family before the next turn names the slug; the
+  // family's first row is what it means everywhere else (isCurrentModel).
+  it("reads a bare family word as that family's first row", () => {
+    expect(ids("claude", "opus")).toEqual(FIVE);
+    expect(ids("claude", "haiku")).toEqual([]);
+  });
+
+  it("falls back to the harness's whole list for a slug it does not know, or none yet", () => {
+    const all = effortsFor("claude")
+      .map((o) => o.id)
+      .filter((id) => id !== DEFAULT_CHOICE);
+    expect(ids("claude", "claude-something-9")).toEqual(all);
+    expect(ids("claude", undefined)).toEqual(all);
+  });
+
+  it("never offers the default, which only a session not yet started can mean", () => {
+    expect(ids("claude", "claude-opus-5-5")).not.toContain(DEFAULT_CHOICE);
+    expect(ids("codex", "gpt-5.5")).not.toContain(DEFAULT_CHOICE);
+  });
+
+  it("keeps codex's own catalogue, which has no per-model data", () => {
+    expect(ids("codex", "gpt-5.6-terra")).toEqual([
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max",
+      "ultra",
+    ]);
+  });
+
+  it("keeps the levels a pi session stamped", () => {
+    expect(ids("pi", "anthropic/claude-opus-5", { levels: ["off", "low", "high"] })).toEqual([
+      "off",
+      "low",
+      "high",
+    ]);
   });
 });

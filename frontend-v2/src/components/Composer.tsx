@@ -1,42 +1,15 @@
-import {
-  createEffect,
-  createMemo,
-  createSignal,
-  onCleanup,
-  Show,
-  type Component,
-  type JSX,
-} from "solid-js";
+import { createEffect, createSignal, onCleanup, Show, type Component, type JSX } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
 import type { SlashCommand } from "../logic/compose.logic";
-import { isDangerMode, modeRow, modeTitle, type ModeId } from "../logic/modes";
+import { isDangerMode, type ModeId } from "../logic/modes";
 import type { DraftAttachment } from "../store/drafts";
-import {
-  contextTone,
-  formatTokens,
-  percentFull,
-  readingAge,
-  type ContextState,
-} from "./context.logic";
-import { ContextPanel } from "./ContextPanel";
+import type { ContextState } from "./context.logic";
 import { PromptField, type PromptFieldSinks } from "./PromptField";
-import { ModelPanel } from "./ModelPanel";
-import { DialBar, type DialSpec } from "./Dial";
-import { ModePanel } from "./ModePanel";
-import { ContextRing, ShieldIcon, WarnIcon } from "./Icons";
-import {
-  chipName,
-  labelFor,
-  modelName,
-  summarise,
-  type ModelField,
-  type ModelHarness,
-  type ModelState,
-  type PiOffer,
-} from "../lib/models";
+import { ModelSheet } from "./ModelSheet";
+import type { ModelField, ModelHarness, ModelState, PiOffer } from "../lib/models";
 
 /**
  * The LIVE session's composer, docked at the foot of the Text view: the
@@ -56,14 +29,15 @@ import {
  * The line's jobs moved: what the turn is doing went into the live work group
  * at the end of the conversation, the watching state into the pill, and the
  * dock's top edge (a sweep while working, a dashed danger rule) went with it.
- * Until the model sheet lands, the session's dials sit in the model button's
- * slot and background work is a quiet note beside them. Stop is a state of the
+ * Its three dials became the one model button in the box's row, whose sheet
+ * holds the model, the effort, the mode and the context (ModelSheet), and
+ * background work is a quiet note beside that button. Stop is a state of the
  * round button: it shows while Claude works and the field is empty, and only
  * when the transcript and the hook state agree that a turn runs.
  *
  * BYPASS AND NO ASK turn the surface's border the danger colour, with a ring
- * while it is focused, and change nothing else: the placeholder stays the
- * same one sentence in every mode.
+ * while it is focused, and put a small red shield on the model button. Nothing
+ * else changes: the placeholder stays the same one sentence in every mode.
  *
  * Sending goes through ONE route on every device: `onSend` (the session control
  * channel, session-events /prompt). It used to fork on `sendToTerminal` for a
@@ -151,23 +125,23 @@ export const Composer: Component<{
   sendToTerminal?: (bytes: string) => void;
   /** Prompts already sent in this session, oldest first (↑ recalls them). */
   history?: string[];
-  /** The permission mode in force, which the mode dial shows. */
+  /** The permission mode in force, which the model sheet ticks. */
   mode?: string;
   /** A mode change is in flight. */
   modeBusy?: boolean;
   /** Why the mode cannot change right now: a dialog is on the pane, where
-   *  Shift+Tab would type into it. The mode dial is held with this reason. */
+   *  Shift+Tab would type into it. The model button is held with this reason. */
   modeHeld?: string;
-  /** Why the model dial cannot act right now, for the same dialogs: the
+  /** Why the model cannot change right now, for the same dialogs: the
    *  picker is driven by typing `/model` into the pane. */
   modelHeld?: string;
   /** Modes the server has said this session does not offer. */
   modesUnavailable?: ReadonlySet<string>;
   /** Step the permission mode once, as Shift+Tab does in the CLI. */
   onCycleMode?: () => void;
-  /** Put the session in a mode picked from the dial's list. */
+  /** Put the session in a mode picked from the sheet's list. */
   onPickMode?: (mode: ModeId) => void;
-  /** The newest `/context` reading, shown as the context dial. */
+  /** The newest `/context` reading, the sheet's context line. */
   context?: ContextState;
   /** Which CLI this session runs, when it is one with a model to pick. Absent
    *  for a plain shell, and for a session whose tool nothing has reported. */
@@ -263,153 +237,16 @@ export const Composer: Component<{
     props.live || props.inertReason ? undefined : props.background;
   const danger = (): boolean => isDangerMode(props.mode ?? "");
 
-  // ---- the dials ------------------------------------------------------------
-  // Built once each and handed to the bar by reference, with every value read
-  // through an accessor, so a change of mode or model updates a dial in place
-  // rather than rebuilding it under the reader's focus.
-
-  /** Why the mode dial cannot act: watching, or a dialog on the pane. */
-  const modeHeld = (): string => props.inertReason || props.modeHeld || "";
-  const modeDial: DialSpec = {
-    id: "mode",
-    label: "mode",
-    tab: "Mode",
-    title: "Permission mode",
-    dataMode: () => props.mode,
-    tone: () => modeRow(props.mode ?? "")?.tone,
-    danger,
-    busy: () => props.modeBusy === true,
-    held: modeHeld,
-    value: () => (
-      <>
-        <span class="tl-dial-icon">
-          <Show when={danger()} fallback={<ShieldIcon />}>
-            <WarnIcon />
-          </Show>
-        </span>
-        <span class="tl-dial-value">{modeTitle(props.mode ?? "")}</span>
-      </>
-    ),
-    ariaLabel: () =>
-      `Permission mode: ${modeTitle(props.mode ?? "")}. ${modeHeld() || "Change it"}`,
-    hint: () => {
-      const row = modeRow(props.mode ?? "");
-      return (
-        `Permission mode: ${modeTitle(props.mode ?? "")}.` +
-        (row ? ` ${row.line}.` : "") +
-        " Shift+Tab in the message steps to the next one."
-      );
-    },
-    panel: (ctx) => (
-      <ModePanel
-        current={props.mode ?? ""}
-        unavailable={props.modesUnavailable}
-        held={modeHeld() || undefined}
-        onPick={(id) => {
-          // Picking the mode in force sends nothing: the walk would press no
-          // key, and saying so is the dial showing the mode it already shows.
-          if (id !== props.mode) props.onPickMode?.(id);
-          ctx.close();
-        }}
-      />
-    ),
-  };
-
-  /** Why the model dial cannot act: watching, or a dialog on the pane. */
-  const modelHeld = (): string => props.inertReason || props.modelHeld || "";
-  /** The model half and the effort half, or whichever is known. */
-  const modelWords = (): string => {
-    const h = props.harness ?? "claude";
-    const m = props.model?.model ? modelName(h, props.model.model) : "";
-    const e = props.model?.effort ? labelFor(h, "effort", props.model.effort) : "";
-    return [m, e].filter((s) => s !== "").join(" · ");
-  };
-  /** What the dial is called, in the harness's own words: pi's second
-   *  setting is "thinking" (lib/models.ts chipName). */
-  const modelTitle = (): string => chipName(props.harness ?? "claude");
-  const modelDial: DialSpec = {
-    id: "model",
-    label: "model",
-    tab: "Model",
-    // A getter, so the float's name follows the harness like the rest does.
-    get title() {
-      return modelTitle();
-    },
-    fold: 1,
-    busy: () => props.modelBusy === true,
-    held: modelHeld,
-    // A session that has not answered yet has said nothing about either, so
-    // the dial reads "Model" rather than inventing a value: the composer's
-    // stored preference is what the NEXT session starts on, which is a
-    // different question.
-    unknown: () => !props.modelBusy && modelWords() === "",
-    value: () => (
-      <span class="tl-dial-value">{props.modelBusy ? "Switching…" : modelWords() || "Model"}</span>
-    ),
-    ariaLabel: () =>
-      `${modelTitle()}: ${modelWords() || "not reported yet"}. ${modelHeld() || "Change them"}`,
-    // The exact slug, which the name on the dial shortens (lib/models.ts).
-    hint: () =>
-      summarise(props.model)
-        ? `${modelTitle()}: ${summarise(props.model)}`
-        : `${modelTitle()}. The session has not answered yet`,
-    panel: (ctx) => (
-      <ModelPanel
-        harness={props.harness ?? "claude"}
-        state={props.model}
-        busy={props.modelBusy === true}
-        // The phone's sheet reaches this panel by its tab, past the held dial.
-        inertReason={modelHeld() || undefined}
-        onPick={(field, id) => props.onPickModel?.(field, id)}
-        onDone={ctx.close}
-        {...(props.modelOffer ? { offer: props.modelOffer } : {})}
-      />
-    ),
-  };
-
-  const ctxDial: DialSpec = {
-    id: "ctx",
-    label: "context",
-    tab: "Context",
-    title: "Context window",
-    fold: 2,
-    readout: true,
-    tone: () => (props.context ? contextTone(props.context.reading) : undefined),
-    value: () => (
-      <>
-        <ContextRing percent={props.context ? percentFull(props.context.reading) : 0} />
-        <span class="tl-dial-value tl-dial-num">
-          {props.context ? percentFull(props.context.reading) : 0}%
-        </span>
-      </>
-    ),
-    ariaLabel: () =>
-      `Context window ${props.context ? percentFull(props.context.reading) : 0}% full. Show the breakdown`,
-    hint: () => {
-      const c = props.context;
-      if (!c) return "Context window";
-      const r = c.reading;
-      return (
-        `Context window ${percentFull(r)}% full: ${formatTokens(r.usedTokens)} of ` +
-        `${formatTokens(r.maxTokens)} tokens${r.model ? ` on ${r.model}` : ""}, read ${readingAge(c.turnsAgo)}`
-      );
-    },
-    panel: () => <Show when={props.context}>{(c) => <ContextPanel state={c()} />}</Show>,
-  };
-
   /**
-   * Which dials exist. The mode only once something has read one (a pane or a
-   * transcript that never named a mode, a codex pane for one, gets no dial
-   * rather than a confident wrong one), the model only for a CLI that has one
-   * to pick, the context only once a `/context` reading exists.
+   * Whether the model button has anything to open: a CLI with a model to pick,
+   * a mode something has read (a pane or a transcript that never named one, a
+   * codex pane for one, gets no Mode section rather than a confident wrong
+   * one), or a `/context` reading. A plain shell has none of the three.
    */
-  const dials = createMemo<DialSpec[]>(() => {
-    const out: DialSpec[] = [];
-    if (props.mode && (props.onPickMode || props.onCycleMode)) out.push(modeDial);
-    if (props.harness && props.onPickModel) out.push(modelDial);
-    if (props.context) out.push(ctxDial);
-    return out;
-  });
+  const hasSheet = (): boolean =>
+    (!!props.harness && !!props.onPickModel) ||
+    (!!props.mode && !!(props.onPickMode || props.onCycleMode)) ||
+    !!props.context;
 
   /**
    * Where Send goes. While the plan dialog is up, the text is feedback on the
@@ -436,11 +273,26 @@ export const Composer: Component<{
     return undefined;
   };
 
-  /** The model button's slot: the dials for now, and background work. */
+  /** The model button's slot: the button, and background work beside it. */
   const tools = (): JSX.Element => (
     <>
-      <Show when={dials().length > 0}>
-        <DialBar dials={dials()} sheetTitle="This session" />
+      <Show when={hasSheet()}>
+        <ModelSheet
+          {...(props.harness && props.onPickModel
+            ? { harness: props.harness, onPickModel: props.onPickModel }
+            : {})}
+          model={props.model}
+          modelBusy={props.modelBusy === true}
+          modelOffer={props.modelOffer}
+          mode={props.mode && (props.onPickMode || props.onCycleMode) ? props.mode : undefined}
+          modeBusy={props.modeBusy === true}
+          modesUnavailable={props.modesUnavailable}
+          onPickMode={props.onPickMode}
+          modeHeld={props.modeHeld}
+          modelHeld={props.modelHeld}
+          context={props.context}
+          inertReason={props.inertReason}
+        />
       </Show>
       <Show when={background()}>
         {(label) => (

@@ -132,7 +132,8 @@ function mount(
     q(".tl-timeline .tl-group-box[data-live] .tl-group-sum")?.textContent ?? null;
   const field = () => q<HTMLTextAreaElement>("textarea")!;
   const send = () => q<HTMLButtonElement>(".tl-send")!;
-  const dial = (id: string) => q<HTMLButtonElement>(`.tl-dial[data-dial="${id}"]`);
+  /** The model button, which holds the mode and the model alike. */
+  const dial = () => q<HTMLButtonElement>(".tl-model-btn");
   return {
     dial,
     ...r,
@@ -190,7 +191,7 @@ describe("when the plan card docks", () => {
     expect(answered.card()).toBeNull();
   });
 
-  it("holds the mode dial while the card is docked", async () => {
+  it("withholds Shift+Tab while the card is docked", async () => {
     // Shift+Tab on the feedback row approves the plan, so the field must not
     // send it while the card is up.
     const keys = vi.fn(async (_keys: string[]) => true);
@@ -478,11 +479,11 @@ describe("what Send does with the field while the card is docked", () => {
   });
 });
 
-describe("the dials while the card is docked", () => {
+describe("the model button while the card is docked", () => {
   const modeEvent = (id: number, mode: string): Event =>
     ev({ id, kind: "meta", meta: "permission-mode", body: mode });
 
-  it("holds the mode and model dials with the reason as the title, before the transcript has the call", async () => {
+  it("holds the model button with the reason as the title, before the transcript has the call", async () => {
     // The prompt opened a turn and nothing records the plan call yet, so only
     // the pane's reading says a dialog is up.
     const onSetModel = vi.fn(async () => ({
@@ -497,22 +498,18 @@ describe("the dials while the card is docked", () => {
       { harness: "claude", onSetModel },
     );
     await waitFor(() => expect(v.card()).not.toBeNull());
-    await waitFor(() => expect(v.dial("mode")).not.toBeNull());
-    expect(v.dial("mode")!.getAttribute("aria-disabled")).toBe("true");
-    expect(v.dial("mode")!.getAttribute("title")).toBe(
-      "Answer Claude first: a mode change now would type into the open dialog",
-    );
-    const model = v.dial("model")!;
+    await waitFor(() => expect(v.dial()?.getAttribute("data-mode")).toBe("default"));
+    const model = v.dial()!;
     expect(model.getAttribute("aria-disabled")).toBe("true");
     expect(model.getAttribute("title")).toBe(
       "Answer Claude first: a model change now would type into the open dialog",
     );
     fireEvent.click(model);
-    expect(v.container.querySelector(".tl-dial-pop")).toBeNull();
+    expect(v.container.querySelector(".tl-ms-pop")).toBeNull();
     expect(onSetModel).not.toHaveBeenCalled();
   });
 
-  it("frees both dials once the dialog has been answered", async () => {
+  it("frees the model button once the dialog has been answered", async () => {
     const v = mount(
       [modeEvent(1, "default"), prompt(2), planUse(3, "p1"), asking(4, PLAN_FIRST)],
       undefined,
@@ -526,8 +523,7 @@ describe("the dials while the card is docked", () => {
     await waitFor(() => expect(v.card()).not.toBeNull());
     v.setEvents([...v.events(), asking(5, ""), approved(6, "p1")]);
     await waitFor(() => expect(v.card()).toBeNull());
-    await waitFor(() => expect(v.dial("model")!.getAttribute("aria-disabled")).toBeNull());
-    expect(v.dial("mode")!.getAttribute("aria-disabled")).toBeNull();
+    await waitFor(() => expect(v.dial()!.getAttribute("aria-disabled")).toBeNull());
   });
 });
 

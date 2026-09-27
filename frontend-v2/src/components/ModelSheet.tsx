@@ -1,0 +1,488 @@
+import { createSignal, For, Show, type Component, type JSX } from "solid-js";
+import { Portal } from "solid-js/web";
+import { isCoarsePointer } from "../mobile/pointer";
+import { installDialogFocus, wrapTab } from "../lib/focus-trap";
+import { isDangerMode, MODES, modeId, modeTitle, type ModeId } from "../logic/modes";
+import {
+  chipName,
+  DEFAULT_CHOICE,
+  effortsForModel,
+  fieldHeading,
+  isCurrentModel,
+  isEffortFor,
+  labelFor,
+  modelName,
+  optionsFor,
+  summarise,
+  type ModelField,
+  type ModelHarness,
+  type ModelOption,
+  type ModelState,
+  type PiOffer,
+} from "../lib/models";
+import { contextSummary, contextTone, percentFull, type ContextState } from "./context.logic";
+import { CheckIcon, ChevronDownIcon, ShieldIcon, SparkleIcon } from "./Icons";
+import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
+
+/**
+ * The model button in the composer's box, and the one sheet it opens.
+ *
+ * THE T3 PASS (Viktor, 2026-09-27; docs/plans/2026-09-27-text-view-t3-pass.md).
+ * The Quiet line put three dials on a line above the field: mode, model with
+ * effort, and context. Viktor asked for "something closer to t3 code", so they
+ * became one button in the box's bottom row, "✳ Opus 5.5 ⌄", and one sheet
+ * behind it with four parts: the Model list, an Effort segmented control, the
+ * Mode list, and a quiet "Context N% used" line. With a fine pointer the sheet
+ * is a 360px popover above the box; with a coarse one it is a bottom sheet
+ * over a scrim, drawn at phone sizes (48px rows, 16px text).
+ *
+ * WHAT THE BUTTON SAYS. The model's name, which keeps the version and drops
+ * the rest of the slug (lib/models.ts `modelName`); the exact slug and the
+ * effort go in its title. "Model" until the session has reported one, and
+ * "Switching…" while a model change or a mode walk is being driven. Bypass and
+ * No ask add a small red shield in front of the sparkle; the box's border
+ * turning the danger colour is the other half of that signal (PromptField).
+ *
+ * WHAT A PICK DOES. A model or an effort goes to `onPickModel`, which drives
+ * the CLI's own picker (POST /model); a mode goes to `onPickMode`, which asks
+ * the server to walk Shift+Tab to it (POST /model with a mode). Both type into
+ * somebody's live pane, so a pick of what is already in force sends nothing,
+ * and every pick closes the sheet, the way the dials did on a live session.
+ *
+ * WHEN IT CANNOT ACT. A dialog on the pane holds the button: the picker and
+ * the walk both type keys, and a dialog would take them (on the plan
+ * approval's feedback row Shift+Tab approves the plan, memory #13896). A
+ * dialog that lands while the sheet is open holds every row instead. So does
+ * watching another device drive, and a change already in flight holds the rows
+ * it would race.
+ *
+ * WHICH EFFORTS. The levels the session's model offers (lib/models.ts
+ * `effortsForModel`, read from the CLI's own catalogue): five rungs on every
+ * Claude row but Haiku 4.5, which has one level and so no control. Codex keeps
+ * its catalogue and pi the levels its session stamped, under pi's own word,
+ * "Thinking". The level the session reports always shows, so a session on
+ * ultracode, which the row leaves out, still sees it ticked.
+ */
+
+/** The float's accessible name, on the popover and the bottom sheet alike. */
+const SHEET_NAME = "Model, effort and mode";
+
+/** What the arrow keys walk in the sheet. */
+const NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
+
+/** The tallest the popover gets, as the prototype draws it. */
+const POP_MAX = 620;
+
+export const ModelSheet: Component<{
+  /** Which CLI the session runs. Absent: no Model or Effort section. */
+  harness?: ModelHarness;
+  /** What the session reports being on; undefined until it has answered. */
+  model?: ModelState;
+  /** A model or effort change is being driven. */
+  modelBusy?: boolean;
+  /** Pi's rows: the models pi lists and the levels the session supports. */
+  modelOffer?: PiOffer;
+  onPickModel?: (field: ModelField, id: string) => void;
+  /** The permission mode in force. Empty or absent: no Mode section. */
+  mode?: string;
+  /** A mode walk is being driven. */
+  modeBusy?: boolean;
+  /** Modes the server has said this session does not offer. */
+  modesUnavailable?: ReadonlySet<string>;
+  onPickMode?: (mode: ModeId) => void;
+  /** Why the mode cannot change right now: a dialog is on the pane. */
+  modeHeld?: string;
+  /** Why the model cannot change right now, for the same dialogs. */
+  modelHeld?: string;
+  /** The newest `/context` reading, for the context line. */
+  context?: ContextState;
+  /** Watching: the sheet reads, and every row is inert. */
+  inertReason?: string;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  const [sheet, setSheet] = createSignal(false);
+  const [popMax, setPopMax] = createSignal(POP_MAX);
+  let root: HTMLSpanElement | undefined;
+  let btn: HTMLButtonElement | undefined;
+  let popEl: HTMLDivElement | undefined;
+  let layerEl: HTMLDivElement | undefined;
+
+  // ---- the button ------------------------------------------------------------
+  const danger = (): boolean => isDangerMode(props.mode ?? "");
+  const busy = (): boolean => props.modelBusy === true || props.modeBusy === true;
+  /** Why the button opens nothing: a dialog is on the pane. */
+  const held = (): string => props.modelHeld || props.modeHeld || "";
+  /** The model's name, or "" while the session has not said. */
+  const name = (): string =>
+    props.harness && props.model?.model ? modelName(props.harness, props.model.model) : "";
+  const label = (): string => {
+    if (busy()) return "Switching…";
+    if (props.harness) return name() || "Model";
+    return modeTitle(props.mode ?? "") || "Model";
+  };
+  /** The model and the effort by name, for the button's accessible name. */
+  const spoken = (): string => {
+    const h = props.harness;
+    if (!h) return "";
+    const e = props.model?.effort ? labelFor(h, "effort", props.model.effort) : "";
+    return [name(), e].filter((s) => s !== "").join(" · ");
+  };
+  const title = (): string => {
+    if (held()) return held();
+    const h = props.harness;
+    if (!h) return `Permission mode: ${modeTitle(props.mode ?? "")}`;
+    const exact = summarise(props.model);
+    return exact ? `${chipName(h)}: ${exact}` : `${chipName(h)}. The session has not answered yet`;
+  };
+  const ariaLabel = (): string => {
+    const parts: string[] = [];
+    if (props.harness) parts.push(`${chipName(props.harness)}: ${spoken() || "not reported yet"}.`);
+    if (props.mode) parts.push(`Permission mode: ${modeTitle(props.mode)}.`);
+    parts.push(held() || "Change them");
+    return parts.join(" ");
+  };
+
+  // ---- opening and closing ---------------------------------------------------
+  const close = (refocus: boolean): void => {
+    if (!open()) return;
+    setOpen(false);
+    if (refocus) btn?.focus();
+  };
+
+  dismissFloat({
+    open,
+    inside: (t) => !!(root?.contains(t) || layerEl?.contains(t)),
+    close: (why) => close(why === "escape"),
+  });
+
+  /**
+   * Cap the popover at the room above the box: in a workspace tile the pane
+   * above the composer can be shorter than the sheet's 620px.
+   */
+  const placePop = (): void => {
+    const pill = root?.closest(".tl-pill");
+    const view = root?.closest(".tl-textview");
+    if (!pill) return;
+    const room = pill.getBoundingClientRect().top - (view?.getBoundingClientRect().top ?? 0) - 16;
+    setPopMax(Math.min(POP_MAX, Math.max(160, room)));
+  };
+
+  const press = (e: MouseEvent): void => {
+    if (held() || busy()) return;
+    if (open()) {
+      close(false);
+      return;
+    }
+    const phone = isCoarsePointer();
+    setSheet(phone);
+    if (!phone) placePop();
+    setOpen(true);
+    // A keyboard activation is a click with no pointer detail. The list takes
+    // the focus then, or the arrows would have nothing to walk. A pointer
+    // leaves the focus where it was, as a menu does. The phone's sheet takes
+    // the focus itself (lib/focus-trap), which is what puts the keyboard away.
+    if (!phone && e.detail === 0) focusChosen(popEl, NAV);
+  };
+
+  // ---- the Model and Effort sections ------------------------------------------
+  const h = (): ModelHarness | undefined => props.harness;
+  /** Why no model or effort can be picked, or "" when one can. */
+  const modelLocked = (): boolean =>
+    !!props.inertReason || !!props.modelHeld || props.modelBusy === true;
+  const chosen = (field: ModelField, id: string): boolean => {
+    const hh = h();
+    if (!hh) return false;
+    return field === "model"
+      ? isCurrentModel(hh, id, props.model?.model)
+      : props.model?.effort === id;
+  };
+  const modelRows = (): readonly ModelOption[] => {
+    const hh = h();
+    return hh
+      ? optionsFor(hh, "model", props.modelOffer).filter((o) => o.id !== DEFAULT_CHOICE)
+      : [];
+  };
+  /** This model's levels, and the one the session is on if the row left it out. */
+  const effortRows = (): readonly ModelOption[] => {
+    const hh = h();
+    if (!hh) return [];
+    const rows = effortsForModel(hh, props.model?.model, props.modelOffer);
+    const cur = props.model?.effort;
+    if (rows.length === 0 || !cur || rows.some((o) => o.id === cur)) return rows;
+    return isEffortFor(hh, cur) && cur !== DEFAULT_CHOICE
+      ? [...rows, { id: cur, label: labelFor(hh, "effort", cur) }]
+      : rows;
+  };
+  const pickModel = (field: ModelField, id: string): void => {
+    if (modelLocked()) return;
+    if (!chosen(field, id)) props.onPickModel?.(field, id);
+    close(true);
+  };
+
+  // ---- the Mode section --------------------------------------------------------
+  const current = (): ModeId | undefined => modeId(props.mode ?? "");
+  /** Why no mode can be picked right now, said once under the list. */
+  const modeHold = (): string =>
+    props.inertReason ||
+    props.modeHeld ||
+    (props.modeBusy ? "A mode change is on its way to the session" : "");
+  /** Why this row cannot be picked, or "" when it can. */
+  const why = (id: ModeId): string => {
+    const hold = modeHold();
+    if (hold) return hold;
+    if (props.modesUnavailable?.has(id)) return "Not offered in this session";
+    // No ask is not a stop on Shift+Tab: a session can start in it, and the
+    // first press leaves it for good (CLI 2.1.281, memory #13911).
+    if (id === "dontAsk" && current() !== "dontAsk") {
+      return "Set when the session starts. Shift+Tab cannot reach it";
+    }
+    return "";
+  };
+  const pickMode = (id: ModeId): void => {
+    if (why(id)) return;
+    // The walk would press no key; the tick already says so.
+    if (id !== current()) props.onPickMode?.(id);
+    close(true);
+  };
+
+  /** The one line under the lists that says why nothing can be picked. */
+  const holdNote = (): string => props.inertReason || props.modelHeld || props.modeHeld || "";
+
+  const body = (): JSX.Element => (
+    <>
+      <Show when={h() && modelRows().length > 0}>
+        <div class="tl-ms-h" aria-hidden="true">
+          {fieldHeading(h()!, "model")}
+        </div>
+        <div role="radiogroup" aria-label="Model">
+          <For each={modelRows()}>
+            {(o) => (
+              <button
+                type="button"
+                role="radio"
+                class="tl-ms-row tl-ms-model"
+                data-value={o.id}
+                aria-checked={chosen("model", o.id)}
+                aria-disabled={modelLocked() ? "true" : undefined}
+                title={props.inertReason || o.id}
+                onClick={() => pickModel("model", o.id)}
+              >
+                <span class="tl-ms-lab">
+                  <SparkleIcon size={14} class="tl-ms-spark" />
+                  <span class="tl-ms-name">{modelName(h()!, o.id)}</span>
+                  {/* The exact slug, which Viktor asked to see (2026-09-06);
+                      codex and pi already name their rows by it. */}
+                  <Show when={modelName(h()!, o.id) !== o.id}>
+                    <small class="tl-ms-slug">{o.id}</small>
+                  </Show>
+                </span>
+                <span class="tl-ms-tick" aria-hidden="true">
+                  <Show when={chosen("model", o.id)}>
+                    <CheckIcon />
+                  </Show>
+                </span>
+              </button>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={h()}>
+        {(hh) => (
+          <>
+            <div class="tl-ms-h" aria-hidden="true">
+              {fieldHeading(hh(), "effort")}
+              <Show when={effortRows().length > 0}>
+                <span class="tl-ms-aside">how hard it thinks</span>
+              </Show>
+            </div>
+            <Show
+              when={effortRows().length > 0}
+              fallback={
+                <p class="tl-ms-none">
+                  {`${props.model?.model ? modelName(hh(), props.model.model) : "This model"} has one effort level.`}
+                </p>
+              }
+            >
+              <div class="tl-ms-seg" role="radiogroup" aria-label={fieldHeading(hh(), "effort")}>
+                <For each={effortRows()}>
+                  {(o) => (
+                    <button
+                      type="button"
+                      role="radio"
+                      data-value={o.id}
+                      aria-checked={chosen("effort", o.id)}
+                      aria-disabled={modelLocked() ? "true" : undefined}
+                      title={labelFor(hh(), "effort", o.id)}
+                      onClick={() => pickModel("effort", o.id)}
+                    >
+                      {o.id}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </Show>
+            {/* Codex's picker writes ~/.codex/config.toml and has no "this
+                session only" key, where Claude's does, so a change there also
+                moves what the next codex session starts on. */}
+            <Show when={hh() === "codex"}>
+              <p class="tl-ms-note">Also becomes codex's default for new sessions.</p>
+            </Show>
+          </>
+        )}
+      </Show>
+      <Show when={props.mode}>
+        <div class="tl-ms-h" aria-hidden="true">
+          Mode
+          <span class="tl-ms-aside">{modeTitle(props.mode ?? "")}</span>
+        </div>
+        <div role="radiogroup" aria-label="Permission mode">
+          <For each={MODES}>
+            {(m, i) => (
+              <>
+                <Show when={m.tone === "danger" && MODES[i() - 1]?.tone !== "danger"}>
+                  <div class="tl-ms-rule" aria-hidden="true" />
+                </Show>
+                <button
+                  type="button"
+                  role="radio"
+                  class="tl-ms-row tl-ms-mode"
+                  data-mode={m.id}
+                  data-danger={m.tone === "danger" ? "" : undefined}
+                  aria-checked={current() === m.id}
+                  aria-disabled={why(m.id) ? "true" : undefined}
+                  title={why(m.id) || undefined}
+                  onClick={() => pickMode(m.id)}
+                >
+                  <span class="tl-ms-lab">
+                    <Show when={m.tone === "danger"}>
+                      <ShieldIcon size={14} class="tl-ms-shield" />
+                    </Show>
+                    <span class="tl-ms-name">{m.label}</span>
+                  </span>
+                  {/* A row held for its own reason says it here, where a
+                      phone can read it; the hold on every row is said once,
+                      under the list. */}
+                  <span class="tl-ms-desc">
+                    {why(m.id) && why(m.id) !== modeHold() ? why(m.id) : m.line}
+                  </span>
+                  <span class="tl-ms-tick" aria-hidden="true">
+                    <Show when={current() === m.id}>
+                      <CheckIcon />
+                    </Show>
+                  </span>
+                </button>
+              </>
+            )}
+          </For>
+        </div>
+      </Show>
+      <Show when={holdNote()}>
+        <p class="tl-ms-note" data-kind="held">
+          {holdNote()}
+        </p>
+      </Show>
+      <Show when={props.context}>
+        {(c) => (
+          <div class="tl-ms-ctx" data-tone={contextTone(c().reading)} title={contextSummary(c())}>
+            <i style={{ "--p": `${percentFull(c().reading)}%` }} aria-hidden="true" />
+            Context {percentFull(c().reading)}% used
+          </div>
+        )}
+      </Show>
+    </>
+  );
+
+  return (
+    <span class="tl-ms" ref={root}>
+      <button
+        ref={btn}
+        type="button"
+        class="tl-model-btn"
+        data-mode={props.mode || undefined}
+        data-danger={danger() ? "" : undefined}
+        data-busy={busy() ? "" : undefined}
+        data-unknown={!busy() && !!props.harness && name() === "" ? "" : undefined}
+        aria-haspopup="dialog"
+        aria-expanded={open()}
+        aria-disabled={held() ? "true" : undefined}
+        aria-label={ariaLabel()}
+        title={title()}
+        onClick={press}
+      >
+        <Show when={danger()}>
+          <ShieldIcon size={14} class="tl-model-shield" />
+        </Show>
+        <SparkleIcon class="tl-model-spark" />
+        <span class="tl-model-name">{label()}</span>
+        <ChevronDownIcon class="tl-model-chev" />
+      </button>
+      <Show when={open() && !sheet()}>
+        <div
+          ref={popEl}
+          class="tl-ms-pop"
+          role="dialog"
+          aria-label={SHEET_NAME}
+          style={{ "max-height": `${popMax()}px` }}
+          onKeyDown={(e) => walkNav(e, NAV)}
+        >
+          {body()}
+        </div>
+      </Show>
+      <Show when={open() && sheet()}>
+        <Portal>
+          <BottomSheet ref={(el) => (layerEl = el)} onClose={() => close(false)}>
+            {body()}
+          </BottomSheet>
+        </Portal>
+      </Show>
+    </span>
+  );
+};
+
+/**
+ * The phone's sheet: a scrim and a sheet rising from the bottom edge.
+ *
+ * Rendered into the document's body. The composer's surface blurs what is
+ * behind it (`backdrop-filter`), which makes it the containing block of any
+ * fixed descendant, so a sheet drawn inside it would be pinned to the box
+ * rather than to the screen.
+ *
+ * Modal while it is up. It takes the focus, which also puts the phone's
+ * keyboard away when the message field had it; Tab cannot walk out behind the
+ * scrim; closing hands the focus back to whatever held it (lib/focus-trap).
+ */
+const BottomSheet: Component<{
+  ref: (el: HTMLDivElement) => void;
+  onClose: () => void;
+  children: JSX.Element;
+}> = (props) => {
+  let sheetEl: HTMLDivElement | undefined;
+  installDialogFocus(() => sheetEl);
+  const onKeyDown = (e: KeyboardEvent): void => {
+    if (e.key === "Tab" && sheetEl) wrapTab(e, sheetEl);
+    else walkNav(e, NAV);
+  };
+  return (
+    <div class="tl-ms-layer" ref={props.ref}>
+      <button
+        type="button"
+        class="tl-ms-scrim"
+        aria-label="Close"
+        tabindex={-1}
+        onClick={() => props.onClose()}
+      />
+      <div
+        class="tl-ms-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-label={SHEET_NAME}
+        tabindex={-1}
+        ref={sheetEl}
+        onKeyDown={onKeyDown}
+      >
+        <div class="tl-ms-grab" aria-hidden="true" />
+        {props.children}
+      </div>
+    </div>
+  );
+};

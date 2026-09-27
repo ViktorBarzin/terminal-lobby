@@ -88,7 +88,8 @@ describe("the composer's affordances", () => {
   });
 
   // A click on the chip stepped the mode until the Quiet line composer. The
-  // dial opens the list instead, and Shift+Tab in the field is what steps.
+  // model button opens the sheet with the mode list instead (the T3 pass),
+  // and Shift+Tab in the field is what steps.
   it("steps the mode on Shift+Tab, and opens the list on a click", () => {
     const onCycleMode = vi.fn();
     const { container } = render(() => (
@@ -104,10 +105,10 @@ describe("the composer's affordances", () => {
     ));
     fireEvent.keyDown(field(container), { key: "Tab", shiftKey: true });
     expect(onCycleMode).toHaveBeenCalledTimes(1);
-    const dial = container.querySelector<HTMLButtonElement>('.tl-dial[data-dial="mode"]')!;
-    expect(dial.querySelector(".tl-dial-value")?.textContent).toBe("Bypass");
-    fireEvent.click(dial);
-    expect(container.querySelector(".tl-dial-pop-mode")).not.toBeNull();
+    const button = container.querySelector<HTMLButtonElement>(".tl-model-btn")!;
+    expect(button.getAttribute("data-mode")).toBe("bypassPermissions");
+    fireEvent.click(button);
+    expect(container.querySelector(".tl-ms-pop .tl-ms-mode")).not.toBeNull();
     expect(onCycleMode).toHaveBeenCalledTimes(1);
   });
 });

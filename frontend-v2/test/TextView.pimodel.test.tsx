@@ -1,5 +1,5 @@
 /**
- * A pi session's model dial reads what the session STAMPED.
+ * A pi session's model button reads what the session STAMPED.
  *
  * Claude's dial reads its model off the transcript and codex's off its pane.
  * Pi has neither: the lobby's pi extension stamps the model, the thinking level
@@ -39,23 +39,26 @@ function mount(o: { stamp: ModelState | undefined; offer?: PiOffer; reply?: SetM
       modelOffer={o.offer ?? { models: [OPUS, MINI] }}
     />
   ));
-  const dial = () => r.container.querySelector<HTMLButtonElement>('.tl-dial[data-dial="model"]');
-  /** What the dial shows. */
-  const shown = () => dial()?.querySelector(".tl-dial-value")?.textContent;
+  const dial = () => r.container.querySelector<HTMLButtonElement>(".tl-model-btn");
+  /** What the model button shows: the model's name. */
+  const shown = () => dial()?.querySelector(".tl-model-name")?.textContent;
+  /** The exact model and level, which the button's title carries. */
+  const exact = () => dial()?.getAttribute("title");
   const pick = (name: string) => {
     fireEvent.click(dial()!);
-    const b = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-pick-model")).find(
-      (x) => x.querySelector(".tl-pick-name")?.textContent === name,
+    const b = Array.from(r.container.querySelectorAll<HTMLButtonElement>(".tl-ms-model")).find(
+      (x) => x.querySelector(".tl-ms-name")?.textContent === name,
     );
     fireEvent.click(b!);
   };
-  return { ...r, shown, pick, setStamp, onSetModel };
+  return { ...r, shown, exact, pick, setStamp, onSetModel };
 }
 
-describe("<TextView> — a pi session's model dial", () => {
+describe("<TextView> — a pi session's model button", () => {
   it("starts from what the session stamped, having no transcript to read", () => {
     const v = mount({ stamp: { model: OPUS, effort: "high" } });
-    expect(v.shown()).toBe(`${OPUS} · High`);
+    expect(v.shown()).toBe(OPUS);
+    expect(v.exact()).toBe(`Model and thinking: ${OPUS} · high`);
   });
 
   it("says it does not know yet when nothing has been stamped", () => {
@@ -70,7 +73,7 @@ describe("<TextView> — a pi session's model dial", () => {
     });
     v.pick(MINI);
     expect(v.onSetModel).toHaveBeenCalledWith({ model: MINI, effort: "" });
-    await waitFor(() => expect(v.shown()).toBe(`${MINI} · High`));
+    await waitFor(() => expect(v.shown()).toBe(MINI));
   });
 
   // The reply is a reading taken right after the change. The stamp is the
@@ -81,13 +84,13 @@ describe("<TextView> — a pi session's model dial", () => {
       reply: { ok: true, state: { model: MINI, effort: "high" } },
     });
     v.pick(MINI);
-    await waitFor(() => expect(v.shown()).toBe(`${MINI} · High`));
+    await waitFor(() => expect(v.exact()).toBe(`Model and thinking: ${MINI} · high`));
     v.setStamp({ model: MINI, effort: "low" });
-    await waitFor(() => expect(v.shown()).toBe(`${MINI} · Low`));
+    await waitFor(() => expect(v.exact()).toBe(`Model and thinking: ${MINI} · low`));
   });
 
   // A pick the session did not take is said out loud, as it is for Claude:
-  // the dial must not show a model the session is not on.
+  // the button must not show a model the session is not on.
   it("keeps showing what the session is on when a pick did not take", async () => {
     const v = mount({
       stamp: { model: OPUS, effort: "high" },
@@ -95,8 +98,8 @@ describe("<TextView> — a pi session's model dial", () => {
     });
     v.pick(MINI);
     await waitFor(() => expect(v.onSetModel).toHaveBeenCalled());
-    // The dial reads "Switching…" while the change is driven, so this waits
-    // for the reply rather than reading the dial mid-switch.
-    await waitFor(() => expect(v.shown()).toBe(`${OPUS} · High`));
+    // The button reads "Switching…" while the change is driven, so this waits
+    // for the reply rather than reading the button mid-switch.
+    await waitFor(() => expect(v.shown()).toBe(OPUS));
   });
 });

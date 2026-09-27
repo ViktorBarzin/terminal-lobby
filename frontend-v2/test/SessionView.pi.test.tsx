@@ -4,7 +4,7 @@ import { SessionView } from "../src/components/SessionView";
 import { resetPiModels } from "../src/lib/pi-models";
 
 /**
- * A pi session's model dial, wired end to end through the session view: the
+ * A pi session's model button, wired end to end through the session view: the
  * reading comes from what the session list carries for it, the rows from
  * GET /pi-models and the session's stamped levels, and a pick goes out as
  * POST /model/{session} naming pi.
@@ -57,19 +57,19 @@ function serve(): Call[] {
   return calls;
 }
 
-const dial = (c: HTMLElement) => c.querySelector<HTMLButtonElement>('.tl-dial[data-dial="model"]');
-/** What the dial shows. */
-const shown = (c: HTMLElement) => dial(c)?.querySelector(".tl-dial-value")?.textContent;
+const dial = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-model-btn");
+/** The exact model and level, which the model button's title carries. */
+const shown = (c: HTMLElement) => dial(c)?.getAttribute("title");
 const modelRows = (c: HTMLElement) =>
-  Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-pick-model"));
+  Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-ms-model"));
 const labels = (c: HTMLElement) => [
-  ...modelRows(c).map((b) => b.querySelector(".tl-pick-name")?.textContent ?? ""),
-  ...Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-effort-seg button")).map(
+  ...modelRows(c).map((b) => b.querySelector(".tl-ms-name")?.textContent ?? ""),
+  ...Array.from(c.querySelectorAll<HTMLButtonElement>(".tl-ms-seg button")).map(
     (b) => b.textContent ?? "",
   ),
 ];
 
-describe("<SessionView> — a pi session's model dial", () => {
+describe("<SessionView> — a pi session's model button", () => {
   let origES: unknown;
   beforeEach(() => {
     resetPiModels();
@@ -100,13 +100,13 @@ describe("<SessionView> — a pi session's model dial", () => {
         piStamp={() => ({ piModel: OPUS, piThinking: "high", piLevels: "off,low,medium,high" })}
       />
     ));
-    await waitFor(() => expect(shown(container)).toBe(`${OPUS} · High`));
+    await waitFor(() => expect(shown(container)).toBe(`Model and thinking: ${OPUS} · high`));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/pi-models"))).toBe(true));
 
     fireEvent.click(dial(container)!);
     // The open list follows the list, so rows arrive when the read lands.
     await waitFor(() =>
-      expect(labels(container)).toEqual([OPUS, MINI, "Off", "Low", "Medium", "High"]),
+      expect(labels(container)).toEqual([OPUS, MINI, "off", "low", "medium", "high"]),
     );
 
     const mini = modelRows(container).find((b) => b.textContent?.includes(MINI))!;
@@ -115,7 +115,7 @@ describe("<SessionView> — a pi session's model dial", () => {
     const post = calls.find((c) => c.url.includes("/model/qa-pi"))!;
     expect(post.method).toBe("POST");
     expect(post.body).toEqual({ tool: "pi", model: MINI, effort: "", awaitReady: false });
-    await waitFor(() => expect(shown(container)).toBe(`${MINI} · High`));
+    await waitFor(() => expect(shown(container)).toBe(`Model and thinking: ${MINI} · high`));
   });
 
   // Each read of the list costs the server a login shell running pi.

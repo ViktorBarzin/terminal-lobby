@@ -180,12 +180,28 @@ export const ShieldIcon: Component<{ size?: number; class?: string }> = (props) 
   </Glyph>
 );
 
-/** A mode that asks about nothing: the warning triangle. */
-export const WarnIcon: Component<{ size?: number; class?: string }> = (props) => (
-  <Glyph box="0 0 16 16" size={props.size ?? 12} width={1.7} class={props.class}>
-    <path d="M8 2.2 14.3 13.4H1.7L8 2.2Z" />
-    <path d="M8 6.6v3.2" stroke-width="1.8" />
-    <circle cx="8" cy="11.6" r=".5" fill="currentColor" stroke-width="1.2" />
+/**
+ * Claude's sparkle, on the model button and each row of the model sheet. The
+ * one filled glyph here: it is a mark rather than a line drawing, coloured by
+ * the theme's `--sparkle`.
+ */
+export const SparkleIcon: Component<{ size?: number; class?: string }> = (props) => (
+  <svg
+    class={props.class}
+    width={props.size ?? 15}
+    height={props.size ?? 15}
+    viewBox="0 0 16 16"
+    fill="currentColor"
+    aria-hidden="true"
+  >
+    <path d="M8 .8l.9 5.2 3.9-3.6-2.4 4.7 5.2.9-5.2.9 2.4 4.7-3.9-3.6L8 15.2 7.1 10l-3.9 3.6L5.6 9 .4 8l5.2-.9L3.2 2.4 7.1 6z" />
+  </svg>
+);
+
+/** The single chevron that says the model button opens a sheet. */
+export const ChevronDownIcon: Component<{ class?: string }> = (props) => (
+  <Glyph box="0 0 12 12" size={11} class={props.class}>
+    <path d="m2.8 4.6 3.2 3.2 3.2-3.2" />
   </Glyph>
 );
 
@@ -233,37 +249,3 @@ export const CloseIcon: Component = () => (
     <path d="m4 4 8 8M12 4l-8 8" />
   </Glyph>
 );
-
-/**
- * How full the context window is, as a ring. The track is the same colour at
- * 28%, so the ring reads on every theme without a second token.
- */
-export const ContextRing: Component<{ percent: number }> = (props) => {
-  const r = 5;
-  const c = 2 * Math.PI * r;
-  const dash = () => (c * Math.max(0, Math.min(100, props.percent))) / 100;
-  return (
-    <svg class="tl-dial-ring" width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
-      <circle
-        cx="7"
-        cy="7"
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        stroke-opacity=".28"
-        stroke-width="2.2"
-      />
-      <circle
-        cx="7"
-        cy="7"
-        r={r}
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2.2"
-        stroke-linecap="round"
-        stroke-dasharray={`${dash().toFixed(2)} ${c.toFixed(2)}`}
-        transform="rotate(-90 7 7)"
-      />
-    </svg>
-  );
-};

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  breakdown,
   contextState,
+  contextSummary,
   contextTone,
   formatTokens,
   percentFull,
@@ -90,7 +90,9 @@ describe("percentFull", () => {
   });
 
   it("falls back to the ratio when the CLI published no percentage", () => {
-    expect(percentFull(reading({ percent: 0, usedTokens: 500_000, maxTokens: 1_000_000 }))).toBe(50);
+    expect(percentFull(reading({ percent: 0, usedTokens: 500_000, maxTokens: 1_000_000 }))).toBe(
+      50,
+    );
   });
 
   // A session that has begun is never shown as 0% — that reads as "no session".
@@ -127,27 +129,21 @@ describe("readingAge", () => {
   });
 });
 
-describe("breakdown", () => {
-  it("drops Free space, which is just the meter inverted", () => {
-    expect(breakdown(reading())!.map((c) => c.name)).not.toContain("Free space");
-  });
-
-  it("sorts largest first, so what is eating the context is at the top", () => {
-    expect(breakdown(reading())!.map((c) => c.name)).toEqual([
-      "MCP tools (deferred)",
-      "Messages",
-      "System prompt",
-    ]);
-  });
-
-  it("drops empty categories rather than listing zeroes", () => {
-    const got = breakdown(
-      reading({ categories: [{ name: "Custom agents", tokens: 0, percent: 0 }] }),
+/**
+ * The model sheet shows context as one quiet line, "Context 42% used" (the T3
+ * pass, 2026-09-27). The breakdown panel went with the dial; the numbers
+ * behind the percentage, and how old the reading is, stay in the line's title.
+ */
+describe("contextSummary", () => {
+  it("says the tokens, the model and the reading's age", () => {
+    expect(contextSummary({ reading: reading(), turnsAgo: 0 })).toBe(
+      "65.2k of 1m tokens on claude-opus-5, read just now",
     );
-    expect(got).toEqual([]);
   });
 
-  it("survives a reading with no category table", () => {
-    expect(breakdown(reading({ categories: undefined }))).toEqual([]);
+  it("leaves the model out when the reading did not name one", () => {
+    expect(contextSummary({ reading: reading({ model: "" }), turnsAgo: 3 })).toBe(
+      "65.2k of 1m tokens, read 3 turns ago",
+    );
   });
 });

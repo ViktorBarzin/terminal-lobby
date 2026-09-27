@@ -137,13 +137,12 @@ describe("<Composer> hints while the plan dialog is up", () => {
   });
 });
 
-describe("<Composer> dials held while a dialog is up", () => {
+describe("<Composer> model button held while a dialog is up", () => {
   const MODE_REASON = "Answer Claude first: a mode change now would type into the open dialog";
   const MODEL_REASON = "Answer Claude first: a model change now would type into the open dialog";
-  const dial = (c: HTMLElement, id: string) =>
-    c.querySelector<HTMLButtonElement>(`.tl-dial[data-dial="${id}"]`)!;
+  const button = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-model-btn")!;
 
-  it("holds the mode and the model dials, each with its reason as the title", () => {
+  it("holds the model button, with the reason as its title, and opens nothing", () => {
     const onPickModel = vi.fn();
     const { container } = mount({
       live: WAITING,
@@ -157,23 +156,26 @@ describe("<Composer> dials held while a dialog is up", () => {
       onPickModel,
       modelHeld: MODEL_REASON,
     });
-    expect(dial(container, "mode").getAttribute("aria-disabled")).toBe("true");
-    expect(dial(container, "mode").getAttribute("title")).toBe(MODE_REASON);
-    const model = dial(container, "model");
-    expect(model.getAttribute("aria-disabled")).toBe("true");
-    expect(model.getAttribute("title")).toBe(MODEL_REASON);
-    expect(model.getAttribute("aria-label")).toContain(MODEL_REASON);
-    fireEvent.click(model);
-    expect(container.querySelector(".tl-dial-pop")).toBeNull();
+    const b = button(container);
+    expect(b.getAttribute("aria-disabled")).toBe("true");
+    expect(b.getAttribute("title")).toBe(MODEL_REASON);
+    expect(b.getAttribute("aria-label")).toContain(MODEL_REASON);
+    fireEvent.click(b);
+    expect(container.querySelector(".tl-ms-pop")).toBeNull();
   });
 
-  it("leaves the model dial free when nothing holds it", () => {
+  it("holds it for the mode's reason alone, too", () => {
+    const { container } = mount({ mode: "manual", onCycleMode: () => {}, modeHeld: MODE_REASON });
+    expect(button(container).getAttribute("title")).toBe(MODE_REASON);
+  });
+
+  it("leaves the model button free when nothing holds it", () => {
     const { container } = mount({
       harness: "claude",
       model: { model: "claude-opus-5-5", effort: "medium" },
       onPickModel: () => {},
     });
-    expect(dial(container, "model").getAttribute("aria-disabled")).toBeNull();
+    expect(button(container).getAttribute("aria-disabled")).toBeNull();
   });
 });
 

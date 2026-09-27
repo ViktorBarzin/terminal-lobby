@@ -245,14 +245,17 @@ src/
                          are checked by the shape of a `provider/id` reference.
                          Neither setting is a launch flag — a per-model command
                          key would miss the pre-warm pool and give up Claude's
-                         ~2.4s boot on every model but the default
+                         ~2.4s boot on every model but the default.
+                         `effortsForModel` narrows a live session's levels to
+                         what its model offers, read from the CLI's own
+                         catalogue: five rungs, none on Haiku 4.5
     model-api.ts         Applying one of those choices to a session:
                          POST /model, which drives the CLI's own picker. The
                          reply is what the session reports afterwards rather
                          than an echo, because an effort change can be refused
                          without anything failing
-    mode-api.ts          Putting a session in a permission mode from the mode
-                         dial: the same POST /model route with a `mode` in the
+    mode-api.ts          Putting a session in a permission mode from the model
+                         sheet: the same POST /model route with a `mode` in the
                          body, since a new prefix would need the IngressRoute
                          changed. The server walks Shift+Tab one stop at a time
                          and replies with the mode the pane shows at the end;
@@ -482,9 +485,9 @@ src/
                          components/
     compose.logic.ts     PURE `/` and `@` completion + reading the mode off
                          the pane's status line
-    modes.ts             PURE the mode dial's list: six modes with one line
-                         each on what they do, the CLI's own titles, which two
-                         ask nothing first, and the placeholder that says so
+    modes.ts             PURE the model sheet's mode list: six modes with one
+                         line each on what they do, in the sheet's order, the
+                         CLI's own titles, and which two ask nothing first
     order.logic.ts       PURE session ordering: newest-first by created or by
                          last DRIVEN time (never session_activity, which a
                          read-only attach bumps), and the capture that freezes
@@ -710,7 +713,9 @@ src/
                          may grow. jsdom does no layout, so this is the only
                          place the decision can be tested
     overlay.ts           A backdrop's press-to-dismiss, on the node rather than
-                         as a handler, since the surface is not a control
+                         as a handler, since the surface is not a control; a
+                         float's close on a press outside it or on Escape
+                         (`dismissFloat`); the arrow keys through a float's rows
     lobby.logic.ts       PURE sidebar derivation + layout transforms (unit-tested)
     WorkspaceCanvas.tsx  The dividers of a Workspace and nothing else: nested
                          @corvu/resizable nodes with no session content in them,
@@ -793,7 +798,7 @@ src/
                          While the plan card is docked the field is the plan's
                          feedback row: its placeholder says so, Send goes to
                          `onPlanFeedback`, the "queues" hint is hidden, and the
-                         mode and model dials are held. With a question docked
+                         model button is held. With a question docked
                          Send answers it as free text (TextView `send`)
     StatusLine.tsx       The line above the pill: what the session is doing
                          (the call in flight, its target, how long, the steps)
@@ -803,15 +808,21 @@ src/
                          width, since Safari 15.6 has no container queries
     statusline.logic.ts  PURE the line's state and precedence, a target's
                          short form, and the width bands it folds at
-    Dial.tsx             The labelled dials and their floats: a popover above
-                         the dial with a fine pointer, ONE bottom sheet with a
-                         tab per dial with a coarse one. Knows nothing about
-                         modes or models; the caller hands it DialSpecs
-    ModePanel.tsx        The mode dial's list: six modes, one line each, the
-                         danger two under a rule, No ask held unless the
-                         session is in it, and every row held while a dialog is
-                         on the pane
-    ModelPanel.tsx       The model dial's list: the running CLI's models by
+    Dial.tsx             The new-session composer's labelled dials and their
+                         floats: a popover above the dial with a fine pointer,
+                         ONE bottom sheet with a tab per dial with a coarse
+                         one. Knows nothing about projects or models; the
+                         caller hands it DialSpecs
+    ModelSheet.tsx       The live composer's one model button ("✳ Opus 5.5 ⌄",
+                         a red shield in Bypass and No ask) and the sheet it
+                         opens: a 360px popover on a desktop, a bottom sheet
+                         with a coarse pointer. Model rows with their slugs,
+                         Effort with the levels this model offers, the six
+                         modes (the danger two under a rule, No ask held
+                         unless the session is in it), and a quiet "Context N%
+                         used" line. Every row is held while a dialog is on
+                         the pane or another device drives
+    ModelPanel.tsx       The new-session model dial's list: the CLI's models by
                          name with the slug under each, and effort as a three
                          by two control. Pi's rows are handed in as an offer
                          (its own model list, the levels its model supports)
@@ -819,9 +830,6 @@ src/
                          new-session composer: "leave it alone" answers a
                          question only a session that does not exist yet can
                          be asked
-    ContextPanel.tsx     What fills the context window, behind the context
-                         dial. Figures are the CLI's own, because the ceiling
-                         is not on the wire and is not a constant
     PlusTray.tsx         What the pill's + opens: attach a file, add a photo,
                          / commands, @ a file path. The rows only report the
                          press; the inputs and the caret stay in PromptField
@@ -833,8 +841,10 @@ src/
                          draft, ↑ history, and the mobile input attributes that
                          restore QuickType and swipe typing
     context.logic.ts     PURE reading of the `/context` meter (newest reading,
-                         staleness in settled turns, category breakdown).
-                         Nothing runs the command — no reading, no chip
+                         staleness in settled turns, the line's hover words).
+                         Figures are the CLI's own, because the ceiling is not
+                         on the wire. Nothing runs the command — no reading,
+                         no context line
     QuestionCard.tsx     The docked question card, after T3 Code's question
                          panel (ADR-0034): one question at a time with an i/N
                          counter, a single-select pick that moves on by

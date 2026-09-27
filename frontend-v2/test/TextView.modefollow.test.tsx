@@ -14,12 +14,15 @@
  *  - a Shift+Tab typed in the Terminal left it stale on coming back.
  *
  * So the pane is also read after an approval from the card, whenever a turn
- * starts or ends, and each time the Text view comes back on screen.
+ * starts or ends, and each time the Text view comes back on screen. The dial
+ * became the model button in the T3 pass (2026-09-27), which carries the mode
+ * as `data-mode` and wears a red shield in Bypass.
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
+import { modeTitle } from "../src/logic/modes";
 import type { AnswerResponse } from "../src/lib/answer-api";
 import type { Event } from "../src/types/events";
 
@@ -70,7 +73,7 @@ function mount(opts: { events: Event[]; onScreen?: boolean }) {
       notify={() => {}}
     />
   ));
-  const dial = () => r.container.querySelector<HTMLElement>('.tl-dial[data-dial="mode"]');
+  const dial = () => r.container.querySelector<HTMLElement>(".tl-model-btn");
   const option = (n: number) =>
     [...r.container.querySelectorAll<HTMLButtonElement>(".tl-plancard .tl-qcard-option")].find(
       (o) => o.querySelector(".tl-qcard-key")?.textContent === String(n),
@@ -83,7 +86,11 @@ function mount(opts: { events: Event[]; onScreen?: boolean }) {
     onPane,
     onAnswer,
     option,
-    shown: () => dial()?.querySelector(".tl-dial-value")?.textContent,
+    /** The mode the model button carries, by the sheet's name for it. */
+    shown: () => {
+      const m = dial()?.getAttribute("data-mode");
+      return m ? modeTitle(m) : undefined;
+    },
     /** The read the view makes when it opens has come back. */
     opened: async () => {
       await waitFor(() => expect(onPane).toHaveBeenCalled());
@@ -111,7 +118,7 @@ const planTurn = (): Event[] => [
   ev({ id: 4, kind: "meta", meta: "asking", body: JSON.stringify(PLAN) }),
 ];
 
-describe("<TextView>: the mode dial follows changes it did not make", () => {
+describe("<TextView>: the model button follows mode changes it did not make", () => {
   it("shows the mode an approval from the plan card switched to", async () => {
     const v = mount({ events: planTurn() });
     await waitFor(() => expect(v.option(2)).toBeDefined());

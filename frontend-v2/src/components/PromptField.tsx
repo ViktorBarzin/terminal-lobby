@@ -36,9 +36,8 @@ import {
 } from "../lib/attachments";
 import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
 import { createMobileFlip } from "../mobile/pointer";
-import { dismissOnPress } from "./overlay";
+import { dismissFloat, dismissOnPress } from "./overlay";
 import { PlusTray } from "./PlusTray";
-import { dismissFloat } from "./Dial";
 
 /**
  * The field a prompt is written in: the pill, with `+` before it and Send

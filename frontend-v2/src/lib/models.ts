@@ -260,6 +260,54 @@ export function optionsFor(h: ModelHarness, f: ModelField, pi?: PiOffer): readon
 }
 
 /**
+ * The effort rungs each Claude model offers, by exact slug.
+ *
+ * Read from the Claude Code 2.1.283 binary's built-in model catalogue on
+ * 2026-09-27 (memory #14201). Each entry carries capabilities: `effort` says
+ * the model has the setting at all, and `xhigh_effort` and `max_effort` gate
+ * those two rungs; the CLI's own model list filters its levels the same way.
+ * Every row here but Haiku has all five, Sonnet 5 included. Haiku 4.5 has no
+ * effort capability, so it has one level and no rungs to pick.
+ *
+ * `ultracode` is left out on purpose. It is xhigh plus dynamic workflows
+ * rather than a rung of thinking, and the model sheet's row is "how hard it
+ * thinks". It stays in the catalogue above, where the new-session picker
+ * offers it, and the sheet still shows it on a session already running on it.
+ */
+const FIVE_RUNGS = ["low", "medium", "high", "xhigh", "max"] as const;
+const CLAUDE_EFFORTS: Readonly<Record<string, readonly string[]>> = {
+  "claude-opus-5-5": FIVE_RUNGS,
+  "claude-opus-5": FIVE_RUNGS,
+  "claude-opus-5[1m]": FIVE_RUNGS,
+  "claude-sonnet-5": FIVE_RUNGS,
+  "claude-haiku-4-5-20251001": [],
+  "claude-opus-4-8": FIVE_RUNGS,
+};
+
+/**
+ * The effort levels a live session's model offers, without `default` (which
+ * only a session not yet started can mean).
+ *
+ * Claude's come from the table above, keyed by slug, with a bare family word
+ * read as its family's first row the way `isCurrentModel` reads it. A slug the
+ * table does not know, or no model reported yet, gets the harness's whole list:
+ * the CLI refuses a level its model lacks, and an empty picker helps nobody.
+ * Codex keeps its catalogue, since nothing here knows its levels per model.
+ * Pi keeps the levels the session stamped (`optionsFor`).
+ */
+export function effortsForModel(
+  h: ModelHarness,
+  model: string | undefined,
+  pi?: PiOffer,
+): readonly ModelOption[] {
+  const all = optionsFor(h, "effort", pi).filter((o) => o.id !== DEFAULT_CHOICE);
+  if (h !== "claude" || !model) return all;
+  const slugged = has(h, "model", model) ? model : canonicalFor(h, modelFamily(h, model));
+  const rungs = slugged ? CLAUDE_EFFORTS[slugged] : undefined;
+  return rungs ? all.filter((o) => rungs.includes(o.id)) : all;
+}
+
+/**
  * Whether a stored id is one this harness could be sent. A pi model is judged
  * by its shape, because the list it came from is pi's and not this file's:
  * judged against the catalogue, every pi pick would be dropped on load.
