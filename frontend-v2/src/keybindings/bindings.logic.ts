@@ -34,8 +34,8 @@
  *
  * One thing to know before reversing it: the palette half of that answer is
  * not wired. `App.tsx`'s palette action list has no view-toggle entry, so on
- * 2026-09-06 the segmented control is the only way a person reaches the
- * toggle, and `runAppCommand`'s `view.toggle` arm runs from tests alone. That
+ * 2026-09-06 the segmented control (since 2026-09-27 the header's one view
+ * icon) is the only way a person reaches the toggle, and `runAppCommand`'s `view.toggle` arm runs from tests alone. That
  * is a gap in the palette, not a reason for a chord.
  */
 import {

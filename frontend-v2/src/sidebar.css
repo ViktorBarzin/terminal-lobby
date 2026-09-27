@@ -1210,16 +1210,192 @@
   min-height: 0;
   width: 100%;
 }
+/* THE T3 HEADER (docs/plans/2026-09-27-text-view-t3-pass.md; prototype
+   composer/6-t3.html, `.hd`): a round back button on a phone, the title over a
+   "project · state" subtitle, and one rounded group with the view icon and
+   "…". The same bar heads both views.
+
+   A FIXED HEIGHT, not a natural one. The bar comes off the shell column before
+   the terminal is measured (see `.tl-bar-host` above), so any change in its
+   height is a terminal resize and a grid POST. 56px holds whatever the bar
+   carries: the title block, the 36px group, and the Terminal view's 28px tools.
+   The phone block below makes it 58px, the prototype's 44px row with 6px over
+   and 8px under.
+
+   The system font in both views, so the title keeps one face when the view
+   switches under it. */
 .tl-session-bar {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  height: 56px;
+  box-sizing: border-box;
+  padding: 0 20px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
+  font-family: var(--font-text);
 }
-.tl-session-bar-spacer {
+/* Every item keeps its own width but the title block: a control that shrank
+   below its content would paint over its neighbour. */
+.tl-session-bar > * {
+  flex: 0 0 auto;
+}
+/* The one item that gives up width. Each line inside it ellipsizes itself, so
+   the block needs no clipping of its own, which would cut off the switcher's
+   menu as it drops below the title. */
+.tl-bar-head {
   flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+.tl-bar-title {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* On a coarse pointer the title is the session switcher: a button that reads as
+   the title, with a small caret. */
+.tl-bar-head > .tl-session-picker {
+  display: flex;
+  min-width: 0;
+}
+.tl-session-picker > .tl-bar-title {
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-session-caret {
+  margin-left: 4px;
+  font-size: 0.7em;
+  color: var(--text-muted);
+}
+.tl-bar-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 17px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.tl-bar-sub-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The session's state, as the prototype's `.sd`: done green at rest, the
+   running colour pulsing while Claude works, amber while it waits for you. */
+.tl-bar-state {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-done);
+}
+.tl-bar-state[data-s="working"] {
+  background: var(--state-running);
+  animation: tl-bar-pulse 1.2s ease-in-out infinite;
+}
+.tl-bar-state[data-s="waiting"] {
+  background: var(--state-awaiting);
+}
+.tl-bar-state[data-s="watching"],
+.tl-bar-state[data-s="suspended"] {
+  background: var(--text-muted);
+}
+@keyframes tl-bar-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-bar-state[data-s="working"] {
+    animation: none;
+  }
+}
+/* ADR-0016's badge, on the subtitle's line. It keeps its touch target, and the
+   negative margins keep that target from growing the line. */
+.tl-bar-sub .tl-conn-badge {
+  min-height: 28px;
+  min-width: 28px;
+  margin: -6px 0 -6px -4px;
+  padding: 0 4px;
+}
+/* One rounded group: the view icon and "…". */
+.tl-bar-group {
+  display: flex;
+  align-items: center;
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--bg-card);
+}
+.tl-bar-group-btn {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: none;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+.tl-bar-group-btn svg {
+  width: 17px;
+  height: 17px;
+}
+@media (hover: hover) {
+  .tl-bar-group-btn:hover {
+    background: var(--hover-tint);
+  }
+}
+/* The hidden view has something you have not seen. */
+.tl-bar-group-btn .tl-activity-dot {
+  position: absolute;
+  top: 5px;
+  right: 8px;
+}
+/* The "…" menu anchors on its button (.tl-menu is top:100%; right:0), and
+   clears xterm, whose own layers stack up to z-index 11. */
+.tl-bar-menu {
+  position: relative;
+  display: flex;
+}
+.tl-bar-menu .tl-menu {
+  z-index: 30;
+  margin-top: 6px;
+  min-width: 180px;
+}
+/* The switcher's list drops from the title, left-aligned under it. */
+.tl-session-picker {
+  position: relative;
+}
+.tl-session-menu {
+  left: 0;
+  right: auto;
+  z-index: 30;
+  max-height: 60vh;
+  overflow-y: auto;
 }
 /* The terminal controls, grouped so they read as one cluster (as the vanilla
    page's floating group does) rather than as loose icons among the session
@@ -1535,63 +1711,48 @@
   .tl-shellbar {
     display: none;
   }
+  /* The T3 header at phone size: a 44px row (the back button and the group)
+     with the prototype's 6px over and 8px under, and no rule beneath it. Still
+     a fixed height, for the reason the desktop rule gives. */
   .tl-session-bar {
-    min-height: 40px;
-    padding: 0 6px;
-    gap: 6px;
+    height: 58px;
+    padding: 6px 14px 8px;
+    border-bottom: 0;
   }
-  /* One flexible item, and it is the session name: everything else on this bar
-     is a control, and a control that shrinks below its own content does not get
-     smaller — it overflows its box and paints on top of its neighbour. Measured
-     at 390px, `< Sessions` was squeezed to the 40px floor and its label ran
-     under the session name. */
-  .tl-session-bar > * {
-    flex: 0 0 auto;
-  }
-  .tl-session {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* The view switch is the widest thing on the bar after the back control
-     (131px of 390 at its labelled size). On a phone it goes icon-only — each
-     segment keeps its glyph, its tooltip and its aria-label, and the pair drops
-     to about 80px, which is what buys the session name and the act-as chip room
-     to be legible. This is what the pillar-#2 research asked for ("icon-only on
-     mobile"); it was specified and never built. */
-  .tl-viewswitch .tl-seg {
-    padding: 0 10px;
-    min-height: 36px;
-    font-size: 12px;
-  }
-  /* Back to the list. The one labelled control on the bar: an unlabelled `\2039`
-     in a row of icons is a guess, and this is the only way out of the terminal.
-     It re-shows the label the max-width:1000px rule above hides. */
+  /* Back to the list: a round 44px button, the one way out of the session. */
   .tl-session-bar .tl-back-btn {
-    /* width:auto beats the max-width:1000px rule's fixed 28px (raised to the
-       40px touch floor above). A fixed width on a labelled button does not
-       clip the label — it lets it paint outside the box, over the neighbour. */
-    width: auto;
-    padding: 0 10px 0 6px;
-    font-size: 17px;
-    line-height: 1;
+    width: 44px;
+    height: 44px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
   }
-  .tl-session-bar .tl-back-btn .tl-btn-label {
-    display: inline;
+  .tl-bar-title {
+    font-size: 17px;
+    font-weight: 650;
+    line-height: 22px;
+  }
+  .tl-bar-sub {
     font-size: 13px;
   }
-  /* The bar's overflow menu. It anchors the popup, so it needs to be the
-     positioned ancestor .tl-menu resolves against (top:100%; right:0). */
-  .tl-bar-menu {
-    position: relative;
-    display: inline-flex;
+  /* The group grows to the back button's height. */
+  .tl-bar-group {
+    height: 44px;
+    border-radius: 22px;
   }
-  /* Above the terminal. xterm's own stylesheet stacks its screen, decoration
-     and helper layers up to z-index 11, so the popup needs to clear those. */
-  .tl-bar-menu .tl-menu {
-    z-index: 30;
+  .tl-bar-group-btn {
+    width: 46px;
+    height: 40px;
+    border-radius: 20px;
+  }
+  .tl-bar-group-btn svg {
+    width: 20px;
+    height: 20px;
   }
   /* Settings, on the sidebar's own screen. The gear normally rides the shell
      bar, which is folded away here, and the session bar only exists once a
@@ -1678,23 +1839,7 @@
    label). Measured at 390px with an act-as chip before this: the bar's content
    ran 67px past its right edge and the session name was 18px wide. */
 @media (max-width: 520px) {
-  /* Nothing paints outside the header. Everything below makes the content FIT;
-     this is the guard that makes a future addition get noticed rather than
-     silently drawn over its neighbour. */
-  .tl-session-bar {
-    overflow: hidden;
-  }
-  /* The name is the one thing that says WHICH session you are typing into. */
-  .tl-session {
-    min-width: 5ch;
-  }
-  /* Icon-only segments: each keeps its glyph, tooltip and aria-label, and the
-     pair drops from 131px (or 173px with icons) to about 80px. This is what the
-     pillar-#2 research asked for and never got built. */
-  .tl-viewswitch .tl-seg-label {
-    display: none;
-  }
-  /* Same trade for the sidebar's ordering picker, which shares this header row
+  /* Icon-only for the sidebar's ordering picker, which shares its header row
      with the title, ↻ and the bell. At 390px the word costs about 45px of the
      ~230px the title has left; the glyph, the tooltip and the tick inside the
      menu all still say which ordering is on. */
@@ -1705,37 +1850,11 @@
     width: 40px;
     padding: 0;
   }
-  .tl-viewswitch .tl-seg {
-    padding: 0 9px;
-  }
   /* The terminal's own tools are 148px of a 390px bar. On a screen this narrow
      the soft-key row below carries paste/upload/images and a pinch sets the
      font, so the bar does not need to. */
   .tl-term-tools {
     display: none;
-  }
-  /* The session name is the one item on this bar that may give up width, and on
-     a coarse pointer it is not the flex child: the name is a PICKER (tap it to
-     switch session), so the child is the `.tl-session-picker` wrapper and the
-     shrink rule on `.tl-session` applies to a button INSIDE a `flex: 0 0 auto`
-     item, where it can do nothing.
-
-     Measured at 390px on a session named `debug-bob-blank-screen`: the bar's
-     content ran to 432px, and the Terminal segment started at x=389.6 — off the
-     screen and clipped by the `overflow: hidden` above, so the text view had no
-     way back to the terminal. The wrapper carries the shrink; `display: flex`
-     is what lets the button inside it take the ellipsis rather than sizing the
-     wrapper to the full name. */
-  .tl-session-bar > .tl-session-picker {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .tl-session-picker > .tl-session {
-    min-width: 0;
-    /* Beat the 40vw cap downward only: the name gets the room that is left after
-       the controls, never more than 40vw of it. */
-    max-width: 100%;
   }
   /* The act-as chip: 40vw is 156px of a 390px bar. A quarter still shows enough
      of a username to recognise, and the ✕ stays reachable.

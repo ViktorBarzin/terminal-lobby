@@ -574,7 +574,15 @@ export const NewSessionComposer: Component<{
           between them, and this is the one screen you arrive on. */}
       <div class="tl-session-bar">
         {props.leading}
-        <span class="tl-session">New session</span>
+        <div class="tl-bar-head">
+          <span class="tl-bar-title">New session</span>
+          <div class="tl-bar-sub">
+            <span class="tl-bar-state" data-s="watching" aria-hidden="true" />
+            <span class="tl-bar-sub-text">
+              {props.project() ? `${props.project()} · new session` : "new session"}
+            </span>
+          </div>
+        </div>
       </div>
       <div class="tl-new-composer">
         {/* The choices sit on a line above the box, where the live composer

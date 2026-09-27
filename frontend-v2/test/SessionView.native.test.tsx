@@ -61,11 +61,7 @@ vi.mock("../src/components/TerminalNative", () => ({
     active?: boolean;
     onAttention?: (kind: "bell" | "output") => void;
     onGrid?: (cols: number, rows: number) => void;
-    onReady?: (control: {
-      reconnect: () => void;
-      ask: () => void;
-      copy: () => void;
-    }) => void;
+    onReady?: (control: { reconnect: () => void; ask: () => void; copy: () => void }) => void;
   }) => {
     native.mounted++;
     native.active = () => props.active;
@@ -117,15 +113,24 @@ function statusProbe() {
   };
 }
 
-/** The [Text | Terminal] switch, and its two activity dots, in that order. */
-const segments = (root: HTMLElement): HTMLButtonElement[] =>
-  Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
-
-const dots = (root: HTMLElement): boolean[] =>
-  segments(root).map((b) => !!b.querySelector(".tl-activity-dot"));
-
 const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
+
+/** The header's one view icon. It names the view it switches TO, and carries
+ *  that view's unseen-content dot. */
+const toggle = (root: HTMLElement): HTMLButtonElement =>
+  root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-view-toggle")!;
+
+/** Show a view through the header icon, clicking only when it is not already up. */
+function show(root: HTMLElement, want: "text" | "terminal"): void {
+  if (mode(root) !== want) fireEvent.click(toggle(root));
+}
+
+/** [Text dot, Terminal dot]: the icon's dot belongs to the hidden view. */
+const dots = (root: HTMLElement): boolean[] => {
+  const dotted = !!toggle(root).querySelector(".tl-activity-dot");
+  return mode(root) === "terminal" ? [dotted, false] : [false, dotted];
+};
 
 afterEach(() => {
   native.asks = 0;
@@ -149,8 +154,7 @@ afterEach(() => {
  * ------------------------------------------------------------------ */
 
 describe("the terminal <SessionView> mounts", () => {
-  const host = (root: HTMLElement): Element | null =>
-    root.querySelector(".tl-terminal-native");
+  const host = (root: HTMLElement): Element | null => root.querySelector(".tl-terminal-native");
 
   it("mounts the terminal the lobby draws itself", () => {
     const { container } = render(() => <SessionView session="qa-native-default" />);
@@ -231,8 +235,7 @@ describe("the Copy lever the soft keys use", () => {
     window.matchMedia = ((q: string) =>
       ({
         media: q,
-        matches:
-          q.includes("pointer: coarse") || /max-width:\s*(3|4|5|6|7)\d\dpx/.test(q),
+        matches: q.includes("pointer: coarse") || /max-width:\s*(3|4|5|6|7)\d\dpx/.test(q),
         addEventListener: () => {},
         removeEventListener: () => {},
         addListener: () => {},
@@ -249,7 +252,7 @@ describe("the Copy lever the soft keys use", () => {
     stubPhone();
     const { container } = render(() => <SessionView session="qa-native-copy" />);
     // Text is the default view on a phone, and the row is the terminal view's.
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     const copy = document
       .getElementById("soft-keys")
       ?.querySelector<HTMLButtonElement>('button[aria-label="Copy the visible screen"]');
@@ -267,7 +270,7 @@ describe("the Copy lever the soft keys use", () => {
     stubPhone();
     native.readyOnMount = false;
     const { container } = render(() => <SessionView session="qa-native-copy-early" />);
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     const copy = document
       .getElementById("soft-keys")
       ?.querySelector<HTMLButtonElement>('button[aria-label="Copy the visible screen"]');
@@ -368,11 +371,7 @@ describe("the grid claim <SessionView> makes for the terminal", () => {
 
     vi.advanceTimersByTime(2000); // and the quiet period expires
     native.claim?.(120, 40);
-    expect(grids).toEqual([
-      "qa-grid-quiet 231x62",
-      "qa-grid-quiet 120x40",
-      "qa-grid-quiet 120x40",
-    ]);
+    expect(grids).toEqual(["qa-grid-quiet 231x62", "qa-grid-quiet 120x40", "qa-grid-quiet 120x40"]);
   });
 });
 
@@ -385,17 +384,17 @@ describe("the attention props <SessionView> gives the terminal", () => {
    * `ownsBridges` cannot stand in for this one. It is `onScreen()` alone, so it
    * stays TRUE while the text view shows over a terminal that is still mounted
    * and still attached. That period is precisely the one attention.ts exists to
-   * report, since output arriving then is what dots the [Terminal] segment.
+   * report, since output arriving then is what dots the Terminal icon.
    */
   it("hands over `active`, and takes it away when the text view shows", () => {
     const { container } = render(() => <SessionView session="qa-native-active" />);
     expect(native.active?.(), "the terminal is the default view").toBe(true);
 
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(mode(container)).toBe("text");
     expect(native.active?.(), "the text view is over the terminal now").toBe(false);
 
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     expect(native.active?.()).toBe(true);
   });
 
@@ -423,9 +422,9 @@ describe("the attention props <SessionView> gives the terminal", () => {
     expect(seen).toEqual([["bell", "qa-native-bell"]]);
   });
 
-  it("dots the [Terminal] segment for output behind the text view", () => {
+  it("dots the Terminal icon for output behind the text view", () => {
     const { container } = render(() => <SessionView session="qa-native-dot" />);
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(dots(container)).toEqual([false, false]);
 
     native.signal?.("output");

@@ -136,25 +136,24 @@ describe("the system font", () => {
     expect(decl(appCss, ".tl-textview", "font-family")).toBe("var(--font-text)");
   });
 
-  it("heads the session bar only while the Text view shows", () => {
-    expect(decl(appCss, '.tl-session-bar[data-mode="text"]', "font-family")).toBe(
-      "var(--font-text)",
-    );
-    expect(decl(sidebarCss, ".tl-session-bar", "font-family")).toBeUndefined();
+  // The header is one bar over both views, and its title keeps one face when
+  // the view switches under it (the T3 header, 2026-09-27).
+  it("heads the session bar in both views", () => {
+    expect(decl(sidebarCss, ".tl-session-bar", "font-family")).toBe("var(--font-text)");
+    expect(appCss).not.toContain('.tl-session-bar[data-mode="text"]');
   });
 
   it("leaves the lobby in DM Sans", () => {
     expect(decl(appCss, "body", "font-family")).toBe("var(--font-ui)");
   });
 
-  // The model sheet's phone layer is the one exception: it is drawn into the
-  // document's body, because the composer's blurred surface would pin a fixed
-  // sheet to the box (ModelSheet.tsx), so it names the face itself.
+  // Two exceptions. The model sheet's phone layer is drawn into the document's
+  // body, because the composer's blurred surface would pin a fixed sheet to the
+  // box (ModelSheet.tsx), so it names the face itself. The session bar heads
+  // both views and keeps one face across them.
   it("is read only under the Text view", () => {
     const allowed = (s: string): boolean =>
-      s.startsWith(".tl-textview") ||
-      s.startsWith('.tl-session-bar[data-mode="text"]') ||
-      s === ".tl-ms-layer";
+      s.startsWith(".tl-textview") || s === ".tl-session-bar" || s === ".tl-ms-layer";
     const offenders = [appCss, sidebarCss].flatMap((css) =>
       rules(css)
         .filter((r) => /var\(--font-text\)/.test(r.body))

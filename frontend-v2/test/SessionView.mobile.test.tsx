@@ -74,10 +74,7 @@ const realMatchMedia = window.matchMedia;
 describe("<SessionView> — the merged phone bar", () => {
   it("renders the shell's back control first in its own bar", () => {
     const { container } = render(() => (
-      <SessionView
-        session="qa-mobile"
-        leading={<button class="tl-back-btn">back</button>}
-      />
+      <SessionView session="qa-mobile" leading={<button class="tl-back-btn">back</button>} />
     ));
     const bar = container.querySelector(".tl-session-bar")!;
     const back = bar.querySelector(".tl-back-btn");
@@ -86,11 +83,10 @@ describe("<SessionView> — the merged phone bar", () => {
     expect([...bar.children].indexOf(back!)).toBe(0);
   });
 
-  it("renders nothing extra when the shell keeps its own bar", () => {
+  it("renders no back control when the shell keeps its own bar", () => {
     const { container } = render(() => <SessionView session="qa-mobile" />);
     const bar = container.querySelector(".tl-session-bar")!;
     expect(bar.querySelector(".tl-back-btn")).toBeNull();
-    expect(bar.querySelector(".tl-bar-menu-btn")).toBeNull();
   });
 });
 
@@ -120,20 +116,25 @@ describe("<SessionView> — visible: a hidden pane must not resize tmux", () => 
   });
 });
 
-describe("<SessionView> — the phone bar's overflow menu", () => {
+/**
+ * The header's "…" (the T3 header, 2026-09-27). It holds Find in session,
+ * Images, Files, the Watch toggle and the shell's own items on EVERY device:
+ * the header keeps only the title, the view icon and "…", so the rows that
+ * used to be buttons on a desktop bar moved in here too.
+ */
+describe("<SessionView> — the header's … menu", () => {
   afterEach(() => {
     window.matchMedia = realMatchMedia;
     vi.restoreAllMocks();
   });
 
-  it("moves Files and Watch behind a ⋯ on a phone", () => {
+  it("keeps Files and Watch behind the … on a phone", () => {
     stubViewport(PHONE);
     const { container } = render(() => <SessionView session="qa-mobile" />);
     const bar = container.querySelector(".tl-session-bar")!;
-    // Measured at 390px, the bar's own controls left the session name 29px.
     expect(bar.querySelector('[aria-label="File preview"]')).toBeNull();
     expect(bar.querySelector(".tl-watch-btn")).toBeNull();
-    const dots = bar.querySelector<HTMLButtonElement>(".tl-bar-menu-btn");
+    const dots = bar.querySelector<HTMLButtonElement>(".tl-bar-group .tl-bar-menu-btn");
     expect(dots).not.toBeNull();
     expect(dots!.getAttribute("aria-expanded")).toBe("false");
   });
@@ -154,25 +155,25 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
     expect(hidden.container.querySelector("#soft-keys")).toBeNull();
   });
 
-  it("keeps them as buttons on a tablet, which has the room", () => {
-    stubViewport(TABLET);
-    const { container } = render(() => <SessionView session="qa-mobile" />);
-    const bar = container.querySelector(".tl-session-bar")!;
-    expect(bar.querySelector(".tl-bar-menu-btn")).toBeNull();
-    expect(bar.querySelector('[aria-label="File preview"]')).not.toBeNull();
+  it("uses the same … on a tablet and a desktop", () => {
+    for (const vp of [TABLET, { width: 1280, height: 800, coarse: false }]) {
+      stubViewport(vp);
+      const { container, unmount } = render(() => <SessionView session="qa-mobile" />);
+      const bar = container.querySelector(".tl-session-bar")!;
+      expect(bar.querySelector(".tl-bar-group .tl-bar-menu-btn"), `${vp.width}px`).not.toBeNull();
+      expect(bar.querySelector('[aria-label="File preview"]'), `${vp.width}px`).toBeNull();
+      unmount();
+    }
   });
 
-  it("opens on tap and offers Files, Watch and the shell's own items", () => {
+  it("opens on tap and offers Find, Images, Files, Watch and the shell's own items", () => {
     stubViewport(PHONE);
     // Find searches the transcript, so it is a TEXT-view item. Since 2026-08-19
     // a phone opens in the terminal like everything else, so this session has to
     // say it is being read in text — which is what a reader who tapped Text has.
     localStorage.setItem("tl:viewmode:v1:qa-mobile", "text");
     const { container } = render(() => (
-      <SessionView
-        session="qa-mobile"
-        menuExtra={<button class="tl-menu-item">Settings</button>}
-      />
+      <SessionView session="qa-mobile" menuExtra={<button class="tl-menu-item">Settings</button>} />
     ));
     const dots = container.querySelector<HTMLButtonElement>(".tl-bar-menu-btn")!;
     expect(container.querySelector(".tl-menu")).toBeNull();
@@ -181,8 +182,8 @@ describe("<SessionView> — the phone bar's overflow menu", () => {
       (e.textContent || "").trim(),
     );
     // Find is here rather than in the header, which measured 25px past its own
-    // edge at 390px — and there is no chord to press on a phone.
-    expect(items).toEqual(["Files", "Find in session", "Watch only", "Settings"]);
+    // edge at 390px, and there is no chord to press on a phone.
+    expect(items).toEqual(["Find in session", "Images", "Files", "Watch only", "Settings"]);
     expect(dots.getAttribute("aria-expanded")).toBe("true");
     localStorage.removeItem("tl:viewmode:v1:qa-mobile");
   });

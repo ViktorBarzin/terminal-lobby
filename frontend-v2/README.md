@@ -728,8 +728,11 @@ src/
                          this strip once per tile, in rows taken off four live
                          terminals, so the context meter and the spend figure
                          stay on the session bar, which follows focus
-    SessionView.tsx      The per-session two-view surface (text | terminal)
-    ViewSwitch.tsx       Segmented Text|Terminal + activity dot
+    SessionView.tsx      The per-session two-view surface (text | terminal),
+                         and the T3 header over both: title, "project · state"
+                         subtitle, one group with the view icon and "…"
+    header.logic.ts      PURE header subtitle: the state word and dot, the
+                         project and any background work
     TextView.tsx         Text mode: timeline above the composer, with the
                          question card or the plan card docked between. It
                          holds each answer in flight and, for a plan, the

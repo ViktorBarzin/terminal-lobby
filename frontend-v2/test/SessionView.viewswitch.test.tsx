@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { createSignal } from "solid-js";
 import { render, fireEvent, waitFor } from "@solidjs/testing-library";
 import { SessionView } from "../src/components/SessionView";
 
@@ -98,14 +99,42 @@ function statusProbe() {
   };
 }
 
-const segments = (root: HTMLElement): HTMLButtonElement[] =>
-  Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
+/** The one view icon in the header group: it names the view it switches TO. */
+const toggle = (root: HTMLElement): HTMLButtonElement => {
+  const b = root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-view-toggle");
+  expect(b, "the view icon in the header group").toBeTruthy();
+  return b!;
+};
 
-const dots = (root: HTMLElement): boolean[] =>
-  segments(root).map((b) => !!b.querySelector(".tl-activity-dot"));
+/** Does the icon carry the unseen-content dot for the view it switches to? */
+const dotted = (root: HTMLElement): boolean => !!toggle(root).querySelector(".tl-activity-dot");
 
 const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
+
+/** Show a view through the header icon, the way a reader does. */
+function show(root: HTMLElement, want: "text" | "terminal"): void {
+  if (mode(root) !== want) fireEvent.click(toggle(root));
+  expect(mode(root)).toBe(want);
+}
+
+/** Open the header's "…" menu and return its rows' labels. */
+function openMenu(root: HTMLElement): string[] {
+  const dots = root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-bar-menu-btn");
+  expect(dots, "the … button in the header group").toBeTruthy();
+  fireEvent.click(dots!);
+  return [...root.querySelectorAll(".tl-bar-menu .tl-menu-item")].map((e) =>
+    (e.textContent || "").trim(),
+  );
+}
+
+const menuRow = (root: HTMLElement, label: string): HTMLButtonElement => {
+  const b = [...root.querySelectorAll<HTMLButtonElement>(".tl-bar-menu .tl-menu-item")].find(
+    (e) => (e.textContent || "").trim() === label,
+  );
+  expect(b, `the menu's ${label} row`).toBeTruthy();
+  return b!;
+};
 
 /** Fire the terminal's attention hand-up, as terminal/attention.ts does. */
 function fromTerminal(kind: "bell" | "output"): void {
@@ -241,44 +270,41 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(mode(container)).not.toBe(before);
   });
 
-  // The bar takes the Text view's system font while it heads one, so it says
-  // which view it heads. It is portalled out of the view in the shell, where
-  // the view's own data-mode cannot reach it.
+  // The bar says which view it heads. It is portalled out of the view into the
+  // shell, where the view's own data-mode cannot reach it.
   it("marks the session bar with the view it heads", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
     const bar = (): string | null =>
       container.querySelector(".tl-session-bar")?.getAttribute("data-mode") ?? null;
     expect(bar()).toBe("terminal");
 
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(bar()).toBe("text");
 
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     expect(bar()).toBe("terminal");
   });
 
-  it("dots the [Terminal] segment when output arrives while you're in text mode", () => {
+  it("dots the Terminal icon when output arrives while you're in text mode", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
-    // Terminal is the default view now, so switch to Text first — the [Terminal]
+    // Terminal is the default view now, so switch to Text first: the Terminal
     // dot only latches for output that lands while the terminal is HIDDEN.
-    fireEvent.click(segments(container)[0]!); // [Text]
-    expect(mode(container)).toBe("text");
-    expect(dots(container)).toEqual([false, false]);
+    show(container, "text");
+    expect(dotted(container)).toBe(false);
 
     fromTerminal("output");
-    // [Text (selected), Terminal (hidden — has unseen output)]
-    expect(dots(container)).toEqual([false, true]);
+    expect(toggle(container).getAttribute("aria-label")).toBe("Terminal view");
+    expect(dotted(container)).toBe(true);
   });
 
-  it("clears the [Terminal] dot when you switch to the terminal", () => {
+  it("clears the Terminal dot when you switch to the terminal", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
-    fireEvent.click(segments(container)[0]!); // [Text] — so the bell lands while the terminal is hidden
+    show(container, "text"); // so the bell lands while the terminal is hidden
     fromTerminal("bell");
-    expect(dots(container)).toEqual([false, true]);
+    expect(dotted(container)).toBe(true);
 
-    fireEvent.click(segments(container)[1]!); // [Terminal]
-    expect(mode(container)).toBe("terminal");
-    expect(dots(container)).toEqual([false, false]);
+    show(container, "terminal");
+    expect(dotted(container)).toBe(false);
   });
 
   /**
@@ -295,10 +321,10 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(mode(container)).toBe("terminal");
     expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
 
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
 
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     expect(container.querySelectorAll(".tl-conn-badge")).toHaveLength(1);
   });
 
@@ -320,7 +346,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     try {
       const probe = statusProbe();
       const { container } = render(() => <SessionView session="qa-vs" status={probe.props} />);
-      fireEvent.click(segments(container)[0]!); // [Text] opens the stream
+      show(container, "text"); // opens the stream
       expect(probe.last()).toBe("connecting");
 
       eventSources[0]!.onerror?.(null); // the 404 the browser reports opaquely
@@ -338,7 +364,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     try {
       const probe = statusProbe();
       const { container } = render(() => <SessionView session="qa-vs" status={probe.props} />);
-      fireEvent.click(segments(container)[0]!); // [Text] opens the stream
+      show(container, "text"); // opens the stream
       eventSources[0]!.onerror?.(null);
       await flush();
       expect(probe.last()).toBe("reconnecting");
@@ -382,7 +408,7 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     // Open the Text view: that is what opens the transcript stream (it is no
     // longer opened by mounting — see SessionView.lazysse.test.tsx), and the
     // recent-files list below is derived from that stream's events.
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
 
     // A Read in the transcript puts a file in the preview's recent list.
     eventSources[0]!.onmessage?.({
@@ -395,7 +421,8 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
       }),
     });
 
-    fireEvent.click(container.querySelector('[aria-label="File preview"]')!);
+    openMenu(container);
+    fireEvent.click(menuRow(container, "Files"));
     await waitFor(() => expect(seen.at(-1)?.open).toBe(true));
     expect(seen.at(-1)).toEqual({ open: true, dirty: false });
 
@@ -427,9 +454,12 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
  * floating cluster (A− A+ / images / upload / paste); v2 shipped only two of
  * them, as emoji. These pin both halves of the fix: the set is complete, and the
  * buttons draw SVG rather than an emoji codepoint.
+ *
+ * Since the T3 header (2026-09-27) Images and Files are rows in the "…" menu
+ * on every device; the Terminal view keeps its own tools as buttons.
  */
 describe("<SessionView> — terminal controls in the session bar", () => {
-  it("offers font size, images, upload and paste — not just two of them", () => {
+  it("offers font size, upload and paste on the bar, and images and files in the menu", () => {
     const { container } = render(() => <SessionView session="qa-tools" />);
     const labels = [...container.querySelectorAll(".tl-session-bar button")].map((b) =>
       b.getAttribute("aria-label"),
@@ -438,12 +468,22 @@ describe("<SessionView> — terminal controls in the session bar", () => {
       expect.arrayContaining([
         "Smaller terminal font",
         "Larger terminal font",
-        "Session images",
         "Upload image",
         "Paste from clipboard",
-        "File preview",
       ]),
     );
+    expect(labels).not.toContain("Session images");
+    expect(labels).not.toContain("File preview");
+    expect(openMenu(container)).toEqual(expect.arrayContaining(["Images", "Files"]));
+  });
+
+  it("opens the gallery from the menu's Images row", () => {
+    const opened = vi.fn();
+    const { container } = render(() => <SessionView session="qa-tools" onOpenGallery={opened} />);
+    openMenu(container);
+    fireEvent.click(menuRow(container, "Images"));
+    expect(opened).toHaveBeenCalledTimes(1);
+    expect(container.querySelector(".tl-bar-menu .tl-menu")).toBeNull();
   });
 
   it("draws icons, not emoji", () => {
@@ -452,13 +492,9 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     // The buttons DO carry a text label — what must never come back is a
     // pictographic glyph standing in for the icon.
     const { container } = render(() => <SessionView session="qa-tools" />);
-    for (const label of [
-      "Session images",
-      "Upload image",
-      "Paste from clipboard",
-      "File preview",
-    ]) {
+    for (const label of ["Upload image", "Paste from clipboard", "Text view", "Session actions"]) {
       const btn = container.querySelector(`.tl-session-bar [aria-label="${label}"]`)!;
+      expect(btn, label).toBeTruthy();
       expect(btn.querySelector("svg"), `${label} should draw an svg`).toBeTruthy();
       expect(btn.textContent ?? "", `${label} should carry no emoji`).not.toMatch(
         /\p{Extended_Pictographic}/u,
@@ -466,16 +502,24 @@ describe("<SessionView> — terminal controls in the session bar", () => {
     }
   });
 
-  it("labels each control, so six icons are not a guessing game", () => {
+  it("labels each terminal tool, so the icons are not a guessing game", () => {
     const { container } = render(() => <SessionView session="qa-tools" />);
     const labelled = (aria: string): string =>
       container
         .querySelector(`.tl-session-bar [aria-label="${aria}"] .tl-btn-label`)
         ?.textContent?.trim() ?? "";
-    expect(labelled("Session images")).toBe("Images");
     expect(labelled("Upload image")).toBe("Upload");
     expect(labelled("Paste from clipboard")).toBe("Paste");
-    expect(labelled("File preview")).toBe("Files");
+  });
+
+  it("keeps the terminal tools off the Text view's bar", () => {
+    // Its own session name: the view is remembered per session, and the cases
+    // after this one expect qa-tools to open in the terminal.
+    const { container } = render(() => <SessionView session="qa-tools-text" />);
+    show(container, "text");
+    expect(container.querySelector('[aria-label="Paste from clipboard"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Smaller terminal font"]')).toBeNull();
+    localStorage.removeItem("tl:viewmode:v1:qa-tools-text");
   });
 
   it("steps the roamed font size, clamped at the ends", () => {
@@ -564,8 +608,8 @@ describe("<SessionView> — terminal controls in the session bar", () => {
       const { container } = render(() => <SessionView session="qa-tools" />);
       expect(container.querySelector('[aria-label="Paste from clipboard"]')).toBeNull();
       expect(container.querySelector('[aria-label="Smaller terminal font"]')).toBeNull();
-      // the file preview is session chrome, not a terminal control — it stays
-      expect(container.querySelector('[aria-label="File preview"]')).not.toBeNull();
+      // the file preview is session chrome, not a terminal control: it stays
+      expect(openMenu(container)).toContain("Files");
     } finally {
       window.matchMedia = orig;
     }
@@ -573,36 +617,97 @@ describe("<SessionView> — terminal controls in the session bar", () => {
 });
 
 /**
- * The text view is the newer of the two and still in testing, so the switch
- * says so (Viktor, 2026-08-18).
- *
- * In one glyph, because the control is already 131px of a 390px header at its
- * labelled size — and because below 380px the labels are hidden entirely, so a
- * word would have nothing to attach to. The word itself lives in the title and
- * the aria-label.
+ * The T3 header (docs/plans/2026-09-27-text-view-t3-pass.md, "Phone header"):
+ * a title with a "project · state" subtitle, and one rounded group holding the
+ * view icon and "…". The segmented [Text | Terminal] switch is gone; the one
+ * icon names the view it switches TO, so the Terminal view shows a Text icon
+ * in the same place.
  */
-describe("<ViewSwitch> — the text view is marked as alpha", () => {
-  const switchOf = (root: HTMLElement) =>
-    Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
+describe("<SessionView> — the header's view icon", () => {
+  it("shows a Text icon over the terminal and a Terminal icon over the text", () => {
+    const { container } = render(() => <SessionView session="qa-icon" />);
+    expect(mode(container)).toBe("terminal");
+    expect(toggle(container).getAttribute("aria-label")).toBe("Text view");
 
-  it("marks the text segment, and only that one", () => {
-    const { container } = render(() => <SessionView session="qa-alpha" />);
-    const [text, terminal] = switchOf(container as HTMLElement);
-    expect(text!.querySelector(".tl-seg-alpha")?.textContent?.trim()).toBe("α");
-    expect(terminal!.querySelector(".tl-seg-alpha")).toBeNull();
+    fireEvent.click(toggle(container));
+    expect(mode(container)).toBe("text");
+    expect(toggle(container).getAttribute("aria-label")).toBe("Terminal view");
+
+    fireEvent.click(toggle(container));
+    expect(mode(container)).toBe("terminal");
   });
 
-  it("says the word where there is room for it", () => {
-    // The glyph is aria-hidden, so this is the only thing that announces it.
-    const { container } = render(() => <SessionView session="qa-alpha" />);
-    const [text] = switchOf(container as HTMLElement);
-    expect(text!.getAttribute("aria-label")).toMatch(/alpha/i);
-    expect(text!.getAttribute("title")).toMatch(/alpha/i);
+  it("is the first of exactly two buttons in the group, before …", () => {
+    const { container } = render(() => <SessionView session="qa-icon" />);
+    const group = container.querySelector(".tl-bar-group")!;
+    const buttons = [...group.querySelectorAll(":scope > button, :scope > .tl-bar-menu > button")];
+    expect(buttons.map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Text view",
+      "Session actions",
+    ]);
   });
 
-  it("does not announce it twice", () => {
-    const { container } = render(() => <SessionView session="qa-alpha" />);
-    const mark = container.querySelector(".tl-seg-alpha")!;
-    expect(mark.getAttribute("aria-hidden")).toBe("true");
+  // The Text view was marked alpha on 2026-08-18. With one icon there is no
+  // segment to carry the glyph, so the word stays in the tooltip only.
+  it("keeps the alpha note in the Text icon's tooltip", () => {
+    const { container } = render(() => <SessionView session="qa-icon" />);
+    expect(toggle(container).getAttribute("title")).toMatch(/alpha/i);
+    show(container, "text");
+    expect(toggle(container).getAttribute("title")).not.toMatch(/alpha/i);
+  });
+});
+
+describe("<SessionView> — the header's title and subtitle", () => {
+  const sub = (root: HTMLElement): string =>
+    root.querySelector(".tl-bar-sub-text")?.textContent?.trim() ?? "";
+  const stateDot = (root: HTMLElement): string | null =>
+    root.querySelector(".tl-bar-state")?.getAttribute("data-s") ?? null;
+
+  it("titles the bar with the session's label", () => {
+    const { container } = render(() => <SessionView session="qa-sub" label="Fix the card" />);
+    expect(container.querySelector(".tl-bar-title")?.textContent?.trim()).toBe("Fix the card");
+  });
+
+  it("says project and state under it, with the running dot", () => {
+    const { container } = render(() => (
+      <SessionView session="qa-sub" project={() => "code"} claudeState={() => "running"} />
+    ));
+    expect(sub(container)).toBe("code · working");
+    expect(stateDot(container)).toBe("working");
+  });
+
+  it("follows the state as the session list moves it", async () => {
+    const [state, setState] = createSignal<"running" | "awaiting">("running");
+    const { container } = render(() => (
+      <SessionView session="qa-sub" project={() => "code"} claudeState={state} />
+    ));
+    setState("awaiting");
+    await waitFor(() => expect(sub(container)).toBe("code · waiting for you"));
+    expect(stateDot(container)).toBe("waiting");
+  });
+
+  it("appends background work", () => {
+    const { container } = render(() => (
+      <SessionView
+        session="qa-sub"
+        project={() => "code"}
+        claudeState={() => "running"}
+        background={() => ({ agents: 2 })}
+      />
+    ));
+    expect(sub(container)).toBe("code · working · 2 agents");
+  });
+
+  it("says watching on a device that only watches", () => {
+    const { container } = render(() => (
+      <SessionView session="qa-sub" project={() => "code"} driven={() => true} />
+    ));
+    expect(sub(container)).toBe("code · watching");
+  });
+
+  it("keeps the connection badge on the subtitle's line", () => {
+    const probe = statusProbe();
+    const { container } = render(() => <SessionView session="qa-sub" status={probe.props} />);
+    expect(container.querySelector(".tl-bar-sub .tl-conn-badge")).not.toBeNull();
   });
 });

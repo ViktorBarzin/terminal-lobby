@@ -49,12 +49,12 @@ function stubFetch(): void {
 const promptBodies = (): unknown[] =>
   posts.filter((p) => p.url.includes("/prompt")).map((p) => JSON.parse(p.body));
 
-const segment = (root: HTMLElement, title: RegExp): HTMLButtonElement => {
-  const b = Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg")).find(
-    (el) => title.test(el.getAttribute("title") ?? ""),
-  );
-  expect(b, `the ${title} segment`).toBeTruthy();
-  return b!;
+/** Show the view whose name matches, through the header's one view icon. The
+ *  icon names the view it switches TO, so it is clicked only when it matches. */
+const showView = (root: HTMLElement, name: RegExp): void => {
+  const b = root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-view-toggle");
+  expect(b, "the header's view icon").toBeTruthy();
+  if (name.test(b!.getAttribute("aria-label") ?? "")) fireEvent.click(b!);
 };
 
 const field = (root: HTMLElement) =>
@@ -84,7 +84,7 @@ describe("<SessionView> — sending at a suspended session", () => {
     const { container, unmount } = render(() => (
       <SessionView session="qa-suspend-a" suspended={suspended} resume={resume} />
     ));
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     type(container as HTMLElement, "Reply with the word: kiwi");
 
     await waitFor(() =>
@@ -100,7 +100,7 @@ describe("<SessionView> — sending at a suspended session", () => {
     const { container, unmount } = render(() => (
       <SessionView session="qa-suspend-b" suspended={suspended} resume={resume} />
     ));
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     type(container as HTMLElement, "still here");
 
     await waitFor(() => expect(field(container as HTMLElement)?.value).toBe("still here"));
@@ -114,7 +114,7 @@ describe("<SessionView> — sending at a suspended session", () => {
     const { container, unmount } = render(() => (
       <SessionView session="qa-suspend-c" suspended={suspended} resume={resume} />
     ));
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     type(container as HTMLElement, "right now");
 
     await waitFor(() => expect(promptBodies()).toEqual([{ text: "right now" }]));

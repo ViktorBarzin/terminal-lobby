@@ -50,18 +50,6 @@ body {
 .tl-brand {
   font-weight: 600;
 }
-.tl-session {
-  font-family: var(--font-mono);
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  padding: 2px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 40vw;
-}
 /* `.tl-conn` — the text view's old SSE word badge ("open", "no transcript") —
    is gone with the markup that used it. StatusDot replaced it on both views. */
 
@@ -220,55 +208,7 @@ body {
   }
 }
 
-/* ---- View switch ------------------------------------------------------- */
-.tl-viewswitch {
-  display: inline-flex;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 2px;
-  gap: 2px;
-}
-.tl-seg {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 0;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
-  padding: 5px 12px;
-  border-radius: calc(var(--radius) - 4px);
-  cursor: pointer;
-}
-.tl-seg:hover {
-  background: var(--hover-tint);
-  color: var(--text-primary);
-}
-.tl-seg.active {
-  background: var(--bg-card-hover);
-  color: var(--text-primary);
-  box-shadow: var(--surface-shadow);
-}
-/* "still in testing", in one glyph. Riding high like a superscript rather than
-   sitting on the baseline keeps it from reading as part of the label, and
-   flex:none stops it being the thing that gives up width when the bar is
-   tight. The switch is icon-only below 380px, where this is the only mark
-   left. */
-.tl-seg-alpha {
-  flex: none;
-  align-self: flex-start;
-  margin-left: -3px;
-  font-size: calc(9.5px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  line-height: 1.35;
-  color: var(--accent);
-}
-.tl-seg:not(.active) .tl-seg-alpha {
-  opacity: 0.7;
-}
+/* The unseen-content dot on the header's view icon (sidebar.css places it). */
 .tl-activity-dot {
   width: 7px;
   height: 7px;
@@ -1072,16 +1012,17 @@ label.tl-set-row-label {
   opacity: 0.75;
 }
 
-.tl-watch-btn.tl-watch-on {
+/* The Watch row in the header's "…" menu, while it is on. */
+.tl-watch-item.tl-watch-on {
   color: var(--accent);
-  border-color: var(--accent);
 }
 /* Driving in a lens — this tab is typing into another user's session. The
-   control stays a control; what changes is that it reads hot, so the state is
-   visible from the bar rather than only from the tinted frame around the app. */
-.tl-watch-btn.tl-watch-lens-drive {
+   control stays a control; what changes is that it reads hot. The "…" button
+   carries the same mark, so the state is visible from the bar rather than only
+   from the tinted frame around the app. */
+.tl-watch-item.tl-watch-lens-drive,
+.tl-bar-menu-btn.tl-watch-lens-drive {
   color: var(--danger);
-  border-color: var(--danger);
 }
 /* The pty-write controls, inert while watching: a read-only tmux client drops
    what they send, and an upload would file an image in the session's gallery
@@ -1344,11 +1285,6 @@ label.tl-set-row-label {
 .tl-textview .tl-complete-desc,
 .tl-textview .tl-complete-source,
 .tl-textview .tl-complete-note {
-  font-family: var(--font-text);
-}
-/* The session bar takes the same face while it heads a Text view, so the title
-   and the conversation under it read as one surface. */
-.tl-session-bar[data-mode="text"] {
   font-family: var(--font-text);
 }
 .tl-timeline {

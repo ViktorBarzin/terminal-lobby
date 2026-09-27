@@ -28,7 +28,7 @@ import { SessionView } from "../src/components/SessionView";
  *
  * So the first connect waits for Text mode to actually be shown. Only the FIRST
  * one: once open the stream stays open for the life of this view, because the
- * [Text] segment's activity dot is exactly the promise that the timeline keeps
+ * Text icon's activity dot is exactly the promise that the timeline keeps
  * filling while you are looking at the terminal.
  */
 
@@ -43,14 +43,24 @@ interface FakeSource {
 const eventSources: FakeSource[] = [];
 const g = globalThis as unknown as { EventSource?: unknown };
 
-const segments = (root: HTMLElement): HTMLButtonElement[] =>
-  Array.from(root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"));
-
-const dots = (root: HTMLElement): boolean[] =>
-  segments(root).map((b) => !!b.querySelector(".tl-activity-dot"));
-
 const mode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
+
+/** The header's one view icon. It names the view it switches TO, and carries
+ *  that view's unseen-content dot. */
+const toggle = (root: HTMLElement): HTMLButtonElement =>
+  root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-view-toggle")!;
+
+/** Show a view through the header icon, clicking only when it is not already up. */
+function show(root: HTMLElement, want: "text" | "terminal"): void {
+  if (mode(root) !== want) fireEvent.click(toggle(root));
+}
+
+/** [Text dot, Terminal dot]: the icon's dot belongs to the hidden view. */
+const dots = (root: HTMLElement): boolean[] => {
+  const dotted = !!toggle(root).querySelector(".tl-activity-dot");
+  return mode(root) === "terminal" ? [dotted, false] : [false, dotted];
+};
 
 const feed = (src: FakeSource | undefined, id: number, body: string): void =>
   src?.onmessage?.({
@@ -96,7 +106,7 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     const { container } = render(() => <SessionView session="qa-lazy" />);
     expect(eventSources).toHaveLength(0);
 
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(mode(container)).toBe("text");
     expect(eventSources).toHaveLength(1);
     expect(eventSources[0]?.url).toContain("qa-lazy");
@@ -113,16 +123,16 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
 
   it("keeps the stream when you switch back to the Terminal", async () => {
     const { container } = render(() => <SessionView session="qa-lazy" />);
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(eventSources).toHaveLength(1);
 
-    fireEvent.click(segments(container)[1]!); // [Terminal]
+    show(container, "terminal");
     expect(mode(container)).toBe("terminal");
     expect(eventSources[0]?.closed).toBe(false);
     expect(eventSources).toHaveLength(1);
 
-    // ...and it is still filling the timeline, which is what the [Text]
-    // segment's activity dot reports while you are not looking at it.
+    // ...and it is still filling the timeline, which is what the Text
+    // icon's activity dot reports while you are not looking at it.
     feed(eventSources[0], 1, "arrived while you were in the terminal");
     // The store coalesces arriving events into one write per frame, so the dot
     // appears on the next frame rather than inside this tick.
@@ -133,10 +143,10 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
   it("opens exactly one stream however often you toggle the view", () => {
     const { container } = render(() => <SessionView session="qa-lazy" />);
     for (let i = 0; i < 3; i++) {
-      fireEvent.click(segments(container)[0]!); // [Text]
-      fireEvent.click(segments(container)[1]!); // [Terminal]
+      show(container, "text");
+      show(container, "terminal");
     }
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(eventSources).toHaveLength(1);
   });
 
@@ -160,7 +170,7 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     // which is what made a terminal-only session look broken (c494629).
     expect(published.every((s) => s === null)).toBe(true);
 
-    fireEvent.click(segments(container)[0]!); // [Text] opens the stream
+    show(container, "text"); // opens the stream
     // Now it reports the connection it just triggered, not the vocabulary of a
     // broken one.
     expect(published[published.length - 1]).toBe("connecting");
@@ -175,7 +185,7 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
 
   it("closes the stream on unmount once it HAS been opened", () => {
     const { container, unmount } = render(() => <SessionView session="qa-lazy" />);
-    fireEvent.click(segments(container)[0]!); // [Text]
+    show(container, "text");
     expect(eventSources).toHaveLength(1);
 
     unmount();
@@ -190,7 +200,12 @@ describe("<SessionView> — the transcript stream is opened by Text mode", () =>
     expect(eventSources).toHaveLength(0);
     expect(dots(container)).toEqual([false, false]);
 
-    fireEvent.click(container.querySelector('[aria-label="File preview"]')!);
+    // Files is a row in the header's … menu.
+    fireEvent.click(container.querySelector(".tl-bar-group .tl-bar-menu-btn")!);
+    const files = [
+      ...container.querySelectorAll<HTMLButtonElement>(".tl-bar-menu .tl-menu-item"),
+    ].find((e) => (e.textContent || "").trim() === "Files");
+    fireEvent.click(files!);
     expect(container.querySelector(".tl-preview-panel")).toBeTruthy();
     expect(container.querySelector(".tl-preview-recents")).toBeNull();
   });

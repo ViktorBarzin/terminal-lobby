@@ -75,7 +75,7 @@ import { startNetworkWatch } from "../diagnostics/network";
 import { createPrefsStore, modelChoiceFor, resetOneSessionEffort } from "../store/prefs";
 import { modelHarness, modelRequest } from "../lib/models";
 import { createSkillsStore } from "../store/skills";
-import { SkillsIcon } from "./Icons";
+import { BackGlyph, SkillsIcon } from "./Icons";
 import { toasts } from "../store/toast";
 import { createKeybindingEngine } from "../keybindings/engine";
 import { keyContext } from "../keybindings/bindings.logic";
@@ -2475,11 +2475,12 @@ export const App: Component = () => {
               leading={
                 <Show when={flip()}>
                   <button
-                    class="tl-icon-btn tl-back-btn"
+                    type="button"
+                    class="tl-back-btn"
                     aria-label="Back to sessions"
                     onClick={() => setCollapsed(false)}
                   >
-                    ‹<span class="tl-btn-label">Sessions</span>
+                    <BackGlyph />
                   </button>
                 </Show>
               }
@@ -2738,11 +2739,12 @@ export const App: Component = () => {
                       leading={
                         <Show when={flip()}>
                           <button
-                            class="tl-icon-btn tl-back-btn"
+                            type="button"
+                            class="tl-back-btn"
                             aria-label="Back to sessions"
                             onClick={() => setCollapsed(false)}
                           >
-                            ‹<span class="tl-btn-label">Sessions</span>
+                            <BackGlyph />
                           </button>
                         </Show>
                       }
@@ -2768,6 +2770,9 @@ export const App: Component = () => {
                         store.sessions.some((s) => s.name === k.name && s.driven === true)
                       }
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
+                      // The header's subtitle starts with it. BY KEY, for the
+                      // reason `tileSession` exists.
+                      project={() => tileSession()?.project}
                       // The hook-stamped state, which the Text view's Stop
                       // needs to agree with the transcript. BY KEY, for the
                       // reason `tileSession` exists.

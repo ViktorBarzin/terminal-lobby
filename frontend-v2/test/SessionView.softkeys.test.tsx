@@ -36,12 +36,12 @@ function stubPhone(): void {
 const viewMode = (root: HTMLElement): string | null =>
   root.querySelector(".tl-session-view")?.getAttribute("data-mode") ?? null;
 
-const segment = (root: HTMLElement, title: RegExp): HTMLButtonElement => {
-  const b = Array.from(
-    root.querySelectorAll<HTMLButtonElement>(".tl-viewswitch .tl-seg"),
-  ).find((el) => title.test(el.getAttribute("title") ?? ""));
-  expect(b, `the ${title} segment`).toBeTruthy();
-  return b!;
+/** Show the view whose name matches, through the header's one view icon. The
+ *  icon names the view it switches TO, so it is clicked only when it matches. */
+const showView = (root: HTMLElement, name: RegExp): void => {
+  const b = root.querySelector<HTMLButtonElement>(".tl-bar-group .tl-view-toggle");
+  expect(b, "the header's view icon").toBeTruthy();
+  if (name.test(b!.getAttribute("aria-label") ?? "")) fireEvent.click(b!);
 };
 
 describe("<SessionView> — the soft keys are the terminal view's", () => {
@@ -53,7 +53,7 @@ describe("<SessionView> — the soft keys are the terminal view's", () => {
   it("shows them in the terminal view", () => {
     stubPhone();
     const { container } = render(() => <SessionView session="qa-softkeys" />);
-    fireEvent.click(segment(container as HTMLElement, /Terminal/i));
+    showView(container as HTMLElement, /Terminal/i);
     expect(viewMode(container as HTMLElement)).toBe("terminal");
     expect(document.getElementById("soft-keys")).not.toBeNull();
   });
@@ -61,7 +61,7 @@ describe("<SessionView> — the soft keys are the terminal view's", () => {
   it("does not show them in the text view", () => {
     stubPhone();
     const { container } = render(() => <SessionView session="qa-softkeys" />);
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     expect(viewMode(container as HTMLElement)).toBe("text");
     expect(document.getElementById("soft-keys")).toBeNull();
   });
@@ -71,9 +71,9 @@ describe("<SessionView> — the soft keys are the terminal view's", () => {
     // terminal its keys for the rest of the session.
     stubPhone();
     const { container } = render(() => <SessionView session="qa-softkeys" />);
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     expect(document.getElementById("soft-keys")).toBeNull();
-    fireEvent.click(segment(container as HTMLElement, /Terminal/i));
+    showView(container as HTMLElement, /Terminal/i);
     expect(document.getElementById("soft-keys")).not.toBeNull();
   });
 
@@ -87,7 +87,7 @@ describe("<SessionView> — the soft keys are the terminal view's", () => {
     stubPhone();
     document.body.classList.remove("has-soft-keys");
     const { container } = render(() => <SessionView session="qa-softkeys" />);
-    fireEvent.click(segment(container as HTMLElement, /Text/i));
+    showView(container as HTMLElement, /Text/i);
     expect(document.body.classList.contains("has-soft-keys")).toBe(false);
   });
 });

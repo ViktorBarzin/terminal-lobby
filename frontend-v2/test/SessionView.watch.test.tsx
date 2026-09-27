@@ -70,44 +70,62 @@ class FakeEventSource {
 beforeEach(() => {
   localStorage.clear();
   vi.stubGlobal("EventSource", FakeEventSource);
-  vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]"))));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() => Promise.resolve(new Response("[]"))),
+  );
   vi.mocked(terminalFrameArgs).mockClear();
 });
 
-const watchButton = (c: HTMLElement) =>
-  c.querySelector<HTMLButtonElement>("button.tl-watch-btn")!;
+/**
+ * The Watch row in the header's "…" menu, opening the menu first when it is
+ * shut. Since the T3 header (2026-09-27) Watch is a menu row on every device,
+ * not a bar button; picking it closes the menu, so each read reopens it.
+ */
+const watchButton = (c: HTMLElement): HTMLButtonElement => {
+  if (!c.querySelector(".tl-bar-menu .tl-menu")) {
+    const dots = c.querySelector<HTMLButtonElement>(".tl-bar-group .tl-bar-menu-btn");
+    expect(dots, "the … button in the header group").toBeTruthy();
+    fireEvent.click(dots!);
+  }
+  const row = c.querySelector<HTMLButtonElement>(".tl-bar-menu button.tl-watch-item");
+  expect(row, "no Watch row in the … menu").toBeTruthy();
+  return row!;
+};
 
 describe("<SessionView> — the Watch toggle", () => {
-  it("is present while the TEXT view is showing, so it can be set before the attach", () => {
+  it("is in the … menu while the TEXT view is showing, so it can be set before the attach", () => {
     localStorage.setItem("tl:viewmode:v1:main", "text"); // start in text mode
     const { container } = render(() => <SessionView session="main" />);
 
     expect(container.querySelector(".tl-session-view")?.getAttribute("data-mode")).toBe("text");
     const btn = watchButton(container);
-    expect(btn, "no Watch button in the session bar").toBeTruthy();
-    expect(btn.offsetParent === null && btn.hidden).toBe(false);
+    expect(btn.hidden).toBe(false);
+    expect(btn.getAttribute("role")).toBe("menuitemcheckbox");
   });
 
   it("starts off, so opening a session behaves exactly as it does today", () => {
     const { container } = render(() => <SessionView session="main" />);
     const btn = watchButton(container);
-    expect(btn.getAttribute("aria-pressed")).toBe("false");
+    expect(btn.getAttribute("aria-checked")).toBe("false");
     expect(btn.classList.contains("tl-watch-on")).toBe(false);
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
   });
 
   it("clicking it turns watching on, and says so", async () => {
     const { container } = render(() => <SessionView session="main" />);
-    const btn = watchButton(container);
 
-    fireEvent.click(btn);
-    await waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(watchButton(container));
+    // Picking a row closes the menu, as every row does.
+    expect(container.querySelector(".tl-bar-menu .tl-menu")).toBeNull();
+    await waitFor(() => expect(watchButton(container).getAttribute("aria-checked")).toBe("true"));
+    const btn = watchButton(container);
     expect(btn.classList.contains("tl-watch-on")).toBe(true);
     expect(btn.textContent).toContain("Watching");
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro");
 
     fireEvent.click(btn);
-    await waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"));
+    await waitFor(() => expect(watchButton(container).getAttribute("aria-checked")).toBe("false"));
     // Turning it off records an EXPLICIT choice to drive, not an absence. With
     // no choice stored, the automatic rule would put a driven session straight
     // back into watch mode and the button would look inert.
@@ -115,48 +133,39 @@ describe("<SessionView> — the Watch toggle", () => {
   });
 
   it("joins as a viewer when someone is already driving, with nothing stored", () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => true} />
-    ));
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
+    const { container } = render(() => <SessionView session="main" driven={() => true} />);
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("true");
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBeNull();
   });
 
   it("drives a session nobody else is on, as before", () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => false} />
-    ));
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("false");
+    const { container } = render(() => <SessionView session="main" driven={() => false} />);
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("false");
   });
 
   it("take-control sticks even while the other device keeps driving", async () => {
-    const { container } = render(() => (
-      <SessionView session="main" driven={() => true} />
-    ));
-    const btn = watchButton(container);
-    expect(btn.getAttribute("aria-pressed")).toBe("true"); // auto-joined
+    const { container } = render(() => <SessionView session="main" driven={() => true} />);
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("true"); // auto-joined
 
-    fireEvent.click(btn); // take control
-    await waitFor(() => expect(btn.getAttribute("aria-pressed")).toBe("false"));
+    fireEvent.click(watchButton(container)); // take control
+    await waitFor(() => expect(watchButton(container).getAttribute("aria-checked")).toBe("false"));
     expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("rw");
   });
 
   it("remembers per session — watching one does not silence another", async () => {
     const a = render(() => <SessionView session="main" />);
     fireEvent.click(watchButton(a.container));
-    await waitFor(() =>
-      expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro"),
-    );
+    await waitFor(() => expect(localStorage.getItem(WATCH_KEY_PREFIX + "main")).toBe("ro"));
     a.unmount();
 
     const b = render(() => <SessionView session="other" />);
-    expect(watchButton(b.container).getAttribute("aria-pressed")).toBe("false");
+    expect(watchButton(b.container).getAttribute("aria-checked")).toBe("false");
   });
 
   it("a session already marked as watched comes up watching", () => {
     localStorage.setItem(WATCH_KEY_PREFIX + "main", "ro");
     const { container } = render(() => <SessionView session="main" />);
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("true");
   });
 
   /**
@@ -208,14 +217,13 @@ describe("<SessionView> — the Watch toggle", () => {
  * here (App derives it from /whoami).
  */
 describe("<SessionView> — acting as another user", () => {
-  const bar = (c: HTMLElement, cls: string) =>
-    c.querySelector<HTMLButtonElement>(`button.${cls}`)!;
+  const bar = (c: HTMLElement, cls: string) => c.querySelector<HTMLButtonElement>(`button.${cls}`)!;
   const lensView = () => render(() => <SessionView session="main" lens={() => "bob"} />);
 
   it("comes up watching, whatever your own session of that name chose", () => {
     localStorage.setItem(WATCH_KEY_PREFIX + "main", "rw");
     const { container } = lensView();
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("true");
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("true");
   });
 
   it("attaches read-only, and names the user it is watching", async () => {
@@ -239,11 +247,9 @@ describe("<SessionView> — acting as another user", () => {
     const btn = watchButton(container);
     expect(btn.disabled).toBe(false);
     fireEvent.click(btn);
-    expect(watchButton(container).getAttribute("aria-pressed")).toBe("false");
+    expect(watchButton(container).getAttribute("aria-checked")).toBe("false");
     await waitFor(() =>
-      expect(
-        vi.mocked(terminalFrameArgs).mock.calls.some(([, opts]) => !opts?.watch),
-      ).toBe(true),
+      expect(vi.mocked(terminalFrameArgs).mock.calls.some(([, opts]) => !opts?.watch)).toBe(true),
     );
     expect(watchButton(container).title).toContain("bob");
   });
@@ -262,7 +268,14 @@ describe("<SessionView> — acting as another user", () => {
     const { container } = lensView();
     expect(bar(container, "tl-paste-btn").disabled).toBe(true);
     expect(bar(container, "tl-upload-btn").disabled).toBe(true);
-    expect(bar(container, "tl-gallery-btn").disabled).toBe(false); // reading is untouched
+    // Reading is untouched: the gallery row in the … menu stays live.
+    const images = [...container.querySelectorAll<HTMLButtonElement>(".tl-bar-menu-btn")];
+    fireEvent.click(images[0]!);
+    const row = [
+      ...container.querySelectorAll<HTMLButtonElement>(".tl-bar-menu .tl-menu-item"),
+    ].find((e) => (e.textContent || "").trim() === "Images");
+    expect(row?.disabled).toBe(false);
+    fireEvent.click(images[0]!); // shut it again
 
     fireEvent.click(watchButton(container));
     expect(bar(container, "tl-paste-btn").disabled).toBe(false);
