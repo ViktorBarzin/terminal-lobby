@@ -1072,6 +1072,12 @@ func answerPosition(r answerReading, known []DialogQuestion) (int, bool) {
 		return 0, false
 	}
 	if reviewOnScreen(r.region) {
+		if len(r.dialog.Headers) == 0 && len(known) > 0 {
+			// The tab bar is off the top of a tall review screen
+			// (reviewFoot), and the call's list says how many questions
+			// the review sits past.
+			return len(known), true
+		}
 		return len(r.dialog.Headers), true
 	}
 	return questionOnScreen(r.dialog, known)

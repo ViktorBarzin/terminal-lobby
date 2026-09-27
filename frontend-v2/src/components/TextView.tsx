@@ -741,7 +741,7 @@ export const TextView: Component<{
     })();
     if (!seen) return null;
     return {
-      ...seen,
+      ...withCallHeaders(seen, known),
       questions: drawnQuestions(seen).map((q) => withCallContent(q, known)),
     };
   });
@@ -1712,6 +1712,24 @@ function drawnQuestions(d: DialogView): DialogQuestionView[] {
     const options: DialogOptionView[] | null = q.options;
     return options ? q : { ...q, options: [] };
   });
+}
+
+/**
+ * A review screen whose tab bar is off the top of the pane, with the call's
+ * questions filled in.
+ *
+ * A review screen taller than the pane loses its tab bar, so the reading
+ * carries the Submit screen and no headers (sessionio reviewFoot, found on an
+ * 80x23 pane on 2026-09-27). The record still says which questions the call
+ * asked. They count as answered: the review screen is one past the last
+ * question, and the card only walks there by answering each one.
+ */
+function withCallHeaders(d: DialogView, known: Question[]): DialogView {
+  if ((d.headers?.length ?? 0) > 0 || known.length === 0) return d;
+  const qs = drawnQuestions(d);
+  const onReview = qs.length > 0 && qs[0]!.options.length === 0;
+  if (!onReview) return d;
+  return { ...d, headers: known.map((q) => q.header), count: known.length, answered: known.length };
 }
 
 /**

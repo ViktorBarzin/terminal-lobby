@@ -346,3 +346,25 @@ describe("the review screen as the wire actually sends it", () => {
     expect(onAnswer.mock.calls[1]![0]).toEqual({ submit: true });
   });
 });
+
+describe("a review screen taller than the pane", () => {
+  /**
+   * sessionio reviewFoot: the tab bar has scrolled off the top, so the
+   * reading carries the Submit screen and no headers at all (Go omits the
+   * empty list). Found on an 80x23 pane on 2026-09-27, where the card kept
+   * showing question 1 of 4 with no Submit.
+   */
+  const clipped = { questions: [{ question: "Ready to submit your answers?", options: [] }], partial: true };
+
+  it("offers Submit and names the call's questions from its record", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest): Promise<AnswerResponse | null> => null);
+    const v = mount([ask("tool-a", twoQuestions), asking(clipped)], onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-step")).toBe("ready to submit"));
+    const rows = [...v.container.querySelectorAll(".tl-qcard-reviewrow")].map((r) => r.textContent);
+    expect(rows).toEqual(["Fruitanswered", "Drinkanswered"]);
+    const submit = v.container.querySelector<HTMLButtonElement>(".tl-qcard-send");
+    expect(submit?.textContent).toBe("Submit");
+    submit!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledWith({ submit: true }));
+  });
+});
