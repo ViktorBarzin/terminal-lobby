@@ -182,6 +182,30 @@ describe("<WorkGroupRowView> folded", () => {
     expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("waiting");
   });
 
+  it("does not count an edit that failed as a file edited", () => {
+    // Seen live on 2026-09-27: an Edit refused with "File has not been read
+    // yet" read as "Edited 1 file" beside "failed".
+    const g = groupOf([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Edit",
+        toolId: "e1",
+        body: JSON.stringify({ file_path: "/r/calc.py", old_string: "a", new_string: "b" }),
+        at: 1_000,
+      }),
+      result(3, "e1", "File has not been read yet. Read it first before writing to it.", {
+        isError: true,
+        at: 2_000,
+      }),
+      ev({ id: 4, kind: "turn_end", at: 3_000 }),
+    ]);
+    const { container } = mount(g);
+    expect(container.querySelector(".tl-group-sum")!.textContent).toBe("1 edit failed");
+    expect(container.querySelector(".tl-group-meta")!.textContent).toContain("failed");
+  });
+
   it("says a call the reader declined was declined, not that it failed", () => {
     const declined = groupOf([
       ev({ id: 1, kind: "user", body: "go" }),

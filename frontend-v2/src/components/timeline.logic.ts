@@ -1331,7 +1331,8 @@ function waitingPhrase(t: Tally, n: number): string {
  * file in several places; everything else counts calls. Thinking says nothing.
  *
  * A call the reader declined is not counted as done: it goes in a "declined 1
- * edit" phrase after the rest. With `waiting` (the turn is waiting on the
+ * edit" phrase after the rest. An edit that failed changed nothing and goes in
+ * a "1 edit failed" phrase. With `waiting` (the turn is waiting on the
  * reader), a call with no result yet is the one the permission prompt asks
  * about, and goes in a "waiting to edit 1 file" phrase last, so a group never
  * says an edit landed before the reader allowed it (found live 2026-09-27).
@@ -1343,6 +1344,7 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
   const skills: string[] = [];
   const declined = new Map<Tally, number>();
   const pending = new Map<Tally, number>();
+  const failedEdits = new Map<Tally, number>();
   const bump = (m: Map<Tally, number>, t: Tally): void => {
     m.set(t, (m.get(t) ?? 0) + 1);
   };
@@ -1351,6 +1353,12 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
     const t = tallyOf(c);
     if (declinedCall(c)) {
       bump(declined, t);
+      continue;
+    }
+    // An edit that came back as an error changed nothing, so it is not a
+    // file edited. A command that failed still ran, and says so.
+    if (t === "edit" && c.done && c.isError) {
+      bump(failedEdits, t);
       continue;
     }
     if (opts.waiting && !c.done) {
@@ -1396,6 +1404,7 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
     const [one, many] = DECLINED_NOUN[t];
     said.push(`declined ${plural(n, one, many)}`);
   }
+  for (const n of failedEdits.values()) said.push(`${plural(n, "edit", "edits")} failed`);
   for (const [t, n] of pending) said.push(`waiting to ${waitingPhrase(t, n)}`);
   const text = said.join(", ");
   return text.charAt(0).toUpperCase() + text.slice(1);
