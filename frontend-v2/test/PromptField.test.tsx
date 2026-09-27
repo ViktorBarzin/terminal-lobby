@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
-import { PromptField, type PromptFieldSinks } from "../src/components/PromptField";
+import { PromptField } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
@@ -119,83 +119,6 @@ describe("<PromptField>: the pill", () => {
     expect(
       container.querySelector(".tl-pill")!.firstElementChild!.classList.contains("tl-field"),
     ).toBe(true);
-  });
-});
-
-/**
- * Sending another way, on the field's own terms.
- *
- * The plan card's "Approve with this feedback" sends the composer's text by a
- * route of its own. It goes through the field, so the text is composed,
- * cleared and restored exactly as Send does it: never cleared without either a
- * confirmed send or a restore (memory #11256).
- */
-describe("<PromptField>: the sinks a card outside it can use", () => {
-  const mountWithSinks = () => {
-    let sinks: PromptFieldSinks | undefined;
-    const r = render(() => (
-      <PromptField onSend={onSend} label="Message" register={(s) => (sinks = s)} />
-    ));
-    return { ...r, sinks: () => sinks! };
-  };
-
-  it("says whether there is anything to send, as it is typed", () => {
-    const { container, sinks } = mountWithSinks();
-    expect(sinks().hasInput()).toBe(false);
-    type(field(container), "change step 2");
-    expect(sinks().hasInput()).toBe(true);
-    type(field(container), "   ");
-    expect(sinks().hasInput()).toBe(false);
-  });
-
-  it("says whether what is written runs over more than one line, as it is typed", () => {
-    // The plan card says line breaks become spaces while the field holds any.
-    const { container, sinks } = mountWithSinks();
-    type(field(container), "one line");
-    expect(sinks().lineBreaks()).toBe(false);
-    type(field(container), "first\nsecond");
-    expect(sinks().lineBreaks()).toBe(true);
-    type(field(container), "");
-    expect(sinks().lineBreaks()).toBe(false);
-  });
-
-  it("sends through the route it is handed, not through Send's", async () => {
-    const { container, sinks } = mountWithSinks();
-    type(field(container), "approve, but keep the tests");
-    const via: string[] = [];
-    const ok = await sinks().submitVia(async (t) => {
-      via.push(t);
-      return true;
-    });
-    expect(ok).toBe(true);
-    expect(via).toEqual(["approve, but keep the tests"]);
-    expect(sent).toEqual([]);
-    expect(field(container).value).toBe("");
-  });
-
-  it("puts the text back when that route refuses, or throws", async () => {
-    const { container, sinks } = mountWithSinks();
-    type(field(container), "keep me");
-    expect(await sinks().submitVia(async () => false)).toBe(false);
-    expect(field(container).value).toBe("keep me");
-    expect(
-      await sinks().submitVia(async () => {
-        throw new Error("gone");
-      }),
-    ).toBe(false);
-    expect(field(container).value).toBe("keep me");
-  });
-
-  it("sends nothing, and says so, when there is nothing written", async () => {
-    const { sinks } = mountWithSinks();
-    let called = false;
-    expect(
-      await sinks().submitVia(async () => {
-        called = true;
-        return true;
-      }),
-    ).toBe(false);
-    expect(called).toBe(false);
   });
 });
 

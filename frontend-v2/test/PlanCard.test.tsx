@@ -5,8 +5,11 @@
  *
  * The card renders one reading and the state its caller holds: which answer is
  * in flight, and what the last reply said. It sends nothing itself. A tap on
- * an option asks the caller to approve with that row, and "Approve with this
- * feedback" asks the caller to send the composer's text with `approve: true`.
+ * an option asks the caller to approve with that row. The last row, "Tell
+ * Claude what to change", opens the card's own field (the T3 pass, prototype
+ * 6-plan): its Send asks the caller to send the words as feedback, and
+ * "Approve with this feedback", offered beside it while it holds text, asks
+ * the caller to send them with `approve: true`.
  *
  * What it must never do is answer by accident. There are no digit shortcuts
  * and no raw keypad, because option 1 in the usual layout clears the context
@@ -49,24 +52,38 @@ type Props = ComponentProps<typeof PlanCard>;
 
 const mount = (over: Partial<Props> = {}) => {
   const onApprove = vi.fn();
-  const onApproveWithFeedback = vi.fn();
+  const onFeedback = vi.fn(async (_words: string) => true);
+  const onApproveWithFeedback = vi.fn(async (_words: string) => true);
   const onTerminal = vi.fn();
   const r = render(() => (
     <PlanCard
       reading={READING}
       plan={PLAN}
-      hasInput={false}
       onApprove={onApprove}
+      onFeedback={onFeedback}
       onApproveWithFeedback={onApproveWithFeedback}
       onTerminal={onTerminal}
       {...over}
     />
   ));
-  return { ...r, onApprove, onApproveWithFeedback, onTerminal };
+  return { ...r, onApprove, onFeedback, onApproveWithFeedback, onTerminal };
 };
 
 const text = (el: Element | null): string => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
-const options = (c: HTMLElement) => [...c.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")];
+/** The approve rows, the CLI's numbered ones; the own row is not one of them. */
+const options = (c: HTMLElement) => [
+  ...c.querySelectorAll<HTMLButtonElement>(".tl-qcard-option:not(.tl-qcard-own)"),
+];
+const ownRow = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-qcard-own");
+const ownField = (c: HTMLElement) => c.querySelector<HTMLTextAreaElement>(".tl-qcard-owninput");
+const ownSend = (c: HTMLElement) =>
+  c.querySelector<HTMLButtonElement>(".tl-qcard-ownfield .tl-send");
+/** Open the own row and type these words into its field. */
+const typeOwn = async (c: HTMLElement, words: string) => {
+  fireEvent.click(ownRow(c)!);
+  await Promise.resolve();
+  fireEvent.input(ownField(c)!, { target: { value: words } });
+};
 const button = (c: HTMLElement, name: string | RegExp) =>
   [...c.querySelectorAll<HTMLButtonElement>("button")].find((b) =>
     typeof name === "string" ? text(b) === name : name.test(text(b)),
@@ -115,10 +132,16 @@ describe("<PlanCard> at rest", () => {
     ]);
   });
 
-  it("does not draw the feedback row as an option, since the composer is that row", () => {
+  it("ends with Tell Claude what to change, a muted row with a pen and no number", () => {
     const { container } = mount();
-    expect(container.textContent).not.toContain("Tell Claude what to change");
     expect(options(container)).toHaveLength(3);
+    const own = ownRow(container);
+    expect(text(own?.querySelector(".tl-qcard-label") ?? null)).toBe("Tell Claude what to change");
+    expect(own?.querySelector(".tl-qcard-key svg")).not.toBeNull();
+    expect(text(own?.querySelector(".tl-qcard-key") ?? null)).toBe("");
+    // It is the last row, under the approve rows.
+    const rows = [...container.querySelectorAll(".tl-qcard-options > *")];
+    expect(rows[rows.length - 1]).toBe(own);
   });
 
   it("approves with the row tapped, by number and label", () => {
@@ -147,9 +170,18 @@ describe("<PlanCard> never answers by accident", () => {
     expect(onApprove).not.toHaveBeenCalled();
   });
 
-  it("has no Reject button", () => {
-    const { container } = mount({ hasInput: true });
+  it("has no Reject button, even with feedback written", async () => {
+    const { container } = mount();
+    await typeOwn(container, "smaller steps");
     expect(button(container, /reject|cancel|no,? /i)).toBeUndefined();
+  });
+
+  it("types digits into its own field as words, never as a pick", async () => {
+    const { container, onApprove, onFeedback } = mount();
+    await typeOwn(container, "");
+    for (const key of ["1", "2", "3"]) fireEvent.keyDown(ownField(container)!, { key });
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onFeedback).not.toHaveBeenCalled();
   });
 
   it("never falls back to a raw keypad, even when the choices cannot be read", () => {
@@ -223,13 +255,7 @@ describe("<PlanCard> clamps a long plan behind 'Read the full plan'", () => {
     stub(600, 180);
     const [plan, setPlan] = createSignal<string | null>(null);
     const { container } = render(() => (
-      <PlanCard
-        reading={READING}
-        plan={plan()}
-        hasInput={false}
-        onApprove={() => {}}
-        onApproveWithFeedback={() => {}}
-      />
+      <PlanCard reading={READING} plan={plan()} onApprove={() => {}} />
     ));
     expect(button(container, "Read the full plan")).toBeUndefined();
     setPlan(PLAN);
@@ -251,13 +277,7 @@ describe("<PlanCard> clamps a long plan behind 'Read the full plan'", () => {
     try {
       const [plan, setPlan] = createSignal<string | null>(null);
       const { container } = render(() => (
-        <PlanCard
-          reading={READING}
-          plan={plan()}
-          hasInput={false}
-          onApprove={() => {}}
-          onApproveWithFeedback={() => {}}
-        />
+        <PlanCard reading={READING} plan={plan()} onApprove={() => {}} />
       ));
       setPlan(PLAN);
       expect(observed).toContain(container.querySelector(".tl-plancard-plan"));
@@ -289,43 +309,106 @@ describe("<PlanCard> clamps a long plan behind 'Read the full plan'", () => {
   });
 });
 
+describe("<PlanCard> 'Tell Claude what to change'", () => {
+  it("opens into the card's own field, named for what it does", async () => {
+    const { container } = mount();
+    expect(ownField(container)).toBeNull();
+    fireEvent.click(ownRow(container)!);
+    await Promise.resolve();
+    const field = ownField(container)!;
+    expect(field.getAttribute("placeholder")).toBe("Tell Claude what to change…");
+    expect(field.getAttribute("aria-label")).toBe("Tell Claude what to change");
+    expect(document.activeElement).toBe(field);
+  });
+
+  it("sends the words as feedback on the Send beside them, and empties when it lands", async () => {
+    const { container, onFeedback, onApprove, onApproveWithFeedback } = mount();
+    await typeOwn(container, "use the existing helper");
+    fireEvent.click(ownSend(container)!);
+    expect(onFeedback).toHaveBeenCalledWith("use the existing helper");
+    expect(onApprove).not.toHaveBeenCalled();
+    expect(onApproveWithFeedback).not.toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ownField(container)?.value ?? "").toBe("");
+  });
+
+  it("sends on Enter, and breaks the line on Shift+Enter", async () => {
+    const { container, onFeedback } = mount();
+    await typeOwn(container, "first");
+    fireEvent.keyDown(ownField(container)!, { key: "Enter", shiftKey: true });
+    expect(onFeedback).not.toHaveBeenCalled();
+    fireEvent.keyDown(ownField(container)!, { key: "Enter" });
+    expect(onFeedback).toHaveBeenCalledWith("first");
+  });
+
+  it("keeps the words when the feedback was not sent", async () => {
+    const onFeedback = vi.fn(async (_w: string) => false);
+    const { container } = mount({ onFeedback });
+    await typeOwn(container, "keep this");
+    fireEvent.click(ownSend(container)!);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ownField(container)!.value).toBe("keep this");
+  });
+
+  it("sends nothing for blanks", async () => {
+    const { container, onFeedback } = mount();
+    await typeOwn(container, "  \n  ");
+    expect(ownSend(container)!.disabled).toBe(true);
+    fireEvent.keyDown(ownField(container)!, { key: "Enter" });
+    expect(onFeedback).not.toHaveBeenCalled();
+  });
+
+  it("is held while watching", () => {
+    const { container } = mount({ inert: "Watching alice" });
+    expect(ownRow(container)!.disabled).toBe(true);
+  });
+});
+
 describe("<PlanCard> 'Approve with this feedback'", () => {
   /* Found live 2026-09-27 on the Android emulator: with option 1 "Yes, clear
      context (9% used) and use auto mode", the button approved through option 1
      and the context meter went from 9% to 5%. The CLI's Shift+Tab takes option
      1, as the first measured session did too, so the button says it clears the
      context whenever option 1 does. */
-  it("says it clears the context when option 1 does", () => {
-    const { container } = mount({ hasInput: true });
+  it("says it clears the context when option 1 does", async () => {
+    const { container } = mount();
+    await typeOwn(container, "and keep the tests");
     expect(button(container, "Approve with this feedback")).toBeUndefined();
     expect(button(container, "Approve with this feedback and clear context")).toBeDefined();
   });
 
-  it("stays plain when option 1 keeps the context", () => {
-    const { container } = mount({ reading: NO_AUTO, hasInput: true });
+  it("stays plain when option 1 keeps the context", async () => {
+    const { container } = mount({ reading: NO_AUTO });
+    await typeOwn(container, "and keep the tests");
     expect(button(container, "Approve with this feedback")).toBeDefined();
   });
 
-  it("is offered only while the composer holds text", () => {
-    const [has, setHas] = createSignal(false);
-    const onApproveWithFeedback = vi.fn();
-    const { container } = render(() => (
-      <PlanCard
-        reading={NO_AUTO}
-        plan={PLAN}
-        hasInput={has()}
-        onApprove={() => {}}
-        onApproveWithFeedback={onApproveWithFeedback}
-      />
-    ));
+  it("is offered only while the card's field holds text, and carries those words", async () => {
+    const { container, onApproveWithFeedback, onFeedback } = mount({ reading: NO_AUTO });
     expect(button(container, "Approve with this feedback")).toBeUndefined();
-    setHas(true);
+    await typeOwn(container, "   ");
+    expect(button(container, "Approve with this feedback")).toBeUndefined();
+    fireEvent.input(ownField(container)!, { target: { value: "approve, and keep the tests" } });
     const approve = button(container, "Approve with this feedback");
     expect(approve).toBeDefined();
     fireEvent.click(approve!);
-    expect(onApproveWithFeedback).toHaveBeenCalledTimes(1);
-    setHas(false);
+    expect(onApproveWithFeedback).toHaveBeenCalledWith("approve, and keep the tests");
+    expect(onFeedback).not.toHaveBeenCalled();
+    await Promise.resolve();
+    await Promise.resolve();
     expect(button(container, "Approve with this feedback")).toBeUndefined();
+  });
+
+  it("keeps the words when the approval was not sent", async () => {
+    const onApproveWithFeedback = vi.fn(async (_w: string) => false);
+    const { container } = mount({ reading: NO_AUTO, onApproveWithFeedback });
+    await typeOwn(container, "keep this");
+    fireEvent.click(button(container, "Approve with this feedback")!);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(ownField(container)!.value).toBe("keep this");
   });
 });
 
@@ -341,10 +424,19 @@ describe("<PlanCard> while an answer is in flight", () => {
     expect(onApprove).not.toHaveBeenCalled();
   });
 
-  it("says feedback is on its way and holds every choice", () => {
-    const { container } = mount({ sending: { kind: "feedback" }, hasInput: true });
+  it("says feedback is on its way and holds every choice", async () => {
+    const [sending, setSending] = createSignal<Props["sending"]>(null);
+    const { container } = mount({
+      get sending() {
+        return sending();
+      },
+    });
+    await typeOwn(container, "smaller steps");
+    setSending({ kind: "feedback" });
     expect(notice(container)).toBe("Sending your feedback…");
     for (const row of options(container)) expect(row.disabled).toBe(true);
+    expect(ownField(container)!.disabled).toBe(true);
+    expect(ownSend(container)!.disabled).toBe(true);
     expect(button(container, "Approve with this feedback and clear context")?.disabled).toBe(true);
   });
 
@@ -372,10 +464,11 @@ describe("<PlanCard> after a refused reply", () => {
   });
 
   it("says the plan has gone, and offers nothing to answer (not-drawn, no-dialog)", () => {
-    const { container } = mount({ notice: "gone", hasInput: true });
+    const { container } = mount({ notice: "gone" });
     expect(notice(container)).toBe("The plan is no longer waiting in the Terminal.");
     expect(options(container)).toHaveLength(0);
-    expect(button(container, "Approve with this feedback")).toBeUndefined();
+    expect(ownRow(container)).toBeNull();
+    expect(ownField(container)).toBeNull();
   });
 
   it("says the plan has gone even when the reply carried no plan reading", () => {
@@ -399,27 +492,29 @@ describe("<PlanCard> after a refused reply", () => {
     expect(notice(container)).toBe(
       "Couldn't read the plan's choices. Open the Terminal to answer it.",
     );
-    expect(button(container, "Approve with this feedback")).toBeUndefined();
+    expect(ownRow(container)).toBeNull();
     fireEvent.click(button(container, "Open Terminal")!);
     expect(onTerminal).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("<PlanCard> notes about the feedback", () => {
-  it("says line breaks become spaces", () => {
-    const { container } = mount({ hasInput: true, lineBreaks: true });
+  it("says line breaks become spaces while the field has one", async () => {
+    const { container } = mount();
+    await typeOwn(container, "first\nsecond");
     expect(text(container.querySelector(".tl-plancard-lines"))).toBe(
       "Line breaks become spaces, because the Terminal's feedback field is one line.",
     );
   });
 
-  it("has no line-break note otherwise", () => {
-    const { container } = mount({ hasInput: true });
+  it("has no line-break note otherwise", async () => {
+    const { container } = mount();
+    await typeOwn(container, "one line");
     expect(container.querySelector(".tl-plancard-lines")).toBeNull();
   });
 
   it("says why feedback over 2,000 bytes was not sent", () => {
-    const { container } = mount({ hasInput: true, notice: "too-long" });
+    const { container } = mount({ notice: "too-long" });
     expect(notice(container)).toBe(
       "Not sent: the Terminal's feedback field takes up to 2,000 bytes. Shorten it and send again.",
     );

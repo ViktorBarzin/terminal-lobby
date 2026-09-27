@@ -103,16 +103,6 @@ export const Composer: Component<{
   claudeState?: ClaudeState;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
-  /**
-   * The plan-approval dialog is on the pane. The field then answers the plan:
-   * its placeholder says so and Send goes to `onPlanFeedback`, which types the
-   * text into the dialog's feedback row, so nothing typed here can land in an
-   * open plan menu by accident.
-   */
-  planOpen?: boolean;
-  /** Send's route while `planOpen`. Resolves false when refused, which puts
-   *  the text back. */
-  onPlanFeedback?: (text: string) => Promise<boolean>;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (5xx, unreachable),
    *  which puts the typed text back in the field. The attachments ride along
@@ -251,23 +241,13 @@ export const Composer: Component<{
     !!props.context;
 
   /**
-   * Where Send goes. While the plan dialog is up, the text is feedback on the
-   * plan and is typed into the dialog's own row; a plain prompt then would be
-   * typed into the plan menu, which is what `onPlanFeedback` exists to
-   * prevent. A stable function rather than a conditional prop, so the field
-   * reads the route at the moment it sends.
+   * Where Send goes. A stable function rather than the prop itself, so the
+   * field reads the route at the moment it sends. The plan's feedback is the
+   * plan card's own field since the T3 pass; the card hides this composer
+   * while it waits, and the text view refuses a send that still reaches it.
    */
   const send = (text: string, held: readonly DraftAttachment[]): Promise<boolean> =>
-    props.planOpen && props.onPlanFeedback ? props.onPlanFeedback(text) : props.onSend(text, held);
-  const placeholder = (): string =>
-    props.planOpen ? "Tell Claude what to change…" : "Ask Claude, or run a command…";
-
-  /** What Send's tooltip warns of, when a send would do more than send. */
-  const sendTitle = (): string | undefined => {
-    if (props.planOpen)
-      return "Send (Enter). Tells Claude what to change in its plan, and it keeps planning";
-    return undefined;
-  };
+    props.onSend(text, held);
 
   /** The model button's slot: the button, and background work beside it. */
   const tools = (): JSX.Element => (
@@ -313,7 +293,7 @@ export const Composer: Component<{
         textSize={props.textSize}
         onSend={send}
         label="Message to send to the session"
-        placeholder={placeholder()}
+        placeholder="Ask Claude, or run a command…"
         history={props.history}
         onListDir={props.onListDir}
         commands={props.commands}
@@ -331,11 +311,8 @@ export const Composer: Component<{
         canStop={turnRunning() && !props.inertReason}
         onStop={stop}
         stopping={stopping()}
-        // Not while the plan card is up: that send answers the dialog, and
-        // the live row can still say working before the plan call is recorded.
-        queues={turnRunning() && !props.planOpen}
+        queues={turnRunning()}
         attachNote="Images join this session's gallery"
-        sendTitle={sendTitle()}
       />
     </div>
   );

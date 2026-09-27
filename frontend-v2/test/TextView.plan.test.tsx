@@ -5,8 +5,9 @@
  * mounted: when the card docks and what plan it shows, which request an
  * option tap puts on the wire, what the view shows between an applied answer
  * and the transcript's record of it (the transient, up to 20 s), a refusal
- * that redraws the card from the reply, feedback sent through the composer,
- * and the words on the status line
+ * that redraws the card from the reply, feedback sent through the card's own
+ * "Tell Claude what to change" field (the T3 pass, prototype 6-plan), and the
+ * words on the live group
  * (docs/plans/2026-09-24-text-composer-redesign.md, "The plan-approval flow",
  * "When the card docks, and what it shows", "After clear context").
  *
@@ -123,15 +124,35 @@ function mount(
     [...r.container.querySelectorAll<HTMLButtonElement>(".tl-plancard .tl-qcard-option")].find(
       (o) => o.querySelector(".tl-qcard-key")?.textContent === String(n),
     );
+  /** The approve rows' labels, as the pane draws them; the own row is not one. */
   const labels = () =>
-    [...r.container.querySelectorAll(".tl-plancard .tl-qcard-label")].map((l) => l.textContent);
+    [
+      ...r.container.querySelectorAll(
+        ".tl-plancard .tl-qcard-option:not(.tl-qcard-own) .tl-qcard-label",
+      ),
+    ].map((l) => l.textContent);
   const row = () => q(".tl-row-plan");
   const header = () => row()?.querySelector(".tl-plan-outcome")?.textContent ?? null;
   /** What the live group at the end of the conversation says. */
   const status = () =>
     q(".tl-timeline .tl-group-box[data-live] .tl-group-sum")?.textContent ?? null;
-  const field = () => q<HTMLTextAreaElement>("textarea")!;
-  const send = () => q<HTMLButtonElement>(".tl-send")!;
+  /** The composer's field and its round button, hidden behind the card. */
+  const field = () => q<HTMLTextAreaElement>(".tl-composer textarea")!;
+  const send = () => q<HTMLButtonElement>(".tl-composer .tl-send")!;
+  /** The card's "Tell Claude what to change" row, and the field it opens. */
+  const ownRow = () => q<HTMLButtonElement>(".tl-plancard .tl-qcard-own");
+  const ownField = () => q<HTMLTextAreaElement>(".tl-plancard .tl-qcard-owninput");
+  const ownSend = () => q<HTMLButtonElement>(".tl-plancard .tl-qcard-ownfield .tl-send")!;
+  /** Open the card's own row and type these words into it. */
+  const typeOwn = async (words: string) => {
+    fireEvent.click(ownRow()!);
+    await waitFor(() => expect(ownField()).not.toBeNull());
+    fireEvent.input(ownField()!, { target: { value: words } });
+  };
+  const approveWithFeedback = () =>
+    [...(card()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((x) =>
+      (x.textContent ?? "").startsWith("Approve with this feedback"),
+    );
   /** The model button, which holds the mode and the model alike. */
   const dial = () => q<HTMLButtonElement>(".tl-model-btn");
   return {
@@ -147,6 +168,11 @@ function mount(
     status,
     field,
     send,
+    ownRow,
+    ownField,
+    ownSend,
+    typeOwn,
+    approveWithFeedback,
   };
 }
 
@@ -161,6 +187,8 @@ describe("when the plan card docks", () => {
     await waitFor(() => expect(v.card()).not.toBeNull());
     expect(v.card()!.textContent).toContain("Create hello.txt");
     expect(v.labels()).toEqual(PLAN_FIRST.options.map((o) => o.label));
+    // The last row is the card's own field for the dialog's feedback row.
+    expect(v.ownRow()?.textContent).toBe("Tell Claude what to change");
     // The plan is on screen once: the row shrinks to its stub.
     expect(v.row()!.getAttribute("data-docked")).toBe("true");
     expect(v.row()!.textContent).toContain("shown below");
@@ -330,42 +358,64 @@ describe("a refused option", () => {
   });
 });
 
-describe("feedback through the composer", () => {
-  it("sends Send as feedback that keeps Claude planning, and clears the field when applied", async () => {
+describe("feedback through the card's own field", () => {
+  it("sends the words as feedback that keeps Claude planning", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
     const onSend = vi.fn(async () => true);
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    expect(v.field().getAttribute("placeholder")).toBe("Tell Claude what to change…");
-    fireEvent.input(v.field(), {
-      target: { value: "use the\nexisting helper" },
-    });
-    fireEvent.click(v.send());
+    await v.typeOwn("use the\nexisting helper");
+    fireEvent.click(v.ownSend());
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
       plan: { feedback: "use the existing helper", approve: false },
     });
     expect(onSend).not.toHaveBeenCalled();
     await waitFor(() => expect(v.card()).toBeNull());
-    expect(v.field().value).toBe("");
     expect(v.header()).toBe("Sending back…");
   });
 
-  it("keeps the text when the feedback is refused", async () => {
+  it("keeps the words in the card when the feedback is refused", async () => {
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], async () => ({
       applied: false,
       reason: "unverified",
     }));
     await waitFor(() => expect(v.card()).not.toBeNull());
-    fireEvent.input(v.field(), { target: { value: "smaller steps" } });
-    fireEvent.click(v.send());
+    await v.typeOwn("smaller steps");
+    fireEvent.click(v.ownSend());
     await waitFor(() =>
       expect(v.card()!.textContent).toContain(
         "Your answer may not have landed. Check the Terminal.",
       ),
     );
-    // The field put the text back when the reply was refused.
-    await waitFor(() => expect(v.field().value).toBe("smaller steps"));
+    expect(v.ownField()!.value).toBe("smaller steps");
+  });
+
+  it("approves with the card's words, through option 1, and says it clears the context", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    await v.typeOwn("and keep the tests");
+    const approve = v.approveWithFeedback();
+    expect(approve?.textContent).toBe("Approve with this feedback and clear context");
+    fireEvent.click(approve!);
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      plan: { feedback: "and keep the tests", approve: true },
+    });
+    await waitFor(() => expect(v.card()).toBeNull());
+    expect(v.header()).toBe("Clearing context…");
+    expect(v.status()).toBe("Clearing the context and starting the plan…");
+  });
+
+  it("approves plainly when option 1 keeps the context", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_NO_AUTO)], onAnswer);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    await v.typeOwn("and keep the tests");
+    fireEvent.click(v.approveWithFeedback()!);
+    await waitFor(() => expect(v.card()).toBeNull());
+    expect(v.header()).toBe("Approving…");
   });
 
   it("offers no Approve with this feedback for words the hidden composer holds", async () => {
@@ -376,10 +426,21 @@ describe("feedback through the composer", () => {
     await waitFor(() => expect(v.card()).not.toBeNull());
     fireEvent.input(v.field(), { target: { value: "and add tests" } });
     await Promise.resolve();
-    const approve = [...v.card()!.querySelectorAll<HTMLButtonElement>("button")].find((x) =>
-      (x.textContent ?? "").startsWith("Approve with this feedback"),
+    expect(v.approveWithFeedback()).toBeUndefined();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it("refuses from a watching device and keeps the words", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const v = mount(
+      [prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)],
+      onAnswer,
+      undefined,
+      undefined,
+      { inertReason: "Watching alice" },
     );
-    expect(approve).toBeUndefined();
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.ownRow()!.disabled).toBe(true);
     expect(onAnswer).not.toHaveBeenCalled();
   });
 });
@@ -415,29 +476,30 @@ describe("the composer's place", () => {
   });
 });
 
-describe("what Send does with the field while the card is docked", () => {
-  it("sends nothing for a field of blanks and line breaks", async () => {
+describe("what the card's field sends", () => {
+  it("sends nothing for blanks and line breaks", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
     const onSend = vi.fn(async () => true);
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    fireEvent.input(v.field(), { target: { value: "  \n \n " } });
-    fireEvent.click(v.send());
+    await v.typeOwn("  \n \n ");
+    fireEvent.keyDown(v.ownField()!, { key: "Enter" });
+    fireEvent.click(v.ownSend());
     await Promise.resolve();
     expect(onAnswer).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
     expect(v.card()).not.toBeNull();
   });
 
-  it("does not send feedback over 2,000 bytes, says why, and keeps the text", async () => {
+  it("does not send feedback over 2,000 bytes, says why, and keeps the words", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
     const onSend = vi.fn(async () => true);
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
     await waitFor(() => expect(v.card()).not.toBeNull());
     // 1,001 two-byte characters: 1,001 characters, 2,002 bytes.
     const long = "é".repeat(1001);
-    fireEvent.input(v.field(), { target: { value: long } });
-    fireEvent.click(v.send());
+    await v.typeOwn(long);
+    fireEvent.click(v.ownSend());
     await waitFor(() =>
       expect(v.card()!.textContent).toContain(
         "Not sent: the Terminal's feedback field takes up to 2,000 bytes.",
@@ -445,19 +507,21 @@ describe("what Send does with the field while the card is docked", () => {
     );
     expect(onAnswer).not.toHaveBeenCalled();
     expect(onSend).not.toHaveBeenCalled();
-    await waitFor(() => expect(v.field().value).toBe(long));
+    expect(v.ownField()!.value).toBe(long);
   });
 
-  it("says nothing under the card about line breaks in the hidden field", async () => {
+  it("says line breaks become spaces for the card's words, not the hidden composer's", async () => {
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)]);
     await waitFor(() => expect(v.card()).not.toBeNull());
     fireEvent.input(v.field(), { target: { value: "first\nsecond" } });
     await Promise.resolve();
     expect(v.card()!.querySelector(".tl-plancard-lines")).toBeNull();
+    await v.typeOwn("first\nsecond");
+    expect(v.card()!.querySelector(".tl-plancard-lines")).not.toBeNull();
   });
 
   it.each(["no-dialog", "not-drawn"] as const)(
-    "keeps the text on %s, and the next Send goes as a prompt",
+    "hands the words to the composer on %s, and its next Send goes as a prompt",
     async (reason) => {
       const onAnswer = vi.fn(
         async (_req: AnswerRequest): Promise<AnswerResponse> => ({ applied: false, reason }),
@@ -465,12 +529,16 @@ describe("what Send does with the field while the card is docked", () => {
       const onSend = vi.fn(async (_text: string) => true);
       const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer, onSend);
       await waitFor(() => expect(v.card()).not.toBeNull());
-      fireEvent.input(v.field(), { target: { value: "one more step" } });
-      fireEvent.click(v.send());
+      await v.typeOwn("one more step");
+      fireEvent.click(v.ownSend());
       await waitFor(() =>
         expect(v.card()!.textContent).toContain("The plan is no longer waiting in the Terminal."),
       );
+      // Nothing is left to answer: the composer is back, holding the words.
+      const composer = v.container.querySelector<HTMLElement>(".tl-composer")!;
+      await waitFor(() => expect(composer.hidden).toBe(false));
       await waitFor(() => expect(v.field().value).toBe("one more step"));
+      expect(v.ownField()).toBeNull();
       expect(onSend).not.toHaveBeenCalled();
 
       fireEvent.click(v.send());
@@ -478,6 +546,34 @@ describe("what Send does with the field while the card is docked", () => {
       expect(onAnswer).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+describe("the hidden composer while the card is docked", () => {
+  it("keeps its words and says to answer from the card, rather than typing into the menu", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
+    const onSend = vi.fn(async () => true);
+    const notify = vi.fn();
+    const v = mount(
+      [prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)],
+      onAnswer,
+      onSend,
+      undefined,
+      { notify },
+    );
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(v.field().getAttribute("placeholder")).toBe("Ask Claude, or run a command…");
+    fireEvent.input(v.field(), { target: { value: "a draft" } });
+    fireEvent.click(v.send());
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        "Claude's plan is waiting. Answer it from the card first.",
+        "warning",
+      ),
+    );
+    expect(onAnswer).not.toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+    await waitFor(() => expect(v.field().value).toBe("a draft"));
+  });
 
   it("leaves 1 and 2 on an empty field to a permission, never the plan", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());

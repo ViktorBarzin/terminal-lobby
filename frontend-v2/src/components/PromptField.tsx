@@ -6,7 +6,6 @@ import {
   Show,
   onCleanup,
   onMount,
-  type Accessor,
   type Component,
   type JSX,
 } from "solid-js";
@@ -89,22 +88,6 @@ export interface PromptFieldSinks {
   prependText: (text: string) => void;
   /** Put the caret in the field. */
   focus: () => void;
-  /** Whether a send would carry anything: prose, a held file, or both. */
-  hasInput: Accessor<boolean>;
-  /** Whether what is written runs over more than one line. The plan card says
-   *  line breaks become spaces while it does, since its feedback row is one
-   *  line. */
-  lineBreaks: Accessor<boolean>;
-  /**
-   * Send what is written through a different sender, on the field's own terms.
-   *
-   * For the plan card's "Approve with this feedback", which is the composer's
-   * text sent another way: the field composes the message, clears, and puts
-   * everything back if the sender refuses, exactly as its own Send does, so a
-   * control outside the field can never lose what was typed (memory #11256).
-   * Resolves what the sender resolved, or false when there was nothing to send.
-   */
-  submitVia: (send: (text: string) => Promise<boolean>) => Promise<boolean>;
 }
 
 /**
@@ -646,9 +629,6 @@ export const PromptField: Component<{
       insertText,
       prependText,
       focus: () => ta?.focus(),
-      hasInput: sendable,
-      lineBreaks: () => draft().includes("\n"),
-      submitVia: (send) => submitWith((text) => send(text)),
     }),
   );
 
@@ -838,9 +818,7 @@ export const PromptField: Component<{
    * not since typed into is restored. A sender that throws has not delivered
    * anything either, so it restores the same way.
    *
-   * `send` is `onSend` for Send and Enter, and whatever the caller hands
-   * `submitVia` otherwise (the plan card's "Approve with this feedback"), so
-   * every way out of the field keeps the same guarantee.
+   * `send` is `onSend`, which Send and Enter both reach.
    */
   const submitWith = (
     send: (text: string, held: readonly DraftAttachment[]) => Promise<boolean>,

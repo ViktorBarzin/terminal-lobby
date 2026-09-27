@@ -11,6 +11,7 @@ import {
 import type { PlanOptionView } from "../lib/answer-api";
 import { CardDot, CardHead } from "./CardHead";
 import { Markdown } from "./Markdown";
+import { OwnAnswer } from "./OwnAnswer";
 import {
   feedbackClearsContext,
   splitPlanTitle,
@@ -39,19 +40,25 @@ const UNREADABLE = "Couldn't read the plan's choices. Open the Terminal to answe
  * It renders; it does not send. The plan comes from the transcript (the
  * ExitPlanMode call's input, or null while the call is not written yet), the
  * approve rows from the pane's reading, and the answer in flight and the last
- * reply's notice from the caller, which is also where the composer's feedback
- * is sent from. Keeping both kinds of answer with one owner is what lets a
- * Send pressed during an approval be refused with "Still sending your last
- * answer…" rather than racing it.
+ * reply's notice from the caller, which is also where feedback is sent from.
+ * Keeping both kinds of answer with one owner is what lets a Send pressed
+ * during an approval be refused with "Still sending your last answer…" rather
+ * than racing it.
+ *
+ * The last row is "Tell Claude what to change" (`OwnAnswer`), the card's own
+ * field: the composer is hidden while the card has its place, so the words
+ * for the dialog's feedback row are typed here. Its Send keeps Claude
+ * planning; "Approve with this feedback", offered under the field while it
+ * holds text, approves carrying them. The card holds the words, and drops
+ * them only once a send has landed.
  *
  * WHAT IT LEAVES OUT, ON PURPOSE. No digit shortcuts, and no raw keypad when
  * the pane cannot be read: option 1 in the usual layout clears the context and
  * starts carrying out the plan, so a stray 1 must never reach the pane. No
  * Reject button (open point 10): the CLI rejects only through Esc or Enter on
- * an empty feedback row, and the Terminal's Esc still does that. The feedback
- * row is not drawn yet. The composer is hidden while the card is up, so its
- * text is out of sight and the text view leaves `hasInput` false: an approval
- * never carries words the reader cannot see.
+ * an empty feedback row, and the Terminal's Esc still does that. An approval
+ * carries only the words in the card's own field, never the hidden composer's
+ * draft, so it never carries words the reader cannot see.
  */
 export const PlanCard: Component<{
   /** The approve rows as the pane draws them, or null when it could not be read. */
@@ -60,20 +67,20 @@ export const PlanCard: Component<{
   plan: string | null;
   /** The plan file changed while the plan was presented, so `plan` may be older. */
   stale?: boolean;
-  /** A field on show holds text that could go as feedback (PromptField `hasInput`). */
-  hasInput?: boolean;
   /** The answer in flight, if any. */
   sending?: PlanSending | null;
   /** Why this device may not answer (it is watching), or empty when it may. */
   inert?: string;
   /** What the last reply, or an ignored press, left the card to say. */
   notice?: PlanNotice | null;
-  /** That field's text has line breaks, which go out as spaces. */
-  lineBreaks?: boolean;
   /** Approve with this row, by the number and the label the reader saw. */
   onApprove: (option: PlanOptionView) => void;
-  /** Send that field's text as feedback with `approve: true`. */
-  onApproveWithFeedback?: () => void;
+  /** Send the card's words as feedback that keeps Claude planning; false
+   *  when they did not land, which keeps them in the field. Absent, the card
+   *  offers no field. */
+  onFeedback?: (words: string) => Promise<boolean>;
+  /** Send the card's words as feedback with `approve: true`; false as above. */
+  onApproveWithFeedback?: (words: string) => Promise<boolean>;
   /** Show the Terminal view. */
   onTerminal?: () => void;
   /** Stop watching and answer from this device. */
@@ -81,6 +88,8 @@ export const PlanCard: Component<{
 }> = (props) => {
   const [full, setFull] = createSignal(false);
   const [overflows, setOverflows] = createSignal(false);
+  const [ownOpen, setOwnOpen] = createSignal(false);
+  const [words, setWords] = createSignal("");
   let planEl: HTMLDivElement | undefined;
 
   /**
@@ -125,6 +134,16 @@ export const PlanCard: Component<{
   const unreadable = () => !gone() && props.reading === null;
   const answerable = () => !gone() && props.reading !== null;
   const held = () => props.sending != null || !!props.inert;
+  const hasWords = () => words().trim() !== "";
+  const offerApprove = () => hasWords() && answerable() && !!props.onApproveWithFeedback;
+  /** Send the words one way or the other, and empty the field once they land. */
+  const sendWords = async (via?: (w: string) => Promise<boolean>): Promise<void> => {
+    if (!via || held() || !hasWords()) return;
+    if (await via(words())) {
+      setWords("");
+      setOwnOpen(false);
+    }
+  };
 
   const noticeText = (): string => {
     if (props.notice) return NOTICE_TEXT[props.notice];
@@ -221,13 +240,24 @@ export const PlanCard: Component<{
                 );
               }}
             </For>
+            <Show when={props.onFeedback}>
+              <OwnAnswer
+                label="Tell Claude what to change"
+                open={ownOpen()}
+                value={words()}
+                disabled={held()}
+                onOpen={() => setOwnOpen(true)}
+                onInput={setWords}
+                onSend={() => void sendWords(props.onFeedback)}
+              />
+            </Show>
           </div>
         </Show>
       </div>
 
       {/* Under the body rather than in it, so it stays in view while the
           reader types, however far the plan above is scrolled. */}
-      <Show when={props.lineBreaks && answerable()}>
+      <Show when={ownOpen() && words().trim().includes("\n") && answerable()}>
         <div class="tl-plancard-lines">
           Line breaks become spaces, because the Terminal's feedback field is one line.
         </div>
@@ -238,7 +268,7 @@ export const PlanCard: Component<{
         {noticeText()}
       </div>
 
-      <Show when={offerTerminal() || (props.hasInput === true && answerable())}>
+      <Show when={offerTerminal() || offerApprove()}>
         <div class="tl-qcard-actions tl-plancard-actions">
           <Show when={offerTerminal() && props.onTerminal}>
             <button type="button" class="tl-qcard-back" onClick={() => props.onTerminal?.()}>
@@ -246,15 +276,15 @@ export const PlanCard: Component<{
             </button>
           </Show>
           {/* The CLI's Shift+Tab on its feedback row: approve, carrying the
-              composer's text. Offered only while there is text to carry. It
-              approves through option 1, so when option 1 clears the context
-              the button says so: that cannot be undone from here. */}
-          <Show when={props.hasInput === true && answerable()}>
+              words in the field above. Offered only while there are words to
+              carry. It approves through option 1, so when option 1 clears the
+              context the button says so: that cannot be undone from here. */}
+          <Show when={offerApprove()}>
             <button
               type="button"
               class="tl-qcard-next"
               disabled={held()}
-              onClick={() => props.onApproveWithFeedback?.()}
+              onClick={() => void sendWords(props.onApproveWithFeedback)}
             >
               {feedbackClearsContext(props.reading ?? null)
                 ? "Approve with this feedback and clear context"

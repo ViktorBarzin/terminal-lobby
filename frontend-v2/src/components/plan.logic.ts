@@ -174,7 +174,7 @@ export function planReplyNotice(reply: AnswerResponse | null): PlanNotice | null
 const PLAN_FEEDBACK_MAX_BYTES = 2000;
 
 /**
- * The composer's text as it goes out as plan feedback: line breaks become
+ * Typed words as they go out as plan feedback: line breaks become
  * spaces, since the CLI's feedback field is a single line, and the ends are
  * trimmed. `joined` says a line break was replaced, so the card can say so;
  * `tooLong` says the result is over 2,000 bytes in UTF-8, which the server

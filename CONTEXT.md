@@ -994,16 +994,20 @@ The last numbered row of a **plan approval**, reading `Tell Claude what to
 change` until something is typed into it. It is an inline field: `Enter` sends
 its text back to Claude as feedback and the planning goes on, shift+tab
 approves the plan with the text, and `Enter` on the empty row rejects the plan.
-The composer is hidden while the plan card is up, so it does not fill this row.
+The plan card's own "Tell Claude what to change" field fills this row; the
+composer is hidden while the card is up.
 _Avoid_: reject row, row 4 (its number follows the options above it)
 
 **Plan card**:
 The text view's mirror of a **plan approval**, in the **Composer**'s place
 while Claude waits, as the question card is: "Plan ready", the plan from the
 transcript, and the approve rows with the numbers and labels the pane draws.
-The composer stays mounted but hidden, and its text never rides along with an
-approval. Once the card says the plan has gone, the composer comes back under
-it. The **Model sheet**'s button is held while it is up. It has no Reject
+Its last row, "Tell Claude what to change", opens into a field with its own
+Send, which fills the **feedback row** and keeps Claude planning; "Approve
+with this feedback" beside it approves carrying those words. The composer
+stays mounted but hidden, and its text never rides along with an approval.
+Once the card says the plan has gone, the composer comes back under it,
+holding any words the card could not send. The **Model sheet**'s button is held while it is up. It has no Reject
 button and no digit shortcuts, since option 1 can clear context.
 _Avoid_: plan dialog (the CLI's own, in the pane), approval card
 

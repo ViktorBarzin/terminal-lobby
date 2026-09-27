@@ -105,7 +105,7 @@ describe("a watching Text view", () => {
     expect(v.field().value).toBe("Reply with the word watched");
   });
 
-  it("does not send the field as plan feedback", async () => {
+  it("does not send the hidden composer while the plan card is up", async () => {
     const v = mount([prompt, asking(2, PLAN)]);
     v.type("watching text 1");
     await waitFor(() => expect(v.notify).toHaveBeenCalledWith(WATCHING, "info"));
@@ -116,7 +116,8 @@ describe("a watching Text view", () => {
 
   it("draws the plan card's rows inert", async () => {
     const v = mount([prompt, asking(2, PLAN)]);
-    await waitFor(() => expect(v.rows(".tl-plancard")).toHaveLength(2));
+    // The two approve rows and the card's "Tell Claude what to change", all inert.
+    await waitFor(() => expect(v.rows(".tl-plancard")).toHaveLength(3));
     for (const b of v.rows(".tl-plancard")) expect(b.disabled).toBe(true);
     fireEvent.click(v.rows(".tl-plancard")[0]!);
     expect(v.onAnswer).not.toHaveBeenCalled();

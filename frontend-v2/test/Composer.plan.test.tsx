@@ -1,18 +1,23 @@
 /**
  * The composer while Claude's plan-approval dialog is on the pane.
  *
- * The dialog's fourth row, "Tell Claude what to change", is a text field of its
- * own, and a plain prompt typed at the pane then would land in the open menu
- * (measured on CLI 2.1.281, memory #13896). Viktor decided on 2026-09-24 that
- * the composer is the one text box in the dock: while the plan card is up, its
- * placeholder says what it does and Send types the text into that row as
- * feedback. The card's "Approve with this feedback" sends the same text by
- * another route, through the field's `submitVia`.
+ * Until the T3 pass the composer was the dialog's feedback row: while the plan
+ * card was up its placeholder read "Tell Claude what to change…" and Send
+ * typed the text into that row (Viktor, 2026-09-24). Since the T3 pass
+ * (prototype 6-plan, approved 2026-09-27) the plan card takes the composer's
+ * place and has a "Tell Claude what to change" field of its own
+ * (PlanCard.test.tsx, TextView.plan.test.tsx). The composer is hidden behind
+ * the card and stays an ordinary message field: the text view refuses a send
+ * that still reaches it, so nothing typed here lands in the open plan menu.
+ *
+ * What stays here is what the composer itself does while a dialog is up: the
+ * model button is held, and Send is never greyed out once something is
+ * written.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, fireEvent, waitFor } from "@solidjs/testing-library";
+import { render, fireEvent } from "@solidjs/testing-library";
 import type { ComponentProps } from "solid-js";
-import { Composer, type ComposerSinks } from "../src/components/Composer";
+import { Composer } from "../src/components/Composer";
 import type { WorkingRow } from "../src/components/timeline.logic";
 
 const WAITING: WorkingRow = { kind: "working", key: "w", turnKey: "t", steps: 4, waiting: true };
@@ -26,111 +31,31 @@ const WORKING: WorkingRow = {
 };
 
 const mount = (props: Partial<ComponentProps<typeof Composer>> = {}) => {
-  let sinks: ComposerSinks | undefined;
   const r = render(() => (
     <Composer
       pending={[]}
       onSend={async () => true}
       onStop={() => {}}
       onResolve={() => {}}
-      register={(s) => (sinks = s)}
       {...props}
     />
   ));
   const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
   const send = r.container.querySelector<HTMLButtonElement>(".tl-send")!;
-  return { ...r, field, send, sinks: () => sinks! };
+  return { ...r, field, send };
 };
 
-describe("<Composer> while the plan dialog is up", () => {
-  it("says the field answers the plan", () => {
-    const { field } = mount({ live: WAITING, planOpen: true, onPlanFeedback: async () => true });
-    expect(field.getAttribute("placeholder")).toBe("Tell Claude what to change…");
-  });
-
-  it("sends the text as feedback on the plan, never as a prompt", async () => {
+describe("<Composer> is an ordinary message field whatever the pane shows", () => {
+  it("keeps its placeholder and sends to onSend while Claude waits", () => {
     const onSend = vi.fn(async () => true);
-    const onPlanFeedback = vi.fn(async () => true);
-    const { field, send } = mount({ live: WAITING, planOpen: true, onPlanFeedback, onSend });
-    fireEvent.input(field, { target: { value: "use the existing helper" } });
-    fireEvent.click(send);
-    expect(onPlanFeedback).toHaveBeenCalledWith("use the existing helper");
-    expect(onSend).not.toHaveBeenCalled();
-    await Promise.resolve();
-    expect(field.value).toBe("");
-  });
-
-  it("puts the text back when the feedback was refused", async () => {
-    const onPlanFeedback = vi.fn(async () => false);
-    const { field, send } = mount({ live: WAITING, planOpen: true, onPlanFeedback });
-    fireEvent.input(field, { target: { value: "keep this" } });
-    fireEvent.click(send);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(field.value).toBe("keep this");
-  });
-
-  it("goes back to an ordinary message the moment the dialog is gone", () => {
-    const onSend = vi.fn(async () => true);
-    const { field, send } = mount({ onSend, onPlanFeedback: async () => true });
+    const { field, send } = mount({ live: WAITING, onSend });
     expect(field.getAttribute("placeholder")).toBe("Ask Claude, or run a command…");
     fireEvent.input(field, { target: { value: "carry on" } });
     fireEvent.click(send);
     expect(onSend).toHaveBeenCalledWith("carry on", []);
   });
 
-  it("sends an attachment as its path, as a prompt would carry it", async () => {
-    const onPlanFeedback = vi.fn(async (_text: string) => true);
-    const { field, send, sinks } = mount({ live: WAITING, planOpen: true, onPlanFeedback });
-    fireEvent.input(field, { target: { value: "match this screenshot" } });
-    field.setSelectionRange(field.value.length, field.value.length);
-    sinks().add([
-      {
-        path: "/var/lib/clipboard-store/wizard/qa/pasted-20260926-101010-a1.png",
-        name: "pasted-20260926-101010-a1.png",
-        kind: "image",
-      },
-    ]);
-    await waitFor(() => expect(field.value).toContain("[img]"));
-    fireEvent.click(send);
-    expect(onPlanFeedback).toHaveBeenCalledTimes(1);
-    expect(onPlanFeedback.mock.calls[0]![0]).toBe(
-      "match this screenshot /var/lib/clipboard-store/wizard/qa/pasted-20260926-101010-a1.png",
-    );
-  });
-
-  it("hands the card what it needs for Approve with this feedback", async () => {
-    const onPlanFeedback = vi.fn(async () => true);
-    const { field, sinks } = mount({ live: WAITING, planOpen: true, onPlanFeedback });
-    expect(sinks().hasInput()).toBe(false);
-    fireEvent.input(field, { target: { value: "approve, and keep the tests" } });
-    expect(sinks().hasInput()).toBe(true);
-    const approve = vi.fn(async () => true);
-    expect(await sinks().submitVia(approve)).toBe(true);
-    expect(approve).toHaveBeenCalledWith("approve, and keep the tests");
-    expect(onPlanFeedback).not.toHaveBeenCalled();
-    expect(field.value).toBe("");
-  });
-});
-
-describe("<Composer> hints while the plan dialog is up", () => {
-  it("does not say the send queues, because this send answers the dialog", () => {
-    // The live row can still say working in the moment before the transcript
-    // records the plan call; the send answers the plan either way.
-    const { field, send } = mount({
-      live: WORKING,
-      claudeState: "running",
-      planOpen: true,
-      onPlanFeedback: async () => true,
-    });
-    fireEvent.input(field, { target: { value: "smaller steps" } });
-    expect(send.getAttribute("aria-label")).toBe("Send");
-    expect(send.getAttribute("title")).toBe(
-      "Send (Enter). Tells Claude what to change in its plan, and it keeps planning",
-    );
-  });
-
-  it("still says it queues on an ordinary mid-turn send", () => {
+  it("says a mid-turn send queues", () => {
     const { field, send } = mount({ live: WORKING, claudeState: "running" });
     fireEvent.input(field, { target: { value: "and then this" } });
     expect(send.getAttribute("aria-label")).toBe("Send, queues after this turn");
@@ -146,8 +71,6 @@ describe("<Composer> model button held while a dialog is up", () => {
     const onPickModel = vi.fn();
     const { container } = mount({
       live: WAITING,
-      planOpen: true,
-      onPlanFeedback: async () => true,
       mode: "manual",
       onCycleMode: () => {},
       modeHeld: MODE_REASON,
@@ -187,7 +110,6 @@ describe("Send is never greyed out once something is written", () => {
     ["working", { live: WORKING, claudeState: "running" }],
     ["working by the transcript alone", { live: WORKING, claudeState: "done" }],
     ["waiting", { live: WAITING }],
-    ["with the plan open", { live: WAITING, planOpen: true, onPlanFeedback: async () => true }],
     ["idle", {}],
   ] as [string, Partial<ComponentProps<typeof Composer>>][])("while %s", (_what, props) => {
     const { send, field } = mount(props);

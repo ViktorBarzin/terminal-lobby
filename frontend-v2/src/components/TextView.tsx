@@ -798,15 +798,22 @@ export const TextView: Component<{
       );
       return false;
     }
+    // The plan's feedback is the card's own field since the T3 pass. A prompt
+    // typed at the pane now would land in the open plan menu (memory #13896),
+    // so a send that still reaches here keeps its words.
+    if (planUp()) {
+      props.notify?.("Claude's plan is waiting. Answer it from the card first.", "warning");
+      return false;
+    }
     return props.onSend(text);
   };
 
   // ---- The plan approval ----
   //
   // docs/plans/2026-09-24-text-composer-redesign.md, "The plan-approval flow"
-  // and "When the card docks, and what it shows". The card docks where the
-  // question card docks; an option tap is one request, and the composer's
-  // Send is the dialog's feedback row while the card is up.
+  // and "When the card docks, and what it shows". The card takes the
+  // composer's place; an option tap is one request, and the card's own "Tell
+  // Claude what to change" field is the dialog's feedback row (the T3 pass).
 
   /** What the dock decision reads off the events: the pane's plan reading and
    *  the newest ExitPlanMode call (plan.logic). */
@@ -980,21 +987,26 @@ export const TextView: Component<{
   };
 
   /**
-   * The composer's text as feedback on the plan: `approve: false` keeps
-   * Claude planning (Send), `approve: true` approves with it (the card's
-   * button). Resolves true only when the reply is applied, so the field keeps
-   * the text otherwise.
+   * The card's words as feedback on the plan: `approve: false` keeps Claude
+   * planning (the field's Send), `approve: true` approves with them ("Approve
+   * with this feedback"). Resolves true only when the reply is applied, so the
+   * card keeps the words otherwise.
    *
-   * Once the card has said the plan is gone, the next Send goes out as the
-   * prompt it would otherwise have been. An approval with feedback approves
-   * through option 1 (feedbackClearsContext), so the row says what option 1
-   * says it does, as the card's button did.
+   * When the reply says the plan has gone, the words move into the composer,
+   * which comes back in the card's place, so the next Send goes out as the
+   * prompt they would otherwise have been; the card lets go of them. An
+   * approval with feedback approves through option 1 (feedbackClearsContext),
+   * so the row says what option 1 says it does, as the card's button does.
    */
-  const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> =>
-    followed(await sendPlanFeedbackNow(text, approve));
+  const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> => {
+    if (followed(await sendPlanFeedbackNow(text, approve))) return true;
+    if (planReplyNow()?.notice !== "gone") return false;
+    composerSinks()?.prependText(text);
+    return true;
+  };
   const sendPlanFeedbackNow = async (text: string, approve: boolean): Promise<boolean> => {
     if (refuseWatching()) return false;
-    if (!planDocked() || planReplyNow()?.notice === "gone") return props.onSend(text);
+    if (!planDocked() || planReplyNow()?.notice === "gone") return false;
     if (planSending()) {
       sayOnPlanCard("busy");
       return false;
@@ -1398,6 +1410,8 @@ export const TextView: Component<{
           inert={props.inertReason}
           notice={planReplyNow()?.notice ?? null}
           onApprove={approvePlanOption}
+          onFeedback={(words) => sendPlanFeedback(words, false)}
+          onApproveWithFeedback={(words) => sendPlanFeedback(words, true)}
           onTerminal={props.onOpenTerminal}
           onTakeControl={props.onTakeControl}
         />
@@ -1415,8 +1429,6 @@ export const TextView: Component<{
         live={lineLive()}
         claudeState={props.claudeState?.()}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
-        planOpen={planDocked() !== null}
-        onPlanFeedback={(text) => sendPlanFeedback(text, false)}
         pending={props.pending}
         onSend={send}
         onStop={() => void stopHandingBack()}

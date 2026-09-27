@@ -770,7 +770,7 @@ src/
     plan.logic.ts        PURE when the plan-approval card docks: the pane's
                          plan reading against the newest ExitPlanMode call.
                          Also what the card says after a reply, and the
-                         composer's text as one line of feedback
+                         card's words as one line of feedback
     MessagesTimeline.tsx Rows-as-data renderer (fold / tool / question / …),
                          with Claude's queued prompts drawn after the last row
                          as dashed ghost bubbles. The working row is the
@@ -795,11 +795,9 @@ src/
                          and the pill. The dock's top edge carries the state:
                          a sweep while Claude works, the awaiting colour while
                          it waits, a dashed danger rule in bypass or no ask.
-                         While the plan card is docked the field is the plan's
-                         feedback row: its placeholder says so, Send goes to
-                         `onPlanFeedback`, the "queues" hint is hidden, and the
-                         model button is held. With a question docked
-                         Send answers it as free text (TextView `send`)
+                         While a card is docked the composer is hidden and the
+                         model button is held; the text view refuses a send
+                         that still reaches it (TextView `send`)
     StatusLine.tsx       The line above the pill: what the session is doing
                          (the call in flight, its target, how long, the steps)
                          with Stop beside it, "Waiting for you", work still
@@ -872,9 +870,12 @@ src/
                          markdown, clamped behind "Read the full plan", and
                          the approve rows as the pane draws them. It renders
                          the answer in flight and the last reply's notice,
-                         which its caller holds. No digit shortcuts, no raw
-                         keypad and no Reject button, since a stray 1 would
-                         clear context
+                         which its caller holds. Its last row, "Tell Claude
+                         what to change", is the card's own field for the
+                         feedback row, with "Approve with this feedback"
+                         beside it while it holds text. No digit shortcuts,
+                         no raw keypad and no Reject button, since a stray 1
+                         would clear context
     PermissionCard.tsx   The card for Claude Code's tool permission prompt,
                          in the composer's place, read off the pane: what the
                          tool will do and its rows as drawn. A tap, or the
