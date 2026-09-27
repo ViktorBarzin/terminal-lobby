@@ -269,6 +269,15 @@ describe("the card in the composer's place", () => {
     expect(decl(appCss, ".tl-qcard-key", "width")).toBe("22px");
   });
 
+  it("shows an option's whole description, since nothing else can reveal the rest", () => {
+    // Found live on 2026-09-27: 25-word descriptions ended in an ellipsis
+    // after two lines, and a single-select pick moves on before a chosen row
+    // could open.
+    expect(decl(appCss, ".tl-qcard-desc", "-webkit-line-clamp")).toBeUndefined();
+    expect(decl(appCss, ".tl-qcard-desc", "line-clamp")).toBeUndefined();
+    expect(decl(appCss, ".tl-qcard-desc", "overflow")).toBeUndefined();
+  });
+
   it("gives the phone 48px rows and a 16px question", () => {
     expect(appCss).toMatch(/\.tl-qcard-option\s*\{[^}]*min-height:\s*48px/);
     expect(appCss).toMatch(/\.tl-qcard-question\s*\{[^}]*font-size:\s*calc\(16px/);

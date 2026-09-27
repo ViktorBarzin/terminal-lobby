@@ -6311,21 +6311,15 @@ body.tl-kb-up {
 /* Two lines by default, all of it once chosen. The descriptions stay on
    screen because that is where the decision lives, and hiding them until a
    tap would make comparing four options a serial exercise on a phone. */
+/* Whole, never clamped: nothing on the row can reveal a cut description, and
+   a single-select pick moves on before a chosen row could open (found live on
+   2026-09-27, 25-word options cut at two lines). A tall set of rows scrolls
+   inside the card instead. */
 .tl-qcard-desc {
   grid-column: 2;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: calc(16px * var(--tl-text-scale, 1));
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-}
-.tl-qcard-option[data-chosen="true"] .tl-qcard-desc {
-  -webkit-line-clamp: unset;
-  line-clamp: unset;
-  overflow: visible;
 }
 /* The last row, "Type your own answer" (prototype `.cd-opt[data-own]`): muted,
    with a pen in the keycap where the digit would be. */
