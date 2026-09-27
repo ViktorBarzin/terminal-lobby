@@ -156,6 +156,31 @@ describe("letting go once the transcript has it", () => {
     dispose();
   });
 
+  it("lets go of a prompt the transcript skipped over", async () => {
+    // Measured 2026-09-27: a send answered OK and never reached Claude. The
+    // next prompt was recorded by its own text, so the lost one was never
+    // released: its bubble sat at the end of the timeline for minutes, held
+    // the status line on Working through two later turns, and made a newer
+    // plan read "Plan not answered". The CLI records prompts in the order it
+    // takes them, so an older prose prompt still unrecorded when a newer one
+    // is recorded never arrived.
+    const { store, dispose, deliver } = mount();
+    await store.send("Run ping in the foreground");
+    await store.send("Write a paragraph about bicycles");
+    await deliver(userEvent(1, "Write a paragraph about bicycles"));
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("keeps a skipped-over command, which may never be recorded", async () => {
+    const { store, dispose, deliver } = mount();
+    await store.send("/help");
+    await store.send("deploy the api");
+    await deliver(userEvent(1, "deploy the api"));
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["/help"]);
+    dispose();
+  });
+
   it("keeps a prompt sent AFTER the record it did not cause", async () => {
     // The transcript catching up on older traffic must not clear something
     // sent since.

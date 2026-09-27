@@ -605,7 +605,15 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
               // Either kind is let go when the transcript says the same thing.
               const said = left.findIndex((p) => sameCommand(e.body ?? "", p.text));
               if (said >= 0) {
-                drop(said);
+                // Prose sent BEFORE the one just recorded, and still not
+                // recorded itself, never reached Claude: the CLI records
+                // prompts in the order it takes them. Kept, it sat at the end
+                // of the timeline for good, held the status line on Working
+                // and made a newer plan read "Plan not answered" (measured
+                // 2026-09-27). A command is kept, for the reason below.
+                left = left.filter(
+                  (p, n) => n > said || (n < said && (p.command || p.afterId >= e.id)),
+                );
                 continue;
               }
               // No text match. Prose is ALWAYS recorded, so a record made after
