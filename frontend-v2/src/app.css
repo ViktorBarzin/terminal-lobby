@@ -2526,7 +2526,9 @@ label.tl-set-row-label {
 }
 
 /* The phone: taller rows for a finger, a size up, no tools icon, and the tick
-   gives its room to the time (the phone query, as `.tl-timeline` above). */
+   gives its room to the time (the phone query, as `.tl-timeline` above). A
+   turn fold's file name and token count give theirs to "Worked for 38s · 5
+   steps", which carries the time already. */
 @media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
   .tl-group-head {
     min-height: 46px;
@@ -2537,6 +2539,7 @@ label.tl-set-row-label {
   .tl-group-ico,
   .tl-group-okm,
   .tl-group-call-kind,
+  .tl-fold-files,
   .tl-fold-tokens {
     display: none;
   }
