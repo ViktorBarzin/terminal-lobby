@@ -13,6 +13,27 @@ const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
 const isNoRow = (label: string): boolean => label === "No" || label.startsWith("No,");
 
 /**
+ * How the pane marks a line of an Edit's diff: "4 +def mul(a, b):" put in,
+ * "5 -# end" taken out, and no mark for anything else. Used while the call is
+ * not in the transcript yet, when the well has only the pane's lines.
+ */
+const paneSign = (line: string): "+" | "-" | undefined => {
+  const m = /^\s*\d+ ([+-])/.exec(line);
+  return m ? (m[1] as "+" | "-") : undefined;
+};
+
+/**
+ * Scroll the well to the first changed line, one line above it, so a diff
+ * whose unchanged lines fill the well still shows its change.
+ */
+const scrollToChange = (el: HTMLPreElement): void => {
+  queueMicrotask(() => {
+    const first = el.querySelector<HTMLElement>('[data-sign="+"], [data-sign="-"]');
+    if (first) el.scrollTop = Math.max(0, first.offsetTop - el.offsetTop - first.offsetHeight);
+  });
+};
+
+/**
  * The card that answers Claude Code's tool permission prompt, in the
  * composer's place while Claude waits (the T3 pass, prototype 6-permission).
  *
@@ -122,7 +143,15 @@ export const PermissionCard: Component<{
         <Switch
           fallback={
             <Show when={props.reading.detail.length > 0}>
-              <pre class="tl-code tl-permcard-detail">{props.reading.detail.join("\n")}</pre>
+              <pre class="tl-code tl-permcard-detail" ref={scrollToChange}>
+                <For each={props.reading.detail}>
+                  {(line) => (
+                    <span class="tl-permcard-line" data-sign={paneSign(line)}>
+                      {line}
+                    </span>
+                  )}
+                </For>
+              </pre>
             </Show>
           }
         >

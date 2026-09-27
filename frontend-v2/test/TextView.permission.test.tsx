@@ -139,6 +139,31 @@ describe("the permission card", () => {
     expect(card()!.textContent).toContain("Do you want to make this edit to calc.py?");
   });
 
+  it("marks the pane's changed lines while the call is not in the transcript yet", async () => {
+    // Seen live on 2026-09-27: with two calls in one message the prompt was up
+    // before the transcript had either, so the well had only the pane's lines.
+    const edit = JSON.stringify({
+      kind: "permission",
+      title: "Edit file",
+      detail: ["calc.py", "1  def add(a, b):", "2      return a + b", "3 +", "4 +def mul(a, b):", "5 -# end"],
+      prompt: "Do you want to make this edit to calc.py?",
+      options: [
+        { number: 1, label: "Yes" },
+        { number: 2, label: "No" },
+      ],
+    });
+    const { card } = mount([
+      ev({ id: 1, kind: "user", body: "add mul", at: 1000 }),
+      ev({ id: 3, kind: "meta", meta: "asking", body: edit }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    const signs = [...card()!.querySelectorAll(".tl-permcard-detail .tl-permcard-line")].map((l) =>
+      l.getAttribute("data-sign"),
+    );
+    expect(signs).toEqual([null, null, null, "+", "+", "-"]);
+    expect(card()!.querySelector(".tl-permcard-detail")!.textContent).toContain("4 +def mul(a, b):");
+  });
+
   it("shows a Bash call's command in its well and its description under it", async () => {
     const bash = JSON.stringify({
       kind: "permission",
