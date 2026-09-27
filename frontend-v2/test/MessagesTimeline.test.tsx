@@ -47,21 +47,19 @@ describe("<MessagesTimeline> (smoke)", () => {
     expect(getByText("Ran")).toBeInTheDocument();
   });
 
-  // The row that said "Working…" with the call in flight closed the timeline
-  // until the Quiet line composer (2026-09-24). It says the same words on the
-  // composer's thin line now (StatusLine.test.tsx), including "Waiting for
-  // you" while Claude is stopped on a question, and the timeline keeps only
-  // what the conversation says.
-  it("draws the running turn's rows, and leaves the working words to the composer", () => {
+  // The working row closed the timeline until the Quiet line composer
+  // (2026-09-24) moved its words onto the composer's thin line. The T3 pass
+  // (2026-09-27) brought them back into the conversation as the live group at
+  // its end (MessagesTimeline.live.test.tsx), in the work group's box, and the
+  // old row stays the drill-in's.
+  it("draws the running turn's rows, then the live group, and no old working row", () => {
     const events: Event[] = [
       ev({ id: 1, kind: "user", body: "start" }),
       ev({ id: 2, kind: "text", body: "on it" }),
     ];
-    const { getByText, queryByText, container } = render(() => (
-      <MessagesTimeline events={events} />
-    ));
+    const { getByText, container } = render(() => <MessagesTimeline events={events} />);
     expect(getByText("on it")).toBeInTheDocument();
-    expect(queryByText("Working…")).toBeNull();
+    expect(container.querySelector(".tl-row-live .tl-group-sum")!.textContent).toBe("Working…");
     expect(container.querySelector(".tl-row-working")).toBeNull();
   });
 
@@ -99,13 +97,18 @@ describe("<MessagesTimeline> row identity", () => {
     const [events, setEvents] = createSignal<Event[]>(LIVE);
     const { container } = render(() => <MessagesTimeline events={events()} />);
 
-    const before = [...container.querySelectorAll(".tl-row")];
+    // The transcript's rows. The live group's own row comes and goes with
+    // the turn's state (MessagesTimeline.live.test.tsx): once Claude replies
+    // after the running group, the live state gets a row of its own at the end.
+    const transcript = () => [...container.querySelectorAll(".tl-row:not(.tl-row-live)")];
+    const before = transcript();
     expect(before.length).toBeGreaterThan(2);
 
     setEvents([...LIVE, ev({ id: 4, kind: "text", body: "here it is" })]);
 
-    const after = [...container.querySelectorAll(".tl-row")];
+    const after = transcript();
     expect(after).toHaveLength(before.length + 1);
+    expect(container.querySelector(".tl-row-live")).not.toBeNull();
     for (const node of before) {
       expect(
         after.includes(node),

@@ -2359,7 +2359,11 @@ label.tl-set-row-label {
   background: color-mix(in srgb, var(--bg-card) 70%, transparent);
   overflow: hidden;
 }
-.tl-group-box[data-live] {
+/* The live group at the end of an open turn: the running group, or a row of
+   its own before the first call ("Working…") and while the context clears.
+   Waiting on the reader keeps the plain border: nothing runs. */
+.tl-group-box[data-live="working"],
+.tl-group-box[data-live="clearing"] {
   border-color: color-mix(in srgb, var(--state-running) 45%, var(--border-strong));
 }
 .tl-group-head {
@@ -2380,6 +2384,23 @@ label.tl-set-row-label {
 }
 .tl-group-head:hover {
   background: var(--hover-tint);
+}
+/* A live row of its own holds no calls, so nothing opens it. */
+.tl-live-head {
+  cursor: default;
+}
+.tl-live-head:hover {
+  background: none;
+}
+/* Claude is stopped on the reader: a still dot in the awaiting colour where
+   the spinner sits, since a spinner is what says work is happening. */
+.tl-live-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 2.5px;
+  border-radius: 50%;
+  background: var(--state-awaiting);
 }
 .tl-group-head:focus-visible,
 .tl-group-call-head:focus-visible {
@@ -2609,10 +2630,10 @@ label.tl-set-row-label {
   }
 }
 
-/* The pulse that says work is happening. A session's working row moved onto
-   the composer's thin line (2026-09-24), which has its own dot; this one stays
-   for the drill-in's working row, the timeline's "loading earlier rows" hint,
-   and the answer card, which borrows its animation. */
+/* The pulse that says work is happening. A session's own timeline says it
+   with the live group's spinner (2026-09-27); this one stays for the
+   drill-in's working row, the timeline's "loading earlier rows" hint, and the
+   answer card, which borrows its animation. */
 .tl-working-dot {
   width: 8px;
   height: 8px;
@@ -2620,8 +2641,8 @@ label.tl-set-row-label {
   background: var(--state-running);
   animation: tl-pulse 1.1s ease-in-out infinite;
 }
-/* The live row, drawn in the timeline only in an agent's drill-in, which has
-   no composer and so no status line (AgentTranscript). */
+/* The working row, drawn only in an agent's drill-in (AgentTranscript), whose
+   calls are rows of their own rather than work groups. */
 .tl-row-working {
   display: flex;
   align-items: center;
@@ -3028,17 +3049,8 @@ label.tl-set-row-label {
   border-radius: 50%;
   background: var(--text-muted);
 }
-/* Working: the running colour, pulsing. Waiting: the awaiting colour the
-   state dot and the permission row already use, and still, because a pulse is
-   what says work is happening. Background: a hollow dot that breathes slowly,
-   for a turn that is over while an agent it started is not. */
-.tl-status-state[data-kind="working"] .tl-line-dot {
-  background: var(--state-running);
-  animation: tl-pulse 1.1s ease-in-out infinite;
-}
-.tl-status-state[data-kind="waiting"] .tl-line-dot {
-  background: var(--state-awaiting);
-}
+/* Background: a hollow dot that breathes slowly, for a turn that is over
+   while an agent it started is not. */
 .tl-status-state[data-kind="background"] .tl-line-dot {
   background: transparent;
   box-shadow: inset 0 0 0 1.6px var(--state-running);
@@ -3054,13 +3066,6 @@ label.tl-set-row-label {
   font-weight: 500;
   color: var(--text-muted);
 }
-.tl-status-tool {
-  flex: none;
-  font-size: calc(10px * var(--tl-text-scale, 1));
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
-}
 .tl-status-target {
   flex: 0 1 auto;
   min-width: 0;
@@ -3073,15 +3078,6 @@ label.tl-set-row-label {
 .tl-status-sep {
   flex: none;
   opacity: 0.7;
-}
-.tl-status-num {
-  flex: none;
-  font-variant-numeric: tabular-nums;
-}
-.tl-status-steps {
-  flex: none;
-  display: inline-flex;
-  gap: 7px;
 }
 .tl-status-eye {
   flex: none;
@@ -3315,7 +3311,7 @@ label.tl-set-row-label {
    Container queries would say this, and Safari 15.6, the oldest engine served
    (lib/baseline-polyfills.ts), has none. StatusLine measures itself and writes
    `data-room` (statusline.logic `roomFor`). The micro-labels go first, then
-   the step count and the long background words, then, at a phone's width and
+   the long background words, then, at a phone's width and
    while the left side has something to say, the model and (while Claude works
    or someone watches) the context fold into the phone's sheet, where every
    dial keeps a tab. The mode never folds. */
@@ -3324,8 +3320,6 @@ label.tl-set-row-label {
 .tl-statusline[data-room="tight"] .tl-dial-label {
   display: none;
 }
-.tl-statusline[data-room="narrow"] .tl-status-steps,
-.tl-statusline[data-room="tight"] .tl-status-steps,
 .tl-statusline[data-room="narrow"] .tl-status-long,
 .tl-statusline[data-room="tight"] .tl-status-long {
   display: none;
@@ -3337,7 +3331,6 @@ label.tl-set-row-label {
 .tl-statusline[data-room="tight"]:not([data-kind="idle"]) [data-fold],
 .tl-statusline[data-room="tight"][data-kind="working"] [data-fold2],
 .tl-statusline[data-room="tight"][data-kind="watching"] [data-fold2],
-.tl-statusline[data-room="tight"][data-kind="working"] .tl-status-word,
 .tl-statusline[data-room="tight"][data-kind="watching"] .tl-status-reason {
   display: none;
 }
@@ -4163,11 +4156,6 @@ label.tl-set-row-label {
   .tl-composer[data-status="working"]::before {
     animation: none;
     background: color-mix(in srgb, var(--state-running) 60%, transparent);
-  }
-  .tl-status-state[data-kind="working"] .tl-line-dot {
-    animation: none;
-    opacity: 1;
-    transform: none;
   }
   .tl-status-state[data-kind="background"] .tl-line-dot,
   .tl-plus[aria-busy="true"] .tl-disc {

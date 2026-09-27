@@ -5,8 +5,8 @@
  * the Quiet line composer (2026-09-24). A queued prompt is the reader's own
  * message that has not left yet, so it now sits at the end of the conversation
  * as a dashed outline of the bubble it will become, three at most and then a
- * count. And the working row that used to close the timeline is gone from it:
- * the composer's thin line says what the turn is doing.
+ * count. The old working row is gone from it: the live group at the end says
+ * what the turn is doing, and the ghosts land after it.
  */
 import { describe, it, expect } from "vitest";
 import { render } from "@solidjs/testing-library";
@@ -80,13 +80,14 @@ describe("queued prompts in the timeline", () => {
 });
 
 describe("the working row", () => {
-  // It moved onto the composer's thin line (StatusLine), which says the same
-  // words in the same place every time instead of 16px above the composer
-  // inside the scroll.
-  it("is no longer drawn at the foot of the timeline", () => {
+  // The old row is the drill-in's. A session's timeline ends on the live
+  // group instead (MessagesTimeline.live.test.tsx), which here is the running
+  // group naming the edit in flight.
+  it("is not drawn at the foot of a session's timeline", () => {
     const { container, queryByText } = render(() => <MessagesTimeline events={RUNNING} />);
     expect(container.querySelector(".tl-row-working")).toBeNull();
     expect(queryByText("Working…")).toBeNull();
+    expect(container.querySelector(".tl-row-group .tl-group-box[data-live]")).not.toBeNull();
   });
 });
 

@@ -71,10 +71,10 @@ export const Composer: Component<{
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
-   * The open turn's live row, exactly as the timeline used to draw it, or
-   * undefined while no turn is open. It decides the line's words, whether Stop
-   * shows (while something RUNS, never while Claude waits), the "queues" hint
-   * beside Send, and the dock's top edge.
+   * The open turn's live row, or undefined while no turn is open. It decides
+   * whether Stop shows (while something RUNS, never while Claude waits), the
+   * "queues" hint beside Send, and the dock's top edge. What the turn is doing
+   * is the conversation's to say, in the live group at its end.
    *
    * NOT a reason to withhold Send: it is derived from the transcript and lags
    * the pane, and a mid-turn send queues rather than failing.
@@ -93,8 +93,6 @@ export const Composer: Component<{
    * open plan menu by accident.
    */
   planOpen?: boolean;
-  /** This device's plan answer is clearing the context; the line says so. */
-  planClearing?: boolean;
   /** Send's route while `planOpen`. Resolves false when refused, which puts
    *  the text back. */
   onPlanFeedback?: (text: string) => Promise<boolean>;
@@ -386,7 +384,6 @@ export const Composer: Component<{
         live={props.live}
         background={props.background}
         inertReason={props.inertReason}
-        clearing={props.planClearing}
         onStop={props.onStop}
         onTakeControl={props.onTakeControl}
       >

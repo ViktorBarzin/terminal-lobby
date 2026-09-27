@@ -1,72 +1,12 @@
-import type { WorkingRow } from "./timeline.logic";
-
 /**
- * What the composer's thin line says, as pure functions.
+ * What the composer's thin line still needs, as pure functions.
  *
- * The line is the Quiet line composer's (Viktor chose it on 2026-09-24): one
- * row of small type above the pill, the session's state on the left and the
- * mode, model and context dials on the right. It took over two things that
- * lived elsewhere. The working row sat at the foot of the timeline, inside the
- * scroll, and the background strip sat between the timeline and the composer.
- * Both now say their piece here, in the same place every time.
+ * The line is the Quiet line composer's (2026-09-24). Its state on the left,
+ * "Working · tool · elapsed · N steps", moved into the live group at the end
+ * of the conversation on 2026-09-27 (timeline.logic `liveGroupState`, with
+ * `shortTarget`). What remains is how the line words the watching state and
+ * how much it keeps at a given width, until the T3 pass retires the line.
  */
-
-/** The one thing the line's left side reports. */
-export type LineState =
-  | { kind: "working"; row: WorkingRow }
-  | { kind: "waiting"; row: WorkingRow }
-  | { kind: "background"; label: string }
-  | { kind: "watching"; reason: string }
-  /** This device approved a plan with an option that clears the context, and
-   *  the new conversation has not arrived yet. */
-  | { kind: "clearing" }
-  | { kind: "idle" };
-
-/**
- * Which state the line shows, by the prototype's precedence.
- *
- * Watching comes first: a device that only watches can stop nothing and send
- * nothing, and the line is where it says so. Then a context clear this device
- * started from the plan card: the old transcript records it as a rejection and
- * closes its turn, and for up to 20 s nothing else says that Claude is about
- * to start on the plan in a new conversation. Then the open turn, waiting when
- * Claude is stopped on the reader and working otherwise. Then work the session
- * still owes once its turn has closed (lobby.logic `backgroundLabel`), which by
- * this order never speaks while a turn is open and so never doubles up with
- * it. Then nothing.
- *
- * The dock's top edge does not follow this. It follows the session itself, so
- * a watcher still sees the sweep while the session they watch works.
- */
-export function lineState(o: {
-  live?: WorkingRow;
-  background?: string;
-  inertReason?: string;
-  clearing?: boolean;
-}): LineState {
-  if (o.inertReason) return { kind: "watching", reason: o.inertReason };
-  if (o.clearing) return { kind: "clearing" };
-  if (o.live)
-    return o.live.waiting ? { kind: "waiting", row: o.live } : { kind: "working", row: o.live };
-  if (o.background) return { kind: "background", label: o.background };
-  return { kind: "idle" };
-}
-
-/**
- * What the line shows of a call's target.
- *
- * A path by its file name: the line has a few words of room, and the name is
- * the part that says which file. The title carries the whole path. A command
- * whole, since its first word is rarely its point (`npx vitest run
- * QuestionCard`), and an address whole, since its last segment says nothing on
- * its own. A token with no space in it and a slash somewhere is a path.
- */
-export function shortTarget(label: string): string {
-  const t = label.trim();
-  if (!t || /\s/.test(t) || !t.includes("/") || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
-  const parts = t.split("/").filter((p) => p !== "");
-  return parts[parts.length - 1] ?? t;
-}
 
 /**
  * A watching reason split into the words that name the watch and the rest.

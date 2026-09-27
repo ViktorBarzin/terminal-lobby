@@ -1,13 +1,11 @@
 /**
- * The composer's thin line: the session's state on the left, the dials on the
- * right, and Stop beside the work it stops.
+ * The composer's thin line, as it stands while the T3 pass replaces it: Stop
+ * while something runs, background work once the turn has closed, the watching
+ * state with Take control, and the dials on the right.
  *
- * It took over from two things (Quiet line composer, 2026-09-24): the working
- * row at the foot of the timeline, which scrolled with the transcript and
- * stood 16px above the composer, and the background strip under the timeline.
- * The row's words carry over unchanged: the call in flight, its target, how
- * long it has run and the step count above one. What changed is WHERE, and
- * that Stop no longer shows while Claude is only waiting for the reader.
+ * The turn's own words (working, waiting, clearing, the clock and the step
+ * count) moved into the live group at the end of the conversation on
+ * 2026-09-27 (MessagesTimeline.live.test.tsx).
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
@@ -31,12 +29,16 @@ const state = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-status-state
 const live = (c: HTMLElement) => c.querySelector<HTMLElement>(".tl-statusline [aria-live]")!;
 
 describe("while Claude works", () => {
-  it("names the call, its target, how long it has run and the steps so far", () => {
+  // The T3 pass (2026-09-27) moved the working words, the clock and the step
+  // count into the live group at the end of the conversation
+  // (MessagesTimeline.live.test.tsx). Stop stays on the line until the
+  // composer's round button takes it over.
+  it("offers Stop and nothing else on the left: the conversation says what runs", () => {
     const { container } = render(() => (
       <StatusLine
         live={row({
           tool: "Edit",
-          toolLabel: "frontend-v2/src/components/QuestionCard.tsx",
+          toolLabel: "a/QuestionCard.tsx",
           toolStartedAt: Date.now() - 252_000,
         })}
         onStop={() => {}}
@@ -44,46 +46,32 @@ describe("while Claude works", () => {
     ));
     const s = state(container);
     expect(s.getAttribute("data-kind")).toBe("working");
-    expect(s.querySelector(".tl-status-word")?.textContent).toBe("Working");
-    expect(s.querySelector(".tl-status-tool")?.textContent).toBe("Edit");
-    // The file's name on the line, the whole path in its title.
-    const target = s.querySelector(".tl-status-target")!;
-    expect(target.textContent).toBe("QuestionCard.tsx");
-    expect(target.getAttribute("title")).toBe("frontend-v2/src/components/QuestionCard.tsx");
-    expect(s.textContent).toContain("4m 12s");
-    expect(s.querySelector(".tl-status-steps")?.textContent).toContain("7 steps");
+    expect(s.textContent).toBe("Stop");
+    expect(s.querySelector(".tl-status-word")).toBeNull();
+    expect(s.textContent).not.toContain("4m 12s");
   });
 
-  it("leaves the step count out until there is more than one", () => {
-    const { container } = render(() => <StatusLine live={row({ steps: 1 })} onStop={() => {}} />);
-    expect(container.querySelector(".tl-status-steps")).toBeNull();
-  });
-
-  it("offers Stop beside the work, and Stop stops", () => {
+  it("Stop stops", () => {
     const onStop = vi.fn();
     const { container } = render(() => <StatusLine live={row()} onStop={onStop} />);
     const stop = state(container).querySelector<HTMLButtonElement>(".tl-stop")!;
-    expect(stop.textContent).toContain("Stop");
     fireEvent.click(stop);
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
-  it("ticks its clock once a second while the turn is open", () => {
+  it("keeps no clock of its own", () => {
     vi.useFakeTimers();
-    const { container } = render(() => (
+    render(() => (
       <StatusLine live={row({ toolStartedAt: Date.now() - 5_000 })} onStop={() => {}} />
     ));
-    expect(state(container).textContent).toContain("5s");
-    vi.advanceTimersByTime(3_000);
-    expect(state(container).textContent).toContain("8s");
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
 describe("while Claude waits for the reader", () => {
-  // The turn is open because Claude asked something and stopped. The row said
-  // "Working…" over this for a week of 57% of all quiet open turns (replayed
-  // 2026-09-04), and a red Stop beside "waiting" read as an alarm.
-  it("says so, with a still dot and no Stop", () => {
+  // A red Stop beside "waiting" read as an alarm; the ways out of a wait are
+  // the card's own buttons, Send and the terminal.
+  it("shows no Stop, and leaves the words to the conversation", () => {
     const { container } = render(() => (
       <StatusLine
         live={row({ waiting: true, toolStartedAt: Date.now() - 12_000 })}
@@ -91,9 +79,8 @@ describe("while Claude waits for the reader", () => {
       />
     ));
     const s = state(container);
-    expect(s.getAttribute("data-kind")).toBe("waiting");
-    expect(s.querySelector(".tl-status-word")?.textContent).toBe("Waiting for you");
-    expect(s.textContent).toContain("12s");
+    expect(s.getAttribute("data-kind")).toBe("idle");
+    expect(s.textContent).toBe("");
     expect(container.querySelector(".tl-stop")).toBeNull();
   });
 });
@@ -152,28 +139,19 @@ describe("on a device that only watches", () => {
 });
 
 describe("what a screen reader hears", () => {
-  it("speaks once per change of state, never per tick of the clock", async () => {
-    vi.useFakeTimers();
-    const [liveRow, setLive] = createSignal<WorkingRow | undefined>(
-      row({ toolStartedAt: Date.now() - 1_000 }),
-    );
-    const { container } = render(() => <StatusLine live={liveRow()} onStop={() => {}} />);
-    expect(live(container).textContent).toBe("Claude is working");
-
-    const changes: string[] = [];
-    const mo = new MutationObserver(() => changes.push(live(container).textContent ?? ""));
-    mo.observe(live(container), { childList: true, characterData: true, subtree: true });
-    vi.advanceTimersByTime(4_000);
-    await Promise.resolve();
-    expect(changes, "no announcement from the clock").toEqual([]);
-
-    setLive(row({ waiting: true }));
-    await Promise.resolve();
-    expect(live(container).textContent).toBe("Claude is waiting for you");
+  // The turn's own states are announced by the timeline now; the line speaks
+  // only for what it still shows.
+  it("says when background work outlives the turn, and nothing for the turn itself", async () => {
+    const [bg, setBg] = createSignal<string | undefined>(undefined);
+    const [liveRow, setLive] = createSignal<WorkingRow | undefined>(row());
+    const { container } = render(() => (
+      <StatusLine live={liveRow()} background={bg()} onStop={() => {}} />
+    ));
+    expect(live(container).textContent).toBe("");
     setLive(undefined);
+    setBg("2 agents");
     await Promise.resolve();
-    expect(live(container).textContent).toBe("Claude finished");
-    mo.disconnect();
+    expect(live(container).textContent).toBe("Background work is still running");
   });
 
   it("says nothing on arrival at an idle session", () => {

@@ -229,3 +229,29 @@ describe("a note", () => {
     expect(declsOf(topCss, ".tl-meta-value").has("font-weight")).toBe(false);
   });
 });
+
+describe("the live group at the end of an open turn (6-working)", () => {
+  it("borders a running group, and the clearing row, in the running colour at 45%", () => {
+    for (const sel of [
+      '.tl-group-box[data-live="working"]',
+      '.tl-group-box[data-live="clearing"]',
+    ]) {
+      expect(declsOf(topCss, sel).get("border-color")).toBe(
+        "color-mix(in srgb, var(--state-running) 45%, var(--border-strong))",
+      );
+    }
+  });
+
+  it("keeps the plain border while Claude waits, with a still awaiting dot", () => {
+    expect(() => declsOf(topCss, '.tl-group-box[data-live="waiting"]')).toThrow();
+    const dot = declsOf(topCss, ".tl-live-dot");
+    expect(dot.get("background")).toBe("var(--state-awaiting)");
+    expect(dot.get("border-radius")).toBe("50%");
+    expect(dot.has("animation")).toBe(false);
+  });
+
+  it("does not light up a live row that nothing opens", () => {
+    expect(declsOf(topCss, ".tl-live-head").get("cursor")).toBe("default");
+    expect(declsOf(topCss, ".tl-live-head:hover").get("background")).toBe("none");
+  });
+});

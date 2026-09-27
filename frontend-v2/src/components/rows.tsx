@@ -1,11 +1,12 @@
 import {
-  createEffect,
   createMemo,
   createSignal,
   For,
   Index,
+  Match,
   onCleanup,
   Show,
+  Switch,
   type Component,
 } from "solid-js";
 import { Markdown } from "./Markdown";
@@ -18,8 +19,10 @@ import {
   groupSummary,
   planHeader,
   planSummary,
+  shortTarget,
   shownPlanOutcome,
   type ContinuationRow,
+  type LiveGroupState,
   type MetaRow,
   type PlanRow,
   type PlanTransient,
@@ -748,10 +751,10 @@ export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
 );
 
 /**
- * The open turn's live row, drawn in the timeline only where no composer sits
- * under it: an agent's drill-in (AgentTranscript), which has no status line to
- * say the agent is still working. A session's own timeline leaves it out and
- * the composer's status line says it instead (2026-09-24).
+ * The open turn's working row, drawn only in an agent's drill-in
+ * (AgentTranscript), whose calls are rows of their own rather than work
+ * groups. A session's own timeline draws the live group at its end instead
+ * (LiveRowView, or the running WorkGroupRowView; 2026-09-27).
  */
 export const WorkingRowView: Component<{ row: WorkingRow; now: number }> = (props) => {
   const elapsed = () => {
@@ -1021,17 +1024,85 @@ const WorkCallRow: Component<{
   );
 };
 
-/** Ticks once a second while `on` says so; otherwise holds still. */
-function useClock(on: () => boolean): () => number {
-  const [now, setNow] = createSignal(Date.now());
-  createEffect(() => {
-    if (!on()) return;
-    setNow(Date.now());
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    onCleanup(() => clearInterval(t));
-  });
-  return now;
+/** A live state the running group draws: the open turn's, working or waiting. */
+type OpenLive = Extract<LiveGroupState, { kind: "working" | "waiting" }>;
+
+/** The live state, when it is one a group or a row draws. */
+const openLive = (s: LiveGroupState | undefined): OpenLive | undefined =>
+  s && (s.kind === "working" || s.kind === "waiting") ? s : undefined;
+
+/**
+ * The left of a live head: a spinner while Claude works or clears the context,
+ * a still dot in the awaiting colour while it waits on the reader, since a
+ * spinner is what says work is happening.
+ */
+const LiveMark: Component<{ kind: LiveGroupState["kind"] }> = (props) => (
+  <Show when={props.kind === "waiting"} fallback={<GroupSpinner />}>
+    <span class="tl-live-dot" aria-hidden="true" />
+  </Show>
+);
+
+/** What a live head says: "Running <code>ls</code>", "Working…", "Waiting for you". */
+const LiveWords: Component<{ state: LiveGroupState }> = (props) => {
+  const what = () => {
+    const s = props.state;
+    return s.kind === "working" ? s.label || s.tool : undefined;
+  };
+  return (
+    <Switch>
+      <Match when={props.state.kind === "clearing"}>
+        Clearing the context and starting the plan…
+      </Match>
+      <Match when={props.state.kind === "waiting"}>Waiting for you</Match>
+      <Match when={what()}>
+        {(w) => (
+          <>
+            Running <code title={w()}>{shortTarget(w())}</code>
+          </>
+        )}
+      </Match>
+      <Match when={props.state.kind === "working"}>Working…</Match>
+    </Switch>
+  );
+};
+
+/**
+ * The meta on the right of a live head: "2 done · 14s" on the running group,
+ * the time alone before the first call and while Claude waits. Clearing has
+ * no clock: the old turn is closed and the new one has not begun.
+ */
+function liveMeta(s: LiveGroupState, now: number, inGroup: boolean): string {
+  if (s.kind !== "working" && s.kind !== "waiting") return "";
+  const t = s.since !== undefined && now > 0 ? formatDuration(Math.max(0, now - s.since)) : "";
+  if (s.kind === "working" && inGroup) return t ? `${s.done} done · ${t}` : `${s.done} done`;
+  return t;
 }
+
+/**
+ * The live row at the end of the conversation, for the states no running
+ * group carries: before the first call ("Working…"), waiting on the reader
+ * with no group at the end, and a context clear this device started. It wears
+ * the group's box so it sits in the same place, and the running group takes
+ * its place the moment a call starts. Nothing opens it: it holds no calls.
+ */
+export const LiveRowView: Component<{ state: LiveGroupState; now: number }> = (props) => (
+  <div class="tl-row tl-row-live">
+    <div class="tl-group-box" data-live={props.state.kind} aria-live="off">
+      <div class="tl-group-head tl-live-head">
+        <LiveMark kind={props.state.kind} />
+        <Show when={props.state.kind !== "clearing"}>
+          <GroupIconSvg icon="tools" class="tl-group-ico" />
+        </Show>
+        <span class="tl-group-sum">
+          <LiveWords state={props.state} />
+        </span>
+        <Show when={liveMeta(props.state, props.now, false)}>
+          {(m) => <span class="tl-group-meta">{m()}</span>}
+        </Show>
+      </div>
+    </div>
+  </div>
+);
 
 /**
  * One run of tool calls between two replies, as one bordered row: a status
@@ -1055,17 +1126,17 @@ export const WorkGroupRowView: Component<{
   onOpenPreview?: (path: string) => void;
   onLoadFull?: (toolId: string) => Promise<string | null>;
   renderChild?: (row: ToolRow["children"][number]) => unknown;
+  /** The live state, handed to the running group at the end of an open turn
+   *  (timeline.logic `liveGroupState`). Absent, the group is settled. */
+  live?: LiveGroupState;
+  /** The timeline's clock, which ticks only while a turn is open. */
+  now?: number;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
-  const live = () => props.row.live;
-  const now = useClock(() => live() !== undefined);
+  const live = () => openLive(props.live);
   const status = () => (props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok");
   const summary = createMemo(() => groupSummary(props.row.calls));
   const took = () => formatDuration(props.row.durationMs);
-  const elapsed = () => {
-    const from = live()?.startedAt;
-    return from ? formatDuration(now() - from) : "";
-  };
   /** Every event the group stands for, so a search hit on a folded call lands here. */
   const eids = () => props.row.calls.map((c) => c.id).join(" ");
 
@@ -1074,7 +1145,8 @@ export const WorkGroupRowView: Component<{
       <div
         class="tl-group-box"
         data-open={open() ? "" : undefined}
-        data-live={live() ? "" : undefined}
+        data-live={live()?.kind}
+        aria-live={live() ? "off" : undefined}
       >
         <button
           type="button"
@@ -1083,23 +1155,12 @@ export const WorkGroupRowView: Component<{
           onClick={() => setOpen((v) => !v)}
         >
           <Show when={live()} fallback={<span class="tl-group-dot" data-status={status()} />}>
-            <GroupSpinner />
+            {(l) => <LiveMark kind={l().kind} />}
           </Show>
           <GroupIconSvg icon="tools" class="tl-group-ico" />
           <span class="tl-group-sum">
             <Show when={live()} fallback={summary()}>
-              {(l) => (
-                <Show
-                  when={l().label || l().tool}
-                  fallback={l().waiting ? "Waiting for you" : summary() || "Working…"}
-                >
-                  {(what) => (
-                    <>
-                      Running <code>{what()}</code>
-                    </>
-                  )}
-                </Show>
-              )}
+              {(l) => <LiveWords state={l()} />}
             </Show>
           </span>
           <span class="tl-group-meta">
@@ -1122,11 +1183,7 @@ export const WorkGroupRowView: Component<{
                 </>
               }
             >
-              {(l) => (
-                <>
-                  {l().done} done{elapsed() ? ` · ${elapsed()}` : ""}
-                </>
-              )}
+              {(l) => <>{liveMeta(l(), props.now ?? 0, true)}</>}
             </Show>
           </span>
           <GroupChevron />

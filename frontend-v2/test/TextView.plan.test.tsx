@@ -127,7 +127,9 @@ function mount(
     [...r.container.querySelectorAll(".tl-plancard .tl-qcard-label")].map((l) => l.textContent);
   const row = () => q(".tl-row-plan");
   const header = () => row()?.querySelector(".tl-plan-outcome")?.textContent ?? null;
-  const status = () => q(".tl-status-state .tl-status-word")?.textContent ?? null;
+  /** What the live group at the end of the conversation says. */
+  const status = () =>
+    q(".tl-timeline .tl-group-box[data-live] .tl-group-sum")?.textContent ?? null;
   const field = () => q<HTMLTextAreaElement>("textarea")!;
   const send = () => q<HTMLButtonElement>(".tl-send")!;
   const dial = (id: string) => q<HTMLButtonElement>(`.tl-dial[data-dial="${id}"]`);
@@ -228,13 +230,13 @@ describe("an option tap", () => {
     await waitFor(() => expect(v.header()).toBe("Plan approved"));
   });
 
-  it("says it is clearing context, on the row and the status line, for an option that clears", async () => {
+  it("says it is clearing context, on the row and the live group, for an option that clears", async () => {
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)]);
     await waitFor(() => expect(v.option(1)).toBeDefined());
     v.option(1)!.click();
     await waitFor(() => expect(v.card()).toBeNull());
     expect(v.header()).toBe("Clearing context…");
-    expect(v.status()).toBe("Clearing context · starting on the plan");
+    expect(v.status()).toBe("Clearing the context and starting the plan…");
 
     // The old transcript records the clear as a rejection; this client knows
     // better, so the row keeps saying what it did.
@@ -245,7 +247,7 @@ describe("an option tap", () => {
     // The stream switches to the new conversation: the old events go, and
     // with them the transient.
     v.setEvents([ev({ id: 10, kind: "text", body: "Starting on it.", at: 10_000 })]);
-    await waitFor(() => expect(v.status()).not.toBe("Clearing context · starting on the plan"));
+    await waitFor(() => expect(v.status()).not.toBe("Clearing the context and starting the plan…"));
   });
 });
 
@@ -262,11 +264,11 @@ describe("the transient after an applied answer", () => {
     v.setEvents([...v.events(), asking(4, ""), rejected(5, "p1")]);
     await vi.advanceTimersByTimeAsync(19_000);
     expect(v.header()).toBe("Clearing context…");
-    expect(v.status()).toBe("Clearing context · starting on the plan");
+    expect(v.status()).toBe("Clearing the context and starting the plan…");
 
     await vi.advanceTimersByTimeAsync(1_500);
     expect(v.header()).toBe("Plan rejected");
-    expect(v.status()).not.toBe("Clearing context · starting on the plan");
+    expect(v.status()).not.toBe("Clearing the context and starting the plan…");
   });
 
   it("does not re-dock the reading it answered while that answer settles, and does after 20 s", async () => {
@@ -529,7 +531,7 @@ describe("the dials while the card is docked", () => {
   });
 });
 
-describe("the status line while the card is docked", () => {
+describe("the live group while the card is docked", () => {
   it("reads 'Waiting for you' before the transcript has the call", async () => {
     // The prompt opened a turn, so the transcript alone says Claude works.
     const v = mount([prompt(1), asking(2, PLAN_FIRST)]);
@@ -544,6 +546,6 @@ describe("the status line while the card is docked", () => {
     v.option(2)!.click();
     await waitFor(() => expect(v.card()).toBeNull());
     v.setEvents([...v.events(), asking(4, ""), approved(5, "p1")]);
-    await waitFor(() => expect(v.status()).toBe("Working"));
+    await waitFor(() => expect(v.status()).toBe("Working…"));
   });
 });

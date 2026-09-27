@@ -488,7 +488,11 @@ export const TextView: Component<{
   const held = createMemo(() => heldFromEvents(props.events));
   const asked = createMemo((): Question[] => held() ?? recorded()?.questions ?? []);
   /** WHAT is being asked, as the call's question texts; empty when nothing is. */
-  const asking = createMemo(() => asked().map((q) => q.question).join("\u0000"));
+  const asking = createMemo(() =>
+    asked()
+      .map((q) => q.question)
+      .join("\u0000"),
+  );
   /**
    * WHICH CALL the card belongs to: a count that moves when something starts
    * asking after nothing was, or the call being asked changes. The card holds
@@ -691,7 +695,10 @@ export const TextView: Component<{
     if (resp.applied) return followed(true);
     if (resp.reason === "not-held") {
       setNotHeld(true);
-      props.notify?.("The question is no longer waiting on this card. Answer it in the Terminal.", "error");
+      props.notify?.(
+        "The question is no longer waiting on this card. Answer it in the Terminal.",
+        "error",
+      );
     } else if (resp.reason === "incomplete") {
       props.notify?.("Every question needs an answer before it can be sent.", "error");
     }
@@ -968,10 +975,11 @@ export const TextView: Component<{
   };
 
   /**
-   * What the composer's line is handed as the open turn. While the card is
-   * docked it reads "Waiting for you" even before the transcript has the call,
-   * when the transcript alone still says Claude is working. The wait's start
-   * is not known then, so the line shows no clock rather than the turn's.
+   * The open turn as the live group and the composer are handed it. While the
+   * card is docked it reads "Waiting for you" even before the transcript has
+   * the call, when the transcript alone still says Claude is working. The
+   * wait's start is not known then, so the live group shows no clock rather
+   * than the turn's.
    */
   const lineLive = createMemo((): WorkingRow | undefined => {
     const l = live();
@@ -1188,6 +1196,11 @@ export const TextView: Component<{
           })()}
           hidden={drill() !== null}
           onReveal={() => closeDrill(false)}
+          // The live group at the end says what the turn is doing: off the
+          // same row the composer reads, so a docked plan card reads "Waiting
+          // for you" there too, and a pending slash command draws nothing.
+          live={lineLive() ?? null}
+          clearing={planAnswered()?.action === "clear"}
         />
         <Show when={drill()} keyed>
           {(id) => (
@@ -1297,10 +1310,10 @@ export const TextView: Component<{
       </Show>
       <Composer
         textSize={textSize()}
-        // The open turn's row, which the thin line reads, and what the session
-        // still owes once the transcript has closed the turn: an agent or a
-        // workflow it launched keeps going and writes into this conversation
-        // minutes later (the session list knows, the transcript does not).
+        // The open turn's row, which decides Stop, and what the session still
+        // owes once the transcript has closed the turn: an agent or a workflow
+        // it launched keeps going and writes into this conversation minutes
+        // later (the session list knows, the transcript does not).
         // The agent panel names the same work one entry at a time, so the line
         // leaves it out while the panel shows; on the panel's own signal, so
         // the two cannot disagree.
@@ -1314,7 +1327,6 @@ export const TextView: Component<{
         asking={!!asking()}
         planOpen={planDocked() !== null}
         onPlanFeedback={(text) => sendPlanFeedback(text, false)}
-        planClearing={planAnswered()?.action === "clear"}
         pending={props.pending}
         onSend={send}
         onStop={props.onStop}

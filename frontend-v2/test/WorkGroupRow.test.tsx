@@ -12,7 +12,13 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import type { Event } from "../src/types/events";
 import { WorkGroupRowView } from "../src/components/rows";
-import { deriveRows, type WorkGroupRow } from "../src/components/timeline.logic";
+import {
+  deriveRows,
+  liveGroupState,
+  liveRow,
+  type LiveGroupState,
+  type WorkGroupRow,
+} from "../src/components/timeline.logic";
 import { closePicture, picture } from "../src/store/picture";
 import { track } from "../src/telemetry/track";
 
@@ -79,10 +85,21 @@ function groupOf(events: Event[]): WorkGroupRow {
 
 function mount(
   row: WorkGroupRow,
-  more: { onLoadFull?: (id: string) => Promise<string | null> } = {},
+  more: {
+    onLoadFull?: (id: string) => Promise<string | null>;
+    live?: LiveGroupState;
+    now?: number;
+  } = {},
 ) {
   const { container } = render(() => (
-    <WorkGroupRowView row={row} session="s" me="wizard" onLoadFull={more.onLoadFull} />
+    <WorkGroupRowView
+      row={row}
+      session="s"
+      me="wizard"
+      onLoadFull={more.onLoadFull}
+      live={more.live}
+      now={more.now}
+    />
   ));
   const head = () => container.querySelector<HTMLButtonElement>(".tl-group-head")!;
   const calls = () => [...container.querySelectorAll<HTMLElement>(".tl-group-call")];
@@ -225,13 +242,27 @@ describe("<WorkGroupRowView> while it runs", () => {
     bash(4, "b2", "sleep 6 && echo b", 3_000),
   ];
 
+  // The timeline hands the running group its live state (liveGroupState),
+  // and its one clock; the group keeps neither of its own.
+  const liveOf = (events: Event[]) => {
+    const rows = deriveRows(events);
+    return liveGroupState({ live: liveRow(rows), last: groupOf(events) });
+  };
+
   it("names the call in flight and counts the ones done, with a spinner", () => {
-    const { container } = mount(groupOf(RUNNING));
-    expect(container.querySelector(".tl-group-box")!.hasAttribute("data-live")).toBe(true);
+    const { container } = mount(groupOf(RUNNING), { live: liveOf(RUNNING), now: 17_000 });
+    expect(container.querySelector(".tl-group-box")!.getAttribute("data-live")).toBe("working");
     expect(container.querySelector(".tl-group-spin")).not.toBeNull();
     expect(container.querySelector(".tl-group-sum")!.textContent).toBe("Running sleep 6 && echo b");
     expect(container.querySelector(".tl-group-sum code")!.textContent).toBe("sleep 6 && echo b");
-    expect(container.querySelector(".tl-group-meta")!.textContent).toMatch(/^1 done/);
+    // 1s to 17s: the group's first call to now.
+    expect(container.querySelector(".tl-group-meta")!.textContent).toBe("1 done · 16s");
+  });
+
+  it("draws settled without a live state, even while its last call is out", () => {
+    const { container } = mount(groupOf(RUNNING));
+    expect(container.querySelector(".tl-group-box")!.hasAttribute("data-live")).toBe(false);
+    expect(container.querySelector(".tl-group-head > .tl-group-spin")).toBeNull();
   });
 
   it("spins on the open call row that has not come back", () => {

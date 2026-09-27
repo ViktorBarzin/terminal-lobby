@@ -1707,6 +1707,105 @@ export function liveRowOf(
 }
 
 /**
+ * What the live group at the end of the conversation says.
+ *
+ * `groupKey` names the running work group that carries it, when the open turn
+ * ends on one; otherwise the timeline draws a row of its own in the same place.
+ * `since` is when the thing being timed began: the group's first call, the call
+ * in flight, the wait, or the turn when nothing has run yet.
+ */
+export type LiveGroupState =
+  | { kind: "idle" }
+  /** This device's plan answer is clearing the context (TextView planClearing). */
+  | { kind: "clearing" }
+  | { kind: "waiting"; since?: number; groupKey?: string }
+  | {
+      kind: "working";
+      /** The call in flight. Absent before the first call and between calls. */
+      tool?: string;
+      label?: string;
+      /** How many of the running group's calls have come back. */
+      done: number;
+      since?: number;
+      groupKey?: string;
+    };
+
+/**
+ * The live group's state, by the precedence the status line had
+ * (docs/plans/2026-09-27-text-view-t3-pass.md retires that line).
+ *
+ * A context clear this device started comes first: the old transcript records
+ * it as a rejection and closes its turn, and for up to 20 s nothing else says
+ * that Claude is about to start on the plan in a new conversation. Then the
+ * open turn, waiting when Claude is stopped on the reader and working
+ * otherwise. Then nothing.
+ *
+ * Watching is not an input. The line hid the turn behind "Watching"; the live
+ * group sits in the conversation, and a device that only watches still wants
+ * to see the work go by.
+ *
+ * `live` is the open turn's row as the view has it (TextView `lineLive`, which
+ * knows about a docked plan card and pending slash commands). `last` is the
+ * last row the timeline draws. When that is the open turn's running group, the
+ * group carries the state and gives it its call and count.
+ */
+export function liveGroupState(o: {
+  live?: WorkingRow;
+  last?: TimelineRow;
+  clearing?: boolean;
+}): LiveGroupState {
+  if (o.clearing) return { kind: "clearing" };
+  const live = o.live;
+  if (!live) return { kind: "idle" };
+  const last = o.last;
+  const group =
+    last?.kind === "work-group" && last.live && last.turnKey === live.turnKey ? last : undefined;
+  const groupKey = group ? { groupKey: group.key } : {};
+  if (live.waiting) {
+    return {
+      kind: "waiting",
+      ...(live.toolStartedAt !== undefined ? { since: live.toolStartedAt } : {}),
+      ...groupKey,
+    };
+  }
+  if (group?.live) {
+    const g = group.live;
+    return {
+      kind: "working",
+      ...(g.tool !== undefined ? { tool: g.tool } : {}),
+      ...(g.label !== undefined ? { label: g.label } : {}),
+      done: g.done,
+      ...(g.startedAt !== undefined ? { since: g.startedAt } : {}),
+      ...groupKey,
+    };
+  }
+  const since = live.toolStartedAt ?? live.startedAt;
+  return {
+    kind: "working",
+    ...(live.tool !== undefined ? { tool: live.tool } : {}),
+    ...(live.toolLabel !== undefined ? { label: live.toolLabel } : {}),
+    done: 0,
+    ...(since !== undefined ? { since } : {}),
+  };
+}
+
+/**
+ * What the live group shows of a call's target.
+ *
+ * A path by its file name: the row has a few words of room, and the name is
+ * the part that says which file. The title carries the whole path. A command
+ * whole, since its first word is rarely its point (`npx vitest run
+ * QuestionCard`), and an address whole, since its last segment says nothing on
+ * its own. A token with no space in it and a slash somewhere is a path.
+ */
+export function shortTarget(label: string): string {
+  const t = label.trim();
+  if (!t || /\s/.test(t) || !t.includes("/") || /^[a-z][a-z0-9+.-]*:\/\//i.test(t)) return t;
+  const parts = t.split("/").filter((p) => p !== "");
+  return parts[parts.length - 1] ?? t;
+}
+
+/**
  * The newest row that says something happened — everything except the open
  * turn's working marker, which is appended after the turn's own rows and is
  * therefore what a LIVE question is followed by.

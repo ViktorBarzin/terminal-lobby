@@ -18,6 +18,8 @@ import type { Event } from "../types/events";
 import { diag } from "../telemetry/diag";
 import {
   deriveRows,
+  liveGroupState,
+  liveRow,
   MAX_QUEUED_SHOWN,
   sameRow,
   scrollTopAfterPrepend,
@@ -25,6 +27,7 @@ import {
   type ContinuationRow,
   type ErrorRow,
   type LeafRow,
+  type LiveGroupState,
   type MessageRow,
   type MetaRow,
   type PermissionRow,
@@ -47,6 +50,7 @@ import { MessageSegments } from "./Attachment";
 import { collapseSegments, segmentPrompt } from "../lib/attachments";
 import {
   ContinuationRowView,
+  LiveRowView,
   MetaRowView,
   PlanRowView,
   QuestionRowView,
@@ -390,10 +394,18 @@ export const MessagesTimeline: Component<{
   /** What the top row says once there is nothing earlier: "Start of session",
    *  or the start of an agent's transcript in the drill-in. */
   start?: string;
-  /** Draw the open turn's working row. Only for a timeline with no composer
-   *  under it, the drill-in, since a session's composer says it on its status
-   *  line. */
+  /** Draw the open turn's working row. Only for the drill-in, an agent's own
+   *  transcript, whose calls are rows of their own rather than work groups. A
+   *  session's timeline draws the live group at its end instead. */
   workingRow?: boolean;
+  /**
+   * The open turn's row as the view reads it (TextView `lineLive`, which knows
+   * about a docked plan card and pending slash commands), or null when the
+   * view says no turn is open. Left out, the timeline reads its own rows.
+   */
+  live?: WorkingRow | null;
+  /** This device's plan answer is clearing the context (TextView planClearing). */
+  clearing?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -403,11 +415,10 @@ export const MessagesTimeline: Component<{
   /**
    * The rows indexed by a render key, unique even if an event id repeats.
    *
-   * The open turn's working row is left out. It closed the timeline until
-   * 2026-09-24 and says its piece on the composer's thin line now
-   * (StatusLine), which is where the reader is already looking and which does
-   * not scroll away with the transcript. The drill-in has no composer, so it
-   * asks for the row (`workingRow`).
+   * The open turn's working row is left out: the live group at the end says
+   * what the turn is doing (`liveState` below), on the running work group when
+   * the turn ends on one. The drill-in asks for the row (`workingRow`), since
+   * an agent's transcript has no groups.
    */
   const keyed = createMemo(() => {
     const keys: string[] = [];
@@ -641,13 +652,51 @@ export const MessagesTimeline: Component<{
 
   // The row kind is encoded in its key, so a node never changes kind under
   // itself and the switch can run once, at creation.
-  // A ticking clock for the drill-in's working row. One timer for the whole
-  // timeline, running only while that row is drawn: a per-row interval would
-  // re-render the list once a second forever.
+  /**
+   * What the live group at the end says (timeline.logic `liveGroupState`): on
+   * the running work group when the open turn ends on one, otherwise on a row
+   * of its own after the last row. The drill-in draws its working row instead,
+   * so it has none: one live indicator per open turn.
+   */
+  const liveState = createMemo<LiveGroupState>(() => {
+    if (props.workingRow) return { kind: "idle" };
+    const all = rows();
+    let last: TimelineRow | undefined;
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (all[i]!.kind !== "working") {
+        last = all[i];
+        break;
+      }
+    }
+    const live = props.live === undefined ? liveRow(all) : (props.live ?? undefined);
+    return liveGroupState({ live, last, clearing: props.clearing });
+  });
+  /** The running group's key, which the group's view compares its own to. */
+  const liveGroupKey = createMemo(() => {
+    const s = liveState();
+    return s.kind === "working" || s.kind === "waiting" ? s.groupKey : undefined;
+  });
+  /** The live state for a row of its own, when no running group carries it. */
+  const liveRowState = createMemo((): LiveGroupState | undefined => {
+    const s = liveState();
+    if (s.kind === "idle") return undefined;
+    if (s.kind !== "clearing" && s.groupKey !== undefined) return undefined;
+    return s;
+  });
+
+  /**
+   * One clock for the whole timeline, running only while a turn is open: the
+   * live group's, or the drill-in's working row. A per-row interval would
+   * re-render the list once a second forever.
+   */
   const [now, setNow] = createSignal(0);
+  const ticking = createMemo(() => {
+    const kind = liveState().kind;
+    if (kind === "working" || kind === "waiting") return true;
+    return props.workingRow === true && rows().some((r) => r.kind === "working");
+  });
   createEffect(() => {
-    const working = props.workingRow === true && rows().some((r) => r.kind === "working");
-    if (!working) {
+    if (!ticking()) {
       setNow(0);
       return;
     }
@@ -655,6 +704,29 @@ export const MessagesTimeline: Component<{
     const t = setInterval(() => setNow(Date.now()), 1000);
     onCleanup(() => clearInterval(t));
   });
+
+  /**
+   * What a screen reader hears, once per change of state. Keyed on the KIND,
+   * so the clock never reaches it: the ticking row itself is `aria-live="off"`
+   * inside the log. Arriving at an idle session says nothing; a turn that
+   * ends says so.
+   */
+  let spoken = false;
+  const announce = createMemo<string>((was) => {
+    switch (liveState().kind) {
+      case "working":
+        spoken = true;
+        return "Claude is working";
+      case "waiting":
+        spoken = true;
+        return "Claude is waiting for you";
+      case "clearing":
+        spoken = true;
+        return "Clearing the context, then Claude starts on the plan";
+      case "idle":
+        return spoken ? "Claude finished" : was;
+    }
+  }, "");
 
   const renderRow = (key: string): JSX.Element => {
     const row = rowAt(key);
@@ -723,6 +795,8 @@ export const MessagesTimeline: Component<{
             onOpenPreview={props.onOpenPreview}
             onLoadFull={props.onLoadFull}
             renderChild={renderLeaf}
+            live={liveGroupKey() === row().key ? liveState() : undefined}
+            now={now()}
           />
         );
       case "turn-fold":
@@ -1152,6 +1226,7 @@ export const MessagesTimeline: Component<{
           </div>
         </Show>
         <For each={shownKeys()}>{(key) => renderRow(key)}</For>
+        <Show when={liveRowState()}>{(s) => <LiveRowView state={s()} now={now()} />}</Show>
         <GhostRowsView
           queued={props.queued ?? []}
           me={props.me}
@@ -1172,6 +1247,9 @@ export const MessagesTimeline: Component<{
           ↓ Latest
         </button>
       </Show>
+      <span class="tl-sr-only tl-timeline-live" aria-live="polite">
+        {announce()}
+      </span>
     </div>
   );
 };
