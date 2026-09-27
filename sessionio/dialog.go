@@ -464,6 +464,15 @@ func reviewScreen(lines []string) *Dialog {
 		}
 	}
 	if !asks || tabs == "" {
+		// The tab bar scrolled off a review screen taller than the pane
+		// (reviewFoot). Which call this is, and how far it got, then comes
+		// from the call's own record: the reading carries no headers.
+		if reviewFoot(lines) >= 0 {
+			return &Dialog{
+				Questions: []DialogQuestion{{Question: readyPrompt}},
+				Partial:   true,
+			}
+		}
 		return nil
 	}
 	headers := tabHeaders(tabs)

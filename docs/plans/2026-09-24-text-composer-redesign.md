@@ -101,7 +101,7 @@ These still hold and keep their meaning:
 ### Behaviour the composer keeps
 
 - Enter sends and Shift+Enter adds a newline; the phone's send key sends through `beforeinput` `insertLineBreak`. IME commits never send.
-- ↑ on an empty field walks history. Shift+Tab cycles the mode. 1 or 2 on an empty field answers a pending permission.
+- ↑ on an empty field walks history. Shift+Tab cycles the mode. A digit on an empty field answers a pending permission: with the permission card docked it presses the row with that number, since the card shows the CLI's numbers as keycaps and what row 2 means changes with the prompt.
 - Attachments are inline tokens at the caret with a chip and a thumbnail behind them. Backspace removes a whole chip, a thumbnail opens full size, and paste and drag-and-drop attach.
 - The / and @ completion menu opens above the field.
 - Drafts persist per session, and the field never clears without a confirmed send or a restore.

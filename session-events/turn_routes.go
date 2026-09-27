@@ -51,10 +51,11 @@ type promptDriver interface {
 // 2026-09-19, send-keys into a dead pane exits 0 and the text vanishes, and a
 // session whose wrapper shell outlived its Claude takes the prompt at a BASH
 // PROMPT and runs it as a command. awaitReady does not catch either one: a
-// frozen scrollback still shows a settled prompt. The lobby's composer holds
-// its messages instead of sending them (frontend-v2/src/store/suspend-queue.ts);
-// this is for every other caller, and it names the session so the answer says
-// what to do.
+// frozen scrollback still shows a settled prompt. The lobby's composer wakes
+// the session first and then sends with awaitReady
+// (frontend-v2/src/store/wake-send.ts), since respawn-pane clears the frozen
+// screen and the wait then reads the new Claude's own input line; this is for
+// every other caller, and it names the session so the answer says what to do.
 //
 // A pi session asking whether to trust its folder is refused too. That
 // question is a list, and a pasted line plus Enter answers it with its first

@@ -523,8 +523,27 @@ export const TextView: Component<{
     held() && !notHeld() ? "open" : graceOver() || notHeld() ? "terminal" : "connecting";
   /** The tool permission prompt on the pane, answered by its own card. */
   const permission = createMemo(() => permissionFromPane(props.events));
+  /**
+   * Refuse a write while this device only watches, and say why.
+   *
+   * Watching is a read-only tmux attach on the client; the server takes a
+   * prompt or an answer from any client. Found in review on 2026-09-27: with
+   * the line reading "Watching", Enter sent the prompt, Send over a plan went
+   * out as feedback, and the permission card answered the CLI's prompt. Every
+   * way this view writes to the session goes through here first.
+   */
+  const refuseWatching = (): boolean => {
+    const why = props.inertReason;
+    if (!why) return false;
+    props.notify?.(why, "info");
+    return true;
+  };
+  /** The docked permission card's press, for a row number typed on the
+   *  keyboard (PermissionCard `register`). */
+  let pressPermissionRow: ((row: number) => boolean) | undefined;
   /** Press a permission row's number. */
   const pickPermission = async (n: number): Promise<boolean> => {
+    if (refuseWatching()) return false;
     const ok = (await props.onKeys?.([String(n)])) ?? false;
     if (!ok) props.notify?.("Couldn't answer Claude's prompt. Answer it in the Terminal.", "error");
     return ok;
@@ -657,7 +676,7 @@ export const TextView: Component<{
    * as it was and a toast says why.
    */
   const answerHeld = async (req: AnswerRequest): Promise<boolean> => {
-    if (!props.onAnswer || answering()) return false;
+    if (!props.onAnswer || answering() || refuseWatching()) return false;
     setAnswering(true);
     let resp: AnswerResponse | null;
     try {
@@ -711,6 +730,7 @@ export const TextView: Component<{
   };
   const send = async (text: string): Promise<boolean> => followed(await sendNow(text));
   const sendNow = async (text: string): Promise<boolean> => {
+    if (refuseWatching()) return false;
     // A permission prompt's menu takes keys, not a prompt: its Enter picks
     // the highlighted row, "Yes". The words stay in the field.
     if (permission()) {
@@ -869,7 +889,7 @@ export const TextView: Component<{
     action: PlanTransient,
   ): Promise<AnswerResponse | null | undefined> => {
     const d = planDocked();
-    if (!d || !props.onAnswer || planSending()) return undefined;
+    if (!d || !props.onAnswer || planSending() || refuseWatching()) return undefined;
     const against = planReadingKey(d.reading);
     const shown = planCardReading();
     const keys = shown ? [against, planReadingKey(shown)] : [against];
@@ -926,6 +946,7 @@ export const TextView: Component<{
   const sendPlanFeedback = async (text: string, approve: boolean): Promise<boolean> =>
     followed(await sendPlanFeedbackNow(text, approve));
   const sendPlanFeedbackNow = async (text: string, approve: boolean): Promise<boolean> => {
+    if (refuseWatching()) return false;
     if (!planDocked() || planReplyNow()?.notice === "gone") return props.onSend(text);
     if (planSending()) {
       sayOnPlanCard("busy");
@@ -1223,6 +1244,7 @@ export const TextView: Component<{
             busy={answering()}
             hasInput={composerSinks()?.hasInput() ?? false}
             keysActive={props.onScreen !== false && tileFocused()}
+            inert={props.inertReason}
             onSubmit={submitAnswers}
             onChat={chatInstead}
             onUseTyped={() => {
@@ -1244,6 +1266,10 @@ export const TextView: Component<{
             <PermissionCard
               reading={reading}
               onPick={pickPermission}
+              inert={props.inertReason}
+              register={(press) => {
+                pressPermissionRow = press;
+              }}
               onTerminal={props.onOpenTerminal}
             />
           ) : null;
@@ -1260,6 +1286,7 @@ export const TextView: Component<{
           hasInput={composerSinks()?.hasInput() ?? false}
           lineBreaks={composerSinks()?.lineBreaks() ?? false}
           sending={planSending()}
+          inert={props.inertReason}
           notice={planReplyNow()?.notice ?? null}
           onApprove={approvePlanOption}
           onApproveWithFeedback={() => {
@@ -1313,6 +1340,7 @@ export const TextView: Component<{
         session={props.session}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
+        onPermissionDigit={(row) => (permission() ? (pressPermissionRow?.(row) ?? false) : false)}
         register={(api) => {
           setComposerSinks(api);
           props.register?.(api);

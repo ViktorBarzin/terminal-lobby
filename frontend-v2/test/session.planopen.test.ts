@@ -83,6 +83,18 @@ describe("session store: prompt refused while the plan approval is up", () => {
     expect(notes[0]?.msg).toMatch(/asking to use a tool/i);
   });
 
+  it("keeps the text and says Claude is asking a question", async () => {
+    // A question refuses a prompt too (2026-09-27): the prompt's Enter
+    // would pick the highlighted option and lose the words.
+    g.fetch = respond(409, '{"applied":false,"reason":"question-open"}\n', "application/json");
+    const { ok, notes, pending } = await sendOnce("my queued follow-up note");
+    expect(ok).toBe(false);
+    expect(pending).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.kind).toBe("warning");
+    expect(notes[0]?.msg).toMatch(/asking a question/i);
+  });
+
   it("treats a plain-text 409 as any other failed send", async () => {
     g.fetch = respond(409, "conflict\n", "text/plain");
     const { ok, notes, pending } = await sendOnce("hi");

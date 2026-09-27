@@ -22,13 +22,28 @@ export const PermissionCard: Component<{
   onPick: (option: number) => Promise<boolean>;
   /** Show the Terminal view. */
   onTerminal?: () => void;
+  /** Why this device may not answer (it is watching), or empty when it may. */
+  inert?: string;
+  /**
+   * Hand the caller the card's own press, for a row's number typed on the
+   * keyboard. It answers true when the card has that row, whether or not the
+   * press went out, so the digit is not typed into the field instead.
+   */
+  register?: (press: (row: number) => boolean) => void;
 }> = (props) => {
   const [pressed, setPressed] = createSignal<number | null>(null);
+  // The refusal while watching is the caller's (onPick), so a key press is
+  // told why; a tap cannot reach here, the rows being disabled.
   const pick = async (n: number): Promise<void> => {
     if (pressed() !== null) return;
     setPressed(n);
     if (!(await props.onPick(n))) setPressed(null);
   };
+  props.register?.((row) => {
+    if (!props.reading.options.some((o) => o.number === row)) return false;
+    void pick(row);
+    return true;
+  });
   return (
     <div class="tl-qcard tl-permcard" role="dialog" aria-label="Claude is asking to use a tool">
       <div class="tl-qcard-head">
@@ -51,7 +66,8 @@ export const PermissionCard: Component<{
                 class="tl-qcard-option"
                 data-chosen={pressed() === option.number ? "true" : undefined}
                 aria-busy={pressed() === option.number ? "true" : undefined}
-                disabled={pressed() !== null}
+                disabled={pressed() !== null || !!props.inert}
+                title={props.inert || undefined}
                 onClick={() => void pick(option.number)}
               >
                 <span class="tl-qcard-key" aria-hidden="true">

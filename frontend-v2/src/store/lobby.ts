@@ -52,7 +52,6 @@ import {
 } from "./prompt-line";
 import { hideDockedSession } from "./dock.logic";
 import { STATES_KEY, stampsState } from "./visits";
-import { dropHeld } from "./suspend-queue";
 import { applyWatch, carryWatch, loadWatch, setWatchUndo } from "./watchmode";
 import { carryViewMode } from "./viewmode";
 import { carryDraft } from "./drafts";
@@ -1373,10 +1372,6 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   async function sendKill(name: string): Promise<boolean> {
     cancelKill(name); // landing it now, so its window is over either way
-    // Anything still waiting for this session to wake up is never going to be
-    // delivered. The undo window is already over by here, so this is the first
-    // moment the text is certainly unwanted.
-    dropHeld(name);
     let record: RestoreSelection | null = null;
     let killed = true;
     try {

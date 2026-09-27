@@ -221,6 +221,13 @@ context and start executing. While the plan card is docked the composer routes
 Send as feedback, so the refusal is there for a stale client and for the moment
 before the reading arrives.
 
+The same route refuses with `permission-open` while a tool permission prompt is
+on the pane, and since 2026-09-27 with `question-open` while a question is. A
+prompt's Enter on a question picks the highlighted option: measured on 0.78.0,
+a prompt sent before the question card docked answered "Shape?" with an option
+nobody chose, and the words were lost. The card docks about 1.4 s after the
+dialog draws, so the refusal covers that window and a stalled event stream.
+
 - *Was (2026-09-10):* a capture the parser cannot fully read is shown as the
   pane itself, with the lines that look like numbered rows made tappable.
   *Now:* that still holds for questions. For a plan the card points to the

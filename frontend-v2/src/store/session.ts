@@ -104,8 +104,13 @@ export interface SessionStore {
   resolvePermission: (reqId: string, decision: PermissionDecision) => Promise<boolean>;
   /** Send a prompt (provisional control endpoint — see blockers). Resolves
    *  false when the session refused it (409 plan-open, 5xx, unreachable) so the
-   *  composer can hand the typed text back instead of destroying it. */
-  send: (text: string) => Promise<boolean>;
+   *  composer can hand the typed text back instead of destroying it.
+   *
+   *  `awaitReady` asks session-events to hold the prompt until Claude has drawn
+   *  its input line, for a session that is still starting (a Send that woke a
+   *  suspended one, store/wake-send.ts). Its 503, "not ready yet", is tried
+   *  again up to READY_TRIES times in all. */
+  send: (text: string, opts?: { awaitReady?: boolean }) => Promise<boolean>;
   /** Interrupt the running turn (provisional control endpoint). */
   interrupt: () => Promise<void>;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
@@ -282,10 +287,18 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
 
 /**
  * The prompt guard's reason, when this is its refusal: 409 with `{"applied":
- * false, "reason": "plan-open"}`, or "permission-open" for a tool permission
- * prompt (session-events plan.go). "" for a 409 with any other body, JSON or
+ * false, "reason": "plan-open"}`, "permission-open" for a tool permission
+ * prompt, or "question-open" for a question (session-events plan.go). "" for a 409 with any other body, JSON or
  * not, and for a body that fails to read.
  */
+/**
+ * How many times an `awaitReady` send is tried while the server answers 503.
+ * Each try is held up to 4 s (session-events PromptReadyWait), so three cover
+ * a `claude --resume` of a large transcript on a loaded box (3.1 s measured on
+ * a quiet one) with room to spare.
+ */
+const READY_TRIES = 3;
+
 async function promptRefusal(res: Response): Promise<string> {
   if (res.status !== 409) return "";
   try {
@@ -913,13 +926,21 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     return Promise.resolve(false);
   };
 
-  const send = async (text: string): Promise<boolean> => {
+  const send = async (text: string, sendOpts?: { awaitReady?: boolean }): Promise<boolean> => {
+    const awaitReady = sendOpts?.awaitReady === true;
     try {
-      const res = await fetchWithDeadline(promptUrl(session), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text }),
-      });
+      const post = () =>
+        fetchWithDeadline(promptUrl(session), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(awaitReady ? { text, awaitReady } : { text }),
+        });
+      let res = await post();
+      // Each try is held server-side for up to PromptReadyWait (4 s), so the
+      // tries need no gap of their own.
+      for (let tried = 1; awaitReady && res.status === 503 && tried < READY_TRIES; tried++) {
+        res = await post();
+      }
       if (!res.ok) {
         // The one 409 left is the prompt guard (design doc contract 4): the
         // plan approval is on the pane, where a paste and Enter would pick a
@@ -934,6 +955,10 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         } else if (refused === "permission-open") {
           // A tool permission prompt, whose menu an Enter would answer "Yes".
           opts.notify?.("Claude is asking to use a tool. Answer it first.", "warning");
+        } else if (refused === "question-open") {
+          // A question, whose menu an Enter would answer with the highlighted
+          // option. Once the card docks, Send answers it with these words.
+          opts.notify?.("Claude is asking a question. Send again to answer it from the card.", "warning");
         } else {
           opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
         }

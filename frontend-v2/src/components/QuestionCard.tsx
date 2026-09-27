@@ -45,6 +45,9 @@ export const QuestionCard: Component<{
   state: QuestionCardState;
   /** A request is in flight. */
   busy: boolean;
+  /** Why this device may not answer (it is watching), or empty when it may.
+   *  The rows then draw disabled. */
+  inert?: string;
   /** The composer holds words, so Next and Submit use them as the answer. */
   hasInput: boolean;
   /** Keys 1-9 reach this card: its view is the one being typed into. */
@@ -78,7 +81,7 @@ export const QuestionCard: Component<{
   };
   const collapsed = () => collapsedAt() !== null && collapsedAt() === question()?.question;
   const last = () => index() >= count() - 1;
-  const answerable = () => props.state === "open" && !props.busy && !sent();
+  const answerable = () => props.state === "open" && !props.busy && !props.inert && !sent();
   const hasCustom = () => (draft()?.custom.trim() ?? "") !== "";
   const chosen = (o: QuestionOption) => !hasCustom() && (draft()?.selected ?? []).includes(o.label);
   const current = () => {
