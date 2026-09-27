@@ -1,5 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js";
 import type { Question, QuestionOption } from "./canonicalize";
+import { CardDot, CardHead } from "./CardHead";
 import { buildAnswers, resolveAnswer, setCustom, toggle, type Draft } from "./question.logic";
 
 /** How long a single-select pick shows as chosen before the card moves on:
@@ -23,22 +24,25 @@ export interface QuestionCardApi {
 export type QuestionCardState = "open" | "connecting" | "terminal";
 
 /**
- * The card that answers a blocking AskUserQuestion, docked above the composer
- * (ADR-0034).
+ * The card that answers a blocking AskUserQuestion, in the composer's place
+ * while Claude waits (ADR-0034; the T3 pass, prototype 6-question).
  *
  * It follows T3 Code's question panel (`ComposerPendingUserInputPanel.tsx`),
  * drawn with the lobby's own tokens: one question at a time with an `i/N`
  * counter, a single-select pick that moves on by itself after a beat, a
- * multi-select that toggles in place, keys 1-9 on a desktop, and a header that
- * collapses the card so the conversation above can be read. The composer is the
- * free-text answer while the card is up. Nothing goes to the session until every
- * question has an answer, and then the whole call goes at once, as data: the
- * hook holding the question hands it to the CLI, and nothing is typed into the
- * pane.
+ * multi-select that toggles in place, keys 1-9 on a desktop, and a head that
+ * collapses the card so the conversation above can be read. Nothing goes to
+ * the session until every question has an answer, and then the whole call goes
+ * at once, as data: the hook holding the question hands it to the CLI, and
+ * nothing is typed into the pane.
+ *
+ * The composer is hidden while the card is up, so its draft is out of sight
+ * and never becomes an answer; `hasInput` and `onUseTyped` are for a field the
+ * reader can see.
  *
  * Two things differ from T3 on purpose. Option previews are shown, because
  * Claude uses them to compare code and layouts, and "Chat about this" declines
- * the question and hands Claude the composer's words, as the CLI's own row does.
+ * the question, as the CLI's own row does.
  */
 export const QuestionCard: Component<{
   questions: Question[];
@@ -48,18 +52,20 @@ export const QuestionCard: Component<{
   /** Why this device may not answer (it is watching), or empty when it may.
    *  The rows then draw disabled. */
   inert?: string;
-  /** The composer holds words, so Next and Submit use them as the answer. */
-  hasInput: boolean;
+  /** A field on show holds words, so Next and Submit use them as the answer. */
+  hasInput?: boolean;
   /** Keys 1-9 reach this card: its view is the one being typed into. */
   keysActive: boolean;
   /** Send the whole call. Resolves true once the session has it. */
   onSubmit: (answers: Record<string, string[]>) => Promise<boolean>;
   /** Decline the question and talk instead. */
   onChat: () => void;
-  /** Next or Submit with words in the composer: the text view hands them to
-   *  `typed` through the composer, so the field clears only if they are taken. */
-  onUseTyped: () => void;
+  /** Next or Submit with words in that field: the text view hands them to
+   *  `typed`, so the field clears only if they are taken. */
+  onUseTyped?: () => void;
   onTerminal?: () => void;
+  /** Stop watching and answer from this device. */
+  onTakeControl?: () => void;
   register?: (api: QuestionCardApi) => void;
 }> = (props) => {
   const [index, setIndex] = createSignal(0);
@@ -126,7 +132,7 @@ export const QuestionCard: Component<{
   };
 
   const next = (): void => {
-    if (props.hasInput) {
+    if (props.hasInput && props.onUseTyped) {
       props.onUseTyped();
       return;
     }
@@ -143,14 +149,22 @@ export const QuestionCard: Component<{
     },
   });
 
-  // Keys 1-9 pick, when nothing editable has the focus and this card's view is
-  // the one being typed into. A collapsed card opts out, since the numbers it
-  // would pick are not on screen.
+  let cardEl: HTMLDivElement | undefined;
+  // Keys 1-9 pick, when the focus is in this card's Text view, nothing editable
+  // has it, and the view is the one being typed into. A collapsed card opts
+  // out, since the numbers it would pick are not on screen.
+  //
+  // In the view, not anywhere on the page: the composer hides the moment the
+  // card docks, so the rest of a sentence being typed lands on the page's body,
+  // and "use 2 of them" must not answer. The text view hands the card the
+  // focus when it docks and nothing else had it.
   onMount(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
       if (!props.keysActive || collapsed() || !answerable()) return;
       const t = e.target;
+      const view = cardEl?.closest(".tl-textview") ?? cardEl;
+      if (!(t instanceof Node) || !view?.contains(t)) return;
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
       if (t instanceof HTMLElement && t.closest('[contenteditable]:not([contenteditable="false"])'))
         return;
@@ -174,31 +188,63 @@ export const QuestionCard: Component<{
   });
 
   const nextLabel = () => (last() ? "Submit" : "Next");
-  const canNext = () => answerable() && (props.hasInput || current() !== null);
+  const canNext = () => answerable() && (props.hasInput === true || current() !== null);
+  /** A lone single-select question answers on the pick, so Submit would only
+   *  ever sit there disabled; it shows while a field on show can answer it. */
+  const offerNext = () => count() > 1 || question()?.multiSelect === true || props.hasInput === true;
 
   return (
-    <div class="tl-qcard" role="dialog" aria-label="Claude is asking a question">
-      <button
-        type="button"
-        class="tl-qcard-head"
-        aria-expanded={!collapsed()}
-        title={collapsed() ? "Show the question and its options" : "Hide the question and its options"}
-        onClick={() => setCollapsedAt(collapsed() ? null : (question()?.question ?? null))}
-      >
-        <span class="tl-qcard-title">{question()?.header || "Question"}</span>
-        <Show when={count() > 1}>
-          <span class="tl-qcard-step">
-            {index() + 1}/{count()}
-          </span>
-        </Show>
-        <Show when={collapsed()}>
-          <span class="tl-qcard-peek">{question()?.question}</span>
-        </Show>
-        <span class="tl-qcard-chevron" data-collapsed={collapsed() ? "true" : undefined} aria-hidden="true" />
-      </button>
+    <div
+      class="tl-qcard"
+      role="dialog"
+      aria-label="Claude is asking a question"
+      tabIndex={-1}
+      ref={cardEl}
+    >
+      <CardHead
+        lead={
+          <button
+            type="button"
+            class="tl-qcard-fold"
+            aria-expanded={!collapsed()}
+            title={
+              collapsed() ? "Show the question and its options" : "Hide the question and its options"
+            }
+            onClick={() => setCollapsedAt(collapsed() ? null : (question()?.question ?? null))}
+          >
+            <CardDot />
+            <span class="tl-qcard-title">Claude asks</span>
+            <Show when={question()?.header}>
+              <span class="tl-qcard-tag">{question()?.header}</span>
+            </Show>
+            <Show when={count() > 1}>
+              <span class="tl-qcard-step">
+                {index() + 1}/{count()}
+              </span>
+            </Show>
+            <Show when={collapsed()}>
+              <span class="tl-qcard-peek">{question()?.question}</span>
+            </Show>
+            <span
+              class="tl-qcard-chevron"
+              data-collapsed={collapsed() ? "true" : undefined}
+              aria-hidden="true"
+            />
+          </button>
+        }
+        links={
+          <Show when={props.onTerminal}>
+            <button type="button" class="tl-qcard-link" onClick={() => props.onTerminal?.()}>
+              Open in Terminal
+            </button>
+          </Show>
+        }
+        inert={props.inert}
+        onTakeControl={props.onTakeControl}
+      />
       <Show when={!collapsed()}>
+        <div class="tl-qcard-question">{question()?.question}</div>
         <div class="tl-qcard-body">
-          <div class="tl-qcard-question">{question()?.question}</div>
           <Show
             when={props.state !== "terminal"}
             fallback={
@@ -224,13 +270,13 @@ export const QuestionCard: Component<{
                     onPointerEnter={() => o.preview && setFocused(o.label)}
                     onFocus={() => o.preview && setFocused(o.label)}
                   >
+                    <span class="tl-qcard-key" aria-hidden="true">
+                      {chosen(o) ? "✓" : i() < 9 ? String(i() + 1) : ""}
+                    </span>
                     <span class="tl-qcard-label">{o.label}</span>
                     <Show when={o.description && o.description !== o.label}>
                       <span class="tl-qcard-desc">{o.description}</span>
                     </Show>
-                    <span class="tl-qcard-key" aria-hidden="true">
-                      {chosen(o) ? "✓" : i() < 9 ? String(i() + 1) : ""}
-                    </span>
                   </button>
                 )}
               </For>
@@ -263,7 +309,7 @@ export const QuestionCard: Component<{
               type="button"
               class="tl-qcard-chat"
               disabled={!answerable()}
-              title="Decline the question and send Claude what is in the message field instead"
+              title="Decline the question and talk to Claude about it instead"
               onClick={() => props.onChat()}
             >
               Chat about this
@@ -282,14 +328,16 @@ export const QuestionCard: Component<{
                 Previous
               </button>
             </Show>
-            <button
-              type="button"
-              class={last() ? "tl-qcard-send" : "tl-qcard-next"}
-              disabled={!canNext()}
-              onClick={next}
-            >
-              {nextLabel()}
-            </button>
+            <Show when={offerNext()}>
+              <button
+                type="button"
+                class={last() ? "tl-qcard-send" : "tl-qcard-next"}
+                disabled={!canNext()}
+                onClick={next}
+              >
+                {nextLabel()}
+              </button>
+            </Show>
           </Show>
         </div>
       </Show>

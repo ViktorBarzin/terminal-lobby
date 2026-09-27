@@ -846,30 +846,34 @@ src/
                          Figures are the CLI's own, because the ceiling is not
                          on the wire. Nothing runs the command — no reading,
                          no context line
-    QuestionCard.tsx     The docked question card, after T3 Code's question
-                         panel (ADR-0034): one question at a time with an i/N
+    QuestionCard.tsx     The question card, in the composer's place while
+                         Claude waits, after T3 Code's question panel
+                         (ADR-0034): one question at a time with an i/N
                          counter, a single-select pick that moves on by
-                         itself, a multi-select that toggles, keys 1-9, a head
-                         that collapses the card, and option previews. The
-                         composer is the free-text answer. The whole call goes
-                         out in one request once every question has an answer,
-                         to the hook holding it; with no hold it points at the
+                         itself, a multi-select that toggles, keys 1-9 from
+                         inside the Text view, a head that folds the card,
+                         and option previews. The whole call goes out in one
+                         request once every question has an answer, to the
+                         hook holding it; with no hold it points at the
                          Terminal
+    CardHead.tsx         The head row the three cards share: the awaiting dot,
+                         what Claude waits on, quiet links on the right, and
+                         Take control on a watching device
     question.logic.ts    PURE drafts for the question card (T3's rules) and the
                          held question read off the stream (`held` meta)
-    PlanCard.tsx         The docked card for Claude Code's plan approval: the
-                         plan from the transcript as markdown, clamped behind
-                         "Show all", and the approve rows as the pane draws
-                         them. It renders the answer in flight and the last
-                         reply's notice, which its caller holds. No digit
-                         shortcuts, no raw keypad and no Reject button, since
-                         a stray 1 would clear context. It draws no feedback
-                         row either: while it is up, the composer below is
-                         that row
-    PermissionCard.tsx   The docked card for Claude Code's tool permission
-                         prompt, read off the pane: the prompt's title, what
-                         the tool will do, and its rows as drawn. A tap
-                         presses the row's number, once per prompt
+    PlanCard.tsx         The card for Claude Code's plan approval, in the
+                         composer's place: the plan from the transcript as
+                         markdown, clamped behind "Read the full plan", and
+                         the approve rows as the pane draws them. It renders
+                         the answer in flight and the last reply's notice,
+                         which its caller holds. No digit shortcuts, no raw
+                         keypad and no Reject button, since a stray 1 would
+                         clear context
+    PermissionCard.tsx   The card for Claude Code's tool permission prompt,
+                         in the composer's place, read off the pane: what the
+                         tool will do and its rows as drawn. A tap, or the
+                         row's digit from inside the Text view, presses the
+                         row's number, once per prompt
     find.logic.ts        PURE hit labelling + how far back a jump may reach
     FindInSession.tsx    Find-in-session overlay. The search runs on the SERVER
                          over the whole transcript — the window here is 20 turns

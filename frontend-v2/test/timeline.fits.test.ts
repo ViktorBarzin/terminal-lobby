@@ -96,25 +96,25 @@ describe("what does not fit is wrapped or scrolled in its own box", () => {
 });
 
 /**
- * The composer stays on screen when a question card is open.
+ * A card leaves the conversation room.
  *
- * Same shape as the new-session box, one screen over: `.tl-qcard` capped itself
- * at `min(52vh, 420px)` "so the composer under it never leaves the screen", and
- * `vh` is the one unit that cannot promise that on iOS Safari — the keyboard
- * shrinks the visual viewport and leaves `vh` resolving against the full
- * screen. Measured at 390x844 with a 336px keyboard: the card held 420px and
- * the composer sat 84px under the keyboard.
+ * `.tl-qcard` once capped itself at `min(52vh, 420px)`, and `vh` is the one
+ * unit that cannot promise anything on iOS Safari: the keyboard shrinks the
+ * visual viewport and leaves `vh` resolving against the full screen. Measured
+ * at 390x844 with a 336px keyboard: the card held 420px and the composer sat
+ * 84px under the keyboard.
  *
- * The share went from 52% to 62% with the Quiet line composer (2026-09-24),
- * which is 38px shorter than the one it replaced: on the prototype's 616px
- * desktop pane that keeps a four-option card's every row in view (343px). It
- * is still a share of the pane and still no `vh`.
+ * Since the T3 pass the card takes the composer's place, at the prototype's
+ * 470px on a desktop and 560px on a phone, and never more than the pane less
+ * 96px, so a short tile or a raised keyboard still shows the end of the
+ * conversation above it. Still a share of the pane, and still no `vh`.
  */
-describe("a question card leaves the composer room", () => {
+describe("a card leaves the conversation room", () => {
   it("caps itself against its pane, not against the viewport", () => {
     const qcard = rule(".tl-qcard");
-    expect(qcard).toMatch(/max-height:\s*min\(62%,\s*460px\)/);
+    expect(qcard).toMatch(/max-height:\s*min\(470px,\s*calc\(100% - 96px\)\)/);
     expect(qcard).not.toMatch(/max-height:[^;]*vh/);
+    expect(css).toMatch(/max-height:\s*min\(560px,\s*calc\(100% - 96px\)\)/);
   });
 
   it("scrolls its OPTIONS rather than growing, and never its own actions", () => {

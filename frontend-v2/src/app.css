@@ -6368,95 +6368,112 @@ body.tl-kb-up {
   margin-right: 6px;
   opacity: 0.8;
 }
-/* The answer card, docked above the composer while a question is blocking. It
-   sits IN the composer's column rather than over the transcript, so the phone
-   keyboard pushes it up with the input instead of covering it. */
+/* ---- the card in the composer's place ------------------------------------
+   While Claude waits on a question, a permission or a plan, the card takes
+   the composer's place (the T3 pass, prototype `.card`): the composer is
+   hidden but stays mounted (`.tl-composer[hidden]`), and the card sits where
+   the box was, in the composer's gutters and the 760px column, drawn as the
+   same rounded surface edged in the awaiting colour. */
+.tl-composer[hidden] {
+  display: none;
+}
 .tl-qcard {
   flex: none;
-  margin: 0 8px 6px;
-  padding: 10px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 50%, var(--border));
-  border-radius: 10px;
-  background: var(--bg-panel, var(--bg-page));
-  /* A long walk on a short phone scrolls inside the card, so the composer under
-     it never leaves the screen.
-
-     A SHARE OF THE PANE, not of the viewport. The pane is what the composer has
-     to fit into beside the card, and on iOS Safari the two part company the
-     moment a keyboard opens: the keyboard shrinks only the VISUAL viewport, so
-     `52vh` went on resolving against the whole 844px screen while the pane
-     holding the card was 465px. Measured at 390x844 with a 336px keyboard: the
-     card kept its 420px, and the composer, the thing being typed into, was
-     pushed to 501-592, its bottom 84px underneath the keyboard.
-
-     62% since the Quiet line composer (2026-09-24), up from 52%: the composer
-     under the card is 38px shorter, and 62% keeps a four-option card's every
-     row in view on the prototype's 616px desktop pane (343px). */
-  max-height: min(62%, 460px);
-  /* The CARD no longer scrolls — the option list inside it does. It was one
-     scroll box holding everything, so the button that submits was simply below
-     the fold: measured at 390x844 the actions sat 388px past the bottom edge,
-     and on a 1280x900 desktop 55px past it, with no scrollbar or shadow to say
-     so. A head and a footer that cannot move are what make the cap safe. */
+  box-sizing: border-box;
+  /* `.tl-composer`'s own gutters, so the card lines up with the box it
+     replaces and with the conversation's column above. */
+  width: calc(100% - 2 * clamp(12px, 6vw, 80px));
+  max-width: 760px;
+  margin: 0 auto 14px;
+  padding: 12px 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--state-awaiting) 55%, var(--border-strong));
+  border-radius: 22px;
+  background: var(--bg-card);
+  box-shadow: var(--surface-shadow);
+  /* The prototype's 470px (560px on a phone, below), and never more than the
+     pane less 96px, so a short tile or a raised keyboard still shows the end
+     of the conversation. A SHARE OF THE PANE, not of the viewport: on iOS
+     Safari a keyboard shrinks only the visual viewport, so `vh` went on
+     resolving against the whole 844px screen while the pane was 465px. */
+  max-height: min(470px, calc(100% - 96px));
+  /* The CARD does not scroll; its body does. A head and a footer that cannot
+     move are what keep the rows' Submit and the head's links reachable. */
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* Line up with the transcript. Every row above this is `.tl-row`, capped at
-     760px and centred (860px until the T3 pass); the card was full-width —
-     1004px against 860 at a 1280px window, starting 80px to their left — which
-     is part of why it read as
-     something that had landed on the page rather than part of it. */
-  max-width: 760px;
-  width: calc(100% - 16px);
-  box-sizing: border-box;
-  align-self: center;
+  animation: tl-rise 0.2s ease-out;
 }
-/* The head follows T3 Code's question panel: a quiet label, the i/N counter,
-   and on the question card a chevron that collapses the card to this one line
-   so the conversation above it can be read (ADR-0034). On the question card it
-   is a button, so the reset below keeps it looking like the plan and
-   permission cards' plain heads. */
+/* It takes the focus when it docks so its keys work at once; the edge above
+   already says where it is. */
+.tl-qcard:focus {
+  outline: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-qcard {
+    animation: none;
+  }
+}
+/* The head: the awaiting dot and what Claude is waiting on, then quiet links
+   on the right ("Open in Terminal", "Read the full plan", Take control). On
+   the question card the left side is a button that folds the card to this
+   one line so the conversation above can be read (ADR-0034). */
 .tl-qcard-head {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 4px 8px;
-  /* At a large pinch size the items squeeze into columns two words wide. Let
-     them drop below instead. */
+  gap: 2px 12px;
+  /* At a large pinch size the links drop below rather than squeezing the
+     words into columns two wide. */
   flex-wrap: wrap;
-  margin: 0 0 6px;
-  padding: 2px 0;
+  padding: 0 4px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+}
+.tl-qcard-lead,
+.tl-qcard-fold {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+}
+.tl-qcard-fold {
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
   text-align: left;
-}
-button.tl-qcard-head {
-  width: 100%;
-  flex-wrap: nowrap;
   cursor: pointer;
-  border-radius: 6px;
 }
-button.tl-qcard-head:hover .tl-qcard-title,
-button.tl-qcard-head:hover .tl-qcard-chevron {
-  color: var(--text-primary);
+.tl-qcard-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state-awaiting);
 }
 .tl-qcard-title {
-  font-weight: 600;
+  flex: none;
+  color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
 }
-.tl-qcard-step,
-.tl-qcard-hint {
+/* Claude's short label for the question, or the tool a permission names. */
+.tl-qcard-tag::before {
+  content: "\00B7";
+  margin-right: 8px;
+}
+.tl-qcard-tag,
+.tl-qcard-step {
+  flex: none;
   color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-qcard-step {
   font-variant-numeric: tabular-nums;
 }
-/* Collapsed, the question itself stands in for the body as a one-line
-   reminder of what is being asked. */
+/* Folded, the question itself stands in for the body as a one-line reminder
+   of what is being asked. */
 .tl-qcard-peek {
   flex: 1 1 auto;
   min-width: 0;
@@ -6466,87 +6483,124 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
-/* Points at the body: down while it is open below the head, up once the card
-   is collapsed into it. */
+/* Points at the body: down while it is open, up once folded. */
 .tl-qcard-chevron {
   flex: none;
-  margin-left: auto;
-  width: 7px;
-  height: 7px;
-  border-right: 1.5px solid var(--text-muted);
-  border-bottom: 1.5px solid var(--text-muted);
+  width: 6px;
+  height: 6px;
+  margin-left: 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
   transform: translateY(-2px) rotate(45deg);
   transition: transform 150ms;
 }
 .tl-qcard-chevron[data-collapsed="true"] {
   transform: translateY(2px) rotate(-135deg);
 }
+.tl-qcard-links {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.tl-qcard-link {
+  border: 0;
+  background: none;
+  padding: 4px 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .tl-qcard-fold:hover .tl-qcard-title,
+  .tl-qcard-fold:hover .tl-qcard-chevron,
+  .tl-qcard-link:hover {
+    color: var(--text-primary);
+  }
+}
+/* What Claude asks: the prototype's `.cd-q`, 15px on a desktop, 16px on a
+   phone (below). */
 .tl-qcard-question {
-  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  flex: none;
+  margin: 6px 4px 8px;
+  color: var(--text-primary);
+  font-size: calc(15px * var(--tl-text-scale, 1));
   line-height: 1.4;
+  font-weight: 600;
 }
 .tl-qcard-hint {
-  margin-top: 2px;
+  margin: 0 4px 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--tl-text-scale, 1));
 }
 /* The only thing that scrolls. */
 .tl-qcard-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-width: thin;
 }
 .tl-qcard-options {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 8px;
 }
-/* A row per option, T3's shape: the label with its description under it, and
-   on the right the digit that picks it, or a tick once it is picked. Grid
-   placement is by class, so the plan and permission cards, which put the digit
-   first in their markup, draw the same way. */
+/* A bordered row per option: the numbered keycap first, the label and its
+   description beside it. Grid placement is by class, so all three cards draw
+   the same way. */
 .tl-qcard-option {
   display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 2px 10px;
-  padding: 7px 8px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 1px 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: none;
   color: inherit;
   font: inherit;
-  font-size: calc(13px * var(--tl-text-scale, 1));
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
   text-align: left;
   cursor: pointer;
+  transition:
+    border-color 0.12s,
+    background 0.12s;
 }
-.tl-qcard-option:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+@media (hover: hover) {
+  .tl-qcard-option:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  }
 }
 .tl-qcard-option[data-chosen="true"] {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
 .tl-qcard-option:disabled {
   cursor: default;
   opacity: 0.6;
 }
-/* The digit the CLI is listening for, in the chip the recorded row already
-   uses. Filled once chosen, so the selection reads at a glance rather than from
-   a 10px dot — and on a desktop it doubles as the key to press. */
+/* The digit that picks the row. Filled once chosen, so the selection reads at
+   a glance, and on a desktop it doubles as the key to press. */
 .tl-qcard-key {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 1 / span 2;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 5px; /* matches .tl-option-key and .tl-inline-code */
-  border: 1px solid var(--border);
-  background: var(--bg-page);
+  border: 1px solid var(--border-strong);
   color: var(--text-muted);
   font-family: var(--font-mono, ui-monospace, monospace);
-  font-size: calc(11px * var(--tl-text-scale, 1));
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
   line-height: 1;
 }
 .tl-qcard-option[data-chosen="true"] .tl-qcard-key {
@@ -6554,16 +6608,10 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   border-color: var(--accent);
   color: #fff;
 }
-/* The question card draws its tick as text; the digit-to-tick swap below is
-   for the permission card's multi rows, which have none. */
-/* Multi-select is a different promise — several of these travel together — so
-   the chip carries a tick rather than pretending to be a radio.
-   It is drawn IN the chip, not over it. The first version of this rule was
-   `position: absolute; inset: 0` with nothing positioned between it and
-   `.tl-textview`, which is relative because it anchors the pinch size pill — so
-   `inset: 0` resolved against the whole view. It painted nothing and swallowed
-   every click, and a multi-select could hold exactly one answer before the next
-   tap landed back on the chip that was already chosen. */
+/* Multi-select is a different promise (several of these travel together), so
+   the chip carries a tick rather than pretending to be a radio. It is drawn
+   IN the chip: an absolutely placed tick once resolved against the whole view,
+   painted nothing and swallowed every click. */
 .tl-qcard-option[data-multi="true"][data-chosen="true"] .tl-qcard-key {
   font-size: calc(0px * var(--tl-text-scale, 1)); /* the digit gives way to the tick */
 }
@@ -6573,52 +6621,68 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   line-height: 1;
 }
 .tl-qcard-label {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 1;
-  font-weight: 500;
+  font-weight: 560;
+  line-height: calc(22px * var(--tl-text-scale, 1));
 }
-/* Two lines by default, all of it once chosen.
-   Every description stays on screen because that is where the decision lives:
-   on a real call, "postinst verifies; failure auto-reverts and holds" against
-   "Alert only, fix forward" cannot be chosen between from the labels. Hiding
-   them until a tap would make comparing four options a serial exercise — which
-   is worst on the phone this is mostly read on. Two lines gives the gist of all
-   of them and the whole of the one being considered. */
+/* Two lines by default, all of it once chosen. The descriptions stay on
+   screen because that is where the decision lives, and hiding them until a
+   tap would make comparing four options a serial exercise on a phone. */
 .tl-qcard-desc {
-  grid-column: 1;
+  grid-column: 2;
   color: var(--text-muted);
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  line-height: 1.35;
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  line-height: calc(16px * var(--tl-text-scale, 1));
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
   line-clamp: 2;
   overflow: hidden;
 }
-.tl-qcard-option[data-chosen="true"] .tl-qcard-desc,
-.tl-qcard-options[data-full="true"] .tl-qcard-desc {
+.tl-qcard-option[data-chosen="true"] .tl-qcard-desc {
   -webkit-line-clamp: unset;
   line-clamp: unset;
   overflow: visible;
 }
-/* "Show all" / "Show less". A quiet control: it changes how much is on screen,
-   not what anything means. */
 /* The preview Claude gave the option in focus: a code snippet or an ASCII
    mockup, so it keeps its own line breaks and scrolls rather than wraps. */
 .tl-qcard-preview {
-  margin: 8px 0 0;
+  margin: 8px 4px 0;
   padding: 8px 10px;
   max-height: calc(12px * 1.4 * 10 * var(--tl-text-scale, 1));
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 10px;
   background: var(--bg-page);
   font-family: var(--font-mono, ui-monospace, monospace);
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
   white-space: pre;
 }
-.tl-qcard-full,
+/* A phone (the phone query, mobile/pointer.ts FLIP_QUERY): the prototype's
+   560px cap, a 16px question and 48px rows for a finger. */
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  .tl-qcard {
+    margin-bottom: 8px;
+    max-height: min(560px, calc(100% - 96px));
+  }
+  .tl-qcard-question {
+    font-size: calc(16px * var(--tl-text-scale, 1));
+    line-height: 1.44;
+  }
+  .tl-qcard-option {
+    min-height: 48px;
+    padding: 9px 11px;
+    font-size: calc(15px * var(--tl-text-scale, 1));
+  }
+  .tl-qcard-desc {
+    font-size: calc(13px * var(--tl-text-scale, 1));
+    line-height: calc(17px * var(--tl-text-scale, 1));
+  }
+}
+/* A quiet control: it changes how much is on screen, not what anything
+   means. */
 .tl-question-full {
   border: 0;
   background: none;
@@ -6630,12 +6694,8 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.tl-qcard-full:hover,
 .tl-question-full:hover {
   color: var(--text-primary);
-}
-.tl-qcard-full {
-  margin-left: auto;
 }
 /* Leaves the question rather than answering it, so it reads as a link and sits
    away from the button that commits. */
@@ -6663,7 +6723,8 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
-  margin-top: 10px;
+  margin-top: 8px;
+  padding: 0 4px;
 }
 .tl-qcard-back,
 .tl-qcard-next,
@@ -6705,15 +6766,19 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
 }
 
 /* The plan-approval card (PlanCard). It is a `.tl-qcard`, so it shares the
-   question card's cap of min(62%, 460px), its pinned head and actions, and its
-   phone rules; these rules add the plan and the lines under it. */
-/* About six lines of plan, then "Show all". Six leaves the three choices and
-   the actions in view on a 616px desktop pane, where the card's cap is 382px;
-   the card's body scrolls, so an expanded plan pushes the choices down rather
+   question card's cap, its pinned head and actions, and its phone rules;
+   these rules add the plan and the lines under it. */
+/* About six lines of plan in the prototype's well, then "Read the full plan".
+   The card's body scrolls, so an expanded plan pushes the choices down rather
    than off the card. */
 .tl-plancard-plan {
   max-height: calc(13px * 1.45 * 6 * var(--tl-text-scale, 1));
   overflow: hidden;
+  margin: 8px 4px 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-page);
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -6749,23 +6814,34 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
 .tl-plancard-lines {
   flex: none;
   margin-top: 6px;
+  padding: 0 4px;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
 }
-/* What the tool will do, from the permission prompt (PermissionCard): four
-   lines, then it scrolls, so a Write's file cannot push the rows off the card. */
+/* What the tool will do, from the permission prompt (PermissionCard), in the
+   prototype's command well: four lines, then it scrolls, so a Write's file
+   cannot push the rows off the card. */
 .tl-permcard-detail {
-  max-height: calc(12px * 1.4 * 4 * var(--tl-text-scale, 1));
-  margin: 0 0 6px;
+  max-height: calc(19px * 4 * var(--tl-text-scale, 1));
+  margin: 8px 4px 10px;
+  padding: 9px 11px;
+  border-radius: 10px;
   overflow: auto;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  line-height: 1.4;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  line-height: calc(19px * var(--tl-text-scale, 1));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+/* The prompt's own question ("Do you want to proceed?", "Do you want to
+   create b.txt?"), quiet under the well, as the prototype's `.cd-why`. */
+.tl-permcard-prompt {
+  margin: -4px 4px 10px;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
 .tl-plancard-flight {
-  grid-column: 1;
+  grid-column: 2;
   color: var(--text-muted);
   font-size: calc(11.5px * var(--tl-text-scale, 1));
   font-style: italic;
@@ -6775,6 +6851,7 @@ button.tl-qcard-head:hover .tl-qcard-chevron {
 .tl-plancard-notice {
   flex: none;
   margin-top: 8px;
+  padding: 0 4px;
   font-size: calc(12px * var(--tl-text-scale, 1));
   line-height: 1.4;
 }

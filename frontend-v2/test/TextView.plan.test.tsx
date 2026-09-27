@@ -368,28 +368,50 @@ describe("feedback through the composer", () => {
     await waitFor(() => expect(v.field().value).toBe("smaller steps"));
   });
 
-  it("approves with the feedback from the card's button", async () => {
+  it("offers no Approve with this feedback for words the hidden composer holds", async () => {
+    // The card takes the composer's place, so a draft in the field is out of
+    // sight and must not ride along with an approval.
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied());
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], onAnswer);
     await waitFor(() => expect(v.card()).not.toBeNull());
     fireEvent.input(v.field(), { target: { value: "and add tests" } });
-    const approve = await waitFor(() => {
-      const b = [...v.card()!.querySelectorAll<HTMLButtonElement>("button")].find(
-        (x) => x.textContent === "Approve with this feedback and clear context",
-      );
-      expect(b).toBeDefined();
-      return b!;
-    });
-    approve.click();
-    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({
-      plan: { feedback: "and add tests", approve: true },
-    });
+    await Promise.resolve();
+    const approve = [...v.card()!.querySelectorAll<HTMLButtonElement>("button")].find((x) =>
+      (x.textContent ?? "").startsWith("Approve with this feedback"),
+    );
+    expect(approve).toBeUndefined();
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+});
+
+describe("the composer's place", () => {
+  it("hides the composer while the card is up, keeps its draft, and brings it back", async () => {
+    const v = mount([prompt(1), planUse(2, "p1")]);
+    const composer = () => v.container.querySelector<HTMLElement>(".tl-composer")!;
+    fireEvent.input(v.field(), { target: { value: "a draft" } });
+    v.setEvents([...v.events(), asking(3, PLAN_FIRST)]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    expect(composer().hidden).toBe(true);
+    expect(v.field().value).toBe("a draft");
+    v.setEvents([...v.events(), asking(4, ""), approved(5, "p1")]);
     await waitFor(() => expect(v.card()).toBeNull());
-    expect(v.field().value).toBe("");
-    // Option 1 clears context in this session, and approving with feedback
-    // approves through option 1, so the button said so and the row does too.
-    expect(v.header()).toBe("Clearing context…");
+    expect(composer().hidden).toBe(false);
+    expect(v.field().value).toBe("a draft");
+  });
+
+  it("gives the composer back while the card says the plan has gone", async () => {
+    // Nothing is left to answer, and the field is where the next prompt goes.
+    const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)], async () => ({
+      applied: false,
+      reason: "not-drawn",
+    }));
+    await waitFor(() => expect(v.option(2)).toBeDefined());
+    expect(v.container.querySelector<HTMLElement>(".tl-composer")!.hidden).toBe(true);
+    v.option(2)!.click();
+    await waitFor(() =>
+      expect(v.card()!.textContent).toContain("The plan is no longer waiting in the Terminal."),
+    );
+    expect(v.container.querySelector<HTMLElement>(".tl-composer")!.hidden).toBe(false);
   });
 });
 
@@ -426,14 +448,12 @@ describe("what Send does with the field while the card is docked", () => {
     await waitFor(() => expect(v.field().value).toBe(long));
   });
 
-  it("says under the card that line breaks become spaces while the field has any", async () => {
+  it("says nothing under the card about line breaks in the hidden field", async () => {
     const v = mount([prompt(1), planUse(2, "p1"), asking(3, PLAN_FIRST)]);
     await waitFor(() => expect(v.card()).not.toBeNull());
-    const note = () => v.card()!.querySelector(".tl-plancard-lines");
-    fireEvent.input(v.field(), { target: { value: "one line" } });
-    expect(note()).toBeNull();
     fireEvent.input(v.field(), { target: { value: "first\nsecond" } });
-    await waitFor(() => expect(note()?.textContent).toContain("Line breaks become spaces"));
+    await Promise.resolve();
+    expect(v.card()!.querySelector(".tl-plancard-lines")).toBeNull();
   });
 
   it.each(["no-dialog", "not-drawn"] as const)(

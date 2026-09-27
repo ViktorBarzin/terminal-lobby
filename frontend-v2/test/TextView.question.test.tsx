@@ -1,12 +1,16 @@
 /**
- * The docked question card answers a HELD call as data (ADR-0034).
+ * The question card answers a HELD call as data (ADR-0034).
  *
  * The lobby's PermissionRequest hook holds the AskUserQuestion and the stream
  * says so with a `held` meta event. The card then works the way T3 Code's
  * question panel does: one question at a time, a single-select pick moves on
- * by itself, a multi-select toggles, the composer is the free-text answer, and
- * the whole call goes out in one request once every question has an answer.
- * Nothing is read off the pane and nothing is typed into it.
+ * by itself, a multi-select toggles, and the whole call goes out in one
+ * request once every question has an answer. Nothing is read off the pane and
+ * nothing is typed into it.
+ *
+ * Since the T3 pass the card takes the composer's place: the composer is
+ * hidden while the card is up but stays mounted, so its draft survives, and
+ * nothing the reader cannot see goes out as an answer.
  *
  * What these cover is the WIRING, with the real card mounted: what each tap
  * puts on the wire and what the card shows for each state of the hold.
@@ -121,7 +125,8 @@ describe("a held call", () => {
     const v = mount([held([colour, fruits])], onAnswer);
 
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
-    expect(v.text(".tl-qcard-title")).toBe("Colour");
+    expect(v.text(".tl-qcard-title")).toBe("Claude asks");
+    expect(v.text(".tl-qcard-tag")).toBe("Colour");
     expect(v.text(".tl-qcard-step")).toBe("1/2");
     expect(v.container.textContent).toContain("about Red");
 
@@ -188,25 +193,66 @@ describe("a held call", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 
-  it("uses the composer's words when Next is pressed with some typed", async () => {
+  it("takes the composer's place, which stays mounted with its draft", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
-    const v = mount([held([colour])], onAnswer);
-    await waitFor(() => expect(v.button("Submit")).toBeTruthy());
-    v.typeInComposer("teal");
-    await waitFor(() => expect(v.button("Submit")!.disabled).toBe(false));
+    const v = mount([], onAnswer);
+    const composer = () => v.container.querySelector<HTMLElement>(".tl-composer")!;
+    const field = () => v.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    expect(composer().hidden).toBe(false);
+    v.typeInComposer("half a thought");
+
+    v.setEvents([held([colour, fruits])]);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    expect(composer().hidden).toBe(true);
+    expect(field().value).toBe("half a thought");
+    // The card is the view's bottom slot: nothing but the hidden composer
+    // follows it.
+    expect(v.card()!.nextElementSibling).toBe(composer());
+
+    // The hidden draft is never the answer: Next waits for a pick, and the
+    // pick is what goes out.
+    v.option("Blue")!.click();
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick fruits"));
+    expect(v.button("Submit")!.disabled).toBe(true);
+    v.option("Pear")!.click();
     v.button("Submit")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["teal"] } });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      answers: { "Pick a colour": ["Blue"], "Pick fruits": ["Pear"] },
+    });
+
+    v.setEvents([...v.events(), held(null)]);
+    await waitFor(() => expect(v.card()).toBeNull());
+    expect(composer().hidden).toBe(false);
+    expect(field().value).toBe("half a thought");
   });
 
-  it("declines with the composer's words on Chat about this", async () => {
+  it("declines without the hidden composer's words on Chat about this", async () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const v = mount([held([colour])], onAnswer);
     await waitFor(() => expect(v.button("Chat about this")).toBeTruthy());
-    v.typeInComposer("why these two?");
+    v.typeInComposer("a draft for later");
     v.button("Chat about this")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "why these two?" });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "" });
+    expect(
+      (v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).value,
+    ).toBe("a draft for later");
+  });
+
+  it("answers a one-question single-select on the pick, with no Submit to press", async () => {
+    const v = mount([held([colour])]);
+    await waitFor(() => expect(v.option("Red")).toBeTruthy());
+    expect(v.button("Submit")).toBeUndefined();
+  });
+
+  it("offers the Terminal from its head", async () => {
+    const v = mount([held([colour])]);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    const link = v.card()!.querySelector<HTMLButtonElement>(".tl-qcard-head .tl-qcard-link");
+    expect(link?.textContent).toBe("Open in Terminal");
+    link!.click();
+    expect(v.onOpenTerminal).toHaveBeenCalled();
   });
 
   it("declines with no words when the composer is empty", async () => {
@@ -232,22 +278,40 @@ describe("a held call", () => {
     expect(v.text(".tl-qcard-preview")).toBe("BLUE BOX");
   });
 
-  it("picks with keys 1-9", async () => {
+  it("picks with keys 1-9 while the focus is in the Text view", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([held([colour])], onAnswer);
+    await waitFor(() => expect(v.option("Blue")).toBeTruthy());
+    fireEvent.keyDown(v.card()!, { key: "2" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Blue"] } });
+  });
+
+  it("leaves a digit typed outside the Text view alone", async () => {
+    // The composer hides the moment the card docks, so the rest of a sentence
+    // being typed lands on the page. "use 2 of them" must not answer.
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const v = mount([held([colour])], onAnswer);
     await waitFor(() => expect(v.option("Blue")).toBeTruthy());
     fireEvent.keyDown(document.body, { key: "2" });
-    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Blue"] } });
+    // A pick marks its row at once, before the beat that moves on.
+    expect(v.option("Blue")!.getAttribute("aria-pressed")).toBe("false");
+    expect(onAnswer).not.toHaveBeenCalled();
+  });
+
+  it("takes the focus when it docks and nothing had it, so the keys work at once", async () => {
+    const v = mount([held([colour])]);
+    await waitFor(() => expect(v.card()).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
   });
 
   it("collapses to one line and opens again", async () => {
     const v = mount([held([colour])]);
     await waitFor(() => expect(v.option("Red")).toBeTruthy());
-    v.card()!.querySelector<HTMLButtonElement>(".tl-qcard-head")!.click();
+    v.card()!.querySelector<HTMLButtonElement>(".tl-qcard-fold")!.click();
     expect(v.option("Red")).toBeUndefined();
     expect(v.text(".tl-qcard-peek")).toBe("Pick a colour");
-    v.card()!.querySelector<HTMLButtonElement>(".tl-qcard-head")!.click();
+    v.card()!.querySelector<HTMLButtonElement>(".tl-qcard-fold")!.click();
     expect(v.option("Red")).toBeTruthy();
   });
 

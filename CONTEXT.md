@@ -969,10 +969,11 @@ _Avoid_: pending question (any unanswered `AskUserQuestion` in the transcript,
 held or not), parked question
 
 **Question card**:
-The text view's mirror of an `AskUserQuestion`, docked above the **Composer**
-where the plan card docks. It shows the call's questions one at a time and
-sends every answer together once each question has one; while it is up the
-composer is the free-text answer to the question on show.
+The text view's mirror of an `AskUserQuestion`. It takes the **Composer**'s
+place while Claude waits, as the plan card and the permission card do: the
+composer stays mounted but hidden, so its draft survives and never becomes an
+answer. It shows the call's questions one at a time and sends every answer
+together once each question has one.
 _Avoid_: answer card, dialog (the CLI's own, in the pane)
 
 **Plan approval**:
@@ -981,8 +982,8 @@ a plan: the plan, a numbered list of ways to approve it, and the **feedback
 row**. The approve options differ between sessions (one may clear context
 first, auto mode may not be offered, the context figure moves), so they are
 read off the pane as drawn. Approving with a clear starts a new conversation
-whose first message carries the plan. The text view docks it as the plan card,
-above the composer.
+whose first message carries the plan. The text view shows it as the plan card,
+in the composer's place.
 _Avoid_: plan on its own (a **Plan** is a vendor account tier, under Agent
 spend), plan mode (the permission mode a plan is written in)
 
@@ -991,17 +992,17 @@ The last numbered row of a **plan approval**, reading `Tell Claude what to
 change` until something is typed into it. It is an inline field: `Enter` sends
 its text back to Claude as feedback and the planning goes on, shift+tab
 approves the plan with the text, and `Enter` on the empty row rejects the plan.
-The text view fills it from the composer rather than from a box of its own.
+The composer is hidden while the plan card is up, so it does not fill this row.
 _Avoid_: reject row, row 4 (its number follows the options above it)
 
 **Plan card**:
-The text view's mirror of a **plan approval**, docked above the **Composer**
-where the question card docks: "Claude's plan is ready", the plan from the
+The text view's mirror of a **plan approval**, in the **Composer**'s place
+while Claude waits, as the question card is: "Plan ready", the plan from the
 transcript, and the approve rows with the numbers and labels the pane draws.
-It draws no **feedback row**: while it is up the composer is that row, so Send
-sends the field's text back as feedback and the card's "Approve with this
-feedback" approves with it, and the **Model sheet**'s button is held. It has
-no Reject button and no digit shortcuts, since option 1 can clear context.
+The composer stays mounted but hidden, and its text never rides along with an
+approval. Once the card says the plan has gone, the composer comes back under
+it. The **Model sheet**'s button is held while it is up. It has no Reject
+button and no digit shortcuts, since option 1 can clear context.
 _Avoid_: plan dialog (the CLI's own, in the pane), approval card
 
 **Plan outcome**:

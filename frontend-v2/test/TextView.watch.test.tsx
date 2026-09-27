@@ -66,6 +66,7 @@ function mount(initial: Event[]) {
     async (_r: AnswerRequest): Promise<AnswerResponse | null> => ({ applied: true, done: true }),
   );
   const notify = vi.fn();
+  const onTakeControl = vi.fn();
   const [events] = createSignal<Event[]>(initial);
   const r = render(() => (
     <TextView
@@ -79,6 +80,7 @@ function mount(initial: Event[]) {
       onAnswer={onAnswer}
       notify={notify}
       inertReason={WATCHING}
+      onTakeControl={onTakeControl}
     />
   ));
   const field = () => r.container.querySelector<HTMLTextAreaElement>("textarea")!;
@@ -89,7 +91,7 @@ function mount(initial: Event[]) {
     fireEvent.input(field(), { target: { value: text } });
     fireEvent.keyDown(field(), { key: "Enter" });
   };
-  return { r, field, rows, type, onSend, onKeys, onAnswer, notify };
+  return { r, field, rows, type, onSend, onKeys, onAnswer, notify, onTakeControl };
 }
 
 const prompt = ev({ id: 1, kind: "user", body: "hello", at: 1000 });
@@ -141,5 +143,20 @@ describe("a watching Text view", () => {
     expect(v.onAnswer).not.toHaveBeenCalled();
     expect(v.onKeys).not.toHaveBeenCalled();
     expect(v.onSend).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["plan", ".tl-plancard", asking(2, PLAN)],
+    ["permission", ".tl-permcard", asking(2, PERMISSION)],
+    ["question", ".tl-qcard:not(.tl-plancard):not(.tl-permcard)", held(2, QUESTION)],
+  ] as const)("offers Take control from the %s card's head", async (_name, sel, event) => {
+    const v = mount([prompt, event]);
+    const link = () =>
+      [...v.r.container.querySelectorAll<HTMLButtonElement>(`${sel} .tl-qcard-head button`)].find(
+        (b) => b.textContent === "Take control",
+      );
+    await waitFor(() => expect(link()).toBeDefined());
+    link()!.click();
+    expect(v.onTakeControl).toHaveBeenCalledTimes(1);
   });
 });

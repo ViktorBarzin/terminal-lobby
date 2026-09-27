@@ -1,6 +1,6 @@
 /**
- * The card that answers Claude Code's plan approval, docked above the composer
- * (docs/plans/2026-09-24-text-composer-redesign.md, "When the card docks, and
+ * The card that answers Claude Code's plan approval, in the composer's place
+ * since the T3 pass (docs/plans/2026-09-24-text-composer-redesign.md, "When the card docks, and
  * what it shows", and open point 10).
  *
  * The card renders one reading and the state its caller holds: which answer is
@@ -80,7 +80,7 @@ describe("<PlanCard> at rest", () => {
     expect(card).not.toBeNull();
     expect(card?.getAttribute("role")).toBe("dialog");
     expect(card?.getAttribute("aria-label")).toBe("Claude's plan is ready");
-    expect(text(container.querySelector(".tl-qcard-title"))).toBe("Claude's plan is ready");
+    expect(text(container.querySelector(".tl-qcard-title"))).toBe("Plan ready");
   });
 
   it("renders the plan as markdown", () => {
@@ -174,7 +174,7 @@ describe("<PlanCard> plan text", () => {
   });
 });
 
-describe("<PlanCard> clamps a long plan behind 'Show all'", () => {
+describe("<PlanCard> clamps a long plan behind 'Read the full plan'", () => {
   const stub = (scroll: number, client: number) => {
     Object.defineProperty(HTMLElement.prototype, "scrollHeight", {
       configurable: true,
@@ -190,14 +190,16 @@ describe("<PlanCard> clamps a long plan behind 'Show all'", () => {
     delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
   });
 
-  it("offers 'Show all' when the plan overflows its clamp, and 'Show less' after", async () => {
+  it("offers 'Read the full plan' when the plan overflows its clamp, and 'Show less' after", async () => {
     stub(600, 180);
     const { container } = mount();
     // Measured once the plan is laid out, a microtask after it mounts.
     await Promise.resolve();
     const plan = container.querySelector(".tl-plancard-plan")!;
-    const toggle = button(container, "Show all");
+    const toggle = button(container, "Read the full plan");
     expect(toggle).toBeDefined();
+    // The prototype's link on the right of the head.
+    expect(toggle!.closest(".tl-qcard-head")).not.toBeNull();
     expect(plan.getAttribute("data-full")).toBeNull();
     // Clamped, it fades out rather than cutting a line in half.
     expect(plan.getAttribute("data-clamped")).toBe("true");
@@ -221,10 +223,10 @@ describe("<PlanCard> clamps a long plan behind 'Show all'", () => {
         onApproveWithFeedback={() => {}}
       />
     ));
-    expect(button(container, "Show all")).toBeUndefined();
+    expect(button(container, "Read the full plan")).toBeUndefined();
     setPlan(PLAN);
     await Promise.resolve();
-    expect(button(container, "Show all")).toBeDefined();
+    expect(button(container, "Read the full plan")).toBeDefined();
   });
 
   it("watches the plan for growth, whenever it mounts", () => {
@@ -260,7 +262,7 @@ describe("<PlanCard> clamps a long plan behind 'Show all'", () => {
     stub(120, 120);
     const { container } = mount();
     await Promise.resolve();
-    expect(button(container, "Show all")).toBeUndefined();
+    expect(button(container, "Read the full plan")).toBeUndefined();
     expect(container.querySelector(".tl-plancard-plan")?.getAttribute("data-clamped")).toBeNull();
   });
 

@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi } from "vitest";
 import { render, waitFor, fireEvent } from "@solidjs/testing-library";
-import { createSignal } from "solid-js";
+import { createSignal, type ComponentProps } from "solid-js";
 import { TextView } from "../src/components/TextView";
 import type { Event } from "../src/types/events";
 
@@ -44,6 +44,7 @@ function mount(
   initial: Event[],
   onKeys = vi.fn(async (_k: string[]) => true),
   onSend = vi.fn(async () => true),
+  extra: Partial<ComponentProps<typeof TextView>> = {},
 ) {
   const [events, setEvents] = createSignal<Event[]>(initial);
   const notify = vi.fn();
@@ -57,10 +58,12 @@ function mount(
       onKeys={onKeys}
       onPane={async () => ({ pane: "", state: "running" })}
       notify={notify}
+      {...extra}
     />
   ));
   const card = () => r.container.querySelector<HTMLElement>(".tl-permcard");
-  return { r, setEvents, card, onKeys, onSend, notify };
+  const composer = () => r.container.querySelector<HTMLElement>(".tl-composer")!;
+  return { r, events, setEvents, card, composer, onKeys, onSend, notify };
 }
 
 describe("the permission card", () => {
@@ -70,7 +73,9 @@ describe("the permission card", () => {
       ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
     ]);
     await waitFor(() => expect(card()).not.toBeNull());
-    expect(card()!.textContent).toContain("Bash command");
+    expect(card()!.querySelector(".tl-qcard-title")?.textContent).toBe(
+      "Claude wants to run a command",
+    );
     expect(card()!.textContent).toContain("printf 'hi\\n' > a.txt");
     expect(card()!.textContent).toContain("Do you want to proceed?");
     const rows = [...card()!.querySelectorAll(".tl-qcard-option")].map((b) => b.textContent);
@@ -83,6 +88,60 @@ describe("the permission card", () => {
     expect(live?.getAttribute("data-live")).toBe("waiting");
     expect(live?.querySelector(".tl-group-sum")?.textContent).toBe("Waiting for you");
     expect(r.container.querySelector('.tl-composer .tl-send[data-kind="stop"]')).toBeNull();
+  });
+
+  it("takes the composer's place, which stays mounted with its draft", async () => {
+    const { r, card, composer, setEvents } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    fireEvent.input(field, { target: { value: "next, tidy the tests" } });
+    expect(composer().hidden).toBe(false);
+
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(composer().hidden).toBe(true);
+    expect(r.container.querySelector("textarea")).toBe(field);
+    expect(field.value).toBe("next, tidy the tests");
+
+    setEvents([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+      ev({ id: 4, kind: "tool_result", toolId: "b1", body: "" }),
+    ]);
+    await waitFor(() => expect(card()).toBeNull());
+    expect(composer().hidden).toBe(false);
+    expect(field.value).toBe("next, tidy the tests");
+  });
+
+  it("offers the Terminal from its head", async () => {
+    const onOpenTerminal = vi.fn();
+    const { card } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onOpenTerminal },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    const link = card()!.querySelector<HTMLButtonElement>(".tl-qcard-head .tl-qcard-link");
+    expect(link?.textContent).toBe("Open in Terminal");
+    link!.click();
+    expect(onOpenTerminal).toHaveBeenCalled();
+  });
+
+  it("holds the model button while the prompt is up", async () => {
+    // A `/model` typed now would land in the prompt's menu. The prompt is on
+    // the pane before the transcript records anything that waits.
+    const { r, card } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      {
+        harness: "claude",
+        onSetModel: async () => ({ ok: true as const, state: { model: "", effort: "" } }),
+      },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    const model = r.container.querySelector<HTMLButtonElement>(".tl-model-btn")!;
+    expect(model.getAttribute("aria-disabled")).toBe("true");
   });
 
   it("presses the row's number, once", async () => {
@@ -133,6 +192,30 @@ describe("the permission card", () => {
     // The card is inert once a row went in, from the keyboard as from a tap.
     fireEvent.keyDown(field, { key: "1" });
     expect(onKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("presses the row a digit names while the focus is in the Text view, once", async () => {
+    const { card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(fireEvent.keyDown(card()!, { key: "2" })).toBe(false);
+    await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["2"]));
+    fireEvent.keyDown(card()!, { key: "1" });
+    expect(onKeys).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a digit typed on the page alone", async () => {
+    // The field hides when the card docks, so the rest of a sentence being
+    // typed lands on the page. "fix the 2 tests" must not allow anything.
+    const { card, onKeys } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(fireEvent.keyDown(document.body, { key: "2" })).toBe(true);
+    expect(onKeys).not.toHaveBeenCalled();
   });
 
   it("leaves a digit to be typed when the field has text or the card has no such row", async () => {

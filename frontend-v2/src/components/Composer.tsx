@@ -74,6 +74,12 @@ export type ComposerSinks = PromptFieldSinks;
 const STOP_SETTLE_MS = 20_000;
 
 export const Composer: Component<{
+  /**
+   * A card Claude is waiting on has the composer's place (the T3 pass). The
+   * composer stays mounted and only stops drawing, so the draft, the
+   * attachments and the registered sinks outlive the card.
+   */
+  hidden?: boolean;
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
@@ -309,7 +315,7 @@ export const Composer: Component<{
   );
 
   return (
-    <div class="tl-composer">
+    <div class="tl-composer" hidden={props.hidden}>
       <Show when={props.pending.length > 0}>
         <PermissionPanel pending={props.pending} onResolve={props.onResolve} />
       </Show>

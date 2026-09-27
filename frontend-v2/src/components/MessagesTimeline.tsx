@@ -406,6 +406,9 @@ export const MessagesTimeline: Component<{
   live?: WorkingRow | null;
   /** This device's plan answer is clearing the context (TextView planClearing). */
   clearing?: boolean;
+  /** A card Claude is waiting on holds the bottom of the view, so "Latest"
+   *  stays away while it is up. */
+  latestHidden?: boolean;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -1233,7 +1236,7 @@ export const MessagesTimeline: Component<{
           onOpenPreview={props.onOpenPreview}
         />
       </Show>
-      <Show when={!pinned()}>
+      <Show when={!pinned() && !props.latestHidden}>
         <button
           type="button"
           class="tl-scroll-end"

@@ -675,8 +675,8 @@ export const TextView: Component<{
     });
     onCleanup(stop);
   });
-  /** The same handle as a signal, for what renders from it: the plan card
-   *  offers "Approve with this feedback" only while the field holds text. */
+  /** The same handle as a signal, for what acts on the field from outside it:
+   *  Stop hands queued messages back into it. */
   const [composerSinks, setComposerSinks] = createSignal<ComposerSinks>();
 
   /**
@@ -736,14 +736,9 @@ export const TextView: Component<{
   };
   const submitAnswers = (answers: Record<string, string[]>): Promise<boolean> =>
     answerHeld({ answers });
-  /** "Chat about this": the composer's words, if it holds any, go to Claude
-   *  with the refusal, and the field clears only if they were taken. */
+  /** "Chat about this": decline the question and talk instead. The composer
+   *  is hidden behind the card, so its draft stays in it and goes nowhere. */
   const chatInstead = (): void => {
-    const sinks = composerSinks();
-    if (sinks?.hasInput()) {
-      void sinks.submitVia((text) => answerHeld({ chat: text }));
-      return;
-    }
     void answerHeld({ chat: "" });
   };
 
@@ -1123,15 +1118,17 @@ export const TextView: Component<{
    * the model dial: Shift+Tab is a key the dialog reads (on the plan's
    * feedback row it approves the plan), and `/model` would be typed into it.
    *
-   * Four ways to know one is up. A question the card is answering, a
-   * permission the panel is answering, the plan card, which docks from the
-   * pane's reading before the transcript has the call, and the live row's
-   * `waiting`, which is true while the transcript holds any of Claude's stops
-   * without an answer.
+   * Five ways to know one is up. A question the card is answering, the tool
+   * permission prompt its card is answering (a `/model` would land in its
+   * menu), a permission the hook-fed panel is answering, the plan card, which
+   * docks from the pane's reading before the transcript has the call, and the
+   * live row's `waiting`, which is true while the transcript holds any of
+   * Claude's stops without an answer.
    */
   const dialogUp = createMemo(
     (): boolean =>
       asking() !== "" ||
+      permission() !== null ||
       props.pending.length > 0 ||
       live()?.waiting === true ||
       planDocked() !== null,
@@ -1185,6 +1182,62 @@ export const TextView: Component<{
       .finally(() => setModeBusy(false));
   };
 
+  // ---- The bottom slot ----
+  //
+  // One slot holds either the composer or the card Claude is waiting on (the
+  // T3 pass, "Regions and who owns them"). The composer stays MOUNTED behind a
+  // card, hidden: its draft, its attachments and the sinks registered with the
+  // session view keep working, and the reader finds the field as they left it
+  // once the card goes.
+  const questionUp = (): boolean => !!props.onAnswer && asking() !== "";
+  const permissionUp = (): boolean => !!props.onKeys && permission() !== null;
+  /** A plan card that has said the plan is gone has nothing left to answer, and
+   *  the field is where the next prompt goes, so the composer comes back. */
+  const planUp = (): boolean => planDocked() !== null && planReplyNow()?.notice !== "gone";
+  const composerHidden = createMemo(() => questionUp() || permissionUp() || planUp());
+  const cardUp = createMemo(() => questionUp() || permissionUp() || planDocked() !== null);
+
+  /** Whether a key from this target is this view's to act on: the view is on
+   *  screen and the one being typed into, and the focus is inside it on
+   *  something that does not take text. */
+  const keyInView = (t: EventTarget | null): boolean =>
+    props.onScreen !== false &&
+    tileFocused() &&
+    !!viewEl &&
+    !viewEl.closest(".tl-hidden") &&
+    t instanceof Element &&
+    viewEl.contains(t) &&
+    !isEditingTarget(t);
+
+  // A permission row's digit, pressed while the field is hidden (a62e8220 did
+  // this from the empty field, which the card now hides). Only from inside the
+  // view: the rest of a sentence being typed when the card docked lands on the
+  // page's body, and "fix the 2 tests" must not allow anything.
+  onMount(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!/^[1-9]$/.test(e.key) || !permissionUp() || !keyInView(e.target)) return;
+      if (pressPermissionRow?.(Number(e.key))) e.preventDefault();
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
+
+  // A card that docks while nothing has the focus takes it, so its keys work at
+  // once. A reader who was typing keeps theirs where it was: the field hides,
+  // and their next keys land on the page rather than on the card's rows.
+  createEffect(
+    on(cardUp, (up) => {
+      if (!up) return;
+      queueMicrotask(() => {
+        const active = document.activeElement;
+        if (active && active !== document.body) return;
+        if (props.onScreen === false || !tileFocused()) return;
+        viewEl?.querySelector<HTMLElement>(".tl-qcard")?.focus({ preventScroll: true });
+      });
+    }),
+  );
+
   return (
     <div
       class="tl-textview"
@@ -1231,6 +1284,8 @@ export const TextView: Component<{
           // for you" there too, and a pending slash command draws nothing.
           live={lineLive() ?? null}
           clearing={planAnswered()?.action === "clear"}
+          // The card is at the bottom and says what Claude is waiting on.
+          latestHidden={cardUp()}
         />
         <Show when={drill()} keyed>
           {(id) => (
@@ -1260,10 +1315,12 @@ export const TextView: Component<{
           )}
         </Show>
       </div>
-      {/* Docked, not inline: on a phone the timeline scrolls and the keyboard
-          covers it, and a walk that slides out from under a thumb mid-answer is
-          worse than no walk. The permanent record is the inline row, which
-          appears the moment the transcript carries the result. */}
+      {/* In the composer's place, not inline: on a phone the timeline scrolls
+          and the keyboard covers it, and a walk that slides out from under a
+          thumb mid-answer is worse than no walk. The permanent record is the
+          inline row, which appears the moment the transcript carries the
+          result. The composer below stays mounted and hidden while a card is
+          up (`composerHidden`). */}
       {/* KEYED on the CALL (`callSerial`), which is how one call is told from
           the next. The card holds state of its own: a half-typed free-text
           answer, which row is being tapped, the multi-select clicks waiting
@@ -1285,15 +1342,12 @@ export const TextView: Component<{
             questions={asked()}
             state={cardState()}
             busy={answering()}
-            hasInput={composerSinks()?.hasInput() ?? false}
             keysActive={props.onScreen !== false && tileFocused()}
             inert={props.inertReason}
             onSubmit={submitAnswers}
             onChat={chatInstead}
-            onUseTyped={() => {
-              void composerSinks()?.submitVia(send);
-            }}
             onTerminal={props.onOpenTerminal}
+            onTakeControl={props.onTakeControl}
             register={(api) => {
               cardApi = api;
             }}
@@ -1310,6 +1364,7 @@ export const TextView: Component<{
               reading={reading}
               onPick={pickPermission}
               inert={props.inertReason}
+              onTakeControl={props.onTakeControl}
               register={(press) => {
                 pressPermissionRow = press;
               }}
@@ -1326,19 +1381,16 @@ export const TextView: Component<{
           reading={planCardReading()}
           plan={planShown().text}
           stale={planShown().stale}
-          hasInput={composerSinks()?.hasInput() ?? false}
-          lineBreaks={composerSinks()?.lineBreaks() ?? false}
           sending={planSending()}
           inert={props.inertReason}
           notice={planReplyNow()?.notice ?? null}
           onApprove={approvePlanOption}
-          onApproveWithFeedback={() => {
-            void composerSinks()?.submitVia((text) => sendPlanFeedback(text, true));
-          }}
           onTerminal={props.onOpenTerminal}
+          onTakeControl={props.onTakeControl}
         />
       </Show>
       <Composer
+        hidden={composerHidden()}
         textSize={textSize()}
         // The open turn's row, which decides Stop, and what the session still
         // owes once the transcript has closed the turn: an agent or a workflow
@@ -1350,11 +1402,10 @@ export const TextView: Component<{
         live={lineLive()}
         claudeState={props.claudeState?.()}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
-        // Send stays available while a question is docked, and answers it:
-        // `send` types what is in the field as the question's free-text
-        // answer, and only falls back to a prompt when the pane has no dialog
-        // left. Send's label says so. `asking()` is the same signal the card
-        // itself is keyed on, so the two cannot disagree.
+        // The composer is hidden while a question is docked. Its send still
+        // routes a question's free-text answer through `send`, and only falls
+        // back to a prompt when the pane has no dialog left. `asking()` is the
+        // same signal the card itself is keyed on, so the two cannot disagree.
         asking={!!asking()}
         planOpen={planDocked() !== null}
         onPlanFeedback={(text) => sendPlanFeedback(text, false)}

@@ -231,3 +231,36 @@ describe("one 760px column", () => {
     expect(appCss).not.toMatch(/\b860px/);
   });
 });
+
+/**
+ * The cards that take the composer's place (prototype `.card` and `.cd-*`):
+ * the same rounded surface as the box, edged in the awaiting colour, with the
+ * option rows as bordered rows and a finger-sized row on the phone.
+ */
+describe("the card in the composer's place", () => {
+  it("draws the prototype's surface from theme tokens", () => {
+    expect(decl(appCss, ".tl-qcard", "border-radius")).toBe("22px");
+    expect(decl(appCss, ".tl-qcard", "border")).toBe(
+      "1px solid color-mix(in srgb, var(--state-awaiting) 55%, var(--border-strong))",
+    );
+    expect(decl(appCss, ".tl-qcard", "background")).toBe("var(--bg-card)");
+    expect(decl(appCss, ".tl-qcard", "padding")).toBe("12px 12px 10px");
+    expect(decl(appCss, ".tl-qcard-dot", "background")).toBe("var(--state-awaiting)");
+  });
+
+  it("draws each option as a bordered row with its keycap first", () => {
+    expect(decl(appCss, ".tl-qcard-option", "border-radius")).toBe("12px");
+    expect(decl(appCss, ".tl-qcard-option", "border")).toBe("1px solid var(--border)");
+    expect(decl(appCss, ".tl-qcard-key", "grid-column")).toBe("1");
+    expect(decl(appCss, ".tl-qcard-key", "width")).toBe("22px");
+  });
+
+  it("gives the phone 48px rows and a 16px question", () => {
+    expect(appCss).toMatch(/\.tl-qcard-option\s*\{[^}]*min-height:\s*48px/);
+    expect(appCss).toMatch(/\.tl-qcard-question\s*\{[^}]*font-size:\s*calc\(16px/);
+  });
+
+  it("hides the composer it replaces without unmounting it", () => {
+    expect(decl(appCss, ".tl-composer[hidden]", "display")).toBe("none");
+  });
+});

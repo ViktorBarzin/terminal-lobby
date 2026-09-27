@@ -1,5 +1,6 @@
 import { For, Show, createEffect, createSignal, on, onCleanup, type Component } from "solid-js";
 import type { PlanOptionView } from "../lib/answer-api";
+import { CardDot, CardHead } from "./CardHead";
 import { Markdown } from "./Markdown";
 import { feedbackClearsContext, type PlanNotice, type PlanSending } from "./plan.logic";
 import type { PlanReading } from "./timeline.logic";
@@ -17,9 +18,9 @@ const NOTICE_TEXT: Record<PlanNotice, string> = {
 const UNREADABLE = "Couldn't read the plan's choices. Open the Terminal to answer it.";
 
 /**
- * The card that answers Claude Code's plan approval, docked above the composer
- * where the question card docks (docs/plans/2026-09-24-text-composer-redesign.md,
- * "When the card docks, and what it shows").
+ * The card that answers Claude Code's plan approval, in the composer's place
+ * while Claude waits (docs/plans/2026-09-24-text-composer-redesign.md, "When
+ * the card docks, and what it shows"; the T3 pass, prototype 6-plan).
  *
  * It renders; it does not send. The plan comes from the transcript (the
  * ExitPlanMode call's input, or null while the call is not written yet), the
@@ -34,8 +35,9 @@ const UNREADABLE = "Couldn't read the plan's choices. Open the Terminal to answe
  * starts carrying out the plan, so a stray 1 must never reach the pane. No
  * Reject button (open point 10): the CLI rejects only through Esc or Enter on
  * an empty feedback row, and the Terminal's Esc still does that. The feedback
- * row itself is not drawn, because the composer below is that row while the
- * card is up.
+ * row is not drawn yet. The composer is hidden while the card is up, so its
+ * text is out of sight and the text view leaves `hasInput` false: an approval
+ * never carries words the reader cannot see.
  */
 export const PlanCard: Component<{
   /** The approve rows as the pane draws them, or null when it could not be read. */
@@ -44,22 +46,24 @@ export const PlanCard: Component<{
   plan: string | null;
   /** The plan file changed while the plan was presented, so `plan` may be older. */
   stale?: boolean;
-  /** The composer holds text that could go as feedback (PromptField `hasInput`). */
-  hasInput: boolean;
+  /** A field on show holds text that could go as feedback (PromptField `hasInput`). */
+  hasInput?: boolean;
   /** The answer in flight, if any. */
   sending?: PlanSending | null;
   /** Why this device may not answer (it is watching), or empty when it may. */
   inert?: string;
   /** What the last reply, or an ignored press, left the card to say. */
   notice?: PlanNotice | null;
-  /** The composer's text has line breaks, which go out as spaces. */
+  /** That field's text has line breaks, which go out as spaces. */
   lineBreaks?: boolean;
   /** Approve with this row, by the number and the label the reader saw. */
   onApprove: (option: PlanOptionView) => void;
-  /** Send the composer's text as feedback with `approve: true`. */
-  onApproveWithFeedback: () => void;
+  /** Send that field's text as feedback with `approve: true`. */
+  onApproveWithFeedback?: () => void;
   /** Show the Terminal view. */
   onTerminal?: () => void;
+  /** Stop watching and answer from this device. */
+  onTakeControl?: () => void;
 }> = (props) => {
   const [full, setFull] = createSignal(false);
   const [overflows, setOverflows] = createSignal(false);
@@ -116,20 +120,34 @@ export const PlanCard: Component<{
   const offerTerminal = () => props.notice === "unverified" || unreadable();
 
   return (
-    <div class="tl-qcard tl-plancard" role="dialog" aria-label="Claude's plan is ready">
-      <div class="tl-qcard-head">
-        <span class="tl-qcard-title">Claude's plan is ready</span>
-        <Show when={props.plan !== null && (overflows() || full())}>
-          <button
-            type="button"
-            class="tl-qcard-full"
-            aria-expanded={full()}
-            onClick={() => setFull((v) => !v)}
-          >
-            {full() ? "Show less" : "Show all"}
-          </button>
-        </Show>
-      </div>
+    <div
+      class="tl-qcard tl-plancard"
+      role="dialog"
+      aria-label="Claude's plan is ready"
+      tabIndex={-1}
+    >
+      <CardHead
+        lead={
+          <span class="tl-qcard-lead">
+            <CardDot />
+            <span class="tl-qcard-title">Plan ready</span>
+          </span>
+        }
+        links={
+          <Show when={props.plan !== null && (overflows() || full())}>
+            <button
+              type="button"
+              class="tl-qcard-link"
+              aria-expanded={full()}
+              onClick={() => setFull((v) => !v)}
+            >
+              {full() ? "Show less" : "Read the full plan"}
+            </button>
+          </Show>
+        }
+        inert={props.inert}
+        onTakeControl={props.onTakeControl}
+      />
 
       <div class="tl-qcard-body">
         <Show
@@ -196,7 +214,7 @@ export const PlanCard: Component<{
         {noticeText()}
       </div>
 
-      <Show when={offerTerminal() || (props.hasInput && answerable())}>
+      <Show when={offerTerminal() || (props.hasInput === true && answerable())}>
         <div class="tl-qcard-actions tl-plancard-actions">
           <Show when={offerTerminal() && props.onTerminal}>
             <button type="button" class="tl-qcard-back" onClick={() => props.onTerminal?.()}>
@@ -207,12 +225,12 @@ export const PlanCard: Component<{
               composer's text. Offered only while there is text to carry. It
               approves through option 1, so when option 1 clears the context
               the button says so: that cannot be undone from here. */}
-          <Show when={props.hasInput && answerable()}>
+          <Show when={props.hasInput === true && answerable()}>
             <button
               type="button"
               class="tl-qcard-next"
               disabled={held()}
-              onClick={() => props.onApproveWithFeedback()}
+              onClick={() => props.onApproveWithFeedback?.()}
             >
               {feedbackClearsContext(props.reading ?? null)
                 ? "Approve with this feedback and clear context"

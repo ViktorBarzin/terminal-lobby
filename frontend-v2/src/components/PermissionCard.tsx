@@ -1,9 +1,14 @@
 import { For, Show, createSignal, type Component } from "solid-js";
+import { CardDot, CardHead } from "./CardHead";
 import type { PermissionReading } from "./timeline.logic";
 
+/** A Bash prompt is titled "Bash command"; every other tool is titled by what
+ *  it does ("Edit file"), which the head then names beside its words. */
+const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
+
 /**
- * The card that answers Claude Code's tool permission prompt, docked above the
- * composer where the question and plan cards dock.
+ * The card that answers Claude Code's tool permission prompt, in the
+ * composer's place while Claude waits (the T3 pass, prototype 6-permission).
  *
  * The rows are the prompt's own, numbered and worded as the Terminal draws
  * them (sessionio permdialog.go): what "Yes, and always allow" covers changes
@@ -24,6 +29,8 @@ export const PermissionCard: Component<{
   onTerminal?: () => void;
   /** Why this device may not answer (it is watching), or empty when it may. */
   inert?: string;
+  /** Stop watching and answer from this device. */
+  onTakeControl?: () => void;
   /**
    * Hand the caller the card's own press, for a row's number typed on the
    * keyboard. It answers true when the card has that row, whether or not the
@@ -44,19 +51,45 @@ export const PermissionCard: Component<{
     void pick(row);
     return true;
   });
+  /** The tool's own title, when the head's words do not already say it. */
+  const tag = (): string => (isCommand(props.reading.title) ? "" : props.reading.title.trim());
   return (
-    <div class="tl-qcard tl-permcard" role="dialog" aria-label="Claude is asking to use a tool">
-      <div class="tl-qcard-head">
-        <span class="tl-qcard-title">
-          {props.reading.title || "Claude is asking to use a tool"}
-        </span>
-      </div>
+    <div
+      class="tl-qcard tl-permcard"
+      role="dialog"
+      aria-label="Claude is asking to use a tool"
+      tabIndex={-1}
+    >
+      <CardHead
+        lead={
+          <span class="tl-qcard-lead">
+            <CardDot />
+            <span class="tl-qcard-title">
+              {isCommand(props.reading.title)
+                ? "Claude wants to run a command"
+                : "Claude wants to use a tool"}
+            </span>
+            <Show when={tag()}>
+              <span class="tl-qcard-tag">{tag()}</span>
+            </Show>
+          </span>
+        }
+        links={
+          <Show when={props.onTerminal}>
+            <button type="button" class="tl-qcard-link" onClick={() => props.onTerminal?.()}>
+              Open in Terminal
+            </button>
+          </Show>
+        }
+        inert={props.inert}
+        onTakeControl={props.onTakeControl}
+      />
       <div class="tl-qcard-body">
         <Show when={props.reading.detail.length > 0}>
           <pre class="tl-code tl-permcard-detail">{props.reading.detail.join("\n")}</pre>
         </Show>
         <Show when={props.reading.prompt}>
-          <div class="tl-qcard-question">{props.reading.prompt}</div>
+          <div class="tl-permcard-prompt">{props.reading.prompt}</div>
         </Show>
         <div class="tl-qcard-options">
           <For each={props.reading.options}>
@@ -79,13 +112,6 @@ export const PermissionCard: Component<{
           </For>
         </div>
       </div>
-      <Show when={props.onTerminal}>
-        <div class="tl-qcard-actions">
-          <button type="button" class="tl-qcard-back" onClick={() => props.onTerminal?.()}>
-            Open Terminal
-          </button>
-        </div>
-      </Show>
     </div>
   );
 };
