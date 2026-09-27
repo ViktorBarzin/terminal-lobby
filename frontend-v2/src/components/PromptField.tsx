@@ -34,7 +34,7 @@ import {
   previewContentUrl,
   storedDisplayName,
 } from "../lib/attachments";
-import { EyeIcon, PlusIcon, QueueIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
+import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
 import { createMobileFlip } from "../mobile/pointer";
 import { dismissOnPress } from "./overlay";
 import { PlusTray } from "./PlusTray";
@@ -105,9 +105,18 @@ export interface PromptFieldSinks {
   submitVia: (send: (text: string) => Promise<boolean>) => Promise<boolean>;
 }
 
-/** A per-instance id for the "queues" hint, which Send names as its
- *  description. The lobby keeps many sessions mounted at once. */
-let hintSeq = 0;
+/**
+ * How long one press of Stop holds the button before it takes another, when
+ * the turn has not visibly settled by then.
+ *
+ * Stop is `Injector.Cancel` (sessionio/tmux.go), which sends C-c without
+ * reading the pane, and a second C-c at an idle Claude prompt exits the CLI.
+ * So a press holds the button until `canStop` goes false (the session
+ * re-stamps `done` after an interrupt, and the list carries that within ~10s,
+ * ADR-0001), or until this bound passes, after which the session really is
+ * still running and a second press is the reader's to make.
+ */
+const STOP_SETTLE_MS = 20_000;
 
 /**
  * The words the watching pill shows: who is being watched, from the session
@@ -182,12 +191,10 @@ export const PromptField: Component<{
   onEmptyDigit?: (digit: string) => boolean;
   /**
    * Claude is working, so a send now QUEUES. While this is true and the field
-   * holds something, a quiet "queues" sits beside Send and Send names it as
-   * its description. Send keeps its name either way: the reading behind this
-   * lags the pane, and a button promising to queue would sometimes be wrong
-   * about what is about to happen (Composer.queue.test.tsx).
+   * holds something, Send is named "Send, queues after this turn". The caller
+   * decides it on the same two readings as `canStop` (Composer.queue.test.tsx).
    */
-  queueHint?: boolean;
+  queues?: boolean;
   /** The + tray's footer: where an attached file ends up. */
   trayNote?: string;
   /** No `+` at all: a field that takes no files and offers no triggers. */
@@ -203,25 +210,16 @@ export const PromptField: Component<{
   /** What sits between `+` and the round button in the box: the model
    *  button's slot. Hidden in the pill. */
   tools?: JSX.Element;
-  /** Something is running that Stop would interrupt, and how to stop it. */
+  /**
+   * Something is running that Stop would interrupt, and how to stop it. While
+   * this is true and the field is empty with nothing attached, the round
+   * button IS Stop; typing turns it back into Send. One press per turn: see
+   * `STOP_SETTLE_MS`.
+   */
   canStop?: boolean;
   onStop?: () => void;
   /** Hand the session back to this device, from the watching pill. */
   onTakeControl?: () => void;
-  /**
-   * Draw Send as unavailable while there is nothing to send.
-   *
-   * An empty send is refused either way — the guard in `submit` is the same for
-   * both composers. What differs is whether the refusal has to be VISIBLE. A
-   * live session is already there, so a keystroke that sends nothing to it
-   * costs nothing and saying so would be noise. On the new-session composer
-   * that keystroke is what CREATES the session, so a silent refusal reads as
-   * the app being broken. Turned on there, and nowhere else.
-   *
-   * "Input" rather than "text" because a held file counts: a screenshot on its
-   * own is a prompt, and it leaves as the path it uploaded to.
-   */
-  sendNeedsInput?: boolean;
   /**
    * The attachments are files that have not been uploaded yet.
    *
@@ -265,7 +263,6 @@ export const PromptField: Component<{
   let trayEl: HTMLDivElement | undefined;
   /** The chip layer behind the field — see `mirror` and the JSX below. */
   let mirrorEl: HTMLDivElement | undefined;
-  const hintId = `tl-send-hint-${++hintSeq}`;
   const [draft, setDraft] = createSignal("");
 
   // ---- the shape ----------------------------------------------------------
@@ -1112,17 +1109,74 @@ export const PromptField: Component<{
     act();
   };
 
+  // ---- the round button ------------------------------------------------
+  // Send, Stop, or the Send that queues: one 32px disc, the surface's last
+  // control. See `canStop` and Composer.queue.test.tsx.
+
+  /** A send now queues behind the running turn. */
+  const queueing = (): boolean => props.queues === true && sendable();
   /**
    * What Send's tooltip says. A caller's caveat wins (a question it would
-   * dismiss, a plan it would answer); otherwise the queue, which is the one
-   * thing about a send the button itself does not show.
+   * dismiss, a plan it would answer); otherwise the queue.
    */
-  const queueing = (): boolean => props.queueHint === true && sendable();
   const sendTitle = (): string =>
     props.sendTitle ??
     (queueing()
       ? "Send (Enter). Claude is working, so this queues until the turn ends"
       : "Send (Enter)");
+
+  /**
+   * Stop was pressed and the turn has not settled yet. Cleared when `canStop`
+   * goes false, or after `STOP_SETTLE_MS`, whichever comes first.
+   */
+  const [stopping, setStopping] = createSignal(false);
+  let stopTimer: ReturnType<typeof setTimeout> | undefined;
+  const settled = (): void => {
+    clearTimeout(stopTimer);
+    stopTimer = undefined;
+    setStopping(false);
+  };
+  createEffect(() => {
+    if (!props.canStop) settled();
+  });
+  onCleanup(settled);
+
+  /**
+   * Which the button is. Stop only with an empty field and nothing attached:
+   * anything to send wins, so a stale reading can never stand between the
+   * reader and a send. A watching device gets neither.
+   */
+  const kind = (): "send" | "stop" =>
+    !watching() && props.canStop === true && !!props.onStop && !sendable() ? "stop" : "send";
+  /**
+   * Greyed while the press would do nothing: an empty Send, a Stop already
+   * pressed this turn, or any press from a watching device.
+   */
+  const buttonDisabled = (): boolean =>
+    watching() || (kind() === "stop" ? stopping() : !sendable());
+  const buttonLabel = (): string => {
+    if (kind() === "stop") return stopping() ? "Stopping…" : "Stop Claude";
+    return queueing() ? "Send, queues after this turn" : "Send";
+  };
+  const buttonTitle = (): string => {
+    if (kind() === "stop")
+      return stopping() ? "Stopping: waiting for the turn to end" : "Stop: interrupts this turn";
+    return sendTitle();
+  };
+  /**
+   * The press. Enter never reaches here with an empty field: it goes straight
+   * to `submit`, which refuses an empty send, so Enter never stops Claude.
+   */
+  const press = (): void => {
+    if (buttonDisabled()) return;
+    if (kind() === "send") {
+      submit();
+      return;
+    }
+    setStopping(true);
+    stopTimer = setTimeout(settled, STOP_SETTLE_MS);
+    props.onStop?.();
+  };
 
   return (
     <>
@@ -1331,17 +1385,16 @@ export const PromptField: Component<{
               }}
             />
           </div>
-          {/* Send is the pill's last control, always. It is never greyed out
-              on a live session and never renamed: a mid-turn send QUEUES in
-              Claude, and the quiet "queues" beside it is how that is said.
+          {/* The round button is the surface's last control, always, in one
+              of three states (Composer.queue.test.tsx).
 
-              Why it is always here. Send was once REPLACED by Stop while a turn
-              ran, the browser half of a turn gate the server gave up on
-              2026-08-15, and what that cost was the phone, where there is no
-              Enter key to fall back on. Worse, the turn reading is derived from
-              the transcript, which lags the pane: measured live, a session
-              whose real state was `done` showed Stop in 98 of 100 samples over
-              300s, so a finished session could offer no way to send at all. */}
+              Why Stop is gated so hard. Send was once REPLACED by Stop while a
+              turn ran, on the transcript's reading alone, and that reading lags
+              the pane: measured live, a session whose real state was `done`
+              showed Stop in 98 of 100 samples over 300s, so a finished session
+              could offer no way to send at all. Now the caller needs the hook
+              state to agree before `canStop` is true, and typing anything
+              turns the button back into Send. */}
           <Show when={props.tools}>
             <div class="tl-box-tools">{props.tools}</div>
           </Show>
@@ -1367,37 +1420,20 @@ export const PromptField: Component<{
             </div>
           </Show>
           <div class="tl-pill-end">
-            {/* Stop, while something runs. Beside the round button until that
-                button takes Stop over as its own state. */}
-            <Show when={props.canStop && props.onStop}>
-              <button
-                type="button"
-                class="tl-stop"
-                aria-label="Stop Claude"
-                title="Stop: interrupts this turn"
-                onClick={() => props.onStop?.()}
-              >
-                <StopSquareIcon />
-              </button>
-            </Show>
-            <Show when={queueing()}>
-              <span class="tl-send-hint" id={hintId}>
-                <QueueIcon />
-                queues
-              </span>
-            </Show>
             <button
               type="button"
               class="tl-send"
-              aria-label="Send"
-              aria-describedby={queueing() ? hintId : undefined}
+              data-kind={kind()}
+              aria-label={buttonLabel()}
               onPointerDown={keepFocusOnSend}
-              onClick={submit}
-              disabled={props.sendNeedsInput && !sendable()}
-              title={sendTitle()}
+              onClick={press}
+              disabled={buttonDisabled()}
+              title={buttonTitle()}
             >
               <span class="tl-disc">
-                <SendArrowIcon />
+                <Show when={kind() === "stop"} fallback={<SendArrowIcon />}>
+                  <StopSquareIcon size={11} />
+                </Show>
               </span>
             </button>
           </div>

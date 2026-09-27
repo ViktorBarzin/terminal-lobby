@@ -50,7 +50,7 @@ import { terminalFrameArgs } from "../lib/terminal-url";
 import { setSessionGrid } from "../lib/lobby-api";
 import { refocusTerminal } from "../keybindings/refocus";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
-import type { BackgroundWork, PiStamp, SessionTool } from "../types/lobby";
+import type { BackgroundWork, ClaudeState, PiStamp, SessionTool } from "../types/lobby";
 import { modelHarness, piLevels, type ModelState, type PiOffer } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
 import { setSessionMode } from "../lib/mode-api";
@@ -195,6 +195,9 @@ export const SessionView: Component<{
    *  that have not reported back. From the session list, because the transcript
    *  closes the turn when the main thread stops talking and cannot see them. */
   background?: () => BackgroundWork | undefined;
+  /** The session's hook-stamped state, from the session list (ADR-0001).
+   *  Absent where there is no list, which offers no Stop in the Text view. */
+  claudeState?: () => ClaudeState | undefined;
   /** The size of the session's tmux window — its Grid — from the session list,
    *  or null when nobody could say.
    *
@@ -1665,6 +1668,7 @@ export const SessionView: Component<{
             events={store.events}
             rows={rows}
             background={props.background}
+            claudeState={props.claudeState}
             agents={store.agents}
             tool={props.tool}
             pending={pending()}

@@ -770,6 +770,17 @@ watching device's pill reads "Watching" with Take control. The prompts Claude
 has queued are drawn as ghost bubbles at the end of the conversation.
 _Avoid_: chat box, prompt bar
 
+**Round button**:
+The last control on the **Composer**'s surface: one 32px disc in three states.
+It is Send when idle, greyed while the field is empty and nothing runs. It is
+Stop while Claude works and the field is empty with nothing attached. Once
+something is typed or attached mid-turn it is a Send that queues behind the
+turn. Stop shows only when the **Working row** and the session's hook-stamped
+state both say a turn runs, and it takes one press per turn: an interrupt is a
+C-c, and a second one at an idle prompt exits Claude. Enter in an empty field
+does nothing. A watching device can neither send nor stop.
+_Avoid_: send button, stop button
+
 **Status line**:
 The thin line along the top of the **Composer**. Its left side shows the
 **Working row** while a turn is open, and otherwise that Claude is still

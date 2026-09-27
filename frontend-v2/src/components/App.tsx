@@ -2768,6 +2768,10 @@ export const App: Component = () => {
                         store.sessions.some((s) => s.name === k.name && s.driven === true)
                       }
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
+                      // The hook-stamped state, which the Text view's Stop
+                      // needs to agree with the transcript. BY KEY, for the
+                      // reason `tileSession` exists.
+                      claudeState={() => tileSession()?.state || undefined}
                       // The idle sweep took this session's claude back. The
                       // view keeps working — the frozen pane is worth reading
                       // and the transcript is all still there — but anything

@@ -3404,37 +3404,34 @@ label.tl-set-row-label {
 .tl-send:active .tl-disc {
   transform: scale(0.9);
 }
-/* Only the new-session composer ever draws it this way: there, Send CREATES
-   the session, so an empty box has to look like it cannot. */
+/* Stop is the same disc in the text colour, carrying an 11px square: while
+   Claude works and the field is empty (6-working in the prototype). */
+.tl-send[data-kind="stop"] .tl-disc {
+  background: var(--text-primary);
+  color: var(--bg-page);
+}
+/* Greyed while a press would do nothing: an empty Send with nothing running,
+   a Stop already pressed this turn, a watching device (6-idle). */
 .tl-send:disabled {
   cursor: default;
+}
+.tl-send:disabled:hover .tl-disc {
+  filter: none;
+}
+.tl-send:disabled:active .tl-disc {
+  transform: none;
 }
 .tl-send:disabled .tl-disc {
   background: color-mix(in srgb, var(--text-muted) 22%, transparent);
   color: color-mix(in srgb, var(--text-muted) 80%, transparent);
 }
-/* Stop, while something runs, beside the round button. */
-.tl-stop {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
-  border-radius: 50%;
-  background: color-mix(in srgb, var(--danger) 9%, transparent);
-  color: var(--danger);
-  cursor: pointer;
-  animation: tl-pop-in 0.18s ease-out;
-}
-.tl-stop:hover {
-  background: color-mix(in srgb, var(--danger) 17%, transparent);
+/* Stopping: the square stays, dimmed, until the turn settles. */
+.tl-send[data-kind="stop"]:disabled .tl-disc {
+  animation: tl-breathe 1.2s ease-in-out infinite;
 }
 .tl-plus:focus-visible,
 .tl-send:focus-visible,
 .tl-dial:focus-visible,
-.tl-stop:focus-visible,
 .tl-take:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
@@ -3444,18 +3441,6 @@ label.tl-set-row-label {
   display: flex;
   align-items: center;
   gap: 6px;
-}
-/* Mid-turn a send QUEUES. The button keeps its name; this says it, quietly,
-   while there is something to send. */
-.tl-send-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding-left: 4px;
-  font-size: calc(11px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  white-space: nowrap;
-  animation: tl-fade-in 0.2s ease-out;
 }
 
 /* ---- attachments, inside the message ----------------------------------
@@ -4128,19 +4113,18 @@ label.tl-set-row-label {
    whole app. */
 @media (prefers-reduced-motion: reduce) {
   .tl-box-note-dot,
-  .tl-plus[aria-busy="true"] .tl-disc {
+  .tl-plus[aria-busy="true"] .tl-disc,
+  .tl-send[data-kind="stop"]:disabled .tl-disc {
     animation: none;
   }
   .tl-dial[data-busy]::before {
     animation: none;
     background: var(--accent);
   }
-  .tl-stop,
   .tl-dial[data-danger],
   .tl-tray,
   .tl-dial-pop,
   .tl-complete,
-  .tl-send-hint,
   .tl-row-user[data-queued] .tl-bubble-user,
   .tl-sheet,
   .tl-sheet-scrim {

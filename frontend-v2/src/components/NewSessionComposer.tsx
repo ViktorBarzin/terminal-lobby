@@ -346,8 +346,8 @@ export const NewSessionComposer: Component<{
    * instruction — but it is also what a stray Enter looks like, and what it
    * left behind was a session with no prompt to summarise, so it sat in the
    * sidebar as `New session` with nothing in it (Viktor, 2026-09-12). The field
-   * refuses that send and draws Send unavailable while it would (PromptField,
-   * `sendNeedsInput`), so by the time this runs there is prose or a held file
+   * refuses that send and draws Send unavailable while it would (PromptField's
+   * round button), so by the time this runs there is prose or a held file
    * behind it. The slot warmed above is deliberately
    * NOT released — create only STARTS the attach, and handing it back now would
    * reliably win that race and cost the create its head start. `handedOff` is
@@ -621,7 +621,6 @@ export const NewSessionComposer: Component<{
             onAttach={holdFiles}
             pendingAttachments
             label="Prompt for a new session"
-            sendNeedsInput
             placeholder="What do you want to do?"
             hint="Enter to start the session · Shift+Enter for a newline"
             draftKey={NEW_SESSION_DRAFT_KEY}

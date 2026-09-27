@@ -44,27 +44,20 @@ describe("<PromptField> — an empty send", () => {
   });
 });
 
-describe("<PromptField> — Send, when the caller needs something in the box", () => {
+describe("<PromptField> — Send, while there is nothing to send", () => {
   const send = (c: HTMLElement) => c.querySelector<HTMLButtonElement>(".tl-send")!;
 
-  // The refusal above is silent, and silence is only tolerable where nothing
-  // was going to happen anyway. On the new-session composer Enter CREATES the
-  // session, so a keystroke that does nothing reads as the app being broken.
-  // `sendNeedsInput` puts the refusal on the control, before it is pressed.
+  // The refusal above is silent on Enter. The round button puts it on the
+  // control, before it is pressed, on every composer since the T3 pass
+  // (2026-09-27): greyed while the field is empty and nothing runs. On the
+  // new-session composer that is what says Enter will not create a session.
   it("draws it unavailable until there is something to send", () => {
-    const { container } = render(() => (
-      <PromptField onSend={onSend} label="Message" sendNeedsInput />
-    ));
+    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
     expect(send(container).disabled).toBe(true);
     type(field(container), "fix the deploy");
     expect(send(container).disabled).toBe(false);
     type(field(container), "  ");
     expect(send(container).disabled).toBe(true);
-  });
-
-  it("leaves it available by default, which is the live composer", () => {
-    const { container } = render(() => <PromptField onSend={onSend} label="Message" />);
-    expect(send(container).disabled).toBe(false);
   });
 });
 

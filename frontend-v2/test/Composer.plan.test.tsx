@@ -114,25 +114,26 @@ describe("<Composer> while the plan dialog is up", () => {
 });
 
 describe("<Composer> hints while the plan dialog is up", () => {
-  it("hides the 'queues' hint, because this send answers the dialog", () => {
+  it("does not say the send queues, because this send answers the dialog", () => {
     // The live row can still say working in the moment before the transcript
     // records the plan call; the send answers the plan either way.
-    const { field, send, container } = mount({
+    const { field, send } = mount({
       live: WORKING,
+      claudeState: "running",
       planOpen: true,
       onPlanFeedback: async () => true,
     });
     fireEvent.input(field, { target: { value: "smaller steps" } });
-    expect(container.querySelector(".tl-send-hint")).toBeNull();
+    expect(send.getAttribute("aria-label")).toBe("Send");
     expect(send.getAttribute("title")).toBe(
       "Send (Enter). Tells Claude what to change in its plan, and it keeps planning",
     );
   });
 
-  it("still shows the 'queues' hint on an ordinary mid-turn send", () => {
-    const { field, container } = mount({ live: WORKING });
+  it("still says it queues on an ordinary mid-turn send", () => {
+    const { field, send } = mount({ live: WORKING, claudeState: "running" });
     fireEvent.input(field, { target: { value: "and then this" } });
-    expect(container.querySelector(".tl-send-hint")?.textContent).toContain("queues");
+    expect(send.getAttribute("aria-label")).toBe("Send, queues after this turn");
   });
 });
 
@@ -176,15 +177,20 @@ describe("<Composer> dials held while a dialog is up", () => {
   });
 });
 
-describe("Send is never greyed out on a live session", () => {
+// Since the T3 pass (2026-09-27) the round button greys out while the field is
+// empty and nothing runs (Composer.queue.test.tsx). What stays true is that
+// nothing a turn or a dialog is doing withholds Send once something is written.
+describe("Send is never greyed out once something is written", () => {
   it.each([
-    ["working", { live: WORKING }],
+    ["working", { live: WORKING, claudeState: "running" }],
+    ["working by the transcript alone", { live: WORKING, claudeState: "done" }],
     ["waiting", { live: WAITING }],
     ["asking", { live: WAITING, asking: true }],
     ["with the plan open", { live: WAITING, planOpen: true, onPlanFeedback: async () => true }],
-    ["idle and empty", {}],
+    ["idle", {}],
   ] as [string, Partial<ComponentProps<typeof Composer>>][])("while %s", (_what, props) => {
-    const { send } = mount(props);
+    const { send, field } = mount(props);
+    fireEvent.input(field, { target: { value: "the next thing" } });
     expect(send.disabled).toBe(false);
   });
 });

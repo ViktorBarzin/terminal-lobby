@@ -234,13 +234,6 @@ export const CloseIcon: Component = () => (
   </Glyph>
 );
 
-/** The small stack beside Send's "queues" hint. */
-export const QueueIcon: Component = () => (
-  <Glyph box="0 0 12 12" size={11}>
-    <path d="M2 3.5h8M2 6h8M2 8.5h5" />
-  </Glyph>
-);
-
 /**
  * How full the context window is, as a ring. The track is the same colour at
  * 28%, so the ring reads on every theme without a second token.

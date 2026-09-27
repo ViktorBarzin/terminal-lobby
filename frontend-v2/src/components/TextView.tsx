@@ -65,7 +65,7 @@ import {
 } from "./plan.logic";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
-import type { BackgroundWork, SessionTool } from "../types/lobby";
+import type { BackgroundWork, ClaudeState, SessionTool } from "../types/lobby";
 import { AgentPanel } from "./AgentPanel";
 import { AgentTranscript } from "./AgentTranscript";
 import { panelPresent, type AgentSnapshot } from "./agents.logic";
@@ -253,6 +253,9 @@ export const TextView: Component<{
   /** Which command the session runs, from the session list. The agent panel
    *  shows only while the session's claude is there to run its agents. */
   tool?: () => SessionTool | undefined;
+  /** The session's hook-stamped state, from the session list (ADR-0001). The
+   *  composer's Stop needs it to say `running` as well as the transcript. */
+  claudeState?: () => ClaudeState | undefined;
   pending: PendingPermission[];
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
@@ -1318,6 +1321,7 @@ export const TextView: Component<{
         // leaves it out while the panel shows; on the panel's own signal, so
         // the two cannot disagree.
         live={lineLive()}
+        claudeState={props.claudeState?.()}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
         // Send stays available while a question is docked, and answers it:
         // `send` types what is in the field as the question's free-text

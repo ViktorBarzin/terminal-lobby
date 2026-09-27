@@ -1,5 +1,6 @@
 import { createMemo, Show, type Component, type JSX } from "solid-js";
 import type { PermissionDecision } from "../types/events";
+import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
 import { PermissionPanel } from "./PermissionPanel";
 import type { SlashCommand } from "../logic/compose.logic";
@@ -48,8 +49,9 @@ import {
  * at the end of the conversation, the watching state into the pill, and the
  * dock's top edge (a sweep while working, a dashed danger rule) went with it.
  * Until the model sheet lands, the session's dials sit in the model button's
- * slot, background work is a quiet note beside them, and Stop sits beside the
- * round button.
+ * slot and background work is a quiet note beside them. Stop is a state of the
+ * round button: it shows while Claude works and the field is empty, and only
+ * when the transcript and the hook state agree that a turn runs.
  *
  * BYPASS AND NO ASK turn the surface's border the danger colour, with a ring
  * while it is focused, and change nothing else: the placeholder stays the
@@ -77,15 +79,24 @@ export const Composer: Component<{
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
-   * The open turn's live row, or undefined while no turn is open. It decides
-   * whether Stop shows (while something RUNS, never while Claude waits) and
-   * the "queues" hint beside Send. What the turn is doing is the
-   * conversation's to say, in the live group at its end.
+   * The open turn's live row, or undefined while no turn is open. With
+   * `claudeState` it decides whether the round button offers Stop (while
+   * something RUNS, never while Claude waits) and whether Send says it
+   * queues. What the turn is doing is the conversation's to say, in the live
+   * group at its end.
    *
    * NOT a reason to withhold Send: it is derived from the transcript and lags
    * the pane, and a mid-turn send queues rather than failing.
    */
   live?: WorkingRow;
+  /**
+   * The session's hook-stamped state (ADR-0001), from the session list.
+   * Stop needs it to read `running` as well as the live row saying working:
+   * the row lags the pane (a `done` session showed Stop in 98 of 100 samples),
+   * and a Stop pressed at an idle prompt sends a C-c that can exit Claude.
+   * Absent, or any other state, offers no Stop.
+   */
+  claudeState?: ClaudeState;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
   /** Claude is asking a blocking question right now. The text view sends what
@@ -202,6 +213,8 @@ export const Composer: Component<{
   };
 
   const working = (): boolean => !!props.live && !props.live.waiting;
+  /** A turn runs by both readings: the transcript's row and the hook state. */
+  const turnRunning = (): boolean => working() && props.claudeState === "running";
   /** Background work, once no turn is open ("2 agents"). */
   const background = (): string | undefined =>
     props.live || props.inertReason ? undefined : props.background;
@@ -424,11 +437,11 @@ export const Composer: Component<{
         fold
         danger={danger()}
         tools={tools()}
-        canStop={working() && !props.inertReason}
+        canStop={turnRunning() && !props.inertReason}
         onStop={props.onStop}
-        // Hidden while the plan card is up: that send answers the dialog, and
+        // Not while the plan card is up: that send answers the dialog, and
         // the live row can still say working before the plan call is recorded.
-        queueHint={working() && !props.planOpen}
+        queues={turnRunning() && !props.planOpen}
         trayNote="Images join this session's gallery"
         sendTitle={sendTitle()}
       />

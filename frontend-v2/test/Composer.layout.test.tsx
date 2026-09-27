@@ -144,6 +144,7 @@ describe("<Composer>: pill or box", () => {
   it("keeps the field focused through a finger's press on Send", () => {
     const { ta, container } = mount({}, "phone");
     ta.focus();
+    fireEvent.input(ta, { target: { value: "hello" } });
     const send = container.querySelector(".tl-send")!;
     const press = new PointerEvent("pointerdown", {
       bubbles: true,
@@ -259,15 +260,18 @@ describe("<Composer>: every control still does its job", () => {
     const onCycleMode = vi.fn();
     const { container, ta } = mount({
       live: WORKING,
+      claudeState: "running",
       onSend,
       onStop,
       mode: "bypassPermissions",
       onCycleMode,
       onPickMode: noop,
     });
+    // Stop while the field is empty, then Send once something is typed: the
+    // same round button.
+    fireEvent.click(container.querySelector('.tl-send[data-kind="stop"]')!);
     fireEvent.input(ta, { target: { value: "hello" } });
-    fireEvent.click(container.querySelector(".tl-send")!);
-    fireEvent.click(container.querySelector(".tl-stop")!);
+    fireEvent.click(container.querySelector('.tl-send[data-kind="send"]')!);
     expect(onSend).toHaveBeenCalledWith("hello", []);
     expect(onStop).toHaveBeenCalledTimes(1);
 
