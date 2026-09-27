@@ -83,11 +83,19 @@ describe("<PlanCard> at rest", () => {
     expect(text(container.querySelector(".tl-qcard-title"))).toBe("Plan ready");
   });
 
-  it("renders the plan as markdown", () => {
+  it("shows the plan's title as its question line and the rest as markdown", () => {
     const { container } = mount();
+    expect(text(container.querySelector(".tl-qcard-question"))).toBe("Add a size check");
     const plan = container.querySelector(".tl-plancard-plan");
-    expect(plan?.querySelector("h1")?.textContent).toBe("Add a size check");
+    expect(plan?.querySelector("h1")).toBeNull();
     expect(plan?.querySelector("code")?.textContent).toBe("wc -c");
+    expect(plan?.closest(".tl-plancard-well")).not.toBeNull();
+  });
+
+  it("keeps a plan with no leading heading whole, with no question line", () => {
+    const { container } = mount({ plan: "1. Read the file.\n2. Done." });
+    expect(container.querySelector(".tl-qcard-question")).toBeNull();
+    expect(text(container.querySelector(".tl-plancard-plan"))).toContain("Read the file.");
   });
 
   it("offers each approve row with its number and its label exactly as drawn", () => {

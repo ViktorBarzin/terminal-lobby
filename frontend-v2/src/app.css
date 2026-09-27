@@ -6421,10 +6421,9 @@ body.tl-kb-up {
   flex: none;
   display: flex;
   align-items: center;
-  gap: 2px 12px;
-  /* At a large pinch size the links drop below rather than squeezing the
-     words into columns two wide. */
-  flex-wrap: wrap;
+  gap: 8px;
+  /* One line: on a narrow card the words give way (an ellipsis) before the
+     links do, so "Open in Terminal" never drops onto a line of its own. */
   padding: 0 4px;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
@@ -6454,7 +6453,11 @@ body.tl-kb-up {
   background: var(--state-awaiting);
 }
 .tl-qcard-title {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
@@ -6466,6 +6469,7 @@ body.tl-kb-up {
 .tl-qcard-tag,
 .tl-qcard-step {
   flex: none;
+  white-space: nowrap;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
@@ -6660,6 +6664,12 @@ body.tl-kb-up {
   line-height: 1.4;
   white-space: pre;
 }
+/* A finger anywhere, a tablet included: every row is a 40px target. */
+@media (pointer: coarse) {
+  .tl-qcard-option {
+    min-height: 40px;
+  }
+}
 /* A phone (the phone query, mobile/pointer.ts FLIP_QUERY): the prototype's
    560px cap, a 16px question and 48px rows for a finger. */
 @media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
@@ -6771,14 +6781,16 @@ body.tl-kb-up {
 /* About six lines of plan in the prototype's well, then "Read the full plan".
    The card's body scrolls, so an expanded plan pushes the choices down rather
    than off the card. */
-.tl-plancard-plan {
-  max-height: calc(13px * 1.45 * 6 * var(--tl-text-scale, 1));
-  overflow: hidden;
-  margin: 8px 4px 10px;
+.tl-plancard-well {
+  margin: 0 4px 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-page);
+}
+.tl-plancard-plan {
+  max-height: calc(13px * 1.45 * 6 * var(--tl-text-scale, 1));
+  overflow: hidden;
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 1.45;
   overflow-wrap: anywhere;
@@ -6931,8 +6943,8 @@ body.tl-kb-up {
   .tl-complete-item {
     min-height: 40px;
   }
-  /* The card is answered with a thumb. */
-  .tl-qcard-option,
+  /* The card is answered with a thumb; its rows get theirs with the card
+     (48px on a phone). */
   .tl-qcard-back,
   .tl-qcard-next,
   .tl-qcard-send {

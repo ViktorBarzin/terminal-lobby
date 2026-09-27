@@ -207,3 +207,15 @@ export function feedbackClearsContext(reading: PlanReading | null): boolean {
   const first = reading?.options.find((o) => o.number === 1);
   return first !== undefined && clearsContext(first.label);
 }
+
+/**
+ * The plan's own title, for the plan card's question line (the T3 pass,
+ * prototype 6-plan): a first line that is a level 1-3 heading becomes the
+ * title, and the markdown after it is what the card's well shows. A plan that
+ * opens any other way stays whole, with no title.
+ */
+export function splitPlanTitle(plan: string): { title: string; rest: string } {
+  const m = /^\s*#{1,3}[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*(?:\r?\n|$)/.exec(plan);
+  if (!m?.[1]) return { title: "", rest: plan };
+  return { title: m[1].trim(), rest: plan.slice(m[0].length).replace(/^\s*\n/, "") };
+}

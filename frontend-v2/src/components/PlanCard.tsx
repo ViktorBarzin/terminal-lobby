@@ -1,8 +1,22 @@
-import { For, Show, createEffect, createSignal, on, onCleanup, type Component } from "solid-js";
+import {
+  For,
+  Show,
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+  type Component,
+} from "solid-js";
 import type { PlanOptionView } from "../lib/answer-api";
 import { CardDot, CardHead } from "./CardHead";
 import { Markdown } from "./Markdown";
-import { feedbackClearsContext, type PlanNotice, type PlanSending } from "./plan.logic";
+import {
+  feedbackClearsContext,
+  splitPlanTitle,
+  type PlanNotice,
+  type PlanSending,
+} from "./plan.logic";
 import type { PlanReading } from "./timeline.logic";
 
 /** The words for each notice (docs/plans/2026-09-24-text-composer-redesign.md). */
@@ -105,6 +119,7 @@ export const PlanCard: Component<{
     ),
   );
 
+  const split = createMemo(() => splitPlanTitle(props.plan ?? ""));
   const gone = () => props.notice === "gone";
   /** No choices to offer: the pane could not be read, and the plan has not gone. */
   const unreadable = () => !gone() && props.reading === null;
@@ -149,18 +164,27 @@ export const PlanCard: Component<{
         onTakeControl={props.onTakeControl}
       />
 
+      {/* The plan's own title is the card's question line, as the prototype
+          draws it, and the well under it starts with the steps. */}
+      <Show when={split().title}>
+        <div class="tl-qcard-question">{split().title}</div>
+      </Show>
       <div class="tl-qcard-body">
         <Show
           when={props.plan !== null}
           fallback={<div class="tl-plancard-loading">Loading the plan…</div>}
         >
-          <div
-            class="tl-plancard-plan"
-            ref={attach}
-            data-full={full() ? "true" : undefined}
-            data-clamped={overflows() && !full() ? "true" : undefined}
-          >
-            <Markdown text={props.plan ?? ""} />
+          {/* The well carries the border and the fill, so the clamp's fade
+              below runs over the plan's words and not over the well's edge. */}
+          <div class="tl-plancard-well">
+            <div
+              class="tl-plancard-plan"
+              ref={attach}
+              data-full={full() ? "true" : undefined}
+              data-clamped={overflows() && !full() ? "true" : undefined}
+            >
+              <Markdown text={split().rest} />
+            </div>
           </div>
         </Show>
         <Show when={props.stale}>
