@@ -1204,6 +1204,8 @@ def review_key(ch):
 # FAKEDIALOG_MODE; a start that is off the cycle, dontAsk, gives way to the
 # cycle's first stop and never comes back, as measured. Every stop the box has
 # shown is listed above it, so a test can say what a walk passed through.
+# A "!" typed at the input box raises the plan approval, standing in for the
+# dialog a PreToolUse announces about a second before the CLI draws it.
 
 PLAN_OPTS = os.environ.get(
     "FAKEDIALOG_PLAN_OPTS",
@@ -1414,7 +1416,7 @@ def plan_key(ch):
 
 def plan_main():
     """The plan approval, then the input box; or the input box alone."""
-    global in_paste
+    global in_paste, plan_up
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
@@ -1446,6 +1448,8 @@ def plan_main():
                 continue
             if plan_up:
                 plan_key(ch)
+            elif ch == "!":
+                plan_up = True
             redraw()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)

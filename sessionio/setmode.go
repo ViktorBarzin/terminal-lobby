@@ -231,7 +231,11 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 		return ModeResult{}, err
 	}
 	defer unlock()
-	if in.dialogMarked(osUser, session) {
+	stale, up, err := in.dialogPending(ctx, osUser, session)
+	if err != nil {
+		return ModeResult{}, err
+	}
+	if up {
 		return ModeResult{Reason: ModeDialogOpen}, nil
 	}
 	pane, err := in.CapturePane(osUser, session)
@@ -256,7 +260,7 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 	seen := map[string]bool{from: true}
 	cur := from
 	for res.Presses < maxModePresses {
-		if res.Presses > 0 && in.dialogMarked(osUser, session) {
+		if res.Presses > 0 && in.dialogMarked(osUser, session, stale) {
 			res.Reason = ModeDialogOpen
 			return res, nil
 		}
@@ -331,9 +335,48 @@ func (in *Injector) busy(osUser, session string) bool {
 	return strings.TrimSpace(bg) != ""
 }
 
-// dialogMarked reports whether the hooks say a blocking dialog is up
-// (OptionAsk).
-func (in *Injector) dialogMarked(osUser, session string) bool {
+// dialogDraw is how long the hooks' marker (OptionAsk) may stand over a pane
+// that still shows the status line before the marker is taken to be one no
+// dialog followed. The PreToolUse that sets it fires about a second before the
+// dialog is drawn (measured 2026-09-13). Nothing clears it when a question is
+// escaped: Esc interrupts the turn, and none of the hooks the box wires fires
+// for that (measured 2026-09-26, the pane back at its prompt and the marker
+// still naming the escaped call). A var so a test can shorten it.
+var dialogDraw = 3 * time.Second
+
+// dialogPending reports whether a blocking dialog is up or about to be: the
+// hooks' marker is set and the status line has gone, which a drawn dialog
+// takes the place of. A marker whose status line stays drawn for dialogDraw is
+// returned as `stale`, for the walk to ignore from then on. A marker that
+// changes while it is watched is watched afresh, since a new id is a new
+// dialog on its way.
+func (in *Injector) dialogPending(ctx context.Context, osUser, session string) (stale string, up bool, err error) {
 	ask, _ := in.Option(osUser, session, OptionAsk)
-	return ask != ""
+	deadline := time.Now().Add(dialogDraw)
+	for ask != "" {
+		pane, err := in.CapturePane(osUser, session)
+		if err != nil {
+			return "", false, err
+		}
+		if PaneMode(pane) == "" {
+			return "", true, nil
+		}
+		if !time.Now().Before(deadline) {
+			return ask, false, nil
+		}
+		if err := answerWait(ctx, keySettle); err != nil {
+			return "", false, err
+		}
+		if now, _ := in.Option(osUser, session, OptionAsk); now != ask {
+			ask, deadline = now, time.Now().Add(dialogDraw)
+		}
+	}
+	return "", false, nil
+}
+
+// dialogMarked reports whether the hooks say a blocking dialog is up
+// (OptionAsk), other than the marker dialogPending found stale.
+func (in *Injector) dialogMarked(osUser, session, stale string) bool {
+	ask, _ := in.Option(osUser, session, OptionAsk)
+	return ask != "" && ask != stale
 }

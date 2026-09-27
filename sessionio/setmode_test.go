@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The permission-mode driver: Shift+Tab one stop at a time, the status line
@@ -267,14 +268,40 @@ func TestSetModeRefusesWhileADialogIsUp(t *testing.T) {
 			t.Fatalf("the dialog went away:\n%s", pane)
 		}
 	})
-	t.Run("the marker", func(t *testing.T) {
+	t.Run("the marker, with the dialog a moment away", func(t *testing.T) {
 		in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" ")
 		stamp(t, in, osUser, OptionAsk, "toolu_1")
+		// The CLI draws the dialog about a second after the PreToolUse that
+		// sets the marker (measured 2026-09-13).
+		draw := time.AfterFunc(400*time.Millisecond, func() {
+			_ = in.Command(osUser, "send-keys", "-t", exactPane("demo"), "-l", "!").Run()
+		})
+		t.Cleanup(func() { draw.Stop() })
 		res := setMode(t, in, osUser, ModePlan)
 		if res.Applied || res.Reason != ModeDialogOpen || res.Presses != 0 {
 			t.Fatalf("got %+v, want dialog-open with nothing pressed", res)
 		}
 	})
+}
+
+// Esc on a question interrupts the turn, and none of the hooks the box wires
+// fires for that, so the marker the PreToolUse set outlives the dialog
+// (measured 2026-09-26 in a scratch session: the pane back at an empty prompt
+// reading "auto mode on", @claude_ask still naming the escaped call). A marker
+// over a status line that stays drawn is not a dialog, and it does not block
+// the walk, nor does it later stop it midway.
+func TestSetModeWalksPastAMarkerNoDialogFollowed(t *testing.T) {
+	was := dialogDraw
+	dialogDraw = 600 * time.Millisecond
+	t.Cleanup(func() { dialogDraw = was })
+	in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" ")
+	stamp(t, in, osUser, OptionAsk, "toolu_escaped")
+
+	res := setMode(t, in, osUser, ModePlan)
+
+	if !res.Applied || res.Mode != ModePlan || res.Presses != 2 {
+		t.Fatalf("got %+v, want plan after two presses", res)
+	}
 }
 
 // A press the status line does not answer ends the walk: pressing again
