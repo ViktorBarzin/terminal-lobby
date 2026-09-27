@@ -4,6 +4,7 @@ import {
   createMemo,
   createSignal,
   For,
+  Index,
   on,
   onCleanup,
   onMount,
@@ -39,6 +40,8 @@ import {
   type ToolRow,
   type TurnFoldRow,
   type UserRow,
+  type WorkGroupRow,
+  type WorkLeaf,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
@@ -637,6 +640,29 @@ export const MessagesTimeline: Component<{
     }
   };
 
+  /**
+   * One row of a work group, drawn as the call or thinking it is.
+   *
+   * A group only grows at its end, so the row at an index keeps its kind and
+   * the switch runs once; `<Index>` hands each position a signal, so a call
+   * whose result lands updates in place and an opened call stays open.
+   */
+  const renderGroupLeaf = (leaf: Accessor<WorkLeaf>): JSX.Element => {
+    const first = untrack(leaf);
+    if (first.kind === "thinking") return <ThinkingRowView row={leaf() as ThinkingRow} />;
+    if (first.itemType === "skill") return <SkillRowView row={leaf() as ToolRow} />;
+    return (
+      <ToolRowView
+        row={leaf() as ToolRow}
+        session={props.session}
+        me={props.me}
+        onOpenPreview={props.onOpenPreview}
+        onLoadFull={props.onLoadFull}
+        renderChild={renderLeaf}
+      />
+    );
+  };
+
   // The row kind is encoded in its key, so a node never changes kind under
   // itself and the switch can run once, at creation.
   // A ticking clock for the drill-in's working row. One timer for the whole
@@ -712,6 +738,14 @@ export const MessagesTimeline: Component<{
         return <StatusRowView row={row() as StatusRow} />;
       case "working":
         return <WorkingRowView row={row() as WorkingRow} now={now()} />;
+      case "work-group":
+        // The group's calls, one row each, the way they drew before calls
+        // were gathered into groups.
+        return (
+          <div class="tl-work-group">
+            <Index each={(row() as WorkGroupRow).calls}>{renderGroupLeaf}</Index>
+          </div>
+        );
       case "turn-fold":
         return (
           <TurnFoldRowView

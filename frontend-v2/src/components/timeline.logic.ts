@@ -47,6 +47,10 @@ import {
  * Inc): the last assistant message of a settled turn stays visible as the
  * turn's answer and everything else folds behind "Worked for Ns". What a tool
  * row SAYS comes from canonicalize.ts, which reads the transcript's own payloads.
+ *
+ * Since the T3 pass (2026-09-27) each run of tool calls between two replies is
+ * gathered into one work group row (see WorkGroupRow), in running and settled
+ * turns alike, and a settled turn's fold hides replies and groups in order.
  */
 
 export interface UserRow {
@@ -97,6 +101,8 @@ export interface ToolRow {
   payload?: unknown;
   isError: boolean;
   done: boolean;
+  /** When the result was written, once it has been. */
+  doneAt?: number;
   /** The payload was capped; the full one is fetched by toolId. */
   truncated: boolean;
   /** Subagent work belonging to this call (collab_agent_tool_call only). */
@@ -248,14 +254,72 @@ export interface TurnFoldRow {
   kind: "turn-fold";
   key: string;
   turnKey: string;
+  /** How many steps the fold hides, counting each call inside a work group. */
   count: number;
   durationMs?: number;
-  hidden: LeafRow[];
+  /** The replies and work groups the fold hides, in order. */
+  hidden: FoldedRow[];
   /** At least one hidden row is a failure — the collapsed row must say so. */
   hasError: boolean;
   /** Files the turn changed, summarised on the collapsed row. */
   changedFiles: string[];
+  /**
+   * The pictures of the work groups the fold hides, in order. Pictures from
+   * tools stay in view when their group is folded, and a folded turn folds
+   * its groups too, so the fold row carries them.
+   */
+  pictures: WorkPicture[];
   usage?: TokenUsage;
+}
+
+/** A picture a call handed back, as a work group lists it. */
+export type WorkPicture =
+  /** An image block in the call's result, read back by the call's id and index. */
+  | { kind: "block"; toolId: string; n: number; label: string }
+  /** A file a screenshot tool wrote, by its absolute path. */
+  | { kind: "file"; path: string };
+
+/** What the running work group is doing, for its spinner row. */
+export interface WorkGroupLive {
+  /** The call in flight. Absent while Claude is between calls. */
+  tool?: string;
+  label?: string;
+  /** When the group began: its first row. The row's clock counts from here. */
+  startedAt?: number;
+  /** When the call in flight began. */
+  callStartedAt?: number;
+  /** How many of the group's calls have come back. */
+  done: number;
+  /** Claude is stopped on a prompt the pane shows (see WorkingRow.waiting). */
+  waiting?: boolean;
+}
+
+/** The rows a work group holds: its calls, and the thinking among them. */
+export type WorkLeaf = ToolRow | ThinkingRow;
+
+/**
+ * One run of tool calls between two replies, drawn as one row: "Ran 3
+ * commands, edited 2 files · 28s" (docs/plans/2026-09-27-text-view-t3-pass.md).
+ *
+ * The key is the run's first row's, prefixed, so it is the same while the turn
+ * runs and after it settles: MessagesTimeline keys rows by `key`, and an open
+ * group has to stay open, and the scroll pin still, as the run grows.
+ */
+export interface WorkGroupRow {
+  kind: "work-group";
+  key: string;
+  turnKey: string;
+  calls: WorkLeaf[];
+  /** First call's start to the last result, when both carry a time. */
+  durationMs?: number;
+  /** At least one call failed. */
+  hasError: boolean;
+  /** The turn was interrupted while this group ran. */
+  stopped: boolean;
+  /** Every call's pictures, in call order. */
+  pictures: WorkPicture[];
+  /** Set on the group still running at the end of an open turn. */
+  live?: WorkGroupLive;
 }
 export interface WorkingRow {
   kind: "working";
@@ -291,7 +355,9 @@ export type LeafRow =
   | ErrorRow
   | StatusRow
   | MetaRow;
-export type TimelineRow = LeafRow | TurnFoldRow | WorkingRow | ContinuationRow;
+/** What a turn's fold can hide: its leaf rows and its work groups. */
+export type FoldedRow = LeafRow | WorkGroupRow;
+export type TimelineRow = LeafRow | WorkGroupRow | TurnFoldRow | WorkingRow | ContinuationRow;
 
 interface Turn {
   key: string;
@@ -775,6 +841,7 @@ function collectTurnRows(turn: Turn): {
           existing.payload = e.result;
           existing.isError = !!e.isError;
           existing.done = true;
+          if (e.at !== undefined) existing.doneAt = e.at;
           existing.truncated = !!e.truncated;
           if (e.images?.length) existing.images = e.images;
           if (e.files?.length) existing.files = e.files;
@@ -806,7 +873,7 @@ function collectTurnRows(turn: Turn): {
               children: [],
               turnKey: turn.key,
               ...(e.toolId !== undefined ? { toolId: e.toolId } : {}),
-              ...(e.at !== undefined ? { at: e.at } : {}),
+              ...(e.at !== undefined ? { at: e.at, doneAt: e.at } : {}),
               ...(e.images?.length ? { images: e.images } : {}),
               ...(e.files?.length ? { files: e.files } : {}),
             },
@@ -977,11 +1044,23 @@ function collectTurnRows(turn: Turn): {
   return { userRow, work };
 }
 
+/** A leaf the fold hides, or a work group holding some: did anything fail? */
+function foldedFailed(row: FoldedRow): boolean {
+  return row.kind === "work-group" ? row.hasError : leafFailed(row);
+}
+
+/** How many steps a folded row stands for: a work group counts its rows. */
+function foldedSteps(row: FoldedRow): number {
+  return row.kind === "work-group" ? row.calls.length : 1;
+}
+
 /**
  * The rows a turn contributes below its user message. A settled turn with more
- * than one work row folds; anything else hands back the work as it stands.
+ * than one work row folds to its last reply; anything else hands back the work
+ * as it stands. The fold hides replies and work groups in order (Viktor,
+ * 2026-09-27: "a finished turn still folds to its last reply").
  */
-function foldSettledTurn(turn: Turn, work: LeafRow[], settled: boolean): TimelineRow[] {
+function foldSettledTurn(turn: Turn, work: FoldedRow[], settled: boolean): TimelineRow[] {
   const rows: TimelineRow[] = [];
   if (settled && work.length > 1) {
     // Keep the last assistant message visible (the turn's "answer"); fold the
@@ -997,19 +1076,21 @@ function foldSettledTurn(turn: Turn, work: LeafRow[], settled: boolean): Timelin
     if (visibleAt < 0) visibleAt = work.length - 1;
     const visible = work[visibleAt];
     const hidden = work.filter((_, i) => i !== visibleAt);
-    const changed = [...new Set(work.flatMap((r) => (r.kind === "tool" ? r.changedFiles : [])))];
+    const changed = [...new Set(work.flatMap(changedFilesOf))];
+    const duration = turnDuration(turn);
     const fold: TurnFoldRow | null =
       hidden.length > 0
         ? {
             kind: "turn-fold",
             key: `fold-${turn.key}`,
             turnKey: turn.key,
-            count: hidden.length,
+            count: hidden.reduce((n, r) => n + foldedSteps(r), 0),
             hidden,
-            hasError: hidden.some(leafFailed),
+            hasError: hidden.some(foldedFailed),
             changedFiles: changed,
+            pictures: hidden.flatMap((r) => (r.kind === "work-group" ? r.pictures : [])),
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
-            ...(turnDuration(turn) !== undefined ? { durationMs: turnDuration(turn) } : {}),
+            ...(duration !== undefined ? { durationMs: duration } : {}),
           }
         : null;
     // Chronology: the fold stands for the run of hidden rows that begins at
@@ -1023,6 +1104,217 @@ function foldSettledTurn(turn: Turn, work: LeafRow[], settled: boolean): Timelin
     for (const r of work) rows.push(r);
   }
   return rows;
+}
+
+/** The files a row changed: a call's own, or every call's in a group. */
+function changedFilesOf(row: FoldedRow): string[] {
+  if (row.kind === "tool") return row.changedFiles;
+  if (row.kind === "work-group") {
+    return row.calls.flatMap((c) => (c.kind === "tool" ? c.changedFiles : []));
+  }
+  return [];
+}
+
+/** What opens the notice Claude writes when a turn is interrupted (sessionio record.go). */
+const INTERRUPT_MARKER = "[Request interrupted by user";
+
+/** The status row an interrupt leaves in the turn, or false for any other row. */
+function isInterrupt(row: FoldedRow | undefined): boolean {
+  return row?.kind === "status" && row.subtype === "state" && row.body.startsWith(INTERRUPT_MARKER);
+}
+
+/**
+ * Gather each run of tool calls, with the thinking among them, into one work
+ * group. A run of thinking with no call in it stays as it is: there is no work
+ * to summarise. Every other row ends a run and keeps its own place.
+ *
+ * In an open turn the group the work ends on is the running one and gets
+ * `live`; `waiting` says Claude is stopped on a prompt rather than working.
+ */
+function groupWork(
+  work: LeafRow[],
+  turnKey: string,
+  settled: boolean,
+  waiting: boolean,
+): FoldedRow[] {
+  const out: FoldedRow[] = [];
+  let run: WorkLeaf[] = [];
+  const flush = (next: LeafRow | undefined) => {
+    if (run.length === 0) return;
+    if (!run.some((r) => r.kind === "tool")) {
+      out.push(...run);
+    } else {
+      out.push(workGroup(run, turnKey, settled, next));
+    }
+    run = [];
+  };
+  for (const r of work) {
+    if (r.kind === "tool" || r.kind === "thinking") {
+      run.push(r);
+      continue;
+    }
+    flush(r);
+    out.push(r);
+  }
+  flush(undefined);
+  // The group still running is the one the open turn ends on.
+  const last = out[out.length - 1];
+  if (!settled && last?.kind === "work-group") {
+    last.live = liveOf(last, waiting);
+  }
+  return out;
+}
+
+/** One work group from a run of rows, and the row that ended it (if any). */
+function workGroup(
+  run: WorkLeaf[],
+  turnKey: string,
+  settled: boolean,
+  next: LeafRow | undefined,
+): WorkGroupRow {
+  const calls = run.filter((r): r is ToolRow => r.kind === "tool");
+  // Stopped: the interrupt notice is the row that ended the run, or the turn
+  // settled with a call that never came back (an interrupt before Claude's
+  // first token writes no notice at all).
+  const stopped = isInterrupt(next) || (settled && calls.some((c) => !c.done));
+  const start = calls[0]!.at;
+  let end: number | undefined;
+  for (const c of calls) {
+    if (c.doneAt !== undefined && (end === undefined || c.doneAt > end)) end = c.doneAt;
+  }
+  if (stopped && next?.at !== undefined && (end === undefined || next.at > end)) end = next.at;
+  const duration =
+    start !== undefined && end !== undefined && end > start ? end - start : undefined;
+  return {
+    kind: "work-group",
+    key: `group-${run[0]!.key}`,
+    turnKey,
+    calls: run,
+    hasError: calls.some((c) => c.isError),
+    stopped,
+    pictures: calls.flatMap(picturesOf),
+    ...(duration !== undefined ? { durationMs: duration } : {}),
+  };
+}
+
+/** A call's pictures, image blocks first and then the files it wrote. */
+function picturesOf(call: ToolRow): WorkPicture[] {
+  const out: WorkPicture[] = [];
+  const toolId = call.toolId;
+  // A block is read back by the call's id, so a call without one has no
+  // route to its pictures.
+  if (toolId) {
+    const label = call.detail || call.label;
+    for (const ref of call.images ?? []) out.push({ kind: "block", toolId, n: ref.n, label });
+  }
+  for (const path of call.files ?? []) out.push({ kind: "file", path });
+  return out;
+}
+
+/** The running group's live state: the call in flight, and how far along it is. */
+function liveOf(group: WorkGroupRow, waiting: boolean): WorkGroupLive {
+  let current: ToolRow | undefined;
+  let done = 0;
+  for (const c of group.calls) {
+    if (c.kind !== "tool") continue;
+    if (c.done) done++;
+    else current = c;
+  }
+  const startedAt = group.calls[0]!.at;
+  return {
+    ...(current ? { tool: current.tool, label: current.label } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(current?.at !== undefined ? { callStartedAt: current.at } : {}),
+    done,
+    ...(waiting ? { waiting: true } : {}),
+  };
+}
+
+/** How a work group's summary counts a call. */
+type Tally = "skill" | "command" | "edit" | "read" | "search" | "picture" | "tool" | "agent";
+
+/**
+ * What a call counts as. Grep and Glob classify as file reads (canonicalize),
+ * but three of them are three searches, not three files read.
+ */
+function tallyOf(call: ToolRow): Tally {
+  switch (call.itemType) {
+    case "command_execution":
+      return "command";
+    case "file_change":
+      return "edit";
+    case "file_read":
+      return call.tool === "Grep" || call.tool === "Glob" ? "search" : "read";
+    case "web_search":
+      return "search";
+    case "image_view":
+      return "picture";
+    case "collab_agent_tool_call":
+      return "agent";
+    case "skill":
+      return "skill";
+    case "mcp_tool_call":
+    case "dynamic_tool_call":
+    case "todo":
+    case "question":
+    case "plan":
+      return "tool";
+  }
+}
+
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * A work group's one-line summary: "Ran 3 commands, edited 2 files".
+ *
+ * One phrase per kind of call, in the order each kind first appears. Edits and
+ * reads count FILES, since Claude reads a long file in pages and edits one
+ * file in several places; everything else counts calls. Thinking says nothing.
+ */
+export function groupSummary(calls: readonly WorkLeaf[]): string {
+  const order: Tally[] = [];
+  const counts = new Map<Tally, number>();
+  const files = new Map<Tally, Set<string>>();
+  const skills: string[] = [];
+  for (const c of calls) {
+    if (c.kind !== "tool") continue;
+    const t = tallyOf(c);
+    if (!counts.has(t)) order.push(t);
+    counts.set(t, (counts.get(t) ?? 0) + 1);
+    if (t === "edit" || t === "read") {
+      const seen = files.get(t) ?? new Set<string>();
+      const ids =
+        t === "edit" && c.changedFiles.length > 0 ? c.changedFiles : [c.detail || c.label || c.key];
+      for (const id of ids) seen.add(id);
+      files.set(t, seen);
+    }
+    if (t === "skill" && c.label && !skills.includes(c.label)) skills.push(c.label);
+  }
+  const phrase = (t: Tally): string => {
+    const n = counts.get(t) ?? 0;
+    switch (t) {
+      case "command":
+        return `ran ${plural(n, "command", "commands")}`;
+      case "edit":
+        return `edited ${plural(files.get(t)?.size ?? n, "file", "files")}`;
+      case "read":
+        return `read ${plural(files.get(t)?.size ?? n, "file", "files")}`;
+      case "search":
+        return n === 1 ? "searched once" : `searched ${n} times`;
+      case "picture":
+        return `viewed ${plural(n, "picture", "pictures")}`;
+      case "tool":
+        return `used ${plural(n, "tool", "tools")}`;
+      case "agent":
+        return `ran ${plural(n, "agent", "agents")}`;
+      case "skill":
+        if (skills.length === 1) return `loaded ${skills[0]}`;
+        if (skills.length === 2) return `loaded ${skills[0]} and ${skills[1]}`;
+        return `loaded ${plural(skills.length || n, "skill", "skills")}`;
+    }
+  };
+  const text = order.map(phrase).join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** The single progress indicator a running turn gets. */
@@ -1095,14 +1387,20 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
 /**
  * Derive the folded row list from a session's events (see module doc).
  *
- * `fold: false` leaves every settled turn's work in place. The drill-in reads
- * an agent's own transcript that way: an agent is one long turn, and folding it
- * behind "Worked for 4m" would hide exactly the work the reader opened it for.
+ * `fold: false` leaves every settled turn's work in place, and `group: false`
+ * leaves every call as its own row rather than gathering each run into a work
+ * group. The drill-in reads an agent's own transcript with both off: an agent
+ * is one long turn, and folding it behind "Worked for 4m" or "Ran 40 commands"
+ * would hide exactly the work the reader opened it for.
  */
-export function deriveRows(events: Event[], opts: { fold?: boolean } = {}): TimelineRow[] {
+export function deriveRows(
+  events: Event[],
+  opts: { fold?: boolean; group?: boolean } = {},
+): TimelineRow[] {
   const turns = groupTurns(events);
   const out: TimelineRow[] = [];
   const fold = opts.fold !== false;
+  const group = opts.group !== false;
 
   turns.forEach((turn, ti) => {
     const isLast = ti === turns.length - 1;
@@ -1111,10 +1409,14 @@ export function deriveRows(events: Event[], opts: { fold?: boolean } = {}): Time
     // A plan left without a result in a turn that has settled was never
     // answered: the session moved on without it.
     if (settled) for (const r of work) if (r.kind === "plan" && r.pending) supersedePlan(r);
+    // The working row reads the calls one by one, so it is worked out before
+    // they are gathered into groups.
+    const working = settled ? null : workingRowFor(turn, work);
+    const shaped = group ? groupWork(work, turn.key, settled, working?.waiting === true) : work;
 
     if (userRow) out.push(userRow);
-    for (const r of foldSettledTurn(turn, work, settled && fold)) out.push(r);
-    if (!settled) out.push(workingRowFor(turn, work));
+    for (const r of foldSettledTurn(turn, shaped, settled && fold)) out.push(r);
+    if (working) out.push(working);
   });
 
   markSuperseded(out);
@@ -1393,7 +1695,12 @@ export function liveRowOf(
   sent: ReadonlyArray<Pick<PendingPrompt, "command">>,
 ): WorkingRow | undefined {
   const row = liveRow(shown);
-  if (row && sent.length > 0 && sent.every((p) => p.command) && row.turnKey.startsWith(PENDING_TURN)) {
+  if (
+    row &&
+    sent.length > 0 &&
+    sent.every((p) => p.command) &&
+    row.turnKey.startsWith(PENDING_TURN)
+  ) {
     return liveRow(base);
   }
   return row;
@@ -1545,7 +1852,9 @@ export function permissionFromPane(events: Event[]): PermissionReading | null {
   return {
     id,
     title: typeof raw.title === "string" ? raw.title : "",
-    detail: Array.isArray(raw.detail) ? raw.detail.filter((l): l is string => typeof l === "string") : [],
+    detail: Array.isArray(raw.detail)
+      ? raw.detail.filter((l): l is string => typeof l === "string")
+      : [],
     prompt: typeof raw.prompt === "string" ? raw.prompt : "",
     options,
   };

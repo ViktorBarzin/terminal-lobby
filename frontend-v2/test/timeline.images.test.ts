@@ -21,8 +21,11 @@ const RECORD = "1ecbc9e7-ef70-4213-bd81-82c2dfcb5169";
 
 const userRow = (rows: ReturnType<typeof deriveRows>): UserRow =>
   rows.find((r): r is UserRow => r.kind === "user")!;
+/** The one call, inside the work group that holds it since 2026-09-27. */
 const toolRow = (rows: ReturnType<typeof deriveRows>): ToolRow =>
-  rows.find((r): r is ToolRow => r.kind === "tool")!;
+  rows
+    .flatMap((r) => (r.kind === "work-group" ? r.calls : [r]))
+    .find((r): r is ToolRow => r.kind === "tool")!;
 
 describe("pictures on the user row", () => {
   it("carries a terminal paste's references and its record", () => {

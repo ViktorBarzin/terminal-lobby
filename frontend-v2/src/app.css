@@ -2035,6 +2035,14 @@ label.tl-set-row-label {
   width: 100%;
   margin: 0 auto;
 }
+/* A work group's calls lay out as rows of the timeline itself, spaced by its
+   gap, the way they did before calls were gathered into groups. */
+.tl-work-group {
+  display: contents;
+}
+.tl-work-group > * {
+  flex-shrink: 0;
+}
 
 /* The user's message: a rounded grey bubble on the right, with no outline
    (the T3 pass, 2026-09-27; the prototype's `.m-user`). It was a bordered card

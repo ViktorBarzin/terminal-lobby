@@ -43,7 +43,7 @@ export const AgentTranscript: Component<{
 }> = (props) => {
   const stream = createAgentStream(props.session, props.agent, { notify: props.notify });
   createEffect(() => (props.parked ? stream.park() : stream.unpark()));
-  const rows = createMemo(() => deriveRows(stream.events, { fold: false }));
+  const rows = createMemo(() => deriveRows(stream.events, { fold: false, group: false }));
   const head = createMemo(() => (props.info ? drillHead(props.info, props.run) : undefined));
   const title = () => head()?.title ?? props.agent;
 

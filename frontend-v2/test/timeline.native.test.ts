@@ -27,8 +27,12 @@ const prompt = (text = "go") => ev({ kind: "user", body: text });
 
 /** Rows of one unsettled turn, flattened past any fold. */
 const rowsOf = (...events: Event[]) => deriveRows(events);
+/** Opens every fold, and every work group into the calls it holds (2026-09-27). */
 const flat = (rows: ReturnType<typeof deriveRows>) =>
-  visibleRows(rows, new Set(rows.filter((r) => r.kind === "turn-fold").map((r) => r.turnKey)));
+  visibleRows(
+    rows,
+    new Set(rows.filter((r) => r.kind === "turn-fold").map((r) => r.turnKey)),
+  ).flatMap((r) => (r.kind === "work-group" ? r.calls : [r]));
 
 describe("tool rows carry what the call is doing", () => {
   it("labels a command row with the command", () => {
@@ -41,7 +45,7 @@ describe("tool rows carry what the call is doing", () => {
         body: JSON.stringify({ command: "go test ./..." }),
       }),
     );
-    const tool = rows.find((r) => r.kind === "tool") as ToolRow;
+    const tool = flat(rows).find((r) => r.kind === "tool") as ToolRow;
     expect(tool.itemType).toBe("command_execution");
     expect(tool.label).toBe("go test ./...");
     expect(tool.done).toBe(false);
@@ -436,7 +440,7 @@ describe("the fold", () => {
       ev({ kind: "turn_end" }),
     ];
     expect(deriveRows(events).map((r) => r.kind)).toEqual(["user", "turn-fold", "message"]);
-    expect(deriveRows(events, { fold: false }).map((r) => r.kind)).toEqual([
+    expect(deriveRows(events, { fold: false, group: false }).map((r) => r.kind)).toEqual([
       "user",
       "thinking",
       "tool",
@@ -447,7 +451,7 @@ describe("the fold", () => {
   it("still shows a running turn's working row when it does not fold", () => {
     const rows = deriveRows(
       [prompt(), ev({ kind: "tool_use", tool: "Bash", toolId: "b1", body: "{}" })],
-      { fold: false },
+      { fold: false, group: false },
     );
     expect(rows.map((r) => r.kind)).toEqual(["user", "tool", "working"]);
   });
@@ -536,9 +540,9 @@ describe("sameRow", () => {
         ev({ kind: "tool_result", toolId: "tu1", body: "x", result: { stdout } }),
       ]);
     seq = 0;
-    const a = mk("one").find((r) => r.kind === "tool")!;
+    const a = flat(mk("one")).find((r) => r.kind === "tool")!;
     seq = 0;
-    const b = mk("two").find((r) => r.kind === "tool")!;
+    const b = flat(mk("two")).find((r) => r.kind === "tool")!;
     expect(sameRow(a, b)).toBe(false);
   });
 });

@@ -19,9 +19,13 @@ import type { Event } from "../src/types/events";
  *
  * A settled turn past a few rows collapses into a `turn-fold` carrying its
  * leaves in `hidden` — the same walk timeline.logic does when it needs them all.
+ * A skill call sits inside its turn's work group since 2026-09-27, so the walk
+ * opens groups too.
  */
 const leaves = (rows: ReturnType<typeof deriveRows>) =>
-  rows.flatMap((r) => (r.kind === "turn-fold" ? r.hidden : [r]));
+  rows
+    .flatMap((r) => (r.kind === "turn-fold" ? r.hidden : [r]))
+    .flatMap((r) => (r.kind === "work-group" ? r.calls : [r]));
 
 let id = 0;
 const ev = (e: Partial<Event> & Pick<Event, "kind">): Event =>
@@ -81,9 +85,7 @@ describe("folding the two records into one card", () => {
     // workflow-authoring: 14 of the 24 bodies with no `Base directory` line.
     reset();
     const rows = leaves(
-      deriveRows(
-        turn(skillCall("workflow-authoring"), skillLoaded("workflow-authoring", 16_705)),
-      ),
+      deriveRows(turn(skillCall("workflow-authoring"), skillLoaded("workflow-authoring", 16_705))),
     );
     expect(rows.filter((r) => r.kind === "meta")).toHaveLength(0);
     const row = rows.find((r) => r.kind === "tool")!;
