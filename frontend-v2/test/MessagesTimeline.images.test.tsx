@@ -15,8 +15,9 @@ import { closePicture, picture } from "../src/store/picture";
  *     Fenced code stays code, and a bare name draws nothing.
  *   - the user's bubble: a picture pasted into the terminal is drawn where its
  *     `[Image #N]` placeholder stood.
- *   - a tool row: a small thumbnail for a Read of an image and for a
- *     screenshot, which opens full size.
+ *   - a tool call: a small thumbnail for a Read of an image and for a
+ *     screenshot, under the work group holding the call (or the turn's fold
+ *     while it hides that group), which opens full size.
  * Every picture that cannot be read falls back to text, never a broken icon.
  */
 
@@ -253,44 +254,59 @@ describe("pictures on tool rows", () => {
       session === undefined ? {} : { session },
     );
 
-  /** The fold hides settled work; open it to reach the tool rows. */
+  /** The fold hides settled work; open it to reach the work group. */
   const unfold = (c: HTMLElement): void => {
     fireEvent.click(c.querySelector(".tl-fold-btn")!);
   };
+  /** Open the work group, then its first call. */
+  const openCall = (c: HTMLElement): HTMLElement => {
+    fireEvent.click(c.querySelector(".tl-row-group .tl-group-head")!);
+    const call = c.querySelector<HTMLElement>(".tl-group-call")!;
+    fireEvent.click(call.querySelector(".tl-group-call-head")!);
+    return call;
+  };
 
-  it("shows a Read of an image as a thumbnail of the transcript's own copy", () => {
+  // Since the T3 pass (2026-09-27) a tool's pictures are drawn under the work
+  // group that holds the call, folded or open, and under the turn's fold while
+  // the fold hides that group.
+  it("shows a Read of an image as a thumbnail of the transcript's own copy, under the fold", () => {
     const { container } = readTurn();
-    unfold(container);
-    const tool = container.querySelector(".tl-row-tool")!;
-    const img = tool.querySelector(".tl-tool-thumbs .tl-tool-thumb img");
+    const img = container.querySelector(".tl-row-fold .tl-group-pics .tl-tool-thumb img");
     expect(img?.getAttribute("src")).toBe(`/result/s/${TOOL}/image/0`);
     expect(img?.getAttribute("alt")).toBe("shot.png");
   });
 
-  it("shows the thumbnail while the row is collapsed, and no empty output once open", () => {
+  it("moves the thumbnail under its work group once the turn is unfolded", () => {
     const { container } = readTurn();
     unfold(container);
-    const tool = container.querySelector(".tl-row-tool")!;
-    expect(tool.querySelector(".tl-tool-raw")).toBeNull();
-    fireEvent.click(tool.querySelector(".tl-tool-toggle")!);
-    expect(tool.querySelector(".tl-tool-raw pre.tl-code:not(details pre)")).toBeNull();
-    expect(tool.textContent).not.toContain("Show full output");
+    expect(container.querySelector(".tl-row-fold .tl-tool-thumb")).toBeNull();
+    const img = container.querySelector(".tl-row-group .tl-group-pics .tl-tool-thumb img");
+    expect(img?.getAttribute("src")).toBe(`/result/s/${TOOL}/image/0`);
+  });
+
+  it("shows no empty output when the picture-only call is opened", () => {
+    const { container } = readTurn();
+    unfold(container);
+    const call = openCall(container);
+    expect(call.querySelector(".tl-tool-raw")).not.toBeNull();
+    expect(call.querySelector(".tl-tool-raw pre.tl-code:not(details pre)")).toBeNull();
+    expect(call.textContent).not.toContain("Show full output");
   });
 
   it("opens the thumbnail full size", () => {
     const { container } = readTurn();
-    unfold(container);
     fireEvent.click(container.querySelector(".tl-tool-thumb")!);
     expect(picture()?.src).toBe(`/result/s/${TOOL}/image/0`);
   });
 
-  it("removes a thumbnail that cannot be read, and keeps the row", () => {
+  it("removes a thumbnail that cannot be read, and keeps the group and its call", () => {
     const { container } = readTurn();
     unfold(container);
-    const tool = container.querySelector(".tl-row-tool")!;
-    fireEvent.error(tool.querySelector(".tl-tool-thumb img")!);
-    expect(tool.querySelector("img")).toBeNull();
-    expect(tool.querySelector(".tl-tool-label")?.textContent).toContain("shot.png");
+    const group = container.querySelector(".tl-row-group")!;
+    fireEvent.error(group.querySelector(".tl-tool-thumb img")!);
+    expect(group.querySelector("img")).toBeNull();
+    fireEvent.click(group.querySelector(".tl-group-head")!);
+    expect(group.querySelector(".tl-group-call-label")?.textContent).toContain("shot.png");
   });
 
   it("shows a screenshot's file through the picture route", () => {
@@ -313,7 +329,7 @@ describe("pictures on tool rows", () => {
       ev({ id: 4, kind: "text", body: "done" }),
     ]);
     unfold(container);
-    const img = container.querySelector(".tl-row-tool .tl-tool-thumb img");
+    const img = container.querySelector(".tl-row-group .tl-tool-thumb img");
     expect(img?.getAttribute("src")).toBe("/files/image?path=%2Fhome%2Fwizard%2Fpage-top.png");
     expect(img?.getAttribute("alt")).toBe("page-top.png");
   });
@@ -335,6 +351,6 @@ describe("pictures on tool rows", () => {
         me="wizard"
       />
     ));
-    expect(container.querySelector(".tl-row-tool img")).toBeNull();
+    expect(container.querySelector(".tl-row-group img")).toBeNull();
   });
 });

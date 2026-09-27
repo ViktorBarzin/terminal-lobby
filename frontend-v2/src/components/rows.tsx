@@ -1,4 +1,13 @@
-import { createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  For,
+  Index,
+  onCleanup,
+  Show,
+  type Component,
+} from "solid-js";
 import { Markdown } from "./Markdown";
 import { Picture } from "./Attachment";
 import { contentUrlFor } from "../lib/attachments";
@@ -6,6 +15,7 @@ import { toolImageUrl } from "../lib/config";
 import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import {
+  groupSummary,
   planHeader,
   planSummary,
   shownPlanOutcome,
@@ -18,7 +28,10 @@ import {
   type TodoRow,
   type ToolRow,
   type TurnFoldRow,
+  type WorkGroupRow,
   type WorkingRow,
+  type WorkLeaf,
+  type WorkPicture,
 } from "./timeline.logic";
 import { basename } from "../store/preview.logic";
 
@@ -240,6 +253,92 @@ interface Thumb {
   kind: PictureKind;
 }
 
+/**
+ * What an opened call shows: the diff for an edit, a command's output split
+ * into stdout and stderr, anything else's output, "Show full output" for a
+ * result the wire capped, and the raw input. ToolRowView opens into it, and so
+ * does a call row inside a work group, so a group hides no detail a tool row
+ * had.
+ */
+const ToolDetail: Component<{
+  row: ToolRow;
+  /** The result is only pictures, which the caller draws as thumbnails. */
+  pictureOnly: boolean;
+  /** Fetch the full payload for a result the wire capped. */
+  onLoadFull?: (toolId: string) => Promise<string | null>;
+}> = (props) => {
+  const [full, setFull] = createSignal<string | null>(null);
+  const [loading, setLoading] = createSignal(false);
+  const loadFull = async () => {
+    if (!props.onLoadFull || !props.row.toolId || loading()) return;
+    setLoading(true);
+    setFull(await props.onLoadFull(props.row.toolId));
+    setLoading(false);
+  };
+  return (
+    <div class="tl-tool-raw">
+      <Show when={props.row.detail && props.row.detail !== props.row.label}>
+        <div class="tl-tool-detail">{props.row.detail}</div>
+      </Show>
+      <Show when={props.row.itemType === "file_change"}>
+        <DiffView payload={props.row.payload} />
+      </Show>
+      <Show when={props.row.itemType === "command_execution"}>
+        <CommandOutputView
+          payload={props.row.payload}
+          fallback={props.row.result ?? ""}
+          isError={props.row.isError}
+        />
+      </Show>
+      <Show
+        when={
+          props.row.itemType !== "file_change" &&
+          props.row.itemType !== "command_execution" &&
+          props.row.result !== undefined &&
+          !props.pictureOnly
+        }
+      >
+        <>
+          <div class="tl-tool-section-label">output{props.row.isError ? " (error)" : ""}</div>
+          <pre class="tl-code" classList={{ "tl-code-error": props.row.isError }}>
+            {props.row.result}
+          </pre>
+        </>
+      </Show>
+      <Show when={props.row.truncated}>
+        <Show
+          when={full()}
+          fallback={
+            <button type="button" class="tl-linkbtn" onClick={loadFull} disabled={loading()}>
+              {loading() ? "Loading…" : "Show full output"}
+            </button>
+          }
+        >
+          <pre class="tl-code">{full()}</pre>
+        </Show>
+      </Show>
+      <details class="tl-tool-input">
+        <summary>input</summary>
+        <pre class="tl-code">{props.row.input}</pre>
+      </details>
+    </div>
+  );
+};
+
+/** The +added −removed an edit made, or null for any other call. */
+function editStat(row: ToolRow): { added: number; removed: number } | null {
+  if (row.itemType !== "file_change") return null;
+  const stat = diffStat(diffHunks(row.payload));
+  return stat.added || stat.removed ? stat : null;
+}
+
+/** The file a call names, for its preview chip and its thumbnails' names. */
+const callPath = (row: ToolRow): string => row.changedFiles[0] ?? row.detail;
+
+/** Whether a call names a file the preview overlay can open. */
+const canPreview = (row: ToolRow): boolean =>
+  (row.itemType === "file_change" || row.itemType === "file_read") && callPath(row).startsWith("/");
+
 export const ToolRowView: Component<{
   row: ToolRow;
   /** the session, whose transcript holds a result's picture blocks. */
@@ -253,26 +352,12 @@ export const ToolRowView: Component<{
   renderChild?: (row: ToolRow["children"][number]) => unknown;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
-  const [full, setFull] = createSignal<string | null>(null);
-  const [loading, setLoading] = createSignal(false);
 
   const status = () => (!props.row.done ? "running" : props.row.isError ? "error" : "ok");
   const tick = () => (!props.row.done ? "…" : props.row.isError ? "✗" : "✓");
-  const stat = createMemo(() =>
-    props.row.itemType === "file_change" ? diffStat(diffHunks(props.row.payload)) : null,
-  );
-  const path = () => props.row.changedFiles[0] ?? props.row.detail;
-  const previewable = () =>
-    props.onOpenPreview &&
-    (props.row.itemType === "file_change" || props.row.itemType === "file_read") &&
-    path().startsWith("/");
-
-  const loadFull = async () => {
-    if (!props.onLoadFull || !props.row.toolId || loading()) return;
-    setLoading(true);
-    setFull(await props.onLoadFull(props.row.toolId));
-    setLoading(false);
-  };
+  const stat = createMemo(() => editStat(props.row));
+  const path = () => callPath(props.row);
+  const previewable = () => props.onOpenPreview && canPreview(props.row);
 
   /**
    * The pictures this call handed back, as small thumbnails (2026-09-24,
@@ -324,11 +409,13 @@ export const ToolRowView: Component<{
             {props.row.label || props.row.tool || "tool"}
           </span>
         </button>
-        <Show when={stat() && (stat()!.added || stat()!.removed)}>
-          <span class="tl-diff-stat">
-            <span class="tl-diff-add">+{stat()!.added}</span>
-            <span class="tl-diff-del">−{stat()!.removed}</span>
-          </span>
+        <Show when={stat()}>
+          {(s) => (
+            <span class="tl-diff-stat">
+              <span class="tl-diff-add">+{s().added}</span>
+              <span class="tl-diff-del">−{s().removed}</span>
+            </span>
+          )}
         </Show>
         <Show when={previewable()}>
           <button
@@ -366,52 +453,7 @@ export const ToolRowView: Component<{
       </Show>
 
       <Show when={open()}>
-        <div class="tl-tool-raw">
-          <Show when={props.row.detail && props.row.detail !== props.row.label}>
-            <div class="tl-tool-detail">{props.row.detail}</div>
-          </Show>
-          <Show when={props.row.itemType === "file_change"}>
-            <DiffView payload={props.row.payload} />
-          </Show>
-          <Show when={props.row.itemType === "command_execution"}>
-            <CommandOutputView
-              payload={props.row.payload}
-              fallback={props.row.result ?? ""}
-              isError={props.row.isError}
-            />
-          </Show>
-          <Show
-            when={
-              props.row.itemType !== "file_change" &&
-              props.row.itemType !== "command_execution" &&
-              props.row.result !== undefined &&
-              !pictureOnly()
-            }
-          >
-            <>
-              <div class="tl-tool-section-label">output{props.row.isError ? " (error)" : ""}</div>
-              <pre class="tl-code" classList={{ "tl-code-error": props.row.isError }}>
-                {props.row.result}
-              </pre>
-            </>
-          </Show>
-          <Show when={props.row.truncated}>
-            <Show
-              when={full()}
-              fallback={
-                <button type="button" class="tl-linkbtn" onClick={loadFull} disabled={loading()}>
-                  {loading() ? "Loading…" : "Show full output"}
-                </button>
-              }
-            >
-              <pre class="tl-code">{full()}</pre>
-            </Show>
-          </Show>
-          <details class="tl-tool-input">
-            <summary>input</summary>
-            <pre class="tl-code">{props.row.input}</pre>
-          </details>
-        </div>
+        <ToolDetail row={props.row} pictureOnly={pictureOnly()} onLoadFull={props.onLoadFull} />
       </Show>
     </div>
   );
@@ -743,10 +785,387 @@ export const WorkingRowView: Component<{ row: WorkingRow; now: number }> = (prop
   );
 };
 
+// ---------------------------------------------------------------------------
+// Work groups (the T3 pass, 2026-09-27; docs/plans/2026-09-27-text-view-t3-pass.md).
+
+/** The icons a work group draws, from the prototype's own set (16px box, stroked). */
+const GROUP_ICON = {
+  command: "m3 4.5 3.2 3.5L3 11.5M8 12h5",
+  edit: "M10.8 2.6 13.4 5.2 6 12.6l-3.2.6.6-3.2z",
+  read: "M9 1.8H4.6a1.4 1.4 0 0 0-1.4 1.4v9.6a1.4 1.4 0 0 0 1.4 1.4h6.8a1.4 1.4 0 0 0 1.4-1.4V5.6L9 1.8ZM9 1.8v3.8h3.8M5.8 8.4h4.4M5.8 11h3",
+  search: "M11.4 7a4.4 4.4 0 1 1-8.8 0 4.4 4.4 0 0 1 8.8 0ZM10.4 10.4l3.4 3.4",
+  picture:
+    "M3.8 2.8h8.4a2 2 0 0 1 2 2v6.4a2 2 0 0 1-2 2H3.8a2 2 0 0 1-2-2V4.8a2 2 0 0 1 2-2ZM6.9 6.3a1.2 1.2 0 1 1-2.4 0 1.2 1.2 0 0 1 2.4 0ZM2.4 12l3.8-3.6 2.6 2.4 2.1-1.8 3 2.6",
+  thought: "M8 1.8v12.4M2.6 4.9l10.8 6.2M2.6 11.1l10.8-6.2",
+  tools:
+    "M10.2 2.2a3.2 3.2 0 0 0-3 4.3L2.6 11.1a1.3 1.3 0 0 0 1.8 1.8l4.6-4.6a3.2 3.2 0 0 0 4.3-3l-1.9 1.3-1.7-.5-.5-1.7z",
+} as const;
+type GroupIcon = keyof typeof GROUP_ICON;
+
+const GroupIconSvg: Component<{ icon: GroupIcon; class: string }> = (props) => (
+  <svg
+    class={props.class}
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d={GROUP_ICON[props.icon]} />
+  </svg>
+);
+
+/** The chevron a group's head ends on; it turns a quarter while the group is open. */
+const GroupChevron: Component = () => (
+  <svg
+    class="tl-group-chev"
+    viewBox="0 0 12 12"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.7"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true"
+  >
+    <path d="m4.4 2.6 3.4 3.4-3.4 3.4" />
+  </svg>
+);
+
+/** What one row of an open group calls itself: its icon and its verb. */
+function callKind(leaf: WorkLeaf): { icon: GroupIcon; word: string } {
+  if (leaf.kind === "thinking") return { icon: "thought", word: "Thought" };
+  switch (leaf.itemType) {
+    case "command_execution":
+      return { icon: "command", word: "Ran" };
+    case "file_change":
+      return { icon: "edit", word: "Edited" };
+    case "file_read":
+      // Grep and Glob classify as reads (canonicalize), but they search.
+      return leaf.tool === "Grep" || leaf.tool === "Glob"
+        ? { icon: "search", word: "Searched" }
+        : { icon: "read", word: "Read" };
+    case "web_search":
+      return { icon: "search", word: "Searched" };
+    case "image_view":
+      return { icon: "picture", word: "Viewed" };
+    case "skill":
+      return { icon: "tools", word: "Loaded" };
+    case "collab_agent_tool_call":
+      return { icon: "tools", word: "Agent" };
+    case "mcp_tool_call":
+    case "dynamic_tool_call":
+    case "todo":
+    case "question":
+    case "plan":
+      return { icon: "tools", word: "Used" };
+  }
+}
+
+/** One thumbnail's address, or null when there is nothing to read it from. */
+function thumbOf(
+  p: WorkPicture,
+  session: string | undefined,
+  me: string | undefined,
+): Thumb | null {
+  if (p.kind === "block") {
+    if (!session) return null;
+    return {
+      src: toolImageUrl(session, p.toolId, p.n),
+      alt: basename(p.label) || "Picture",
+      kind: "block",
+    };
+  }
+  const src = contentUrlFor(p.path, me ?? "");
+  return src ? { src, alt: basename(p.path), kind: "file" } : null;
+}
+
+/**
+ * The pictures a group's calls handed back, as 76px thumbnails under it, drawn
+ * whether the group is open or folded: looking at them is often the reason to
+ * read the group at all. One press opens the lightbox, which tells telemetry
+ * the picture came from a tool, as a tool row's thumbnail always has.
+ */
+const WorkPictures: Component<{
+  pictures: readonly WorkPicture[];
+  session?: string;
+  me?: string;
+}> = (props) => {
+  const thumbs = createMemo(() =>
+    props.pictures.flatMap((p) => thumbOf(p, props.session, props.me) ?? []),
+  );
+  return (
+    <Show when={thumbs().length > 0}>
+      <div class="tl-group-pics">
+        <For each={thumbs()}>
+          {(t) => <Picture src={t.src} alt={t.alt} size="thumb" source="tool" kind={t.kind} />}
+        </For>
+      </div>
+    </Show>
+  );
+};
+
+/** The spinner a running group and its call in flight wear. */
+const GroupSpinner: Component = () => <span class="tl-group-spin" aria-hidden="true" />;
+
+/**
+ * One call in an open group: icon, verb, the call's own label in the mono face,
+ * and on the right the edit's line counts, a tick, a cross, or a spinner while
+ * it runs. Pressing it opens the same detail a tool row opens into.
+ */
+const WorkCallRow: Component<{
+  leaf: WorkLeaf;
+  me?: string;
+  onOpenPreview?: (path: string) => void;
+  onLoadFull?: (toolId: string) => Promise<string | null>;
+  renderChild?: (row: ToolRow["children"][number]) => unknown;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  const kind = () => callKind(props.leaf);
+  const call = () => (props.leaf.kind === "tool" ? props.leaf : null);
+  const status = () => {
+    const c = call();
+    if (!c) return "ok";
+    return !c.done ? "running" : c.isError ? "error" : "ok";
+  };
+  const label = () => {
+    const leaf = props.leaf;
+    if (leaf.kind === "thinking") return leaf.body.trim().split("\n")[0] ?? "";
+    return leaf.label || leaf.tool || "tool";
+  };
+  const stat = createMemo(() => {
+    const c = call();
+    return c ? editStat(c) : null;
+  });
+  return (
+    <div
+      class="tl-group-call"
+      data-eid={props.leaf.id}
+      data-status={status()}
+      data-open={open() ? "" : undefined}
+    >
+      <button
+        type="button"
+        class="tl-group-call-head"
+        aria-expanded={open()}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <GroupIconSvg icon={kind().icon} class="tl-group-call-ico" />
+        <span class="tl-group-call-kind">{kind().word}</span>
+        <span class="tl-group-call-label" title={label()}>
+          {label()}
+        </span>
+        <span class="tl-group-call-st">
+          <Show when={status() === "running"}>
+            <GroupSpinner />
+          </Show>
+          <Show when={status() === "error"}>
+            <span class="tl-group-call-err">✗</span>
+          </Show>
+          {/* Thinking is not a call: it neither passes nor fails. */}
+          <Show when={status() === "ok" && call()}>
+            <Show when={stat()} fallback={<span class="tl-group-call-ok">✓</span>}>
+              {(s) => (
+                <>
+                  <span class="tl-diff-add">+{s().added}</span>
+                  <Show when={s().removed}>
+                    <span class="tl-diff-del">−{s().removed}</span>
+                  </Show>
+                </>
+              )}
+            </Show>
+          </Show>
+        </span>
+      </button>
+      <Show when={open()}>
+        <div class="tl-group-call-detail">
+          <Show
+            when={call()}
+            fallback={
+              <div class="tl-thinking-body">
+                <Markdown text={props.leaf.kind === "thinking" ? props.leaf.body : ""} />
+              </div>
+            }
+          >
+            {(c) => (
+              <>
+                <Show when={props.onOpenPreview && canPreview(c())}>
+                  <button
+                    type="button"
+                    class="tl-tool-pathchip"
+                    title={`Preview ${callPath(c())}`}
+                    onClick={() => props.onOpenPreview?.(callPath(c()))}
+                  >
+                    {basename(callPath(c()))}
+                  </button>
+                </Show>
+                <Show when={c().children.length > 0}>
+                  <div class="tl-subagent">
+                    <For each={c().children}>{(r) => <>{props.renderChild?.(r)}</>}</For>
+                  </div>
+                </Show>
+                <ToolDetail
+                  row={c()}
+                  pictureOnly={
+                    ((c().images?.length ?? 0) > 0 || (c().files?.length ?? 0) > 0) && !c().result
+                  }
+                  onLoadFull={props.onLoadFull}
+                />
+              </>
+            )}
+          </Show>
+        </div>
+      </Show>
+    </div>
+  );
+};
+
+/** Ticks once a second while `on` says so; otherwise holds still. */
+function useClock(on: () => boolean): () => number {
+  const [now, setNow] = createSignal(Date.now());
+  createEffect(() => {
+    if (!on()) return;
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    onCleanup(() => clearInterval(t));
+  });
+  return now;
+}
+
+/**
+ * One run of tool calls between two replies, as one bordered row: a status
+ * dot, what the calls did ("Edited 2 files, ran 2 commands"), a tick and the
+ * time on the right, and a chevron. Pressed, it lists one compact row per
+ * call. The running group at the end of an open turn names the call in flight
+ * with a spinner instead, and counts the calls done and the time so far.
+ *
+ * The open state is this view's own signal. MessagesTimeline keys rows by
+ * `key`, a group's is its first row's, and a row's content arrives through a
+ * per-key signal, so the view outlives every append and an open group stays
+ * open. The calls go through `<Index>` for the same reason: a group grows at
+ * its end, so an opened call keeps its place and its state.
+ */
+export const WorkGroupRowView: Component<{
+  row: WorkGroupRow;
+  /** the session, whose transcript holds a result's picture blocks. */
+  session?: string;
+  /** the effective OS user, which decides whether a store path is ours. */
+  me?: string;
+  onOpenPreview?: (path: string) => void;
+  onLoadFull?: (toolId: string) => Promise<string | null>;
+  renderChild?: (row: ToolRow["children"][number]) => unknown;
+}> = (props) => {
+  const [open, setOpen] = createSignal(false);
+  const live = () => props.row.live;
+  const now = useClock(() => live() !== undefined);
+  const status = () => (props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok");
+  const summary = createMemo(() => groupSummary(props.row.calls));
+  const took = () => formatDuration(props.row.durationMs);
+  const elapsed = () => {
+    const from = live()?.startedAt;
+    return from ? formatDuration(now() - from) : "";
+  };
+  /** Every event the group stands for, so a search hit on a folded call lands here. */
+  const eids = () => props.row.calls.map((c) => c.id).join(" ");
+
+  return (
+    <div class="tl-row tl-row-group" data-eids={eids()}>
+      <div
+        class="tl-group-box"
+        data-open={open() ? "" : undefined}
+        data-live={live() ? "" : undefined}
+      >
+        <button
+          type="button"
+          class="tl-group-head"
+          aria-expanded={open()}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <Show when={live()} fallback={<span class="tl-group-dot" data-status={status()} />}>
+            <GroupSpinner />
+          </Show>
+          <GroupIconSvg icon="tools" class="tl-group-ico" />
+          <span class="tl-group-sum">
+            <Show when={live()} fallback={summary()}>
+              {(l) => (
+                <Show
+                  when={l().label || l().tool}
+                  fallback={l().waiting ? "Waiting for you" : summary() || "Working…"}
+                >
+                  {(what) => (
+                    <>
+                      Running <code>{what()}</code>
+                    </>
+                  )}
+                </Show>
+              )}
+            </Show>
+          </span>
+          <span class="tl-group-meta">
+            <Show
+              when={live()}
+              fallback={
+                <>
+                  <Show when={status() === "error"}>
+                    <span class="tl-group-failed">failed</span>
+                    {took() ? " · " : ""}
+                  </Show>
+                  <Show when={status() === "stopped"}>stopped{took() ? " · " : ""}</Show>
+                  <Show when={status() === "ok"}>
+                    <span class="tl-group-okm">
+                      <span class="tl-group-ok">✓</span>
+                      {took() ? " · " : ""}
+                    </span>
+                  </Show>
+                  {took()}
+                </>
+              }
+            >
+              {(l) => (
+                <>
+                  {l().done} done{elapsed() ? ` · ${elapsed()}` : ""}
+                </>
+              )}
+            </Show>
+          </span>
+          <GroupChevron />
+        </button>
+        <Show when={open()}>
+          <div class="tl-group-list">
+            <Index each={props.row.calls}>
+              {(leaf) => (
+                <WorkCallRow
+                  leaf={leaf()}
+                  me={props.me}
+                  onOpenPreview={props.onOpenPreview}
+                  onLoadFull={props.onLoadFull}
+                  renderChild={props.renderChild}
+                />
+              )}
+            </Index>
+          </div>
+        </Show>
+      </div>
+      <WorkPictures pictures={props.row.pictures} session={props.session} me={props.me} />
+    </div>
+  );
+};
+
+/**
+ * A settled turn's fold, in the work group's bordered look: "Worked for 28s ·
+ * 6 steps". It stands for the replies and groups it hides, so it says when
+ * one of them failed, and it carries their pictures while it is shut; open, the
+ * groups under it show their own.
+ */
 export const TurnFoldRowView: Component<{
   row: TurnFoldRow;
   expanded: boolean;
   onToggle: (turnKey: string) => void;
+  /** the session, whose transcript holds a result's picture blocks. */
+  session?: string;
+  /** the effective OS user, which decides whether a store path is ours. */
+  me?: string;
 }> = (props) => {
   const tokens = () => {
     const u = props.row.usage;
@@ -755,35 +1174,44 @@ export const TurnFoldRowView: Component<{
   };
   return (
     <div class="tl-row tl-row-fold">
-      <button
-        type="button"
-        class="tl-fold-btn"
-        aria-expanded={props.expanded}
-        data-has-error={props.row.hasError ? "true" : undefined}
-        onClick={() => props.onToggle(props.row.turnKey)}
-      >
-        <span class="tl-fold-caret">{props.expanded ? "▾" : "▸"}</span>
-        <span class="tl-fold-label">
-          {props.row.durationMs ? `Worked for ${formatDuration(props.row.durationMs)}` : "Worked"}
-          {" · "}
-          {props.row.count} {props.row.count === 1 ? "step" : "steps"}
-        </span>
-        <Show when={props.row.changedFiles.length > 0}>
-          <span class="tl-fold-files">
-            {props.row.changedFiles.length === 1
-              ? basename(props.row.changedFiles[0]!)
-              : `${props.row.changedFiles.length} files`}
+      <div class="tl-group-box" data-open={props.expanded ? "" : undefined}>
+        <button
+          type="button"
+          class="tl-group-head tl-fold-btn"
+          aria-expanded={props.expanded}
+          data-has-error={props.row.hasError ? "true" : undefined}
+          onClick={() => props.onToggle(props.row.turnKey)}
+        >
+          <span class="tl-group-dot" data-status={props.row.hasError ? "error" : "ok"} />
+          <span class="tl-group-sum tl-fold-label">
+            {props.row.durationMs ? `Worked for ${formatDuration(props.row.durationMs)}` : "Worked"}
+            {" · "}
+            {props.row.count} {props.row.count === 1 ? "step" : "steps"}
           </span>
-        </Show>
-        <Show when={tokens() > 0}>
-          <span class="tl-fold-tokens">{formatTokens(tokens())} tok</span>
-        </Show>
-        {/* A fold is the only thing standing for the steps it hides, so a hidden
-            failure has to surface here — in words, not by colour alone. */}
-        <Show when={props.row.hasError}>
-          <span class="tl-fold-error">✗ failed</span>
-        </Show>
-      </button>
+          <span class="tl-group-meta">
+            <Show when={props.row.changedFiles.length > 0}>
+              <span class="tl-fold-files">
+                {props.row.changedFiles.length === 1
+                  ? basename(props.row.changedFiles[0]!)
+                  : `${props.row.changedFiles.length} files`}
+              </span>
+            </Show>
+            <Show when={tokens() > 0}>
+              <span class="tl-fold-tokens">{formatTokens(tokens())} tok</span>
+            </Show>
+            {/* A fold is the only thing standing for the steps it hides, so a
+                hidden failure has to surface here, in words, not by colour
+                alone. */}
+            <Show when={props.row.hasError}>
+              <span class="tl-fold-error">✗ failed</span>
+            </Show>
+          </span>
+          <GroupChevron />
+        </button>
+      </div>
+      <Show when={!props.expanded}>
+        <WorkPictures pictures={props.row.pictures} session={props.session} me={props.me} />
+      </Show>
     </div>
   );
 };

@@ -36,12 +36,15 @@ describe("<MessagesTimeline> (smoke)", () => {
     expect(getByText(/2 steps/)).toBeInTheDocument();
     expect(queryByText("ls")).toBeNull();
 
-    // Expanding the fold reveals the hidden tool row. Since 2026-08-16 that row
-    // is labelled with what the call is DOING — the command, not "Bash" — so
-    // the reader can tell two Bash calls apart without opening either.
+    // Expanding the fold reveals the hidden work group, and opening the group
+    // lists its calls. Since 2026-08-16 a call is labelled with what it is
+    // DOING (the command, not "Bash"), so the reader can tell two Bash calls
+    // apart without opening either.
     fireEvent.click(getByRole("button", { name: /Worked/ }));
+    expect(queryByText("ls")).toBeNull();
+    fireEvent.click(getByRole("button", { name: /Ran 1 command/ }));
     expect(getByText("ls")).toBeInTheDocument();
-    expect(getByText("Command")).toBeInTheDocument();
+    expect(getByText("Ran")).toBeInTheDocument();
   });
 
   // The row that said "Working…" with the call in flight closed the timeline
@@ -111,23 +114,27 @@ describe("<MessagesTimeline> row identity", () => {
     }
   });
 
-  it("leaves an expanded tool row expanded when its own result lands", () => {
+  it("leaves an opened call expanded, in an open group, when its own result lands", () => {
     const [events, setEvents] = createSignal<Event[]>(LIVE);
     const { container } = render(() => <MessagesTimeline events={events()} />);
 
-    const tool = container.querySelector(".tl-row-tool")!;
-    const toggle = tool.querySelector(".tl-tool-toggle")!;
+    const head = container.querySelector(".tl-group-head")!;
+    fireEvent.click(head);
+    const call = container.querySelector(".tl-group-call")!;
+    const toggle = call.querySelector(".tl-group-call-head")!;
     fireEvent.click(toggle);
-    expect(tool.querySelector(".tl-code")).not.toBeNull();
-    expect(tool.getAttribute("data-status")).toBe("running");
+    expect(call.querySelector(".tl-code")).not.toBeNull();
+    expect(call.getAttribute("data-status")).toBe("running");
 
     setEvents([...LIVE, ev({ id: 4, kind: "tool_result", toolId: "t1", body: "line one" })]);
 
-    expect(container.querySelector(".tl-row-tool")).toBe(tool);
+    expect(container.querySelector(".tl-group-head")).toBe(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector(".tl-group-call")).toBe(call);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
-    // …and the row updated in place rather than being replaced.
-    expect(tool.getAttribute("data-status")).toBe("ok");
-    expect(tool.textContent).toContain("line one");
+    // …and the call updated in place rather than being replaced.
+    expect(call.getAttribute("data-status")).toBe("ok");
+    expect(call.textContent).toContain("line one");
   });
 });
 
@@ -145,25 +152,28 @@ describe("<MessagesTimeline> turn fold", () => {
     ev({ id: 5, kind: "turn_end" }),
   ];
 
-  it("expands and re-folds, with the caret and aria-expanded following state", () => {
+  // Drawn in the work group's bordered look since the T3 pass (2026-09-27):
+  // the chevron turns with the box's data-open where a ▸/▾ caret swapped.
+  it("expands and re-folds, with the chevron and aria-expanded following state", () => {
     const { container } = render(() => <MessagesTimeline events={SETTLED} />);
     const fold = container.querySelector(".tl-fold-btn")!;
-    const caret = () => container.querySelector(".tl-fold-caret")!.textContent;
+    const open = () => fold.closest(".tl-group-box")!.hasAttribute("data-open");
 
     expect(fold.getAttribute("aria-expanded")).toBe("false");
-    expect(caret()).toBe("▸");
-    expect(container.querySelector(".tl-row-tool")).toBeNull();
+    expect(open()).toBe(false);
+    expect(fold.querySelector(".tl-group-chev")).not.toBeNull();
+    expect(container.querySelector(".tl-row-group")).toBeNull();
 
     fireEvent.click(fold);
-    expect(container.querySelector(".tl-row-tool")).not.toBeNull();
+    expect(container.querySelector(".tl-row-group")).not.toBeNull();
     expect(container.querySelector(".tl-fold-btn")).toBe(fold);
     expect(fold.getAttribute("aria-expanded")).toBe("true");
-    expect(caret()).toBe("▾");
+    expect(open()).toBe(true);
 
     fireEvent.click(fold);
-    expect(container.querySelector(".tl-row-tool")).toBeNull();
+    expect(container.querySelector(".tl-row-group")).toBeNull();
     expect(fold.getAttribute("aria-expanded")).toBe("false");
-    expect(caret()).toBe("▸");
+    expect(open()).toBe(false);
   });
 });
 
@@ -287,17 +297,22 @@ describe("<MessagesTimeline> collapsed failure signal", () => {
     expect(btn.textContent).not.toContain("failed");
   });
 
-  it("still shows the ✗, the output (error) label and the red output when expanded", () => {
+  it("still says failed, shows the ✗, the output (error) label and the red output when expanded", () => {
     const { container } = render(() => <MessagesTimeline events={FAILED} />);
     fireEvent.click(container.querySelector(".tl-fold-btn")!);
-    const tool = container.querySelector(".tl-row-tool")!;
-    expect(tool.getAttribute("data-status")).toBe("error");
-    expect(tool.querySelector(".tl-tool-tick")!.textContent).toBe("✗");
+    const group = container.querySelector(".tl-row-group")!;
+    expect(group.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("error");
+    expect(group.querySelector(".tl-group-meta")!.textContent).toContain("failed");
 
-    fireEvent.click(tool.querySelector(".tl-tool-toggle")!);
-    const labels = [...tool.querySelectorAll(".tl-tool-section-label")].map((n) => n.textContent);
+    fireEvent.click(group.querySelector(".tl-group-head")!);
+    const call = group.querySelector(".tl-group-call")!;
+    expect(call.getAttribute("data-status")).toBe("error");
+    expect(call.querySelector(".tl-group-call-st")!.textContent).toBe("✗");
+
+    fireEvent.click(call.querySelector(".tl-group-call-head")!);
+    const labels = [...call.querySelectorAll(".tl-tool-section-label")].map((n) => n.textContent);
     expect(labels).toContain("output (error)");
-    expect(tool.querySelector(".tl-code-error")!.textContent).toContain("ENOENT");
+    expect(call.querySelector(".tl-code-error")!.textContent).toContain("ENOENT");
   });
 });
 

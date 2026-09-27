@@ -4,7 +4,6 @@ import {
   createMemo,
   createSignal,
   For,
-  Index,
   on,
   onCleanup,
   onMount,
@@ -41,7 +40,6 @@ import {
   type TurnFoldRow,
   type UserRow,
   type WorkGroupRow,
-  type WorkLeaf,
 } from "./timeline.logic";
 import { Markdown } from "./Markdown";
 import { ownWhile } from "../lib/ownwhile";
@@ -57,6 +55,7 @@ import {
   SkillRowView,
   ToolRowView,
   TurnFoldRowView,
+  WorkGroupRowView,
   WorkingRowView,
 } from "./rows";
 
@@ -640,29 +639,6 @@ export const MessagesTimeline: Component<{
     }
   };
 
-  /**
-   * One row of a work group, drawn as the call or thinking it is.
-   *
-   * A group only grows at its end, so the row at an index keeps its kind and
-   * the switch runs once; `<Index>` hands each position a signal, so a call
-   * whose result lands updates in place and an opened call stays open.
-   */
-  const renderGroupLeaf = (leaf: Accessor<WorkLeaf>): JSX.Element => {
-    const first = untrack(leaf);
-    if (first.kind === "thinking") return <ThinkingRowView row={leaf() as ThinkingRow} />;
-    if (first.itemType === "skill") return <SkillRowView row={leaf() as ToolRow} />;
-    return (
-      <ToolRowView
-        row={leaf() as ToolRow}
-        session={props.session}
-        me={props.me}
-        onOpenPreview={props.onOpenPreview}
-        onLoadFull={props.onLoadFull}
-        renderChild={renderLeaf}
-      />
-    );
-  };
-
   // The row kind is encoded in its key, so a node never changes kind under
   // itself and the switch can run once, at creation.
   // A ticking clock for the drill-in's working row. One timer for the whole
@@ -739,12 +715,15 @@ export const MessagesTimeline: Component<{
       case "working":
         return <WorkingRowView row={row() as WorkingRow} now={now()} />;
       case "work-group":
-        // The group's calls, one row each, the way they drew before calls
-        // were gathered into groups.
         return (
-          <div class="tl-work-group">
-            <Index each={(row() as WorkGroupRow).calls}>{renderGroupLeaf}</Index>
-          </div>
+          <WorkGroupRowView
+            row={row() as WorkGroupRow}
+            session={props.session}
+            me={props.me}
+            onOpenPreview={props.onOpenPreview}
+            onLoadFull={props.onLoadFull}
+            renderChild={renderLeaf}
+          />
         );
       case "turn-fold":
         return (
@@ -752,6 +731,8 @@ export const MessagesTimeline: Component<{
             row={row() as TurnFoldRow}
             expanded={expandedTurns().has((row() as TurnFoldRow).turnKey)}
             onToggle={toggleTurn}
+            session={props.session}
+            me={props.me}
           />
         );
     }
@@ -895,7 +876,11 @@ export const MessagesTimeline: Component<{
    */
   const scrollToEvent = (id: number): boolean => {
     const el = scroller;
-    const row = el?.querySelector<HTMLElement>(`[data-eid="${id}"]`);
+    // A call inside a folded work group has no row of its own; the group
+    // answers for it (data-eids), and an open group's call row wins.
+    const row =
+      el?.querySelector<HTMLElement>(`[data-eid="${id}"]`) ??
+      el?.querySelector<HTMLElement>(`[data-eids~="${id}"]`);
     if (!el || !row) return false;
     // A row nobody can see cannot be scrolled to, and the jump would report a
     // success that showed nothing. The owner puts the timeline back first.

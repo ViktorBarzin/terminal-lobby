@@ -36,7 +36,7 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
   ...e,
 });
 
-/** A live turn, so the tool row is rendered unfolded — the collapsing element. */
+/** A live turn, so the work group is rendered unfolded, the collapsing element. */
 const LIVE_TURN: Event[] = [
   ev({ id: 1, kind: "user", body: "read the notes" }),
   ev({ id: 2, kind: "text", body: "on it" }),
@@ -61,17 +61,18 @@ describe("timeline rows hold their height when the transcript overflows", () => 
     }
   });
 
-  it("keeps a collapsed tool row unshrinkable even though it clips its overflow", () => {
+  // A tool call sits inside a work group since the T3 pass (2026-09-27); the
+  // group's bordered box is what clips now.
+  it("keeps a folded work group unshrinkable even though its box clips its overflow", () => {
     const { container } = render(() => <MessagesTimeline events={LIVE_TURN} />);
-    const tool = container.querySelector(".tl-row-tool");
-    expect(tool, "a tool row should render").not.toBeNull();
+    const group = container.querySelector(".tl-row-group");
+    expect(group, "a work group should render").not.toBeNull();
 
-    const css = getComputedStyle(tool!);
-    // `overflow: hidden` is what removes this row's min-content floor. It is
-    // wanted (it clips the card's rounded corners), so the floor has to come
-    // from flex-shrink instead.
-    expect(css.overflow).toBe("hidden");
-    expect(css.flexShrink).toBe("0");
+    // `overflow: hidden` is what removes a box's min-content floor. It is
+    // wanted (it clips the box's rounded corners), so the row's floor has to
+    // come from flex-shrink instead.
+    expect(getComputedStyle(group!.querySelector(".tl-group-box")!).overflow).toBe("hidden");
+    expect(getComputedStyle(group!).flexShrink).toBe("0");
   });
 
   it("keeps the empty-state child unshrinkable too", () => {
@@ -95,7 +96,8 @@ describe("timeline rows hold their height when the transcript overflows", () => 
 describe("expanded tool output is height-clamped", () => {
   it("clamps and scrolls the raw output pane", () => {
     const { container } = render(() => <MessagesTimeline events={LIVE_TURN} />);
-    fireEvent.click(container.querySelector(".tl-tool-toggle")!);
+    fireEvent.click(container.querySelector(".tl-group-head")!);
+    fireEvent.click(container.querySelector(".tl-group-call-head")!);
 
     const pre = container.querySelector(".tl-tool-raw .tl-code");
     expect(pre, "expanding a tool row should render its raw output").not.toBeNull();
@@ -217,7 +219,7 @@ describe("the timeline opens at the newest exchange", () => {
       tl.scrollTop = 100;
       geom.grow(1400);
       fireEvent.click(container.querySelector(".tl-fold-btn")!);
-      expect(container.querySelector(".tl-row-tool")).not.toBeNull();
+      expect(container.querySelector(".tl-row-group")).not.toBeNull();
       expect(tl.scrollTop).toBe(100);
     } finally {
       geom.restore();

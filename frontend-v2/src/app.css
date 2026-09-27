@@ -2035,14 +2035,6 @@ label.tl-set-row-label {
   width: 100%;
   margin: 0 auto;
 }
-/* A work group's calls lay out as rows of the timeline itself, spaced by its
-   gap, the way they did before calls were gathered into groups. */
-.tl-work-group {
-  display: contents;
-}
-.tl-work-group > * {
-  flex-shrink: 0;
-}
 
 /* The user's message: a rounded grey bubble on the right, with no outline
    (the T3 pass, 2026-09-27; the prototype's `.m-user`). It was a bordered card
@@ -2349,35 +2341,274 @@ label.tl-set-row-label {
   overflow-y: auto;
 }
 
-/* fold / working / permission / error / status */
+/* ---- The work group (the T3 pass, 2026-09-27; the prototype's `.wg`) ----
+   Every run of tool calls between two replies is one bordered row, "Edited 2
+   files, ran 2 commands · 28s ›", that opens into one compact row per call.
+   The turn's fold wears the same box. Its pictures sit 8px under it: the
+   timeline's 18px gap is between rows, so the row lays the box and the
+   thumbnails out as its own column. */
+.tl-row-group,
 .tl-row-fold {
   display: flex;
-}
-.tl-fold-btn {
-  display: inline-flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
-  border: 1px dashed var(--border-strong);
-  background: transparent;
-  color: var(--text-muted);
+}
+.tl-group-box {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  overflow: hidden;
+}
+.tl-group-box[data-live] {
+  border-color: color-mix(in srgb, var(--state-running) 45%, var(--border-strong));
+}
+.tl-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
   font: inherit;
-  font-size: calc(12px * var(--tl-text-scale, 1));
-  padding: 5px 12px;
-  border-radius: 999px;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  line-height: 18px;
+  text-align: left;
   cursor: pointer;
 }
-.tl-fold-btn:hover {
-  color: var(--text-primary);
+.tl-group-head:hover {
   background: var(--hover-tint);
 }
-/* A fold hiding a failed step says so on the collapsed row. */
-.tl-fold-btn[data-has-error="true"] {
-  border-color: var(--danger);
+.tl-group-head:focus-visible,
+.tl-group-call-head:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
 }
+.tl-group-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--state-done);
+}
+.tl-group-dot[data-status="stopped"] {
+  background: var(--text-muted);
+}
+.tl-group-dot[data-status="error"] {
+  background: var(--danger);
+}
+.tl-group-ico {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+.tl-group-sum {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-group-sum code {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-group-meta {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tl-group-ok {
+  color: var(--success);
+}
+.tl-group-failed,
 .tl-fold-error {
   color: var(--danger);
-  font-family: var(--font-mono);
 }
+.tl-group-chev {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--text-muted);
+  transition: transform 0.18s;
+}
+.tl-group-box[data-open] .tl-group-chev {
+  transform: rotate(90deg);
+}
+/* The spinner a running group and its call in flight wear. */
+.tl-group-spin {
+  flex: none;
+  box-sizing: border-box;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--state-running) 25%, transparent);
+  border-top-color: var(--state-running);
+  animation: tl-group-spin 0.8s linear infinite;
+}
+@keyframes tl-group-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The open group: one compact row per call. */
+.tl-group-list {
+  border-top: 1px solid var(--border);
+  padding: 4px 0;
+}
+.tl-group-call-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 30px;
+  padding: 3px 12px 3px 29px;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+.tl-group-call-head:hover {
+  background: var(--hover-tint);
+}
+.tl-group-call-ico {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+.tl-group-call-kind {
+  flex: none;
+  width: 48px;
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+.tl-group-call-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: calc(12px * var(--tl-text-scale, 1));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-group-call-st {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+}
+.tl-group-call-st .tl-diff-add,
+.tl-group-call-ok {
+  color: var(--success);
+}
+.tl-group-call-st .tl-diff-del,
+.tl-group-call-err {
+  color: var(--danger);
+}
+/* An opened call: the detail a tool row opens into, indented to the label. */
+.tl-group-call-detail {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 2px 12px 10px 29px;
+}
+.tl-group-call-detail > .tl-tool-raw,
+.tl-group-call-detail > .tl-subagent,
+.tl-group-call-detail > .tl-thinking-body {
+  align-self: stretch;
+  min-width: 0;
+}
+.tl-group-call-detail .tl-tool-raw {
+  padding: 0;
+  border-top: 0;
+}
+
+/* A group's pictures: 76px-tall thumbnails in a row under it, folded or open. */
+.tl-group-pics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tl-group-pics .tl-tool-thumb img {
+  height: 76px;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--bg-card);
+}
+.tl-group-pics .tl-tool-thumb:focus-visible {
+  border-radius: 9px;
+}
+
+/* The turn's fold, in the group's box: "Worked for 28s · 6 steps". */
+.tl-fold-files,
+.tl-fold-tokens {
+  color: var(--text-muted);
+}
+
+/* The phone: taller rows for a finger, a size up, no tools icon, and the tick
+   gives its room to the time (the phone query, as `.tl-timeline` above). */
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  .tl-group-head {
+    min-height: 46px;
+    gap: 8px;
+    padding: 0 10px 0 12px;
+    font-size: calc(14px * var(--tl-text-scale, 1));
+  }
+  .tl-group-ico,
+  .tl-group-okm,
+  .tl-group-call-kind,
+  .tl-fold-tokens {
+    display: none;
+  }
+  .tl-group-sum code {
+    font-size: calc(12px * var(--tl-text-scale, 1));
+    letter-spacing: -0.02em;
+  }
+  .tl-group-meta {
+    gap: 4px;
+    font-size: calc(11.5px * var(--tl-text-scale, 1));
+  }
+  .tl-group-call-head {
+    min-height: 34px;
+    padding-left: 14px;
+  }
+  .tl-group-call-detail {
+    padding-left: 14px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-group-spin {
+    animation: none;
+    transform: rotate(45deg);
+  }
+  .tl-group-chev {
+    transition: none;
+  }
+}
+
 /* The pulse that says work is happening. A session's working row moved onto
    the composer's thin line (2026-09-24), which has its own dot; this one stays
    for the drill-in's working row, the timeline's "loading earlier rows" hint,
@@ -5772,13 +6003,6 @@ body.tl-kb-up {
 }
 .tl-row-meta[data-meta="compact"] .tl-meta-text {
   font-style: italic;
-}
-
-.tl-fold-files,
-.tl-fold-tokens {
-  font-size: calc(11.5px * var(--tl-text-scale, 1));
-  color: var(--text-muted);
-  margin-left: 8px;
 }
 
 /* Scroll affordances. */

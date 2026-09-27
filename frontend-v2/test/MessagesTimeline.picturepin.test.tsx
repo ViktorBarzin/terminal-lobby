@@ -88,40 +88,53 @@ describe("<MessagesTimeline> while its pictures load", () => {
     expect(tl.scrollTop).toBe(740);
   });
 
-  it("keeps the live end when a live Read row's thumbnail arrives", async () => {
-    const TOOL = "toolu_01EaDF17CdmXP8Wc3ctiXaL2";
+  // Since the T3 pass (2026-09-27) a call's pictures are drawn under the work
+  // group holding it, folded or open, and under a settled turn's fold while
+  // the fold hides the group.
+  const READ_SHOT: Event[] = [
+    ev({ id: 1, kind: "user", body: "look at it" }),
+    ev({
+      id: 2,
+      kind: "tool_use",
+      tool: "Read",
+      toolId: "toolu_01EaDF17CdmXP8Wc3ctiXaL2",
+      body: '{"file_path":"/tmp/claude-1000/x/scratchpad/shot.png"}',
+    }),
+    ev({
+      id: 3,
+      kind: "tool_result",
+      toolId: "toolu_01EaDF17CdmXP8Wc3ctiXaL2",
+      images: [{ n: 0, mediaType: "image/png", bytes: 139874 }],
+    }),
+  ];
+
+  it.each([
+    ["a running work group", READ_SHOT, ".tl-row-group .tl-group-pics .tl-tool-thumb img"],
+    [
+      "a settled turn's fold",
+      [
+        ...READ_SHOT,
+        ev({ id: 4, kind: "text", body: "the header overlaps" }),
+        ev({ id: 5, kind: "turn_end" }),
+      ],
+      ".tl-row-fold .tl-group-pics .tl-tool-thumb img",
+    ],
+  ])("keeps the live end when a thumbnail arrives under %s", async (_what, events, selector) => {
     const { container } = render(() => (
-      <MessagesTimeline
-        events={[
-          ev({ id: 1, kind: "user", body: "look at it" }),
-          ev({
-            id: 2,
-            kind: "tool_use",
-            tool: "Read",
-            toolId: TOOL,
-            body: '{"file_path":"/tmp/claude-1000/x/scratchpad/shot.png"}',
-          }),
-          ev({
-            id: 3,
-            kind: "tool_result",
-            toolId: TOOL,
-            images: [{ n: 0, mediaType: "image/png", bytes: 139874 }],
-          }),
-        ]}
-        me="wizard"
-        session="s"
-      />
+      <MessagesTimeline events={events} me="wizard" session="s" />
     ));
     const tl = container.querySelector<HTMLElement>(".tl-timeline")!;
     const g = geometry(tl, { content: 1000, client: 300 });
     tl.scrollTop = 700;
     fireEvent.scroll(tl);
 
-    g.content = 1096; // the thumbnail, about 96px tall
-    tl.querySelector(".tl-tool-thumb img")!.dispatchEvent(new window.Event("load"));
+    g.content = 1086; // the thumbnail, 76px tall plus its gap
+    const img = tl.querySelector(selector);
+    expect(img, "the thumbnail is drawn while the group is folded").not.toBe(null);
+    img!.dispatchEvent(new window.Event("load"));
     await settle();
 
-    expect(tl.scrollTop).toBe(796);
+    expect(tl.scrollTop).toBe(786);
   });
 
   it("leaves a reader who scrolled up where they were", async () => {

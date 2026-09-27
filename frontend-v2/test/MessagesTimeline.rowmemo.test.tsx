@@ -165,23 +165,24 @@ describe("<MessagesTimeline> rendering is unchanged", () => {
     const [events, setEvents] = createSignal<Event[]>(live);
     const { container } = render(() => <MessagesTimeline events={events()} />);
 
-    const tool = container.querySelector(".tl-row-tool")!;
+    const group = container.querySelector(".tl-row-group")!;
+    const meta = () => group.querySelector(".tl-group-meta")!.textContent;
     const user = container.querySelector(".tl-row-user")!;
     const userText = user.querySelector(".tl-user-text")!;
-    expect(tool.getAttribute("data-status")).toBe("running");
+    expect(meta()).toMatch(/^0 done/);
 
     setEvents([...live, ev({ id: 4, kind: "tool_result", toolId: "t1", body: "hello" })]);
 
-    // The tool row moved, so its view was told.
-    expect(container.querySelector(".tl-row-tool")).toBe(tool);
-    expect(tool.getAttribute("data-status")).toBe("ok");
+    // The work group moved, so its view was told.
+    expect(container.querySelector(".tl-row-group")).toBe(group);
+    expect(meta()).toMatch(/^1 done/);
     // The user row did not, so nothing about it was rebuilt, down to the node
     // inside the bubble that a re-render would have replaced.
     expect(container.querySelector(".tl-row-user")).toBe(user);
     expect(user.querySelector(".tl-user-text")).toBe(userText);
   });
 
-  it("keeps an expanded tool row open across an unrelated event", () => {
+  it("keeps an open work group open across an unrelated event", () => {
     const live: Event[] = [
       ev({ id: 1, kind: "user", body: "go" }),
       ev({ id: 2, kind: "tool_use", tool: "Bash", toolId: "t1", body: '{"command":"ls"}' }),
@@ -189,13 +190,43 @@ describe("<MessagesTimeline> rendering is unchanged", () => {
     const [events, setEvents] = createSignal<Event[]>(live);
     const { container } = render(() => <MessagesTimeline events={events()} />);
 
-    const toggle = container.querySelector(".tl-tool-toggle")!;
+    const toggle = container.querySelector(".tl-group-head")!;
     fireEvent.click(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
 
     setEvents([...live, ev({ id: 3, kind: "text", body: "something else entirely" })]);
-    expect(container.querySelector(".tl-tool-toggle")).toBe(toggle);
+    expect(container.querySelector(".tl-group-head")).toBe(toggle);
     expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  // The group's key is its first row's, so a call that joins the run lands in
+  // the same view: the group stays open, and so does a call opened inside it.
+  it("an open group stays open across an append", () => {
+    const live: Event[] = [
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "tool_use", tool: "Bash", toolId: "t1", body: '{"command":"ls"}' }),
+    ];
+    const [events, setEvents] = createSignal<Event[]>(live);
+    const { container } = render(() => <MessagesTimeline events={events()} />);
+
+    const head = container.querySelector(".tl-group-head")!;
+    fireEvent.click(head);
+    const first = container.querySelector(".tl-group-call")!;
+    fireEvent.click(first.querySelector(".tl-group-call-head")!);
+
+    setEvents([
+      ...live,
+      ev({ id: 3, kind: "tool_result", toolId: "t1", body: "README.md" }),
+      ev({ id: 4, kind: "tool_use", tool: "Bash", toolId: "t2", body: '{"command":"pwd"}' }),
+    ]);
+
+    expect(container.querySelector(".tl-group-head")).toBe(head);
+    expect(head.getAttribute("aria-expanded")).toBe("true");
+    const calls = container.querySelectorAll(".tl-group-call");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).toBe(first);
+    expect(first.querySelector(".tl-group-call-head")!.getAttribute("aria-expanded")).toBe("true");
+    expect(first.textContent).toContain("README.md");
   });
 });
 
