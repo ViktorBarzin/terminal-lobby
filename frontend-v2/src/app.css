@@ -6511,8 +6511,10 @@ body.tl-kb-up {
   border-radius: 10px;
   background: var(--bg-page);
 }
+/* Twelve lines on a desktop: six held only a plan's Context section, and the
+   steps were under the fade (found live on 2026-09-27). */
 .tl-plancard-plan {
-  max-height: calc(13px * 1.45 * 6 * var(--tl-text-scale, 1));
+  max-height: calc(13px * 1.45 * 12 * var(--tl-text-scale, 1));
   overflow: hidden;
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 1.45;

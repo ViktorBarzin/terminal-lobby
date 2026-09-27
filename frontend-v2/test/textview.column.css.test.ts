@@ -278,6 +278,14 @@ describe("the card in the composer's place", () => {
     expect(decl(appCss, ".tl-qcard-desc", "overflow")).toBeUndefined();
   });
 
+  it("shows twelve lines of a plan on a desktop, so its steps are in view", () => {
+    // Found live on 2026-09-27: six lines held only the plan's Context
+    // section, and the steps the reader approves were under the fade.
+    expect(decl(appCss, ".tl-plancard-plan", "max-height")).toBe(
+      "calc(13px * 1.45 * 12 * var(--tl-text-scale, 1))",
+    );
+  });
+
   it("gives the phone 48px rows and a 16px question", () => {
     expect(appCss).toMatch(/\.tl-qcard-option\s*\{[^}]*min-height:\s*48px/);
     expect(appCss).toMatch(/\.tl-qcard-question\s*\{[^}]*font-size:\s*calc\(16px/);
