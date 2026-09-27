@@ -216,7 +216,7 @@ function refusal(
 
 /**
  * The narrowest text view the agent panel keeps its margin in, in px. The
- * prototype's breakpoint: a 260px rail beside what is left still reads as a
+ * prototype's breakpoint: a 280px rail beside what is left still reads as a
  * column, and below it the panel folds into a strip above the transcript.
  */
 const RAIL_MIN_PX = 900;
@@ -608,7 +608,7 @@ export const TextView: Component<{
   /**
    * The agent panel, and which of its two forms fits.
    *
-   * The margin needs 260px beside a readable column, so below RAIL_MIN_PX of
+   * The margin needs 280px beside a readable column, so below RAIL_MIN_PX of
    * text view it becomes a one-line strip above the transcript instead. The
    * width is the TEXT VIEW's, not the window's: a workspace tile or the open
    * sidebar narrows it without the viewport changing, which is why this is an

@@ -42,3 +42,36 @@ describe("the agent colours", () => {
     expect(rule(".tl-drill")).toMatch(/--tl-agent-none:/);
   });
 });
+
+describe("the panel's type", () => {
+  // Viktor, 2026-09-27: the rail's text "looks weird and is difficult to
+  // read". It was 10–10.5px, a third of it monospace, and every heading
+  // uppercased and letter-spaced. The rail now reads in the transcript's own
+  // face at 12px and up; the one monospace line left is a workflow's id,
+  // which is a handle rather than words.
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+    .map((m) => ({ sel: m[1]!.trim().split("\n").pop()!.trim(), body: m[2]! }))
+    .filter((r) => /\.tl-agents?\b|\.tl-agents?-/.test(r.sel));
+
+  it("finds the panel's rules", () => {
+    expect(rules.length).toBeGreaterThan(30);
+  });
+
+  it.each(rules.filter((r) => /font-size:/.test(r.body)).map((r) => [r.sel, r.body]))(
+    "sets %s at 12px or larger",
+    (_sel, body) => {
+      const px = Number(/font-size:\s*calc\(([\d.]+)px/.exec(body)?.[1]);
+      expect(px).toBeGreaterThanOrEqual(12);
+    },
+  );
+
+  it("uppercases nothing", () => {
+    expect(rules.filter((r) => /text-transform:\s*uppercase/.test(r.body)).map((r) => r.sel)).toEqual([]);
+  });
+
+  it("keeps monospace for the workflow id alone", () => {
+    expect(rules.filter((r) => /font-family:[^;]*mono/.test(r.body)).map((r) => r.sel)).toEqual([
+      '.tl-agents-run-title[data-id="true"]',
+    ]);
+  });
+});
