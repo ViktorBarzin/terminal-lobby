@@ -1,6 +1,6 @@
 import { For, Show, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js";
 import type { Question, QuestionOption } from "./canonicalize";
-import { CardDot, CardHead } from "./CardHead";
+import { CardDot, CardHead, keepFocusIn } from "./CardHead";
 import { OwnAnswer } from "./OwnAnswer";
 import { buildAnswers, resolveAnswer, setCustom, toggle, type Draft } from "./question.logic";
 
@@ -98,10 +98,24 @@ export const QuestionCard: Component<{
     const answers = buildAnswers(props.questions, drafts());
     if (!answers) {
       const gap = props.questions.findIndex((q) => !resolveAnswer(q, drafts()[q.question]));
-      if (gap >= 0) setIndex(gap);
+      if (gap >= 0) goTo(gap);
       return;
     }
     if (await props.onSubmit(answers)) setSent(true);
+  };
+
+  let cardEl: HTMLDivElement | undefined;
+  /**
+   * Move to another question, keeping the focus in the card. The button that
+   * moved can turn disabled (Next on a question with no answer yet) or go
+   * away (Previous on the first), and the focus would fall to the page, where
+   * the row digits are not the card's (found live on 2026-09-27).
+   */
+  const goTo = (i: number): void => {
+    const had = !!cardEl && cardEl.contains(document.activeElement);
+    setIndex(i);
+    setFocused(null);
+    if (had) queueMicrotask(() => keepFocusIn(cardEl));
   };
 
   /** T3's advance: the last question submits, any other moves to the next. */
@@ -112,8 +126,7 @@ export const QuestionCard: Component<{
       void submit();
       return;
     }
-    setIndex((i) => i + 1);
-    setFocused(null);
+    goTo(index() + 1);
   };
 
   const pick = (o: QuestionOption): void => {
@@ -136,7 +149,6 @@ export const QuestionCard: Component<{
     if (q) put(q, setCustom(draft(), words));
   };
 
-  let cardEl: HTMLDivElement | undefined;
   // Keys 1-9 pick, when the focus is in this card's Text view, nothing editable
   // has it, and the view is the one being typed into. A collapsed card opts
   // out, since the numbers it would pick are not on screen.
@@ -319,8 +331,7 @@ export const QuestionCard: Component<{
                 disabled={!answerable()}
                 onClick={() => {
                   clearTimeout(advanceTimer);
-                  setIndex((i) => Math.max(0, i - 1));
-                  setFocused(null);
+                  goTo(Math.max(0, index() - 1));
                 }}
               >
                 Previous

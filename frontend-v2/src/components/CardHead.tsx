@@ -22,7 +22,17 @@ export const CardHead: Component<{
     <span class="tl-qcard-links">
       {props.links}
       <Show when={props.inert && props.onTakeControl}>
-        <button type="button" class="tl-qcard-link" onClick={() => props.onTakeControl?.()}>
+        <button
+          type="button"
+          class="tl-qcard-link"
+          onClick={(e) => {
+            // The link goes away under the click, and the focus with it, so
+            // the card takes it back and its row digits work at once.
+            const card = e.currentTarget.closest<HTMLElement>(".tl-qcard");
+            props.onTakeControl?.();
+            queueMicrotask(() => keepFocusIn(card));
+          }}
+        >
           Take control
         </button>
       </Show>
@@ -32,3 +42,20 @@ export const CardHead: Component<{
 
 /** The awaiting dot at the head's left. */
 export const CardDot: Component = () => <span class="tl-qcard-dot" aria-hidden="true" />;
+
+/**
+ * Hand a card the focus when the focus has fallen out of it: onto the page,
+ * onto an element that has gone, or onto a button that has turned disabled.
+ * The row digits only act on keys from inside the Text view, so a card that
+ * loses the focus under a click of its own stops answering them.
+ */
+export function keepFocusIn(card: HTMLElement | null | undefined): void {
+  if (!card?.isConnected) return;
+  const a = document.activeElement;
+  const lost =
+    !a ||
+    a === document.body ||
+    !a.isConnected ||
+    ((a instanceof HTMLButtonElement || a instanceof HTMLTextAreaElement) && a.disabled);
+  if (lost) card.focus({ preventScroll: true });
+}

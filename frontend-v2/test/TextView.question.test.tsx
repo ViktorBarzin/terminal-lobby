@@ -436,6 +436,59 @@ describe("a held call", () => {
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
   });
 
+  it("keeps the focus in the card after Next, so the next question's digits work", async () => {
+    // Found live on 2026-09-27: Next turns disabled on a question with no
+    // answer yet, the focus fell to the page, and "2" did nothing.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([held([fruits, colour])], onAnswer);
+    await waitFor(() => expect(v.option("Apple")).toBeTruthy());
+    v.option("Apple")!.click();
+    const next = v.button("Next")!;
+    next.focus();
+    next.click();
+    await waitFor(() => expect(v.option("Blue")).toBeTruthy());
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      answers: { "Pick fruits": ["Apple"], "Pick a colour": ["Blue"] },
+    });
+  });
+
+  it("takes the focus back after Take control, so the digits work at once", async () => {
+    // Found live on 2026-09-27: the Take control link went away under the
+    // click, the focus fell to the page, and "2" did nothing.
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const [inert, setInert] = createSignal<string | undefined>("You are watching.");
+    const r = render(() => (
+      <TextView
+        events={[held([colour])]}
+        pending={[]}
+        onSend={async () => true}
+        onStop={() => {}}
+        onResolve={() => {}}
+        onKeys={async () => true}
+        onPane={async () => ({ pane: "", state: "done" })}
+        onAnswer={onAnswer}
+        inertReason={inert()}
+        onTakeControl={() => setInert(undefined)}
+      />
+    ));
+    const take = await waitFor(() => {
+      const b = [...r.container.querySelectorAll<HTMLButtonElement>(".tl-qcard button")].find(
+        (x) => x.textContent?.trim() === "Take control",
+      );
+      expect(b).toBeTruthy();
+      return b!;
+    });
+    take.focus();
+    take.click();
+    const card = r.container.querySelector<HTMLElement>(".tl-qcard:not(.tl-plancard)")!;
+    await waitFor(() => expect(document.activeElement).toBe(card));
+    fireEvent.keyDown(document.activeElement!, { key: "2" });
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+  });
+
   it("draws no row for the question while its card is up, and the record once answered", async () => {
     // Prototype 6-question: the card asks, and the conversation does not echo
     // it with an "answering below…" row.
