@@ -1131,11 +1131,13 @@ function foldSettledTurn(turn: Turn, work: FoldedRow[], settled: boolean): Timel
   return rows;
 }
 
-/** The files a row changed: a call's own, or every call's in a group. */
+/** The files a row changed: a call's own, or every call's in a group. A call
+ *  that came back as an error, a declined one included, changed nothing. */
 function changedFilesOf(row: FoldedRow): string[] {
-  if (row.kind === "tool") return row.changedFiles;
+  const own = (c: ToolRow): string[] => (c.isError ? [] : c.changedFiles);
+  if (row.kind === "tool") return own(row);
   if (row.kind === "work-group") {
-    return row.calls.flatMap((c) => (c.kind === "tool" ? c.changedFiles : []));
+    return row.calls.flatMap((c) => (c.kind === "tool" ? own(c) : []));
   }
   return [];
 }

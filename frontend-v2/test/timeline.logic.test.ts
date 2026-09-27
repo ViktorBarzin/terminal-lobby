@@ -913,6 +913,28 @@ describe("work groups", () => {
     ]);
   });
 
+  it("leaves a declined or failed edit's file out of what a fold says changed", () => {
+    // Seen live on 2026-09-27: a turn whose only Edit the reader declined
+    // folded to "Worked for 3m 16s · 1 step · calc.py".
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "tool_use", tool: "Edit", toolId: "e1", body: '{"file_path":"/r/a.ts"}' }),
+      done(3, "e1", {
+        isError: true,
+        body: "The user doesn't want to proceed with this tool use. The tool use was rejected.",
+      }),
+      ev({ id: 4, kind: "tool_use", tool: "Edit", toolId: "e2", body: '{"file_path":"/r/b.ts"}' }),
+      done(5, "e2", { isError: true, body: "File has not been read yet." }),
+      ev({ id: 6, kind: "text", body: "ok" }),
+      ev({ id: 7, kind: "tool_use", tool: "Bash", toolId: "t1", body: '{"command":"ls"}' }),
+      done(8, "t1"),
+      ev({ id: 9, kind: "text", body: "done" }),
+      ev({ id: 10, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.changedFiles).toEqual([]);
+  });
+
   it("reads the changed files and failures inside the groups a fold hides", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go" }),
