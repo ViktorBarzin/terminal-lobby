@@ -211,26 +211,22 @@ What it does not show: real iOS behaviour. The keyboard is drawn, not raised,
 so the keyboard-up layout is a simulation. Checking it on the iPhone
 (`homelab ios shot`) belongs to the build, not to this review.
 
+## Settled after the prototype
+
+Viktor answered four questions the prototype raised, on 2026-09-27:
+
+| Question | Decision |
+|---|---|
+| Replies inside a turn | A finished turn still folds to its last reply. Opening it shows the replies and work groups in order. |
+| Stop with queued messages | Stop puts the queued messages back into the field as a draft, so nothing is sent that you did not see after stopping. |
+| Text and Terminal on desktop | One icon in the header group on phone and desktop. The Terminal view shows a Text icon in the same place. |
+| Reach of the system font | The whole Text view: conversation, composer, cards and header. The sidebar and the rest of the lobby keep DM Sans. |
+
 ## Open questions
 
-1. **Replies inside a turn.** Today a settled turn folds everything but its last
-   reply behind "Worked for Ns". Work groups keep the replies between tool runs
-   visible, which is how the prototype reads. Long turns with many short
-   replies will be longer on screen than they are today. Is that the intent, or
-   should a settled turn still fold, with work groups inside the fold?
-2. **Where the typed answer goes for a multi-select question.** The prototype
-   answers a single-select on the first tap. A multi-select needs ticks and a
-   submit; the card's existing multi-select flow would carry over, but the
-   prototype does not draw it.
-3. **Stop with queued messages.** The prototype sends the first queued message
-   once Stop ends the turn, as the queue does today when a turn ends. Should
-   Stop also clear the queue?
-4. **Header on desktop.** The prototype drops the back button on desktop, since
-   the sidebar is always there. The Text/Terminal switch becomes the Terminal
-   icon in both. Is one icon enough of a way back to the Terminal on desktop?
-5. **Prose font.** The pass uses the system font for prose while the rest of the
-   lobby uses DM Sans. Should the switch cover the whole lobby, only the Text
-   view, or only its conversation?
-6. **Effort per model.** The sheet shows the efforts each model offers (the
+1. **A multi-select question in the composer's place.** The prototype answers a
+   single-select on the first tap. The card's existing multi-select flow (ticks,
+   then a Next or Submit button) carries over; the prototype does not draw it.
+2. **Effort per model.** The sheet shows the efforts each model offers (the
    prototype assumes Sonnet has no xhigh and Haiku has one level). The real
-   list should come from what the box reports per model.
+   list comes from what the box reports per model, to be read during the build.
