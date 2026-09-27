@@ -776,6 +776,8 @@ working in the background, or why this device only watches; its right side
 holds the **dials**. Not Claude Code's own status line in the pane, where the
 permission mode is read, nor its statusLine setting, where the **Recorder**
 sits.
+Retired by the T3 pass (2026-09-27, draft): what it said moves into the live
+**Work group** and the header, and its dials into the model sheet.
 _Avoid_: status bar, status row (the timeline row it took over from), footer
 
 **Dial**:
@@ -784,12 +786,16 @@ list that changes it: mode, model with effort, and context in the **Composer**;
 project, command, and model with effort in the **New-session composer**. With a
 mouse each dial opens its own popover; on a phone every dial opens one sheet
 with a tab per dial.
+Retired by the T3 pass (2026-09-27, draft), in both composers: the settings
+move into the sheet the model button opens, and the new-session project and
+command into a strip under the box.
 _Avoid_: chip (the old mode and model chips), picker (the list a dial opens)
 
 **+ tray**:
 The menu behind the "+" at the start of a composer's pill: attach a file, add a
 photo, a `/` command, and in a live **Composer** an `@` file path. It took over
-from the Attach button on 2026-09-24.
+from the Attach button on 2026-09-24. Retired by the T3 pass (2026-09-27,
+draft): "+" opens a plain menu of Photo library, Camera, File and Commands.
 _Avoid_: tray on its own (the strip of chips that **Inline chips** replaced),
 attach menu, plus menu
 
@@ -847,6 +853,11 @@ The stream of things a turn *did* â€” tool calls, approvals, thinking, errors â€
 kept separate from the turn's message text and merged with it only at render.
 Each entry carries a **tone** (`info` / `tool` / `approval` / `error`).
 _Avoid_: activity feed, events (Event is the wire type)
+
+**Work group**:
+A run of **Work log** entries between two replies, drawn as one row. The live
+one, at the end of the conversation, shows what Claude is doing now.
+_Avoid_: tool group, fold (the "Worked for Ns" row folds a whole turn)
 
 **Working row**:
 The live row standing for a turn in flight: the tool currently running, an
