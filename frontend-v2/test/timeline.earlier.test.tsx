@@ -58,6 +58,7 @@ describe("loading earlier turns by reaching the top", () => {
     fireEvent.scroll(el);
     expect(onLoadEarlier).not.toHaveBeenCalled();
 
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
     geom.top = 120; // scrolled up to the oldest rows
     fireEvent.scroll(el);
     expect(onLoadEarlier).toHaveBeenCalledTimes(1);
@@ -88,6 +89,7 @@ describe("loading earlier turns by reaching the top", () => {
     ));
     const el = container.querySelector<HTMLElement>(".tl-timeline")!;
     const geom = stubScroller(el, 4000, 400);
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
     geom.top = 40;
     fireEvent.scroll(el);
     fireEvent.scroll(el);
@@ -135,6 +137,7 @@ describe("loading earlier turns by reaching the top", () => {
     ));
     const el = container.querySelector<HTMLElement>(".tl-timeline")!;
     const geom = stubScroller(el, 4000, 400);
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
     geom.top = 10;
     fireEvent.scroll(el);
     await Promise.resolve();
@@ -168,6 +171,7 @@ describe("loading earlier turns by reaching the top", () => {
     if (anchor) {
       Object.defineProperty(anchor, "offsetTop", { configurable: true, get: () => anchorTop });
     }
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
     geom.top = 100;
     fireEvent.scroll(el);
     expect(onLoadEarlier).toHaveBeenCalledTimes(1);

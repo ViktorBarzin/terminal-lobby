@@ -233,6 +233,7 @@ describe("the timeline opens at the newest exchange", () => {
       const tl = container.querySelector(".tl-timeline") as HTMLElement;
       expect(tl.scrollTop).toBe(BOTTOM);
 
+      fireEvent.wheel(tl, { deltaY: -120 }); // the reader scrolls up
       tl.scrollTop = 0;
       fireEvent.scroll(tl);
 

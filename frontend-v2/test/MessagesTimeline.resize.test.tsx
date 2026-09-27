@@ -121,6 +121,7 @@ describe("<MessagesTimeline> when its own box changes size", () => {
   it("leaves a reader who scrolled up where they were", () => {
     const { tl, resized, latest } = mount();
     const g = geometry(tl, { content: 1000, client: 300 });
+    fireEvent.wheel(tl, { deltaY: -120 }); // the reader scrolls up
     tl.scrollTop = 100;
     fireEvent.scroll(tl);
     expect(latest()).not.toBe(null);

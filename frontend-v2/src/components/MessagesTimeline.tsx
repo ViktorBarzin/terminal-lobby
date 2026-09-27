@@ -139,6 +139,12 @@ const StatusRowView: Component<{ row: StatusRow }> = (props) => (
 
 /** How far off the bottom still counts as "reading the live end". */
 const PIN_SLACK_PX = 40;
+/** How long after a wheel turn, scroll key or release its scroll still counts as
+ *  the reader's. Covers the smooth-scroll animation's first frames; once the
+ *  first event has unpinned the view, later ones cannot pin it by mistake. */
+const GESTURE_MS = 500;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
+const EDITABLE = "input, textarea, select";
 
 /** How long a jumped-to row stays highlighted — long enough to find with the
  *  eye after the scroll, short enough not to become part of the layout. */
@@ -649,10 +655,96 @@ export const MessagesTimeline: Component<{
     const el = scroller;
     return !el || el.scrollHeight - el.scrollTop - el.clientHeight <= PIN_SLACK_PX;
   };
+  const stickToBottom = (el: HTMLElement): void => {
+    el.scrollTop = Math.max(0, el.scrollHeight - el.clientHeight);
+  };
+
+  /**
+   * Whether the reader is scrolling right now: a finger or a button held on the
+   * transcript, or a wheel turn, scroll key or release within GESTURE_MS.
+   *
+   * Only the reader lets go of the live end. A scroll event arrives on the frame
+   * after its scroll and reads that frame's geometry, and while a session opens
+   * the pin's own write is routinely followed by rows, pictures and markdown
+   * that grew the content before its event came in; a line added to the
+   * composer does the same through the browser's clamp. Read as the reader's
+   * scroll, each of those unpinned the view for good. Measured on 2026-09-27 on
+   * 0.77.1: 4 to 7 of 8 cold opens of a session with pictures on phone Chrome
+   * stopped 1,161 to 4,303px above the latest message with "Latest" showing.
+   */
+  let touching = false;
+  let pressing = false;
+  let gestureAt = Number.NEGATIVE_INFINITY;
+  const gesture = (): void => {
+    gestureAt = performance.now();
+  };
+  const readerScrolling = (): boolean =>
+    touching || pressing || performance.now() - gestureAt < GESTURE_MS;
+
   const onScroll = () => {
+    const el = scroller;
+    if (el && pinned() && !atBottom() && !readerScrolling()) {
+      if (!untrack(() => props.hidden)) stickToBottom(el);
+      return;
+    }
     setPinned(atBottom());
     maybeLoadEarlier();
   };
+
+  onMount(() => {
+    const el = scroller;
+    if (!el) return;
+    // A touch and a mouse button are held separately: a finger's own pointer
+    // is cancelled the moment the browser takes it over to pan, while the
+    // touch goes on.
+    const touch = (): void => {
+      touching = true;
+      gesture();
+    };
+    const untouch = (): void => {
+      touching = false;
+      gesture();
+    };
+    const press = (e: PointerEvent): void => {
+      if (e.pointerType === "touch") return;
+      pressing = true;
+      gesture();
+    };
+    const unpress = (): void => {
+      if (!pressing) return;
+      pressing = false;
+      gesture();
+    };
+    // Keys scroll whichever scroller the reader last used, wherever focus is,
+    // except in a field, where the same keys move a caret.
+    const onKey = (e: KeyboardEvent): void => {
+      if (!SCROLL_KEYS.has(e.key)) return;
+      const t = e.target;
+      if (t instanceof HTMLElement && (t.isContentEditable || t.closest(EDITABLE))) return;
+      gesture();
+    };
+    const passive = { passive: true } as const;
+    el.addEventListener("wheel", gesture, passive);
+    el.addEventListener("touchstart", touch, passive);
+    el.addEventListener("touchmove", gesture, passive);
+    el.addEventListener("pointerdown", press, passive);
+    window.addEventListener("touchend", untouch, passive);
+    window.addEventListener("touchcancel", untouch, passive);
+    window.addEventListener("pointerup", unpress, passive);
+    window.addEventListener("pointercancel", unpress, passive);
+    document.addEventListener("keydown", onKey, true);
+    onCleanup(() => {
+      el.removeEventListener("wheel", gesture);
+      el.removeEventListener("touchstart", touch);
+      el.removeEventListener("touchmove", gesture);
+      el.removeEventListener("pointerdown", press);
+      window.removeEventListener("touchend", untouch);
+      window.removeEventListener("touchcancel", untouch);
+      window.removeEventListener("pointerup", unpress);
+      window.removeEventListener("pointercancel", unpress);
+      document.removeEventListener("keydown", onKey, true);
+    });
+  });
 
   /**
    * Scroll to one event and flash its row — how a search hit is opened.
