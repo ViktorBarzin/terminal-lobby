@@ -46,16 +46,28 @@ describe("the chip layer's markup still matches its stylesheet", () => {
 });
 
 describe("an attached image in the composer", () => {
-  it("drops the pill behind a token that carries a picture", () => {
-    const chip = rule('.tl-inline-chip[data-thumb]');
-    expect(chip).toMatch(/position:\s*relative/);
-    expect(chip).toMatch(/background:\s*none/);
+  // Measured on the Android emulator's Chrome on 2026-09-27 (412x783 CSS):
+  // while a picture sat INSIDE a line of text, every line of the message took
+  // the picture's height, since a textarea has one line height for all of
+  // them, and a four-line message scrolled the 200px field until the picture
+  // was cut off at the top. The pictures now sit in a row above the text.
+  it("keeps the text at its own line height while a picture is attached", () => {
+    for (const sel of [
+      ".tl-field[data-thumbs] .tl-composer-input",
+      ".tl-field[data-thumbs] .tl-composer-mirror",
+    ]) {
+      const r = rule(sel);
+      expect(r).not.toMatch(/line-height/);
+      expect(r).toMatch(/padding-top:\s*calc\(var\(--tl-thumb-h\)/);
+    }
   });
 
-  it("covers the whole token with a box the thumbnail height, above the field", () => {
+  it("draws the pictures in a row in that room, above the field", () => {
+    const strip = rule(".tl-thumb-strip");
+    expect(strip).toMatch(/position:\s*absolute/);
+    expect(strip).toMatch(/display:\s*flex/);
     const zoom = rule(".tl-inline-zoom");
-    expect(zoom).toMatch(/position:\s*absolute/);
-    expect(zoom).toMatch(/width:\s*100%/);
+    expect(zoom).not.toMatch(/position:\s*absolute/);
     expect(zoom).toMatch(/height:\s*var\(--tl-thumb-h\)/);
     expect(zoom).toMatch(/z-index:\s*\d+/);
     // The mirror takes no clicks; the picture has to ask for them back, or it
@@ -63,19 +75,14 @@ describe("an attached image in the composer", () => {
     expect(zoom).toMatch(/pointer-events:\s*auto/);
   });
 
-  it("scales the picture into that box instead of drawing it at its natural size", () => {
+  it("draws the whole picture at its own shape rather than a crop of it", () => {
     const thumb = rule(".tl-inline-thumb");
-    expect(thumb).toMatch(/width:\s*100%/);
     expect(thumb).toMatch(/height:\s*100%/);
-    expect(thumb).toMatch(/object-fit:\s*cover/);
+    expect(thumb).toMatch(/width:\s*auto/);
   });
 
-  it("grows the line in the field and in the copy behind it alike", () => {
-    for (const sel of [
-      ".tl-field[data-thumbs] .tl-composer-input",
-      ".tl-field[data-thumbs] .tl-composer-mirror",
-    ]) {
-      expect(rule(sel)).toMatch(/line-height:\s*var\(--tl-thumb-line\)/);
-    }
+  it("sizes the picture in the stylesheet, not from script", () => {
+    expect(rule(".tl-field")).toMatch(/--tl-thumb-h:\s*\d+px/);
+    expect(field).not.toContain('"--tl-thumb-');
   });
 });

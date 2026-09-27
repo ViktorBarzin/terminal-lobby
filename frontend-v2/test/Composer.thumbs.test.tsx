@@ -12,10 +12,12 @@ import type { DraftAttachment } from "../src/store/drafts";
  * at all (Viktor, 2026-09-16: "i see just [img], let's replace that with a
  * proper thumbnail of the image instead").
  *
- * The mechanism these tests pin: the picture is painted over the token's own
- * characters, in the mirror layer, so the token has to be WIDE enough to hide
- * behind it (`attachToken`'s pad) and the field has to say when a picture is in
- * it (`data-thumbs`) so the line can grow to a height a picture fits in.
+ * The mechanism these tests pin: the pictures are drawn in a row at the top of
+ * the field, in the mirror layer, and the token stays in the text as a chip a
+ * person can read. The field says when a picture is in it (`data-thumbs`) so
+ * the row has room above the text. Until 2026-09-27 the picture was painted
+ * over the token itself, which made every line of the message as tall as the
+ * picture (a textarea has one line height for all of them).
  */
 
 const IMG: DraftAttachment = {
@@ -72,6 +74,16 @@ describe("the image in the chip", () => {
     const { container } = mount([{ ...IMG, preview: "blob:held-1" }]);
     await waitFor(() => expect(thumbs(container)).toHaveLength(1));
     expect(thumbs(container)[0]!.getAttribute("src")).toBe("blob:held-1");
+  });
+
+  it("draws the picture above the text and leaves the token a chip to read", async () => {
+    const { container } = mount([IMG]);
+    await waitFor(() => expect(thumbs(container)).toHaveLength(1));
+    expect(thumbs(container)[0]!.closest(".tl-thumb-strip")).not.toBeNull();
+    const chip = container.querySelector(".tl-inline-chip")!;
+    expect(chip.querySelector("img")).toBeNull();
+    expect(chip.textContent).toBe("[img]");
+    expect(container.querySelector("textarea")!.value).toBe("[img]");
   });
 
   it("leaves a document as the pill it was", async () => {

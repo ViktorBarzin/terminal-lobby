@@ -30,7 +30,6 @@ import {
   anchorRestored,
   attachToken,
   cutSpan,
-  PAD,
   previewContentUrl,
   storedDisplayName,
 } from "../lib/attachments";
@@ -38,28 +37,6 @@ import { PlusIcon, QueueIcon, SendArrowIcon } from "./Icons";
 import { dismissOnPress } from "./overlay";
 import { PlusTray } from "./PlusTray";
 import { dismissFloat } from "./Dial";
-
-/**
- * How tall a thumbnail is drawn, and how wide its box is, in px.
- *
- * The field's line grows to `THUMB_H` + breathing room while a picture is in
- * the message, because a line of 14px text is 21px tall and a 21px picture of a
- * screenshot is a smear. 44 is the smallest height a screenshot is still
- * recognisable at, measured against the real composer on 2026-09-16; the width
- * is 16:9, which is what a screen grab usually is, and anything else is
- * cover-cropped to it.
- */
-const THUMB_H = 44;
-const THUMB_W = Math.round(THUMB_H * (16 / 9));
-/**
- * The line box a `THUMB_H` picture sits in without touching the line above.
- *
- * Every line of the message is this tall while a picture is in it, since a
- * textarea has one line height for all of them — so the margin is 8px rather
- * than something generous: a three-line message is already 156px of field, and
- * each px here costs three.
- */
-const THUMB_LINE = THUMB_H + 8;
 
 /**
  * The field a prompt is written in: the pill, with `+` before it and Send
@@ -485,50 +462,6 @@ export const PromptField: Component<{
   };
 
   /**
-   * How wide `text` is in the font the FIELD is actually using, or 0 where
-   * nothing is laid out (jsdom, a field not yet in the document).
-   *
-   * Measured rather than assumed because the size is not ours: the text view
-   * has a pinch scale on an ancestor, a phone floors the field at 16px, and the
-   * webfont's metrics differ from the fallback it replaces. A pad computed
-   * against the wrong number leaves the picture either overlapping the words
-   * after it or floating short of them.
-   */
-  const measureText = (text: string): number => {
-    if (!ta || typeof document === "undefined") return 0;
-    const probe = document.createElement("span");
-    probe.textContent = text;
-    probe.style.cssText = "position:absolute;visibility:hidden;white-space:pre;top:0;left:0";
-    const style = getComputedStyle(ta);
-    probe.style.font = style.font;
-    // `font` shorthand comes back empty in some engines; the parts always do.
-    probe.style.fontFamily = style.fontFamily;
-    probe.style.fontSize = style.fontSize;
-    probe.style.fontWeight = style.fontWeight;
-    probe.style.letterSpacing = style.letterSpacing;
-    document.body.appendChild(probe);
-    const w = probe.getBoundingClientRect().width;
-    probe.remove();
-    return w;
-  };
-
-  /**
-   * How many pad characters an image's token needs to be as wide as its
-   * thumbnail.
-   *
-   * Measured against the SHORTEST form the token can take (`[img]`, before any
-   * ` 2` a second copy would add), so whatever `attachToken` settles on is at
-   * least this wide and the picture can never spill onto the text beside it.
-   * Zero where nothing can be measured, which leaves a plain readable token.
-   */
-  const padFor = (name: string, kind: DraftAttachment["kind"]): number => {
-    const unit = measureText(PAD);
-    if (unit <= 0) return 0;
-    const gap = THUMB_W - measureText(attachToken(name, kind, new Set()));
-    return gap <= 0 ? 0 : Math.ceil(gap / unit);
-  };
-
-  /**
    * Put files into the message where the writer is.
    *
    * Each one is written as a token at the caret and remembered against it, so
@@ -546,10 +479,7 @@ export const PromptField: Component<{
     for (const item of items) {
       if (have.has(item.path)) continue;
       have.add(item.path);
-      // Only an image is drawn as a picture, so only an image is padded out to
-      // one. A document keeps the token a person can read.
-      const pad = item.kind === "image" ? padFor(item.name, item.kind) : 0;
-      const token = attachToken(item.name, item.kind, taken, pad);
+      const token = attachToken(item.name, item.kind, taken);
       taken.add(token);
       fresh.push({ ...item, token });
     }
@@ -669,7 +599,7 @@ export const PromptField: Component<{
    * fail on its own: a store path the read-back route cannot resolve, or a
    * format Chromium does not decode (HEIF, which clipboard-upload accepts). The
    * chip falls back to the pill and its token text, which still says what is
-   * attached, and the line stops making room for a picture nobody can see.
+   * attached, and the field stops making room for a picture nobody can see.
    */
   const [broken, setBroken] = createSignal<ReadonlySet<string>>(new Set());
 
@@ -679,8 +609,25 @@ export const PromptField: Component<{
     return a.preview ?? previewContentUrl(a.path);
   };
 
-  /** A picture is in the message, so the line has to be tall enough for one. */
-  const hasThumb = createMemo(() => attached().some((a) => !!a.token && !!thumbFor(a)));
+  /**
+   * The pictures in the message, in the order they were attached, each with
+   * where it is read from. They are drawn in a row at the top of the field,
+   * above the text, and the token stays in the text as a chip.
+   *
+   * NOT OVER THE TOKEN. Until 2026-09-27 each picture was painted over its own
+   * token, which needed a line tall enough for a picture, and a textarea has
+   * one line height for all of its lines: on the phone every wrapped line of a
+   * message took 52px, and four of them scrolled the 200px field until the
+   * picture was cut off at the top (measured on the Android emulator).
+   */
+  const pictures = createMemo(() =>
+    attached().flatMap((a) => {
+      const src = a.token ? thumbFor(a) : null;
+      return src ? [{ item: a, src }] : [];
+    }),
+  );
+  /** A picture is in the message, so the field makes room above the text. */
+  const hasThumb = createMemo(() => pictures().length > 0);
 
   /**
    * The attached picture being looked at full size, or null.
@@ -730,9 +677,9 @@ export const PromptField: Component<{
   window.addEventListener("keydown", onZoomKey, true);
   onCleanup(() => window.removeEventListener("keydown", onZoomKey, true));
 
-  // The line height goes with it, and the field's own height is written in px
-  // at the moment of typing — so without this the field keeps the height it had
-  // for 21px lines and clips the picture it just made room for.
+  // The room above the text goes with it, and the field's own height is written
+  // in px at the moment of typing, so without this the field keeps the height
+  // it had without the row and clips the picture it just made room for.
   createEffect(() => {
     hasThumb();
     autosize();
@@ -1151,69 +1098,58 @@ export const PromptField: Component<{
               It owns no state and takes no clicks; if it were ever wrong the
               message would still read correctly, which is why the token says
               `[img: chart.png]` rather than relying on the paint. */}
-          <div
-            class="tl-field"
-            data-thumbs={hasThumb() ? "on" : undefined}
-            style={{
-              "--tl-thumb-w": `${THUMB_W}px`,
-              "--tl-thumb-h": `${THUMB_H}px`,
-              "--tl-thumb-line": `${THUMB_LINE}px`,
-            }}
-          >
+          <div class="tl-field" data-thumbs={hasThumb() ? "on" : undefined}>
             <div class="tl-composer-mirror" aria-hidden="true" ref={mirrorEl}>
+              {/* The pictures, in a row in the room the field leaves above
+                  its text. The one thing in this layer that sits ABOVE the
+                  field rather than behind it, and out of flow, so the copy of
+                  the text stays a character-for-character match of the
+                  field's. It scrolls with the text, as the first thing in the
+                  message. */}
+              <Show when={hasThumb()}>
+                <div class="tl-thumb-strip">
+                  <For each={pictures()}>
+                    {(p) => (
+                      <button
+                        type="button"
+                        class="tl-inline-zoom"
+                        // Pointer-only, deliberately. This layer is
+                        // `aria-hidden` (it is a copy of text the field
+                        // already carries), so a control inside it must not be
+                        // in the tab order, and a screen reader is not told
+                        // about a picture twice. The token in the text still
+                        // says what is attached.
+                        tabindex={-1}
+                        title={`Open ${p.item.token} full size`}
+                        // The button sits ON TOP of the field, so the default
+                        // press would move the caret into the text under it.
+                        // Opening a picture is not an edit.
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => openZoom(p.src, p.item.name)}
+                      >
+                        <img
+                          class="tl-inline-thumb"
+                          src={p.src}
+                          alt=""
+                          // The store keeps the original (a 4100px screen grab
+                          // is a normal paste here) and this box is 44px tall.
+                          // Decoding off the main thread keeps that from
+                          // landing on the keystroke that attached it.
+                          decoding="async"
+                          draggable={false}
+                          onError={() => setBroken((was) => new Set(was).add(p.item.path))}
+                        />
+                      </button>
+                    )}
+                  </For>
+                </div>
+              </Show>
               <For each={mirror()}>
                 {(part) => (
                   <Show when={part.item} fallback={part.text}>
                     {(item) => (
-                      <span
-                        class="tl-inline-chip"
-                        data-kind={item().kind}
-                        data-thumb={thumbFor(item()) ? "on" : undefined}
-                      >
+                      <span class="tl-inline-chip" data-kind={item().kind}>
                         {part.text}
-                        {/* The picture, painted OVER the token's own
-                            characters — it is the one thing in this layer that
-                            sits above the field rather than behind it. Out of
-                            flow, so the copy it is drawn into stays a
-                            character-for-character match of the field. */}
-                        <Show when={thumbFor(item())}>
-                          {(src) => (
-                            <button
-                              type="button"
-                              class="tl-inline-zoom"
-                              // Pointer-only, deliberately. This layer is
-                              // `aria-hidden` — it is a copy of text the field
-                              // already carries — so a control inside it must
-                              // not be in the tab order, and a screen reader
-                              // is not told about a picture twice. What it
-                              // does have is the only affordance a mouse or a
-                              // thumb can use: 80x44 recognises a screenshot,
-                              // it does not read one.
-                              tabindex={-1}
-                              title="Open the full image"
-                              // The button sits ON TOP of the field, so the
-                              // default press would move the caret into the
-                              // token it covers. Opening a picture is not an
-                              // edit.
-                              onMouseDown={(e) => e.preventDefault()}
-                              onClick={() => openZoom(src(), item().name)}
-                            >
-                              <img
-                                class="tl-inline-thumb"
-                                src={src()}
-                                alt=""
-                                // The store keeps the original — a 4100px
-                                // screen grab is a normal paste here — and
-                                // this box is 80px wide. Decoding off the main
-                                // thread keeps that from landing on the
-                                // keystroke that attached it.
-                                decoding="async"
-                                draggable={false}
-                                onError={() => setBroken((was) => new Set(was).add(item().path))}
-                              />
-                            </button>
-                          )}
-                        </Show>
                       </span>
                     )}
                   </Show>

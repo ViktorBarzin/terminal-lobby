@@ -35,12 +35,6 @@ const all = css.join("\n");
  * SessionCard puts neither class on a row it has not also given the property
  * to — so the `oklch()` that reads it is never computed without one.
  *
- * The three --tl-thumb-* are the size of an attached image's thumbnail, which
- * PromptField owns because the same width decides how many pad characters the
- * token carries — a stylesheet that disagreed would put the picture over the
- * words beside it. It writes all three onto `.tl-field`, unconditionally, and
- * every read is inside that element.
- *
  * --tl-lb-w and --tl-lb-h are the box a WATCHED session drew, in CSS px. Only
  * xterm knows it: the terminal is sized to the session's Grid rather than to
  * its host, and the pixels that comes to depend on the font and the cell
@@ -53,9 +47,6 @@ const SET_BY_JS = new Set([
   "--sk-h",
   "--app-vh",
   "--tl-ws-hue",
-  "--tl-thumb-w",
-  "--tl-thumb-h",
-  "--tl-thumb-line",
   "--tl-lb-w",
   "--tl-lb-h",
 ]);

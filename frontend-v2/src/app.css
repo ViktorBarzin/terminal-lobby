@@ -3211,6 +3211,10 @@ label.tl-set-row-label {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
+  /* How tall an attached picture is drawn. 44 is the smallest height a
+     screenshot is still recognisable at, measured against the real composer on
+     2026-09-16. */
+  --tl-thumb-h: 44px;
 }
 .tl-composer-input,
 .tl-composer-mirror {
@@ -3289,22 +3293,31 @@ label.tl-set-row-label {
 
    `[img]` says a picture is attached without saying WHICH picture, and on the
    new-session screen that pill is the only thing about the paste there is to
-   see (Viktor, 2026-09-16). The picture is painted over the token's own
-   characters: the token is padded out to THUMB_W in the field's real font
-   (PromptField, `padFor`) so the two are the same width, and the line grows to
-   THUMB_LINE so there is room for something taller than a line of text.
+   see (Viktor, 2026-09-16). The pictures sit in a row at the top of the field,
+   in the room `data-thumbs` makes above the text, and the token stays in the
+   text as a chip.
 
-   It is the one thing in the mirror that sits ABOVE the field rather than
-   behind it — z-index against the field's `position: relative` — because the
-   characters it stands for are the FIELD's and would otherwise show through it.
-   Neither this layer nor the field is a stacking context, so the two compete
-   directly; the mirror's own `overflow: hidden` still clips it when the field
-   scrolls, which is what keeps a picture from escaping the box. */
-.tl-inline-chip[data-thumb] {
-  position: relative;
-  background: none;
-  box-shadow: none;
-  outline: none;
+   Not painted over the token, as they were until 2026-09-27. That needed a
+   line tall enough for a picture, and a textarea has one line height for all
+   of its lines, so on the phone every wrapped line took 52px and a four-line
+   message scrolled the 200px field until the picture was cut off at the top
+   (Android emulator, 412x783 CSS).
+
+   The row is the one thing in the mirror that sits ABOVE the field rather than
+   behind it, z-index against the field's `position: relative`, because the
+   field's padding is over it. Neither this layer nor the field is a stacking
+   context, so the two compete directly; the mirror's own `overflow: hidden`
+   still clips the row when the field scrolls, which keeps a picture from
+   escaping the box. */
+.tl-thumb-strip {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  right: 6px;
+  display: flex;
+  gap: 6px;
+  height: var(--tl-thumb-h);
+  overflow: hidden;
 }
 /* The picture's box, and the press that opens it full size.
 
@@ -3314,18 +3327,8 @@ label.tl-set-row-label {
    place in the tab order, since this whole layer is `aria-hidden` and a
    focusable thing inside one is worse than a thing a keyboard cannot reach. */
 .tl-inline-zoom {
-  position: absolute;
-  left: 0;
-  /* Centred on the token's own text box — the height of the glyphs, not of the
-     grown line — so the picture sits on the writing rather than above it. */
-  top: 50%;
-  transform: translateY(-50%);
-  /* The WHOLE token, not a fixed width: the pad takes it to at least
-     --tl-thumb-w (PromptField, `padFor`), and rounding or a ` 2` disambiguator
-     can take it a few px past that. Covering exactly the measured width left
-     the tail of the closing bracket showing beside the picture. The height is
-     PromptField's number, because the line grows to match it. */
-  width: 100%;
+  position: relative;
+  flex: none;
   height: var(--tl-thumb-h);
   padding: 0;
   border: 0;
@@ -3335,8 +3338,8 @@ label.tl-set-row-label {
      asks for them back. */
   pointer-events: auto;
   cursor: zoom-in;
-  /* The same edge the pill wore. On a screenshot of the app itself, which is
-     most of what gets pasted here, nothing else says where the picture ends. */
+  /* On a screenshot of the app itself, which is most of what gets pasted
+     here, nothing else says where the picture ends. */
   outline: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
   /* Behind a PNG with transparency, so it reads as a tile rather than a hole. */
   background: var(--bg-card);
@@ -3344,18 +3347,23 @@ label.tl-set-row-label {
 .tl-inline-zoom:hover {
   outline-color: var(--accent);
 }
+/* The whole picture at its own shape, 44px tall. A panorama is held to three
+   times its height and cropped to that, so one wide grab cannot push the rest
+   of the row out of the field. */
 .tl-inline-thumb {
   display: block;
-  width: 100%;
+  width: auto;
   height: 100%;
+  max-width: calc(var(--tl-thumb-h) * 3);
   object-fit: cover;
   border-radius: 4px;
 }
-/* Room for the picture, in the field and in the copy of it behind. Both, or
-   every chip slides off its token. */
+/* Room for the row above the text, in the field and in the copy of it behind.
+   Both, or every chip slides off its token. The row's own 6px above it, and
+   6px between it and the first line. */
 .tl-field[data-thumbs] .tl-composer-input,
 .tl-field[data-thumbs] .tl-composer-mirror {
-  line-height: var(--tl-thumb-line);
+  padding-top: calc(var(--tl-thumb-h) + 12px);
 }
 
 /* ---- the permission panel, docked above the line ---------------------- */
