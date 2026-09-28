@@ -60,7 +60,8 @@ type Normalizer struct {
 	// where every record is a sidechain record (see NewAgentNormalizer).
 	agent bool
 	// open is the thread's latest prompt while Claude has written nothing for
-	// it, the one a Stop can still take back (see rewound.go). Nil once Claude
+	// it, with the prompts the CLI wrote in the same batch before it, the ones
+	// a Stop can still take back (see rewound.go). Nil once Claude
 	// answers, the CLI settles it with its interrupt notice, or it is marked.
 	open *openPrompt
 	// rewindText and rewindAt are a prompt the cancel route saw go back to the

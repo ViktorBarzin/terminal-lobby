@@ -36,12 +36,32 @@ type openPrompt struct {
 	turnID string
 	text   string
 	at     int64
+	// earlier are the prompts the CLI wrote in the same batch before this one,
+	// oldest first. A Stop puts the whole batch back on the input line, one
+	// prompt per line (deployed review round 4, 2026-09-28).
+	earlier []openPrompt
+}
+
+// all is the batch, oldest first, this prompt last.
+func (p *openPrompt) all() []openPrompt {
+	return append(append([]openPrompt{}, p.earlier...), openPrompt{turnID: p.turnID, text: p.text, at: p.at})
+}
+
+// words is the batch's text as the input line holds it, one prompt per line.
+func (p *openPrompt) words() string {
+	var texts []string
+	for _, q := range p.all() {
+		texts = append(texts, q.text)
+	}
+	return strings.Join(texts, "\n")
 }
 
 // opened records a prompt that has just opened a turn as the one a Stop can
 // still take back. A slash command never reaches Claude, and a `!` command's
-// output follows it as another user record, so neither is one.
+// output follows it as another user record, so neither is one. A prompt
+// written within batchWindow of the open one joins its batch.
 func (n *Normalizer) opened(rec Record, blocks []Block, at int64) {
+	prev := n.open
 	n.open = nil
 	if rec.IsSidechain && !n.agent {
 		return
@@ -51,7 +71,11 @@ func (n *Normalizer) opened(rec Record, blocks []Block, at int64) {
 		strings.HasPrefix(text, "<bash-") {
 		return
 	}
-	n.open = &openPrompt{turnID: n.turnID, text: text, at: at}
+	p := &openPrompt{turnID: n.turnID, text: text, at: at}
+	if prev != nil && at > 0 && prev.at > 0 && at-prev.at < batchWindow {
+		p.earlier = prev.all()
+	}
+	n.open = p
 }
 
 // takenBack reads a conversation record for what it says about the open
@@ -78,8 +102,8 @@ func (n *Normalizer) takenBack(rec Record, role string, blocks []Block, at int64
 		return nil
 	}
 	if at > 0 && n.open.at > 0 && at-n.open.at < batchWindow {
-		// Written with it: the same batch, answered together.
-		n.open = nil
+		// Written with it: the same batch, answered or taken back together.
+		// The prompt joins it as it opens its turn (opened).
 		return nil
 	}
 	return n.rewound(at, true)
@@ -96,7 +120,7 @@ func (n *Normalizer) takenBack(rec Record, role string, blocks []Block, at int64
 // The caller has just interrupted the turn, and Interrupt has already streamed
 // its end, so the turn is closed here without a second one.
 func (n *Normalizer) Rewind(text string, at int64) []Event {
-	if n.open != nil && sameWords(n.open.text, text) {
+	if n.open != nil && sameWords(n.open.words(), text) {
 		return n.rewound(at, false)
 	}
 	n.rewindText, n.rewindAt = text, at
@@ -114,21 +138,25 @@ func (n *Normalizer) rewindOnArrival(at int64) []Event {
 		n.rewindText, n.rewindAt = "", 0
 		return nil
 	}
-	if n.open == nil || !sameWords(n.open.text, n.rewindText) {
+	if n.open == nil || !sameWords(n.open.words(), n.rewindText) {
 		return nil
 	}
 	n.rewindText, n.rewindAt = "", 0
 	return n.rewound(at, true)
 }
 
-// rewound emits the marker for the open prompt and closes its turn when
-// nothing has, streaming the turn's end when `end` says nobody else has.
+// rewound emits a marker for each prompt of the open batch and closes the
+// last one's turn when nothing has, streaming the turn's end when `end` says
+// nobody else has.
 func (n *Normalizer) rewound(at int64, end bool) []Event {
 	p := n.open
 	n.open = nil
-	e := n.emit(KindMeta, at)
-	e.Meta, e.Body, e.TurnID = MetaRewound, p.text, p.turnID
-	out := []Event{e}
+	var out []Event
+	for _, q := range p.all() {
+		e := n.emit(KindMeta, at)
+		e.Meta, e.Body, e.TurnID = MetaRewound, q.text, q.turnID
+		out = append(out, e)
+	}
 	if n.turnID == p.turnID && !n.turnDone {
 		n.turnDone, n.doneMsg = true, ""
 		if end {
@@ -191,7 +219,7 @@ func (n *Normalizer) RestoreRewound(stamp string) []Event {
 	if err != nil || n.open == nil {
 		return nil
 	}
-	if n.open.at > at || wordsKey(n.open.text) != key {
+	if n.open.at > at || wordsKey(n.open.words()) != key {
 		return nil
 	}
 	return n.rewound(at, true)

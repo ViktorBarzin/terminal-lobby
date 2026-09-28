@@ -219,3 +219,97 @@ func TestNormalizerRestoreRewoundLeavesOtherPromptsAlone(t *testing.T) {
 		}
 	}
 }
+
+// Deployed review round 4 (2026-09-28): two prompts queued behind Claude's
+// final reply ran as one batch, each its own record 2 ms apart, and a Stop
+// before Claude answered put both back on the input line. The cancel route
+// names the whole batch, and every prompt in it leaves the conversation.
+func batchLines() [][]byte {
+	return [][]byte{
+		promptLine("Write a paragraph", "2026-09-28T19:10:30Z"),
+		[]byte(`{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"A paragraph."}]},"timestamp":"2026-09-28T19:10:40Z"}`),
+		promptLine("queued msg 1", "2026-09-28T19:10:41.100Z"),
+		promptLine("queued msg 2", "2026-09-28T19:10:41.102Z"),
+	}
+}
+
+func userTurns(evs []Event) []string {
+	var out []string
+	for _, e := range evs {
+		if e.Kind == KindUser {
+			out = append(out, e.TurnID)
+		}
+	}
+	return out
+}
+
+func rewoundTurns(evs []Event) []string {
+	var out []string
+	for _, e := range rewoundOf(evs) {
+		out = append(out, e.TurnID)
+	}
+	return out
+}
+
+func TestNormalizerRewindMarksEveryPromptOfABatch(t *testing.T) {
+	n := NewNormalizer("demo")
+	var all []Event
+	for _, l := range batchLines() {
+		all = append(all, n.Line(l)...)
+	}
+	users := userTurns(all)
+	at := mustAt(t, "2026-09-28T19:10:42Z")
+	n.Interrupt(at)
+	out := n.Rewind("queued msg 1\n\nqueued msg 2", at)
+	got := rewoundTurns(out)
+	if len(got) != 2 || got[0] != users[1] || got[1] != users[2] {
+		t.Fatalf("Rewind marked turns %v, want both batch prompts' %v", got, users[1:])
+	}
+	if b := rewoundOf(out); b[0].Body != "queued msg 1" || b[1].Body != "queued msg 2" {
+		t.Fatalf("marker bodies = %q, %q, want each prompt's own words", b[0].Body, b[1].Body)
+	}
+}
+
+func TestNormalizerRewindBeforeABatchArrivesMarksItAll(t *testing.T) {
+	n := NewNormalizer("demo")
+	lines := batchLines()
+	n.Line(lines[0])
+	n.Line(lines[1])
+	at := mustAt(t, "2026-09-28T19:10:42Z")
+	n.Interrupt(at)
+	if out := n.Rewind("queued msg 1\n\nqueued msg 2", at); len(out) != 0 {
+		t.Fatalf("nothing of the batch recorded yet, Rewind produced %v", kinds(out))
+	}
+	first := n.Line(lines[2])
+	second := n.Line(lines[3])
+	got := append(rewoundTurns(first), rewoundTurns(second)...)
+	want := append(userTurns(first), userTurns(second)...)
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("batch arriving after the Stop marked %v, want %v", got, want)
+	}
+}
+
+func TestNormalizerRestoreRewoundMarksATrailingBatch(t *testing.T) {
+	n := NewNormalizer("demo")
+	var all []Event
+	for _, l := range batchLines() {
+		all = append(all, n.Line(l)...)
+	}
+	got := rewoundTurns(n.RestoreRewound(RewoundStamp("queued msg 1\n\nqueued msg 2", parseAt("2026-09-28T19:10:42Z"))))
+	if users := userTurns(all); len(got) != 2 || got[0] != users[1] || got[1] != users[2] {
+		t.Fatalf("restore marked %v, want both batch prompts' turns %v", got, users[1:])
+	}
+}
+
+// A batch the next prompt follows with nothing from Claude in between went
+// back to the input line whole.
+func TestNormalizerBatchFollowedByAPromptWasRewoundWhole(t *testing.T) {
+	n := NewNormalizer("demo")
+	for _, l := range batchLines() {
+		n.Line(l)
+	}
+	next := n.Line(promptLine("THIRD", "2026-09-28T19:10:50Z"))
+	if got := rewoundOf(next); len(got) != 2 {
+		t.Fatalf("next prompt after a taken-back batch produced %d markers, want 2", len(got))
+	}
+}

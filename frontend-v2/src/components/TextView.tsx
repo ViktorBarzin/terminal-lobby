@@ -37,6 +37,7 @@ import {
   type PlanRow,
   type PlanTransient,
   type TimelineRow,
+  type UserRow,
   type WorkingRow,
 } from "./timeline.logic";
 import { modeFromPane, type PendingPrompt, type SlashCommand } from "../logic/compose.logic";
@@ -246,6 +247,13 @@ const HOLD_GRACE_MS = 4_000;
  * Stop that never answers does not hold the send past it.
  */
 const STOP_HAND_BACK_WAIT_MS = 5_000;
+
+/**
+ * How close two prompt records are when the CLI ran them as one batch: the
+ * prompts queued behind a turn, written 1 to 2 ms apart when it ends, the
+ * window session-events reads a batch with too (sessionio batchWindow).
+ */
+const BATCH_MS = 1_000;
 
 /**
  * How soon after a Stop puts its prompt back an Enter counts as typed without
@@ -712,9 +720,7 @@ export const TextView: Component<{
     let ok: boolean;
     let gone = false;
     if (props.onAnswer) {
-      const resp = await props
-        .onAnswer({ permission: { option: n, label } })
-        .catch(() => null);
+      const resp = await props.onAnswer({ permission: { option: n, label } }).catch(() => null);
       ok = resp?.applied ?? false;
       gone = resp?.reason === "no-dialog" || resp?.reason === "not-drawn";
     } else {
@@ -885,17 +891,29 @@ export const TextView: Component<{
    * recorded yet, or else the transcript's own open turn when its prompt is all
    * it holds. `held` is the store's copy, which then does not also go back as
    * a queued prompt.
+   *
+   * Prompts queued behind a turn run as one batch when it ends, each its own
+   * record written together, and a Stop puts every one back on the input line,
+   * one per line (deployed review round 4, 2026-09-28). So the open turn's
+   * prompt is the whole batch, oldest first, a blank line between each: the
+   * user rows before the working row that the CLI wrote within BATCH_MS of
+   * each other.
    */
   const stoppable = createMemo((): { text: string; held?: PendingPrompt } | null => {
     const early = sent().find((p) => !p.command);
     if (early) return { text: early.text, held: early };
     const rows = baseRows();
-    const last = rows.at(-1);
-    const prompt = rows.at(-2);
-    if (last?.kind === "working" && prompt?.kind === "user" && prompt.body.trim() !== "") {
-      return { text: prompt.body };
+    if (rows.at(-1)?.kind !== "working") return null;
+    const batch: UserRow[] = [];
+    for (let i = rows.length - 2; i >= 0; i--) {
+      const row = rows[i];
+      if (row?.kind !== "user" || row.body.trim() === "") break;
+      const next = batch[0];
+      if (next && !(row.at !== undefined && next.at !== undefined && next.at - row.at < BATCH_MS))
+        break;
+      batch.unshift(row);
     }
-    return null;
+    return batch.length > 0 ? { text: batch.map((r) => r.body).join("\n\n") } : null;
   });
 
   /**
@@ -1414,8 +1432,8 @@ export const TextView: Component<{
    * level changes. An apply holds until the stamp moves, exactly as it would
    * wait for the transcript.
    */
-  const transcriptModel = createMemo(
-    () => fillModel(currentModel(props.events, props.sessionState), props.stampedModel, bannerModel()),
+  const transcriptModel = createMemo(() =>
+    fillModel(currentModel(props.events, props.sessionState), props.stampedModel, bannerModel()),
   );
   // The sheet's context line: a /context reading, or the last turn's usage
   // over the window measured for the model the session answers as.

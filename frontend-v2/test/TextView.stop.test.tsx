@@ -570,6 +570,31 @@ describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
     await waitFor(() => expect(field().value).toBe("next thing"));
   });
 
+  // Deployed review round 4 (2026-09-28): two messages queued behind Claude's
+  // final reply ran as one batch, each its own record 2 ms apart. A Stop 0.7 s
+  // in put both back on Claude's input line as two lines, the view named only
+  // the last, the server found two lines where it was told of one and took
+  // nothing, and the next send's clear erased both. The whole batch is the
+  // stopped turn's prompt.
+  it("names every prompt of a batch the CLI ran together, and hands them all back", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const batch: Event[] = [
+      ...OPENED,
+      { id: 2, kind: "text", session: "demo", turnId: "t1", body: "A paragraph.", at: 1_500 },
+      { id: 3, kind: "meta", meta: "queued", session: "demo", body: "queued msg 1", at: 1_600 },
+      { id: 4, kind: "meta", meta: "queued", session: "demo", body: "queued msg 2", at: 1_700 },
+      { id: 5, kind: "turn_end", session: "demo", turnId: "t1", at: 2_000 },
+      { id: 6, kind: "meta", meta: "dequeued", session: "demo", at: 2_001 },
+      { id: 7, kind: "meta", meta: "dequeued", session: "demo", at: 2_001 },
+      { id: 8, kind: "user", session: "demo", turnId: "t2", body: "queued msg 1", at: 2_002 },
+      { id: 9, kind: "user", session: "demo", turnId: "t3", body: "queued msg 2", at: 2_004 },
+    ];
+    const { button, field } = mount(() => "running", onStop, { events: batch });
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(undefined, "queued msg 1\n\nqueued msg 2");
+    await waitFor(() => expect(field().value).toBe("queued msg 1\n\nqueued msg 2"));
+  });
+
   // The queue race from the same check: the CLI had just taken the first
   // ghost as the next turn when Stop landed, so that one is the stopped turn's
   // prompt and the rest are still queued. Both come back, oldest first.
