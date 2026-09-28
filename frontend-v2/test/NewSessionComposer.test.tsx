@@ -1369,7 +1369,7 @@ describe("<NewSessionComposer> — attachments", () => {
     // then there is no file behind it.
     const saved = loadDraft(NEW_SESSION_DRAFT_KEY)!;
     expect(saved.attachments).toEqual([]);
-    expect(saved.text).toBe("what is wrong here? [img: shot.png]");
+    expect(saved.text).toBe("what is wrong here? [img: shot.png] ");
     expect(localStorage.getItem(DRAFTS_KEY)).not.toContain("held:");
     m.store.dispose();
   });

@@ -65,7 +65,7 @@ describe("the dock", () => {
   });
 
   it("leaves 14px under the box on a desktop and 8px under the pill on a phone", () => {
-    expect(rule(".tl-composer")).toMatch(/padding:\s*0 clamp\(12px, 6vw, 80px\) 14px/);
+    expect(rule(".tl-composer")).toMatch(/padding:\s*0 var\(--tl-gutter\) 14px/);
     expect(rule(".tl-composer", coarse())).toMatch(/padding-bottom:\s*8px/);
   });
 });
@@ -250,9 +250,15 @@ describe("the new-session screen (prototype 6-new)", () => {
     expect(rule('.tl-strip-item[data-side="end"]')).toMatch(/margin-left:\s*auto/);
   });
 
+  // One gutter for the conversation, the composer, the card and this box: the
+  // live pill sat at 6vw (25px at 412px) beside a 14px new-session box, where
+  // the prototype draws both at 14px (found live on 2026-09-28).
   it("keeps the phone's 14px gutter, so the hero stays on one line at 390px", () => {
-    expect(rule(".tl-new-composer", coarse())).toMatch(/padding-left:\s*14px/);
-    expect(rule(".tl-new-composer", coarse())).toMatch(/padding-right:\s*14px/);
+    expect(rule(".tl-new-composer")).toMatch(/padding:\s*16px var\(--tl-gutter\)/);
+    expect(rule(".tl-composer")).toMatch(/var\(--tl-gutter\)/);
+    expect(rule(".tl-timeline")).toMatch(/var\(--tl-gutter\)/);
+    const phone = blocks("(pointer: coarse) and ((max-width: 720px) or (max-height: 480px))").join("\n");
+    expect(rule(":root", phone)).toMatch(/--tl-gutter:\s*14px/);
   });
 
   // Default, five rungs and ultracode ran past a 390px sheet's edge.

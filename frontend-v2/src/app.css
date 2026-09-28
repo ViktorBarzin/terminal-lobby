@@ -1321,7 +1321,7 @@ label.tl-set-row-label {
   overflow-anchor: none;
   /* 26px at the foot, which is the fade below: the last row clears it when the
      reader is at the bottom, and only padding is ever faded. */
-  padding: 16px clamp(12px, 6vw, 80px) 26px;
+  padding: 16px var(--tl-gutter) 26px;
   display: flex;
   flex-direction: column;
   /* The prose, as the prototype's `.col` sets it: 14px on 22.75px with 18px
@@ -1782,7 +1782,7 @@ label.tl-set-row-label {
   gap: 10px;
   width: 100%;
   min-height: 30px;
-  padding: 6px clamp(12px, 6vw, 80px);
+  padding: 6px var(--tl-gutter);
   border: 0;
   background: none;
   color: inherit;
@@ -1809,7 +1809,7 @@ label.tl-set-row-label {
   max-height: min(46vh, 320px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 clamp(12px, 6vw, 80px) 10px;
+  padding: 0 var(--tl-gutter) 10px;
   border-top: 1px solid var(--border);
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
@@ -1827,7 +1827,7 @@ label.tl-set-row-label {
 }
 .tl-drill-head {
   flex: none;
-  padding: 12px clamp(12px, 6vw, 80px) 11px;
+  padding: 12px var(--tl-gutter) 11px;
   border-bottom: 1px solid var(--border);
 }
 /* The reading column's own width, as the timeline's rows have it. */
@@ -1914,7 +1914,7 @@ label.tl-set-row-label {
   box-sizing: content-box;
   max-width: 760px;
   margin: 0 auto;
-  padding: 24px clamp(12px, 6vw, 80px);
+  padding: 24px var(--tl-gutter);
   color: var(--text-muted);
   font-style: italic;
 }
@@ -2685,10 +2685,16 @@ label.tl-set-row-label {
 .tl-markdown {
   overflow-wrap: anywhere;
 }
-.tl-markdown > :first-child {
+/* The renderer wraps the blocks in a div of its own, so the edges are one
+   level down as well. Without that a reply or a plan opening on a heading kept
+   the heading's 1em above it: a blank band at the top of the plan card's well
+   (found live on 2026-09-28). */
+.tl-markdown > :first-child,
+.tl-markdown > div:only-child > :first-child {
   margin-top: 0;
 }
-.tl-markdown > :last-child {
+.tl-markdown > :last-child,
+.tl-markdown > div:only-child > :last-child {
   margin-bottom: 0;
 }
 .tl-markdown p {
@@ -2834,7 +2840,7 @@ label.tl-set-row-label {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 16px clamp(12px, 6vw, 80px);
+  padding: 16px var(--tl-gutter);
   overflow-y: auto;
 }
 /* "What should we build in <project>?", 22px at 620, the project muted. */
@@ -2978,11 +2984,7 @@ label.tl-set-row-label {
    rather than per session, which App.tsx did deliberately so the list screen
    would have it too. --safe-b keeps Send off the home indicator. */
 @media (pointer: coarse) {
-  /* The prototype's 14px phone gutter, which keeps the hero on one line at
-     390px. */
   .tl-new-composer {
-    padding-left: 14px;
-    padding-right: 14px;
     padding-bottom: calc(12px + var(--kb-offset, 0px) + var(--safe-b, 0px));
   }
   .tl-new-hero {
@@ -3012,7 +3014,7 @@ label.tl-set-row-label {
 .tl-composer {
   position: relative;
   flex: 0 0 auto;
-  padding: 0 clamp(12px, 6vw, 80px) 14px;
+  padding: 0 var(--tl-gutter) 14px;
 }
 
 /* ---- the surface ---------------------------------------------------------
@@ -4393,6 +4395,18 @@ label.tl-set-row-label {
    viewport.ts sets .tl-kb-up whenever the platform has taken the bottom edge. */
 :root {
   --safe-b: env(safe-area-inset-bottom);
+  /* The Text view's side gutter: the conversation, the composer, the card
+     that replaces it and the new-session box all use it, so the box is the
+     same width on every screen. The prototype's 14px on a phone (6-idle and
+     6-new draw the pill and the new box at the same inset); the live pill sat
+     at 6vw, 25px at 412px, beside a 14px new-session box (found live on
+     2026-09-28). */
+  --tl-gutter: clamp(12px, 6vw, 80px);
+}
+@media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
+  :root {
+    --tl-gutter: 14px;
+  }
 }
 body.tl-kb-up {
   --safe-b: 0px;
@@ -6073,7 +6087,7 @@ body.tl-kb-up {
   box-sizing: border-box;
   /* `.tl-composer`'s own gutters, so the card lines up with the box it
      replaces and with the conversation's column above. */
-  width: calc(100% - 2 * clamp(12px, 6vw, 80px));
+  width: calc(100% - 2 * var(--tl-gutter));
   max-width: 760px;
   margin: 0 auto 14px;
   padding: 12px 12px 10px;
@@ -6573,11 +6587,12 @@ body.tl-kb-up {
 .tl-plancard-plan li > ol {
   margin: 0;
 }
-/* Five lines on a phone, where the card has about 290px of a 465px pane once
-   the keyboard is up, and the three choices need 140px of it. */
+/* Seven lines on a phone, as the prototype's phone draws the well: five
+   showed about 94px, the Context heading and two lines of it, and none of the
+   steps (found live on 2026-09-28). "Read the full plan" opens the rest. */
 @media (pointer: coarse) {
   .tl-plancard-plan {
-    max-height: calc(13px * 1.45 * 5 * var(--tl-text-scale, 1));
+    max-height: calc(13px * 1.45 * 7 * var(--tl-text-scale, 1));
   }
 }
 .tl-plancard-loading,
