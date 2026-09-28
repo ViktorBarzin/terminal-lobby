@@ -27,6 +27,14 @@ import { createSignal, onMount, Show, type Component } from "solid-js";
 const HIGHLIGHT_MAX_CHARS = 128 * 1024;
 const HIGHLIGHT_AUTO_MAX_CHARS = 16 * 1024;
 
+/**
+ * The languages that mean "not code": shown as written, never highlighted.
+ * Markdown passes `plaintext` for an untagged fence, since auto-detection
+ * coloured a story Claude wrote in one as if it were a program (found live on
+ * 2026-09-28).
+ */
+const PLAIN = new Set(["plaintext", "text", "txt", "plain"]);
+
 type HljsModule = typeof import("highlight.js/lib/core")["default"];
 let hljsReady: Promise<HljsModule> | null = null;
 
@@ -107,14 +115,17 @@ async function loadHljs(): Promise<HljsModule> {
   return hljsReady;
 }
 
-export const CodeView: Component<{ code: string; language?: string }> = (
-  props,
-) => {
+export const CodeView: Component<{ code: string; language?: string }> = (props) => {
   const [markup, setMarkup] = createSignal<string>("");
   const [ready, setReady] = createSignal(false);
   const [skipped, setSkipped] = createSignal(false);
+  const plain = (): boolean => PLAIN.has((props.language ?? "").toLowerCase());
+  /** The language the block names, which an untagged fence does not. */
+  const shownLang = (): string | undefined =>
+    props.language && props.language !== "plaintext" ? props.language : undefined;
 
   onMount(async () => {
+    if (plain()) return;
     try {
       // Over the larger ceiling nothing can highlight this, so don't even pay
       // for the grammars.
@@ -148,21 +159,21 @@ export const CodeView: Component<{ code: string; language?: string }> = (
         <>
           <Show when={skipped()}>
             <div class="tl-preview-note tl-codeview-skipped">
-              Syntax highlighting is off — this file is too large to colour
-              without freezing the page.
+              Syntax highlighting is off — this file is too large to colour without freezing the
+              page.
             </div>
           </Show>
           <pre
             class="tl-code tl-codeview hljs"
-            data-lang={props.language || undefined}
-            data-highlight={skipped() ? "skipped" : undefined}
+            data-lang={shownLang()}
+            data-highlight={skipped() ? "skipped" : plain() ? "off" : undefined}
           >
             <code>{props.code}</code>
           </pre>
         </>
       }
     >
-      <pre class="tl-code tl-codeview hljs" data-lang={props.language || undefined}>
+      <pre class="tl-code tl-codeview hljs" data-lang={shownLang()}>
         <code innerHTML={markup()} />
       </pre>
     </Show>

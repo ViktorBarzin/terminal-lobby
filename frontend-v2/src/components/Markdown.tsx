@@ -348,9 +348,11 @@ const components: SolidMarkdownComponents = {
     if (props.inline) return <code class="tl-inline-code">{text}</code>;
     const lang = hastLang(node);
     if (lang === "mermaid") return <Mermaid code={text} />;
+    // An untagged fence is shown as written: auto-detection coloured prose in
+    // one as if it were code (CodeView's PLAIN).
     return (
       <div class="tl-code-block" data-lang={lang || undefined}>
-        <CodeView code={text} {...(lang ? { language: lang } : {})} />
+        <CodeView code={text} language={lang || "plaintext"} />
       </div>
     );
   },
