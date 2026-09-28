@@ -190,6 +190,38 @@ func TestEffortLadderReadsClaudesSlider(t *testing.T) {
 	}
 }
 
+// A phone-width pane wraps the slider's labels onto a second line, each one
+// split at the same column: "lo"/"w", "medi"/"um", "ultrac"/"ode". Captured on
+// Claude Code 2.1.283 at 47 columns on 2026-09-28, the width a pane has when
+// an iPhone drove it last, where the sheet's Effort row failed every time.
+func TestEffortLadderReadsASliderWrappedAtPhoneWidth(t *testing.T) {
+	want := []string{"low", "medium", "high", "xhigh", "max", "ultracode"}
+	cases := map[string]string{
+		"47 columns": fixture(t, "picker-claude-effort-narrow.txt"),
+		"only the last label wrapped": "   ←/→ to adjust\n" +
+			"   low   medium   high   xhigh   max   ultrac\n" +
+			"                                       ode\n",
+	}
+	for name, pane := range cases {
+		ladder, ok := EffortLadder(pane)
+		if !ok {
+			t.Errorf("%s: the wrapped slider was not recognised", name)
+			continue
+		}
+		if strings.Join(ladder, " ") != strings.Join(want, " ") {
+			t.Errorf("%s: ladder = %v, want %v", name, ladder, want)
+		}
+	}
+}
+
+// A second line that does not line up with the labels is not their tail.
+func TestEffortLadderDoesNotJoinLinesThatDoNotLineUp(t *testing.T) {
+	pane := "   ←/→ to adjust\n   lo   medi\n  w   um\n"
+	if ladder, ok := EffortLadder(pane); ok {
+		t.Errorf("read %v off labels that do not line up", ladder)
+	}
+}
+
 func TestEffortLadderIgnoresAPaneWithNoSlider(t *testing.T) {
 	if _, ok := EffortLadder(fixture(t, "picker-claude-model.txt")); ok {
 		t.Error("the model picker was read as an effort slider")

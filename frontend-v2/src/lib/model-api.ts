@@ -41,9 +41,7 @@ export interface SetModelOptions {
   fetchImpl?: typeof fetch;
 }
 
-export type SetModelResult =
-  | { ok: true; state: ModelState }
-  | { ok: false; reason: string };
+export type SetModelResult = { ok: true; state: ModelState } | { ok: false; reason: string };
 
 async function attempt(o: SetModelOptions, fetchImpl: typeof fetch): Promise<Attempt> {
   try {
@@ -69,10 +67,33 @@ async function attempt(o: SetModelOptions, fetchImpl: typeof fetch): Promise<Att
       return { kind: "no", reason: "The session is working — stop the turn first." };
     }
     const said = (await res.text().catch(() => "")).trim();
-    return { kind: "no", reason: said || `The session refused the change (${res.status}).` };
+    return {
+      kind: "no",
+      reason: readableRefusal(said, o) || `The session refused the change (${res.status}).`,
+    };
   } catch {
     return { kind: "later" }; // a blip on the way out, not a refusal
   }
+}
+
+/**
+ * What a refusal says to the reader.
+ *
+ * The driver's sentence is kept when it names the choice: a model this account
+ * is not offered lists what the session does offer, and that is the whole
+ * value of the error. Any other sentence is how driving the picker went wrong
+ * ("set effort: this build's effort slider is not the one expected (…)"),
+ * which the server logs and a reader cannot act on, so it becomes what failed
+ * and what still works (deployed review round 1, 2026-09-28).
+ */
+function readableRefusal(said: string, o: Pick<SetModelOptions, "harness" | "model">): string {
+  if (!said || /is not offered here|is not one of/.test(said)) return said;
+  const who = o.harness === "codex" ? "Codex" : o.harness === "pi" ? "pi" : "Claude";
+  return o.model
+    ? `Couldn't change the model. ${who}'s picker did not answer as expected; /model in the Terminal still works.`
+    : o.harness === "pi"
+      ? "Couldn't change the thinking level. pi did not answer as expected; /thinking in the Terminal still works."
+      : `Couldn't change the effort. ${who}'s slider did not answer as expected; /effort in the Terminal still works.`;
 }
 
 /**

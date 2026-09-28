@@ -114,6 +114,42 @@ describe("applying a model choice to a session", () => {
     expect(!r.ok && r.reason).toContain("this session lists");
   });
 
+  // Deployed review round 1 (2026-09-28): an effort pick on a phone-width pane
+  // toasted "set effort: this build's effort slider is not the one expected
+  // ([low medium high xhigh max ultracode])". A driver sentence that names no
+  // choice is the server's to log; the reader gets what failed and what works.
+  it("says in plain words when the picker did not answer as expected", async () => {
+    const said = async (body: string, model: string, effort: string) => {
+      const fetchImpl = vi.fn(async () => ({
+        ok: false,
+        status: 502,
+        text: async () => body,
+      }));
+      const r = await setSessionModel({
+        session: "s1",
+        harness: "claude",
+        model,
+        effort,
+        ladder: [0],
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+        sleep: nap,
+      });
+      return r.ok ? "" : r.reason;
+    };
+    const effort = await said(
+      "set effort: this build's effort slider is not the one expected ([low medium high xhigh max ultracode])",
+      "",
+      "high",
+    );
+    expect(effort).toBe(
+      "Couldn't change the effort. Claude's slider did not answer as expected; /effort in the Terminal still works.",
+    );
+    const model = await said(`walking to "Opus": the picker closed`, "opus", "");
+    expect(model).toBe(
+      "Couldn't change the model. Claude's picker did not answer as expected; /model in the Terminal still works.",
+    );
+  });
+
   it("refuses to send a request that asks for nothing", async () => {
     const fetchImpl = vi.fn();
     const r = await setSessionModel({

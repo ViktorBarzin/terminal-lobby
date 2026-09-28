@@ -222,6 +222,12 @@ func CursorOption(opts []PickerOption) (PickerOption, bool) {
 // EffortLadder reads Claude's effort slider off the pane: the levels in the
 // order → walks them. False when the pane is not showing the slider, which
 // includes a build whose ladder is not the one written down above.
+//
+// A narrow pane wraps the labels: at 47 columns (an iPhone's width, measured
+// on Claude Code 2.1.283 on 2026-09-28) each one breaks at the same column
+// onto the next line, "lo"/"w", "medi"/"um", "ultrac"/"ode". So a line of
+// labels takes up to two more lines whose words each start at the column of
+// a label above, and reads them as that label's tail.
 func EffortLadder(pane string) ([]string, bool) {
 	if !strings.Contains(pane, "←/→ to adjust") {
 		return nil, false
@@ -230,23 +236,92 @@ func EffortLadder(pane string) ([]string, bool) {
 	for _, e := range ClaudeEfforts {
 		known[e] = true
 	}
-	for _, line := range strings.Split(pane, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
+	allKnown := func(ws []columnWord) bool {
+		if len(ws) < 3 {
+			return false
 		}
-		all := true
-		for _, f := range fields {
-			if !known[f] {
-				all = false
-				break
+		for _, w := range ws {
+			if !known[w.text] {
+				return false
 			}
 		}
-		if all {
-			return fields, true
+		return true
+	}
+	lines := strings.Split(pane, "\n")
+	for i := range lines {
+		words := columnWords(lines[i])
+		for next := i + 1; ; next++ {
+			if allKnown(words) {
+				out := make([]string, len(words))
+				for k, w := range words {
+					out[k] = w.text
+				}
+				return out, true
+			}
+			if next >= len(lines) || next > i+2 {
+				break
+			}
+			joined, ok := joinLabelTails(words, columnWords(lines[next]))
+			if !ok {
+				break
+			}
+			words = joined
 		}
 	}
 	return nil, false
+}
+
+// columnWord is a word on a pane line and the column it starts at, in runes.
+type columnWord struct {
+	col  int
+	text string
+}
+
+// columnWords splits a line into its words and where each starts.
+func columnWords(line string) []columnWord {
+	var out []columnWord
+	start := -1
+	runes := []rune(line)
+	for i, r := range runes {
+		if r == ' ' || r == '\t' {
+			if start >= 0 {
+				out = append(out, columnWord{start, string(runes[start:i])})
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+	}
+	if start >= 0 {
+		out = append(out, columnWord{start, string(runes[start:])})
+	}
+	return out
+}
+
+// joinLabelTails appends each word of tail to the word above it that starts at
+// the same column. False when tail is empty or any of its words starts where
+// no word above does, which makes it some other line.
+func joinLabelTails(head, tail []columnWord) ([]columnWord, bool) {
+	if len(tail) == 0 {
+		return nil, false
+	}
+	out := append([]columnWord(nil), head...)
+	for _, t := range tail {
+		found := false
+		for k := range out {
+			if out[k].col == t.col {
+				out[k].text += t.text
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, false
+		}
+	}
+	return out, true
 }
 
 // ClaudeEffortHint reads the effort level off a Claude pane, "" when it says

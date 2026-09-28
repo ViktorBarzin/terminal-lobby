@@ -1,0 +1,35 @@
+
+           Claude Code v2.1.283
+ ▐▛███▛█   claude-opus-5-5 with high effort
+▝▜██████▀  Claude API
+ ▝▝   ▝▝   /var/tmp/t3fix/eff
+
+▎ Using claude-opus-5-5 (from managed settings)
+▎ · /model
+
+❯ /effort
+  ⎿  Cancelled
+
+
+
+
+
+
+
+
+
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+   Effort
+
+   Faste                               Smart
+   r                                   er
+   ─────────────▲──────────────────────┆────
+   ───────       ──────────────
+   lo   medi    hi    xhi    ma    ultrac
+   w    um      gh    gh     x     ode
+                                xhigh +
+                                workflows
+
+   ←/→ to adjust · Enter to confirm · s for
+   this session only · Esc to cancel
