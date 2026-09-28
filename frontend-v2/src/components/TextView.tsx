@@ -76,6 +76,7 @@ import { isEditingTarget } from "../keybindings/editing";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
+import type { StopResult } from "../store/session";
 import {
   contextWindow,
   isCurrentModel,
@@ -263,11 +264,13 @@ export const TextView: Component<{
   /** resolves false when the session refused the prompt (the composer keeps it). */
   onSend: (text: string) => Promise<boolean>;
   /**
-   * Interrupt the turn. Handed the prompts to take back when any are queued
-   * (store/session.ts `interrupt`), and resolving whether they came off
-   * Claude's queue, which is when the view puts them back in the field.
+   * Interrupt the turn. Handed the prompts to take back when any are queued,
+   * and the stopped turn's own prompt when Claude has written nothing for it
+   * (store/session.ts `interrupt`). Resolves what came back: off Claude's
+   * queue, and off the pane's input line, which is when the view puts each
+   * back in the field.
    */
-  onStop: (restoreQueue?: readonly string[]) => Promise<boolean> | void;
+  onStop: (restoreQueue?: readonly string[], returnPrompt?: string) => Promise<StopResult> | void;
   onResolve: (reqId: string, decision: PermissionDecision) => void;
   /** Mobile: forward composed bytes to the live pty (bracketed paste + submit). */
   sendToTerminal?: (bytes: string) => void;
@@ -739,24 +742,61 @@ export const TextView: Component<{
   const [composerSinks, setComposerSinks] = createSignal<ComposerSinks>();
 
   /**
-   * Stop, handing any queued messages back to the field (the T3 pass, item 8).
+   * The prompt a Stop would take back: the open turn's, while Claude has
+   * written nothing for it. A Stop then puts it back on Claude Code's input
+   * line and out of the conversation (CLI 2.1.283, measured 2026-09-28), so
+   * the view names it to the server and hands it back to the field.
+   *
+   * It is the first prose sent between turns that the transcript has not
+   * recorded yet, or else the transcript's own open turn when its prompt is all
+   * it holds. `held` is the store's copy, which then does not also go back as
+   * a queued prompt.
+   */
+  const stoppable = createMemo((): { text: string; held?: PendingPrompt } | null => {
+    const early = sent().find((p) => !p.command);
+    if (early) return { text: early.text, held: early };
+    const rows = baseRows();
+    const last = rows.at(-1);
+    const prompt = rows.at(-2);
+    if (last?.kind === "working" && prompt?.kind === "user" && prompt.body.trim() !== "") {
+      return { text: prompt.body };
+    }
+    return null;
+  });
+
+  /**
+   * Stop, handing back what the interrupt would lose (the T3 pass, item 8).
    *
    * The ghosts' texts, and prose sent from here that the transcript never
    * recorded, go back as a draft (`handedBack`): oldest first, a blank line between
    * each, in front of whatever the field holds by then. Nothing is sent. They
    * go back only once the server says it took them off Claude's queue, since
    * CLI 2.1.283 runs every queued prompt as the next turn on an interrupt;
-   * when the server could not, they run, and the field is left alone. A
-   * watching device does not stop the session at all.
+   * when the server could not, they run, and the field is left alone.
+   *
+   * The stopped turn's own prompt goes back first when Claude had written
+   * nothing for it (`stoppable`), once the server says it took it off the
+   * pane's input line; the stream's `rewound` marker then takes its bubble
+   * away. A watching device does not stop the session at all.
    */
   const stopHandingBack = async (): Promise<void> => {
     if (props.inertReason) return;
-    const back = handedBack(queued(), props.pendingPrompts?.() ?? []);
-    if (back.length === 0) {
+    const stopped = stoppable();
+    const held = (props.pendingPrompts?.() ?? []).filter((p) => p !== stopped?.held);
+    const back = handedBack(queued(), held);
+    if (back.length === 0 && !stopped) {
       void props.onStop();
       return;
     }
-    if ((await props.onStop(back)) === true) composerSinks()?.prependText(back.join("\n\n"));
+    const got = await (stopped
+      ? props.onStop(back.length > 0 ? back : undefined, stopped.text)
+      : props.onStop(back));
+    if (!got) return;
+    const text = [
+      ...(got.returned && stopped ? [stopped.text] : []),
+      ...(got.restored ? back : []),
+    ];
+    if (text.length > 0) composerSinks()?.prependText(text.join("\n\n"));
   };
 
   /**

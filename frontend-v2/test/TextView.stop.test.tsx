@@ -14,6 +14,7 @@ import { TextView } from "../src/components/TextView";
 import type { Event } from "../src/types/events";
 import type { ClaudeState } from "../src/types/lobby";
 import type { PendingPrompt } from "../src/logic/compose.logic";
+import type { StopResult } from "../src/store/session";
 
 const g = globalThis as unknown as { EventSource: unknown };
 const realES = g.EventSource;
@@ -33,7 +34,13 @@ const RUNNING_TURN: Event[] = [
   },
 ];
 
-type StopFn = (restoreQueue?: readonly string[]) => Promise<boolean> | void;
+type StopFn = (
+  restoreQueue?: readonly string[],
+  returnPrompt?: string,
+) => Promise<StopResult> | void;
+
+const RESTORED: StopResult = { restored: true, returned: false };
+const NOTHING: StopResult = { restored: false, returned: false };
 
 function mount(
   state: () => ClaudeState | undefined,
@@ -124,7 +131,7 @@ const WITH_GHOSTS: Event[] = [...RUNNING_TURN, queued(3, "first"), queued(4, "se
  */
 describe("<TextView>: Stop hands queued messages back to the field", () => {
   it("puts both ghosts' texts in the field and sends nothing", async () => {
-    const onStop = vi.fn<StopFn>(async () => true);
+    const onStop = vi.fn<StopFn>(async () => RESTORED);
     const onSend = vi.fn(async (_t: string) => true);
     const { button, field } = mount(() => "running", onStop, { events: WITH_GHOSTS, onSend });
     expect(button().dataset.kind).toBe("stop");
@@ -137,19 +144,17 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
   });
 
   it("keeps what was typed while the Stop was in flight, after the handed-back text", async () => {
-    let answer!: (v: boolean) => void;
-    const onStop = vi.fn<StopFn>(() => new Promise<boolean>((r) => (answer = r)));
+    let answer!: (v: StopResult) => void;
+    const onStop = vi.fn<StopFn>(() => new Promise<StopResult>((r) => (answer = r)));
     const { button, field } = mount(() => "running", onStop, { events: WITH_GHOSTS });
     fireEvent.click(button());
     fireEvent.input(field(), { target: { value: "and one more" } });
-    answer(true);
-    await waitFor(() =>
-      expect(field().value).toBe("first\n\nsecond\nline two\n\nand one more"),
-    );
+    answer(RESTORED);
+    await waitFor(() => expect(field().value).toBe("first\n\nsecond\nline two\n\nand one more"));
   });
 
   it("leaves the field alone when the server says the queue stayed", async () => {
-    const onStop = vi.fn<StopFn>(async () => false);
+    const onStop = vi.fn<StopFn>(async () => NOTHING);
     const { button, field } = mount(() => "running", onStop, { events: WITH_GHOSTS });
     fireEvent.click(button());
     await Promise.resolve();
@@ -172,7 +177,7 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
   // recorded only the second one's enqueue. The first was still held by the
   // store, so it came back, but after the second. Send order is the store's.
   it("keeps send order when a held prompt never reached the queue", async () => {
-    const onStop = vi.fn<StopFn>(async () => true);
+    const onStop = vi.fn<StopFn>(async () => RESTORED);
     const held = (id: number, text: string): PendingPrompt => ({
       id,
       text,
@@ -190,7 +195,7 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
   });
 
   it("unwraps a paste the CLI queued inside its pasted_content marker", async () => {
-    const onStop = vi.fn<StopFn>(async () => true);
+    const onStop = vi.fn<StopFn>(async () => RESTORED);
     const pasted = '<pasted_content id="bae7">\nline 1\nline 2\n</pasted_content id="bae7">';
     const { button, field } = mount(() => "running", onStop, {
       events: [...RUNNING_TURN, queued(3, pasted)],
@@ -201,7 +206,7 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
   });
 
   it("does nothing on a watching device", async () => {
-    const onStop = vi.fn<StopFn>(async () => true);
+    const onStop = vi.fn<StopFn>(async () => RESTORED);
     const { button, field } = mount(() => "running", onStop, {
       events: WITH_GHOSTS,
       inertReason: "Watching: this device does not type into the session",
@@ -245,7 +250,14 @@ describe("<TextView>: a message sent mid-turn waits as a ghost", () => {
     const { container } = mount(() => "running", undefined, {
       events: [
         ...RUNNING_TURN,
-        { id: 3, kind: "meta", meta: "queued", session: "demo", turnId: "t1", body: "and then this" },
+        {
+          id: 3,
+          kind: "meta",
+          meta: "queued",
+          session: "demo",
+          turnId: "t1",
+          body: "and then this",
+        },
       ],
       pendingPrompts: [held(-1, "and then this")],
     });
@@ -255,7 +267,15 @@ describe("<TextView>: a message sent mid-turn waits as a ghost", () => {
   it("draws a message sent between turns as the next turn", () => {
     const settled: Event[] = [
       ...RUNNING_TURN,
-      { id: 3, kind: "tool_result", session: "demo", turnId: "t1", toolId: "b1", body: "a", at: 2_100 },
+      {
+        id: 3,
+        kind: "tool_result",
+        session: "demo",
+        turnId: "t1",
+        toolId: "b1",
+        body: "a",
+        at: 2_100,
+      },
       { id: 4, kind: "text", session: "demo", turnId: "t1", body: "Done.", at: 2_200 },
       { id: 5, kind: "turn_end", session: "demo", turnId: "t1", at: 2_300 },
     ];
@@ -268,5 +288,74 @@ describe("<TextView>: a message sent mid-turn waits as a ghost", () => {
       (b) => b.textContent,
     );
     expect(bubbles.at(-1)).toBe("next thing");
+  });
+});
+
+// Found in the T3 pass's live check on 2026-09-28: a Stop pressed in the first
+// seconds after Send, before Claude had written anything, put the prompt back
+// on the pane's own input line (CLI 2.1.283). The Text view showed it as a sent
+// bubble with an empty field, and the next send erased the pane's copy. The
+// view now names that prompt to the server (`onStop(queue, prompt)`), which
+// takes it off the pane's line, and puts it back in the field when it came
+// back. The bubble goes when the stream says the prompt was taken back.
+describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
+  const OPENED: Event[] = [
+    { id: 1, kind: "user", session: "demo", turnId: "t1", body: "Write a long story", at: 1_000 },
+  ];
+  const BOTH: StopResult = { restored: true, returned: true };
+
+  it("names the prompt and puts it back in the field when it came back", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const { button, field } = mount(() => "running", onStop, { events: OPENED });
+    expect(button().dataset.kind).toBe("stop");
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(undefined, "Write a long story");
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+  });
+
+  it("leaves the field alone when it did not come back", async () => {
+    const onStop = vi.fn<StopFn>(async () => NOTHING);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED });
+    fireEvent.click(button());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(field().value).toBe("");
+  });
+
+  it("names nothing once Claude has started on it", () => {
+    const onStop = vi.fn<StopFn>();
+    const { button } = mount(() => "running", onStop);
+    fireEvent.click(button());
+    expect(onStop.mock.calls[0]).toEqual([]);
+  });
+
+  it("names a prompt sent between turns that the transcript has not recorded yet", async () => {
+    const settled: Event[] = [
+      ...OPENED,
+      { id: 2, kind: "text", session: "demo", turnId: "t1", body: "Once upon a time.", at: 1_500 },
+      { id: 3, kind: "turn_end", session: "demo", turnId: "t1", at: 1_600 },
+    ];
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const { button, field } = mount(() => "running", onStop, {
+      events: settled,
+      pendingPrompts: [{ id: -1, text: "next thing", at: 2_000, command: false, afterId: 3 }],
+    });
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(undefined, "next thing");
+    await waitFor(() => expect(field().value).toBe("next thing"));
+  });
+
+  // The queue race from the same check: the CLI had just taken the first
+  // ghost as the next turn when Stop landed, so that one is the stopped turn's
+  // prompt and the rest are still queued. Both come back, oldest first.
+  it("hands back the stopped prompt before the ghosts", async () => {
+    const onStop = vi.fn<StopFn>(async () => BOTH);
+    const { button, field } = mount(() => "running", onStop, {
+      events: [...OPENED, queued(2, "say PLUM")],
+    });
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(["say PLUM"], "Write a long story");
+    await waitFor(() => expect(field().value).toBe("Write a long story\n\nsay PLUM"));
   });
 });

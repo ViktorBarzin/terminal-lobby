@@ -1060,7 +1060,8 @@ export const SessionView: Component<{
     notify: (msg, kind) => props.notify?.(msg, kind),
   });
   /** Stop, handing back the queued prompts the Text view names (item 8). */
-  const stop = (restoreQueue?: readonly string[]) => store.interrupt(restoreQueue);
+  const stop = (restoreQueue?: readonly string[], returnPrompt?: string) =>
+    store.interrupt(restoreQueue, returnPrompt);
 
   /**
    * `@` completion. The composer asks for a directory relative to the session's

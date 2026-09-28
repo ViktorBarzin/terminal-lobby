@@ -84,6 +84,14 @@ export const WINDOW_PARK_MS = HIDDEN_SUSPEND_MS;
  */
 export const TRANSCRIPT_WINDOW_TURNS = 20;
 
+/** What a Stop handed back: the queued prompts came off Claude's queue
+ *  (`restored`), and the stopped turn's own prompt came off its input line
+ *  (`returned`). */
+export interface StopResult {
+  restored: boolean;
+  returned: boolean;
+}
+
 export interface SessionStore {
   /** Reactive, ordered, deduped event list (Solid store proxy). */
   events: Event[];
@@ -119,8 +127,14 @@ export interface SessionStore {
    * measured 2026-09-27). Resolves true only when the server says they came
    * off; the prompts this store was still holding for them are let go then,
    * since the transcript will never record them.
+   *
+   * `returnPrompt` is the prompt of the turn being stopped when Claude has
+   * written nothing for it yet. The interrupt then puts it back on Claude
+   * Code's input line (CLI 2.1.283, measured 2026-09-28), and session-events
+   * takes it off that line so the caller can hand it back to the field.
+   * `returned` is true once it did; a held copy of it is let go then too.
    */
-  interrupt: (restoreQueue?: readonly string[]) => Promise<boolean>;
+  interrupt: (restoreQueue?: readonly string[], returnPrompt?: string) => Promise<StopResult>;
   /** Type an answer into the session's pane (ADR-0010). Returns true on 204. */
   answer: (keys: string[]) => Promise<boolean>;
   /** Read what the pane shows, for mirroring a blocking prompt. */
@@ -311,7 +325,10 @@ async function promptRefusal(res: Response): Promise<string> {
   if (res.status !== 409) return "";
   try {
     const body: unknown = await res.json();
-    return typeof body === "object" && body !== null && "reason" in body && typeof body.reason === "string"
+    return typeof body === "object" &&
+      body !== null &&
+      "reason" in body &&
+      typeof body.reason === "string"
       ? body.reason
       : "";
   } catch {
@@ -973,7 +990,10 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         } else if (refused === "question-open") {
           // A question, whose menu an Enter would answer with the highlighted
           // option. Once the card docks, Send answers it with these words.
-          opts.notify?.("Claude is asking a question. Send again to answer it from the card.", "warning");
+          opts.notify?.(
+            "Claude is asking a question. Send again to answer it from the card.",
+            "warning",
+          );
         } else {
           opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
         }
@@ -999,33 +1019,52 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     }
   };
 
-  const interrupt = async (restoreQueue?: readonly string[]): Promise<boolean> => {
+  const interrupt = async (
+    restoreQueue?: readonly string[],
+    returnPrompt?: string,
+  ): Promise<StopResult> => {
+    const nothing: StopResult = { restored: false, returned: false };
     const restoring = !!restoreQueue && restoreQueue.length > 0;
+    const returning = !!returnPrompt && returnPrompt.trim() !== "";
+    const body = {
+      ...(restoring ? { restoreQueue } : {}),
+      ...(returning ? { returnPrompt } : {}),
+    };
     try {
       const res = await fetchWithDeadline(
         cancelUrl(session),
-        restoring
+        restoring || returning
           ? {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ restoreQueue }),
+              body: JSON.stringify(body),
             }
           : { method: "POST" },
       );
       if (!res.ok) {
         opts.notify?.(`Couldn't interrupt (HTTP ${res.status})`, "error");
-        return false;
+        return nothing;
       }
-      if (!restoring) return false;
-      const reply = (await res.json().catch(() => null)) as { restored?: unknown } | null;
-      if (reply?.restored !== true) return false;
-      const back = new Set(restoreQueue.map((t) => t.trim()));
-      setPendingPrompts((cur) => cur.filter((p) => p.command || !back.has(p.text)));
-      return true;
+      if (!restoring && !returning) return nothing;
+      const reply = (await res.json().catch(() => null)) as {
+        restored?: unknown;
+        returned?: unknown;
+      } | null;
+      const out: StopResult = {
+        restored: restoring && reply?.restored === true,
+        returned: returning && reply?.returned === true,
+      };
+      const back = new Set([
+        ...(out.restored ? (restoreQueue ?? []).map((t) => t.trim()) : []),
+        ...(out.returned ? [(returnPrompt ?? "").trim()] : []),
+      ]);
+      if (back.size > 0)
+        setPendingPrompts((cur) => cur.filter((p) => p.command || !back.has(p.text)));
+      return out;
     } catch {
       /* best-effort cancel */
       opts.notify?.("Couldn't interrupt the session", "error");
-      return false;
+      return nothing;
     }
   };
 

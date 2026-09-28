@@ -67,9 +67,9 @@ describe("interrupt(texts): Stop that hands the queue back", () => {
     await store.send("second");
     expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first", "second"]);
 
-    const restored = await store.interrupt(["first", "second"]);
+    const r = await store.interrupt(["first", "second"]);
 
-    expect(restored).toBe(true);
+    expect(r).toEqual({ restored: true, returned: false });
     expect(JSON.parse(cancels()[0]!.body!)).toEqual({ restoreQueue: ["first", "second"] });
     expect(store.pendingPrompts()).toEqual([]);
     dispose();
@@ -78,14 +78,14 @@ describe("interrupt(texts): Stop that hands the queue back", () => {
   it("keeps holding them when the server says the queue stayed, since they will run", async () => {
     const { store, dispose } = mount({ status: 200, body: { restored: false } });
     await store.send("first");
-    expect(await store.interrupt(["first"])).toBe(false);
+    expect(await store.interrupt(["first"])).toEqual({ restored: false, returned: false });
     expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first"]);
     dispose();
   });
 
   it("sends the bare cancel it always did when nothing is queued", async () => {
     const { store, dispose, cancels } = mount({ status: 204 });
-    expect(await store.interrupt()).toBe(false);
+    expect(await store.interrupt()).toEqual({ restored: false, returned: false });
     expect(cancels()).toHaveLength(1);
     expect(cancels()[0]!.body).toBeUndefined();
     dispose();
@@ -94,8 +94,36 @@ describe("interrupt(texts): Stop that hands the queue back", () => {
   it("reports nothing restored when the cancel failed", async () => {
     const { store, dispose } = mount({ status: 502 });
     await store.send("first");
-    expect(await store.interrupt(["first"])).toBe(false);
+    expect(await store.interrupt(["first"])).toEqual({ restored: false, returned: false });
     expect(store.pendingPrompts().map((p) => p.text)).toEqual(["first"]);
+    dispose();
+  });
+
+  // A Stop before Claude wrote anything puts the prompt back on the pane's
+  // input line (CLI 2.1.283, measured 2026-09-28). Named as returnPrompt, the
+  // server takes it off that line and says so, and the store lets go of the
+  // copy it was holding: the prompt is back in the field, not sent.
+  it("names the prompt a Stop can take back, and lets go of it once it came back", async () => {
+    const { store, dispose, cancels } = mount({
+      status: 200,
+      body: { restored: false, returned: true },
+    });
+    await store.send("Write a long story");
+    const r = await store.interrupt(undefined, "Write a long story");
+    expect(r).toEqual({ restored: false, returned: true });
+    expect(JSON.parse(cancels()[0]!.body!)).toEqual({ returnPrompt: "Write a long story" });
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("keeps holding the prompt when it did not come back", async () => {
+    const { store, dispose } = mount({ status: 200, body: { restored: false } });
+    await store.send("Write a long story");
+    expect(await store.interrupt(undefined, "Write a long story")).toEqual({
+      restored: false,
+      returned: false,
+    });
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["Write a long story"]);
     dispose();
   });
 });

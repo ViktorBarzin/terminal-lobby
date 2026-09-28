@@ -963,6 +963,9 @@ function collectTurnRows(turn: Turn): {
         // the sheet's context line for /context, and the event exists so the store can
         // let go of the command's pending bubble.
         if (meta === "command") break;
+        // A prompt a Stop took back: its bubble is gone (withoutRewound), and
+        // a marker saying so would put it back in other words.
+        if (meta === "rewound") break;
         // The queue's departures are bookkeeping for queuedPrompts(), the
         // same way the mode events are for the sheet: a divider saying a
         // prompt left the queue tells the reader nothing the queue itself
@@ -1536,7 +1539,7 @@ export function deriveRows(
   events: Event[],
   opts: { fold?: boolean; group?: boolean } = {},
 ): TimelineRow[] {
-  const turns = groupTurns(events);
+  const turns = groupTurns(withoutRewound(events));
   const out: TimelineRow[] = [];
   const fold = opts.fold !== false;
   const group = opts.group !== false;
@@ -1560,6 +1563,29 @@ export function deriveRows(
 
   markSuperseded(out);
   return out;
+}
+
+/**
+ * The events without the prompts a Stop took back.
+ *
+ * A Stop that lands before Claude has written anything for the turn puts the
+ * prompt back on Claude Code's input line, and its own view no longer shows it
+ * (CLI 2.1.283, measured 2026-09-28). The transcript keeps the prompt's record,
+ * so session-events marks it with a `rewound` meta naming the turn it opened,
+ * and that turn's prompt is dropped here. Kept, it read as sent, and whatever
+ * started the next turn read as its answer. Returns `events` itself when
+ * nothing was taken back.
+ */
+function withoutRewound(events: Event[]): Event[] {
+  let taken: Set<string> | null = null;
+  for (const e of events) {
+    if (e.kind === "meta" && e.meta === "rewound" && e.turnId) (taken ??= new Set()).add(e.turnId);
+  }
+  if (!taken) return events;
+  const gone = taken;
+  return events.filter(
+    (e) => !(e.kind === "user" && !e.sidechain && e.turnId && gone.has(e.turnId)),
+  );
 }
 
 /**

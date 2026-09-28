@@ -180,7 +180,8 @@ export type MetaKind =
   | "asking"
   | "held"
   | "model"
-  | "command";
+  | "command"
+  | "rewound";
 
 export interface TokenUsage {
   input_tokens?: number;

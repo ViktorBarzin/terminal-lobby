@@ -732,6 +732,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // Dropped by deriveRows as well: a command the CLI ran itself shows where
   // its effect lands, and the event is there for the pending bubble.
   command: "command",
+  // deriveRows drops it and the prompt it names: a prompt a Stop took back
+  // left the conversation.
+  rewound: "taken back",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (
