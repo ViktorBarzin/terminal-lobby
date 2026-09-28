@@ -79,6 +79,16 @@ const WORK: Event[] = [
   ev({ id: 8, kind: "text", body: "Fixed.", at: 30_500 }),
 ];
 
+/** What CLI 2.1.283 writes for a call a Stop interrupted, or a plain No. */
+const STOPPED_RESULT =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+/** …and for a No with words, which the words follow. */
+const DECLINED_WITH_WORDS =
+  "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n";
+
+const kindWord = (row: Element): string =>
+  row.querySelector(".tl-group-call-kind")?.textContent ?? "";
+
 function groupOf(events: Event[]): WorkGroupRow {
   const g = deriveRows(events).find((r): r is WorkGroupRow => r.kind === "work-group");
   if (!g) throw new Error("no work group derived");
@@ -236,6 +246,48 @@ describe("<WorkGroupRowView> folded", () => {
     );
     expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("ok");
     expect(container.querySelector(".tl-group-meta")!.textContent).not.toContain("failed");
+  });
+
+  // Round 7 (2026-09-28): a command interrupted by Stop read "Declined 1
+  // command · stopped". The CLI writes the same rejection for it as for a
+  // plain No, with "STOP what you are doing" and its interrupt notice after;
+  // a No with words carries "the user said:" and Claude carries on. The first
+  // stopped the turn, and says so once.
+  it("says a call a Stop interrupted was stopped, once", () => {
+    const g = groupOf([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "b1", "ping -c 20 127.0.0.1", 1_000),
+      result(3, "b1", STOPPED_RESULT, { isError: true, at: 2_000 }),
+      ev({ id: 4, kind: "state", body: "[Request interrupted by user for tool use]", at: 2_000 }),
+      ev({ id: 5, kind: "turn_end", at: 2_000 }),
+    ]);
+    const { container, head, calls } = mount(g);
+    expect(container.querySelector(".tl-group-sum")!.textContent).toBe("Stopped 1 command");
+    const meta = container.querySelector(".tl-group-meta")!.textContent ?? "";
+    expect(meta).not.toContain("stopped");
+    expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("stopped");
+    fireEvent.click(head());
+    const row = calls()[0]!;
+    expect(row.getAttribute("data-status")).toBe("stopped");
+    expect(kindWord(row)).toBe("Run");
+    expect(row.textContent).toContain("stopped");
+    expect(row.textContent).not.toContain("declined");
+  });
+
+  it("names a declined call by what it asked to do, not by what it did", () => {
+    const g = groupOf([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "b1", "echo bye > hi.txt", 1_000),
+      result(3, "b1", `${DECLINED_WITH_WORDS}write ciao instead`, { isError: true, at: 2_000 }),
+      bash(4, "b2", "echo ciao > hi.txt", 3_000),
+      result(5, "b2", "", { at: 4_000 }),
+    ]);
+    const { head, calls } = mount(g);
+    fireEvent.click(head());
+    const [declined, ran] = calls();
+    expect(declined!.getAttribute("data-status")).toBe("declined");
+    expect(kindWord(declined!)).toBe("Run");
+    expect(kindWord(ran!)).toBe("Ran");
   });
 
   it("answers for its calls' events, so a search hit inside it can find it", () => {

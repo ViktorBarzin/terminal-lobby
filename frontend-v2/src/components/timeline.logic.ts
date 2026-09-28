@@ -433,6 +433,22 @@ export function declinedCall(call: ToolRow): boolean {
   return call.done && call.isError && (call.result ?? "").trimStart().startsWith(DECLINED_RESULT);
 }
 
+/** What the CLI's rejection says when no words came with it (CLI 2.1.283). */
+const STOPPED_TAIL = "STOP what you are doing";
+
+/**
+ * Whether the call was stopped rather than declined with words: a Stop that
+ * interrupted it, or a plain No on its permission prompt. The CLI writes the
+ * same rejection for both, telling Claude to "STOP what you are doing", and
+ * ends the turn with its interrupt notice, so the two cannot be told apart.
+ * A No with words ("To tell you how to proceed, the user said: …") lets
+ * Claude carry on, and stays declined. Found in the round 7 check
+ * (2026-09-28): a command a Stop interrupted read "Declined 1 command".
+ */
+export function stoppedCall(call: ToolRow): boolean {
+  return declinedCall(call) && (call.result ?? "").includes(STOPPED_TAIL);
+}
+
 /**
  * How long a turn worked: its first event to its last `turn_end`. Anything after the
  * end is left out, since a local command typed once the turn settled (/context
@@ -1381,7 +1397,8 @@ function waitingPhrase(t: Tally, n: number): string {
  * file in several places; everything else counts calls. Thinking says nothing.
  *
  * A call the reader declined is not counted as done: it goes in a "declined 1
- * edit" phrase after the rest. An edit that failed changed nothing and goes in
+ * edit" phrase after the rest, or "stopped 1 command" when a Stop or a plain
+ * No ended the turn on it (`stoppedCall`). An edit that failed changed nothing and goes in
  * a "1 edit failed" phrase. With `waiting` (the turn is waiting on the
  * reader), a call with no result yet is the one the permission prompt asks
  * about, and goes in a "waiting to edit 1 file" phrase last, so a group never
@@ -1393,6 +1410,7 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
   const files = new Map<Tally, Set<string>>();
   const skills: string[] = [];
   const declined = new Map<Tally, number>();
+  const stopped = new Map<Tally, number>();
   const pending = new Map<Tally, number>();
   const failedEdits = new Map<Tally, number>();
   const bump = (m: Map<Tally, number>, t: Tally): void => {
@@ -1402,7 +1420,7 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
     if (c.kind !== "tool") continue;
     const t = tallyOf(c);
     if (declinedCall(c)) {
-      bump(declined, t);
+      bump(stoppedCall(c) ? stopped : declined, t);
       continue;
     }
     // An edit that came back as an error changed nothing, so it is not a
@@ -1450,6 +1468,10 @@ export function groupSummary(calls: readonly WorkLeaf[], opts: { waiting?: boole
     }
   };
   const said = order.map(phrase);
+  for (const [t, n] of stopped) {
+    const [one, many] = DECLINED_NOUN[t];
+    said.push(`stopped ${plural(n, one, many)}`);
+  }
   for (const [t, n] of declined) {
     const [one, many] = DECLINED_NOUN[t];
     said.push(`declined ${plural(n, one, many)}`);

@@ -17,6 +17,7 @@ import type { PictureKind } from "../store/picture";
 import { commandOutput, diffHunks, diffStat, type ItemType } from "./canonicalize";
 import {
   declinedCall,
+  stoppedCall,
   groupSummary,
   planHeader,
   planSummary,
@@ -842,6 +843,20 @@ const GroupChevron: Component = () => (
 );
 
 /** What one row of an open group calls itself: its icon and its verb. */
+/**
+ * The word a call that never finished is named by: what it asked to do. A
+ * declined or stopped call read "Ran echo bye … declined" (round 7,
+ * 2026-09-28), and "Ran" said it ran.
+ */
+const ASKED_WORD: Record<string, string> = {
+  Ran: "Run",
+  Edited: "Edit",
+  Searched: "Search",
+  Viewed: "View",
+  Loaded: "Load",
+  Used: "Use",
+};
+
 function callKind(leaf: WorkLeaf): { icon: GroupIcon; word: string } {
   if (leaf.kind === "thinking") return { icon: "thought", word: "Thought" };
   switch (leaf.itemType) {
@@ -936,8 +951,13 @@ const WorkCallRow: Component<{
     const c = call();
     if (!c) return "ok";
     if (!c.done) return "running";
+    if (stoppedCall(c)) return "stopped";
     if (declinedCall(c)) return "declined";
     return c.isError ? "error" : "ok";
+  };
+  const word = () => {
+    const w = kind().word;
+    return status() === "stopped" || status() === "declined" ? (ASKED_WORD[w] ?? w) : w;
   };
   const label = () => {
     const leaf = props.leaf;
@@ -962,7 +982,7 @@ const WorkCallRow: Component<{
         onClick={() => setOpen((v) => !v)}
       >
         <GroupIconSvg icon={kind().icon} class="tl-group-call-ico" />
-        <span class="tl-group-call-kind">{kind().word}</span>
+        <span class="tl-group-call-kind">{word()}</span>
         <span class="tl-group-call-label" title={label()}>
           {label()}
         </span>
@@ -975,6 +995,9 @@ const WorkCallRow: Component<{
           </Show>
           <Show when={status() === "declined"}>
             <span class="tl-group-call-declined">declined</span>
+          </Show>
+          <Show when={status() === "stopped"}>
+            <span class="tl-group-call-declined">stopped</span>
           </Show>
           {/* Thinking is not a call: it neither passes nor fails. */}
           <Show when={status() === "ok" && call()}>
@@ -1152,6 +1175,9 @@ export const WorkGroupRowView: Component<{
   const status = () =>
     props.row.hasError ? "error" : props.row.stopped ? "stopped" : waiting() ? "waiting" : "ok";
   const summary = createMemo(() => groupSummary(props.row.calls, { waiting: waiting() }));
+  /** The summary already says a call was stopped, so the meta does not say
+   *  it again ("Stopped 1 command · stopped"). The dot still does. */
+  const saysStopped = () => props.row.calls.some((c) => c.kind === "tool" && stoppedCall(c));
   const took = () => formatDuration(props.row.durationMs);
   /** Every event the group stands for, so a search hit on a folded call lands here. */
   const eids = () => props.row.calls.map((c) => c.id).join(" ");
@@ -1188,7 +1214,9 @@ export const WorkGroupRowView: Component<{
                     <span class="tl-group-failed">failed</span>
                     {took() ? " · " : ""}
                   </Show>
-                  <Show when={status() === "stopped"}>stopped{took() ? " · " : ""}</Show>
+                  <Show when={status() === "stopped" && !saysStopped()}>
+                    stopped{took() ? " · " : ""}
+                  </Show>
                   <Show when={status() === "waiting"}>
                     <span class="tl-group-waiting">waiting</span>
                     {took() ? " · " : ""}
