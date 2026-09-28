@@ -760,7 +760,7 @@ function collectTurnRows(turn: Turn): {
           kind: "user",
           key: `user-${e.id}`,
           id: e.id,
-          body: e.body ?? "",
+          body: unwrapPasted(e.body ?? ""),
           turnKey: turn.key,
           ...(e.at !== undefined ? { at: e.at } : {}),
           ...(e.images?.length ? { images: e.images } : {}),
@@ -2286,7 +2286,7 @@ export function queuedPrompts(events: Event[], seed?: SessionState | null): stri
         break;
     }
   }
-  return queue.filter((t) => !isHarnessNotice(t));
+  return queue.filter((t) => !isHarnessNotice(t)).map(unwrapPasted);
 }
 
 /**
@@ -2364,12 +2364,24 @@ export function handedBack(queued: readonly string[], held: readonly PendingProm
   return out;
 }
 
-/** The CLI's pasted_content markers taken off, keeping what they held. */
+/**
+ * The CLI's pasted_content markers taken off, keeping what they held.
+ *
+ * CLI 2.1.283 records a long paste as `\n\n<pasted_content id="ed39">\n…\n
+ * </pasted_content id="ed39">\n`, after whatever was typed before it. The
+ * reader sees their own words: the tags and the blank lines the CLI put around
+ * them go, and a text with no marker comes back exactly as it was.
+ */
 function unwrapPasted(text: string): string {
-  return text.replace(
+  let found = false;
+  const out = text.replace(
     /<pasted_content id="([^"]*)">\n?([\s\S]*?)\n?<\/pasted_content id="\1">/g,
-    (_m, _id: string, inner: string) => inner,
+    (_m, _id: string, inner: string) => {
+      found = true;
+      return inner;
+    },
   );
+  return found ? out.trim() : text;
 }
 
 /** The harness's own injected notices, which nobody queued and nobody reads. */
@@ -2379,9 +2391,9 @@ function isHarnessNotice(text: string): boolean {
 
 /** Every prompt this session has sent, oldest first — the composer's history. */
 export function promptHistory(events: Event[], seed?: SessionState | null): string[] {
-  const out: string[] = [...(seed?.prompts ?? [])];
+  const out: string[] = (seed?.prompts ?? []).map(unwrapPasted);
   for (const e of after(events, seed)) {
-    const text = (e.body ?? "").trim();
+    const text = unwrapPasted(e.body ?? "").trim();
     if (e.kind === "user" && text && out[out.length - 1] !== text) out.push(text);
   }
   return out;
