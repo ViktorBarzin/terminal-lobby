@@ -19,7 +19,10 @@ import type { Event } from "../types/events";
  */
 export type PermissionPreview =
   | { kind: "command"; command: string; description: string }
-  | { kind: "diff"; file: string; lines: DiffLine[] };
+  | { kind: "diff"; file: string; lines: DiffLine[] }
+  /** What a Write puts in a file, or a NotebookEdit in a cell, under the
+   *  tool's own title ("Create file"), for a prompt too tall to show either. */
+  | { kind: "file"; title: string; file: string; lines: string[] };
 
 /** One line of an Edit's change: kept, taken out, or put in. */
 export interface DiffLine {
@@ -123,7 +126,7 @@ export function permissionPreview(
   const title = reading.title.trim().toLowerCase();
   const shown = squash(reading.detail.join(" "));
   const calls = waitingCalls(events);
-  if (title === "") return tallPreview(calls);
+  if (title === "") return tallPreview(calls, reading.prompt);
   if (title.startsWith("bash")) {
     for (const c of calls) {
       if (c.tool !== "Bash") continue;
@@ -159,8 +162,12 @@ const HOSTS = new Set(["Agent", "Task"]);
  * call still waiting on its result, so when exactly one such call is waiting,
  * leaving aside an agent that is running others, that call is the one asked
  * about. Anything more is a guess, and there is none.
+ *
+ * A Write's title went with the rest (deployed review round 4, 2026-09-28: a
+ * 90-line Write read only "Do you want to create big.txt?"), so the preview
+ * carries the title the CLI gives it, told apart by the question it asks.
  */
-function tallPreview(calls: readonly Waiting[]): PermissionPreview | null {
+function tallPreview(calls: readonly Waiting[], prompt: string): PermissionPreview | null {
   const own = calls.filter((c) => !HOSTS.has(c.tool));
   if (own.length !== 1) return null;
   const c = own[0]!;
@@ -173,8 +180,26 @@ function tallPreview(calls: readonly Waiting[]): PermissionPreview | null {
     const file = baseName(str(c.input.file_path));
     return lines.length > 0 && file ? { kind: "diff", file, lines } : null;
   }
+  if (c.tool === "Write") {
+    const file = baseName(str(c.input.file_path));
+    const title = /\boverwrite\b/i.test(prompt) ? "Overwrite file" : "Create file";
+    return file ? { kind: "file", title, file, lines: contentLines(str(c.input.content)) } : null;
+  }
+  if (c.tool === "NotebookEdit") {
+    const file = baseName(str(c.input.notebook_path));
+    return file
+      ? { kind: "file", title: "Edit notebook", file, lines: contentLines(str(c.input.new_source)) }
+      : null;
+  }
   return null;
 }
+
+/** A file's lines, less the empty one after its last newline. */
+const contentLines = (text: string): string[] => {
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines;
+};
 
 /**
  * Which prompt a reading is of, the same across readings of one prompt.

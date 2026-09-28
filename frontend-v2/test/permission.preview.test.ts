@@ -33,7 +33,8 @@ const EDIT = reading("Edit file", ["calc.py", "1 def add(a, b):", "2     return 
 const APPEND = {
   file_path: "/tmp/proj/calc.py",
   old_string: "    return a + b",
-  new_string: '    return a + b\n\n\ndef subtract(a, b):\n    """Subtract b from a."""\n    return a - b',
+  new_string:
+    '    return a + b\n\n\ndef subtract(a, b):\n    """Subtract b from a."""\n    return a - b',
 };
 
 describe("permissionPreview", () => {
@@ -126,7 +127,10 @@ describe("permissionPreview", () => {
 // command. The one call waiting is the one being asked about.
 describe("a prompt taller than the pane", () => {
   const HEREDOC = {
-    command: "cat > long.txt <<'EOF'\n" + Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n") + "\nEOF",
+    command:
+      "cat > long.txt <<'EOF'\n" +
+      Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n") +
+      "\nEOF",
     description: "Write 25 numbered lines to long.txt",
   };
   const TALL = reading("", []);
@@ -149,16 +153,66 @@ describe("a prompt taller than the pane", () => {
       use(1, "Agent", "a1", { prompt: "go" }),
       use(2, "Bash", "b1", HEREDOC),
     ]);
-    expect(p).toEqual({ kind: "command", command: HEREDOC.command, description: HEREDOC.description });
+    expect(p).toEqual({
+      kind: "command",
+      command: HEREDOC.command,
+      description: HEREDOC.description,
+    });
   });
 
   it("guesses nothing when more than one call is waiting", () => {
     expect(
-      permissionPreview(TALL, [use(1, "Bash", "b1", HEREDOC), use(2, "Bash", "b2", { command: "ls" })]),
+      permissionPreview(TALL, [
+        use(1, "Bash", "b1", HEREDOC),
+        use(2, "Bash", "b2", { command: "ls" }),
+      ]),
     ).toBeNull();
   });
 
   it("guesses nothing once the call has its result", () => {
     expect(permissionPreview(TALL, [use(1, "Bash", "b1", HEREDOC), done(2, "b1")])).toBeNull();
+  });
+
+  // Deployed review round 4 (2026-09-28): a Write of 90 lines on an 80x23 pane
+  // drew "Claude wants to use a tool / Do you want to create big.txt?" and no
+  // title or content, so the reader approved a file without seeing it.
+  const BIG = {
+    file_path: "/tmp/proj/big.txt",
+    content: Array.from({ length: 90 }, (_, i) => `${i + 1}`).join("\n") + "\n",
+  };
+  const asks = (prompt: string): PermissionReading => ({ ...TALL, prompt });
+
+  it("shows the one waiting Write's file and every line going into it", () => {
+    const p = permissionPreview(asks("Do you want to create big.txt?"), [
+      use(1, "Write", "w1", BIG),
+    ]);
+    expect(p).toEqual({
+      kind: "file",
+      title: "Create file",
+      file: "big.txt",
+      lines: Array.from({ length: 90 }, (_, i) => `${i + 1}`),
+    });
+  });
+
+  it("says a Write over a file that exists overwrites it", () => {
+    const p = permissionPreview(asks("Do you want to overwrite big.txt?"), [
+      use(1, "Write", "w1", BIG),
+    ]);
+    expect(p?.kind === "file" && p.title).toBe("Overwrite file");
+  });
+
+  it("shows the one waiting NotebookEdit's new cell source", () => {
+    const p = permissionPreview(asks("Do you want to make this edit to nb.ipynb?"), [
+      use(1, "NotebookEdit", "n1", {
+        notebook_path: "/tmp/proj/nb.ipynb",
+        new_source: "import os\nprint(os.getcwd())",
+      }),
+    ]);
+    expect(p).toEqual({
+      kind: "file",
+      title: "Edit notebook",
+      file: "nb.ipynb",
+      lines: ["import os", "print(os.getcwd())"],
+    });
   });
 });

@@ -64,8 +64,9 @@ const scrollToChange = (el: HTMLPreElement): void => {
 export const PermissionCard: Component<{
   reading: PermissionReading;
   /** The call the prompt asks about, from the transcript (permission.logic):
-   *  an Edit's change or a Bash command in the well, in place of the pane's
-   *  lines. Absent or null, the well shows what the pane drew. */
+   *  an Edit's change, a Write's content or a Bash command in the well, in
+   *  place of the pane's lines. Absent or null, the well shows what the pane
+   *  drew. */
   preview?: PermissionPreview | null;
   /** Pick the row by its number; false when the pick did not land. */
   onPick: (option: number) => Promise<boolean>;
@@ -123,11 +124,13 @@ export const PermissionCard: Component<{
   });
   const diff = () => (props.preview?.kind === "diff" ? props.preview : undefined);
   const command = () => (props.preview?.kind === "command" ? props.preview : undefined);
+  const file = () => (props.preview?.kind === "file" ? props.preview : undefined);
   /** The quiet line under the well: a command's description, as the
    *  prototype draws it, else the prompt's own question. */
   const why = (): string => command()?.description || props.reading.prompt;
   /** The tool's own title, when the head's words do not already say it. */
-  const tag = (): string => (isCommand(props.reading.title) ? "" : props.reading.title.trim());
+  const tag = (): string =>
+    isCommand(props.reading.title) ? "" : props.reading.title.trim() || (file()?.title ?? "");
   return (
     <div
       class="tl-qcard tl-permcard"
@@ -186,6 +189,14 @@ export const PermissionCard: Component<{
                     </span>
                   )}
                 </For>
+              </pre>
+            )}
+          </Match>
+          <Match when={file()}>
+            {(f) => (
+              <pre class="tl-code tl-permcard-detail">
+                <span class="tl-permcard-file">{f().file}</span>
+                <For each={f().lines}>{(l) => <span class="tl-permcard-line">{l}</span>}</For>
               </pre>
             )}
           </Match>

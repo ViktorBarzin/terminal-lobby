@@ -150,7 +150,14 @@ describe("the permission card", () => {
     const edit = JSON.stringify({
       kind: "permission",
       title: "Edit file",
-      detail: ["calc.py", "1  def add(a, b):", "2      return a + b", "3 +", "4 +def mul(a, b):", "5 -# end"],
+      detail: [
+        "calc.py",
+        "1  def add(a, b):",
+        "2      return a + b",
+        "3 +",
+        "4 +def mul(a, b):",
+        "5 -# end",
+      ],
       prompt: "Do you want to make this edit to calc.py?",
       options: [
         { number: 1, label: "Yes" },
@@ -166,14 +173,20 @@ describe("the permission card", () => {
       l.getAttribute("data-sign"),
     );
     expect(signs).toEqual([null, null, null, "+", "+", "-"]);
-    expect(card()!.querySelector(".tl-permcard-detail")!.textContent).toContain("4 +def mul(a, b):");
+    expect(card()!.querySelector(".tl-permcard-detail")!.textContent).toContain(
+      "4 +def mul(a, b):",
+    );
   });
 
   it("shows a Bash call's command in its well and its description under it", async () => {
     const bash = JSON.stringify({
       kind: "permission",
       title: "Bash command",
-      detail: ["│ npm run build --workspace frontend-v2", "Build the frontend", "This command requires approval"],
+      detail: [
+        "│ npm run build --workspace frontend-v2",
+        "Build the frontend",
+        "This command requires approval",
+      ],
       prompt: "Do you want to proceed?",
       options: [
         { number: 1, label: "Yes" },
@@ -742,11 +755,49 @@ describe("a permission prompt taller than the pane", () => {
       ev({ id: 3, kind: "meta", meta: "asking", body: tall }),
     ]);
     await waitFor(() => expect(card()).not.toBeNull());
-    expect(card()!.querySelector(".tl-qcard-title")?.textContent).toBe("Claude wants to run a command");
+    expect(card()!.querySelector(".tl-qcard-title")?.textContent).toBe(
+      "Claude wants to run a command",
+    );
     expect(card()!.querySelector(".tl-permcard-detail")?.textContent).toBe(
       "cat > long.txt <<'EOF'\nline 1\nline 2\nEOF",
     );
     expect(card()!.textContent).toContain("Write numbered lines to long.txt");
+  });
+
+  // Deployed review round 4 (2026-09-28): a tall Write showed only its
+  // question, "Do you want to create big.txt?", and nothing going in.
+  it("names a waiting Write and shows the lines it puts in the file", async () => {
+    const tall = JSON.stringify({
+      kind: "permission",
+      title: "",
+      detail: [],
+      prompt: "Do you want to create big.txt?",
+      options: [
+        { number: 1, label: "Yes" },
+        { number: 2, label: "No" },
+      ],
+    });
+    const { card } = mount([
+      ev({ id: 1, kind: "user", body: "write the file", at: 1000 }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Write",
+        toolId: "w1",
+        body: JSON.stringify({
+          file_path: "/tmp/proj/big.txt",
+          content: "1 red\n2 green\n3 blue\n",
+        }),
+        at: 2000,
+      }),
+      ev({ id: 3, kind: "meta", meta: "asking", body: tall }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(card()!.querySelector(".tl-qcard-tag")?.textContent).toBe("Create file");
+    expect(card()!.querySelector(".tl-permcard-file")?.textContent).toBe("big.txt");
+    const lines = [...card()!.querySelectorAll(".tl-permcard-line")].map((l) => l.textContent);
+    expect(lines).toEqual(["1 red", "2 green", "3 blue"]);
+    expect(card()!.textContent).toContain("Do you want to create big.txt?");
   });
 });
 
@@ -789,9 +840,12 @@ describe("keys typed as a permission card docks", () => {
   it("types letters pressed on the focused card into the message", async () => {
     const v = mount(base);
     const field = await docked(v);
-    await waitFor(() => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
-      timeout: 2000,
-    });
+    await waitFor(
+      () => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(),
+      {
+        timeout: 2000,
+      },
+    );
     expect(fireEvent.keyDown(v.card()!, { key: "h" })).toBe(false);
     expect(field.value).toBe("h");
     expect(document.activeElement).toBe(field);
@@ -801,9 +855,12 @@ describe("keys typed as a permission card docks", () => {
   it("presses the row once the card has been up a moment", async () => {
     const v = mount(base);
     await docked(v);
-    await waitFor(() => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
-      timeout: 2000,
-    });
+    await waitFor(
+      () => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(),
+      {
+        timeout: 2000,
+      },
+    );
     expect(fireEvent.keyDown(v.card()!, { key: "3" })).toBe(false);
     await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["3"]));
   });
