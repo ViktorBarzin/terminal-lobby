@@ -981,26 +981,26 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         res = await post();
       }
       if (!res.ok) {
-        // The one 409 left is the prompt guard (design doc contract 4): the
-        // plan approval is on the pane, where a paste and Enter would pick a
-        // menu row, so session-events refused it. The text stays in the field
-        // and the reader is told where it goes now. The turn gate that also
-        // answered 409 was removed on 2026-08-15, so any other refusal (400 for
-        // an empty body, 502 for a failed injection) means one thing to a
-        // reader: it did not land.
+        // The one 409 left is the prompt guard (design doc contract 4): a
+        // dialog is on the pane, where a paste and Enter would pick a menu row
+        // (the plan approval, a tool permission prompt answering "Yes", a
+        // question's highlighted option), so session-events refused it. The
+        // text stays in the field, which the card docked in the composer's
+        // place hides until the dialog is answered, and the reader is told
+        // where to answer and that the words come back. The Quiet line copy
+        // pointed at a message box and a Send the card has replaced (deployed
+        // review round 1, 2026-09-28). The turn gate that also answered 409
+        // was removed on 2026-08-15, so any other refusal (400 for an empty
+        // body, 502 for a failed injection) means one thing to a reader: it
+        // did not land.
         const refused = await promptRefusal(res);
+        const onCard = "Answer it on the card, and your message comes back after.";
         if (refused === "plan-open") {
-          opts.notify?.("The plan approval is up. The message box answers it now.", "warning");
+          opts.notify?.(`The plan approval is up. ${onCard}`, "warning");
         } else if (refused === "permission-open") {
-          // A tool permission prompt, whose menu an Enter would answer "Yes".
-          opts.notify?.("Claude is asking to use a tool. Answer it first.", "warning");
+          opts.notify?.(`Claude is asking to use a tool. ${onCard}`, "warning");
         } else if (refused === "question-open") {
-          // A question, whose menu an Enter would answer with the highlighted
-          // option. Once the card docks, Send answers it with these words.
-          opts.notify?.(
-            "Claude is asking a question. Send again to answer it from the card.",
-            "warning",
-          );
+          opts.notify?.(`Claude is asking a question. ${onCard}`, "warning");
         } else {
           opts.notify?.(`Couldn't send prompt (HTTP ${res.status})`, "error");
         }
