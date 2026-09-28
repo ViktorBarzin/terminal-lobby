@@ -1140,8 +1140,7 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
             count: hidden.reduce((n, r) => n + foldedSteps(r), 0),
             hidden,
             hasError: hidden.some(foldedFailed),
-            stopped:
-              stop !== undefined || hidden.some((r) => r.kind === "work-group" && r.stopped),
+            stopped: stop !== undefined || hidden.some((r) => r.kind === "work-group" && r.stopped),
             changedFiles: changed,
             pictures: hidden.flatMap((r) => (r.kind === "work-group" ? r.pictures : [])),
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
@@ -1301,6 +1300,9 @@ function liveOf(group: WorkGroupRow, waiting: boolean): WorkGroupLive {
 /** How a work group's summary counts a call. */
 type Tally = "skill" | "command" | "edit" | "read" | "search" | "picture" | "tool" | "agent";
 
+/** A path whose Read hands back a picture rather than text. */
+const PICTURE_FILE_RE = /\.(?:png|jpe?g|gif|webp|bmp|heic|heif|tiff?)$/i;
+
 /**
  * What a call counts as. Grep and Glob classify as file reads (canonicalize),
  * but three of them are three searches, not three files read.
@@ -1312,7 +1314,9 @@ function tallyOf(call: ToolRow): Tally {
     case "file_change":
       return "edit";
     case "file_read":
-      return call.tool === "Grep" || call.tool === "Glob" ? "search" : "read";
+      if (call.tool === "Grep" || call.tool === "Glob") return "search";
+      // A Read of a picture is Claude looking at it: the result is the image.
+      return call.images?.length || PICTURE_FILE_RE.test(call.detail) ? "picture" : "read";
     case "web_search":
       return "search";
     case "image_view":

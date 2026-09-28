@@ -113,7 +113,7 @@ describe("<WorkGroupRowView> folded", () => {
     const { container, head, calls } = mount(groupOf(WORK));
     expect(head().getAttribute("aria-expanded")).toBe("false");
     expect(container.querySelector(".tl-group-sum")!.textContent).toBe(
-      "Edited 1 file, ran 1 command, read 1 file",
+      "Edited 1 file, ran 1 command, viewed 1 picture",
     );
     // 2s to 30s: the first call's start to the last result.
     expect(container.querySelector(".tl-group-meta")!.textContent).toBe("✓ · 28s");

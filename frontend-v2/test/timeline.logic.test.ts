@@ -710,6 +710,35 @@ describe("work groups", () => {
       ],
       "Viewed 2 pictures",
     ],
+    [
+      // Found live on 2026-09-28: Claude reading two attached screenshots
+      // summed up as "Read 2 files".
+      "pictures read with the Read tool",
+      [
+        ev({
+          id: 1,
+          kind: "tool_use",
+          tool: "Read",
+          toolId: "r1",
+          body: '{"file_path":"/tmp/a.png"}',
+        }),
+        ev({
+          id: 2,
+          kind: "tool_use",
+          tool: "Read",
+          toolId: "r2",
+          body: '{"file_path":"/tmp/B.JPG"}',
+        }),
+        ev({
+          id: 3,
+          kind: "tool_use",
+          tool: "Read",
+          toolId: "r3",
+          body: '{"file_path":"/tmp/notes.md"}',
+        }),
+      ],
+      "Viewed 2 pictures, read 1 file",
+    ],
   ])("summarises %s", (_name, calls, want) => {
     const rows = deriveRows([ev({ id: 0, kind: "user", body: "go" }), ...calls]);
     const [group] = groups(rows);
