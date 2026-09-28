@@ -140,7 +140,7 @@ export const PermissionCard: Component<{
           <span class="tl-qcard-lead">
             <CardDot />
             <span class="tl-qcard-title">
-              {isCommand(props.reading.title)
+              {isCommand(props.reading.title) || command()
                 ? "Claude wants to run a command"
                 : "Claude wants to use a tool"}
             </span>

@@ -698,3 +698,42 @@ describe("the permission card", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 });
+
+// Deployed review round 3 (2026-09-28): a prompt taller than the pane reads
+// with no title and no detail. The card showed "Claude wants to use a tool"
+// and nothing to approve; it now names the waiting call's command.
+describe("a permission prompt taller than the pane", () => {
+  it("shows the waiting command and says it is one", async () => {
+    const tall = JSON.stringify({
+      kind: "permission",
+      title: "",
+      detail: [],
+      prompt: "Do you want to proceed?",
+      options: [
+        { number: 1, label: "Yes" },
+        { number: 2, label: "No" },
+      ],
+    });
+    const { card } = mount([
+      ev({ id: 1, kind: "user", body: "write the file", at: 1000 }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: "Bash",
+        toolId: "b1",
+        body: JSON.stringify({
+          command: "cat > long.txt <<'EOF'\nline 1\nline 2\nEOF",
+          description: "Write numbered lines to long.txt",
+        }),
+        at: 2000,
+      }),
+      ev({ id: 3, kind: "meta", meta: "asking", body: tall }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    expect(card()!.querySelector(".tl-qcard-title")?.textContent).toBe("Claude wants to run a command");
+    expect(card()!.querySelector(".tl-permcard-detail")?.textContent).toBe(
+      "cat > long.txt <<'EOF'\nline 1\nline 2\nEOF",
+    );
+    expect(card()!.textContent).toContain("Write numbered lines to long.txt");
+  });
+});

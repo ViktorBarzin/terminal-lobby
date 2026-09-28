@@ -123,6 +123,7 @@ export function permissionPreview(
   const title = reading.title.trim().toLowerCase();
   const shown = squash(reading.detail.join(" "));
   const calls = waitingCalls(events);
+  if (title === "") return tallPreview(calls);
   if (title.startsWith("bash")) {
     for (const c of calls) {
       if (c.tool !== "Bash") continue;
@@ -143,6 +144,34 @@ export function permissionPreview(
       const lines = editLines(c);
       if (lines.length > 0) return { kind: "diff", file: first, lines };
     }
+  }
+  return null;
+}
+
+/** Calls that run others and wait on them, which never prompt themselves. */
+const HOSTS = new Set(["Agent", "Task"]);
+
+/**
+ * The preview for a prompt taller than the pane, whose rule, title and first
+ * lines have scrolled off, so the pane reader has no title or detail to match
+ * (sessionio/permdialog.go). Found in deployed review round 3 (2026-09-28): a
+ * 25-line heredoc drew a card with no command at all. A prompt is always for a
+ * call still waiting on its result, so when exactly one such call is waiting,
+ * leaving aside an agent that is running others, that call is the one asked
+ * about. Anything more is a guess, and there is none.
+ */
+function tallPreview(calls: readonly Waiting[]): PermissionPreview | null {
+  const own = calls.filter((c) => !HOSTS.has(c.tool));
+  if (own.length !== 1) return null;
+  const c = own[0]!;
+  if (c.tool === "Bash") {
+    const command = str(c.input.command);
+    return command ? { kind: "command", command, description: str(c.input.description) } : null;
+  }
+  if (c.tool === "Edit" || c.tool === "MultiEdit") {
+    const lines = editLines(c);
+    const file = baseName(str(c.input.file_path));
+    return lines.length > 0 && file ? { kind: "diff", file, lines } : null;
   }
   return null;
 }

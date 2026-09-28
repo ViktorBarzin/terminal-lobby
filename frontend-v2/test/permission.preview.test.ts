@@ -117,3 +117,48 @@ describe("permissionPreview", () => {
     expect(permissionPreview(reading("Read file", ["/etc/hostname"]), [])).toBeNull();
   });
 });
+
+// Deployed review round 3 (2026-09-28): a Bash heredoc taller than the pane
+// pushed the prompt's rule, its title and the first lines of the command off
+// screen. The pane reader then reads no title and no detail (a prompt with no
+// rule on screen has no known start), and the card said only "Claude wants to
+// use a tool / Do you want to proceed?" while the transcript held the whole
+// command. The one call waiting is the one being asked about.
+describe("a prompt taller than the pane", () => {
+  const HEREDOC = {
+    command: "cat > long.txt <<'EOF'\n" + Array.from({ length: 25 }, (_, i) => `line ${i + 1}`).join("\n") + "\nEOF",
+    description: "Write 25 numbered lines to long.txt",
+  };
+  const TALL = reading("", []);
+
+  it("shows the one waiting Bash call's command and description", () => {
+    expect(permissionPreview(TALL, [use(1, "Bash", "b1", HEREDOC)])).toEqual({
+      kind: "command",
+      command: HEREDOC.command,
+      description: HEREDOC.description,
+    });
+  });
+
+  it("shows the one waiting Edit's change", () => {
+    const p = permissionPreview(TALL, [use(1, "Edit", "e1", APPEND)]);
+    expect(p?.kind).toBe("diff");
+  });
+
+  it("looks past a running agent to the call it is asking about", () => {
+    const p = permissionPreview(TALL, [
+      use(1, "Agent", "a1", { prompt: "go" }),
+      use(2, "Bash", "b1", HEREDOC),
+    ]);
+    expect(p).toEqual({ kind: "command", command: HEREDOC.command, description: HEREDOC.description });
+  });
+
+  it("guesses nothing when more than one call is waiting", () => {
+    expect(
+      permissionPreview(TALL, [use(1, "Bash", "b1", HEREDOC), use(2, "Bash", "b2", { command: "ls" })]),
+    ).toBeNull();
+  });
+
+  it("guesses nothing once the call has its result", () => {
+    expect(permissionPreview(TALL, [use(1, "Bash", "b1", HEREDOC), done(2, "b1")])).toBeNull();
+  });
+});
