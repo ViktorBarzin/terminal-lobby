@@ -398,7 +398,9 @@ describe("the Model section", () => {
     );
     expect(modelRow("Haiku 4.5").querySelector(".tl-ms-sub")?.textContent).toBe("Fastest");
     expect(opus.textContent).not.toContain("claude-opus-5-5");
-    expect(opus.getAttribute("title")).toBe("claude-opus-5-5");
+    // The note rides in the title too: the desktop popover's two columns show
+    // the name alone (round 7, 2026-09-28).
+    expect(opus.getAttribute("title")).toBe("Most capable · claude-opus-5-5");
     expect(opus.querySelector(".tl-ms-spark")).not.toBeNull();
     const ticked = modelRows().filter((b) => b.getAttribute("aria-checked") === "true");
     expect(ticked.map(nameOf)).toEqual(["Opus 5.5"]);

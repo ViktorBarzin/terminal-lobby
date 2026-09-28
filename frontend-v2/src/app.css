@@ -3526,6 +3526,14 @@ label.tl-set-row-label {
   flex-basis: 100%;
   padding-left: 21px;
 }
+/* The desktop popover's columns are 165px, where a note beside or under the
+   name was cut to "Opus 5 with a …" and still left No ask and the context
+   line under the scroll at 1280x800 (602px of rows in a 561px popover, round
+   7 check). There each cell is the name alone, and the note is in the row's
+   tooltip. */
+.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub {
+  display: none;
+}
 .tl-ms-sheet .tl-ms-desc {
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 17px;

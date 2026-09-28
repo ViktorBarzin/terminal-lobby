@@ -408,7 +408,10 @@ export const ModelSheet: Component<{
                 data-value={o.id}
                 aria-checked={chosen("model", o.id)}
                 aria-disabled={modelLocked() ? "true" : undefined}
-                title={props.inertReason || o.id}
+                title={
+                  props.inertReason ||
+                  (modelNote(h()!, o.id) ? `${modelNote(h()!, o.id)} · ${o.id}` : o.id)
+                }
                 onClick={() => pickModel("model", o.id)}
               >
                 <span class="tl-ms-lab">

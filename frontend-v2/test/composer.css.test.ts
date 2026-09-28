@@ -293,3 +293,12 @@ describe("the watching pill", () => {
     expect(watch).toMatch(/-webkit-touch-callout:\s*none/);
   });
 });
+
+// Round 7 (2026-09-28): six models in the desktop popover left No ask and the
+// context line under its scroll at 1280x800. In two columns there each cell is
+// the name alone; the phone's sheet keeps the note under it.
+describe("the desktop model popover", () => {
+  it("drops the note under a model's name in two columns", () => {
+    expect(rule('.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub')).toMatch(/display:\s*none/);
+  });
+});
