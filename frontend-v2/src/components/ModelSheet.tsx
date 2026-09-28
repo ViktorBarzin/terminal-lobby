@@ -382,13 +382,15 @@ export const ModelSheet: Component<{
           {fieldHeading(h()!, "model")}
         </div>
         {/* Six models at a finger's 48px pushed Bypass, No ask and the
-            context line below a phone's sheet (412x783, 2026-09-27), so the
-            phone lays more than three in two columns. The prototype's one
+            context line below a phone's sheet (412x783, 2026-09-27), and
+            six one-line rows put No ask and the context line under the
+            desktop popover's scroll at 1280x800 (round 7, 2026-09-28). So
+            more than three go in two columns on both. The prototype's one
             column held three. */}
         <div
           role="radiogroup"
           class="tl-ms-models"
-          data-cols={sheet() && modelRows().length > 3 ? "2" : undefined}
+          data-cols={modelRows().length > 3 ? "2" : undefined}
           aria-label={props.names?.model ?? "Model"}
           title={props.modelTitle}
         >

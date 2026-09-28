@@ -3509,8 +3509,8 @@ label.tl-set-row-label {
 }
 /* More than three models go in two columns (ModelSheet), each cell a name
    over its note, so Bypass, No ask and the context line fit a phone's sheet
-   with six models on offer. */
-.tl-ms-sheet .tl-ms-models[data-cols="2"] {
+   and the desktop popover at 1280x800 with six models on offer. */
+.tl-ms-models[data-cols="2"] {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 2px 6px;

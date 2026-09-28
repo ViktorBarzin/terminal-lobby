@@ -246,10 +246,15 @@ describe("the sheet, on a desktop", () => {
     expect(pop.hasAttribute("data-more")).toBe(false);
   });
 
-  it("keeps the models in one column on a desktop, as the prototype draws them", () => {
+  // Round 7 (2026-09-28): with six models the popover was 563px tall over
+  // 651px of rows at 1280x800, and No ask and the context line needed a
+  // scroll. The prototype's one column held three; more go in two columns on
+  // a desktop too, as they do on the phone.
+  it("lays more than three models in two columns on a desktop, so the whole popover fits", () => {
     mount({ model: { model: "claude-opus-5-5" } });
     open();
-    expect(document.querySelector(".tl-ms-models")!.getAttribute("data-cols")).toBeNull();
+    expect(modelRows().length).toBeGreaterThan(3);
+    expect(document.querySelector(".tl-ms-models")!.getAttribute("data-cols")).toBe("2");
   });
 
   it("has Model, Effort and Mode sections, in that order", () => {
