@@ -179,10 +179,11 @@ describe("the sheet, on a desktop", () => {
    * Found live on 2026-09-27: in a 700px or 450px window the lobby stacks its
    * sidebar above the pane, and the popover, capped at the pane's room above
    * the box, was 227px tall and showed five of six models with Effort and
-   * Mode out of view. It is drawn over the page now, so the window's room
-   * above the box is what caps it.
+   * Mode out of view. Drawn over the page and capped by the window instead, it
+   * covered the sidebar and the session's header (found live on 2026-09-28).
+   * A pane that short gets the bottom sheet the phone has.
    */
-  it("reaches above a short pane, capped by the window's room above the box", () => {
+  it("opens as a bottom sheet in a pane too short for the popover", () => {
     vi.stubGlobal("innerHeight", 800);
     vi.stubGlobal("innerWidth", 450);
     const r = render(() => (
@@ -201,12 +202,9 @@ describe("the sheet, on a desktop", () => {
     );
     r.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = rect(671, 16, 418);
     open();
-    const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
-    expect(r.container.contains(pop)).toBe(false);
-    expect(pop.style.maxHeight).toBe(`${671 - 16}px`);
-    expect(pop.style.bottom).toBe(`${800 - 671 + 8}px`);
-    // Its left edge just past the +.
-    expect(pop.style.left).toBe(`${16 + 36}px`);
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
+    const sheet = document.querySelector<HTMLElement>(".tl-ms-sheet")!;
+    expect(sheet.getAttribute("aria-label")).toBe("Model, effort and mode");
   });
 
   // Found live on 2026-09-28 at 1280x800: six models tall, the popover rose

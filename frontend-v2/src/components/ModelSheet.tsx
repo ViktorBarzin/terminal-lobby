@@ -237,10 +237,13 @@ export const ModelSheet: Component<{
    * the pane, and the popover was 227px tall with Effort and Mode out of view.
    * It is drawn in the document's body for the reason BottomSheet is: the
    * box's surface blurs what is behind it, which pins a fixed child to the box.
+   *
+   * Answers whether it fits under the pane's header. When it does not, the
+   * button opens the bottom sheet instead (`press`).
    */
-  const placePop = (): void => {
+  const placePop = (): boolean => {
     const pill = root?.closest(".tl-pill") ?? root;
-    if (!pill) return;
+    if (!pill) return true;
     const r = pill.getBoundingClientRect();
     const vw = window.innerWidth;
     const width = Math.min(POP_W, vw - 2 * POP_GAP);
@@ -250,15 +253,19 @@ export const ModelSheet: Component<{
     // the lobby's bar. The Text view's top edge is the header's foot. When the
     // pane leaves too little room under it (a short window), the window's room
     // is used instead, as above.
-    const paneTop = pill.closest(".tl-textview")?.getBoundingClientRect().top ?? 0;
+    const pane = pill.closest(".tl-textview");
+    const paneTop = pane?.getBoundingClientRect().top ?? 0;
     const underHeader = r.top - paneTop - 2 * POP_GAP;
-    const room = underHeader >= POP_MIN_UNDER_HEADER ? underHeader : r.top - 2 * POP_GAP;
+    const fits = underHeader >= POP_MIN_UNDER_HEADER;
+    const room = fits ? underHeader : r.top - 2 * POP_GAP;
     setPlace({
       left: Math.max(POP_GAP, Math.min(left, vw - POP_GAP - width)),
       bottom: window.innerHeight - r.top + POP_GAP,
       width,
       maxHeight: Math.min(POP_MAX, Math.max(160, room)),
     });
+    // Only a Text view's pane can be too short: the new-session box has none.
+    return fits || !pane;
   };
   /** Whether part of the sheet is below the popover's edge, for the fade that
    *  says so. */
@@ -284,9 +291,12 @@ export const ModelSheet: Component<{
       close(false);
       return;
     }
+    // A pane too short for the popover under its header (a narrow window
+    // stacks the sidebar above it) gets the phone's bottom sheet: drawn over
+    // the window's room instead, the popover covered the sidebar and the
+    // session's header (found live on 2026-09-28).
     const phone = isCoarsePointer();
-    setSheet(phone);
-    if (!phone) placePop();
+    setSheet(phone || !placePop());
     setOpen(true);
     // A keyboard activation is a click with no pointer detail. The list takes
     // the focus then, or the arrows would have nothing to walk. A pointer

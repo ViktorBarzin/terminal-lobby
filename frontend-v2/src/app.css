@@ -3284,6 +3284,15 @@ label.tl-set-row-label {
 .tl-ms-sheet:focus {
   outline: none;
 }
+/* A fine pointer gets the sheet only in a pane too short for the popover
+   (ModelSheet), which can sit in a wide window: the sheet keeps a phone's
+   width there, centred, rather than spanning the window. */
+@media (pointer: fine) {
+  .tl-ms-sheet {
+    max-width: 560px;
+    margin-inline: auto;
+  }
+}
 .tl-ms-grab {
   width: 38px;
   height: 5px;
