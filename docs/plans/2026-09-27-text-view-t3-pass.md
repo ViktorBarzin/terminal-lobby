@@ -307,6 +307,18 @@ Re-run live on desktop: Stop at 0.36, 1.5 and 2.7 s put the prompt back in
 the field with an empty input line and no bubble; with a queued message behind
 it both came back in order; a Stop 14 s in kept the bubble and the reply.
 
+**A send right after a Stop.** The round 7 check on 2026-09-28 lost one message
+in 9 tries: Enter 300 ms after an early Stop. The new prompt was pasted while
+the cancel was still clearing the returned prompt off the input line, so the
+clear's Backspaces took the new text with them and its Enter landed on an
+empty line. POST /prompt and POST /cancel now take turns on a session's input
+line, and a send pressed while a Stop is in flight waits for it (up to 5 s)
+and goes out with only its own words. What a Stop hands back goes into the
+field only when the field holds what it held at the Stop, or nothing; words
+typed meanwhile go out alone, a toast says the stopped message follows, and
+it lands in the field once they are sent. Before, it was glued in front of
+them, and a quick Enter sent both.
+
 **The permission card's typed answer.** Measured on Claude Code 2.1.283 on a
 scratch session: Tab on the prompt's No row opens a field ("No, and tell Claude
 what to do differently"), and Enter there rejects the tool call with "the user
@@ -331,7 +343,14 @@ draft and attachments come back as they were.
   prototype does not draw a turn fold.
 - The mode list's order is Manual, Edits, Auto, Plan, where Quiet line had
   Manual, Plan, Edits, Auto.
-- Model rows show each model's exact slug as the small note.
+- Model rows carry a short description beside the name, as the prototype's
+  do; the exact slug is the row's tooltip. More than three models go in two
+  columns, on the phone and in the desktop popover, so every section and the
+  context line fit at 390x844 and at 1280x800.
+- The new-session button names the model a default start boots on (Opus 5.5,
+  the managed settings' `model`), and its header carries the session header's
+  icon group: Terminal starts a plain shell, and "…" holds Skills and
+  Settings.
 - The header uses the system font in both views, so the title keeps its face
   when the view switches. It has a fixed height, 56px on a desktop pane and
   58px on a phone, in both views, because a height change resizes the terminal
