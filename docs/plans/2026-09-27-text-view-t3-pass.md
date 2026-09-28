@@ -317,7 +317,17 @@ and goes out with only its own words. What a Stop hands back goes into the
 field only when the field holds what it held at the Stop, or nothing; words
 typed meanwhile go out alone, a toast says the stopped message follows, and
 it lands in the field once they are sent. Before, it was glued in front of
-them, and a quick Enter sent both.
+them, and a quick Enter sent both. The replay of that race found the prompt
+back about 100 ms after the Stop, often before typing began, so an Enter
+within 3 s of it coming back, on a field that still starts with it, sends only
+the words typed after it and leaves it in the field. Right after the
+interrupt Claude Code can draw a panel where the input box was (its
+feedback-draft panel did, over a scratch session), so the server keeps reading
+the pane for the returned prompt for the whole 1.5 s rather than stopping at
+the first read that shows no box. Replayed 12 times with Stop at 0.5 to 2.5 s
+and typing 150 to 600 ms after it: every new prompt reached the transcript
+alone, and the stopped prompt was back in the field each time it had been
+taken back.
 
 **The permission card's typed answer.** Measured on Claude Code 2.1.283 on a
 scratch session: Tab on the prompt's No row opens a field ("No, and tell Claude
