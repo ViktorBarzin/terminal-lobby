@@ -3366,7 +3366,7 @@ label.tl-set-row-label {
 .tl-ms-name {
   flex: none;
 }
-.tl-ms-slug {
+.tl-ms-sub {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3499,7 +3499,7 @@ label.tl-set-row-label {
   padding-block: 5px;
 }
 /* More than three models go in two columns (ModelSheet), each cell a name
-   over its slug, so Bypass, No ask and the context line fit a phone's sheet
+   over its note, so Bypass, No ask and the context line fit a phone's sheet
    with six models on offer. */
 .tl-ms-sheet .tl-ms-models[data-cols="2"] {
   display: grid;
@@ -3513,7 +3513,7 @@ label.tl-set-row-label {
   flex-wrap: wrap;
   row-gap: 0;
 }
-.tl-ms-models[data-cols="2"] .tl-ms-slug {
+.tl-ms-models[data-cols="2"] .tl-ms-sub {
   flex-basis: 100%;
   padding-left: 21px;
 }
@@ -3521,7 +3521,7 @@ label.tl-set-row-label {
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 17px;
 }
-.tl-ms-sheet .tl-ms-slug {
+.tl-ms-sheet .tl-ms-sub {
   font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
 .tl-ms-sheet .tl-ms-seg button {

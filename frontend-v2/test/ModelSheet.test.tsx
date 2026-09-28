@@ -382,11 +382,20 @@ describe("the sheet, with a coarse pointer", () => {
 });
 
 describe("the Model section", () => {
-  it("names each model with its exact slug beside it, and ticks the current one", () => {
+  // The prototype's rows: a name and a short note ("Most capable"), found
+  // showing the raw slug in the live check on 2026-09-28. The exact slug,
+  // which Viktor asked to see on 2026-09-06, stays in the row's title.
+  it("names each model with a short note, keeps its exact slug in the title, and ticks the current one", () => {
     mount({ model: { model: "claude-opus-5-5", effort: "high" } });
     open();
     const opus = modelRow("Opus 5.5");
-    expect(opus.querySelector(".tl-ms-slug")?.textContent).toBe("claude-opus-5-5");
+    expect(opus.querySelector(".tl-ms-sub")?.textContent).toBe("Most capable");
+    expect(modelRow("Sonnet 5").querySelector(".tl-ms-sub")?.textContent).toBe(
+      "Fast, strong at code",
+    );
+    expect(modelRow("Haiku 4.5").querySelector(".tl-ms-sub")?.textContent).toBe("Fastest");
+    expect(opus.textContent).not.toContain("claude-opus-5-5");
+    expect(opus.getAttribute("title")).toBe("claude-opus-5-5");
     expect(opus.querySelector(".tl-ms-spark")).not.toBeNull();
     const ticked = modelRows().filter((b) => b.getAttribute("aria-checked") === "true");
     expect(ticked.map(nameOf)).toEqual(["Opus 5.5"]);
@@ -432,7 +441,7 @@ describe("the Model section", () => {
     mount({ harness: "codex", model: { model: "gpt-5.6-terra", effort: "medium" } });
     open();
     const terra = modelRow("gpt-5.6-terra");
-    expect(terra.querySelector(".tl-ms-slug")).toBeNull();
+    expect(terra.querySelector(".tl-ms-sub")).toBeNull();
     expect(modelRows().map(nameOf)).not.toContain("Opus 5");
     expect(efforts().map((b) => b.textContent)).toContain("ultra");
   });

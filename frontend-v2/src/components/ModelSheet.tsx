@@ -21,6 +21,7 @@ import {
   isEffortFor,
   labelFor,
   modelName,
+  modelNote,
   optionsFor,
   startEfforts,
   summarise,
@@ -396,10 +397,12 @@ export const ModelSheet: Component<{
                 <span class="tl-ms-lab">
                   <SparkleIcon size={14} class="tl-ms-spark" />
                   <span class="tl-ms-name">{rowName(o.id)}</span>
-                  {/* The exact slug, which Viktor asked to see (2026-09-06);
-                      codex and pi already name their rows by it. */}
-                  <Show when={o.id !== DEFAULT_CHOICE && rowName(o.id) !== o.id}>
-                    <small class="tl-ms-slug">{o.id}</small>
+                  {/* A short note beside the name, as the prototype's rows
+                      have. The exact slug, which Viktor asked to see
+                      (2026-09-06), is the row's title; codex and pi name their
+                      rows by it. */}
+                  <Show when={modelNote(h()!, o.id)}>
+                    {(note) => <small class="tl-ms-sub">{note()}</small>}
                   </Show>
                 </span>
                 <Show when={o.id === DEFAULT_CHOICE}>

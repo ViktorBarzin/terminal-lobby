@@ -80,6 +80,7 @@ import type { StopResult } from "../store/session";
 import {
   contextWindow,
   isCurrentModel,
+  modelFromBanner,
   type ModelField,
   type ModelHarness,
   type ModelState,
@@ -436,6 +437,14 @@ export const TextView: Component<{
   // counting the moment the transcript moves, with no bookkeeping: the reading
   // simply no longer matches what it was taken against.
   const [paneRead, setPaneRead] = createSignal({ mode: "", against: "" });
+  /**
+   * The model the pane's start-up banner names, for a session the transcript
+   * has not named one for yet: Claude Code writes the model on its first reply,
+   * and a fresh session's button read "Model" with nothing ticked until then
+   * (found live on 2026-09-28). Read with the mode, and it stands only while
+   * the transcript says nothing (transcriptModel).
+   */
+  const [bannerModel, setBannerModel] = createSignal<ModelState | undefined>();
   const mode = createMemo(() => {
     const t = transcriptMode();
     const p = paneRead();
@@ -451,7 +460,12 @@ export const TextView: Component<{
   const readMode = async (was: string): Promise<void> => {
     for (const wait of PANE_READ_DELAYS_MS) {
       await new Promise((r) => setTimeout(r, wait));
-      const seen = modeFromPane((await props.onPane?.())?.pane ?? "");
+      const pane = (await props.onPane?.())?.pane ?? "";
+      if (props.harness === "claude") {
+        const banner = modelFromBanner(pane);
+        if (banner) setBannerModel(banner);
+      }
+      const seen = modeFromPane(pane);
       if (!seen) continue;
       setPaneRead({ mode: seen, against: transcriptMode() });
       if (seen !== was) return;
@@ -1133,7 +1147,7 @@ export const TextView: Component<{
    * wait for the transcript.
    */
   const transcriptModel = createMemo(
-    () => currentModel(props.events, props.sessionState) ?? props.stampedModel,
+    () => currentModel(props.events, props.sessionState) ?? props.stampedModel ?? bannerModel(),
   );
   // The sheet's context line: a /context reading, or the last turn's usage
   // over the window measured for the model the session answers as.

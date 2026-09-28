@@ -587,6 +587,43 @@ export function modelName(h: ModelHarness, model: string): string {
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
+ * The model and effort a Claude pane's start-up banner names, or undefined.
+ *
+ * The banner's second line reads "claude-opus-5-5 with high effort · Claude
+ * API" (CLI 2.1.283, where managed settings make the slug the display name).
+ * It is what a fresh session has to go on: the transcript names the model on
+ * Claude's first reply, and Claude Code writes no transcript before the first
+ * prompt. The " · " after "effort" is what tells the banner from a sentence in
+ * the conversation. Last match wins, as the newest thing on the pane.
+ */
+const BANNER_RE = /(claude-[a-z0-9.-]+(?:\[1m\])?) with ([a-z]+) effort · /g;
+
+export function modelFromBanner(pane: string): ModelState | undefined {
+  let found: ModelState | undefined;
+  for (const m of pane.matchAll(BANNER_RE)) found = { model: m[1]!, effort: m[2]! };
+  return found;
+}
+
+/**
+ * The short note under a model's name in the model sheet, as the prototype
+ * writes its rows ("Most capable", "Fast, strong at code", "Fastest";
+ * composer/6-t3.html). The exact slug stays in the row's title. Only Claude's
+ * rows have one: codex and pi name their rows by the reference itself.
+ */
+const MODEL_NOTES: Readonly<Record<string, string>> = {
+  "claude-opus-5-5": "Most capable",
+  "claude-opus-5": "The previous Opus",
+  "claude-opus-5[1m]": "Opus 5 with a 1M context",
+  "claude-sonnet-5": "Fast, strong at code",
+  "claude-haiku-4-5-20251001": "Fastest",
+  "claude-opus-4-8": "An older Opus",
+};
+
+export function modelNote(h: ModelHarness, id: string): string {
+  return h === "claude" ? (MODEL_NOTES[id] ?? "") : "";
+}
+
+/**
  * The body of a `POST /model/{session}`, or null when there is nothing to
  * apply. `default` on both sides means the session keeps what it booted with,
  * which is a real instruction and not a request to send.
