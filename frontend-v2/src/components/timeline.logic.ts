@@ -137,7 +137,11 @@ export interface QuestionRow {
   id: number;
   toolId?: string;
   questions: Question[];
-  /** What was chosen, once the transcript records an answer. */
+  /**
+   * What was chosen, once the transcript records an answer: one entry per
+   * question, in order, "" where it has none. A multi-select's picks are one
+   * string joined by ", ", as the CLI records them (see `pickedIn`).
+   */
   answers: string[];
   pending: boolean;
   /** Asked, never resolved, and no longer on screen — the session moved past
@@ -449,17 +453,34 @@ function turnDuration(turn: Turn): number | undefined {
   return d > 0 ? d : undefined;
 }
 
-/** The answers an AskUserQuestion result records, as flat labels. */
-function answersFrom(payload: unknown): string[] {
+/**
+ * The answers an AskUserQuestion result records, one per question in order.
+ *
+ * The CLI keys them by the question's text (`{"Which fruits do you want?":
+ * "Apple, Plum"}`, seen on 2026-09-27); a header key is read too. An array is
+ * taken in question order. [] when nothing was recorded.
+ */
+function answersFrom(payload: unknown, questions: readonly Question[]): string[] {
   const raw = (payload as { answers?: unknown } | null)?.answers;
-  if (!raw) return [];
-  const out: string[] = [];
-  const push = (v: unknown) => {
-    if (typeof v === "string" && v) out.push(v);
-  };
-  if (Array.isArray(raw)) raw.forEach(push);
-  else if (typeof raw === "object") Object.values(raw as object).forEach(push);
-  return out;
+  if (!raw || typeof raw !== "object") return [];
+  const text = (v: unknown): string => (typeof v === "string" ? v : "");
+  const out = Array.isArray(raw)
+    ? questions.map((_, i) => text(raw[i]))
+    : questions.map((q) => {
+        const byKey = raw as Record<string, unknown>;
+        return text(byKey[q.question]) || text(byKey[q.header]);
+      });
+  return out.some((a) => a !== "") ? out : [];
+}
+
+/**
+ * Whether `label` is among the picks an answer records. A multi-select's picks
+ * are joined by ", ", so a label is picked when it is the whole answer or one
+ * of its parts.
+ */
+export function pickedIn(answer: string | undefined, label: string): boolean {
+  if (!answer) return false;
+  return answer === label || answer.split(", ").includes(label);
 }
 
 /** A plan's text as the dialog draws it, tracked while the call is open. */
@@ -851,7 +872,7 @@ function collectTurnRows(turn: Turn): {
         if (waiting) {
           waiting.pending = false;
           if (waiting.kind === "question") {
-            waiting.answers = answersFrom(e.result);
+            waiting.answers = answersFrom(e.result, waiting.questions);
           } else {
             resolvePlan(waiting, e, planText.get(waiting));
             if (waiting.outcome.kind === "approved") awaitingMode = waiting;

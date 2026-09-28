@@ -150,6 +150,48 @@ describe("questions", () => {
     expect(pendingQuestion(rows)).toBeNull();
   });
 
+  // Found live on 2026-09-27: a card of two questions, one of them
+  // multi-select, listed both answers under each question, and no pick of the
+  // multi-select was marked. The CLI records one answer per QUESTION TEXT,
+  // with a multi-select's picks joined by ", ".
+  it("records each question's own answer, keyed by the question", () => {
+    const two = ev({
+      kind: "tool_use",
+      tool: "AskUserQuestion",
+      toolId: "q2",
+      body: JSON.stringify({
+        questions: [
+          {
+            question: "Which drink do you want?",
+            header: "Drink",
+            multiSelect: false,
+            options: [{ label: "Tea" }, { label: "Coffee" }],
+          },
+          {
+            question: "Which fruits do you want?",
+            header: "Fruit",
+            multiSelect: true,
+            options: [{ label: "Apple" }, { label: "Pear" }, { label: "Plum" }],
+          },
+        ],
+      }),
+    });
+    const rows = rowsOf(
+      prompt(),
+      two,
+      ev({
+        kind: "tool_result",
+        toolId: "q2",
+        body: "",
+        result: {
+          answers: { "Which fruits do you want?": "Apple, Plum", "Which drink do you want?": "Coffee" },
+        },
+      }),
+    );
+    const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
+    expect(q.answers).toEqual(["Coffee", "Apple, Plum"]);
+  });
+
   // The working row is what a LIVE question is followed by: the turn cannot
   // settle while the dialog is up, so the derivation appends one. Finding the
   // question means looking past it.

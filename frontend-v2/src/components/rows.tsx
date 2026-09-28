@@ -22,6 +22,7 @@ import {
   planSummary,
   shortTarget,
   shownPlanOutcome,
+  pickedIn,
   type ContinuationRow,
   type LiveGroupState,
   type MetaRow,
@@ -514,7 +515,7 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
       data-pending={props.row.pending ? "true" : undefined}
     >
       <For each={props.row.questions}>
-        {(q) => (
+        {(q, qi) => (
           <div class="tl-question">
             <div class="tl-question-head">
               <span class="tl-question-chip">{q.header || "Question"}</span>
@@ -541,7 +542,7 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
                   {(o, oi) => (
                     <div
                       class="tl-question-option"
-                      data-chosen={props.row.answers.includes(o.label) ? "true" : undefined}
+                      data-chosen={pickedIn(props.row.answers[qi()], o.label) ? "true" : undefined}
                     >
                       <span class="tl-option-key">{oi() + 1}</span>
                       <span class="tl-option-label">{o.label}</span>
@@ -558,8 +559,8 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
                 {full() ? "Show less" : "Show all"}
               </button>
             </Show>
-            <Show when={!props.row.pending && props.row.answers.length > 0}>
-              <div class="tl-question-answer">answered: {props.row.answers.join(", ")}</div>
+            <Show when={!props.row.pending && props.row.answers[qi()]}>
+              {(answer) => <div class="tl-question-answer">answered: {answer()}</div>}
             </Show>
             {/* Asked, never answered, and no longer on screen — Claude Code takes
               a dialog down when something else claims the turn and re-asks.
