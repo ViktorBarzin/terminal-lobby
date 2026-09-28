@@ -181,7 +181,7 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
       ],
       at: 2,
     });
-    expect(field(container).value).toBe("look at this [img: a.png]");
+    expect(field(container).value).toBe("look at this [img: a.png] ");
     expect(container.querySelectorAll(".tl-inline-chip").length).toBe(1);
   });
 });

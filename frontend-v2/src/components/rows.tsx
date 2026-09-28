@@ -1145,17 +1145,9 @@ export const WorkGroupRowView: Component<{
    *  stopped, is waiting on the reader: the card docked below asks about it,
    *  and the live state stays off the group while a card says it. */
   const waiting = () =>
-    !live() &&
-    !props.row.stopped &&
-    props.row.calls.some((c) => c.kind === "tool" && !c.done);
+    !live() && !props.row.stopped && props.row.calls.some((c) => c.kind === "tool" && !c.done);
   const status = () =>
-    props.row.hasError
-      ? "error"
-      : props.row.stopped
-        ? "stopped"
-        : waiting()
-          ? "waiting"
-          : "ok";
+    props.row.hasError ? "error" : props.row.stopped ? "stopped" : waiting() ? "waiting" : "ok";
   const summary = createMemo(() => groupSummary(props.row.calls, { waiting: waiting() }));
   const took = () => formatDuration(props.row.durationMs);
   /** Every event the group stands for, so a search hit on a folded call lands here. */

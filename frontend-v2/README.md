@@ -40,7 +40,8 @@ The switch is one icon in the session header's icon group, naming the view it
 switches to (`>_` in the Text view, a Text icon in the Terminal view):
 **full-swap XOR**, both views **permanently mounted** (CSS-hidden, never
 unmounted), `Cmd/Ctrl-J` toggles, per-session/per-device `{mode}` in
-localStorage, and an activity dot on the icon for the hidden view.
+localStorage, and an activity dot on the Text icon when the conversation has
+moved while the Terminal view was showing.
 
 ### Reading a `term.html:NNNN` citation
 

@@ -257,7 +257,9 @@ describe("the new-session screen (prototype 6-new)", () => {
     expect(rule(".tl-new-composer")).toMatch(/padding:\s*16px var\(--tl-gutter\)/);
     expect(rule(".tl-composer")).toMatch(/var\(--tl-gutter\)/);
     expect(rule(".tl-timeline")).toMatch(/var\(--tl-gutter\)/);
-    const phone = blocks("(pointer: coarse) and ((max-width: 720px) or (max-height: 480px))").join("\n");
+    const phone = blocks("(pointer: coarse) and ((max-width: 720px) or (max-height: 480px))").join(
+      "\n",
+    );
     expect(rule(":root", phone)).toMatch(/--tl-gutter:\s*14px/);
   });
 
