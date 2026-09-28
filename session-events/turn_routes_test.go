@@ -36,6 +36,8 @@ type fakeTurns struct {
 	cancelErr    error
 	clearTook    bool  // ClearQueue
 	clearErr     error // ClearQueue
+	reclaimTook  bool  // ReclaimInterrupted
+	reclaimErr   error // ReclaimInterrupted
 	setModelOut  sessionio.ModelState
 	setModelErr  error
 	pane         string // CapturePane
@@ -47,6 +49,7 @@ type fakeTurns struct {
 	setModelReq sessionio.ModelState
 	prompted    string
 	cleared     []string
+	reclaimed   string
 }
 
 func (f *fakeTurns) called(name string) bool {
@@ -119,6 +122,12 @@ func (f *fakeTurns) ClearQueue(_, _ string, queued []string) (bool, error) {
 	f.calls = append(f.calls, "ClearQueue")
 	f.cleared = queued
 	return f.clearTook, f.clearErr
+}
+
+func (f *fakeTurns) ReclaimInterrupted(_, _, text string) (bool, error) {
+	f.calls = append(f.calls, "ReclaimInterrupted")
+	f.reclaimed = text
+	return f.reclaimTook, f.reclaimErr
 }
 
 func (f *fakeTurns) SetModel(_ context.Context, _, _ string, h sessionio.Harness, want sessionio.ModelState) (sessionio.ModelState, error) {
@@ -499,6 +508,66 @@ func TestCancelStopsWhenThePopFails(t *testing.T) {
 	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"restoreQueue":["first"]}`)
 	if rec.Code != http.StatusBadGateway || f.called("CancelHarness") {
 		t.Fatalf("status %d, calls %q, want 502 and no interrupt", rec.Code, f.calls)
+	}
+}
+
+// A Stop that lands before Claude has written anything puts the prompt back on
+// the pane's input line, where the Text view never shows it and the next send
+// erases it. Named in returnPrompt, it is taken off that line AFTER the
+// interrupt, and the reply says so: the Text view puts it back in the field.
+func TestCancelReturnsTheInterruptedPrompt(t *testing.T) {
+	f := &fakeTurns{reclaimTook: true}
+	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"returnPrompt":"Write a long story"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200", rec.Code)
+	}
+	var got struct {
+		Restored bool `json:"restored"`
+		Returned bool `json:"returned"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || !got.Returned || got.Restored {
+		t.Fatalf("body %q, want returned true and nothing restored", rec.Body.String())
+	}
+	if f.reclaimed != "Write a long story" {
+		t.Fatalf("reclaimed %q", f.reclaimed)
+	}
+	cancel, reclaim := -1, -1
+	for i, c := range f.calls {
+		switch c {
+		case "CancelHarness":
+			cancel = i
+		case "ReclaimInterrupted":
+			reclaim = i
+		}
+	}
+	if cancel < 0 || reclaim < cancel {
+		t.Fatalf("calls = %q, want CancelHarness before ReclaimInterrupted", f.calls)
+	}
+}
+
+// Claude had started answering: nothing came back, and the caller is told so.
+// A failed read of the pane is the same answer, since the interrupt landed.
+func TestCancelSaysWhenNothingCameBack(t *testing.T) {
+	for _, f := range []*fakeTurns{{}, {reclaimErr: errors.New("tmux gone")}} {
+		rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"returnPrompt":"Write a long story"}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d, want 200", rec.Code)
+		}
+		if strings.TrimSpace(rec.Body.String()) != `{"restored":false}` {
+			t.Fatalf("body %q, want nothing returned", rec.Body.String())
+		}
+	}
+}
+
+// Only Claude puts a prompt back this way.
+func TestCancelReturnsOnlyClaudesPrompt(t *testing.T) {
+	f := &fakeTurns{reclaimTook: true}
+	rec := postTurn(t, turnMux(t, f), "/cancel/demo", `{"tool":"pi","returnPrompt":"x"}`)
+	if f.called("ReclaimInterrupted") || !f.called("CancelHarness") {
+		t.Fatalf("calls %q, want the interrupt alone", f.calls)
+	}
+	if strings.TrimSpace(rec.Body.String()) != `{"restored":false}` {
+		t.Fatalf("reply %q, want nothing returned", rec.Body.String())
 	}
 }
 

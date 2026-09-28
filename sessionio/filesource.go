@@ -316,7 +316,11 @@ func (f *FileSource) epochLocked() string {
 // placeholders for as long as the cache holds, up to 2,000 events a session
 // (frontend-v2/src/store/transcript-cache.ts). The cost is one full reopen per
 // cached session per device, once.
-const eventShape = "2026-09-24-images"
+//
+// Bumped again 2026-09-28, when a prompt a Stop took back started being marked
+// (MetaRewound): a replay of an older transcript now carries markers it did
+// not, and the ids after them move.
+const eventShape = "2026-09-28-rewound"
 
 // logEpoch names a log by the transcript behind it and the shape its events
 // take. Hashed rather than sent as a path: it travels to the browser, and the
@@ -454,6 +458,22 @@ func (f *FileSource) Interrupt(at int64) {
 	f.mu.Lock()
 	f.diverged = true
 	f.mu.Unlock()
+}
+
+// Rewind records that the prompt `text` went back to the session's input line
+// at `at` (epoch ms), and streams the marker that takes it out of the
+// conversation (Normalizer.Rewind). When the tail has not read the prompt's
+// record yet, the record is marked as it arrives, which a replay would not do.
+func (f *FileSource) Rewind(text string, at int64) {
+	f.normMu.Lock()
+	defer f.normMu.Unlock()
+	evs := f.norm.Rewind(text, at)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.diverged = true
+	for _, e := range evs {
+		f.appendLocked(e)
+	}
 }
 
 // Run tails the transcript until ctx is cancelled.

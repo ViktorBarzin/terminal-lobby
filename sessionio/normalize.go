@@ -59,6 +59,14 @@ type Normalizer struct {
 	// agent is set when the transcript is one agent's own agent-<id>.jsonl,
 	// where every record is a sidechain record (see NewAgentNormalizer).
 	agent bool
+	// open is the thread's latest prompt while Claude has written nothing for
+	// it, the one a Stop can still take back (see rewound.go). Nil once Claude
+	// answers, the CLI settles it with its interrupt notice, or it is marked.
+	open *openPrompt
+	// rewindText and rewindAt are a prompt the cancel route saw go back to the
+	// input line before the tail had read its record (Rewind).
+	rewindText string
+	rewindAt   int64
 }
 
 func NewNormalizer(session string) *Normalizer { return &Normalizer{session: session} }
@@ -250,6 +258,12 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	role := rec.Role()
 	blocks := rec.Blocks()
 	at := parseAt(rec.Timestamp)
+	lead := n.takenBack(rec, role, blocks, at)
+	return append(lead, n.said(rec, role, blocks, at)...)
+}
+
+// said is conversation past the prompt a Stop took back.
+func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []Event {
 
 	// An interrupt is the transcript reporting a key press, not a prompt: it
 	// settles the turn it landed in instead of opening one.
@@ -358,6 +372,7 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	switch {
 	case isPrompt:
 		n.startTurn()
+		n.opened(rec, blocks, at)
 	case n.turnDone && !n.sameResponse(role, rec.Message.ID) &&
 		hasBlock(blocks, "text", "tool_use", "tool_result"):
 		n.startTurn() // work resumed after the turn closed
@@ -525,6 +540,9 @@ func (n *Normalizer) conversation(rec Record) []Event {
 	if isPrompt && n.interruptAt > 0 && at > 0 && at <= n.interruptAt {
 		n.interruptAt = 0
 		out = append(out, n.emit(KindTurnEnd, at))
+	}
+	if isPrompt {
+		out = append(out, n.rewindOnArrival(at)...)
 	}
 	return out
 }

@@ -23,12 +23,18 @@ FAKEINPUT_LINE seeds the box with text already on it, backslash-n again
 standing for a break: the interrupted prompt Claude Code puts back on its input
 line after a Stop, which wraps over more than one line when it is long.
 
+FAKEINPUT_RUNNING is the prompt of a turn Claude has written nothing for yet.
+C-c puts it back on the input line FAKEINPUT_RESTORE_MS later (default 150),
+as CLI 2.1.283 was measured to on 2026-09-28: 40 to 270 ms after the interrupt.
+
 It is a model of that contract, not of the CLI.
 """
 
 import os
+import select
 import sys
 import termios
+import time
 import tty
 
 SWALLOW = int(os.environ.get("FAKEINPUT_SWALLOW", "0"))
@@ -37,6 +43,8 @@ QUEUE = [
     for q in os.environ.get("FAKEINPUT_QUEUE", "").split("|")
     if q
 ]
+RUNNING = os.environ.get("FAKEINPUT_RUNNING", "").replace("\\n", "\n")
+RESTORE_S = int(os.environ.get("FAKEINPUT_RESTORE_MS", "150")) / 1000.0
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
@@ -81,7 +89,18 @@ def main():
         submitted = []
         line = os.environ.get("FAKEINPUT_LINE", "").replace("\\n", "\n")
         draw(submitted, line, queue, interrupted)
+        running = RUNNING
+        restore_at = None
         while True:
+            if restore_at is not None:
+                wait = max(0.0, restore_at - time.monotonic())
+                ready, _, _ = select.select([fd], [], [], wait)
+                if not ready:
+                    line = running + line
+                    running = ""
+                    restore_at = None
+                    draw(submitted, line, queue, interrupted)
+                    continue
             ch = read1()
             if ch == "":
                 return
@@ -101,6 +120,8 @@ def main():
                 submitted.extend(queue)
                 queue = []
                 interrupted = True
+                if running:
+                    restore_at = time.monotonic() + RESTORE_S
             elif ch == "\x1b":
                 # A CSI sequence: ESC [ params final. Up is ESC [ A; the
                 # bracketed-paste markers are ESC [ 2 0 0 ~ and ESC [ 2 0 1 ~.

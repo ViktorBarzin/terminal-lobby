@@ -113,6 +113,37 @@ func TestFileSourceInterruptOnASettledTurnAppendsNothing(t *testing.T) {
 	}
 }
 
+// A Stop that put the prompt back on the input line takes it out of the
+// conversation on every client at once, and a client that reconnects replays
+// the marker too.
+func TestFileSourceRewindStreamsTheMarker(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "s.jsonl")
+	os.WriteFile(p, []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Write a long story"}]},"timestamp":"2026-09-28T02:29:22Z"}`+"\n"), 0o644)
+
+	fs := NewFileSource("demo", p, time.Millisecond)
+	fs.TailOnce()
+	prompt := fs.Replay(0)[0]
+	_, replayable := fs.Head()
+	ch, cancel := fs.Subscribe()
+	defer cancel()
+	fs.Rewind("Write a long story", 1790562564000)
+
+	select {
+	case e := <-ch:
+		if e.Kind != KindMeta || e.Meta != MetaRewound || e.TurnID != prompt.TurnID {
+			t.Fatalf("live event = %+v, want a rewound marker for turn %q", e, prompt.TurnID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the marker never reached the stream")
+	}
+	if last := fs.Replay(0); last[len(last)-1].Meta != MetaRewound {
+		t.Fatalf("replay = %+v, want the marker recorded", last)
+	}
+	if _, e := fs.Head(); e == replayable {
+		t.Fatal("epoch kept after a live-only event")
+	}
+}
+
 // ---- windowed open + the payload a window leaves behind ---------------------
 
 // feed pushes n turns of (prompt, tool call, answer) through a source's

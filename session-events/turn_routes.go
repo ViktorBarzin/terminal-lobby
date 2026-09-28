@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"terminal-lobby/sessionio"
@@ -151,6 +153,7 @@ type cancelDriver interface {
 	CancelHarness(osUser, session string, h sessionio.Harness) error
 	HarnessOf(osUser, session string) sessionio.Harness
 	ClearQueue(osUser, session string, queued []string) (bool, error)
+	ReclaimInterrupted(osUser, session, text string) (bool, error)
 }
 
 // cancelBodyLimit bounds the optional body. It carries the harness's name and,
@@ -175,12 +178,23 @@ const cancelBodyLimit = 4 << 20
 // text back in its field. Otherwise the queued prompts run, as they did
 // before. Only Claude's queue is popped this way. Without the field the reply
 // is the empty 204 every earlier caller reads.
+//
+// {"returnPrompt": "..."} names the prompt of the turn being stopped when
+// Claude has written nothing for it yet. A Stop then takes the prompt out of
+// the conversation and Claude Code puts it back on its input line (CLI
+// 2.1.283, measured 2026-09-28), where the Text view never shows it and the
+// next send's clear erases it. So after the interrupt it is taken off that
+// line (sessionio.ReclaimInterrupted), the stream is told the prompt left the
+// conversation (MetaRewound), and the reply carries "returned": true, which is
+// when the caller puts it back in its field. It rides the same 200 reply as
+// "restored", and is absent when nothing came back.
 func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
 			Tool         string   `json:"tool"`
 			RestoreQueue []string `json:"restoreQueue"`
+			ReturnPrompt string   `json:"returnPrompt"`
 		}
 		// An empty body is the ordinary case, and a malformed one names nothing,
 		// which is what asking the pane is for. One over the limit is refused
@@ -217,8 +231,24 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		// to the transcript, and the transcript is where every other settle
 		// rule lives — so the turn is settled here, on the stream, or the
 		// composer sits on "Working…" + Stop for the life of the session.
-		if fs, ok := rg.source(osUser, session); ok {
-			fs.Interrupt(time.Now().UnixMilli())
+		stopped := time.Now().UnixMilli()
+		fs, hasSource := rg.source(osUser, session)
+		if hasSource {
+			fs.Interrupt(stopped)
+		}
+		returning := strings.TrimSpace(body.ReturnPrompt) != ""
+		returned := false
+		if returning && (h == "" || h == sessionio.HarnessClaude) {
+			took, err := drv.ReclaimInterrupted(osUser, session, body.ReturnPrompt)
+			if err != nil {
+				// The interrupt landed; only the read of the input line failed.
+				// The caller keeps the prompt where it shows it.
+				log.Printf("cancel %s/%s: reclaiming the interrupted prompt failed: %v", osUser, session, err)
+			}
+			returned = took && err == nil
+			if returned && hasSource {
+				fs.Rewind(body.ReturnPrompt, stopped)
+			}
 		}
 		attrs := telemetry.Attrs{"tl.session": session, "tl.client": "api"}
 		if h != "" {
@@ -227,15 +257,19 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		if restored {
 			attrs["tl.count"] = len(body.RestoreQueue)
 		}
+		if returned {
+			attrs["tl.returned"] = true
+		}
 		events.Emit("claude.cancelled", osUser, attrs)
-		if !restoring {
+		if !restoring && !returning {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(struct {
 			Restored bool `json:"restored"`
-		}{restored})
+			Returned bool `json:"returned,omitempty"`
+		}{restored, returned})
 	}
 }
 

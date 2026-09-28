@@ -298,6 +298,10 @@ func TestHarnessRecordsDoNotOpenATurn(t *testing.T) {
 	if turn == "" {
 		t.Fatal("the prompt opened no turn")
 	}
+	// Claude has started on it. A harness record after a prompt Claude wrote
+	// nothing for says the prompt was taken back (rewound.go).
+	n.Line([]byte(`{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"s"}]},` +
+		`"timestamp":"2026-09-02T10:00:00.500Z","sessionId":"x","uuid":"a1"}`))
 
 	for _, tc := range []struct {
 		name string

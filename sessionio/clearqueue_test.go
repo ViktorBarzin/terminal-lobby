@@ -131,3 +131,49 @@ func TestClearQueueNeedsClaudesInputBox(t *testing.T) {
 		t.Fatalf("ClearQueue on a shell = (%v, %v), want (false, nil)", took, err)
 	}
 }
+
+// A Stop that lands before Claude has written anything for the turn puts the
+// prompt back on the input line (CLI 2.1.283, measured 2026-09-28). Left
+// there, the Text view never shows it and the next send's clear erases it, so
+// the prompt is lost while the chat shows it as sent. ReclaimInterrupted takes
+// it off the input line so the caller can hand it back to the composer.
+func TestReclaimInterruptedTakesThePromptBackOffTheInputLine(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_RUNNING='Write a long story about a lighthouse keeper, one that wraps over the width of the pane and then some more words to be sure it does.' FAKEINPUT_RESTORE_MS=200")
+	if err := in.Cancel(osUser, "demo"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	took, err := in.ReclaimInterrupted(osUser, "demo", "Write a long story about a lighthouse keeper, one that wraps over the width of the pane and then some more words to be sure it does.")
+	if err != nil {
+		t.Fatalf("ReclaimInterrupted: %v", err)
+	}
+	if !took {
+		t.Fatal("ReclaimInterrupted did not find the prompt on the input line")
+	}
+	awaitPane(t, in, osUser, func(p string) bool {
+		box, ok := inputBox(p)
+		return ok && strings.TrimSpace(box) == ""
+	})
+	if got := paneLines(t, in, osUser, "SUBMITTED="); len(got) != 0 {
+		t.Fatalf("submitted %q, want nothing", got)
+	}
+}
+
+// Claude had started answering, so nothing comes back, and a draft of the
+// reader's own on the input line is left alone.
+func TestReclaimInterruptedLeavesOtherWordsAlone(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_LINE='my own draft'")
+	if err := in.Cancel(osUser, "demo"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	took, err := in.ReclaimInterrupted(osUser, "demo", "Write a long story")
+	if err != nil || took {
+		t.Fatalf("ReclaimInterrupted = (%v, %v), want (false, nil)", took, err)
+	}
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if box, _ := inputBox(pane); strings.TrimSpace(box) != "my own draft" {
+		t.Fatalf("the input line holds %q, want the reader's draft untouched", box)
+	}
+}
