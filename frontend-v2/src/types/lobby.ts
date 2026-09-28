@@ -160,6 +160,10 @@ export interface Session {
   pane_title?: string;
   /** Which command the session runs; drives the sidebar tool mark. */
   tool?: SessionTool;
+  /** The active pane's working directory (#{pane_current_path}), which the
+   *  Text view's `@` completion lists relative paths from. Absent for a dead
+   *  pane and from a server older than the field. */
+  cwd?: string;
   /** A pi session's model, `provider/id`, as the lobby's pi extension stamped
    *  it on the pane (`@tl_pi_model`). Pi has no transcript the lobby reads, so
    *  this is what its model chip shows. Absent until the extension has run,

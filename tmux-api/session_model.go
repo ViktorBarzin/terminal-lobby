@@ -51,6 +51,9 @@ type Session struct {
 	// for consumers that predate the fields.
 	Command   string `json:"pane_current_command,omitempty"`
 	PaneTitle string `json:"pane_title,omitempty"`
+	// Cwd is the active pane's #{pane_current_path}: the directory the Text
+	// view's @ completion lists relative paths from. Empty for a dead pane.
+	Cwd string `json:"cwd,omitempty"`
 	// Title is the DISPLAY TITLE a person chose — arbitrary text, up to 64
 	// runes, read from the session's @title option. Distinct from PaneTitle,
 	// which whatever is running in the pane sets for itself. Empty means the

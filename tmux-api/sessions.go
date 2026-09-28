@@ -303,6 +303,7 @@ func parseSessions(out []byte) []Session {
 			PiModel:    piModelOf(parts[piModelColumn]),
 			PiThinking: piThinkingOf(parts[piThinkingColumn]),
 			PiLevels:   piLevelsOf(parts[piLevelsColumn]),
+			Cwd:        parts[cwdColumn],
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.

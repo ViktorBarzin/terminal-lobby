@@ -22,6 +22,7 @@ import {
 import type { SseStatus } from "../sse/client";
 import { gridCramped, type SessionGrid } from "../terminal/fit";
 import { createViewMode } from "../store/viewmode";
+import { atListTarget } from "../lib/at-path";
 import { createWatchMode, clearResolvedWatch, publishResolvedWatch } from "../store/watchmode";
 import { pendingPermissions, deriveRows } from "./timeline.logic";
 import type { PermissionDecision } from "../types/events";
@@ -233,6 +234,9 @@ export const SessionView: Component<{
    *  and effort lists the composer's chip offers, and a session running a plain
    *  shell — or one nothing has reported a tool for — gets no chip at all. */
   tool?: () => SessionTool | undefined;
+  /** The session's working directory from the session list, where `@`
+   *  completion lists relative paths from (lib/at-path.ts). */
+  cwd?: () => string | undefined;
   /** What a pi session stamped about itself, off the session list: its model,
    *  its thinking level and the levels that model supports. The chip reads
    *  them, because the lobby reads no pi transcript to find a model in.
@@ -1065,15 +1069,16 @@ export const SessionView: Component<{
 
   /**
    * `@` completion. The composer asks for a directory relative to the session's
-   * own cwd (or absolute when the token starts with /), and gets back bare
+   * own cwd, or its project's when the list reports none (absolute when the
+   * token starts with /), and gets back bare
    * names — directories keep their trailing slash so picking one continues into
    * it rather than ending the token.
    */
   const listDir = async (dir: string): Promise<string[]> => {
-    const base = props.dir || "";
-    const target = dir.startsWith("/") ? dir : `${base}/${dir}`.replace(/\/+/g, "/");
+    const target = atListTarget(dir, { cwd: props.cwd?.(), projectDir: props.dir });
+    if (!target) return [];
     try {
-      const entries = await fileList(target || "/");
+      const entries = await fileList(target);
       return entries.map((e) => (e.isDir ? `${e.name}/` : e.name));
     } catch {
       // A path that does not exist yet is an ordinary state while typing.

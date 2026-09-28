@@ -78,11 +78,12 @@ const (
 		"#{" + sessionio.OptionPiModel + "}" + listSep +
 		"#{" + sessionio.OptionPiThinking + "}" + listSep +
 		"#{" + sessionio.OptionPiLevels + "}" + listSep +
-		"#{" + sessionio.OptionLastActivity + "}" + listSep + "#{pane_title}"
+		"#{" + sessionio.OptionLastActivity + "}" + listSep +
+		"#{pane_current_path}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 22
+	listFields = 23
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -155,6 +156,14 @@ const (
 	// prompt or finished turn (sessionio.OptionLastActivity). Last before
 	// pane_title for the reason every column before it is.
 	activityColumn = 20
+
+	// cwdColumn is the active pane's working directory, #{pane_current_path}:
+	// where the Text view's @ completion resolves a relative path. A session
+	// outside a project had no directory to offer before, and its @ listed "/",
+	// which file-api refuses (deployed review round 1, 2026-09-28). A dead
+	// pane reports it empty. Last before pane_title for the reason every
+	// column before it is.
+	cwdColumn = 21
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service and anything else

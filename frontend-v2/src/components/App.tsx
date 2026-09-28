@@ -2850,6 +2850,7 @@ export const App: Component = () => {
                       newCommand={newCommand}
                       newLaunch={newLaunch}
                       tool={() => store.sessions.find((s) => s.name === k.name)?.tool}
+                      cwd={() => store.sessions.find((s) => s.name === k.name)?.cwd}
                       // What a pi session stamped about its model, which is
                       // all its chip has to read. By key, like the size above.
                       piStamp={() => {

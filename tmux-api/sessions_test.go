@@ -124,18 +124,35 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 }
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
-// activityColumn, the last column before pane_title, spliced for the reason
-// rowCreated gives. EMPTY is what every session reports until its Claude next
-// sees a prompt or finishes a turn.
+// activityColumn and the pane's working directory at cwdColumn, the last two
+// columns before pane_title, spliced for the reason rowCreated gives. EMPTY is
+// what every session reports until its Claude next sees a prompt or finishes a
+// turn, and the directory is left empty, as a dead pane reports it.
 func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+1)
+	out := make([]string, 0, len(cols)+2)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity)
+	out = append(out, activity, "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
+}
+
+// The @ completion in the Text view lists paths relative to where the session
+// is, and a session outside a project had nothing else to go on: it listed
+// "/", which file-api refuses (deployed review round 1, 2026-09-28).
+func TestParseSessionsReadsTheWorkingDirectory(t *testing.T) {
+	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
+	cols := strings.Split(line, listSep)
+	cols[cwdColumn] = "/home/wizard/qa/rd1"
+	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	if got[0].Cwd != "/home/wizard/qa/rd1" || got[0].PaneTitle != "t" {
+		t.Fatalf("Cwd %q, PaneTitle %q", got[0].Cwd, got[0].PaneTitle)
+	}
 }
 
 func TestParseSessionsReadsLastActivity(t *testing.T) {
