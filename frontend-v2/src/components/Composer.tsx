@@ -1,4 +1,4 @@
-import { createEffect, createSignal, on, onCleanup, Show, type Component, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, on, onCleanup, Show, type Component, type JSX } from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
@@ -216,6 +216,15 @@ export const Composer: Component<{
 
   const working = (): boolean => !!props.live && !props.live.waiting;
 
+  /**
+   * The stamp, read once per change of its VALUE. The prop is a field of the
+   * session record, and the list hands over a new record on every poll, so
+   * reading it directly re-runs anything watching it with the same word
+   * (found live on 2026-09-28: the send's trust window ended at the first
+   * poll, ~0.9s into every turn).
+   */
+  const claudeState = createMemo(() => props.claudeState);
+
   // ---- A send this composer made, before the stamp catches up -------------
   const [justSent, setJustSent] = createSignal(false);
   let sentTimer: ReturnType<typeof setTimeout> | undefined;
@@ -227,7 +236,7 @@ export const Composer: Component<{
   // Any move of the stamp after the send is the session speaking for itself.
   createEffect(
     on(
-      () => props.claudeState,
+      claudeState,
       () => forgetSend(),
       { defer: true },
     ),
@@ -251,9 +260,9 @@ export const Composer: Component<{
    */
   const turnRunning = (): boolean =>
     working() &&
-    (props.claudeState === "running" ||
-      props.claudeState === "awaiting" ||
-      (justSent() && props.claudeState === "done"));
+    (claudeState() === "running" ||
+      claudeState() === "awaiting" ||
+      (justSent() && claudeState() === "done"));
 
   // ---- Stop, once per turn ---------------------------------------------------
   const [stopping, setStopping] = createSignal(false);
@@ -266,7 +275,8 @@ export const Composer: Component<{
   // Settled once the stamp says the session is idle: Cancel re-stamps `done`.
   // A move between running and awaiting is the turn going on.
   createEffect(() => {
-    if (props.claudeState !== "running" && props.claudeState !== "awaiting") settled();
+    const state = claudeState();
+    if (state !== "running" && state !== "awaiting") settled();
   });
   onCleanup(settled);
   const stop = (): void => {
@@ -303,6 +313,12 @@ export const Composer: Component<{
     // same tick as before this watched it.
     void sent.then((ok) => {
       if (!ok || isSlashCommand(text)) return;
+      // A prompt that opens a turn is a turn the reader may stop. A Stop still
+      // held from the last one belongs to that turn: pressed while the stamp
+      // read `done`, nothing may move the stamp again to release it, and the
+      // new turn read "Stopping…" for up to STOP_SETTLE_MS (found live on
+      // 2026-09-28).
+      settled();
       forgetSend();
       setJustSent(true);
       sentTimer = setTimeout(forgetSend, SEND_TRUST_MS);

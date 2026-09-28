@@ -231,6 +231,34 @@ describe("<Composer> round button: the hook state lags a running turn", () => {
     expect(button().dataset.kind).toBe("send");
   });
 
+  // Found live on 2026-09-28: the session list re-reads every record on each
+  // poll, so the stamp is handed over again with the same `done` it read at
+  // the send. The button went back to a greyed Send ~0.9s into every turn and
+  // stayed there until the stamp said running, ~4s in.
+  it("keeps trusting the send when the list hands over the same stamp again", async () => {
+    const [state, setState] = createSignal<ClaudeState>("done", { equals: false });
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={noop}
+        onResolve={noop}
+        live={WORKING}
+        claudeState={state()}
+      />
+    ));
+    const button = () => r.container.querySelector<HTMLButtonElement>(".tl-send")!;
+    const field = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    fireEvent.input(field, { target: { value: "run the tests" } });
+    fireEvent.click(button());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(button().dataset.kind).toBe("stop");
+    setState("done");
+    expect(button().dataset.kind).toBe("stop");
+    expect(button().disabled).toBe(false);
+  });
+
   it("stops trusting the send after a bounded wait", async () => {
     vi.useFakeTimers();
     const { button, sendText, setLive } = afterSend();
@@ -351,6 +379,41 @@ describe("<Composer> round button: one Stop per turn", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
     setState("done");
     expect(button().dataset.kind).toBe("send");
+  });
+
+  // Found live on 2026-09-28: a Stop pressed while the stamp still read the
+  // last turn's `done` held the button, since nothing after it moved the
+  // stamp. The next prompt, sent within 20s, opened a turn whose button read
+  // "Stopping…" and could not be pressed.
+  it("offers Stop for the next prompt after a Stop pressed before the stamp moved", async () => {
+    const onStop = vi.fn();
+    const r = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={onStop}
+        onResolve={noop}
+        live={WORKING}
+        claudeState="done"
+      />
+    ));
+    const button = () => r.container.querySelector<HTMLButtonElement>(".tl-send")!;
+    const field = r.getByLabelText("Message to send to the session") as HTMLTextAreaElement;
+    const sendText = async (text: string) => {
+      fireEvent.input(field, { target: { value: text } });
+      fireEvent.click(button());
+      await Promise.resolve();
+      await Promise.resolve();
+    };
+    await sendText("first");
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(1);
+    expect(button().getAttribute("aria-label")).toBe("Stopping…");
+    await sendText("second");
+    expect(button().dataset.kind).toBe("stop");
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(2);
   });
 
   it("gives Stop back after a bounded wait if the turn never settles", () => {
