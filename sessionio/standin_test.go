@@ -37,6 +37,14 @@ func dialogSessionEnv(t *testing.T, env string) (*Injector, string) {
 // input box's status line.
 func standIn(t *testing.T, env, ready string) (*Injector, string) {
 	t.Helper()
+	return standInAs(t, env, ready, "python3 %s")
+}
+
+// standInAs is standIn with the command line the pane runs, `%s` standing for
+// the script: the mode tests start it under Claude's name and flags, which is
+// what the walk reads to tell whether bypass is on the cycle.
+func standInAs(t *testing.T, env, ready, launch string) (*Injector, string) {
+	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
@@ -57,7 +65,7 @@ func standIn(t *testing.T, env, ready string) (*Injector, string) {
 	sock := fmt.Sprintf("sio-dialog-%d-%d", os.Getpid(), dialogSeq.Add(1))
 	t.Cleanup(func() { killSock(sock) })
 	if err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", "demo",
-		"-x", "100", "-y", "40", env+"python3 "+script).Run(); err != nil {
+		"-x", "100", "-y", "40", env+fmt.Sprintf(launch, script)).Run(); err != nil {
 		t.Fatalf("new-session: %v", err)
 	}
 	in := NewInjectorOnSocket(u.Username, sock)

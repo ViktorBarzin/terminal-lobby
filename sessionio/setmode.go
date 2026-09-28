@@ -40,7 +40,9 @@ import (
 // presses is that mode for whatever tool call lands in those 120 ms. Choosing
 // one of them as the target is the reader's decision and is allowed. Which
 // stops a given session offers cannot be read off the pane, so the check
-// counts the bypass stop wherever the measured order puts it, and a walk from
+// counts the bypass stop wherever the measured order puts it, unless the flags
+// the pane's Claude was started with leave bypass off its cycle
+// (bypasscycle.go), and a walk from
 // plan or acceptEdits back to manual, or from manual to auto, waits for the turn
 // to end. A mode that shows where the order says it cannot, mid-walk while
 // Claude works, ends the walk right there.
@@ -58,6 +60,10 @@ const (
 // modeCycle is the order Shift+Tab walks, with every stop any session offers.
 // See the table above; dontAsk is off it.
 var modeCycle = []string{ModeManual, ModeAcceptEdits, ModePlan, ModeBypass, ModeAuto}
+
+// cycleWithoutBypass is the measured order for a session whose Claude was not
+// started with a flag that allows bypass (bypassOnCycle).
+var cycleWithoutBypass = []string{ModeManual, ModeAcceptEdits, ModePlan, ModeAuto}
 
 // maxModePresses bounds a walk: once round the whole cycle and one more. A walk
 // that has not shown its target by then is not going to.
@@ -169,15 +175,22 @@ func PaneMode(pane string) string {
 // the measured order. From dontAsk the first stop is manual. A target that is
 // not on the cycle is never reached, so the walk shows every stop.
 func modePath(from, to string) []string {
+	return modePathOn(modeCycle, from, to)
+}
+
+// modePathOn is modePath over a given cycle: the measured one, or the
+// measured one without the bypass stop for a session that does not offer it
+// (cycleWithoutBypass).
+func modePathOn(cycle []string, from, to string) []string {
 	start := -1
-	for i, m := range modeCycle {
+	for i, m := range cycle {
 		if m == from {
 			start = i
 		}
 	}
 	var path []string
-	for k := 1; k <= len(modeCycle); k++ {
-		stop := modeCycle[(start+k+len(modeCycle))%len(modeCycle)]
+	for k := 1; k <= len(cycle); k++ {
+		stop := cycle[(start+k+len(cycle))%len(cycle)]
 		if stop == to {
 			return path
 		}
@@ -189,7 +202,12 @@ func modePath(from, to string) []string {
 // passesDanger reports whether a walk from `from` to `to` passes through bypass
 // or dontAsk on its way.
 func passesDanger(from, to string) bool {
-	for _, m := range modePath(from, to) {
+	return passesDangerOn(modeCycle, from, to)
+}
+
+// passesDangerOn is passesDanger over a given cycle.
+func passesDangerOn(cycle []string, from, to string) bool {
+	for _, m := range modePathOn(cycle, from, to) {
 		if modeDangerous(m) {
 			return true
 		}
@@ -257,6 +275,13 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 		res.Applied = true
 		return res, nil
 	}
+	// Which stops lie between here and the target depends on whether this
+	// session offers bypass at all (bypasscycle.go). Read once: the flags a
+	// Claude was started with do not change under it.
+	cycle := modeCycle
+	if from != ModeBypass && !in.bypassOnCycle(osUser, session) {
+		cycle = cycleWithoutBypass
+	}
 	seen := map[string]bool{from: true}
 	cur := from
 	for res.Presses < maxModePresses {
@@ -265,7 +290,7 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 			return res, nil
 		}
 		busy := in.busy(osUser, session, stale != "")
-		if busy && passesDanger(cur, target) {
+		if busy && passesDangerOn(cycle, cur, target) {
 			res.Reason = ModeUnsafePath
 			return res, nil
 		}

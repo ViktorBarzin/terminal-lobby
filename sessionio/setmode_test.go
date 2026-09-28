@@ -2,6 +2,7 @@ package sessionio
 
 import (
 	"context"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -114,6 +115,16 @@ func composerSession(t *testing.T, env string) (*Injector, string) {
 	return standIn(t, "FAKEDIALOG_CALL=composer "+env, "for agents")
 }
 
+// composerSessionAs starts the stand-in under Claude's name, with `flags` on
+// its command line as the lobby passes them to claude.
+func composerSessionAs(t *testing.T, env, flags string) (*Injector, string) {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	return standInAs(t, "FAKEDIALOG_CALL=composer "+env, "for agents", "bash -c 'exec -a claude python3 %s "+flags+"'")
+}
+
 // visitedOn is the stand-in's list of every mode its status line has shown.
 func visitedOn(t *testing.T, in *Injector, osUser string) []string {
 	t.Helper()
@@ -201,6 +212,63 @@ func TestSetModeRefusesAWalkThroughBypassWhileClaudeWorks(t *testing.T) {
 				t.Errorf("the walk moved the mode: visited %v", got)
 			}
 		})
+	}
+}
+
+// Round 7 (2026-09-28): a session started without a bypass flag refused Plan
+// to Auto while Claude worked, "passes through Bypass", though Bypass is not on
+// its cycle. The walk reads the flags the pane's Claude was started with.
+func TestSetModeWalksPlanToAutoWhereBypassIsNotOnTheCycle(t *testing.T) {
+	in, osUser := composerSessionAs(t, "FAKEDIALOG_MODES="+cyclePlain+" FAKEDIALOG_MODE=plan ", "")
+	stamp(t, in, osUser, OptionState, StateRunning)
+
+	res := setMode(t, in, osUser, ModeAuto)
+
+	if !res.Applied || res.Mode != ModeAuto || res.Presses != 1 {
+		t.Fatalf("got %+v, want auto after one press", res)
+	}
+}
+
+// …and a Claude started with a bypass flag still has it on the cycle.
+func TestSetModeRefusesPlanToAutoWhereTheFlagsPutBypassOnTheCycle(t *testing.T) {
+	for _, flag := range []string{"--dangerously-skip-permissions", "--allow-dangerously-skip-permissions", "--permission-mode bypassPermissions"} {
+		t.Run(flag, func(t *testing.T) {
+			in, osUser := composerSessionAs(t, "FAKEDIALOG_MODES="+cycleBypass+" FAKEDIALOG_MODE=plan ", flag)
+			stamp(t, in, osUser, OptionState, StateRunning)
+
+			res := setMode(t, in, osUser, ModeAuto)
+
+			if res.Applied || res.Reason != ModeUnsafePath || res.Presses != 0 {
+				t.Fatalf("got %+v, want unsafe-path with nothing pressed", res)
+			}
+		})
+	}
+}
+
+func TestBypassOnCycleReadsClaudesFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		argvs [][]string
+		want  bool
+	}{
+		{"plain claude", [][]string{{"/bin/zsh", "-lic", "claude"}, {"/home/u/.local/bin/claude", "--session-id", "x"}}, false},
+		{"skip flag", [][]string{{"/home/u/.local/bin/claude", "--dangerously-skip-permissions"}}, true},
+		{"allow flag", [][]string{{"claude", "--allow-dangerously-skip-permissions"}}, true},
+		{"permission mode", [][]string{{"claude", "--permission-mode", "bypassPermissions"}}, true},
+		{"permission mode joined", [][]string{{"claude", "--permission-mode=bypassPermissions"}}, true},
+		{"another mode", [][]string{{"claude", "--permission-mode", "plan"}}, false},
+		// A shell naming the flag is not Claude holding it.
+		{"flag on the shell only", [][]string{{"zsh", "-lic", "claude --dangerously-skip-permissions"}, {"claude"}}, false},
+		{"node running claude", [][]string{{"node", "/usr/local/bin/claude", "--dangerously-skip-permissions"}}, true},
+		// No Claude found: nothing says bypass is off, so it counts.
+		{"no claude", [][]string{{"python3", "fake.py"}}, true},
+		{"nothing read", nil, true},
+		// A claude run from a tool call holds a flag the session's does not: counts.
+		{"nested claude with the flag", [][]string{{"claude"}, {"claude", "-p", "--dangerously-skip-permissions"}}, true},
+	} {
+		if got := bypassFromArgvs(tc.argvs); got != tc.want {
+			t.Errorf("%s: bypassFromArgvs = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
 
