@@ -4413,8 +4413,13 @@ label.tl-set-row-label {
      same width on every screen. The prototype's 14px on a phone (6-idle and
      6-new draw the pill and the new box at the same inset); the live pill sat
      at 6vw, 25px at 412px, beside a 14px new-session box (found live on
-     2026-09-28). */
-  --tl-gutter: clamp(12px, 6vw, 80px);
+     2026-09-28).
+     6% rather than 6vw: a percentage in padding and width resolves against
+     the element's containing block, the Text view, so a narrow workspace
+     tile gets a narrow gutter. At 6vw a 510px tile in a 1280px window kept
+     76.8px a side and cut the work-group summaries short (deployed review
+     round 2). */
+  --tl-gutter: clamp(12px, 6%, 80px);
 }
 @media (pointer: coarse) and ((max-width: 720px) or (max-height: 480px)) {
   :root {

@@ -302,3 +302,19 @@ describe("the desktop model popover", () => {
     expect(rule('.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub')).toMatch(/display:\s*none/);
   });
 });
+
+// Deployed review round 2 (2026-09-28): the gutter was clamp(12px, 6vw, 80px),
+// and vw is the WINDOW. A 510px tile in a two-tile workspace at 1280 kept
+// 76.8px a side, the box was 356px and work-group summaries were cut short.
+// A percentage in padding and width resolves against the element's own
+// containing block, which is the Text view, so a narrow tile gets a narrow
+// gutter. Not a container query: `container-type` would make the view the
+// containing block of the composer's fixed-position menus (TextView agentSet).
+describe("the side gutter", () => {
+  it("follows the Text view's width, not the window's", () => {
+    const root = css.match(/:root\s*\{([^{}]*--tl-gutter[^{}]*)\}/)?.[1] ?? "";
+    const gutter = /--tl-gutter:\s*([^;]+);/.exec(root)?.[1] ?? "";
+    expect(gutter).toMatch(/^clamp\(12px,\s*6%,\s*80px\)$/);
+    expect(gutter).not.toMatch(/v(w|i|min|max)\b/);
+  });
+});
