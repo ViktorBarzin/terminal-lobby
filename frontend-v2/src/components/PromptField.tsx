@@ -86,6 +86,8 @@ export interface PromptFieldSinks {
   /** Put text at the START of the message, a blank line before whatever the
    *  field already holds: the queued prompts a Stop hands back. */
   prependText: (text: string) => void;
+  /** What the field holds now, as written. */
+  text: () => string;
   /** Put the caret in the field. */
   focus: () => void;
 }
@@ -658,6 +660,7 @@ export const PromptField: Component<{
       add: addAttachments,
       insertText,
       prependText,
+      text: () => ta?.value ?? "",
       focus: () => ta?.focus(),
     }),
   );

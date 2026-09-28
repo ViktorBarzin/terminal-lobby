@@ -232,6 +232,15 @@ const RAIL_MIN_PX = 900;
 const HOLD_GRACE_MS = 4_000;
 
 /**
+ * How long a send waits for a Stop that may hand text back (`sendNow`). The
+ * server pops the queue (up to 1 s for the box to show it), interrupts, then
+ * waits up to 1.5 s for the stopped prompt to land on the input line
+ * (sessionio reclaimWait), so this covers both with room for the network. A
+ * Stop that never answers does not hold the send past it.
+ */
+const STOP_HAND_BACK_WAIT_MS = 5_000;
+
+/**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
  * above a composer with the docked permission panel.
  *
@@ -798,19 +807,64 @@ export const TextView: Component<{
     const stopped = stoppable();
     const held = (props.pendingPrompts?.() ?? []).filter((p) => p !== stopped?.held);
     const back = handedBack(queued(), held);
-    if (back.length === 0 && !stopped) {
-      void props.onStop();
+    const before = composerSinks()?.text() ?? "";
+    const asking =
+      back.length === 0 && !stopped
+        ? props.onStop()
+        : stopped
+          ? props.onStop(back.length > 0 ? back : undefined, stopped.text)
+          : props.onStop(back);
+    // Every Stop holds the sends behind it, the ones with nothing to hand back
+    // too: a prompt that reached the pane first would be the turn it stops.
+    let done!: () => void;
+    const settled = new Promise<void>((r) => (done = r));
+    handingBack = settled;
+    try {
+      const got = await asking;
+      if (!got) return;
+      const text = [
+        ...(got.returned && stopped ? [stopped.text] : []),
+        ...(got.restored ? back : []),
+      ];
+      if (text.length === 0) return;
+      waitingBack = [...waitingBack, text.join("\n\n")];
+      landHandedBack(before);
+    } finally {
+      if (handingBack === settled) handingBack = null;
+      done();
+    }
+  };
+
+  /**
+   * A Stop still waiting on the server to hand text back, and the text it
+   * handed back that has not gone into the field yet.
+   *
+   * Found in the round 7 check (2026-09-28). An Enter 300 ms after an early
+   * Stop sent the new prompt while the server was still taking the stopped one
+   * off the pane's input line, and the new one was lost; and text that came
+   * back was glued in front of words typed meanwhile, so a quick Enter sent
+   * the stopped prompt again, joined to them. So a send waits for the Stop
+   * (`sendNow`, bounded by STOP_HAND_BACK_WAIT_MS), and what came back only
+   * goes into a field that holds what it held at the Stop, or nothing. Words
+   * typed meanwhile go out alone, and it follows them in.
+   */
+  let handingBack: Promise<void> | null = null;
+  let waitingBack: string[] = [];
+  let sendsWaiting = 0;
+  const landHandedBack = (before: string): void => {
+    const sinks = composerSinks();
+    if (!sinks || waitingBack.length === 0 || sendsWaiting > 0) return;
+    const now = sinks.text();
+    if (now !== before && now.trim() !== "") {
+      props.notify?.(
+        "Stopped. Your earlier message comes back to the field once this one is sent.",
+        "info",
+      );
       return;
     }
-    const got = await (stopped
-      ? props.onStop(back.length > 0 ? back : undefined, stopped.text)
-      : props.onStop(back));
-    if (!got) return;
-    const text = [
-      ...(got.returned && stopped ? [stopped.text] : []),
-      ...(got.restored ? back : []),
-    ];
-    if (text.length > 0) composerSinks()?.prependText(text.join("\n\n"));
+    const text = waitingBack.join("\n\n");
+    waitingBack = [];
+    sinks.prependText(text);
   };
 
   /**
@@ -862,9 +916,27 @@ export const TextView: Component<{
     if (ok) setSends((n) => n + 1);
     return ok;
   };
-  const send = async (text: string): Promise<boolean> => followed(await sendNow(text));
+  const send = async (text: string): Promise<boolean> => {
+    const ok = followed(await sendNow(text));
+    // What a Stop handed back while these words were being written follows
+    // them into the field (`landHandedBack`).
+    if (ok) landHandedBack("");
+    return ok;
+  };
   const sendNow = async (text: string): Promise<boolean> => {
     if (refuseWatching()) return false;
+    const stopping = handingBack;
+    if (stopping) {
+      sendsWaiting++;
+      try {
+        await Promise.race([
+          stopping,
+          new Promise<void>((r) => setTimeout(r, STOP_HAND_BACK_WAIT_MS)),
+        ]);
+      } finally {
+        sendsWaiting--;
+      }
+    }
     // A permission prompt's menu takes keys, not a prompt: its Enter picks
     // the highlighted row, "Yes". The words stay in the field.
     if (permission()) {
