@@ -30,8 +30,9 @@ package main
 //  2. A TRANSCRIPT'S MTIME IS NOT AN ACTIVITY SIGNAL. A transcript whose last
 //     record was 2026-08-19 had an mtime 28 minutes old; keying idleness on it
 //     reported 36 of 38 sessions as active within the hour. The idle signal is
-//     @last_drive (lastdrive.go), which is derived from the CLIENT list and so
-//     says when a human last had hands on the session. Nothing here reads an
+//     Session.LastDrive: the Claude hook's @last_activity (the last prompt or
+//     finished turn) where the session reports one, else @last_drive
+//     (lastdrive.go), derived from the CLIENT list. Nothing here reads an
 //     mtime.
 //
 //  3. THE CONVERSATION UUID IS NOT IN ARGV. For 15 of 38 live processes the

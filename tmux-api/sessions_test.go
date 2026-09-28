@@ -120,7 +120,35 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 	withPi = append(withPi, withSuspended[:piModelColumn]...)
 	withPi = append(withPi, piModel, piThinking, piLevels)
 	withPi = append(withPi, withSuspended[piModelColumn:]...)
-	return strings.Join(withPi, listSep)
+	return spliceActivity(withPi, "")
+}
+
+// spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
+// activityColumn, the last column before pane_title, spliced for the reason
+// rowCreated gives. EMPTY is what every session reports until its Claude next
+// sees a prompt or finishes a turn.
+func spliceActivity(cols []string, activity string) string {
+	if len(cols) < activityColumn {
+		return strings.Join(cols, listSep)
+	}
+	out := make([]string, 0, len(cols)+1)
+	out = append(out, cols[:activityColumn]...)
+	out = append(out, activity)
+	out = append(out, cols[activityColumn:]...)
+	return strings.Join(out, listSep)
+}
+
+func TestParseSessionsReadsLastActivity(t *testing.T) {
+	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
+	cols := strings.Split(line, listSep)
+	cols[activityColumn] = "1800000050"
+	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	if got[0].ActivityAt != 1800000050 || got[0].LastDrive != 1800000100 || got[0].PaneTitle != "t" {
+		t.Fatalf("ActivityAt %d, LastDrive %d, PaneTitle %q", got[0].ActivityAt, got[0].LastDrive, got[0].PaneTitle)
+	}
 }
 
 // /sessions rows carry TWO arbitrary-text fields: pane_title, which

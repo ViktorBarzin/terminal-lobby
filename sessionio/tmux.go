@@ -73,6 +73,14 @@ const (
 	// Nothing outside the hook script and Cancel needs to read it: the state
 	// it produces is already OptionState.
 	OptionAsk = "@claude_ask"
+	// OptionLastActivity is the unix second the session last did something a
+	// person would call using it: a prompt they sent, or a turn that finished.
+	// Written by the same hook script as OptionState, on UserPromptSubmit (a
+	// person's prompt, not a background task's synthetic one) and on Stop, and
+	// on nothing else. terminal-lobby's tmux-api shows it as the session's
+	// "last used" time and suspends on it, in place of the read-write attach
+	// that made opening a session count as using it.
+	OptionLastActivity = "@last_activity"
 	// OptionOrigin says what created the session: "user" when a person asked
 	// for it, absent when nothing said. terminal-lobby's tmux-api reads it to
 	// decide whether a session belongs in somebody's list or in the System

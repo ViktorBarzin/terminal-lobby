@@ -219,13 +219,16 @@ claimed session's **Created** cannot be tmux's own `session_created`.
 _Avoid_: pool session, warm session, spare session
 
 **Last driven**:
-When a human last had hands on a Session — the newest moment a **read-write**
-client was attached. The relative time the sidebar shows, and the answer to "has
-anyone touched this today". A **Watch mode** client deliberately does not move it:
-watching a session leaves it as it was found, the clock included. Derived from the
-client list and kept in the session's `@last_drive` option, so it survives a
-tmux-api restart and a driver who attached from a shell counts like any other.
-Seeded from a session's creation time until its first driver is seen, so it is
+When a Session was last used. The relative time the sidebar shows, and the answer
+to "has anyone touched this today". For a Session whose Claude reports its own
+activity it is the later of the last prompt a person sent and the last turn that
+finished, stamped by the Claude hook in `@last_activity`; opening or reading the
+Session does not move it. Before 2026-09-28 it was the newest moment a
+**read-write** client was attached, so opening a Session counted as using it, and
+that rule still holds for a Session with no such stamp: a shell, or a Claude that
+has not yet seen a prompt or finished a turn. A **Watch mode** client never moves
+it. The attach clock is kept in the session's `@last_drive` option and seeded
+from a session's creation time until its first driver is seen, so the value is
 never empty.
 _Avoid_: last active (that is tmux's `session_activity`, which any attach bumps —
 a read-only one included — and which nothing displays)
@@ -297,8 +300,8 @@ readout stays at $0.00 and a transcript carrying a total of 398.25 USD showed
 that figure restored from the file rather than charged again. The uuid comes from
 the Session's `@claude_transcript` option, never from the pane's argv, which
 disagreed with it for 15 of 38 live processes on 2026-09-19. A resume counts as
-a drive and stamps **Last driven**, or the sweep would take the Session again
-five minutes later. It is refused when a Claude is running under the pane,
+a drive and stamps **Last driven** (both `@last_drive` and `@last_activity`), or
+the sweep would take the Session again five minutes later. It is refused when a Claude is running under the pane,
 which means the mark is stale and a respawn would replace a live conversation.
 _Avoid_: wake, unsuspend, reopen; and do not say restore, which is taken by the
 **Resurrection record** and the restore picker, both of which bring back a

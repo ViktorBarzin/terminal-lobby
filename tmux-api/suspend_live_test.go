@@ -410,6 +410,12 @@ func TestResumeRespawnsARestoredSessionAgainstRealTmux(t *testing.T) {
 	if at <= idleSince {
 		t.Fatalf("%s = %q after the resume, still the stamp that made it a candidate", lastDriveOption, drive)
 	}
+	// A Claude-stamped session is timed by @last_activity instead, and the
+	// resume is activity too.
+	act, _ := tmux("display-message", "-p", "-t", exactPane(name), "#{"+sessionio.OptionLastActivity+"}")
+	if at, _ := strconv.ParseInt(act, 10, 64); at <= idleSince {
+		t.Fatalf("%s = %q after the resume, want it moved to the resume", sessionio.OptionLastActivity, act)
+	}
 }
 
 // The repair pass, against a real server.

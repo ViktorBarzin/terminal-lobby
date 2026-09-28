@@ -16,14 +16,20 @@ type Session struct {
 	// new device as a viewer only when someone is actually driving.
 	Driven       bool  `json:"driven"`
 	LastActivity int64 `json:"lastActivity"`
-	// LastDrive is when a human last had hands on this session: the newest
-	// moment a READ-WRITE client was attached, kept in @last_drive (lastdrive.go).
-	// This is what the session list shows, NOT LastActivity — tmux bumps
-	// session_activity on any attach, a read-only one included, so a viewer used
-	// to reset the number just by looking. Seeded from Created for a session that
-	// has not been driven since the option existed, so it is never empty.
+	// LastDrive is when this session was last used, and what the session list
+	// shows and the suspend sweep times. For a Claude session that has reported
+	// its own activity it is ActivityAt: the last prompt a person sent or the
+	// last turn that finished. Otherwise it is the newest moment a READ-WRITE
+	// client was attached, kept in @last_drive (lastdrive.go), seeded from
+	// Created so it is never empty. NOT LastActivity — tmux bumps
+	// session_activity on any attach, a read-only one included.
 	LastDrive int64 `json:"lastDrive"`
-	Created   int64 `json:"created"`
+	// ActivityAt is @last_activity (sessionio.OptionLastActivity), stamped by
+	// the Claude hook on a person's prompt and on a finished turn; 0 until the
+	// session's Claude has done either. Folded into LastDrive before anything
+	// reads the list, so it is not on the wire itself.
+	ActivityAt int64 `json:"-"`
+	Created    int64 `json:"created"`
 	// State of the Claude conversation inside the session: "running",
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).

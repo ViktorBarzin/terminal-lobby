@@ -82,3 +82,35 @@ func TestEverySessionIsConsideredIndependently(t *testing.T) {
 		t.Fatalf("got %+v, want %+v", got, want)
 	}
 }
+
+// A Claude session carries @last_activity (sessionio.OptionLastActivity): the
+// last prompt a person sent or the last turn that finished. Where it is set it
+// IS the session's last-used time, so an attach must neither move the clock
+// nor write the @last_drive it would otherwise be read from. Opening a session
+// is not using it: on 2026-09-27 emo clicked through his sessions and twelve
+// read the same minute, one whose last prompt was eleven days earlier.
+func TestAnAttachDoesNotStampASessionThatReportsItsOwnActivity(t *testing.T) {
+	got := drivesToStamp([]Session{
+		{Name: "driven", Driven: true, ActivityAt: 500, Created: 400},
+		{Name: "unseeded", Driven: false, ActivityAt: 500, Created: 400},
+	}, 1000, staleAfter)
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want no writes for sessions whose clock comes from Claude", got)
+	}
+}
+
+func TestLastUsedIsTheSessionsOwnActivityWhenItReportsOne(t *testing.T) {
+	sessions := []Session{
+		{Name: "claude", LastDrive: 900, ActivityAt: 500},
+		{Name: "newer", LastDrive: 400, ActivityAt: 800},
+		{Name: "shell", LastDrive: 900},
+	}
+	useReportedActivity(sessions)
+	for name, want := range map[string]int64{"claude": 500, "newer": 800, "shell": 900} {
+		for _, s := range sessions {
+			if s.Name == name && s.LastDrive != want {
+				t.Errorf("%s: LastDrive = %d, want %d", name, s.LastDrive, want)
+			}
+		}
+	}
+}

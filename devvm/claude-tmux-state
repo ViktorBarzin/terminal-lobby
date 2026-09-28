@@ -5,7 +5,9 @@
 # survives the main turn ending while background work is still running
 # (docs/plans/2026-09-04-background-work-session-state-design.md), and with
 # @claude_ask so it holds while a question or a plan sits on screen waiting
-# for a person.
+# for a person, and with @last_activity, the unix second of the last prompt a
+# person sent or the last turn that finished, which the lobby shows as "last
+# used" and suspends on.
 #
 # Wired org-wide via /etc/claude-code/managed-settings.json (infra repo):
 #
@@ -247,6 +249,17 @@ id_ok() {
 # The clearers set ask_clear and let stamp do the write, which keeps the unset
 # off the hot path (see stamp).
 ask_write() { tmux set-option -t "$TMUX_PANE" @claude_ask "$1" >/dev/null 2>&1 || true; }
+
+# ---- Last activity ---------------------------------------------------------
+# The two moments a person would call using a session: they sent a prompt, or a
+# turn finished. The lobby used to take "last used" from the newest read-write
+# attach, so opening a session counted as using it; on 2026-09-27 emo clicked
+# through his sessions in about 35 seconds and twelve read the same minute.
+# Both events are rare, so the one fork for `date` stays off the per-tool-call
+# path the rest of this script keeps fork-free.
+activity() {
+    tmux set-option -t "$TMUX_PANE" @last_activity "$(date +%s)" >/dev/null 2>&1 || true
+}
 
 # ask_tool answers whether the tool this event is about draws a blocking dialog.
 ask_tool() {
@@ -535,11 +548,14 @@ UserPromptSubmit)
     # becomes green"). Talking to a session does not end the work it is doing,
     # and bg_sync at the next Stop re-derives the set from the harness's own
     # list, which is what the wipe was standing in for.
+    # A background task's completion is not a person's prompt; the Stop of the
+    # turn it starts stamps the activity instead.
     case "$payload" in
     *'"prompt":"<task-notification>'*)
         json_tag task-id
         id_ok "$jv" && bg_del "$jv"
         ;;
+    *) activity ;;
     esac
     # Whatever dialog was up is not up any more: this prompt is what took it
     # down, including the prompt of a re-ask.
@@ -592,6 +608,7 @@ Stop)
     # dropped, both without this script having to recognise the launch.
     bg_sync
     bg_read
+    activity
     if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
 SessionStart)

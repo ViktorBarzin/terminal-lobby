@@ -77,11 +77,12 @@ const (
 		"#{" + suspendedOption + "}" + listSep +
 		"#{" + sessionio.OptionPiModel + "}" + listSep +
 		"#{" + sessionio.OptionPiThinking + "}" + listSep +
-		"#{" + sessionio.OptionPiLevels + "}" + listSep + "#{pane_title}"
+		"#{" + sessionio.OptionPiLevels + "}" + listSep +
+		"#{" + sessionio.OptionLastActivity + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 21
+	listFields = 22
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -149,6 +150,11 @@ const (
 	piModelColumn    = 17
 	piThinkingColumn = 18
 	piLevelsColumn   = 19
+
+	// activityColumn is @last_activity, the Claude hook's stamp of the last
+	// prompt or finished turn (sessionio.OptionLastActivity). Last before
+	// pane_title for the reason every column before it is.
+	activityColumn = 20
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service and anything else

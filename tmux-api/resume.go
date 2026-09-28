@@ -276,8 +276,15 @@ func resumeSession(w http.ResponseWriter, osUser, name string) {
 	// exists (suspend.go): the package-level gridInjector was built at init and
 	// ignores the binary seams, so a write through it never reaches a test's
 	// tmux.
-	if err := apiInjector().SetOption(osUser, name, lastDriveOption, strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
-		log.Printf("resume: stamping %s on %s/%s: %v", lastDriveOption, osUser, name, err)
+	//
+	// A session that reports its own activity is timed by
+	// sessionio.OptionLastActivity instead, and a resumed claude reports none
+	// until its first prompt, so the resume writes that stamp too.
+	now := strconv.FormatInt(time.Now().Unix(), 10)
+	for _, opt := range []string{lastDriveOption, sessionio.OptionLastActivity} {
+		if err := apiInjector().SetOption(osUser, name, opt, now); err != nil {
+			log.Printf("resume: stamping %s on %s/%s: %v", opt, osUser, name, err)
+		}
 	}
 	sessionsCacheInstance.invalidate(osUser)
 

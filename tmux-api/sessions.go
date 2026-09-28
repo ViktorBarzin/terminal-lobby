@@ -87,6 +87,10 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 		// session no longer moves its clock.
 		stampDrives(osUser, sessions, time.Now().Unix())
 	}
+	// After the stamps, and outside the client-list branch: a session that
+	// reports its own activity is timed by it whether or not tmux answered
+	// list-clients, and this is the list the suspend sweep reads as well.
+	useReportedActivity(sessions)
 	// One /proc snapshot serves two readers: the liveness backstop (drop
 	// states whose claude died without a SessionEnd hook) and the tool mark
 	// (which command each session runs). A failed scan fails open — states
@@ -248,6 +252,9 @@ func parseSessions(out []byte) []Session {
 		// resume will put back (@tl_suspend_state), not the state the session
 		// is in now.
 		suspendedAt, _ := strconv.ParseInt(parts[suspendedColumn], 10, 64)
+		// Lenient too: EMPTY until the session's Claude next sees a prompt or
+		// finishes a turn, which is every session on the deploy that adds it.
+		activityAt, _ := strconv.ParseInt(parts[activityColumn], 10, 64)
 		if suspendedAt > 0 {
 			state = stateSuspended
 		}
@@ -289,6 +296,7 @@ func parseSessions(out []byte) []Session {
 			Cols:        cols,
 			Rows:        rows,
 			SuspendedAt: suspendedAt,
+			ActivityAt:  activityAt,
 			// The pi extension's stamps, each held to the shape the extension
 			// writes. An unset option renders EMPTY, which is every session that
 			// is not running pi.

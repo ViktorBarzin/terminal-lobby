@@ -50,10 +50,17 @@ type driveStamp struct {
 //     session that predates this option;
 //   - anything else is left alone. In particular a session being WATCHED keeps
 //     the stamp it had, however long the watching lasts. That is the whole point.
+//
+// A session that reports its own activity (ActivityAt, the Claude hook's
+// stamp) is skipped entirely: its last-used time comes from that stamp, and an
+// attach is not activity. Opening a session used to count as using it — on
+// 2026-09-27 emo clicked through his sessions and twelve read the same minute.
 func drivesToStamp(sessions []Session, now, staleAfter int64) []driveStamp {
 	var out []driveStamp
 	for _, s := range sessions {
 		switch {
+		case s.ActivityAt > 0:
+			continue
 		case s.Driven && (s.LastDrive == 0 || now-s.LastDrive >= staleAfter):
 			out = append(out, driveStamp{Name: s.Name, At: now})
 		case !s.Driven && s.LastDrive == 0 && s.Created > 0:
@@ -90,6 +97,18 @@ func stampDrives(osUser string, sessions []Session, now int64) {
 	for i := range sessions {
 		if v, ok := at[sessions[i].Name]; ok {
 			sessions[i].LastDrive = v
+		}
+	}
+}
+
+// useReportedActivity makes a session's own reported activity its last-used
+// time. ActivityAt is the last prompt a person sent or the last turn that
+// finished, and where it is set it replaces the attach-derived @last_drive
+// outright, older or newer: the attach clock is exactly what it corrects.
+func useReportedActivity(sessions []Session) {
+	for i := range sessions {
+		if sessions[i].ActivityAt > 0 {
+			sessions[i].LastDrive = sessions[i].ActivityAt
 		}
 	}
 }
