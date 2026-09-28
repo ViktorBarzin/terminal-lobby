@@ -1301,7 +1301,9 @@ describe("<NewSessionComposer> — the first prompt", () => {
     m.store.dispose();
   });
 
-  it("does not ask codex to wait for a prompt character it never draws", async () => {
+  // Deployed review round 1 (2026-09-28): posted blind, a codex first prompt
+  // sat unsent on codex's input line, 2 times in 2.
+  it("asks the server to wait for codex's input line, naming codex", async () => {
     const api = new FakeApi();
     const w = emptyWire();
     const m = mount(api, {}, w);
@@ -1311,7 +1313,8 @@ describe("<NewSessionComposer> — the first prompt", () => {
     enter(field(m.container)!);
 
     await waitFor(() => expect(w.delivered.length).toBe(1));
-    expect(w.delivered[0]!.awaitReady).toBe(false);
+    expect(w.delivered[0]!.awaitReady).toBe(true);
+    expect(w.delivered[0]!.tool).toBe("codex");
     m.store.dispose();
   });
 });

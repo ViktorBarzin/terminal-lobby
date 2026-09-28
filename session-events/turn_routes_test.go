@@ -393,6 +393,34 @@ func TestPromptNeverTypesIntoPisTrustQuestion(t *testing.T) {
 	}
 }
 
+// Codex draws its › as a menu cursor too, so its wait reads for the input line
+// alone (sessionio.AwaitCodexReady). The first prompt of a codex session was
+// posted blind before and its Enter was lost while codex started (deployed
+// review round 1, 2026-09-28).
+func TestPromptWaitsForCodexsInputLineWhenTheToolIsCodex(t *testing.T) {
+	f := &fakeTurns{}
+	if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say pong","awaitReady":true,"tool":"codex"}`); rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204", rec.Code)
+	}
+	if !f.called("AwaitReady") || f.awaitedWith != sessionio.HarnessCodex || f.called("AwaitInputReady") {
+		t.Fatalf("calls = %q awaited as %q, want codex's wait and not Claude's", f.calls, f.awaitedWith)
+	}
+	if f.prompted != "say pong" {
+		t.Fatalf("prompted %q", f.prompted)
+	}
+}
+
+func TestPromptAnswers503UntilCodexIsReady(t *testing.T) {
+	f := &fakeTurns{awaitErr: errors.New("a menu is up")}
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say pong","awaitReady":true,"tool":"codex"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503", rec.Code)
+	}
+	if f.called("Prompt") {
+		t.Fatal("a codex that was not ready was typed into")
+	}
+}
+
 // Claude's route is untouched when the tool is absent or claude: its own wait,
 // and no pi check at all.
 func TestPromptKeepsClaudesPath(t *testing.T) {

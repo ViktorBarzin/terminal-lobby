@@ -57,6 +57,9 @@ func holdInputLine(ctx context.Context, osUser, session string) (func(), error) 
 type promptDriver interface {
 	AwaitInputReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error
 	AwaitPiReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error
+	// AwaitReady is the harness-aware wait; POST /prompt uses it for codex,
+	// whose › is a menu cursor as well as its input mark.
+	AwaitReady(ctx context.Context, osUser, session string, h sessionio.Harness, wait, poll time.Duration) error
 	PiTrustPending(osUser, session string) bool
 	Option(osUser, session, name string) (string, bool)
 	Prompt(osUser, session, text string) error
@@ -111,7 +114,8 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			// carries. Absent means Claude, which is every caller from before
 			// pi. For pi, ready means pi has titled its pane `π - <dir>`, which
 			// it does once startup has finished and any trust question is
-			// answered; Claude's ❯ says nothing about pi.
+			// answered; Claude's ❯ says nothing about pi. For codex, ready
+			// means its input line with no menu over it (AwaitCodexReady).
 			Tool string `json:"tool"`
 		}
 		if json.NewDecoder(r.Body).Decode(&body) != nil || body.Text == "" {
@@ -124,9 +128,12 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			// should come back, and the caller's retry ladder is what decides
 			// how long to keep coming back for.
 			var err error
-			if pi {
+			switch {
+			case pi:
 				err = drv.AwaitPiReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
-			} else {
+			case sessionio.Harness(body.Tool) == sessionio.HarnessCodex:
+				err = drv.AwaitReady(r.Context(), osUser, session, sessionio.HarnessCodex, PromptReadyWait, PromptReadyPoll)
+			default:
 				err = drv.AwaitInputReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
 			}
 			if err != nil {

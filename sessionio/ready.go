@@ -3,6 +3,7 @@ package sessionio
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -84,6 +85,48 @@ func (in *Injector) AwaitPromptMark(ctx context.Context, osUser, session, mark s
 	if mark == "" {
 		mark = promptMark
 	}
+	return in.awaitSettled(ctx, osUser, session, func(text string) bool {
+		return strings.Contains(text, mark)
+	}, wait, poll)
+}
+
+// AwaitCodexReady is AwaitInputReady for codex, which draws its › in two
+// places: at the head of its input line, and as the cursor of every menu it
+// raises. Measured on codex-cli 0.158.0 on 2026-09-28: a fresh session drew
+// "› Ask Codex to do anything" at 0.8 s and, 0.2 s later on this box, a
+// "Cannot use the background server" dialog with "› 2. Cancel". A prompt and
+// Enter typed while such a menu is up pick its highlighted row, so the wait
+// holds for the input line alone (CodexInputReady).
+func (in *Injector) AwaitCodexReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error {
+	return in.awaitSettled(ctx, osUser, session, CodexInputReady, wait, poll)
+}
+
+// CodexInputReady reports whether a codex pane shows its input line and no
+// menu: a line opening with › that is not a numbered row, and no line where
+// › marks one.
+func CodexInputReady(pane string) bool {
+	input := false
+	for _, line := range strings.Split(pane, "\n") {
+		t := strings.TrimSpace(stripDialogBorder(line))
+		rest, ok := strings.CutPrefix(t, codexPromptMark)
+		if !ok {
+			continue
+		}
+		if reCodexMenuRow.MatchString(strings.TrimSpace(rest)) {
+			return false
+		}
+		input = true
+	}
+	return input
+}
+
+// reCodexMenuRow is a numbered menu row, the text after codex's cursor in a
+// dialog ("2. Cancel", "1. Yes, continue").
+var reCodexMenuRow = regexp.MustCompile(`^[0-9]+\.\s`)
+
+// awaitSettled blocks until ready holds for the pane and the pane has stopped
+// changing for readyStable, or gives up.
+func (in *Injector) awaitSettled(ctx context.Context, osUser, session string, ready func(string) bool, wait, poll time.Duration) error {
 	if wait <= 0 {
 		wait = 30 * time.Second
 	}
@@ -103,7 +146,7 @@ func (in *Injector) AwaitPromptMark(ctx context.Context, osUser, session, mark s
 		// A read that fails is treated as not-ready rather than fatal: a pane
 		// can be momentarily unreadable while the session is being set up, and
 		// the deadline already bounds how long that can go on.
-		if err == nil && strings.Contains(text, mark) {
+		if err == nil && ready(text) {
 			switch {
 			case text != last:
 				last, lastAt = text, time.Now()

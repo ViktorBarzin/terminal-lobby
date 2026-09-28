@@ -260,12 +260,30 @@ describe("the harness the first prompt names", () => {
     ]);
   });
 
-  it("asks Claude and pi to wait, and nothing else", () => {
+  // Deployed review round 1 (2026-09-28): a Codex session started from the
+  // new-session box got its words on codex's input line and never submitted,
+  // because the prompt went out blind 700 ms in and the Enter was lost while
+  // codex started. The server now waits for codex's input line too.
+  it("asks Claude, pi and Codex to wait, and nothing else", () => {
     expect(firstPromptDelivery("claude")).toEqual({ awaitReady: true });
     expect(firstPromptDelivery("pi")).toEqual({ awaitReady: true, tool: "pi" });
-    // Codex draws nothing the server waits on, and a command that is not a
-    // harness has nothing to wait for either.
-    expect(firstPromptDelivery("codex")).toEqual({ awaitReady: false });
+    expect(firstPromptDelivery("codex")).toEqual({ awaitReady: true, tool: "codex" });
+    // A command that is not a harness has nothing to wait for.
     expect(firstPromptDelivery(null)).toEqual({ awaitReady: false });
+  });
+
+  // Codex draws a menu with the same › as its input line, and a blind prompt
+  // plus Enter picks the menu's highlighted row, so it keeps the wait on every
+  // rung and gives up into the composer instead.
+  it("keeps the wait, and names codex, on every rung for a codex session", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = (async (_url: string, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(null, { status: 503 });
+    }) as unknown as typeof fetch;
+    const c = fastClock();
+    expect(await deliver({ fetchImpl, ...c, awaitReady: true, tool: "codex" })).toBe(false);
+    expect(bodies.map((b) => b.tool)).toEqual(FIRST_PROMPT_LADDER.map(() => "codex"));
+    expect(bodies.map((b) => b.awaitReady)).toEqual(FIRST_PROMPT_LADDER.map(() => true));
   });
 });

@@ -43,7 +43,11 @@ import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./m
 import { DotsGlyph, TerminalGlyph, TextGlyph } from "./Icons";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
-import { deliverFirstPrompt, firstPromptDelivery } from "../lib/first-prompt";
+import {
+  deliverFirstPrompt,
+  type FirstPromptTool,
+  firstPromptDelivery,
+} from "../lib/first-prompt";
 import { piModels, refreshPiModels } from "../lib/pi-models";
 import { uploadAttachments } from "../clipboard/attach-files";
 import { composeMessage } from "../logic/compose.logic";
@@ -953,7 +957,7 @@ async function sendFirstPrompt(o: {
   tokens: readonly (string | undefined)[];
   /** How the server should deliver it (lib/first-prompt.ts, firstPromptDelivery). */
   awaitReady: boolean;
-  tool?: "pi";
+  tool?: FirstPromptTool;
   deliver: typeof deliverFirstPrompt;
   upload: typeof uploadAttachments;
 }): Promise<void> {

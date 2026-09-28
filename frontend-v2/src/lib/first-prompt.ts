@@ -86,7 +86,7 @@ export interface DeliverFirstPromptOptions {
    * line rather than guessing from anything the browser can see.
    *
    * Only for a command that draws something the server can wait on, which is
-   * Claude and pi (see `firstPromptDelivery`). Asking for it where nothing will
+   * Claude, pi and codex (see `firstPromptDelivery`). Asking for it where nothing will
    * ever draw one would spend every rung waiting and then give up with the text
    * unsent, so a caller starting something else leaves this off and takes the
    * ladder alone.
@@ -94,10 +94,10 @@ export interface DeliverFirstPromptOptions {
   awaitReady?: boolean;
   /**
    * Which harness the session runs, for a server that has to know. Absent is
-   * Claude, which is what session-events has always assumed; pi says so,
-   * because the wait reads a different thing off its pane.
+   * Claude, which is what session-events has always assumed; pi and codex say
+   * so, because the wait reads a different thing off their panes.
    */
-  tool?: "pi";
+  tool?: FirstPromptTool;
   ladder?: readonly number[];
   gapMs?: number;
   /** injectable for tests; defaults to setTimeout. */
@@ -106,20 +106,28 @@ export interface DeliverFirstPromptOptions {
   fetchImpl?: typeof fetch;
 }
 
+/** The harnesses a first prompt names for the server's wait. */
+export type FirstPromptTool = "pi" | "codex";
+
 /**
  * How the first prompt of a session running harness `h` asks to be delivered
  * (null for a command that is not a harness).
  *
- * Claude and pi both draw something the server can wait for, so both ask for
- * the wait. What they draw differs: Claude's input line shows its `❯`, and pi
- * sets its pane title to `π - …` once startup and any "Trust project folder?"
- * question are over. So pi's prompt names the harness, and Claude's leaves the
- * field out, which the server has always read as Claude. Codex draws nothing
- * the server waits on.
+ * Claude, pi and codex all draw something the server can wait for, so all
+ * three ask for the wait. What they draw differs: Claude's input line shows
+ * its `❯`, pi sets its pane title to `π - …` once startup and any "Trust
+ * project folder?" question are over, and codex draws `›` at its input line
+ * (and as the cursor of its menus, which the server tells apart). So pi's and
+ * codex's prompts name the harness, and Claude's leaves the field out, which
+ * the server has always read as Claude.
+ *
+ * Codex asked for no wait until the deployed review on 2026-09-28 found its
+ * first prompt left unsent on the input line: posted blind 700 ms in, its
+ * Enter was lost while codex started, 2 times in 2.
  */
 export function firstPromptDelivery(h: ModelHarness | null): {
   awaitReady: boolean;
-  tool?: "pi";
+  tool?: FirstPromptTool;
 } {
   switch (h) {
     case "claude":
@@ -127,6 +135,7 @@ export function firstPromptDelivery(h: ModelHarness | null): {
     case "pi":
       return { awaitReady: true, tool: "pi" };
     case "codex":
+      return { awaitReady: true, tool: "codex" };
     case null:
       return { awaitReady: false };
   }
@@ -139,7 +148,7 @@ async function post(
   session: string,
   text: string,
   awaitReady: boolean,
-  tool: "pi" | undefined,
+  tool: FirstPromptTool | undefined,
   fetchImpl: typeof fetch,
 ): Promise<Attempt> {
   try {
@@ -182,6 +191,10 @@ async function post(
  * line discipline turns Enter into a line feed, and pi's editor reads a line
  * feed as a new line, so a blind send leaves the prompt unsent in pi's input
  * box. Giving up instead parks the text in the session's composer.
+ *
+ * Codex keeps the wait to the end too: a codex that never showed its input
+ * line is on a menu, and a blind prompt plus Enter picks the menu's
+ * highlighted row.
  */
 export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<boolean> {
   const lines = o.lines.filter((l) => l !== "");
@@ -195,13 +208,14 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
   const fetchImpl =
     o.fetchImpl ?? ((input, init) => fetchWithDeadline(String(input), init ?? undefined));
   const pi = o.tool === "pi";
+  const waitToTheEnd = pi || o.tool === "codex";
   const ladder = o.ladder ?? (pi ? PI_FIRST_PROMPT_LADDER : FIRST_PROMPT_LADDER);
   const gapMs = o.gapMs ?? LINE_GAP_MS;
 
   let sent = 0;
   for (let rung = 0; rung < ladder.length; rung++) {
     await sleep(ladder[rung]!);
-    const wait = (o.awaitReady ?? false) && (pi || rung < ladder.length - 1);
+    const wait = (o.awaitReady ?? false) && (waitToTheEnd || rung < ladder.length - 1);
     while (sent < lines.length) {
       const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl);
       if (r === "no") return false;

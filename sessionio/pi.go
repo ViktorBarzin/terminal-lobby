@@ -111,7 +111,9 @@ func (in *Injector) AwaitReady(ctx context.Context, osUser, session string, h Ha
 	switch h {
 	case HarnessPi:
 		return in.AwaitPiReady(ctx, osUser, session, wait, poll)
-	case HarnessClaude, HarnessCodex:
+	case HarnessCodex:
+		return in.AwaitCodexReady(ctx, osUser, session, wait, poll)
+	case HarnessClaude:
 		return in.AwaitPromptMark(ctx, osUser, session, PromptMark(h), wait, poll)
 	}
 	return in.AwaitInputReady(ctx, osUser, session, wait, poll)

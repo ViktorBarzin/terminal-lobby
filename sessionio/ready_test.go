@@ -105,3 +105,51 @@ func TestAwaitInputReadyReturnsAtOnceForADrawnPane(t *testing.T) {
 		t.Fatalf("a drawn pane should be ready at once, waited %v", waited)
 	}
 }
+
+// Codex draws its › at the head of its input line and as the cursor of every
+// menu. Measured on codex-cli 0.158.0 on 2026-09-28: a fresh session drew its
+// input line and, 0.2 s later, a dialog whose cursor row is "› 2. Cancel"; a
+// prompt and Enter pasted then would pick that row.
+func TestCodexInputReadyTellsTheInputLineFromAMenu(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	cases := []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"an idle codex", read("status-codex-idle.txt"), true},
+		{"the background-server dialog", read("codex-dialog-daemon.txt"), false},
+		{"a menu with its cursor on the first row", "  Trust this folder?\n\n› 1. Yes, continue\n  2. No, quit\n", false},
+		{"typed text on the input line", "\n› say pong\n\n  gpt medium · ~/code\n", true},
+		{"a pane with no codex yet", "\n\n$ \n", false},
+		{"Claude's prompt", "\n❯ \n", false},
+	}
+	for _, c := range cases {
+		if got := CodexInputReady(c.pane); got != c.want {
+			t.Errorf("%s: CodexInputReady = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+// A codex stuck on a menu never reads as ready, so the first prompt waits
+// rather than answering the menu.
+func TestAwaitCodexReadyWaitsOutAMenu(t *testing.T) {
+	in, osUser, _ := paneSession(t, `sh -c 'printf "\n› 2. Cancel\n"; sleep 60'`)
+	if err := in.AwaitReady(context.Background(), osUser, "demo", HarnessCodex, 1500*time.Millisecond, 100*time.Millisecond); err == nil {
+		t.Fatal("a codex showing a menu read as ready for a prompt")
+	}
+}
+
+func TestAwaitCodexReadyTakesTheInputLine(t *testing.T) {
+	in, osUser, _ := paneSession(t, `sh -c 'sleep 0.8; printf "\n› Ask Codex to do anything\n"; sleep 60'`)
+	if err := in.AwaitReady(context.Background(), osUser, "demo", HarnessCodex, 10*time.Second, 100*time.Millisecond); err != nil {
+		t.Fatalf("AwaitReady(codex): %v", err)
+	}
+}
