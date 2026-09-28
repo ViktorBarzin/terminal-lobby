@@ -297,14 +297,17 @@ export const Composer: Component<{
    * plan card's own field since the T3 pass; the card hides this composer
    * while it waits, and the text view refuses a send that still reaches it.
    */
-  const send = async (text: string, held: readonly DraftAttachment[]): Promise<boolean> => {
-    const ok = await props.onSend(text, held);
-    if (ok && !isSlashCommand(text)) {
+  const send = (text: string, held: readonly DraftAttachment[]): Promise<boolean> => {
+    const sent = props.onSend(text, held);
+    // The field awaits the same promise, so a refusal restores its text on the
+    // same tick as before this watched it.
+    void sent.then((ok) => {
+      if (!ok || isSlashCommand(text)) return;
       forgetSend();
       setJustSent(true);
       sentTimer = setTimeout(forgetSend, SEND_TRUST_MS);
-    }
-    return ok;
+    });
+    return sent;
   };
 
   /** The model button's slot: the button, and background work beside it. */
