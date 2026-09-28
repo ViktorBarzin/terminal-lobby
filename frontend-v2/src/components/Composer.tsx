@@ -1,4 +1,13 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, Show, type Component, type JSX } from "solid-js";
+import {
+  createEffect,
+  createMemo,
+  createSignal,
+  on,
+  onCleanup,
+  Show,
+  type Component,
+  type JSX,
+} from "solid-js";
 import type { PermissionDecision } from "../types/events";
 import type { ClaudeState } from "../types/lobby";
 import type { PendingPermission, WorkingRow } from "./timeline.logic";
@@ -234,13 +243,7 @@ export const Composer: Component<{
     setJustSent(false);
   };
   // Any move of the stamp after the send is the session speaking for itself.
-  createEffect(
-    on(
-      claudeState,
-      () => forgetSend(),
-      { defer: true },
-    ),
-  );
+  createEffect(on(claudeState, () => forgetSend(), { defer: true }));
   onCleanup(forgetSend);
 
   /**

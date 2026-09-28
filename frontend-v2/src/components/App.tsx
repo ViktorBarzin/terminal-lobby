@@ -2784,7 +2784,8 @@ export const App: Component = () => {
                       // The header's subtitle starts with it. BY KEY, for the
                       // reason `tileSession` exists.
                       project={() =>
-                        projectNameFor(store.layout(), k.name) ?? (tileSession()?.project || undefined)
+                        projectNameFor(store.layout(), k.name) ??
+                        (tileSession()?.project || undefined)
                       }
                       // The hook-stamped state, which the Text view's Stop
                       // needs to agree with the transcript. BY KEY, for the
