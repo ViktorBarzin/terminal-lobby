@@ -26,10 +26,15 @@ import type { ModelHarness } from "./models";
  * So delivery walks a ladder, and asks the SERVER to hold each attempt until
  * the pane can take it. The readiness check lives there because that is where
  * the evidence is: `sessionio.AwaitInputReady` watches the pane draw Claude's
- * own `❯` and then hold still for 300ms, which is the same check the T3 bridge
- * already runs after a resurrection, for the same reason. Nothing about a
- * pane's input line reaches the browser, so a browser-side version of this
- * could only ever be a proxy for it.
+ * input box (its `❯` under the box's rule) and then hold still for 300ms,
+ * which is the same check the T3 bridge already runs after a resurrection,
+ * for the same reason. Nothing about a pane's input line reaches the browser,
+ * so a browser-side version of this could only ever be a proxy for it.
+ *
+ * Claude's folder-trust dialog, raised on its first start in a repository
+ * nobody has trusted, draws a `❯` of its own on "No, exit". The server
+ * refuses a prompt while it is up ("trust-open"), and the caller is told the
+ * reason (`onRefused`).
  */
 
 /**
@@ -82,7 +87,7 @@ export interface DeliverFirstPromptOptions {
    *
    * `session-events` answers 503 rather than injecting when it cannot, which
    * this treats like any other "not yet". The check is `sessionio`'s own — the
-   * pane drawing Claude's `❯` and then holding still — so it reads the input
+   * pane drawing Claude's input box and then holding still — so it reads the input
    * line rather than guessing from anything the browser can see.
    *
    * Only for a command that draws something the server can wait on, which is
@@ -104,7 +109,20 @@ export interface DeliverFirstPromptOptions {
   sleep?: (ms: number) => Promise<void>;
   /** injectable for tests; defaults to a deadlined same-origin fetch. */
   fetchImpl?: typeof fetch;
+  /** Told the reason of a 409 refusal ("trust-open", session-events
+   *  plan.go), which ends the delivery. */
+  onRefused?: (reason: string) => void;
 }
+
+/**
+ * What a send refused over Claude's folder-trust dialog tells the reader
+ * (session-events "trust-open"). Claude raises it on its first start in a
+ * folder nobody has trusted, no card answers it, and a prompt's Enter there
+ * picked "No, exit" and ended the session (deployed review round 4,
+ * 2026-09-28).
+ */
+export const TRUST_NOTICE =
+  "Claude is asking whether to trust this folder. Answer it in the Terminal, then send again.";
 
 /** The harnesses a first prompt names for the server's wait. */
 export type FirstPromptTool = "pi" | "codex";
@@ -150,6 +168,7 @@ async function post(
   awaitReady: boolean,
   tool: FirstPromptTool | undefined,
   fetchImpl: typeof fetch,
+  onRefused?: (reason: string) => void,
 ): Promise<Attempt> {
   try {
     const res = await fetchImpl(promptUrl(session), {
@@ -159,6 +178,10 @@ async function post(
       credentials: "same-origin",
     });
     if (res.ok) return "ok";
+    if (res.status === 409 && onRefused) {
+      const reason = await refusalReason(res);
+      if (reason) onRefused(reason);
+    }
     // Three ways of saying "not yet". 503 is the pane not ready, which is the
     // answer `awaitReady` asks for. 502 is what a session tmux cannot find
     // answers, because the injection — not a lookup — is what fails. 404 is
@@ -168,6 +191,21 @@ async function post(
     return later ? "later" : "no";
   } catch {
     return "later"; // a blip on the way out, not a refusal
+  }
+}
+
+/** The reason in a 409 refusal's `{"applied": false, "reason": ...}`, or "". */
+async function refusalReason(res: Response): Promise<string> {
+  try {
+    const body: unknown = await res.json();
+    return typeof body === "object" &&
+      body !== null &&
+      "reason" in body &&
+      typeof body.reason === "string"
+      ? body.reason
+      : "";
+  } catch {
+    return "";
   }
 }
 
@@ -217,7 +255,7 @@ export async function deliverFirstPrompt(o: DeliverFirstPromptOptions): Promise<
     await sleep(ladder[rung]!);
     const wait = (o.awaitReady ?? false) && (waitToTheEnd || rung < ladder.length - 1);
     while (sent < lines.length) {
-      const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl);
+      const r = await post(o.session, lines[sent]!, wait, o.tool, fetchImpl, o.onRefused);
       if (r === "no") return false;
       if (r === "later") break; // next rung, resuming at this line
       sent += 1;

@@ -105,6 +105,8 @@ interface Wire {
   chips: DraftAttachment[][];
   /** What each delivery answers with, in order; the last answer repeats. */
   results: boolean[];
+  /** The refusal reason a failed delivery reports, if any. */
+  refused?: string;
   /** What the `/` menu's catalogue read answers, and the dirs it was asked for. */
   catalogue: SlashCommand[];
   catalogueOk: boolean;
@@ -164,7 +166,9 @@ function mount(
             tool: o.tool,
           });
           const i = Math.min(wire.delivered.length - 1, wire.results.length - 1);
-          return wire.results[i] ?? true;
+          const ok = wire.results[i] ?? true;
+          if (!ok && wire.refused) o.onRefused?.(wire.refused);
+          return ok;
         }}
       />
     );
@@ -1447,6 +1451,30 @@ describe("<NewSessionComposer> — attachments", () => {
         .map((t) => t.message)
         .join(" "),
     ).toContain("waiting in the composer");
+    m.store.dispose();
+  });
+
+  // Deployed review round 4 (2026-09-28): in a git repository Claude had not
+  // been told to trust, the first prompt met its folder-trust dialog. The
+  // server refuses it now, and the reader is told where to answer.
+  it("says Claude is asking about trust when that refused the first prompt", async () => {
+    const api = new FakeApi();
+    const w = emptyWire();
+    w.results = [false];
+    w.refused = "trust-open";
+    const m = mount(api, {}, w);
+    await m.store.refresh();
+
+    type(field(m.container)!, "Fix the deploy");
+    enter(field(m.container)!);
+
+    await waitFor(() => expect(loadDraft(created(api))?.text).toBe("Fix the deploy"));
+    const said = toasts
+      .toasts()
+      .map((t) => t.message)
+      .join(" ");
+    expect(said).toContain("Claude is asking whether to trust this folder");
+    expect(said).toContain("Your prompt is waiting in the composer.");
     m.store.dispose();
   });
 });

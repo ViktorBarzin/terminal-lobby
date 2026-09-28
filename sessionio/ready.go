@@ -74,20 +74,47 @@ func (in *Injector) CapturePane(osUser, session string) (string, error) {
 // anyway: for a resurrection, typing into a pane that never drew a prompt is
 // strictly better than dropping the prompt, and the operator can see both the
 // session and the log line.
+//
+// Ready means Claude's input box (ClaudeInputReady), not a ❯ anywhere on the
+// pane. Claude draws the same ❯ as the cursor of its menus, and its
+// folder-trust dialog opens with "❯ No, exit" highlighted: a wait that took
+// any ❯ passed on the dialog, the first prompt's Enter picked "No, exit", and
+// Claude quit and took the session with it (deployed review round 4,
+// 2026-09-28). A pane that never draws the box costs the bounded wait.
 func (in *Injector) AwaitInputReady(ctx context.Context, osUser, session string, wait, poll time.Duration) error {
-	return in.AwaitPromptMark(ctx, osUser, session, promptMark, wait, poll)
+	return in.awaitSettled(ctx, osUser, session, ClaudeInputReady, wait, poll)
 }
 
 // AwaitPromptMark is AwaitInputReady against a harness other than Claude — the
 // same wait, watching for whatever that TUI draws at its input line
-// (see PromptMark).
+// (see PromptMark). Claude's own mark, or none, is AwaitInputReady.
 func (in *Injector) AwaitPromptMark(ctx context.Context, osUser, session, mark string, wait, poll time.Duration) error {
-	if mark == "" {
-		mark = promptMark
+	if mark == "" || mark == promptMark {
+		return in.AwaitInputReady(ctx, osUser, session, wait, poll)
 	}
 	return in.awaitSettled(ctx, osUser, session, func(text string) bool {
 		return strings.Contains(text, mark)
 	}, wait, poll)
+}
+
+// ClaudeInputReady reports whether a pane shows Claude Code's input box: a line
+// opening with ❯ directly under one of its rules (inputBox). A ❯ anywhere else
+// is a menu's cursor or an echo of an earlier prompt.
+func ClaudeInputReady(pane string) bool {
+	_, ok := inputBox(pane)
+	return ok
+}
+
+// ClaudeTrustPending reports whether a pane shows Claude Code's folder-trust
+// dialog, which it raises on its first start in a folder nobody has trusted:
+// on CLI 2.1.283 "Accessing workspace:" with the rows "❯ No, exit" and "Yes, I
+// trust this folder". A prompt's Enter there picks "No, exit" and Claude quits.
+// A pane that shows the input box is past it, whatever its conversation quotes.
+func ClaudeTrustPending(pane string) bool {
+	if ClaudeInputReady(pane) {
+		return false
+	}
+	return strings.Contains(pane, "No, exit") && strings.Contains(strings.ToLower(pane), "trust this folder")
 }
 
 // AwaitCodexReady is AwaitInputReady for codex, which draws its › in two

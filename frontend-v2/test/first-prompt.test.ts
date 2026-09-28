@@ -115,6 +115,22 @@ describe("deliverFirstPrompt", () => {
     expect(f.calls()).toBe(1);
   });
 
+  // Deployed review round 4 (2026-09-28): the first prompt in an untrusted
+  // git repository met Claude's folder-trust dialog, picked "No, exit", and
+  // the session died. The server now refuses it with a reason, and the reason
+  // reaches the caller so it can say where to answer.
+  it("gives up at once on a refusal, and names its reason", async () => {
+    const fetchImpl = (async () =>
+      new Response('{"applied":false,"reason":"trust-open"}\n', {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      })) as unknown as typeof fetch;
+    const c = fastClock();
+    const reasons: string[] = [];
+    expect(await deliver({ fetchImpl, ...c, onRefused: (r) => reasons.push(r) })).toBe(false);
+    expect(reasons).toEqual(["trust-open"]);
+  });
+
   it("retries a thrown fetch, which is a blip rather than a refusal", async () => {
     let calls = 0;
     const fetchImpl = (async () => {

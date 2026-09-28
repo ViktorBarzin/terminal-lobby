@@ -92,7 +92,8 @@ type promptDriver interface {
 // A pi session asking whether to trust its folder is refused too. That
 // question is a list, and a pasted line plus Enter answers it with its first
 // row, "Trust", so nothing is typed while it is up, whether or not the caller
-// asked for the wait.
+// asked for the wait. Claude's own trust dialog is refused the same way
+// (promptRefusal): its highlighted row is "No, exit".
 func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
@@ -137,6 +138,16 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 				err = drv.AwaitInputReady(r.Context(), osUser, session, PromptReadyWait, PromptReadyPoll)
 			}
 			if err != nil {
+				// Claude asking whether to trust the folder never draws its
+				// input box, so the wait cannot end until someone answers in
+				// the Terminal. Said now, rather than as a 503 the caller
+				// would retry against the same dialog.
+				if !pi && sessionio.Harness(body.Tool) != sessionio.HarnessCodex {
+					if pane, perr := drv.CapturePane(osUser, session); perr == nil && sessionio.ClaudeTrustPending(pane) {
+						writePromptRefusal(w, trustOpenReason)
+						return
+					}
+				}
 				http.Error(w, "session is not ready for input", http.StatusServiceUnavailable)
 				return
 			}

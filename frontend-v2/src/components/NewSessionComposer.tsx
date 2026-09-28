@@ -47,6 +47,7 @@ import {
   deliverFirstPrompt,
   type FirstPromptTool,
   firstPromptDelivery,
+  TRUST_NOTICE,
 } from "../lib/first-prompt";
 import { piModels, refreshPiModels } from "../lib/pi-models";
 import { uploadAttachments } from "../clipboard/attach-files";
@@ -975,11 +976,13 @@ async function sendFirstPrompt(o: {
   }
   const prompt = composeMessage(written, attached);
   const lines = [prompt].filter((l): l is string => !!l);
+  let refused = "";
   const ok = await o.deliver({
     session: o.session,
     lines,
     awaitReady: o.awaitReady,
     ...(o.tool ? { tool: o.tool } : {}),
+    onRefused: (reason) => (refused = reason),
   });
   if (ok || lines.length === 0) return;
   // The session exists and is what the person is now looking at, so the text
@@ -992,5 +995,12 @@ async function sendFirstPrompt(o: {
   // where its token stood. Parking them too would hand the live composer files
   // it would splice in a SECOND time on the retry.
   parkDraft(o.session, { text: prompt, attachments: [], at: Date.now() });
+  // Claude's folder-trust dialog, on its first start in a repository nobody
+  // has trusted (deployed review round 4, 2026-09-28), is answered in the
+  // Terminal; the prompt then goes from the composer.
+  if (refused === "trust-open") {
+    showToast(`${TRUST_NOTICE} Your prompt is waiting in the composer.`, "warning", 12000);
+    return;
+  }
   showToast("Couldn't send the first prompt — it is waiting in the composer", "error", 8000);
 }

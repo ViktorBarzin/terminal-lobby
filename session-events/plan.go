@@ -88,6 +88,9 @@ const exitPlanTool = "ExitPlanMode"
 // It names the screen, as the reason the refusal carries, or "".
 func promptRefusal(rg *registry, p planPane, osUser, session string) string {
 	if pane, err := p.CapturePane(osUser, session); err == nil {
+		if sessionio.ClaudeTrustPending(pane) {
+			return trustOpenReason
+		}
 		if sessionio.ParsePlanDialog(pane) != nil {
 			return planOpenReason
 		}
@@ -143,6 +146,9 @@ const (
 	// A codex menu (sessionio.CodexMenuOpen): the Enter picks its highlighted
 	// row, which on the devvm's startup menu is Cancel, and codex quits.
 	menuOpenReason = "menu-open"
+	// Claude's folder-trust dialog (sessionio.ClaudeTrustPending): the Enter
+	// picks "No, exit", and Claude quits and takes the session with it.
+	trustOpenReason = "trust-open"
 	// A dialog that took the input box's place while a prompt was on its way
 	// (sessionio.ErrInputGone), when the readers above do not name it.
 	dialogOpenReason = "dialog-open"

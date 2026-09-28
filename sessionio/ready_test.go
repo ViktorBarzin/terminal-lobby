@@ -42,7 +42,7 @@ func paneSession(t *testing.T, cmd string) (*Injector, string, string) {
 // the pane to be drawn before typing is the fix.
 func TestAwaitInputReadyWaitsForALateDrawingTUI(t *testing.T) {
 	// Draws nothing for 1.5s, then paints a prompt and holds.
-	in, osUser, _ := paneSession(t, `sh -c 'sleep 1.5; printf "\n`+promptMark+` "; sleep 60'`)
+	in, osUser, _ := paneSession(t, `sh -c 'sleep 1.5; printf "\n────────\n`+promptMark+` "; sleep 60'`)
 
 	start := time.Now()
 	if err := in.AwaitInputReady(context.Background(), osUser, "demo", 20*time.Second, 100*time.Millisecond); err != nil {
@@ -94,7 +94,7 @@ func TestAwaitInputReadyHonoursContextCancellation(t *testing.T) {
 // the ordinary case, which is every prompt sent to a session that is just
 // sitting there.
 func TestAwaitInputReadyReturnsAtOnceForADrawnPane(t *testing.T) {
-	in, osUser, _ := paneSession(t, `sh -c 'printf "\n`+promptMark+` "; sleep 60'`)
+	in, osUser, _ := paneSession(t, `sh -c 'printf "\n────────\n`+promptMark+` "; sleep 60'`)
 	time.Sleep(400 * time.Millisecond)
 
 	start := time.Now()
@@ -180,5 +180,81 @@ func TestAwaitCodexReadyTakesTheInputLine(t *testing.T) {
 	in, osUser, _ := paneSession(t, `sh -c 'sleep 0.8; printf "\n› Ask Codex to do anything\n"; sleep 60'`)
 	if err := in.AwaitReady(context.Background(), osUser, "demo", HarnessCodex, 10*time.Second, 100*time.Millisecond); err != nil {
 		t.Fatalf("AwaitReady(codex): %v", err)
+	}
+}
+
+// Deployed review round 4 (2026-09-28): Claude's folder-trust dialog draws its
+// highlighted row as "❯ No, exit", so a wait that took any ❯ as the input line
+// passed on the dialog, and the first prompt's Enter picked "No, exit". Claude
+// quit and took the session with it. The pane as CLI 2.1.283 drew it in a
+// fresh git repository on an 80x23 pane:
+const trustPane = `
+──────────────────────────────────────────────
+ Accessing workspace:
+
+ /var/tmp/t3r4/repo
+
+ Quick safety check: Is this a project you
+ created or one you trust? (Like your own
+ code, a well-known open source project, or
+ work from your team). If not, take a moment
+ to review what's in this folder first.
+
+ Claude Code'll be able to read, edit, and
+ execute files here.
+
+ Security guide
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`
+
+const readyPane = `
+ ▐▛███▛█   Claude Code v2.1.283
+
+──────────────────────────────────────────────── ↯ /fast ─
+❯ Try "how do I log an error?"
+──────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle)
+`
+
+func TestClaudeInputReadyNeedsTheInputBox(t *testing.T) {
+	cases := map[string]struct {
+		pane string
+		want bool
+	}{
+		"the input box":        {readyPane, true},
+		"the trust dialog":     {trustPane, false},
+		"a permission dialog":  {"\n──────\n Bash command\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n", false},
+		"an echo with no rule": {"\n❯ earlier prompt\n\n● reply\n", false},
+	}
+	for name, c := range cases {
+		if got := ClaudeInputReady(c.pane); got != c.want {
+			t.Errorf("%s: ClaudeInputReady = %v, want %v", name, got, c.want)
+		}
+	}
+}
+
+func TestClaudeTrustPending(t *testing.T) {
+	if !ClaudeTrustPending(trustPane) {
+		t.Fatal("the trust dialog did not read as pending")
+	}
+	if ClaudeTrustPending(readyPane) {
+		t.Fatal("a ready pane read as asking for trust")
+	}
+	// A conversation that quotes the dialog's words, under a live input box,
+	// is not the dialog.
+	quoted := "\n● It shows \"No, exit\" and \"Yes, I trust this folder\".\n" + readyPane
+	if ClaudeTrustPending(quoted) {
+		t.Fatal("a conversation quoting the dialog read as the dialog")
+	}
+}
+
+func TestAwaitInputReadyWaitsOutTheTrustDialog(t *testing.T) {
+	in, osUser, _ := paneSession(t, `sh -c 'printf "\n ❯ No, exit\n   Yes, I trust this folder\n"; sleep 60'`)
+	if err := in.AwaitInputReady(context.Background(), osUser, "demo", 1500*time.Millisecond, 100*time.Millisecond); err == nil {
+		t.Fatal("the trust dialog read as ready for a prompt")
 	}
 }

@@ -939,3 +939,54 @@ func TestPromptThatMetAnUnknownDialogIsRefused(t *testing.T) {
 		t.Errorf("body = %s", got)
 	}
 }
+
+// Deployed review round 4 (2026-09-28): the first prompt from the new-session
+// box, in a git repository Claude had not been told to trust, met Claude's
+// folder-trust dialog. Its Enter picked "❯ No, exit", Claude quit, the
+// one-pane session died, and the route answered 204. The pane as CLI 2.1.283
+// drew it:
+const claudeTrustPane = `
+──────────────────────────────────────────────
+ Accessing workspace:
+
+ /var/tmp/t3r4/repo
+
+ Quick safety check: Is this a project you
+ created or one you trust?
+
+ ❯ No, exit
+   Yes, I trust this folder
+
+ Enter to confirm · Esc to cancel
+`
+
+func TestPromptNeverTypesIntoClaudesTrustDialog(t *testing.T) {
+	f := &fakeTurns{pane: claudeTrustPane}
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say hi"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 while Claude asks about trust", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"trust-open"}` {
+		t.Errorf("body = %s", got)
+	}
+	if f.called("Prompt") {
+		t.Fatal("a prompt was typed into the trust dialog")
+	}
+}
+
+// The first prompt waits for the input box, which the dialog never draws, so
+// the wait gives up; the sender is told why at once rather than retrying a
+// wait that cannot end until someone answers in the Terminal.
+func TestPromptWaitingOnTheTrustDialogSaysSo(t *testing.T) {
+	f := &fakeTurns{pane: claudeTrustPane, awaitErr: errors.New("no input box")}
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say hi","awaitReady":true}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 while Claude asks about trust", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"trust-open"}` {
+		t.Errorf("body = %s", got)
+	}
+	if f.called("Prompt") {
+		t.Fatal("a prompt was typed into the trust dialog")
+	}
+}

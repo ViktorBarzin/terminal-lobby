@@ -26,6 +26,7 @@ import { readCatalogue, type Catalogue } from "./catalogue";
 import { isSlashCommand, sameCommand, type PendingPrompt } from "../logic/compose.logic";
 import { trackPrompt } from "../lib/leaving";
 import { fetchWithDeadline } from "../lib/http";
+import { TRUST_NOTICE } from "../lib/first-prompt";
 import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
 import { snapshotOf, type AgentSnapshot } from "../components/agents.logic";
 
@@ -311,8 +312,9 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
 /**
  * The prompt guard's reason, when this is its refusal: 409 with `{"applied":
  * false, "reason": "plan-open"}`, "permission-open" for a tool permission
- * prompt, "question-open" for a question, "menu-open" for a codex menu, or
- * "dialog-open" for a dialog drawn as the prompt went (session-events plan.go). "" for a 409 with any other body, JSON or
+ * prompt, "question-open" for a question, "menu-open" for a codex menu,
+ * "trust-open" for Claude's folder-trust dialog, or "dialog-open" for a dialog
+ * drawn as the prompt went (session-events plan.go). "" for a 409 with any other body, JSON or
  * not, and for a body that fails to read.
  */
 /**
@@ -1030,6 +1032,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
             "The session is showing a menu. Answer it in the Terminal, then send again.",
             "warning",
           );
+        } else if (refused === "trust-open") {
+          opts.notify?.(TRUST_NOTICE, "warning");
         } else if (refused === "dialog-open") {
           // Claude drew a dialog as the prompt went, one the server's pane
           // readers could not name yet, and the prompt stopped short of it

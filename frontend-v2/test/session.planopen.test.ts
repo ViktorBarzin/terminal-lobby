@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { createRoot } from "solid-js";
 import { createSessionStore } from "../src/store/session";
+import { TRUST_NOTICE } from "../src/lib/first-prompt";
 
 type Note = { msg: string; kind: string };
 
@@ -130,6 +131,18 @@ describe("session store: prompt refused while the plan approval is up", () => {
     expect(notes[0]?.msg).toBe(
       "Claude put up a prompt as your message went. Answer it, and send your message again.",
     );
+  });
+
+  it("keeps the text and says to answer Claude's trust question in the Terminal", async () => {
+    // Claude's folder-trust dialog (deployed review round 4, 2026-09-28): the
+    // Enter picked "No, exit" and Claude quit.
+    g.fetch = respond(409, '{"applied":false,"reason":"trust-open"}\n', "application/json");
+    const { ok, notes, pending } = await sendOnce("say hi");
+    expect(ok).toBe(false);
+    expect(pending).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.kind).toBe("warning");
+    expect(notes[0]?.msg).toBe(TRUST_NOTICE);
   });
 
   it("treats a plain-text 409 as any other failed send", async () => {
