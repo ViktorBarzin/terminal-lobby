@@ -6541,16 +6541,41 @@ body.tl-kb-up {
 /* About six lines of plan in the prototype's well, then "Read the full plan".
    The card's body scrolls, so an expanded plan pushes the choices down rather
    than off the card. */
+/* The plan card's body is a column: the well gives way and the rows keep their
+   height, so a short card still shows every choice and "Tell Claude what to
+   change". Found live on 2026-09-28 at 1280x800: a three-step plan fit its
+   twelve lines, nothing was clamped, no "Read the full plan" showed, and the
+   last row sat under the fold of a body that scrolled. */
+.tl-plancard .tl-qcard-body {
+  display: flex;
+  flex-direction: column;
+}
+.tl-plancard .tl-qcard-options {
+  flex: none;
+}
 .tl-plancard-well {
+  flex: 0 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   margin: 0 4px 10px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--bg-page);
 }
-/* Twelve lines on a desktop: six held only a plan's Context section, and the
-   steps were under the fade (found live on 2026-09-27). */
+/* Opened in full, the plan takes its height and the body scrolls. */
+.tl-plancard-well[data-full="true"] {
+  flex: none;
+}
+/* Up to twelve lines on a desktop: six held only a plan's Context section,
+   and the steps were under the fade (found live on 2026-09-27). It shrinks to
+   what the rows leave, down to four lines or the plan's own height when that
+   is less (--tl-plan-content, which PlanCard measures), and the clamp and the
+   link follow the height it gets. */
 .tl-plancard-plan {
+  flex: 0 1 auto;
+  min-height: min(calc(13px * 1.45 * 4 * var(--tl-text-scale, 1)), var(--tl-plan-content, 100vh));
   max-height: calc(13px * 1.45 * 12 * var(--tl-text-scale, 1));
   overflow: hidden;
   font-size: calc(13px * var(--tl-text-scale, 1));

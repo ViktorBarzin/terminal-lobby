@@ -286,6 +286,27 @@ describe("the card in the composer's place", () => {
     );
   });
 
+  it("lets the plan give way before the rows it is approved from", () => {
+    // Found live on 2026-09-28 at 1280x800: a three-step plan fit the twelve
+    // lines, so nothing was clamped and no "Read the full plan" showed, and
+    // the card's body scrolled with "Tell Claude what to change" below the
+    // fold. The body lays the well and the rows out as a column, the rows
+    // keep their height, and the plan shrinks (down to four lines, or its own
+    // height when shorter) to what
+    // is left, which clamps it and brings the link.
+    expect(decl(appCss, ".tl-plancard .tl-qcard-body", "display")).toBe("flex");
+    expect(decl(appCss, ".tl-plancard .tl-qcard-body", "flex-direction")).toBe("column");
+    expect(decl(appCss, ".tl-plancard-well", "min-height")).toBe("0");
+    expect(decl(appCss, ".tl-plancard-well", "flex")).toBe("0 1 auto");
+    expect(decl(appCss, ".tl-plancard-plan", "flex")).toBe("0 1 auto");
+    expect(decl(appCss, ".tl-plancard-plan", "min-height")).toBe(
+      "min(calc(13px * 1.45 * 4 * var(--tl-text-scale, 1)), var(--tl-plan-content, 100vh))",
+    );
+    expect(decl(appCss, ".tl-plancard .tl-qcard-options", "flex")).toBe("none");
+    // Opened in full, the plan takes its height and the body scrolls.
+    expect(decl(appCss, '.tl-plancard-well[data-full="true"]', "flex")).toBe("none");
+  });
+
   it("gives the phone 48px rows and a 16px question", () => {
     expect(appCss).toMatch(/\.tl-qcard-option\s*\{[^}]*min-height:\s*48px/);
     expect(appCss).toMatch(/\.tl-qcard-question\s*\{[^}]*font-size:\s*calc\(16px/);

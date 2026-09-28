@@ -100,6 +100,9 @@ export const PlanCard: Component<{
    */
   const measure = () => {
     if (!planEl || full()) return;
+    // The plan's own height, so the floor the well shrinks to (four lines)
+    // never pads a shorter plan with blank lines.
+    planEl.style.setProperty("--tl-plan-content", `${planEl.scrollHeight}px`);
     setOverflows(planEl.scrollHeight > planEl.clientHeight + 1);
   };
   /**
@@ -195,7 +198,7 @@ export const PlanCard: Component<{
         >
           {/* The well carries the border and the fill, so the clamp's fade
               below runs over the plan's words and not over the well's edge. */}
-          <div class="tl-plancard-well">
+          <div class="tl-plancard-well" data-full={full() ? "true" : undefined}>
             <div
               class="tl-plancard-plan"
               ref={attach}
