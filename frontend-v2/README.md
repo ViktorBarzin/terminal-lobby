@@ -273,6 +273,8 @@ src/
                          per page, read again when the composer opens with pi
                          chosen; callers asking at once share one read, and a
                          failed read keeps the last answer
+    at-path.ts           Where an `@` completion lists from: the session's
+                         own working directory, then its project's
     first-prompt.ts      Delivering the FIRST prompt of a session created a
                          moment ago. A session tmux has made is reachable
                          seconds before the Claude in it is ready to read
