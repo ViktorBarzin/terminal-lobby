@@ -212,3 +212,61 @@ describe("<TextView>: Stop hands queued messages back to the field", () => {
     expect(field().value).toBe("");
   });
 });
+
+// Found live on 2026-09-27: a message sent while a command ran stood in as a
+// turn of its own at the end, so the running turn read as settled. Its work
+// group said "stopped" with the command still running, the live group moved to
+// the stand-in ("Working… 0s"), and the turn never folded. A message sent into
+// an open turn waits behind it, which the prototype draws as a ghost.
+describe("<TextView>: a message sent mid-turn waits as a ghost", () => {
+  const held = (id: number, text: string, command = false): PendingPrompt => ({
+    id,
+    text,
+    at: 2_500,
+    command,
+    afterId: 2,
+  });
+
+  it("draws it as a ghost and keeps the running group live", () => {
+    const { container } = mount(() => "running", undefined, {
+      pendingPrompts: [held(-1, "and then this")],
+    });
+    const ghosts = [...container.querySelectorAll(".tl-row-ghost .tl-ghost-text")].map(
+      (g) => g.textContent,
+    );
+    expect(ghosts).toEqual(["and then this"]);
+    expect(container.querySelector(".tl-group-box")?.getAttribute("data-live")).toBeTruthy();
+    expect(container.querySelector(".tl-group-meta")?.textContent ?? "").not.toContain("stopped");
+    const bubbles = [...container.querySelectorAll(".tl-row-user:not(.tl-row-ghost)")];
+    expect(bubbles).toHaveLength(1);
+  });
+
+  it("draws it once when the queue has recorded it too", () => {
+    const { container } = mount(() => "running", undefined, {
+      events: [
+        ...RUNNING_TURN,
+        { id: 3, kind: "meta", meta: "queued", session: "demo", turnId: "t1", body: "and then this" },
+      ],
+      pendingPrompts: [held(-1, "and then this")],
+    });
+    expect(container.querySelectorAll(".tl-row-ghost")).toHaveLength(1);
+  });
+
+  it("draws a message sent between turns as the next turn", () => {
+    const settled: Event[] = [
+      ...RUNNING_TURN,
+      { id: 3, kind: "tool_result", session: "demo", turnId: "t1", toolId: "b1", body: "a", at: 2_100 },
+      { id: 4, kind: "text", session: "demo", turnId: "t1", body: "Done.", at: 2_200 },
+      { id: 5, kind: "turn_end", session: "demo", turnId: "t1", at: 2_300 },
+    ];
+    const { container } = mount(() => "done", undefined, {
+      events: settled,
+      pendingPrompts: [{ ...held(-1, "next thing"), afterId: 5 }],
+    });
+    expect(container.querySelectorAll(".tl-row-ghost")).toHaveLength(0);
+    const bubbles = [...container.querySelectorAll(".tl-row-user .tl-user-text")].map(
+      (b) => b.textContent,
+    );
+    expect(bubbles.at(-1)).toBe("next thing");
+  });
+});

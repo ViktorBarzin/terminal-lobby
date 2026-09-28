@@ -368,10 +368,32 @@ export const TextView: Component<{
   // What the transcript says, plus what it has not caught up with. A prompt
   // Claude has already queued is left out: the timeline draws it as a ghost
   // bubble at its end, and one message should show once (withoutQueued).
-  const sent = createMemo(() => withoutQueued(props.pendingPrompts?.() ?? [], queued()));
-  const shown = createMemo(() => withPendingPrompts(props.events, sent()));
+  const unrecorded = createMemo(() => withoutQueued(props.pendingPrompts?.() ?? [], queued()));
   /** The transcript folded, once. */
   const baseRows = createMemo(() => props.rows?.() ?? deriveRows(props.events));
+  /**
+   * The prose sent from here while the transcript's own turn is still open.
+   * It waits behind that turn, so it is drawn as a ghost with the ones the
+   * CLI has queued, not as a turn of its own: standing in as the next turn, it
+   * made the running turn read as settled, its work group said "stopped" with
+   * the command still running, and the live group moved onto the stand-in
+   * (found live on 2026-09-27). A slash command keeps its stand-in turn, since
+   * it may never be recorded at all.
+   */
+  const waitingHeld = createMemo(() =>
+    baseRows().at(-1)?.kind === "working" ? unrecorded().filter((p) => !p.command) : [],
+  );
+  const sent = createMemo(() => {
+    const waiting = waitingHeld();
+    return waiting.length === 0 ? unrecorded() : unrecorded().filter((p) => !waiting.includes(p));
+  });
+  /** Every ghost at the conversation's end: Claude's queue, then what it has
+   *  not recorded yet. */
+  const ghosts = createMemo(() => {
+    const waiting = waitingHeld();
+    return waiting.length === 0 ? queued() : [...queued(), ...waiting.map((p) => p.text)];
+  });
+  const shown = createMemo(() => withPendingPrompts(props.events, sent()));
   /** What the timeline draws. `withPendingPrompts` returns `events` itself when
    *  nothing is in flight, so the common case reuses the fold above rather than
    *  repeating it; an unsent prompt is rare and short-lived. */
@@ -1347,7 +1369,7 @@ export const TextView: Component<{
           follow={sends()}
           me={props.me}
           session={props.session}
-          queued={queued()}
+          queued={ghosts()}
           planDocked={planDocked()?.call ?? null}
           cardDocked={cardUp()}
           planAnswer={(() => {
