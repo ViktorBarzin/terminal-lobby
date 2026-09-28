@@ -1334,6 +1334,14 @@
   margin: -6px 0 -6px -4px;
   padding: 0 4px;
 }
+/* One dot on the subtitle, the session's state, as the prototype draws it:
+   the badge's healthy green beside it read as a second state (found live on
+   2026-09-28). It speaks here when a channel is degraded or down; the Right
+   now panel in Settings stays reachable either way. */
+.tl-bar-sub .tl-conn-badge[data-status="working"],
+.tl-bar-sub .tl-conn-badge[data-status="unknown"] {
+  display: none;
+}
 /* One rounded group: the view icon and "…". */
 .tl-bar-group {
   display: flex;

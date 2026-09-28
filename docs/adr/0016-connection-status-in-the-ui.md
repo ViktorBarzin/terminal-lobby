@@ -101,6 +101,12 @@ The badge shows a dot always and a word only when something is wrong.
 client, rather than the transport words the old badge showed (`open`,
 `no transcript`), which described a mechanism instead of answering a question.
 
+**Amended 2026-09-28.** The T3 pass gave the session bar a subtitle with one
+dot, the session's state, and the badge's healthy green beside it read as a
+second state. In the session bar the badge is now drawn only when a channel is
+degraded or down, as dot and word. The sidebar's badge keeps the dot always,
+and the Right now panel stays in Settings → Network.
+
 ### The check reads; the repairs are separate taps
 
 Run check fires all five probes at once, each capped at 5 s, and fills the panel
