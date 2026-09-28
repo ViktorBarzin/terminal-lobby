@@ -266,6 +266,41 @@ describe("the permission card", () => {
     expect(model.getAttribute("aria-disabled")).toBe("true");
   });
 
+  // Deployed review round 1 (2026-09-28): a suspended session's model button
+  // read the permission mode, "✳ Auto". The session list now names a
+  // suspended session's tool (Claude), so the button names the model, and it
+  // holds while no Claude is running to drive the picker.
+  it("names the model on a suspended session and holds the button until it wakes", async () => {
+    const { r } = mount(
+      [
+        ...base,
+        ev({ id: 3, kind: "tool_result", toolId: "b1", body: "ok", at: 3000 }),
+        ev({
+          id: 4,
+          kind: "meta",
+          meta: "model",
+          model: { model: "claude-opus-5-5", effort: "high" },
+          at: 3500,
+        }),
+        ev({ id: 5, kind: "text", body: "done", at: 4000 }),
+        ev({ id: 6, kind: "turn_end", at: 4000 }),
+      ],
+      undefined,
+      undefined,
+      {
+        harness: "claude",
+        suspended: () => true,
+        onSetModel: async () => ({ ok: true as const, state: { model: "", effort: "" } }),
+      },
+    );
+    const model = r.container.querySelector<HTMLButtonElement>(".tl-model-btn")!;
+    expect(model.querySelector(".tl-model-name")?.textContent).toBe("Opus 5.5");
+    expect(model.getAttribute("aria-disabled")).toBe("true");
+    expect(model.getAttribute("title")).toBe(
+      "The session is asleep. Send a message to wake it, then change the model",
+    );
+  });
+
   it("presses the row's number, once", async () => {
     const { card, onKeys } = mount([
       ...base,

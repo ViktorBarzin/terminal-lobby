@@ -129,6 +129,9 @@ const MODE_HELD_BY_DIALOG =
  *  the server already refuses it while a question is up. */
 const MODEL_HELD_BY_DIALOG =
   "Answer Claude first: a model change now would type into the open dialog";
+/** And while the session is suspended: no Claude is running to drive the
+ *  picker, and a Send is what wakes it (store/wake-send.ts). */
+const MODEL_HELD_ASLEEP = "The session is asleep. Send a message to wake it, then change the model";
 
 /**
  * How long this client's applied plan answer stands in for the transcript's
@@ -402,6 +405,9 @@ export const TextView: Component<{
   onTakeControl?: () => void;
   /** receive the composer's sinks, for gestures that land outside it. */
   register?: (api: ComposerSinks) => void;
+  /** The session is suspended (the session list's mark): the model button
+   *  holds until a Send wakes it. */
+  suspended?: () => boolean;
   /** show the Terminal view — where a question the pane can only half show has
    *  to be answered until the transcript catches up. */
   onOpenTerminal?: () => void;
@@ -1434,7 +1440,8 @@ export const TextView: Component<{
   );
   const modeHeld = (): string => (dialogUp() ? MODE_HELD_BY_DIALOG : "");
   /** A model pick is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
-  const modelHeld = (): string => (dialogUp() ? MODEL_HELD_BY_DIALOG : "");
+  const modelHeld = (): string =>
+    dialogUp() ? MODEL_HELD_BY_DIALOG : props.suspended?.() ? MODEL_HELD_ASLEEP : "";
   /** Modes the server has said this session does not offer. They stay out of
    *  reach until the view remounts, since launch flags do not change mid-run. */
   const [unavailable, setUnavailable] = createSignal<ReadonlySet<string>>(new Set());

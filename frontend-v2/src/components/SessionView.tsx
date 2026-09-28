@@ -1705,6 +1705,7 @@ export const SessionView: Component<{
             me={props.me?.() ?? ""}
             harness={modelHarness(props.tool?.())}
             onSetModel={setModel}
+            suspended={() => props.suspended?.() ?? false}
             onSetMode={(m) => setSessionMode({ session, mode: m })}
             stampedModel={piReading()}
             modelOffer={piOffer()}

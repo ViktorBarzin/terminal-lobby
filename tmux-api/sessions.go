@@ -104,6 +104,7 @@ func userSessionsAndActivity(osUser string) ([]Session, map[string]int64) {
 	} else {
 		log.Printf("proc scan failed (keeping hook states as-is): %v", err)
 	}
+	markSuspendedClaudes(sessions)
 	// A session is created with an opaque id for a name, and nobody types a
 	// title any more. Claude Code's own conversation summary arrives in the pane
 	// title a few seconds after the first prompt, and this is where it becomes

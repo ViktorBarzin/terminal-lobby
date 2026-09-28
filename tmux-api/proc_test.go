@@ -374,3 +374,23 @@ func TestClearDeadStatesKeepsAPiSessionsState(t *testing.T) {
 		}
 	}
 }
+
+// Only a Claude session is suspended (sessionsToSuspend), and a suspended pane
+// is dead, so the process scan finds nothing under it and the list sent no
+// tool. The Text view's model button then read the permission mode ("✳
+// Auto") on every suspended session (deployed review round 1, 2026-09-28).
+func TestSuspendedSessionsAreClaudes(t *testing.T) {
+	sessions := []Session{
+		{Name: "asleep", SuspendedAt: 1800000000},
+		{Name: "asleep-shell-read", SuspendedAt: 1800000000, Tool: toolShell},
+		{Name: "awake", Tool: toolCodex},
+		{Name: "unknown"},
+	}
+	markSuspendedClaudes(sessions)
+	want := []string{toolClaude, toolClaude, toolCodex, ""}
+	for i, w := range want {
+		if sessions[i].Tool != w {
+			t.Errorf("%s: Tool = %q, want %q", sessions[i].Name, sessions[i].Tool, w)
+		}
+	}
+}

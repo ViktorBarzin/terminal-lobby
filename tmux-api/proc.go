@@ -202,6 +202,20 @@ func annotateTools(sessions []Session, t procTree) {
 	}
 }
 
+// markSuspendedClaudes names the tool of every suspended session: Claude,
+// since sessionsToSuspend suspends nothing else. Its pane is dead, so the
+// process scan finds nothing under it, and a session list with no tool made
+// the Text view's model button read the permission mode instead of the model
+// ("✳ Auto") on every suspended session (deployed review round 1,
+// 2026-09-28). Runs whether or not the scan worked: the mark alone says it.
+func markSuspendedClaudes(sessions []Session) {
+	for i := range sessions {
+		if sessions[i].SuspendedAt > 0 {
+			sessions[i].Tool = toolClaude
+		}
+	}
+}
+
 // clearDeadStates drops @claude_state from sessions whose pane has no live
 // claude underneath — claude died without firing SessionEnd (kill -9, OOM
 // of the claude process alone) and the launcher fell back to a shell. An
