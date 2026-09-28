@@ -263,6 +263,17 @@ const FAST_ENTER_MS = 3_000;
  */
 const UNSEEN_TYPING_MS = 700;
 
+/**
+ * How long a card is up before its row digits press rows.
+ *
+ * Deployed review round 3 (2026-09-28): the card took the focus the moment it
+ * docked over the empty field, and "4 more words" typed 30ms later pressed
+ * row 4 (No) and lost the rest; a leading "2" would have granted a lasting
+ * permission. A reader who means a row reads the card first, which takes
+ * longer than this; a keystroke inside it was meant for the message.
+ */
+const CARD_KEYS_ARM_MS = 600;
+
 /** Keys that move the caret: pressing one means the reader is placing it in
  *  the text that is there. */
 const CARET_KEYS = new Set([
@@ -1583,18 +1594,23 @@ export const TextView: Component<{
    * into a field with words in it is typing, so no row is pressed.
    */
   const [typingReleased, releaseTyping] = createSignal(0);
-  const behind = createMemo<{ on: boolean; gen: number }>(
+  /** Bumped when typing starts on the card itself (`typeBehind`). */
+  const [typedOnCard, typeOnCard] = createSignal(0);
+  const behind = createMemo<{ on: boolean; gen: number; typed: number }>(
     (prev) => {
       const up = composerHidden();
       const gen = typingReleased();
-      if (!up) return { on: false, gen };
-      if (prev.on) return { on: gen === prev.gen, gen: prev.gen };
+      const typed = typedOnCard();
+      if (!up) return { on: false, gen, typed };
+      if (prev.on) return { on: gen === prev.gen, gen: prev.gen, typed };
+      if (typed !== prev.typed) return { on: true, gen, typed };
       return {
         on: composerFocused() && (composerSinks()?.text() ?? "").trim() !== "",
         gen,
+        typed,
       };
     },
-    { on: false, gen: 0 },
+    { on: false, gen: 0, typed: 0 },
   );
   const typingBehind = (): boolean => behind().on;
   createEffect(
@@ -1671,12 +1687,39 @@ export const TextView: Component<{
   onMount(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
-      if (!/^[1-9]$/.test(e.key) || !permissionUp() || !keyInView(e.target)) return;
-      if (pressPermissionRow?.(Number(e.key))) e.preventDefault();
+      if (!keyInView(e.target)) return;
+      const digit = /^[1-9]$/.test(e.key);
+      if (digit && permissionUp() && cardKeysArmed()) {
+        if (pressPermissionRow?.(Number(e.key))) e.preventDefault();
+        return;
+      }
+      // A row digit on an armed question card is the card's (QuestionCard).
+      if (digit && questionUp() && cardKeysArmed()) return;
+      if (typeBehind(e)) e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
     onCleanup(() => document.removeEventListener("keydown", onKey));
   });
+
+  /**
+   * A character typed on the focused card goes into the message behind it,
+   * and the field takes the rest, out of sight, the way words typed while a
+   * card docks already do. Letters used to go nowhere, with no notice, and a
+   * digit before the rows arm is typing too (deployed review round 3,
+   * 2026-09-28). Only on the card itself: a row or a link with the focus keeps
+   * its own keys, Space included. True when it took the key.
+   */
+  const typeBehind = (e: KeyboardEvent): boolean => {
+    const t = e.target;
+    if (!(t instanceof HTMLElement) || !t.classList.contains("tl-qcard")) return false;
+    if (e.key.length !== 1 || e.key === " " || props.inertReason) return false;
+    const sinks = composerSinks();
+    if (!sinks || !cardUp()) return false;
+    sinks.insertText(e.key);
+    typeOnCard((n) => n + 1);
+    sinks.focus();
+    return true;
+  };
 
   // A card that docks while nothing has the focus takes it, so its keys work at
   // once. So does one that docks over the EMPTY field the reader just sent
@@ -1686,6 +1729,16 @@ export const TextView: Component<{
   // their next keys land on the page rather than on the card's rows.
   const emptyField = (el: Element): boolean =>
     el instanceof HTMLTextAreaElement && !!el.closest(".tl-composer") && el.value === "";
+  const [cardKeysArmed, setCardKeysArmed] = createSignal(false);
+  let armTimer: ReturnType<typeof setTimeout> | undefined;
+  createEffect(
+    on(cardUp, (up) => {
+      clearTimeout(armTimer);
+      setCardKeysArmed(false);
+      if (up) armTimer = setTimeout(() => setCardKeysArmed(true), CARD_KEYS_ARM_MS);
+    }),
+  );
+  onCleanup(() => clearTimeout(armTimer));
   createEffect(
     on(cardUp, (up) => {
       if (!up) return;
@@ -1703,6 +1756,7 @@ export const TextView: Component<{
       class="tl-textview"
       ref={viewEl}
       style={{ "--tl-text-scale": String(scaleFor(textSize())) }}
+      data-card-keys={cardUp() && cardKeysArmed() ? "armed" : undefined}
     >
       {/* What size the pinch has reached, while it is being made. */}
       <Show when={sizing() !== null}>
@@ -1864,7 +1918,7 @@ export const TextView: Component<{
             questions={asked()}
             state={cardState()}
             busy={answering()}
-            keysActive={props.onScreen !== false && tileFocused()}
+            keysActive={props.onScreen !== false && tileFocused() && cardKeysArmed()}
             inert={props.inertReason}
             onSubmit={submitAnswers}
             onChat={chatInstead}
@@ -1970,7 +2024,9 @@ export const TextView: Component<{
         // Not from a field typing behind the card: the reader cannot see it
         // is empty, so a digit there is typing (`typingBehind`).
         onPermissionDigit={(row) =>
-          permission() && !typingBehind() ? (pressPermissionRow?.(row) ?? false) : false
+          permission() && !typingBehind() && cardKeysArmed()
+            ? (pressPermissionRow?.(row) ?? false)
+            : false
         }
         register={(api) => {
           setComposerSinks(api);

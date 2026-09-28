@@ -18,6 +18,13 @@ import type { Event } from "../src/types/events";
 const WATCHING = "Watching: this device does not type into the session";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "qa", ...e });
+
+/** The card's row digits arm a moment after it docks (TextView
+ *  CARD_KEYS_ARM_MS); a digit pressed before that is typing. */
+const armed = (root: HTMLElement) =>
+  waitFor(() => expect(root.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
+    timeout: 2000,
+  });
 const asking = (id: number, body: unknown): Event =>
   ev({ id, kind: "meta", meta: "asking", body: JSON.stringify(body) });
 /** A question the lobby's hook is holding for the card (ADR-0034). */
@@ -139,6 +146,7 @@ describe("a watching Text view", () => {
     await waitFor(() => expect(v.rows(".tl-permcard")).toHaveLength(4));
     for (const b of v.rows(".tl-permcard")) expect(b.disabled).toBe(true);
     fireEvent.click(v.rows(".tl-permcard")[2]!);
+    await armed(v.r.container);
     fireEvent.keyDown(v.field(), { key: "1" });
     await waitFor(() => expect(v.notify).toHaveBeenCalledWith(WATCHING, "info"));
     expect(v.onKeys).not.toHaveBeenCalled();

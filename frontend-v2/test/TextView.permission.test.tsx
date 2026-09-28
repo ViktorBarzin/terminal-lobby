@@ -17,6 +17,13 @@ import type { AnswerRequest } from "../src/lib/answer-api";
 
 const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session: "qa", ...e });
 
+/** The card's row digits arm a moment after it docks (TextView
+ *  CARD_KEYS_ARM_MS); a digit pressed before that is typing. */
+const armed = (root: HTMLElement) =>
+  waitFor(() => expect(root.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
+    timeout: 2000,
+  });
+
 const READING = JSON.stringify({
   kind: "permission",
   title: "Bash command",
@@ -343,6 +350,7 @@ describe("the permission card", () => {
     await waitFor(() => expect(card()).not.toBeNull());
     const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
     field.focus();
+    await armed(r.container);
     const typed = fireEvent.keyDown(field, { key: "2" });
     expect(typed).toBe(false); // the digit is not typed
     await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["2"]));
@@ -352,11 +360,12 @@ describe("the permission card", () => {
   });
 
   it("presses the row a digit names while the focus is in the Text view, once", async () => {
-    const { card, onKeys } = mount([
+    const { r, card, onKeys } = mount([
       ...base,
       ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
     ]);
     await waitFor(() => expect(card()).not.toBeNull());
+    await armed(r.container);
     expect(fireEvent.keyDown(card()!, { key: "2" })).toBe(false);
     await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["2"]));
     fireEvent.keyDown(card()!, { key: "1" });
@@ -376,6 +385,7 @@ describe("the permission card", () => {
     setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
     await waitFor(() => expect(card()).not.toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(card()));
+    await armed(r.container);
     expect(fireEvent.keyDown(document.activeElement!, { key: "3" })).toBe(false);
     await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["3"]));
   });
@@ -457,6 +467,7 @@ describe("the permission card", () => {
     const timeline = r.container.querySelector<HTMLElement>(".tl-timeline")!;
     expect(timeline.getAttribute("tabindex")).toBe("-1");
     timeline.focus();
+    await armed(r.container);
     expect(fireEvent.keyDown(timeline, { key: "1" })).toBe(false);
     await waitFor(() => expect(onKeys).toHaveBeenCalledWith(["1"]));
   });
@@ -535,6 +546,7 @@ describe("the permission card", () => {
     }
     fireEvent.keyDown(field, { key: "Enter" });
     fireEvent.click(card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!);
+    await armed(r.container);
     fireEvent.keyDown(card()!, { key: "1" });
     expect(onAnswer).toHaveBeenCalledTimes(1);
     expect(onKeys).not.toHaveBeenCalled();
@@ -735,5 +747,64 @@ describe("a permission prompt taller than the pane", () => {
       "cat > long.txt <<'EOF'\nline 1\nline 2\nEOF",
     );
     expect(card()!.textContent).toContain("Write numbered lines to long.txt");
+  });
+});
+
+/**
+ * Deployed review round 3 (2026-09-28): with the field empty, the card took
+ * the focus the moment it docked and a bare digit pressed its row at once.
+ * "4 more words", typed 30ms after the card appeared, pressed No and lost
+ * " more words"; a leading "2" would have granted a lasting permission. And
+ * letters typed on the focused card went nowhere, with no notice.
+ *
+ * The row digits now arm a moment after the card docks, and what is typed on
+ * the card before that, or any letter after it, goes into the message behind
+ * the card, as words typed while a card docks already did.
+ */
+describe("keys typed as a permission card docks", () => {
+  const docked = async (v: ReturnType<typeof mount>) => {
+    const field = v.r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    v.setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    return field;
+  };
+
+  it("types a digit pressed the moment the card docks into the message", async () => {
+    const v = mount(base);
+    const field = await docked(v);
+    expect(v.r.container.querySelector('[data-card-keys="armed"]')).toBeNull();
+    expect(fireEvent.keyDown(v.card()!, { key: "4" })).toBe(false);
+    expect(v.onKeys).not.toHaveBeenCalled();
+    expect(field.value).toBe("4");
+    expect(document.activeElement).toBe(field);
+    expect(v.composer().dataset.offstage).toBe("");
+    expect(v.notify).toHaveBeenCalledWith(
+      "Claude needs an answer. What you type stays in your message for after.",
+      "info",
+    );
+  });
+
+  it("types letters pressed on the focused card into the message", async () => {
+    const v = mount(base);
+    const field = await docked(v);
+    await waitFor(() => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
+      timeout: 2000,
+    });
+    expect(fireEvent.keyDown(v.card()!, { key: "h" })).toBe(false);
+    expect(field.value).toBe("h");
+    expect(document.activeElement).toBe(field);
+    expect(v.onKeys).not.toHaveBeenCalled();
+  });
+
+  it("presses the row once the card has been up a moment", async () => {
+    const v = mount(base);
+    await docked(v);
+    await waitFor(() => expect(v.r.container.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
+      timeout: 2000,
+    });
+    expect(fireEvent.keyDown(v.card()!, { key: "3" })).toBe(false);
+    await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["3"]));
   });
 });

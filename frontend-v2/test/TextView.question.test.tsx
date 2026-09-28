@@ -70,6 +70,13 @@ const held = (questions: unknown[] | null): Event =>
 
 const applied: AnswerResponse = { applied: true, done: true };
 
+/** The card's row digits arm a moment after it docks (TextView
+ *  CARD_KEYS_ARM_MS); a digit pressed before that is typing. */
+const armed = (root: HTMLElement) =>
+  waitFor(() => expect(root.querySelector('[data-card-keys="armed"]')).not.toBeNull(), {
+    timeout: 2000,
+  });
+
 function mount(
   initial: Event[],
   onAnswer: (req: AnswerRequest) => Promise<AnswerResponse | null> = async () => applied,
@@ -399,6 +406,7 @@ describe("a held call", () => {
     const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
     const v = mount([held([colour])], onAnswer);
     await waitFor(() => expect(v.option("Blue")).toBeTruthy());
+    await armed(v.container);
     fireEvent.keyDown(v.card()!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Blue"] } });
@@ -432,6 +440,7 @@ describe("a held call", () => {
     v.setEvents([held([colour])]);
     await waitFor(() => expect(v.card()).toBeTruthy());
     await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    await armed(v.container);
     fireEvent.keyDown(document.activeElement!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
   });
@@ -448,6 +457,7 @@ describe("a held call", () => {
     next.click();
     await waitFor(() => expect(v.option("Blue")).toBeTruthy());
     await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    await armed(v.container);
     fireEvent.keyDown(document.activeElement!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
@@ -485,6 +495,7 @@ describe("a held call", () => {
     take.click();
     const card = r.container.querySelector<HTMLElement>(".tl-qcard:not(.tl-plancard)")!;
     await waitFor(() => expect(document.activeElement).toBe(card));
+    await armed(r.container);
     fireEvent.keyDown(document.activeElement!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
   });
