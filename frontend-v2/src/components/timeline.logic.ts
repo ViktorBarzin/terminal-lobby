@@ -1197,7 +1197,7 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
  * wrote 2 replies"). It replaced "Worked for Ns · N steps" and a token count,
  * which the prototype does not draw (deployed review round 1, 2026-09-28).
  */
-export function foldSummary(hidden: readonly FoldedRow[]): string {
+function foldSummary(hidden: readonly FoldedRow[]): string {
   const calls = hidden.flatMap((r): WorkLeaf[] =>
     r.kind === "work-group" ? r.calls : r.kind === "tool" || r.kind === "thinking" ? [r] : [],
   );
