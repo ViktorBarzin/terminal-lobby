@@ -403,6 +403,42 @@ describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
     await waitFor(() => expect(field().value).toBe("Write a long story"));
   });
 
+  // The replay of the round 7 race (2026-09-28): the prompt came back 100 ms
+  // after the Stop, before typing began 160 to 520 ms after it, so the new
+  // words were typed onto its end and Enter sent both, 5 times in 12. An
+  // Enter that soon after the prompt came back sends only the words typed
+  // after it, and the prompt stays in the field.
+  it("sends only the new words when Enter follows the prompt coming back that closely", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const onSend = vi.fn(async (_t: string) => true);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    fireEvent.click(button());
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+    fireEvent.input(field(), { target: { value: "Write a long storyReply with ok" } });
+    fireEvent.click(button());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("Reply with ok"));
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+  });
+
+  it("sends the whole field once the reader has had time to see the prompt back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+      const onSend = vi.fn(async (_t: string) => true);
+      const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+      fireEvent.click(button());
+      await vi.waitFor(() => expect(field().value).toBe("Write a long story"));
+      await vi.advanceTimersByTimeAsync(4_000);
+      fireEvent.input(field(), { target: { value: "Write a long story, with a dragon" } });
+      fireEvent.click(button());
+      await vi.waitFor(() =>
+        expect(onSend).toHaveBeenCalledWith("Write a long story, with a dragon"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("does not hold a send for good when the Stop never answers", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {

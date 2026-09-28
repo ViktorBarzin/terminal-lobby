@@ -241,6 +241,14 @@ const HOLD_GRACE_MS = 4_000;
 const STOP_HAND_BACK_WAIT_MS = 5_000;
 
 /**
+ * How soon after a Stop puts its prompt back an Enter counts as typed without
+ * seeing it (`landed`). Typing began 160 to 520 ms after the Stop in the round 7
+ * replay, and Enter followed about a second later; 3 s leaves room for a
+ * longer line typed as quickly.
+ */
+const FAST_ENTER_MS = 3_000;
+
+/**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
  * above a composer with the docked permission panel.
  *
@@ -864,8 +872,20 @@ export const TextView: Component<{
     }
     const text = waitingBack.join("\n\n");
     waitingBack = [];
+    // Alone in the field, it is guarded against a quick Enter (`send`).
+    landed = now.trim() === "" ? { text, at: Date.now() } : null;
     sinks.prependText(text);
   };
+  /**
+   * What a Stop last put back into an empty field, and when.
+   *
+   * The replay of the round 7 race (2026-09-28) had the prompt back 100 ms
+   * after the Stop, before typing began 160 to 520 ms after it: the new words
+   * went onto its end and Enter sent both as one prompt, 5 times in 12. An
+   * Enter within FAST_ENTER_MS of it coming back, on a field that still starts
+   * with it, sends only the words after it, and it stays in the field.
+   */
+  let landed: { text: string; at: number } | null = null;
 
   /**
    * Answer the held call, or decline it with "Chat about this", as data
@@ -917,6 +937,23 @@ export const TextView: Component<{
     return ok;
   };
   const send = async (text: string): Promise<boolean> => {
+    const back = landed;
+    landed = null;
+    if (
+      back &&
+      Date.now() - back.at < FAST_ENTER_MS &&
+      text.startsWith(back.text) &&
+      text.slice(back.text.length).trim() !== ""
+    ) {
+      const own = followed(await sendNow(text.slice(back.text.length).trim()));
+      // The field was emptied for the send; the prompt goes back into it.
+      if (own) {
+        landed = { text: back.text, at: Date.now() };
+        composerSinks()?.prependText(back.text);
+        props.notify?.("Sent what you typed. The stopped message stays in the field.", "info");
+      }
+      return own;
+    }
     const ok = followed(await sendNow(text));
     // What a Stop handed back while these words were being written follows
     // them into the field (`landHandedBack`).
