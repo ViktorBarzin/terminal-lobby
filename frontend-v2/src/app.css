@@ -1960,6 +1960,12 @@ label.tl-set-row-label {
   color: var(--text-muted);
   font-style: italic;
 }
+/* In the conversation's column, where the first reply will land. */
+.tl-empty-state {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
 .tl-row {
   max-width: 760px;
   width: 100%;
@@ -6157,6 +6163,16 @@ body.tl-kb-up {
   white-space: nowrap;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
+}
+/* The tag gives way before the title does: "Claude asks" cut to
+   "Claude as…" beside a whole "Season" was seen on a watching phone, where
+   Take control joins the links. Shrink is weighted by size, so a weight this
+   large takes nearly all of it from the tag until the tag is gone. */
+.tl-qcard-tag {
+  flex: 0 100 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tl-qcard-step {
   font-variant-numeric: tabular-nums;
