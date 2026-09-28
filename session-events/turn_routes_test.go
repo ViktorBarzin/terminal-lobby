@@ -57,6 +57,7 @@ type fakeTurns struct {
 	setModelFor sessionio.Harness
 	setModelReq sessionio.ModelState
 	prompted    string
+	promptedBox bool // PromptInto's box
 	cleared     []string
 	reclaimed   string
 	stamped     map[string]string // SetOption
@@ -130,8 +131,9 @@ func (f *fakeTurns) State(_, _ string) string {
 	return f.state
 }
 
-func (f *fakeTurns) Prompt(_, _, text string) error {
+func (f *fakeTurns) PromptInto(_, _, text string, box bool) error {
 	f.record("Prompt")
+	f.promptedBox = box
 	if f.inPrompt != nil {
 		f.inPrompt()
 	}
@@ -1065,5 +1067,22 @@ func appendLine(t *testing.T, path, line string) {
 	defer fh.Close()
 	if _, err := fh.WriteString(line + "\n"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The guard's read of the pane goes with the prompt: a dialog can take the
+// box's place before sessionio's own first read, and a pane with no box reads
+// like a shell's, whose Enter goes unchecked. The live check of the dialog
+// race fix lost a prompt that way on 2026-09-28.
+func TestPromptSaysWhetherTheGuardSawClaudesBox(t *testing.T) {
+	box := "\n────────\n❯ \n────────\n"
+	for pane, want := range map[string]bool{box: true, "$ \n": false} {
+		f := &fakeTurns{pane: pane}
+		if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`); rec.Code != http.StatusNoContent {
+			t.Fatalf("status %d", rec.Code)
+		}
+		if f.promptedBox != want {
+			t.Errorf("pane %q: PromptInto box = %v, want %v", pane, f.promptedBox, want)
+		}
 	}
 }

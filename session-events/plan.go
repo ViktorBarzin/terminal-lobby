@@ -87,23 +87,44 @@ const exitPlanTool = "ExitPlanMode"
 //
 // It names the screen, as the reason the refusal carries, or "".
 func promptRefusal(rg *registry, p planPane, osUser, session string) string {
+	reason, _ := paneRefusal(rg, p, osUser, session)
+	return reason
+}
+
+// paneRefusal is promptRefusal, and whether the pane it read showed Claude's
+// input box: the prompt then goes in knowing the pane is Claude's
+// (sessionio.PromptInto).
+func paneRefusal(rg *registry, p planPane, osUser, session string) (string, bool) {
+	box := false
 	if pane, err := p.CapturePane(osUser, session); err == nil {
-		if sessionio.ClaudeTrustPending(pane) {
-			return trustOpenReason
-		}
-		if sessionio.ParsePlanDialog(pane) != nil {
-			return planOpenReason
-		}
-		if sessionio.ParsePermissionDialog(pane) != nil {
-			return permissionOpenReason
-		}
-		if sessionio.ParseDialog(pane) != nil {
-			return questionOpenReason
-		}
-		if sessionio.CodexMenuOpen(pane) {
-			return menuOpenReason
+		box = sessionio.ClaudeInputReady(pane)
+		if reason := dialogOnPane(pane); reason != "" {
+			return reason, box
 		}
 	}
+	return askRefusal(rg, p, osUser, session), box
+}
+
+// dialogOnPane is the refusal a dialog drawn on the pane calls for, or "".
+func dialogOnPane(pane string) string {
+	switch {
+	case sessionio.ClaudeTrustPending(pane):
+		return trustOpenReason
+	case sessionio.ParsePlanDialog(pane) != nil:
+		return planOpenReason
+	case sessionio.ParsePermissionDialog(pane) != nil:
+		return permissionOpenReason
+	case sessionio.ParseDialog(pane) != nil:
+		return questionOpenReason
+	case sessionio.CodexMenuOpen(pane):
+		return menuOpenReason
+	}
+	return ""
+}
+
+// askRefusal is the refusal the transcript calls for while the hook script
+// says a dialog is up (OptionAsk) and the pane has not drawn one yet.
+func askRefusal(rg *registry, p planPane, osUser, session string) string {
 	ask, _ := p.Option(osUser, session, sessionio.OptionAsk)
 	if ask == "" {
 		return ""

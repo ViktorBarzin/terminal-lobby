@@ -62,7 +62,9 @@ type promptDriver interface {
 	AwaitReady(ctx context.Context, osUser, session string, h sessionio.Harness, wait, poll time.Duration) error
 	PiTrustPending(osUser, session string) bool
 	Option(osUser, session, name string) (string, bool)
-	Prompt(osUser, session, text string) error
+	// PromptInto is sessionio's Prompt told whether the guard's read of the
+	// pane showed Claude's input box.
+	PromptInto(osUser, session, text string, box bool) error
 	// CapturePane is for the plan guard (plan.go promptRefusal), which reads the
 	// pane for the plan approval and nothing else.
 	CapturePane(osUser, session string) (string, error)
@@ -175,14 +177,16 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 		// reason, so the sender keeps its text. A tool permission prompt is
 		// refused the same way. Claude Code draws both, so a pi session is not
 		// read for them.
+		box := false
 		if !pi {
-			if reason := promptRefusal(rg, drv, osUser, session); reason != "" {
+			var reason string
+			if reason, box = paneRefusal(rg, drv, osUser, session); reason != "" {
 				writePromptRefusal(w, reason)
 				return
 			}
 		}
 		sentAt := time.Now()
-		err = drv.Prompt(osUser, session, body.Text)
+		err = drv.PromptInto(osUser, session, body.Text, box)
 		// The Enter went and a dialog stood in the box's place by the next
 		// read, so the pane cannot say whether Claude took the prompt first
 		// (sessionio.ErrSubmitUnconfirmed). The transcript can.

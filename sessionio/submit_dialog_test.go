@@ -54,3 +54,19 @@ func TestPromptTakesACommandThatOpensAScreenAsSubmitted(t *testing.T) {
 		t.Fatalf("Prompt(/config) = %v, want nil", err)
 	}
 }
+
+// The same check lost a prompt a third way: the dialog had already taken the
+// box's place by the time Prompt first read the pane, so the pane read like a
+// shell's, which gets its Enter unchecked. The route had seen the box a moment
+// before, in its guard's read, and says so (PromptInto); the prompt then stops
+// short of the dialog.
+func TestPromptIntoAPaneThatShowedTheBoxStopsAtADialogAlreadyUp(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_DIALOG=start")
+	err := in.PromptInto(osUser, "demo", "queued note 12", true)
+	if !errors.Is(err, ErrInputGone) {
+		t.Fatalf("PromptInto = %v, want ErrInputGone", err)
+	}
+	if got := paneLines(t, in, osUser, "ANSWERED="); len(got) != 0 {
+		t.Fatalf("the dialog was answered %q by a prompt", got)
+	}
+}

@@ -304,11 +304,22 @@ func exactSession(session string) string { return "=" + session }
 // gone by the paste or the Enter, a dialog drawn in its place, gets neither
 // and is ErrInputGone.
 func (in *Injector) Prompt(osUser, session, text string) error {
+	return in.PromptInto(osUser, session, text, false)
+}
+
+// PromptInto is Prompt for a caller that has just read the pane: box says
+// that read showed Claude's input box. A dialog can take the box's place
+// between that read and Prompt's own first one, and a pane with no box reads
+// like a shell's, whose Enter goes unchecked; the live check of the dialog
+// race fix lost a prompt that way on 2026-09-28. With box set the pane is
+// Claude's whatever Prompt then reads, and a box gone by the paste stops it
+// (ErrInputGone).
+func (in *Injector) PromptInto(osUser, session, text string, box bool) error {
 	boxed, err := in.clearInput(osUser, session)
 	if err != nil {
 		return err
 	}
-	return in.pasteAndSubmit(osUser, session, text, boxed)
+	return in.pasteAndSubmit(osUser, session, text, boxed || box)
 }
 
 // promptUnconfirmed is Prompt with a single, unchecked Enter, for a command

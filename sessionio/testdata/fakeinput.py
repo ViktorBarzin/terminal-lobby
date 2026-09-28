@@ -42,7 +42,8 @@ the box's place the moment a bracketed paste starts, or the moment a C-e
 arrives: Claude drawing a prompt while a send is on its way (deployed review
 round 4, 2026-09-28). FAKEINPUT_DIALOG=enter draws it as the Enter arrives
 and takes that Enter as nothing, keeping the text out of sight: the live
-check of the fix found a prompt lost that way, with no row picked. The paste mode turns bracketed paste on, which tmux
+check of the fix found a prompt lost that way, with no row picked.
+FAKEINPUT_DIALOG=start has it up from the start. The paste mode turns bracketed paste on, which tmux
 needs to mark a paste's start. While it is up, Enter picks its highlighted row and a
 digit picks that row, each printed as ANSWERED=<row>, and a paste is ignored.
 
@@ -121,7 +122,7 @@ def main():
     swallow = SWALLOW
     queue = list(QUEUE)
     interrupted = False
-    dialog = False
+    dialog = DIALOG == "start"
     pasting = False
     answered = []
     try:
