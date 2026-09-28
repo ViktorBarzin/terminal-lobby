@@ -279,7 +279,9 @@ func exactPane(session string) string { return "=" + session + ":" }
 // kill-session, where `=name:` is not accepted and `=name` is.
 func exactSession(session string) string { return "=" + session }
 
-// Prompt injects text as a bracketed paste, then submits with Enter.
+// Prompt injects text as bracketed pastes, then submits with Enter. A long
+// message goes as several pastes, each small enough that Claude Code keeps it
+// as the user's own words (pasteChunks).
 //
 // It clears the pane's input line first, so what is submitted is exactly what
 // the composer sent. The pane is rarely empty: Claude Code puts an interrupted
@@ -314,11 +316,7 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 	if err := in.clearInput(osUser, session); err != nil {
 		return err
 	}
-	if err := in.loadBuffer(osUser, text); err != nil {
-		return err
-	}
-	// -p = bracketed paste, -d = delete the buffer afterwards.
-	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
+	if err := in.paste(osUser, session, text); err != nil {
 		return err
 	}
 	return in.enter(osUser, session)
