@@ -385,6 +385,31 @@ draft and attachments come back as they were.
   It stays away while a card is up.
 - Card rows are 48px on a phone and 40px under any other finger.
 
+**After the first deployed review (2026-09-28).** Besides the items above:
+
+- A Codex session's first prompt from the new-session box waits for codex's
+  input line, as Claude's and pi's do. Codex draws its `›` as a menu cursor
+  too, so the wait holds while any numbered menu is up, and a prompt that
+  never finds the input line goes back into the composer.
+- The model sheet's Effort row works on a phone-width pane. At 47 columns
+  Claude Code wraps the slider's labels onto a second line, and the reader
+  now joins them. A refusal that names no choice says what failed and that
+  `/effort` in the Terminal still works, rather than the driver's sentence.
+- `@` completion lists from the session's own working directory, which the
+  session list now carries (`cwd`), then from its project's.
+- A prompt refused because a card is up says to answer the card, and that the
+  message comes back after.
+- Words typed while a card docks stay in the message: the field keeps the
+  focus out of sight behind the card, digits there are typing, and it hides
+  once the focus leaves it.
+- A suspended session is listed as Claude, so its model button names the
+  model; it holds until a Send wakes the session.
+- A shell or Codex session has no transcript here. Its Text view shows what
+  was sent with no live row under it, says the replies are in the Terminal
+  view with a button to open it, and names what the field talks to ("Ask
+  Codex, or run a command…", "Run a command…"). Reading Codex's own
+  conversation into the Text view is not part of the pass.
+
 **How the build was checked.** Unit tests for each item, then live checks: the
 cards, Stop and the queue hand-back against scratch Claude sessions; desktop at
 1280px and the phone at 390px in Chromium, in slate and T3 Light, beside the
