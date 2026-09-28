@@ -2688,6 +2688,13 @@ label.tl-set-row-label {
 .tl-markdown p {
   margin: 0.5em 0;
 }
+/* A single line break in Claude's reply is a break, as the CLI draws it.
+   Markdown would join the two lines into one; a reply that lists steps line
+   by line without bullets read as one run-on sentence. Replies only: a file
+   preview's hard-wrapped prose keeps markdown's joining. */
+.tl-row-message .tl-markdown p {
+  white-space: pre-line;
+}
 .tl-markdown h1,
 .tl-markdown h2,
 .tl-markdown h3,
