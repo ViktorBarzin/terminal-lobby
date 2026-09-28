@@ -405,19 +405,86 @@ describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
 
   // The replay of the round 7 race (2026-09-28): the prompt came back 100 ms
   // after the Stop, before typing began 160 to 520 ms after it, so the new
-  // words were typed onto its end and Enter sent both, 5 times in 12. An
-  // Enter that soon after the prompt came back sends only the words typed
-  // after it, and the prompt stays in the field.
-  it("sends only the new words when Enter follows the prompt coming back that closely", async () => {
+  // words were typed onto its end and Enter sent both, 5 times in 12. That
+  // happens where the field keeps the focus across the Stop (a finger on a
+  // phone): an Enter that soon after the prompt came back, with typing begun
+  // before anyone could have read it, sends only the words typed after it,
+  // and the prompt stays in the field.
+  it("sends only the new words when typing ran straight on in the field it came back to", async () => {
     const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
     const onSend = vi.fn(async (_t: string) => true);
     const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    field().focus();
     fireEvent.click(button());
     await waitFor(() => expect(field().value).toBe("Write a long story"));
     fireEvent.input(field(), { target: { value: "Write a long storyReply with ok" } });
     fireEvent.click(button());
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("Reply with ok"));
     await waitFor(() => expect(field().value).toBe("Write a long story"));
+  });
+
+  // Deployed review round 1 (2026-09-28): Stop, the prompt back in the field,
+  // a click into the field, End, " in French please" and Enter within 3 s sent
+  // only "in French please". On a desktop the Stop takes the focus off the
+  // field, so words typed onto the prompt were typed after coming back to it,
+  // and whatever the field shows is what goes.
+  it("sends the whole field when the field was not focused as the prompt came back", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const onSend = vi.fn(async (_t: string) => true);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    fireEvent.click(button());
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+    field().focus();
+    fireEvent.input(field(), { target: { value: "Write a long story in French please" } });
+    fireEvent.click(button());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("Write a long story in French please"));
+    expect(onSend).toHaveBeenCalledTimes(1);
+  });
+
+  it("sends the whole field when the reader pressed into it after the prompt came back", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const onSend = vi.fn(async (_t: string) => true);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    field().focus();
+    fireEvent.click(button());
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+    fireEvent.pointerDown(field());
+    fireEvent.input(field(), { target: { value: "Write a long story in French please" } });
+    fireEvent.click(button());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("Write a long story in French please"));
+  });
+
+  it("sends the whole field when the caret was moved before typing", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const onSend = vi.fn(async (_t: string) => true);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    field().focus();
+    fireEvent.click(button());
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+    fireEvent.keyDown(field(), { key: "End" });
+    fireEvent.input(field(), { target: { value: "Write a long story in French please" } });
+    fireEvent.click(button());
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("Write a long story in French please"));
+  });
+
+  it("sends the whole field when typing began once the prompt could be read", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+      const onSend = vi.fn(async (_t: string) => true);
+      const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+      field().focus();
+      fireEvent.click(button());
+      await vi.waitFor(() => expect(field().value).toBe("Write a long story"));
+      await vi.advanceTimersByTimeAsync(1_200);
+      fireEvent.input(field(), { target: { value: "Write a long story in French please" } });
+      fireEvent.click(button());
+      await vi.waitFor(() =>
+        expect(onSend).toHaveBeenCalledWith("Write a long story in French please"),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("sends the whole field once the reader has had time to see the prompt back", async () => {

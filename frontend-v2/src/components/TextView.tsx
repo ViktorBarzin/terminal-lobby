@@ -249,6 +249,27 @@ const STOP_HAND_BACK_WAIT_MS = 5_000;
 const FAST_ENTER_MS = 3_000;
 
 /**
+ * How soon after the stopped prompt comes back typing can begin and still be
+ * typing that never saw it. The round 7 replay began typing 60 to 420 ms after
+ * the prompt landed; reading a returned line and deciding to add to it takes
+ * longer than that.
+ */
+const UNSEEN_TYPING_MS = 700;
+
+/** Keys that move the caret: pressing one means the reader is placing it in
+ *  the text that is there. */
+const CARET_KEYS = new Set([
+  "Home",
+  "End",
+  "ArrowLeft",
+  "ArrowRight",
+  "ArrowUp",
+  "ArrowDown",
+  "PageUp",
+  "PageDown",
+]);
+
+/**
  * Text mode — the PRIMARY view. Structured transcript render (MessagesTimeline)
  * above a composer with the docked permission panel.
  *
@@ -873,19 +894,71 @@ export const TextView: Component<{
     const text = waitingBack.join("\n\n");
     waitingBack = [];
     // Alone in the field, it is guarded against a quick Enter (`send`).
-    landed = now.trim() === "" ? { text, at: Date.now() } : null;
+    landed = now.trim() === "" ? land(text) : null;
     sinks.prependText(text);
   };
   /**
-   * What a Stop last put back into an empty field, and when.
+   * What a Stop last put back into an empty field, when, and whether the
+   * reader can still be typing without having seen it.
    *
    * The replay of the round 7 race (2026-09-28) had the prompt back 100 ms
    * after the Stop, before typing began 160 to 520 ms after it: the new words
    * went onto its end and Enter sent both as one prompt, 5 times in 12. An
    * Enter within FAST_ENTER_MS of it coming back, on a field that still starts
    * with it, sends only the words after it, and it stays in the field.
+   *
+   * Only while `unseen` holds. Deployed review round 1 (2026-09-28) added
+   * " in French please" to the returned prompt and Enter sent the fragment
+   * alone. That reader had come back to the prompt, and the field says so:
+   * it did not have the focus as the prompt landed (a desktop Stop takes it),
+   * or it was pressed, or the caret was moved, or typing began later than
+   * UNSEEN_TYPING_MS. Any of those, and the field goes out as it reads.
    */
-  let landed: { text: string; at: number } | null = null;
+  let landed: { text: string; at: number; unseen: boolean; typedAt: number } | null = null;
+  const composerFocused = (): boolean => {
+    const active = document.activeElement;
+    return (
+      active instanceof HTMLTextAreaElement &&
+      !!active.closest(".tl-composer") &&
+      !!viewEl?.contains(active)
+    );
+  };
+  const land = (text: string) => ({
+    text,
+    at: Date.now(),
+    unseen: composerFocused(),
+    typedAt: 0,
+  });
+  /** What the reader does in the field after a prompt came back says whether
+   *  they saw it (`landed`). */
+  const watchLanded = (e: globalThis.Event): void => {
+    const back = landed;
+    if (!back?.unseen) return;
+    const t = e.target;
+    if (!(t instanceof HTMLTextAreaElement) || !t.closest(".tl-composer")) return;
+    if (e.type === "keydown") {
+      if (e instanceof KeyboardEvent && CARET_KEYS.has(e.key)) back.unseen = false;
+      return;
+    }
+    if (e.type === "input") {
+      if (back.typedAt === 0) {
+        back.typedAt = Date.now();
+        if (back.typedAt - back.at > UNSEEN_TYPING_MS) back.unseen = false;
+      }
+      return;
+    }
+    // A press or a focus: the reader came to the field and the prompt in it.
+    back.unseen = false;
+  };
+  onMount(() => {
+    const el = viewEl;
+    if (!el) return;
+    const kinds = ["pointerdown", "mousedown", "touchstart", "focusin", "keydown", "input"];
+    for (const k of kinds) el.addEventListener(k, watchLanded, true);
+    onCleanup(() => {
+      for (const k of kinds) el.removeEventListener(k, watchLanded, true);
+    });
+  });
 
   /**
    * Answer the held call, or decline it with "Chat about this", as data
@@ -940,7 +1013,7 @@ export const TextView: Component<{
     const back = landed;
     landed = null;
     if (
-      back &&
+      back?.unseen &&
       Date.now() - back.at < FAST_ENTER_MS &&
       text.startsWith(back.text) &&
       text.slice(back.text.length).trim() !== ""
@@ -948,7 +1021,7 @@ export const TextView: Component<{
       const own = followed(await sendNow(text.slice(back.text.length).trim()));
       // The field was emptied for the send; the prompt goes back into it.
       if (own) {
-        landed = { text: back.text, at: Date.now() };
+        landed = land(back.text);
         composerSinks()?.prependText(back.text);
         props.notify?.("Sent what you typed. The stopped message stays in the field.", "info");
       }

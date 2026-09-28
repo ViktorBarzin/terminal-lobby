@@ -320,7 +320,13 @@ it lands in the field once they are sent. Before, it was glued in front of
 them, and a quick Enter sent both. The replay of that race found the prompt
 back about 100 ms after the Stop, often before typing began, so an Enter
 within 3 s of it coming back, on a field that still starts with it, sends only
-the words typed after it and leaves it in the field. Right after the
+the words typed after it and leaves it in the field. That split applies only
+while the reader cannot have seen the prompt: the field had the focus as it
+came back (a finger on a phone keeps it across the Stop), nobody pressed the
+field or moved the caret, and typing began within 700 ms. The first deployed
+review found the split sending " in French please" alone after a reader added
+it to the returned prompt on a desktop, where the Stop takes the focus away;
+there the field now goes out as it reads. Right after the
 interrupt Claude Code can draw a panel where the input box was (its
 feedback-draft panel did, over a scratch session), so the server keeps reading
 the pane for the returned prompt for the whole 1.5 s rather than stopping at
