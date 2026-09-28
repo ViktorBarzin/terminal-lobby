@@ -158,6 +158,17 @@ export function projectDirFor(layout: Layout, session: string): string | undefin
 }
 
 /**
+ * The name of the layout project whose sidebar group holds a session, for the
+ * Text view header's "project · state". The layout is where the sidebar's
+ * groups come from; the session record's own `project` (tmux-api's global
+ * project store) is empty for sessions grouped in the lobby. An ungrouped
+ * session or an unknown name yields undefined.
+ */
+export function projectNameFor(layout: Layout, session: string): string | undefined {
+  return layout.projects.find((p) => p.sessions.includes(session))?.name || undefined;
+}
+
+/**
  * The session mounts the shell renders, and the identity `<For>` keys them by.
  *
  * Two lists arrive here: the sessions `store/keepalive.ts` says to keep, and
@@ -2772,7 +2783,9 @@ export const App: Component = () => {
                       background={() => store.sessions.find((s) => s.name === k.name)?.bg}
                       // The header's subtitle starts with it. BY KEY, for the
                       // reason `tileSession` exists.
-                      project={() => tileSession()?.project}
+                      project={() =>
+                        projectNameFor(store.layout(), k.name) ?? (tileSession()?.project || undefined)
+                      }
                       // The hook-stamped state, which the Text view's Stop
                       // needs to agree with the transcript. BY KEY, for the
                       // reason `tileSession` exists.

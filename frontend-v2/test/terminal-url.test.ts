@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildTerminalArgs, type TerminalUrlOpts } from "../src/lib/terminal-url";
-import { projectDirFor } from "../src/components/App";
+import { projectDirFor, projectNameFor } from "../src/components/App";
 import { LAYOUT_VERSION, type Layout } from "../src/types/lobby";
 
 describe("buildTerminalArgs — ttyd positional ?arg= contract", () => {
@@ -158,6 +158,32 @@ describe("projectDirFor — the layout directory a session should be born in", (
         dir: projectDirFor(layout(), "qa-vdirs"),
       }),
     ).toBe("arg=qa-vdirs&arg=default&arg=%2Ftmp%2Fqa-harness-scratch");
+  });
+});
+
+// The Text view header's subtitle reads "project · state". Found live on
+// 2026-09-28: it took the project from the session record, which no session
+// on the box carries, so every header read the state alone while the sidebar
+// showed the session under CODE. The sidebar's groups are the layout's.
+describe("projectNameFor: the sidebar group a session sits in", () => {
+  const layout = (): Layout => ({
+    version: LAYOUT_VERSION,
+    projects: [
+      { name: "code", sessions: ["Project R", "t3"] },
+      { name: "health", sessions: ["walks"] },
+    ],
+    ungrouped: ["loose"],
+    ungroupedIndex: 0,
+  });
+
+  it("names the project whose group holds the session", () => {
+    expect(projectNameFor(layout(), "Project R")).toBe("code");
+    expect(projectNameFor(layout(), "walks")).toBe("health");
+  });
+
+  it("names nothing for an ungrouped session and for an unknown one", () => {
+    expect(projectNameFor(layout(), "loose")).toBeUndefined();
+    expect(projectNameFor(layout(), "never-heard-of-it")).toBeUndefined();
   });
 });
 
