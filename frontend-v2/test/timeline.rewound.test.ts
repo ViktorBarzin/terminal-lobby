@@ -64,6 +64,23 @@ describe("deriveRows: a prompt a Stop took back", () => {
     expect(rows[reply - 1]?.kind).toBe("user");
   });
 
+  // Deployed review round 4 (2026-09-28): a Stop took back two queued prompts
+  // the CLI ran as one batch, each opening a turn of its own. The Stop ends
+  // only the last one's turn, so the first one's, left with nothing but its
+  // marker, read as running: "Working…" and a spinner after the Stop.
+  it("leaves nothing running after it takes back a batch", () => {
+    const events = [
+      ...ANSWERED,
+      ev({ id: 4, kind: "user", turnId: "t2", body: "queued msg 1", at: 2_000 }),
+      ev({ id: 5, kind: "user", turnId: "t3", body: "queued msg 2", at: 2_001 }),
+      ev({ id: 6, kind: "turn_end", turnId: "t3", at: 2_700 }),
+      ev({ id: 7, kind: "meta", meta: "rewound", turnId: "t2", body: "queued msg 1", at: 2_700 }),
+      ev({ id: 8, kind: "meta", meta: "rewound", turnId: "t3", body: "queued msg 2", at: 2_700 }),
+    ];
+    expect(bubbles(events)).toEqual(["hello"]);
+    expect(sessionWorking(deriveRows(events))).toBe(false);
+  });
+
   it("leaves every other turn's prompt alone", () => {
     const events = [
       ...ANSWERED,

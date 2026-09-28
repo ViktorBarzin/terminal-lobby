@@ -1630,6 +1630,11 @@ export function deriveRows(
  * and that turn's prompt is dropped here. Kept, it read as sent, and whatever
  * started the next turn read as its answer. Returns `events` itself when
  * nothing was taken back.
+ *
+ * The markers go too. A batch of queued prompts is one turn per prompt, and
+ * the Stop ends only the last one's; a marker left in an earlier one's turn
+ * kept that turn open with nothing else in it, and the view drew "Working…"
+ * after the Stop (deployed review round 4, 2026-09-28).
  */
 function withoutRewound(events: Event[]): Event[] {
   let taken: Set<string> | null = null;
@@ -1639,7 +1644,9 @@ function withoutRewound(events: Event[]): Event[] {
   if (!taken) return events;
   const gone = taken;
   return events.filter(
-    (e) => !(e.kind === "user" && !e.sidechain && e.turnId && gone.has(e.turnId)),
+    (e) =>
+      !(e.kind === "user" && !e.sidechain && e.turnId && gone.has(e.turnId)) &&
+      !(e.kind === "meta" && e.meta === "rewound"),
   );
 }
 
