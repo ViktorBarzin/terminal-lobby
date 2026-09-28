@@ -51,6 +51,18 @@ export interface CachedTranscript {
   readonly events: readonly Event[];
   /** Which log these ids belong to — the server's `ready.epoch`. */
   readonly epoch: string;
+  /**
+   * Where the next step back begins for these events: the store's cursor when
+   * they were saved, 0 once paging reached the start of the session.
+   *
+   * A resume's `ready` frame names no cursor, and the oldest id held is not a
+   * safe stand-in: a turn the window split brings its prompt from far below
+   * the rest, and paging from that prompt skipped everything between (round 7
+   * check, 2026-09-28: "Start of session" over a transcript that began at event
+   * 212). Copies written before this field existed have none, and are not
+   * resumed from.
+   */
+  readonly cursor?: number;
 }
 
 /** One session's slot as the backend holds it. */
@@ -102,10 +114,7 @@ export function trimToCap(
  * concatenation: a resume overlaps by design (the server may replay the cursor
  * event itself), and a live event can arrive while a window is still landing.
  */
-export function mergeEvents(
-  held: readonly Event[],
-  arrived: readonly Event[],
-): readonly Event[] {
+export function mergeEvents(held: readonly Event[], arrived: readonly Event[]): readonly Event[] {
   if (arrived.length === 0) return held;
   const byId = new Map<number, Event>();
   for (const e of held) byId.set(e.id, e);
@@ -149,7 +158,9 @@ export function createTranscriptCache(backend: CacheBackend | null, now: () => n
     try {
       const rec = await backend.read(session);
       if (!rec || rec.events.length === 0 || !rec.epoch) return null;
-      return { events: rec.events, epoch: rec.epoch };
+      return typeof rec.cursor === "number"
+        ? { events: rec.events, epoch: rec.epoch, cursor: rec.cursor }
+        : { events: rec.events, epoch: rec.epoch };
     } catch {
       return null;
     }
@@ -159,18 +170,25 @@ export function createTranscriptCache(backend: CacheBackend | null, now: () => n
     session: string,
     epoch: string,
     events: readonly Event[],
+    cursor?: number,
   ): Promise<void> => {
     if (!backend || !epoch || events.length === 0) return;
     try {
+      // `trimToCap(unwrap(...))`, not the other way round: reading an index of
+      // a Solid store hands back a PROXIED element, so a slice of one is a
+      // plain array still full of proxies, and IndexedDB cannot
+      // structured-clone any of it. Unwrapping a store is one `$RAW` read and
+      // unwrapping a plain array is identity, so the policy above is unchanged.
+      const all = unwrap(events);
+      const kept = trimToCap(all);
+      // What the cap dropped is a hole under the oldest event kept, so the
+      // next step back starts there.
+      const floor = kept.length < all.length ? kept[0]!.id : 0;
       await backend.write({
         session,
         epoch,
-        // `trimToCap(unwrap(...))`, not the other way round: reading an index of
-        // a Solid store hands back a PROXIED element, so a slice of one is a
-        // plain array still full of proxies, and IndexedDB cannot
-        // structured-clone any of it. Unwrapping a store is one `$RAW` read and
-        // unwrapping a plain array is identity, so the policy above is unchanged.
-        events: trimToCap(unwrap(events)),
+        events: kept,
+        ...(typeof cursor === "number" ? { cursor: Math.max(cursor, floor) } : {}),
         touchedAt: now(),
       });
       const entries = await backend.list();

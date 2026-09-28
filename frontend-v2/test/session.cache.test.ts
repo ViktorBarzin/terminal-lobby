@@ -58,7 +58,7 @@ describe("a session opened from the cache", () => {
     const urls: string[] = [];
     installEventSource(urls);
     const cache = fakeCache({
-      read: async () => ({ events: [ev(1), ev(2), ev(7)], epoch: "epoch-a" }),
+      read: async () => ({ events: [ev(1), ev(2), ev(7)], epoch: "epoch-a", cursor: 0 }),
     });
 
     let store!: ReturnType<typeof createSessionStore>;
@@ -96,7 +96,7 @@ describe("a session opened from the cache", () => {
     installEventSource(urls);
     const saved: Array<{ epoch: string; ids: number[] }> = [];
     const cache = fakeCache({
-      read: async () => ({ events: [ev(1)], epoch: "epoch-a" }),
+      read: async () => ({ events: [ev(1)], epoch: "epoch-a", cursor: 0 }),
       save: async (_s: string, epoch: string, events: readonly Event[]) => {
         saved.push({ epoch, ids: events.map((e) => e.id) });
       },
@@ -129,7 +129,7 @@ describe("a session opened from the cache", () => {
     };
     const saved: string[] = [];
     const cache = fakeCache({
-      read: async () => ({ events: [ev(1)], epoch: "epoch-a" }),
+      read: async () => ({ events: [ev(1)], epoch: "epoch-a", cursor: 0 }),
       save: async (_s: string, epoch: string) => void saved.push(epoch),
     });
     let dispose!: () => void;
@@ -150,7 +150,7 @@ describe("a session opened from the cache", () => {
     installEventSource(urls);
     const dropped: string[] = [];
     const cache = fakeCache({
-      read: async () => ({ events: [ev(9)], epoch: "epoch-old" }),
+      read: async () => ({ events: [ev(9)], epoch: "epoch-old", cursor: 0 }),
       drop: async (s: string) => void dropped.push(s),
     });
     let store!: ReturnType<typeof createSessionStore>;
@@ -170,6 +170,128 @@ describe("a session opened from the cache", () => {
 });
 
 /**
+ * Round 7 (2026-09-28): page earlier once, reopen, and the top row read "Start
+ * of session" over a transcript that began at event 212. A resume names no
+ * cursor, so the store fell back to the oldest id held, and that was the
+ * prompt of a turn split by the window, which rides along from far below it.
+ * The cursor is now stored with the events, and a copy stored without one is
+ * not trusted to page from.
+ */
+describe("paging back from a session opened from the cache", () => {
+  const OPENED = [
+    { ...ev(1), kind: "user" as const, body: "the long first turn" },
+    ev(212),
+    ev(213),
+  ];
+
+  it("keeps the stored cursor, so earlier history is still offered and fetched from it", async () => {
+    const urls: string[] = [];
+    g.EventSource = class {
+      constructor(url: string) {
+        urls.push(url);
+      }
+      close(): void {}
+      // A resume's ready names no cursor.
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: JSON.stringify({ epoch: "epoch-a" }) });
+      }
+      removeEventListener(): void {}
+    };
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", (url: string) => {
+      asked.push(url);
+      return Promise.resolve({ ok: true, json: async () => ({ events: [ev(150)], cursor: 100 }) });
+    });
+    const cache = fakeCache({
+      read: async () => ({ events: OPENED, epoch: "epoch-a", cursor: 200 }),
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      store = createSessionStore("cached", { cache });
+    });
+    await settle();
+    expect(store.events.map((e) => e.id)).toEqual([1, 212, 213]);
+    expect(store.hasEarlier()).toBe(true);
+    await store.loadEarlier();
+    expect(asked.at(-1)).toContain("before=200");
+    expect(store.hasEarlier()).toBe(true);
+    dispose();
+  });
+
+  it("says it has reached the start when the stored cursor says so", async () => {
+    installEventSource([]);
+    g.EventSource = class {
+      close(): void {}
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: JSON.stringify({ epoch: "epoch-a" }) });
+      }
+      removeEventListener(): void {}
+    };
+    const cache = fakeCache({
+      read: async () => ({ events: [ev(1), ev(2)], epoch: "epoch-a", cursor: 0 }),
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      store = createSessionStore("cached", { cache });
+    });
+    await settle();
+    expect(store.hasEarlier()).toBe(false);
+    dispose();
+  });
+
+  it("opens the ordinary way from a copy stored without a cursor", async () => {
+    const urls: string[] = [];
+    installEventSource(urls);
+    const cache = fakeCache({ read: async () => ({ events: OPENED, epoch: "epoch-a" }) });
+    let store!: ReturnType<typeof createSessionStore>;
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      store = createSessionStore("cached", { cache });
+    });
+    await settle();
+    expect(store.events).toHaveLength(0);
+    expect(urls.at(-1)).not.toContain("lastEventId");
+    dispose();
+  });
+
+  it("stores the cursor beside the events, the one paging moved it to included", async () => {
+    g.EventSource = class {
+      close(): void {}
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: JSON.stringify({ cursor: 212, epoch: "epoch-a" }) });
+      }
+      removeEventListener(): void {}
+    };
+    vi.stubGlobal("fetch", () =>
+      Promise.resolve({ ok: true, json: async () => ({ events: [ev(150)], cursor: 100 }) }),
+    );
+    const saved: Array<{ ids: number[]; cursor: number | undefined }> = [];
+    const cache = fakeCache({
+      save: async (_s: string, _e: string, events: readonly Event[], cursor?: number) => {
+        saved.push({ ids: events.map((e) => e.id), cursor });
+      },
+    });
+    let store!: ReturnType<typeof createSessionStore>;
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      store = createSessionStore("cached", { cache });
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(saved.at(-1)?.cursor).toBe(212);
+    await store.loadEarlier();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(saved.at(-1)).toEqual({ ids: [150], cursor: 100 });
+    dispose();
+  });
+});
+
+/**
  * "The cache works" has to be a measurement, not a claim: one record per open
  * saying what this device supplied against what the server still sent.
  */
@@ -179,7 +301,7 @@ describe("what an open reports", () => {
     const urls: string[] = [];
     installEventSource(urls);
     const cache = fakeCache({
-      read: async () => ({ events: [ev(1), ev(2), ev(3)], epoch: "epoch-a" }),
+      read: async () => ({ events: [ev(1), ev(2), ev(3)], epoch: "epoch-a", cursor: 0 }),
     });
     let dispose!: () => void;
     createRoot((d) => {
@@ -210,4 +332,3 @@ describe("what an open reports", () => {
     dispose();
   });
 });
-

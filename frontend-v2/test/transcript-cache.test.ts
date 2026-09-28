@@ -149,6 +149,20 @@ describe("transcript cache — reading and writing", () => {
     expect(backend.records.get("main")!.events).toHaveLength(MAX_EVENTS_PER_SESSION);
   });
 
+  it("keeps where paging back begins beside the events", async () => {
+    const cache = createTranscriptCache(memoryBackend(), () => 1);
+    await cache.save("main", "e", [ev(1), ev(212)], 200);
+    expect(await cache.read("main")).toEqual({ events: [ev(1), ev(212)], epoch: "e", cursor: 200 });
+  });
+
+  it("moves that cursor up to the hole the cap leaves", async () => {
+    const backend = memoryBackend();
+    const cache = createTranscriptCache(backend, () => 1);
+    const events = Array.from({ length: MAX_EVENTS_PER_SESSION + 10 }, (_, i) => ev(i + 1));
+    await cache.save("main", "e", events, 0);
+    expect((await cache.read("main"))?.cursor).toBe(11);
+  });
+
   it("is a no-op, not a failure, with no backend at all", async () => {
     // No IndexedDB (a private window, a partitioned context) must cost the
     // optimisation and nothing else.

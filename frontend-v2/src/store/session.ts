@@ -557,7 +557,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       // 2026-08-28 and 2026-09-11 every write here threw DataCloneError into a
       // catch and stored nothing. The unwrap lives in transcript-cache.ts so
       // that it covers this call and every future one.
-      void cache.save(session, cachedEpoch, events);
+      void cache.save(session, cachedEpoch, events, cursor);
     };
     const idle = (globalThis as { requestIdleCallback?: (cb: () => void, o?: object) => number })
       .requestIdleCallback;
@@ -829,13 +829,20 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   const startWithCache = async (): Promise<void> => {
     const cached = await cache.read(session);
     if (closed) return;
-    if (cached && cached.events.length > 0) {
+    // A copy with no cursor cannot say where paging back starts, and the
+    // oldest id held is no stand-in for it (CachedTranscript.cursor), so it
+    // opens the ordinary way and is overwritten with one that can.
+    if (cached && cached.events.length > 0 && typeof cached.cursor === "number") {
       cachedEpoch = cached.epoch;
       const fresh = takeFresh([...cached.events]);
       if (fresh.length > 0) {
         seededFromCache = fresh.length;
+        // A resume's `ready` names no cursor: the stored one is where the next
+        // step back begins.
+        cursor = cached.cursor;
         batch(() => {
           setEvents(fresh);
+          setHasEarlier(cursor > 0);
           setOpening(false);
         });
         holding = false;
@@ -1203,6 +1210,9 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       if (older.length === 0) return 0;
       const fresh = takeFresh(older);
       if (fresh.length > 0) setEvents((prev) => mergeById(prev, fresh));
+      // The stored copy keeps what paging brought in and where it reached, so a
+      // reopen pages on from here rather than from the oldest id held.
+      scheduleCacheWrite();
       // Only a step the reader drove climbs the ladder; a jump names its own
       // size and should not make the next glance upward expensive.
       if (bytes === undefined) step++;
