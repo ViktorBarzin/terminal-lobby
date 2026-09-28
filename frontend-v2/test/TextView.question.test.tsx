@@ -575,3 +575,24 @@ describe("a call no hook is holding", () => {
     expect(onSend).not.toHaveBeenCalled();
   });
 });
+
+// Deployed review round 3 (2026-09-28): the question sat outside the card's
+// scroll box and kept its full height, so a 60-80 word question left the
+// options and "Type your own answer" a 0px box once the keyboard was up. The
+// question now scrolls with the options, in the card's one scroll box, and
+// the field being typed into is revealed there (OwnAnswer keepInView).
+describe("a tall question", () => {
+  it("scrolls with its options rather than taking the room they need", async () => {
+    const long = question(
+      "Rollout",
+      "Which rollout do we pick for the new checkout, given that the flag service is still on the old SDK, the mobile apps ship every two weeks, the support team wants a week of notice, finance needs the numbers split by region, and we promised the pilot customers they would see it first?",
+      ["Flag", "Big bang", "Region by region", "Pilot only"],
+    );
+    const v = mount([held([long])]);
+    await waitFor(() => expect(v.container.querySelector(".tl-qcard-question")).not.toBeNull());
+    const q = v.container.querySelector(".tl-qcard-question")!;
+    const body = v.container.querySelector(".tl-qcard-body")!;
+    expect(body.contains(q)).toBe(true);
+    expect(body.firstElementChild).toBe(q);
+  });
+});

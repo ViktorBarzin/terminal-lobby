@@ -244,8 +244,12 @@ export const QuestionCard: Component<{
         onTakeControl={props.onTakeControl}
       />
       <Show when={!collapsed()}>
-        <div class="tl-qcard-question">{question()?.question}</div>
+        {/* The question scrolls with its options, in the card's one scroll
+            box. Pinned above it, a 60-80 word question kept its full height
+            and left the options and the typed-answer field a 0px box once a
+            phone's keyboard was up (deployed review round 3, 2026-09-28). */}
         <div class="tl-qcard-body">
+          <div class="tl-qcard-question">{question()?.question}</div>
           <Show
             when={props.state !== "terminal"}
             fallback={

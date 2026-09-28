@@ -6288,7 +6288,9 @@ body.tl-kb-up {
   }
 }
 /* What Claude asks: the prototype's `.cd-q`, 15px on a desktop, 16px on a
-   phone (below). */
+   phone (below). On the question card it is the first thing in the scroll
+   box, so a long question scrolls with its options; the plan card's title
+   stays above its body. */
 .tl-qcard-question {
   flex: none;
   margin: 6px 4px 8px;
