@@ -138,6 +138,35 @@ func TestCodexInputReadyTellsTheInputLineFromAMenu(t *testing.T) {
 	}
 }
 
+// A codex menu is up when codex's cursor marks a numbered row, and codex is the
+// one drawing: Claude's ❯ anywhere on the pane says the pane is Claude's.
+func TestCodexMenuOpen(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	for _, c := range []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"the background-server dialog", read("codex-dialog-daemon.txt"), true},
+		{"a menu inside a border", "│ › 1. Yes, continue │\n│   2. No, quit     │\n", true},
+		{"an idle codex", read("status-codex-idle.txt"), false},
+		{"a Claude pane with a numbered line after ›", "\n› 3. say pong\n\n❯ \n", false},
+		{"a numbered line codex did not mark", "  1. Run without daemon this time\n› Ask Codex\n", false},
+		{"Claude's prompt", "\n❯ \n", false},
+	} {
+		if got := CodexMenuOpen(c.pane); got != c.want {
+			t.Errorf("%s: CodexMenuOpen = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // A codex stuck on a menu never reads as ready, so the first prompt waits
 // rather than answering the menu.
 func TestAwaitCodexReadyWaitsOutAMenu(t *testing.T) {

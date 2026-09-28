@@ -227,6 +227,13 @@ prompt's Enter on a question picks the highlighted option: measured on 0.78.0,
 a prompt sent before the question card docked answered "Shape?" with an option
 nobody chose, and the words were lost. The card docks about 1.4 s after the
 dialog draws, so the refusal covers that window and a stalled event stream.
+Since 2026-09-28 it also refuses with `menu-open` while a codex menu is up (a
+line where codex's `›` marks a numbered row, on a pane with no Claude `❯`).
+Every codex start on the devvm opened "Cannot use the background server" with
+its cursor on "2. Cancel", and a Text view send's Enter picked Cancel: codex
+quit, the session went, and the prompt was lost behind a 204. No card answers
+a codex menu, so the composer keeps the text and says to answer it in the
+Terminal.
 
 - *Was (2026-09-10):* a capture the parser cannot fully read is shown as the
   pane itself, with the lines that look like numbered rows made tappable.

@@ -28,7 +28,8 @@ import (
 // Claude's own queue. This refuses the screens on which a prompt is not queued
 // at all but typed into a menu: the plan approval, and since 2026-09-27 the
 // tool permission prompt (reason permission-open) and a question (reason
-// question-open). A running turn does not refuse a prompt.
+// question-open), and since 2026-09-28 a codex menu (reason menu-open). A
+// running turn does not refuse a prompt.
 //
 // A QUESTION WAS LET THROUGH until 2026-09-27, on the belief that a prompt
 // dismissed it. It answers it: the Enter at the end of Injector.Prompt picks
@@ -76,6 +77,10 @@ const exitPlanTool = "ExitPlanMode"
 // and a restyled one leaves a prompt going through, as every prompt did before
 // 2026-09-27.
 //
+// A codex menu is read off the same capture (since 2026-09-28): codex's
+// startup menu on the devvm has its cursor on Cancel, so a prompt's Enter
+// quit codex and lost the prompt. It has no net under it either.
+//
 // A question is read the same way, parse first and the net under it: the
 // marker names the AskUserQuestion that drew the dialog, and a question whose
 // top the pane has cut off does not parse, so only the net catches it.
@@ -91,6 +96,9 @@ func promptRefusal(rg *registry, p planPane, osUser, session string) string {
 		}
 		if sessionio.ParseDialog(pane) != nil {
 			return questionOpenReason
+		}
+		if sessionio.CodexMenuOpen(pane) {
+			return menuOpenReason
 		}
 	}
 	ask, _ := p.Option(osUser, session, sessionio.OptionAsk)
@@ -132,6 +140,9 @@ const (
 	planOpenReason       = "plan-open"
 	permissionOpenReason = "permission-open"
 	questionOpenReason   = "question-open"
+	// A codex menu (sessionio.CodexMenuOpen): the Enter picks its highlighted
+	// row, which on the devvm's startup menu is Cancel, and codex quits.
+	menuOpenReason = "menu-open"
 )
 
 // writePromptRefusal is the refusal: 409, in the shape the answer routes use.

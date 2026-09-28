@@ -120,6 +120,27 @@ func CodexInputReady(pane string) bool {
 	return input
 }
 
+// CodexMenuOpen reports whether a codex pane has a menu up: a line where
+// codex's › marks a numbered row. A prompt's paste and Enter there pick the
+// highlighted row; on 2026-09-28 every codex start on the devvm opened the
+// "Cannot use the background server" menu with its cursor on "2. Cancel",
+// and a Text view send quit codex. A pane that shows Claude's ❯ anywhere is
+// Claude's, whose menus other readers handle, so it is never a codex menu
+// here, whatever its conversation quotes.
+func CodexMenuOpen(pane string) bool {
+	if strings.Contains(pane, promptMark) {
+		return false
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		t := strings.TrimSpace(stripDialogBorder(line))
+		rest, ok := strings.CutPrefix(t, codexPromptMark)
+		if ok && reCodexMenuRow.MatchString(strings.TrimSpace(rest)) {
+			return true
+		}
+	}
+	return false
+}
+
 // reCodexMenuRow is a numbered menu row, the text after codex's cursor in a
 // dialog ("2. Cancel", "1. Yes, continue").
 var reCodexMenuRow = regexp.MustCompile(`^[0-9]+\.\s`)

@@ -177,6 +177,32 @@ func TestQuestionOpenRefusesAPrompt(t *testing.T) {
 	}
 }
 
+// Codex raises a numbered menu with its cursor on a row, and on this box every
+// codex start opened one ("Cannot use the background server … › 2. Cancel",
+// 5 of 5 starts on 2026-09-28). A prompt's Enter there picked Cancel: codex
+// quit, the session went and the prompt with it, while the reply said 204
+// (deployed review round 2). Only the new-session first prompt waited the
+// menu out; every other send reached it.
+func TestCodexMenuRefusesAPrompt(t *testing.T) {
+	for _, tc := range []struct {
+		name, pane, want string
+	}{
+		{"the background-server menu", capture(t, "codex-dialog-daemon.txt"), menuOpenReason},
+		{"a menu with its cursor on the first row", "  Trust this folder?\n\n› 1. Yes, continue\n  2. No, quit\n", menuOpenReason},
+		{"an idle codex", capture(t, "status-codex-idle.txt"), ""},
+		// Claude draws ❯ at its input line, so a Claude pane quoting a codex
+		// menu in its conversation is not a menu to refuse over.
+		{"a Claude pane quoting a codex menu", "● It showed:\n› 2. Cancel\n\n❯ \n", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rg, p := planEnv(t, tc.pane, answerUserLine)
+			if got := promptRefusal(rg, p, "wizard", "demo"); got != tc.want {
+				t.Errorf("refusal = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // The net under the parse, as for the plan: a question whose top the pane has
 // cut off does not parse, and the hooks' marker naming the AskUserQuestion the
 // transcript holds open is the dialog on screen.

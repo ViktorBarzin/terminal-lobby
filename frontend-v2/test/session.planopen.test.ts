@@ -103,6 +103,20 @@ describe("session store: prompt refused while the plan approval is up", () => {
     );
   });
 
+  it("keeps the text and says to answer the session's menu in the Terminal", async () => {
+    // A codex menu refuses a prompt (deployed review round 2, 2026-09-28):
+    // the Enter picked "2. Cancel" on codex's startup menu and codex quit.
+    g.fetch = respond(409, '{"applied":false,"reason":"menu-open"}\n', "application/json");
+    const { ok, notes, pending } = await sendOnce("say hello in one word");
+    expect(ok).toBe(false);
+    expect(pending).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.kind).toBe("warning");
+    expect(notes[0]?.msg).toBe(
+      "The session is showing a menu. Answer it in the Terminal, then send again.",
+    );
+  });
+
   it("treats a plain-text 409 as any other failed send", async () => {
     g.fetch = respond(409, "conflict\n", "text/plain");
     const { ok, notes, pending } = await sendOnce("hi");
