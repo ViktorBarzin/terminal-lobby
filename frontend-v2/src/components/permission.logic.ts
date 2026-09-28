@@ -146,3 +146,20 @@ export function permissionPreview(
   }
   return null;
 }
+
+/**
+ * Which prompt a reading is of, the same across readings of one prompt.
+ *
+ * The pane redraws a prompt's rows while it waits: the decline driver's Tab
+ * opens the No field, a resize rewraps a long command or turns "different…"
+ * into "differently". Each redraw is a new reading, so the card, keyed on the
+ * reading, starts over. What the reader typed into "Type your own answer"
+ * belongs to the prompt, so it is kept under this key (deployed review round
+ * 2, 2026-09-28): the title, what the tool will do and the question, with
+ * the whitespace a rewrap moves taken out. The rows are left out, since they
+ * are what changes.
+ */
+export function permissionPromptKey(r: PermissionReading): string {
+  const squash = (t: string): string => t.replace(/\s+/g, "");
+  return [r.title.trim(), squash(r.detail.join("")), squash(r.prompt)].join("\n");
+}

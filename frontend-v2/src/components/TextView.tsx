@@ -20,6 +20,7 @@ import type {
 } from "../types/events";
 import {
   permissionFromPane,
+  type PermissionReading,
   currentMode,
   currentModel,
   deriveRows,
@@ -51,8 +52,8 @@ import type { Question } from "./canonicalize";
 import { QuestionCard, type QuestionCardState } from "./QuestionCard";
 import { heldFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
-import { PermissionCard } from "./PermissionCard";
-import { permissionPreview } from "./permission.logic";
+import { PermissionCard, type OwnDraft } from "./PermissionCard";
+import { permissionPreview, permissionPromptKey } from "./permission.logic";
 import {
   clearsContext,
   decidePlanDock,
@@ -657,6 +658,22 @@ export const TextView: Component<{
     if (!why) return false;
     props.notify?.(why, "info");
     return true;
+  };
+  /**
+   * "Type your own answer" for the prompt on the pane, kept here rather than
+   * in the card: the card is keyed on the reading, and a redraw of the same
+   * prompt's rows (the decline driver's Tab, a resize) is a new reading
+   * (permissionPromptKey says which prompt a reading is of).
+   */
+  let permOwn: { key: string; own: OwnDraft } | undefined;
+  // Answered or gone, the prompt takes its words with it, so the same command
+  // asked again later starts empty.
+  createEffect(() => {
+    if (!permission()) permOwn = undefined;
+  });
+  const permOwnFor = (reading: PermissionReading): OwnDraft | undefined => {
+    const key = permissionPromptKey(reading);
+    return permOwn?.key === key ? permOwn.own : undefined;
   };
   /** The docked permission card's press, for a row number typed on the
    *  keyboard (PermissionCard `register`). */
@@ -1849,6 +1866,7 @@ export const TextView: Component<{
       <Show when={props.onKeys ? (permission()?.id ?? 0) : 0} keyed>
         {(_prompt) => {
           const reading = permission();
+          const own = reading ? permOwnFor(reading) : undefined;
           return reading ? (
             <PermissionCard
               reading={reading}
@@ -1859,6 +1877,10 @@ export const TextView: Component<{
               onTakeControl={props.onTakeControl}
               register={(press) => {
                 pressPermissionRow = press;
+              }}
+              {...(own ? { own } : {})}
+              onOwn={(own) => {
+                permOwn = { key: permissionPromptKey(reading), own };
               }}
               onTerminal={props.onOpenTerminal}
             />

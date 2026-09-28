@@ -615,6 +615,52 @@ describe("the permission card", () => {
     await waitFor(() => expect(yes.disabled).toBe(false));
   });
 
+  /**
+   * Found in deployed review round 2 (2026-09-28): the card is keyed on the
+   * reading, and the pane redrawing the same prompt's rows (the driver's Tab
+   * opening the No field, a resize from 47 to 80 columns turning
+   * "different…" into "differently") sent a new reading. The card remounted,
+   * and the words the reader was typing were gone. The words and whether the
+   * field is open belong to the prompt, not to one reading of it.
+   */
+  it("keeps the words typed for a prompt when the pane redraws its rows", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
+    const asking = (id: number, no: string, detail = "printf 'hi\\n' > a.txt") =>
+      ev({
+        id,
+        kind: "meta",
+        meta: "asking",
+        body: JSON.stringify({
+          ...JSON.parse(READING),
+          detail: [detail],
+          options: [
+            { number: 1, label: "Yes" },
+            { number: 2, label: "Yes, and always allow access to /tmp/x from this project" },
+            { number: 3, label: no },
+          ],
+        }),
+      });
+    const { card, setEvents } = mount([...base, asking(3, "No")], undefined, undefined, {
+      onAnswer,
+    });
+    await waitFor(() => expect(card()).not.toBeNull());
+    fireEvent.click(card()!.querySelector<HTMLButtonElement>(".tl-qcard-own")!);
+    const field = await waitFor(
+      () => card()!.querySelector<HTMLTextAreaElement>(".tl-qcard-owninput")!,
+    );
+    fireEvent.input(field, { target: { value: "Write bye instead" } });
+
+    setEvents([...base, asking(3, "No"), asking(4, "No, and tell Claude what to do different…")]);
+    await waitFor(() => expect(card()!.textContent).toContain("different…"));
+    const again = card()!.querySelector<HTMLTextAreaElement>(".tl-qcard-owninput");
+    expect(again?.value).toBe("Write bye instead");
+
+    // The next prompt is another one, and starts empty.
+    setEvents([...base, asking(5, "No", "rm b.txt")]);
+    await waitFor(() => expect(card()!.textContent).toContain("rm b.txt"));
+    expect(card()!.querySelector(".tl-qcard-owninput")).toBeNull();
+  });
+
   it("offers no typed answer while this device watches, or when the prompt has no No row", async () => {
     const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
     const watching = mount(

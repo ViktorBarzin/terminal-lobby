@@ -4,6 +4,12 @@ import { OwnAnswer } from "./OwnAnswer";
 import type { PermissionPreview } from "./permission.logic";
 import type { PermissionReading } from "./timeline.logic";
 
+/** "Type your own answer" as the reader has it: open or not, and its words. */
+export interface OwnDraft {
+  open: boolean;
+  words: string;
+}
+
 /** A Bash prompt is titled "Bash command"; every other tool is titled by what
  *  it does ("Edit file"), which the head then names beside its words. */
 const isCommand = (title: string): boolean => /^bash\b/i.test(title.trim());
@@ -78,11 +84,24 @@ export const PermissionCard: Component<{
    * press went out, so the digit is not typed into the field instead.
    */
   register?: (press: (row: number) => boolean) => void;
+  /** "Type your own answer" as the reader left it on an earlier card for the
+   *  same prompt: the pane redrew the rows and a new card took over. */
+  own?: OwnDraft;
+  /** Told whenever the typed answer opens or its words change. */
+  onOwn?: (own: OwnDraft) => void;
 }> = (props) => {
   /** The row pressed, "own" for the typed answer, null before either. */
   const [pressed, setPressed] = createSignal<number | "own" | null>(null);
-  const [ownOpen, setOwnOpen] = createSignal(false);
-  const [words, setWords] = createSignal("");
+  const [ownOpen, setOwnOpenSignal] = createSignal(props.own?.open ?? false);
+  const [words, setWordsSignal] = createSignal(props.own?.words ?? "");
+  const setOwnOpen = (open: boolean): void => {
+    setOwnOpenSignal(open);
+    props.onOwn?.({ open, words: words() });
+  };
+  const setWords = (w: string): void => {
+    setWordsSignal(w);
+    props.onOwn?.({ open: ownOpen(), words: w });
+  };
   // The refusal while watching is the caller's (onPick), so a key press is
   // told why; a tap cannot reach here, the rows being disabled.
   const pick = async (n: number): Promise<void> => {
