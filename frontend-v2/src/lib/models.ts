@@ -65,6 +65,21 @@ export type ModelField = "model" | "effort";
 /** The id stored and sent for "leave it alone". */
 export const DEFAULT_CHOICE = "default";
 
+/**
+ * What a session started on `default` boots as, where this box decides it.
+ *
+ * Claude's is the managed settings' `model` key
+ * (/etc/claude-code/managed-settings.json), which wins over a user's own
+ * settings: a pool slot started with no --model drew "Using claude-opus-5-5
+ * (from managed settings)" in its banner (measured 2026-09-28). The new-session
+ * button names it, as the prototype does, rather than reading "Default".
+ * Written down for the reason CATALOGUE is, and kept in step with that key.
+ * Codex and pi start on each user's own config, so they have none.
+ */
+export const START_MODEL: Partial<Record<ModelHarness, string>> = {
+  claude: "claude-opus-5-5",
+};
+
 /** One option: what goes on the wire, and how a settings row writes it. */
 export interface ModelOption {
   /** what the CLI's own picker calls it, which is what the driver matches on. */

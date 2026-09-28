@@ -38,7 +38,9 @@ import {
   PromptGlyph,
   SendArrowIcon,
 } from "./Icons";
-import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
+import { dismissFloat, dismissOnPress, focusChosen, walkNav, type RowNav } from "./overlay";
+import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
+import { DotsGlyph, TerminalGlyph, TextGlyph } from "./Icons";
 import { installImageClipboard } from "../clipboard/attach";
 import { isCoarsePointer } from "../mobile/pointer";
 import { deliverFirstPrompt, firstPromptDelivery } from "../lib/first-prompt";
@@ -139,6 +141,9 @@ export const NewSessionComposer: Component<{
   onProject: (name: string) => void;
   /** A control for the header — on a phone, the route to the session list. */
   leading?: JSX.Element;
+  /** The lobby's own rows for the header's "…" (Skills, Settings), as a
+   *  session's header gets them. Without it the group carries Terminal alone. */
+  menu?: JSX.Element;
   /** Seams for tests, defaulting to the real thing: how a created session is
    *  given its first prompt, and how held files reach its store. */
   deliver?: typeof deliverFirstPrompt;
@@ -482,6 +487,24 @@ export const NewSessionComposer: Component<{
     if (c !== cmd()) props.prefs.setPref({ session: { newCommand: c } });
   };
 
+  // ---- the header's icon group ------------------------------------------------
+  // The prototype's new-session screen carries the header a session does: one
+  // rounded group, Terminal and "…" (round 7, 2026-09-28, found missing). A
+  // session's Terminal icon switches to its Terminal view; here there is no
+  // session yet, so it starts a plain shell, which is the box asking for the
+  // shell's name, and the same place then goes back to the command before.
+  /** The command Terminal goes back to from naming a shell. */
+  const [backTo, setBackTo] = createSignal<NewCommand>("claude");
+  const toggleShell = (): void => {
+    if (naming()) {
+      pickCommand(backTo());
+      return;
+    }
+    setBackTo(cmd());
+    pickCommand("shell");
+  };
+  const barMenu = createDismissableMenu(() => () => {});
+
   return (
     <div class="tl-new-view">
       {/* The SAME bar the session view carries, not a lookalike: same class,
@@ -500,6 +523,47 @@ export const NewSessionComposer: Component<{
               {props.project() ? `${props.project()} · new session` : "new session"}
             </span>
           </div>
+        </div>
+        <div class="tl-bar-group">
+          <Show when={canRun("shell", avail()) || naming()}>
+            <button
+              type="button"
+              class="tl-bar-group-btn tl-view-toggle"
+              aria-label={naming() ? `Back to ${COMMAND_LABELS[backTo()]}` : "Start a plain shell"}
+              title={naming() ? `Back to ${COMMAND_LABELS[backTo()]}` : "Start a plain shell"}
+              onClick={toggleShell}
+            >
+              <Show when={naming()} fallback={<TerminalGlyph />}>
+                <TextGlyph />
+              </Show>
+            </button>
+          </Show>
+          <Show when={props.menu}>
+            <span class="tl-bar-menu" ref={barMenu.anchor}>
+              <button
+                type="button"
+                class="tl-bar-group-btn tl-bar-menu-btn"
+                aria-label="More"
+                aria-haspopup="menu"
+                aria-expanded={barMenu.open()}
+                onClick={barMenu.toggle}
+              >
+                <DotsGlyph />
+              </button>
+              <Show when={barMenu.open()}>
+                <div
+                  class="tl-menu"
+                  role="menu"
+                  onClick={stopMenuClick}
+                  onKeyDown={stopMenuActivationKey}
+                >
+                  <span style={{ display: "contents" }} ref={dismissOnPress(() => barMenu.close())}>
+                    {props.menu}
+                  </span>
+                </div>
+              </Show>
+            </span>
+          </Show>
         </div>
       </div>
       <div class="tl-new-composer">

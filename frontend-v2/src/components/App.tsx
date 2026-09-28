@@ -2495,6 +2495,23 @@ export const App: Component = () => {
                   </button>
                 </Show>
               }
+              // The header's "…" carries the lobby's own rows, as a session's
+              // header does on a phone. On every device here: with no session
+              // there is nothing else for it to hold.
+              menu={
+                <>
+                  <button
+                    class="tl-menu-item"
+                    role="menuitem"
+                    onClick={() => openSettings("skills")}
+                  >
+                    Skills
+                  </button>
+                  <button class="tl-menu-item" role="menuitem" onClick={() => openSettings()}>
+                    Settings
+                  </button>
+                </>
+              }
             />
           </Show>
           {/* Every session opened in this tab stays mounted, and the ones being

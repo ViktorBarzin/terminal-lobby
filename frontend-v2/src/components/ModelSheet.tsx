@@ -15,6 +15,7 @@ import { isDangerMode, MODES, modeId, modeTitle, type ModeId } from "../logic/mo
 import {
   chipName,
   DEFAULT_CHOICE,
+  START_MODEL,
   effortsForModel,
   fieldHeading,
   isCurrentModel,
@@ -177,7 +178,11 @@ export const ModelSheet: Component<{
   const name = (): string => {
     const m = props.model?.model;
     if (!props.harness || !m) return "";
-    return m === DEFAULT_CHOICE ? "Default" : modelName(props.harness, m);
+    if (m !== DEFAULT_CHOICE) return modelName(props.harness, m);
+    // The new-session button names what a default start boots on, where the
+    // box decides it (START_MODEL); the sheet's row still reads Default.
+    const start = props.offerDefault ? START_MODEL[props.harness] : undefined;
+    return start ? modelName(props.harness, start) : "Default";
   };
   const label = (): string => {
     if (busy()) return "Switching…";

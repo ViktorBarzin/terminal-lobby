@@ -151,6 +151,11 @@ function mount(
             return token ? { ...chip, token } : chip;
           });
         }}
+        menu={
+          <button type="button" class="tl-menu-item" role="menuitem">
+            Settings
+          </button>
+        }
         deliver={async (o) => {
           wire.delivered.push({
             session: o.session,
@@ -940,9 +945,55 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
     m.store.dispose();
   });
 
-  it("reads Default on the model button until a model is chosen", async () => {
+  // Round 7 (2026-09-28): the button read "Default" where the prototype reads
+  // "Opus 5.5". Default is no --model flag, and on this box that boots the
+  // managed settings' model, so the button names it. The title keeps the
+  // choice as stored.
+  it("names the model a default start boots on until a model is chosen", async () => {
     const m = mount(new FakeApi());
     await m.store.refresh();
+    const model = opener(m.container, "Model for new session")!;
+    expect(model.textContent).toBe("Opus 5.5");
+    expect(model.title).toContain("default");
+    m.store.dispose();
+  });
+
+  // Round 7 (2026-09-28): the header had no rounded icon group, where the
+  // prototype's new-session screen carries Terminal and "…" as a session's
+  // header does. Terminal starts a plain shell here, which is the box naming
+  // it; the same place then offers the way back.
+  it("carries the header's icon group: Terminal names a shell, and back", async () => {
+    const m = mount(new FakeApi(), { claude: true, shell: true });
+    await m.store.refresh();
+    const group = m.container.querySelector(".tl-session-bar .tl-bar-group");
+    expect(group).not.toBeNull();
+    const term = () => group!.querySelector<HTMLButtonElement>(".tl-view-toggle")!;
+    expect(term().getAttribute("aria-label")).toBe("Start a plain shell");
+    fireEvent.click(term());
+    expect(m.container.querySelector(".tl-new-hero")!.textContent).toContain("Name a shell");
+    expect(term().getAttribute("aria-label")).toBe("Back to Claude");
+    fireEvent.click(term());
+    expect(m.container.querySelector(".tl-new-hero")!.textContent).toContain(
+      "What should we build",
+    );
+    m.store.dispose();
+  });
+
+  it("opens the lobby's own rows from the header's …", async () => {
+    const m = mount(new FakeApi());
+    await m.store.refresh();
+    const more = m.container.querySelector<HTMLButtonElement>(".tl-bar-group .tl-bar-menu-btn")!;
+    expect(more.getAttribute("aria-haspopup")).toBe("menu");
+    fireEvent.click(more);
+    const menu = m.container.querySelector('.tl-bar-group [role="menu"]');
+    expect(menu?.textContent).toContain("Settings");
+    m.store.dispose();
+  });
+
+  it("reads Default for a CLI whose start model is not written down", async () => {
+    const m = mount(new FakeApi(), { codex: true });
+    await m.store.refresh();
+    m.prefs.setPref({ session: { newCommand: "codex" } });
     expect(opener(m.container, "Model for new session")!.textContent).toBe("Default");
     m.store.dispose();
   });
