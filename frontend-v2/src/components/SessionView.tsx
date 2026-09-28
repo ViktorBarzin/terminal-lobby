@@ -947,19 +947,15 @@ export const SessionView: Component<{
     () => mode() !== "text" && (maxId() > seenText() || store.catchingUp()),
   );
 
-  // The mirror dot: pty output (or a BEL) that arrived while the TERMINAL view
-  // was hidden. There is no event stream to diff for it the way textDot diffs
-  // event ids — the terminal is a live attach, so the signal is what
-  // terminal/attention.ts decides is news. Latch it here and clear it when you
-  // look.
-  const [terminalDot, setTerminalDot] = createSignal(false);
+  // The terminal's attention signals go up to the lobby (tab title, favicon)
+  // and nowhere else. The Terminal icon had a mirror of the Text icon's dot for
+  // pty output behind the Text view until the T3 pass, but a working session
+  // redraws its pane every second, so that dot latched within a moment of
+  // opening Text and stayed lit, while the conversation already shows what the
+  // pane does (live check, 2026-09-28). The prototype's header has none.
   const noteAttention = (kind: "bell" | "output", from: string | null): void => {
-    if (mode() !== "terminal") setTerminalDot(true);
     props.onTerminalAttention?.(kind, from);
   };
-  createEffect(() => {
-    if (mode() === "terminal") setTerminalDot(false);
-  });
 
   // Ctrl/Cmd+J belongs to the scratch-shell dock, as it does on the vanilla
   // page, and the view toggle has had no chord since. Viktor settled that on
@@ -1526,7 +1522,7 @@ export const SessionView: Component<{
             </Show>
             {/* ONE GROUP: the view icon and "…". The icon names the view it
               switches TO, so the Terminal view shows a Text icon in the same
-              place, and it carries that hidden view's unseen-content dot.
+              place, and the Text icon carries the conversation's unseen dot.
               setMode is what records the view.switched telemetry. */}
             <div class="tl-bar-group">
               <button
@@ -1539,7 +1535,7 @@ export const SessionView: Component<{
                 <Show when={mode() === "text"} fallback={<TextGlyph />}>
                   <TerminalGlyph />
                 </Show>
-                <Show when={mode() === "text" ? terminalDot() : textDot()}>
+                <Show when={textDot()}>
                   <span class="tl-activity-dot" aria-label="new activity" />
                 </Show>
               </button>

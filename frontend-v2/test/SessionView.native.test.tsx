@@ -422,13 +422,12 @@ describe("the attention props <SessionView> gives the terminal", () => {
     expect(seen).toEqual([["bell", "qa-native-bell"]]);
   });
 
-  it("dots the Terminal icon for output behind the text view", () => {
+  // The pane redraws the whole time Claude works, so a Terminal dot latched at
+  // once and never meant anything (live check, 2026-09-28): there is none.
+  it("puts no dot on the Terminal icon for output behind the text view", () => {
     const { container } = render(() => <SessionView session="qa-native-dot" />);
     show(container, "text");
-    expect(dots(container)).toEqual([false, false]);
-
     native.signal?.("output");
-    // [Text (selected), Terminal (hidden, and something happened in it)]
-    expect(dots(container)).toEqual([false, true]);
+    expect(dots(container)).toEqual([false, false]);
   });
 });

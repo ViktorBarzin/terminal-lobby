@@ -285,25 +285,18 @@ describe("<SessionView> — view toggle bridge + terminal activity dot", () => {
     expect(bar()).toBe("terminal");
   });
 
-  it("dots the Terminal icon when output arrives while you're in text mode", () => {
+  // The Terminal icon carried a dot for pty output behind the Text view until
+  // the T3 pass. A working session redraws its pane every second, so the dot
+  // latched within a moment of opening Text and stayed lit for good, and the
+  // conversation already shows everything the pane does (live check,
+  // 2026-09-28). The prototype's header has no dot, so the Terminal icon has
+  // none; the Text icon keeps its dot, which diffs event ids and means news.
+  it("puts no dot on the Terminal icon for output behind the text view", () => {
     const { container } = render(() => <SessionView session="qa-vs" />);
-    // Terminal is the default view now, so switch to Text first: the Terminal
-    // dot only latches for output that lands while the terminal is HIDDEN.
     show(container, "text");
-    expect(dotted(container)).toBe(false);
-
     fromTerminal("output");
-    expect(toggle(container).getAttribute("aria-label")).toBe("Terminal view");
-    expect(dotted(container)).toBe(true);
-  });
-
-  it("clears the Terminal dot when you switch to the terminal", () => {
-    const { container } = render(() => <SessionView session="qa-vs" />);
-    show(container, "text"); // so the bell lands while the terminal is hidden
     fromTerminal("bell");
-    expect(dotted(container)).toBe(true);
-
-    show(container, "terminal");
+    expect(toggle(container).getAttribute("aria-label")).toBe("Terminal view");
     expect(dotted(container)).toBe(false);
   });
 
