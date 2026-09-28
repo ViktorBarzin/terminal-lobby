@@ -26,6 +26,7 @@ import {
   saveDraft,
   type DraftAttachment,
 } from "../store/drafts";
+import { takeLeftBehind } from "../lib/leaving";
 import {
   anchorRestored,
   attachToken,
@@ -883,6 +884,10 @@ export const PromptField: Component<{
           return ok;
         }
         if (ok || !ta || ta.value !== "") return ok;
+        // The page is going and the prompt's request was already out: the
+        // server most likely has it, so the words stay out of the field and
+        // the draft (lib/leaving.ts).
+        if (takeLeftBehind()) return ok;
         // A refusal restores BOTH halves. The text already had this guarantee;
         // an attachment needs it more, because re-attaching means finding the
         // file again — and the tokens are still in the text that comes back,

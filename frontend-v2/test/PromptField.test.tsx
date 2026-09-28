@@ -12,6 +12,7 @@ import { PromptField } from "../src/components/PromptField";
 import { NEW_SESSION_DRAFT_KEY } from "../src/components/NewSessionComposer";
 import { DRAFTS_KEY, loadDraft, parkDraft, saveDraft } from "../src/store/drafts";
 import { NAME_RE } from "../src/types/lobby";
+import { trackPrompt } from "../src/lib/leaving";
 
 beforeEach(() => localStorage.clear());
 afterEach(cleanup);
@@ -183,5 +184,71 @@ describe("<PromptField> — a draft parked from outside while it is mounted", ()
     });
     expect(field(container).value).toBe("look at this [img: a.png] ");
     expect(container.querySelectorAll(".tl-inline-chip").length).toBe(1);
+  });
+});
+
+/**
+ * Deployed review round 2 (2026-09-28): a send to a suspended session is held
+ * 5-6 s while Claude wakes. A reload inside that window cut the prompt's
+ * request off, the send read that as a refusal and the field put the words
+ * back and saved them as the draft just before the page went. The server had
+ * the prompt: after the reload Claude answered it and the same words sat in
+ * the field with Send armed. A prompt request the page left behind may well
+ * have landed, so its words do not come back. A send cut off before any prompt
+ * request went out (still waking the session) was never delivered, and its
+ * words still come back.
+ */
+describe("<PromptField> — a send the page leaves behind", () => {
+  const cutOff = (tracked: boolean) => {
+    let fail: () => void = () => {};
+    const gate = new Promise<boolean>((_, reject) => {
+      fail = () => reject(new TypeError("Failed to fetch"));
+    });
+    const send = (): Promise<boolean> =>
+      (tracked ? trackPrompt(gate) : gate).catch(() => false);
+    return { send, fail: () => fail() };
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  // Chromium rejects the request right after beforeunload, before pagehide
+  // (measured on the local build, 2026-09-28: beforeunload at 3608 ms, the
+  // rejection at 3619, pagehide at 3645). iOS Safari fires no beforeunload.
+  it.each(["beforeunload", "pagehide"])("does not bring back words whose prompt request was in flight (%s)", async (going) => {
+    const s = cutOff(true);
+    const { container } = render(() => (
+      <PromptField onSend={s.send} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    type(field(container), "reply with mango");
+    fireEvent.keyDown(field(container), { key: "Enter" });
+    window.dispatchEvent(new Event(going));
+    s.fail();
+    await settle();
+    expect(field(container).value).toBe("");
+    expect(loadDraft("k7m2q9x4tp0v")).toBeNull();
+  });
+
+  it("brings back words that never left, and words refused while the page stays", async () => {
+    const early = cutOff(false);
+    const a = render(() => (
+      <PromptField onSend={early.send} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    type(field(a.container), "reply with kiwi");
+    fireEvent.keyDown(field(a.container), { key: "Enter" });
+    window.dispatchEvent(new Event("pagehide"));
+    early.fail();
+    await settle();
+    expect(field(a.container).value).toBe("reply with kiwi");
+    a.unmount();
+    localStorage.clear();
+
+    const refused = cutOff(true);
+    const b = render(() => (
+      <PromptField onSend={refused.send} label="Message" draftKey="k7m2q9x4tp0v" />
+    ));
+    type(field(b.container), "reply with pear");
+    fireEvent.keyDown(field(b.container), { key: "Enter" });
+    refused.fail();
+    await settle();
+    expect(field(b.container).value).toBe("reply with pear");
   });
 });

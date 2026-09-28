@@ -24,6 +24,7 @@ import {
 import type { Event, PermissionDecision, SearchHit } from "../types/events";
 import { readCatalogue, type Catalogue } from "./catalogue";
 import { isSlashCommand, sameCommand, type PendingPrompt } from "../logic/compose.logic";
+import { trackPrompt } from "../lib/leaving";
 import { fetchWithDeadline } from "../lib/http";
 import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
 import { snapshotOf, type AgentSnapshot } from "../components/agents.logic";
@@ -321,6 +322,13 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
  * a quiet one) with room to spare.
  */
 const READY_TRIES = 3;
+
+/**
+ * The largest prompt body sent as a keepalive request. The Fetch spec caps
+ * what keepalive requests in flight may carry at 64 KiB together; this leaves
+ * room for another one, a telemetry beacon, say.
+ */
+const KEEPALIVE_MAX_BYTES = 60_000;
 
 async function promptRefusal(res: Response): Promise<string> {
   if (res.status !== 409) return "";
@@ -969,12 +977,24 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   const send = async (text: string, sendOpts?: { awaitReady?: boolean }): Promise<boolean> => {
     const awaitReady = sendOpts?.awaitReady === true;
     try {
+      const body = JSON.stringify(awaitReady ? { text, awaitReady } : { text });
+      // A reload during a send (5-6 s while a suspended session wakes) cut
+      // the request off, the composer put the words back for a prompt the
+      // server delivered anyway, and Send was armed to send it twice
+      // (deployed review round 2, 2026-09-28). The request is kept alive past
+      // the unload so it can still land, and trackPrompt tells the composer
+      // not to bring its words back (lib/leaving.ts). Browsers cap a keepalive
+      // body at 64 KiB, so a bigger paste is not kept alive.
+      const keepalive = new TextEncoder().encode(body).length <= KEEPALIVE_MAX_BYTES;
       const post = () =>
-        fetchWithDeadline(promptUrl(session), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(awaitReady ? { text, awaitReady } : { text }),
-        });
+        trackPrompt(
+          fetchWithDeadline(promptUrl(session), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body,
+            ...(keepalive ? { keepalive: true } : {}),
+          }),
+        );
       let res = await post();
       // Each try is held server-side for up to PromptReadyWait (4 s), so the
       // tries need no gap of their own.
