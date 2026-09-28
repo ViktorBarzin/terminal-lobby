@@ -5917,6 +5917,21 @@ body.tl-kb-up {
    the button shows, so it covers no row. It sat inside the scroller until
    2026-09-27, sticky above its foot, over whatever row was passing. A 32px
    pill 2px down the band, which leaves 8px above the composer's box. */
+/* Where a session with no transcript here answers (a shell, Codex): one
+   quiet line above the composer, with the way to the Terminal. */
+.tl-terminal-note {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 8px;
+  box-sizing: border-box;
+  padding: 4px 16px 6px;
+  color: var(--text-muted);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  text-align: center;
+}
 .tl-latest-band {
   flex: none;
   display: flex;

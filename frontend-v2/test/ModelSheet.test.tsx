@@ -87,6 +87,16 @@ describe("the model button", () => {
     expect(b.getAttribute("aria-expanded")).toBe("false");
   });
 
+  // The sparkle is Claude's mark. Deployed review round 1 (2026-09-28) found a
+  // Codex session's button reading "✳ Model" with it.
+  it("keeps Claude's sparkle off a Codex or pi session's button", () => {
+    mount({ harness: "codex", model: { model: "gpt-6-astra", effort: "medium" } });
+    expect(button().querySelector(".tl-model-spark")).toBeNull();
+    cleanup();
+    mount({ harness: "pi", model: { model: "anthropic/claude-opus-5-5", effort: "high" } });
+    expect(button().querySelector(".tl-model-spark")).toBeNull();
+  });
+
   // The name drops the rest of the slug, so the title carries all of it.
   it("puts the exact slug and the effort in its title", () => {
     mount({ model: { model: "claude-haiku-4-5-20251001", effort: "low" } });

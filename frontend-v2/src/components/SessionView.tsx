@@ -1708,7 +1708,13 @@ export const SessionView: Component<{
             suspended={() => props.suspended?.() ?? false}
             // A shell has no transcript, and session-events registers only
             // Claude's (a Codex stream answers 404).
-            noTranscript={props.tool?.() === "shell" || props.tool?.() === "codex"}
+            noTranscript={
+              props.tool?.() === "shell"
+                ? "shell"
+                : props.tool?.() === "codex"
+                  ? "codex"
+                  : undefined
+            }
             onSetMode={(m) => setSessionMode({ session, mode: m })}
             stampedModel={piReading()}
             modelOffer={piOffer()}

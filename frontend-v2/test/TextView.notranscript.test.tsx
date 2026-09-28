@@ -7,7 +7,7 @@
  * row, because no transcript will ever record the prompt.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render } from "@solidjs/testing-library";
+import { fireEvent, render } from "@solidjs/testing-library";
 import { TextView } from "../src/components/TextView";
 import type { PendingPrompt } from "../src/logic/compose.logic";
 
@@ -18,7 +18,7 @@ const SENT: PendingPrompt[] = [
   { id: -1, text: "echo rv-hello-from-text", at: Date.now(), command: false, afterId: 0 },
 ];
 
-function mount(noTranscript: boolean) {
+function mount(noTranscript: "codex" | "shell" | undefined, onOpenTerminal = vi.fn()) {
   g.EventSource = class {
     close(): void {}
     addEventListener(): void {}
@@ -36,6 +36,8 @@ function mount(noTranscript: boolean) {
       onResolve={() => {}}
       pendingPrompts={() => SENT}
       noTranscript={noTranscript}
+      onOpenTerminal={onOpenTerminal}
+      opening
     />
   ));
 }
@@ -48,7 +50,7 @@ afterEach(() => {
 
 describe("<TextView> for a session with no transcript", () => {
   it("shows what was sent with no live row under it", () => {
-    const { container } = mount(true);
+    const { container } = mount("shell");
     expect(container.textContent).toContain("echo rv-hello-from-text");
     expect(container.querySelector(".tl-row-live")).toBeNull();
     expect(container.textContent).not.toContain("Working");
@@ -56,7 +58,62 @@ describe("<TextView> for a session with no transcript", () => {
   });
 
   it("keeps the live row where a transcript will answer", () => {
-    const { container } = mount(false);
+    const { container } = mount(undefined);
     expect(container.textContent).toContain("Working");
+  });
+
+  // The same review found a Codex session's Text view saying "No messages
+  // yet" and "Ask Claude, or run a command…" while Codex answered in the pane.
+  // It says where the replies are, and names what the field talks to.
+  it("says a Codex session's replies are in the Terminal, and offers it", () => {
+    const open = vi.fn();
+    const { container } = mount("codex", open);
+    const note = container.querySelector(".tl-terminal-note")!;
+    expect(note.textContent).toContain("Codex replies in the Terminal view.");
+    fireEvent.click(note.querySelector("button")!);
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(container.querySelector("textarea")!.getAttribute("placeholder")).toBe(
+      "Ask Codex, or run a command…",
+    );
+  });
+
+  it("says a shell's output is in the Terminal, and asks for a command", () => {
+    const { container } = mount("shell");
+    expect(container.querySelector(".tl-terminal-note")!.textContent).toContain(
+      "Output shows in the Terminal view.",
+    );
+    expect(container.querySelector("textarea")!.getAttribute("placeholder")).toBe("Run a command…");
+  });
+
+  it("adds no note where a transcript will answer", () => {
+    const { container } = mount(undefined);
+    expect(container.querySelector(".tl-terminal-note")).toBeNull();
+    expect(container.querySelector("textarea")!.getAttribute("placeholder")).toBe(
+      "Ask Claude, or run a command…",
+    );
+  });
+
+  // The stream of a session with no transcript never opens (404), so the
+  // empty conversation said "Loading the conversation…" for good.
+  it("does not say the conversation is loading when there is none to load", () => {
+    g.EventSource = class {
+      close(): void {}
+      addEventListener(): void {}
+      removeEventListener(): void {}
+    };
+    const { container } = render(() => (
+      <TextView
+        session="demo"
+        events={[]}
+        pending={[]}
+        onSend={async () => true}
+        onStop={() => {}}
+        onResolve={() => {}}
+        noTranscript="codex"
+        opening
+      />
+    ));
+    expect(container.textContent).not.toContain("Loading the conversation");
+    expect(container.textContent).toContain("No messages yet.");
   });
 });

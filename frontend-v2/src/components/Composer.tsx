@@ -107,6 +107,9 @@ export const Composer: Component<{
    * the message rather than on the page (TextView `typingBehind`).
    */
   offstage?: boolean;
+  /** The field's placeholder, when the session is not Claude's: "Ask Codex,
+   *  or run a command…", "Run a command…" for a shell. */
+  placeholder?: string | undefined;
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
@@ -384,7 +387,7 @@ export const Composer: Component<{
         textSize={props.textSize}
         onSend={send}
         label="Message to send to the session"
-        placeholder="Ask Claude, or run a command…"
+        placeholder={props.placeholder ?? "Ask Claude, or run a command…"}
         history={props.history}
         onListDir={props.onListDir}
         commands={props.commands}

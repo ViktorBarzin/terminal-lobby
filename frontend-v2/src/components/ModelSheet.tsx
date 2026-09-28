@@ -579,7 +579,11 @@ export const ModelSheet: Component<{
         <Show when={danger()}>
           <ShieldIcon size={14} class="tl-model-shield" />
         </Show>
-        <SparkleIcon class="tl-model-spark" />
+        {/* Claude's mark, so only on Claude's button (a Codex session's read
+            "✳ Model", deployed review round 1, 2026-09-28). */}
+        <Show when={!props.harness || props.harness === "claude"}>
+          <SparkleIcon class="tl-model-spark" />
+        </Show>
         <span class="tl-model-name">{label()}</span>
         <ChevronDownIcon class="tl-model-chev" />
       </button>

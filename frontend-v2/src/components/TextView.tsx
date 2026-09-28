@@ -412,9 +412,10 @@ export const TextView: Component<{
    * Nothing records this session's conversation here: a plain shell, or
    * Codex, which session-events does not register (its stream answers 404).
    * What is sent still goes to the pane and shows as a bubble, with no live
-   * row under it that nothing would end.
+   * row under it that nothing would end, and a note says the replies are in
+   * the Terminal view.
    */
-  noTranscript?: boolean;
+  noTranscript?: "codex" | "shell";
   /** show the Terminal view — where a question the pane can only half show has
    *  to be answered until the transcript catches up. */
   onOpenTerminal?: () => void;
@@ -1662,7 +1663,8 @@ export const TextView: Component<{
         ref={observeWidth}
       >
         <MessagesTimeline
-          opening={props.opening}
+          // A session with no transcript here has no stream to open (404).
+          opening={props.noTranscript ? false : props.opening}
           owns={props.onScreen !== false}
           events={shown()}
           rows={shownRows()}
@@ -1727,6 +1729,25 @@ export const TextView: Component<{
           )}
         </Show>
       </div>
+      {/* Where a session with no transcript here answers: the Terminal view.
+          Deployed review round 1 (2026-09-28) found a Codex session's Text
+          view reading "No messages yet" while Codex answered in the pane. */}
+      <Show when={props.noTranscript}>
+        {(kind) => (
+          <div class="tl-terminal-note" role="note">
+            <span>
+              {kind() === "codex"
+                ? "Codex replies in the Terminal view."
+                : "Output shows in the Terminal view."}
+            </span>
+            <Show when={props.onOpenTerminal}>
+              <button type="button" class="tl-linkbtn" onClick={() => props.onOpenTerminal?.()}>
+                Open the Terminal
+              </button>
+            </Show>
+          </div>
+        )}
+      </Show>
       {/* "Latest", in a band of its own between the transcript and the
           composer (prototype 6-scrolled). The band takes its 42px from the
           transcript while it shows, so the button covers no row, which it did
@@ -1837,6 +1858,13 @@ export const TextView: Component<{
         />
       </Show>
       <Composer
+        placeholder={
+          props.noTranscript === "codex"
+            ? "Ask Codex, or run a command…"
+            : props.noTranscript === "shell"
+              ? "Run a command…"
+              : undefined
+        }
         hidden={composerHidden() && !typingBehind()}
         offstage={typingBehind()}
         textSize={textSize()}
