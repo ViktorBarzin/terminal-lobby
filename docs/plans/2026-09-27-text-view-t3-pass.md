@@ -1,6 +1,6 @@
 # Text view: a T3 pass
 
-**Status:** released in 0.81.0 (2026-09-28). Viktor approved the prototype the same day ("yea looks good. go and build it"); what the build measured and where it differs from the prototype is under [What shipped](#what-shipped).
+**Status:** released in 0.81.0 (2026-09-28). Viktor approved the prototype on 2026-09-27 ("yea looks good. go and build it"); what the build measured and where it differs from the prototype is under [What shipped](#what-shipped).
 **Owner:** wizard. **Repos touched:** terminal-lobby (`frontend-v2`, `sessionio`, `session-events`). The prototype lives beside the published page on pages.viktorbarzin.me, under `composer/`.
 **Decisions from:** Viktor's request on 2026-09-27 and the answers he settled the same day, listed under [Decisions](#decisions).
 **Builds on:** `docs/plans/2026-09-24-text-composer-redesign.md` (Quiet line, live since 0.78.0).
