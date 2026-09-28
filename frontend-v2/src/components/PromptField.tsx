@@ -31,6 +31,7 @@ import {
   anchorRestored,
   attachToken,
   cutSpan,
+  tokenizeStorePaths,
   previewContentUrl,
   storedDisplayName,
 } from "../lib/attachments";
@@ -382,6 +383,20 @@ export const PromptField: Component<{
     caretKnown = false;
     autosize();
     if (props.draftKey) clearDraft(props.draftKey);
+  };
+
+  /**
+   * Put a history entry in the field, its store paths back as the chips they
+   * were sent from (deployed review round 3, 2026-09-28: a picture came back
+   * as text, and a file as its raw path). The pending composer holds files it
+   * has not uploaded, so a path there stays text.
+   */
+  const recall = (text: string) => {
+    if (!ta) return;
+    const back = props.pendingAttachments ? { text, items: [] } : tokenizeStorePaths(text);
+    setAttached(back.items);
+    ta.value = back.text;
+    sync();
   };
 
   // ---- the unsent draft: restored on mount, saved on every change ----------
@@ -968,10 +983,7 @@ export const PromptField: Component<{
       e.preventDefault();
       const next = histAt() < 0 ? hist.length - 1 : Math.max(0, histAt() - 1);
       setHistAt(next);
-      if (ta) {
-        ta.value = hist[next] ?? "";
-        sync();
-      }
+      recall(hist[next] ?? "");
       return;
     }
     if (e.key === "ArrowDown" && histAt() >= 0) {
@@ -982,10 +994,7 @@ export const PromptField: Component<{
         clear();
       } else {
         setHistAt(next);
-        if (ta) {
-          ta.value = hist[next] ?? "";
-          sync();
-        }
+        recall(hist[next] ?? "");
       }
       return;
     }

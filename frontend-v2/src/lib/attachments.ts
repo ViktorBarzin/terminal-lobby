@@ -543,3 +543,73 @@ export function anchorRestored<T extends TokenizedAttachment>(
   }
   return { text: out, items: kept };
 }
+
+// ---- history recall -------------------------------------------------------
+//
+// ↑ in the composer walks the session's prompts, read from the transcript
+// (timeline.logic.ts, promptHistory). A message sent with chips was recorded
+// with their paths in their place, or, for a picture Claude Code attached,
+// with its `[Image #N]` placeholder instead (deployed review round 3,
+// 2026-09-28). The two functions below give the writer back what they sent.
+
+/** A file a recalled message carried, as the composer attaches it. */
+export interface RecalledAttachment {
+  path: string;
+  name: string;
+  kind: AttachmentKind;
+  token: string;
+}
+
+/**
+ * A recalled message with every store path turned back into a chip token, and
+ * the attachments those tokens stand for. A path outside the store is left as
+ * text: nothing on this device put it there as a chip.
+ */
+export function tokenizeStorePaths(text: string): { text: string; items: RecalledAttachment[] } {
+  const items: RecalledAttachment[] = [];
+  const taken = new Set<string>();
+  let out = "";
+  for (const seg of segmentMessage(text)) {
+    const stored = seg.kind === "file" ? parseStorePath(seg.path) : null;
+    if (seg.kind !== "file" || !stored) {
+      out += seg.kind === "file" ? seg.path : seg.text;
+      continue;
+    }
+    const known = items.find((a) => a.path === seg.path);
+    if (known) {
+      out += known.token;
+      continue;
+    }
+    const token = attachToken(stored.name, seg.fileKind, taken);
+    taken.add(token);
+    items.push({ path: seg.path, name: stored.name, kind: seg.fileKind, token });
+    out += token;
+  }
+  return { text: out, items };
+}
+
+/** A message's words alone: no paths, no placeholders, no whitespace. What a
+ *  sent message and the CLI's record of it still agree on. */
+function wordsOf(text: string): string {
+  return segmentMessage(text)
+    .map((s) => (s.kind === "text" ? s.text : ""))
+    .join("")
+    .replace(PLACEHOLDER_RE, "")
+    .replace(/\s+/g, "");
+}
+
+/**
+ * History with each entry the CLI rewrote with `[Image #N]` given back as the
+ * message this device sent, whose store path the composer can recall as a
+ * chip. `sent` is those messages, oldest first; the newest with the same words
+ * wins. An entry nothing here sent stays as the transcript has it.
+ */
+export function withSentPictures(history: readonly string[], sent: readonly string[]): string[] {
+  if (sent.length === 0) return [...history];
+  const byWords = new Map<string, string>();
+  for (const s of sent) byWords.set(wordsOf(s), s);
+  return history.map((h) => {
+    if (!h.match(PLACEHOLDER_RE)) return h;
+    return byWords.get(wordsOf(h)) ?? h;
+  });
+}

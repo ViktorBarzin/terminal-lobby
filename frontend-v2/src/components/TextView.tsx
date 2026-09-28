@@ -77,6 +77,8 @@ import { isEditingTarget } from "../keybindings/editing";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
+import { rememberSent, sentPictures } from "../store/sentPictures";
+import { withSentPictures } from "../lib/attachments";
 import type { StopResult } from "../store/session";
 import {
   contextWindow,
@@ -471,7 +473,12 @@ export const TextView: Component<{
   const live = createMemo(() =>
     props.noTranscript ? undefined : liveRowOf(shownRows(), baseRows(), sent()),
   );
-  const history = createMemo(() => promptHistory(props.events, props.sessionState));
+  // Messages with a picture sent from here, so ↑ gives back the picture the
+  // transcript calls `[Image #N]` (deployed review round 3, 2026-09-28).
+  const [sentPics, setSentPics] = createSignal(props.session ? sentPictures(props.session) : []);
+  const history = createMemo(() =>
+    withSentPictures(promptHistory(props.events, props.sessionState), sentPics()),
+  );
   const [modeBusy, setModeBusy] = createSignal(false);
 
   /**
@@ -1092,6 +1099,10 @@ export const TextView: Component<{
       return own;
     }
     const ok = followed(await sendNow(text));
+    if (ok && props.session) {
+      rememberSent(props.session, text);
+      setSentPics(sentPictures(props.session));
+    }
     // What a Stop handed back while these words were being written follows
     // them into the field (`landHandedBack`).
     if (ok) landHandedBack("");
