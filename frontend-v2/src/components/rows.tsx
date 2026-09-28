@@ -1264,7 +1264,10 @@ export const TurnFoldRowView: Component<{
           data-has-error={props.row.hasError ? "true" : undefined}
           onClick={() => props.onToggle(props.row.turnKey)}
         >
-          <span class="tl-group-dot" data-status={props.row.hasError ? "error" : "ok"} />
+          <span
+            class="tl-group-dot"
+            data-status={props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok"}
+          />
           <span class="tl-group-sum tl-fold-label">
             {props.row.durationMs ? `Worked for ${formatDuration(props.row.durationMs)}` : "Worked"}
             {" · "}
@@ -1286,6 +1289,9 @@ export const TurnFoldRowView: Component<{
                 alone. */}
             <Show when={props.row.hasError}>
               <span class="tl-fold-error">✗ failed</span>
+            </Show>
+            <Show when={props.row.stopped && !props.row.hasError}>
+              <span class="tl-fold-stopped">stopped</span>
             </Show>
           </span>
           <GroupChevron />

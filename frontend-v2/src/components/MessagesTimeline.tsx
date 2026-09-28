@@ -23,6 +23,7 @@ import {
   MAX_QUEUED_SHOWN,
   sameRow,
   scrollTopAfterPrepend,
+  statusText,
   visibleRows,
   type ContinuationRow,
   type ErrorRow,
@@ -202,7 +203,7 @@ const ErrorRowView: Component<{ row: ErrorRow }> = (props) => (
 
 const StatusRowView: Component<{ row: StatusRow }> = (props) => (
   <div class="tl-row tl-row-status" data-subtype={props.row.subtype}>
-    <span class="tl-status-text">{props.row.body || props.row.subtype}</span>
+    <span class="tl-status-text">{statusText(props.row)}</span>
   </div>
 );
 

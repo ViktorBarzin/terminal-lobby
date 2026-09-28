@@ -11,12 +11,14 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent } from "@solidjs/testing-library";
 import type { Event } from "../src/types/events";
-import { WorkGroupRowView } from "../src/components/rows";
+import { TurnFoldRowView, WorkGroupRowView } from "../src/components/rows";
+import { MessagesTimeline } from "../src/components/MessagesTimeline";
 import {
   deriveRows,
   liveGroupState,
   liveRow,
   type LiveGroupState,
+  type TurnFoldRow,
   type WorkGroupRow,
 } from "../src/components/timeline.logic";
 import { closePicture, picture } from "../src/store/picture";
@@ -350,5 +352,36 @@ describe("<WorkGroupRowView> while it runs", () => {
     expect(calls()[1]!.getAttribute("data-status")).toBe("running");
     expect(calls()[1]!.querySelector(".tl-group-spin")).not.toBeNull();
     expect(container.querySelectorAll(".tl-group-call .tl-group-spin")).toHaveLength(1);
+  });
+});
+
+// Found live on 2026-09-28: a stopped or declined turn folded as a green
+// "Worked for Ns" with the CLI's raw "[Request interrupted by user]" under it.
+// The prototype draws a stopped group grey with "stopped", then the note
+// "Stopped. Claude's turn ended."
+describe("a turn the reader stopped", () => {
+  const STOPPED: Event[] = [
+    ev({ id: 1, kind: "user", body: "go", at: 1_000 }),
+    ev({ id: 2, kind: "text", body: "looking", at: 1_500 }),
+    bash(3, "b1", "ls", 2_000),
+    result(4, "b1", "ok", { at: 3_000 }),
+    ev({ id: 5, kind: "text", body: "now the tests", at: 4_000 }),
+    ev({ id: 6, kind: "state", body: "[Request interrupted by user]", at: 5_000 }),
+    ev({ id: 7, kind: "turn_end", at: 5_000 }),
+  ];
+
+  it("draws the fold stopped, in words and not by colour alone", () => {
+    const fold = deriveRows(STOPPED).find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    const { container } = render(() => (
+      <TurnFoldRowView row={fold} expanded={false} onToggle={() => {}} />
+    ));
+    expect(container.querySelector(".tl-group-dot")!.getAttribute("data-status")).toBe("stopped");
+    expect(container.querySelector(".tl-group-meta")!.textContent).toContain("stopped");
+  });
+
+  it("says the turn stopped instead of printing the CLI's notice", () => {
+    const { container } = render(() => <MessagesTimeline events={STOPPED} />);
+    expect(container.textContent).toContain("Stopped. Claude's turn ended.");
+    expect(container.textContent).not.toContain("[Request interrupted");
   });
 });

@@ -266,6 +266,8 @@ export interface TurnFoldRow {
   hidden: FoldedRow[];
   /** At least one hidden row is a failure — the collapsed row must say so. */
   hasError: boolean;
+  /** The reader stopped the turn: the fold is drawn stopped, not done. */
+  stopped: boolean;
   /** Files the turn changed, summarised on the collapsed row. */
   changedFiles: string[];
   /**
@@ -1106,8 +1108,13 @@ function foldedSteps(row: FoldedRow): number {
  * as it stands. The fold hides replies and work groups in order (Viktor,
  * 2026-09-27: "a finished turn still folds to its last reply").
  */
-function foldSettledTurn(turn: Turn, work: FoldedRow[], settled: boolean): TimelineRow[] {
+function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): TimelineRow[] {
   const rows: TimelineRow[] = [];
+  // A turn the reader stopped ends on the CLI's interrupt notice. It stays out
+  // of the fold, after it, where it says the turn was stopped rather than
+  // standing in for the answer the turn never gave.
+  const stop = settled && isInterrupt(all[all.length - 1]) ? all[all.length - 1] : undefined;
+  const work = stop ? all.slice(0, -1) : all;
   if (settled && work.length > 1) {
     // Keep the last assistant message visible (the turn's "answer"); fold the
     // rest behind a "Worked for Ns" row. Fall back to the last work row when
@@ -1133,6 +1140,8 @@ function foldSettledTurn(turn: Turn, work: FoldedRow[], settled: boolean): Timel
             count: hidden.reduce((n, r) => n + foldedSteps(r), 0),
             hidden,
             hasError: hidden.some(foldedFailed),
+            stopped:
+              stop !== undefined || hidden.some((r) => r.kind === "work-group" && r.stopped),
             changedFiles: changed,
             pictures: hidden.flatMap((r) => (r.kind === "work-group" ? r.pictures : [])),
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
@@ -1146,8 +1155,9 @@ function foldSettledTurn(turn: Turn, work: FoldedRow[], settled: boolean): Timel
     if (fold && visibleAt > 0) rows.push(fold);
     if (visible) rows.push(visible);
     if (fold && visibleAt === 0) rows.push(fold);
+    if (stop) rows.push(stop);
   } else {
-    for (const r of work) rows.push(r);
+    for (const r of all) rows.push(r);
   }
   return rows;
 }
@@ -1169,6 +1179,16 @@ const INTERRUPT_MARKER = "[Request interrupted by user";
 /** The status row an interrupt leaves in the turn, or false for any other row. */
 function isInterrupt(row: FoldedRow | undefined): boolean {
   return row?.kind === "status" && row.subtype === "state" && row.body.startsWith(INTERRUPT_MARKER);
+}
+
+/**
+ * What a status row says. The interrupt notice is the CLI's own bracketed
+ * line, "[Request interrupted by user for tool use]", which a reader should
+ * not have to decode; it reads the way the prototype's note does.
+ */
+export function statusText(row: StatusRow): string {
+  if (isInterrupt(row)) return "Stopped. Claude's turn ended.";
+  return row.body || row.subtype;
 }
 
 /**

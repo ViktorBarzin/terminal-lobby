@@ -804,6 +804,63 @@ describe("work groups", () => {
     expect(groups(rows)[0]!.stopped).toBe(stopped);
   });
 
+  // Found live on 2026-09-28: a stopped turn folded as a green "Worked for Ns"
+  // with the CLI's own "[Request interrupted by user]" as its visible row.
+  it.each<[string, Event[]]>([
+    [
+      "stopped after a reply",
+      [
+        ev({ id: 2, kind: "text", body: "looking" }),
+        bash(3, "t1", "sleep 60", 1000),
+        done(4, "t1", { body: "[Request interrupted by user for tool use]", isError: true }),
+        ev({ id: 5, kind: "state", body: "[Request interrupted by user for tool use]" }),
+        ev({ id: 6, kind: "turn_end" }),
+      ],
+    ],
+    [
+      "stopped between two replies",
+      [
+        ev({ id: 2, kind: "text", body: "looking" }),
+        bash(3, "t1", "ls", 1000),
+        done(4, "t1"),
+        ev({ id: 5, kind: "text", body: "now the tests" }),
+        ev({ id: 6, kind: "state", body: "[Request interrupted by user]" }),
+        ev({ id: 7, kind: "turn_end" }),
+      ],
+    ],
+  ])("folds a turn %s as stopped and keeps the stop in view", (_name, work) => {
+    const rows = deriveRows([ev({ id: 1, kind: "user", body: "go" }), ...work]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.stopped).toBe(true);
+    const last = rows[rows.length - 1]!;
+    expect(last.kind === "status" && last.body.startsWith("[Request interrupted")).toBe(true);
+    expect(rows.indexOf(fold)).toBeLessThan(rows.length - 1);
+  });
+
+  it("leaves a stopped turn with one group unfolded, the group saying stopped", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "t1", "sleep 60", 1000),
+      ev({ id: 3, kind: "state", body: "[Request interrupted by user]" }),
+      ev({ id: 4, kind: "turn_end" }),
+    ]);
+    expect(rows.some((r) => r.kind === "turn-fold")).toBe(false);
+    expect(groups(rows)[0]!.stopped).toBe(true);
+    expect(rows[rows.length - 1]!.kind).toBe("status");
+  });
+
+  it("does not call a turn that finished cleanly stopped", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "t1", "ls"),
+      done(3, "t1"),
+      ev({ id: 4, kind: "text", body: "ok" }),
+      ev({ id: 5, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.stopped).toBe(false);
+  });
+
   // Found live on 2026-09-27: a local command typed after a turn settled
   // (/context, which writes into the transcript with no turn of its own)
   // joined the turn before it and stretched its "Worked for" to the minute
