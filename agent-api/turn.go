@@ -59,7 +59,11 @@ func (s *Server) runTurn(t *Task) {
 	if t.uncleared {
 		send = s.Sessions.PromptUncleared
 	}
-	if err := send(t.OSUser, live.Name, t.Text); err != nil {
+	// A dialog that took the input box's place at the Enter leaves the pane
+	// unable to say whether the message went (sessionio.ErrSubmitUnconfirmed).
+	// The transcript can, and the watcher below reads it: a turn that never
+	// starts fails there, one that does is followed as usual.
+	if err := send(t.OSUser, live.Name, t.Text); err != nil && !errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
 		s.fail(t, "sending the message to %s failed: %v", t.ConversationID, err)
 		return
 	}

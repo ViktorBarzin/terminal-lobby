@@ -2,11 +2,14 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"terminal-lobby/sessionio"
 )
 
 // sendMessage posts one message and returns its task id.
@@ -196,6 +199,19 @@ func TestTurnFailures(t *testing.T) {
 				h.sessions.promptErr = errors.New("tmux: no server")
 			},
 			match:    "failed",
+			injected: true,
+		},
+		{
+			// A dialog took the input box's place at the Enter, so the pane
+			// cannot say whether the message went (sessionio
+			// ErrSubmitUnconfirmed). The transcript can: the watcher follows
+			// it, and here no turn starts.
+			name: "the box goes at the Enter and nothing was submitted",
+			arm: func(h *harness) {
+				h.readyConversation("c1")
+				h.sessions.promptErr = fmt.Errorf("wrapped: %w", sessionio.ErrSubmitUnconfirmed)
+			},
+			match:    "no turn started",
 			injected: true,
 		},
 		{

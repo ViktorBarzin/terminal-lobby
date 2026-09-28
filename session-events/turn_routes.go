@@ -181,7 +181,20 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 				return
 			}
 		}
-		if err := drv.Prompt(osUser, session, body.Text); err != nil {
+		sentAt := time.Now()
+		err = drv.Prompt(osUser, session, body.Text)
+		// The Enter went and a dialog stood in the box's place by the next
+		// read, so the pane cannot say whether Claude took the prompt first
+		// (sessionio.ErrSubmitUnconfirmed). The transcript can.
+		if errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
+			if recordedSince(r.Context(), rg, osUser, session, body.Text, sentAt) {
+				err = nil
+			} else {
+				writePromptRefusal(w, metDialogReason(r.Context(), rg, drv, osUser, session))
+				return
+			}
+		}
+		if err != nil {
 			// Claude drew a dialog between the guard above and the Enter, and
 			// the prompt stopped short of it (sessionio.ErrInputGone). Refused
 			// as though the dialog had been up all along, so the sender keeps
@@ -230,6 +243,45 @@ func metDialogReason(ctx context.Context, rg *registry, drv promptDriver, osUser
 		select {
 		case <-ctx.Done():
 			return dialogOpenReason
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
+}
+
+// recordedWait bounds how long recordedSince reads the transcript for a
+// prompt whose submit the pane could not confirm. Claude records a queued
+// prompt or a new turn's prompt within a few hundred ms; the tail reads every
+// 200 ms.
+const recordedWait = 2 * time.Second
+
+// recordedTail is how many of the newest events recordedSince looks through.
+const recordedTail = 200
+
+// recordedSince reports whether the transcript recorded `text` as a prompt,
+// queued or opening a turn, at or after `since` (less a second for the
+// transcript's own clock rounding), within recordedWait.
+func recordedSince(ctx context.Context, rg *registry, osUser, session, text string, since time.Time) bool {
+	fs, ok := rg.source(osUser, session)
+	if !ok {
+		return false
+	}
+	want := strings.Join(strings.Fields(text), "")
+	from := since.Add(-time.Second).UnixMilli()
+	deadline := time.Now().Add(recordedWait)
+	for {
+		head, _ := fs.Head()
+		for _, e := range fs.Replay(max(0, head-recordedTail)) {
+			prompt := e.Kind == sessionio.KindUser || (e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaQueued)
+			if prompt && e.At >= from && strings.Join(strings.Fields(e.Body), "") == want {
+				return true
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		select {
+		case <-ctx.Done():
+			return false
 		case <-time.After(100 * time.Millisecond):
 		}
 	}

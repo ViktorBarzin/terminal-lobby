@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -988,5 +990,80 @@ func TestPromptWaitingOnTheTrustDialogSaysSo(t *testing.T) {
 	}
 	if f.called("Prompt") {
 		t.Fatal("a prompt was typed into the trust dialog")
+	}
+}
+
+// The live check of the fix (2026-09-28) lost one prompt in 6 trials another
+// way: the text showed in the box, its Enter went, and a dialog stood in the
+// box's place by the next read, with the prompt neither submitted nor on show.
+// The pane cannot tell that from a prompt submitted just before the dialog
+// drew (sessionio.ErrSubmitUnconfirmed), so the route asks the transcript.
+func TestPromptWhoseBoxWentAtTheEnterIsCheckedInTheTranscript(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		record func(ts string) string
+		want   int
+	}{
+		{"queued", func(ts string) string {
+			return `{"type":"queue-operation","operation":"enqueue","content":"queued  note 12","timestamp":"` + ts + `"}`
+		}, http.StatusNoContent},
+		{"a turn of its own", func(ts string) string {
+			return `{"type":"user","message":{"role":"user","content":"queued note 12"},"timestamp":"` + ts + `"}`
+		}, http.StatusNoContent},
+		{"not recorded", nil, http.StatusConflict},
+		{"recorded before this send", func(string) string {
+			return `{"type":"queue-operation","operation":"enqueue","content":"queued note 12","timestamp":"2026-09-28T10:00:00.000Z"}`
+		}, http.StatusConflict},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeTurns{pane: "❯ \n", promptErr: sessionio.ErrSubmitUnconfirmed}
+			mux, transcript := turnMuxWithTranscript(t, f)
+			f.inPrompt = func() {
+				f.pane = capture(t, "permission-bash.txt")
+				if c.record != nil {
+					appendLine(t, transcript, c.record(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")))
+				}
+			}
+			rec := postTurn(t, mux, "/prompt/demo", `{"text":"queued note 12"}`)
+			if rec.Code != c.want {
+				t.Fatalf("status %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// turnMuxWithTranscript is turnMux over a registry that knows "demo", whose
+// transcript the returned path names.
+func turnMuxWithTranscript(t *testing.T, f *fakeTurns) (http.Handler, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	home := t.TempDir()
+	path := sessionio.TranscriptPath(sessionio.ProjectsRoot(home, "wizard"), "/home/wizard/x", "s1")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appendLine(t, path, `{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-09-28T09:00:00.000Z"}`)
+	rg := newRegistry(ctx, time.Millisecond, home, siotest.NewFakeOptions("wizard/demo"), "wizard")
+	w := httptest.NewRecorder()
+	rg.handleSessionStart()(w, httptest.NewRequest(http.MethodPost, "/hooks/session-start",
+		strings.NewReader(`{"user":"wizard","session_id":"s1","cwd":"/home/wizard/x","tmux_session":"demo"}`)))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("session-start: %d (%s)", w.Code, w.Body.String())
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
+	return mux, path
+}
+
+func appendLine(t *testing.T, path, line string) {
+	t.Helper()
+	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	if _, err := fh.WriteString(line + "\n"); err != nil {
+		t.Fatal(err)
 	}
 }

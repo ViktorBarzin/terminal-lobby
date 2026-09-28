@@ -21,6 +21,14 @@ var ErrPromptNotSubmitted = errors.New("the prompt is still on the input line: E
 // the next Prompt clears them.
 var ErrInputGone = errors.New("the input box went away before the prompt was sent: a dialog took its place")
 
+// ErrSubmitUnconfirmed is a prompt whose Enter was pressed with the text in
+// Claude's input box, and the box was gone by the next read: a dialog took
+// its place. Claude may have submitted the prompt just before the dialog drew,
+// or the dialog may have taken the Enter as nothing and kept the text out of
+// sight (the live check on 2026-09-28 lost a prompt that way, with no row
+// picked). The pane cannot tell the two apart; the transcript can.
+var ErrSubmitUnconfirmed = errors.New("the input box went away at the Enter: whether the prompt was submitted is not known")
+
 // The waits that confirm a submit. Vars only as a test seam.
 var (
 	// submitPoll is how often the box is read back.
@@ -124,6 +132,10 @@ func (in *Injector) awaitHeld(osUser, session, text string) bool {
 
 // confirmSubmitted waits for the box to let go of text, pressing Enter again
 // each time it has held on for enterRetryAfter, up to maxEnters in all.
+//
+// A box that is gone rather than empty is ErrSubmitUnconfirmed, except for a
+// slash command, whose submit opens a screen of its own there (a picker,
+// /config).
 func (in *Injector) confirmSubmitted(osUser, session, text string) error {
 	enters := 1
 	pressed := time.Now()
@@ -134,6 +146,9 @@ func (in *Injector) confirmSubmitted(osUser, session, text string) error {
 			// The Enter was sent and the pane cannot be read: nothing says it
 			// failed, and a read that fails does not say the session is gone.
 			return nil
+		}
+		if _, ok := inputBox(pane); !ok && !strings.HasPrefix(strings.TrimSpace(text), "/") {
+			return ErrSubmitUnconfirmed
 		}
 		if !inputHolds(pane, text) {
 			return nil

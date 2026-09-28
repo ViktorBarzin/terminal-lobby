@@ -40,7 +40,9 @@ rows, the first starting with the prompt mark, and nothing above them.
 FAKEINPUT_DIALOG=paste or FAKEINPUT_DIALOG=clear draws a permission dialog in
 the box's place the moment a bracketed paste starts, or the moment a C-e
 arrives: Claude drawing a prompt while a send is on its way (deployed review
-round 4, 2026-09-28). The paste mode turns bracketed paste on, which tmux
+round 4, 2026-09-28). FAKEINPUT_DIALOG=enter draws it as the Enter arrives
+and takes that Enter as nothing, keeping the text out of sight: the live
+check of the fix found a prompt lost that way, with no row picked. The paste mode turns bracketed paste on, which tmux
 needs to mark a paste's start. While it is up, Enter picks its highlighted row and a
 digit picks that row, each printed as ANSWERED=<row>, and a paste is ignored.
 
@@ -147,7 +149,9 @@ def main():
             ch = read1()
             if ch == "":
                 return
-            if dialog and pasting and ch != "\x1b":
+            if DIALOG == "enter" and not dialog and not answered and line and ch in ("\r", "\n"):
+                dialog = True
+            elif dialog and pasting and ch != "\x1b":
                 pass
             elif dialog and ch in ("\r", "\n"):
                 answered.append("1")
