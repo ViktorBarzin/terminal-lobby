@@ -493,6 +493,40 @@ export interface ComposableAttachment {
 }
 
 /**
+ * Characters that may touch a path without becoming part of it: sentence
+ * punctuation and closing brackets after it, opening brackets and quotes
+ * before it. The timeline's path reader strips the first set and never starts a
+ * path inside the second (lib/attachments.ts, TRAILING_PROSE_RE).
+ */
+const HUGS_AFTER = /[.,;:!?)\]}"'»`]/;
+const HUGS_BEFORE = /[([{"'«`]/;
+
+/**
+ * Swap every copy of `token` in `body` for `path`, with a space on any side
+ * where a word sits right against it.
+ *
+ * Every copy, because a token the writer copied twice means the same file
+ * twice. The space, because a chip is a picture in the field but a path in the
+ * message: `[img]describe` would send `…/a.pngdescribe`, which no longer names
+ * the file, and `sentence[img]` would send a path the timeline cannot find.
+ * Attach-then-type is the phone's normal flow, so this is the common case.
+ */
+function placePath(body: string, token: string, path: string): string {
+  let out = "";
+  let from = 0;
+  for (let at = body.indexOf(token); at !== -1; at = body.indexOf(token, from)) {
+    const before = body[at - 1];
+    const after = body[at + token.length];
+    out += body.slice(from, at);
+    if (before !== undefined && !/\s/.test(before) && !HUGS_BEFORE.test(before)) out += " ";
+    out += path;
+    if (after !== undefined && !/\s/.test(after) && !HUGS_AFTER.test(after)) out += " ";
+    from = at + token.length;
+  }
+  return out + body.slice(from);
+}
+
+/**
  * The message an attachment-carrying composer sends: every token swapped for
  * the absolute path it stands for, in place.
  *
@@ -518,9 +552,7 @@ export function composeMessage(text: string, attachments: readonly ComposableAtt
   for (const a of attachments) {
     if (seen.has(a.path)) continue;
     seen.add(a.path);
-    // split/join rather than replace: a token the writer copied twice means the
-    // same file twice, and a lone replace would leave the second one as text.
-    if (a.token && body.includes(a.token)) body = body.split(a.token).join(a.path);
+    if (a.token && body.includes(a.token)) body = placePath(body, a.token, a.path);
     else loose.push(a.path);
   }
   body = body.trim();

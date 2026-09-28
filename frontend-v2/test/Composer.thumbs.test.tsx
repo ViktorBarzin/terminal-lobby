@@ -83,7 +83,18 @@ describe("the image in the chip", () => {
     const chip = container.querySelector(".tl-inline-chip")!;
     expect(chip.querySelector("img")).toBeNull();
     expect(chip.textContent).toBe("[img]");
-    expect(container.querySelector("textarea")!.value).toBe("[img]");
+    expect(container.querySelector("textarea")!.value).toBe("[img] ");
+  });
+
+  // Attach-then-type is the phone's normal flow. With the caret right against
+  // the chip, the first word typed fused with it and the send carried
+  // `…/a.pngdescribe`, which names no file (live check, 2026-09-28).
+  it("leaves the caret after a space, so the next word does not touch the chip", async () => {
+    const { container } = mount([IMG]);
+    await waitFor(() => expect(thumbs(container)).toHaveLength(1));
+    const ta = container.querySelector("textarea")!;
+    expect(ta.selectionStart).toBe(ta.value.length);
+    expect(ta.value.endsWith(" ")).toBe(true);
   });
 
   it("leaves a document as the pill it was", async () => {

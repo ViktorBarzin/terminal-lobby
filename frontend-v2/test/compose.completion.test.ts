@@ -185,4 +185,26 @@ describe("composeMessage", () => {
   it("places a token the writer copied twice at both of them", () => {
     expect(composeMessage("[img] vs [img]", [img])).toBe(`${a} vs ${a}`);
   });
+
+  // Attach-then-type is the phone's normal flow, and the field can hold a chip
+  // with words right against it. A path fused to a word stops being a path:
+  // the bubble shows raw text, or a file chip that swallows the word.
+  it("keeps a path apart from a word typed right after its token", () => {
+    expect(composeMessage("[img]describe in three words", [img])).toBe(
+      `${a} describe in three words`,
+    );
+  });
+
+  it("keeps a path apart from a word typed right before its token", () => {
+    expect(composeMessage("one short sentence[img]", [img])).toBe(`one short sentence ${a}`);
+  });
+
+  it("keeps two tokens written back to back as two paths", () => {
+    expect(composeMessage("[img][file: report.pdf]", [img, pdf])).toBe(`${a} ${b}`);
+  });
+
+  it("lets sentence punctuation and brackets hug a path, as prose does", () => {
+    expect(composeMessage("see ([img]).", [img])).toBe(`see (${a}).`);
+    expect(composeMessage('"[img]"?', [img])).toBe(`"${a}"?`);
+  });
 });

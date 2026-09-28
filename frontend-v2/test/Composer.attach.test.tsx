@@ -77,7 +77,7 @@ describe("attaching", () => {
 
     pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe("[img] "));
     expect(onAttach).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(chips(container)).toHaveLength(1));
     expect(chips(container)[0]!.textContent).toBe("[img]");
@@ -108,14 +108,14 @@ describe("attaching", () => {
 
     pick(container, file("a.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("look at this [img]"));
+    await waitFor(() => expect(field.value).toBe("look at this [img] "));
   });
 
   it("names a document in its token", async () => {
     const onAttach = vi.fn().mockResolvedValue([DOC]);
     const { container, field } = mount({ onAttach });
     pick(container, file("report.pdf", "application/pdf"));
-    await waitFor(() => expect(field.value).toBe("[file: report.pdf]"));
+    await waitFor(() => expect(field.value).toBe("[file: report.pdf] "));
     await waitFor(() => expect(chips(container)[0]!.getAttribute("data-kind")).toBe("doc"));
   });
 
@@ -125,10 +125,10 @@ describe("attaching", () => {
     const { container, field } = mount({ onAttach });
 
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe("[img] "));
     pick(container, file("b.png", "image/png"));
 
-    await waitFor(() => expect(field.value).toBe("[img] [img 2]"));
+    await waitFor(() => expect(field.value).toBe("[img] [img 2] "));
   });
 
   it("keeps a token from fusing with the word beside it", async () => {
@@ -137,7 +137,7 @@ describe("attaching", () => {
     fireEvent.input(field, { target: { value: "see" } });
     caretTo(field, 3);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("see [img]"));
+    await waitFor(() => expect(field.value).toBe("see [img] "));
   });
 });
 
@@ -161,12 +161,12 @@ describe("removing", () => {
     fireEvent.input(field, { target: { value: "look" } });
     caretTo(field, 4);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe("look [img] "));
 
     field.setSelectionRange(10, 10);
     fireEvent.keyDown(field, { key: "Backspace" });
 
-    await waitFor(() => expect(field.value).toBe("look"));
+    await waitFor(() => expect(field.value).toBe("look "));
     expect(chips(container)).toHaveLength(0);
     send();
     expect(onSend).toHaveBeenCalledWith("look", []);
@@ -176,7 +176,7 @@ describe("removing", () => {
     const onAttach = vi.fn().mockResolvedValue([IMG]);
     const { container, field } = mount({ onAttach });
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("[img]"));
+    await waitFor(() => expect(field.value).toBe("[img] "));
 
     field.setSelectionRange(0, 0);
     fireEvent.keyDown(field, { key: "Delete" });
@@ -253,11 +253,11 @@ describe("sending", () => {
     fireEvent.input(field, { target: { value: "look" } });
     caretTo(field, 4);
     pick(container, file("a.png", "image/png"));
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe("look [img] "));
 
     send();
 
-    await waitFor(() => expect(field.value).toBe("look [img]"));
+    await waitFor(() => expect(field.value).toBe("look [img] "));
     expect(chips(container)).toHaveLength(1);
   });
 });
@@ -290,7 +290,7 @@ describe("persistence", () => {
     const { container } = mount({ onAttach });
     pick(container, file("a.png", "image/png"));
     await waitFor(() => expect(loadDraft("qa")?.attachments[0]?.token).toBe("[img]"));
-    expect(loadDraft("qa")?.text).toBe("[img]");
+    expect(loadDraft("qa")?.text).toBe("[img] ");
   });
 
   it("keeps a corrupt store from breaking the composer", () => {
@@ -334,7 +334,7 @@ describe("register", () => {
     caretTo(field, 11);
     api().add([IMG]);
     await waitFor(() => expect(chips(container)).toHaveLength(1));
-    expect(field.value).toBe("have a look [img]");
+    expect(field.value).toBe("have a look [img] ");
   });
 
   it("inserts pasted text at the caret rather than replacing the message", async () => {

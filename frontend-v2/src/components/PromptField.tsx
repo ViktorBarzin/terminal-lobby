@@ -578,7 +578,10 @@ export const PromptField: Component<{
    * put a caret in the field yet (see `caretKnown`).
    *
    * `pad` keeps a chip from fusing with the words on either side of it. Plain
-   * text never pads: a paste has to land exactly as typed.
+   * text never pads: a paste has to land exactly as typed. A chip at the END
+   * of the message still gets its space after, so the caret sits clear of it
+   * and the word typed next is a word of its own: attach-then-type is how a
+   * phone writes a message about a picture.
    */
   const splice = (text: string, pad: boolean, padAfter: boolean = pad): void => {
     if (!ta || !text) return;
@@ -589,7 +592,7 @@ export const PromptField: Component<{
     const body =
       (pad && before && !/\s$/.test(before) ? " " : "") +
       text +
-      (padAfter && after && !/^\s/.test(after) ? " " : "");
+      (padAfter && !/^\s/.test(after) ? " " : "");
     ta.value = before + body + after;
     const pos = at + body.length;
     ta.setSelectionRange(pos, pos);
