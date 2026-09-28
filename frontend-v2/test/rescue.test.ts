@@ -200,10 +200,9 @@ describe("dragging a card out of System", () => {
   });
 
   it("writes no layout at all when the stamp does not land", async () => {
-    // The dishonest alternative: the layout says "work", the server still says
-    // system. deriveSidebar honours an explicit project placement over the
-    // origin, so the card would sit in `work` looking rescued while it went on
-    // being silent — and nothing would ever tell anybody.
+    // The alternative: the layout says "work", the server still says system.
+    // deriveSidebar files by origin, so the card would spring back into System
+    // on the next poll and leave a `work` entry the sidebar never renders.
     const api = new FakeApi();
     api.sessionsVal = [stray("shell-2")];
     api.layoutVal = {

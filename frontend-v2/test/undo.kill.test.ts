@@ -40,6 +40,7 @@ const sess = (name: string, over: Partial<Session> = {}): Session => ({
   lastActivity: 1000,
   created: 1000,
   owner: "wizard",
+  origin: "user",
   ...over,
 });
 
