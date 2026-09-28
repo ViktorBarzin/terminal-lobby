@@ -674,9 +674,15 @@ def draw_plan():
 #   - Enter on the No row declines, with the words when the field holds any;
 #     Enter on another row picks it.
 #
+# and on 2026-09-28, at 47 columns:
+#
+#   - a digit with the cursor on the open field goes into it ("No, 1");
+#   - walking off an EMPTY field closes it, and the row reads "No" again;
+#   - with the cursor off the field, a digit picks its row as ever ("1"
+#     approved with "No, xyz" drawn under it).
+#
 # Not measured, and nothing in the driver relies on them: ↑ and ↓ stop at the
-# ends here; Tab on another row does nothing here; a digit with the cursor on
-# the open field goes into it here, as it does on the plan's feedback row.
+# ends here; Tab on another row does nothing here.
 
 PERM_OPTS = os.environ.get(
     "FAKEDIALOG_PERM_OPTS",
@@ -746,7 +752,7 @@ def perm_pick(i):
 
 
 def perm_arrow(code):
-    global perm_cursor, perm_caret
+    global perm_cursor, perm_caret, perm_open
     was = perm_cursor
     if code == "A":
         perm_cursor = max(1, perm_cursor - 1)
@@ -754,6 +760,8 @@ def perm_arrow(code):
         perm_cursor = min(perm_no(), perm_cursor + 1)
     if perm_cursor == perm_no() and perm_cursor != was:
         perm_caret = 0
+    if was == perm_no() and perm_cursor != was and perm_field == "":
+        perm_open = False
 
 
 def perm_key(ch):

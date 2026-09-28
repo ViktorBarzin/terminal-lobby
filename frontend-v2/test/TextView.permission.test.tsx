@@ -566,6 +566,55 @@ describe("the permission card", () => {
     expect(card()!.querySelector<HTMLButtonElement>(".tl-qcard-option")!.disabled).toBe(false);
   });
 
+  /**
+   * Found in deployed review round 2 (2026-09-28): a typed decline that failed
+   * left the prompt's No field open with the cursor in it, and the card's
+   * "1 Yes" sent the bare digit, which the field took ("No, 1") instead of
+   * approving. Where the view can answer, a row goes through the answer route
+   * with its number and label, and the server walks the cursor off the field
+   * before the digit (sessionio permdrive.go permPick).
+   */
+  it("picks a row through the answer route, with the label the reader saw", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
+    const { card, onKeys } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    fireEvent.click(card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!);
+    await waitFor(() =>
+      expect(onAnswer).toHaveBeenCalledWith({ permission: { option: 1, label: "Yes" } }),
+    );
+    fireEvent.click(card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[1]!);
+    expect(onAnswer).toHaveBeenCalledTimes(1);
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
+  it("says a row did not land, and leaves the card live", async () => {
+    const onAnswer = vi.fn(async (_r: AnswerRequest) => ({
+      applied: false,
+      reason: "unverified" as const,
+    }));
+    const { card, notify } = mount(
+      [...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })],
+      undefined,
+      undefined,
+      { onAnswer },
+    );
+    await waitFor(() => expect(card()).not.toBeNull());
+    const yes = card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!;
+    fireEvent.click(yes);
+    await waitFor(() =>
+      expect(notify).toHaveBeenCalledWith(
+        "Couldn't answer Claude's prompt. Answer it in the Terminal.",
+        "error",
+      ),
+    );
+    await waitFor(() => expect(yes.disabled).toBe(false));
+  });
+
   it("offers no typed answer while this device watches, or when the prompt has no No row", async () => {
     const onAnswer = vi.fn(async (_r: AnswerRequest) => ({ applied: true, done: true }));
     const watching = mount(

@@ -2,6 +2,8 @@ package sessionio
 
 import (
 	"context"
+	"reflect"
+	"strconv"
 	"time"
 )
 
@@ -43,9 +45,16 @@ import (
 // answerPermission applies one permission request against the reading taken
 // before it.
 func (in *Injector) answerPermission(ctx context.Context, osUser, session string, before answerReading, req AnswerRequest) (AnswerResponse, error) {
-	// A request that answers a question as well says two things at once.
+	// A request that answers a question as well says two things at once, as
+	// does a row picked with words.
 	if req.Answers != nil || req.Chat != nil {
 		return before.reply(AnswerUnknownOption), nil
+	}
+	if req.Permission.Option != 0 {
+		if req.Permission.Decline != "" {
+			return before.reply(AnswerUnknownOption), nil
+		}
+		return in.permPick(ctx, osUser, session, before, req.Permission.Option, req.Permission.Label)
 	}
 	text := req.Permission.Decline
 	// Checked before any key, as AnswerText would check it after the walk.
@@ -85,6 +94,51 @@ func (in *Injector) answerPermission(ctx context.Context, osUser, session string
 	}
 	return in.awaitGone(ctx, osUser, session, typed, func(r answerReading) bool {
 		return onPerm(r) && r.perm.cursor == no && r.perm.amended && typedMatches(r.perm.typed, text)
+	})
+}
+
+// permPick picks the row numbered `n`, which must still be labelled `label`,
+// with its digit. With the cursor in the No row's open field the digit would be
+// typed into it, so the cursor walks off the field first (permOffField). The
+// answer has landed when the prompt it was pressed on has gone.
+func (in *Injector) permPick(ctx context.Context, osUser, session string, before answerReading, n int, label string) (AnswerResponse, error) {
+	if _, ok := planOptionNamed(before.perm.dialog, n, label); !ok {
+		return before.reply(AnswerUnknownOption), nil
+	}
+	cur, reason, err := in.permOffField(ctx, osUser, session, before)
+	if err != nil {
+		return AnswerResponse{}, err
+	}
+	if reason != "" {
+		return cur.reply(reason), nil
+	}
+	if err := in.Keys(osUser, session, []string{strconv.Itoa(n)}); err != nil {
+		return cur.reply(AnswerRefused), nil
+	}
+	pressed := cur.dialog
+	return in.awaitGone(ctx, osUser, session, cur, func(r answerReading) bool {
+		return onPerm(r) && reflect.DeepEqual(r.dialog, pressed)
+	})
+}
+
+// permOffField moves the cursor off the No row while its field is open under
+// it, with one ↑, read back: off the field a digit picks its row again. An
+// empty field closes as the cursor leaves it; words stay (measured on CLI
+// 2.1.283, 2026-09-28). A reading with the cursor anywhere else needs nothing.
+func (in *Injector) permOffField(ctx context.Context, osUser, session string, cur answerReading) (answerReading, string, error) {
+	no := cur.perm.no
+	if no == 0 || cur.perm.cursor != no || !cur.perm.amended {
+		return cur, "", nil
+	}
+	if no == 1 {
+		// No row over it to walk onto, and ↑ from the top row is not measured.
+		return cur, AnswerUnverified, nil
+	}
+	if err := in.Keys(osUser, session, []string{"Up"}); err != nil {
+		return in.refusal(osUser, session)
+	}
+	return in.permAwait(ctx, osUser, session, func(s *permScreen) bool {
+		return s.cursor != 0 && s.cursor != no
 	})
 }
 

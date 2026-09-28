@@ -40,8 +40,9 @@ const scrollToChange = (el: HTMLPreElement): void => {
  * The rows are the prompt's own, numbered and worded as the Terminal draws
  * them (sessionio permdialog.go): what "Yes, and always allow" covers changes
  * with the tool and the directory, so the card shows the CLI's words rather
- * than its own. A tap presses the row's number, which picks the row with no
- * Enter (measured on CLI 2.1.283, 2026-09-27).
+ * than its own. A tap picks the row by its number, which picks it with no
+ * Enter (measured on CLI 2.1.283, 2026-09-27); the caller sends it through
+ * the answer route, which first takes the cursor out of an open No field.
  *
  * The last row is "Type your own answer" (`OwnAnswer`), under the CLI's own
  * rows, No included. Its words decline the tool call and tell Claude what to
@@ -60,7 +61,7 @@ export const PermissionCard: Component<{
    *  an Edit's change or a Bash command in the well, in place of the pane's
    *  lines. Absent or null, the well shows what the pane drew. */
   preview?: PermissionPreview | null;
-  /** Press the row's number; false when the key did not reach the session. */
+  /** Pick the row by its number; false when the pick did not land. */
   onPick: (option: number) => Promise<boolean>;
   /** Decline with these words; false when the decline did not land. Absent
    *  means this view cannot, and the card offers no typed answer. */

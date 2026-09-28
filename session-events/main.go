@@ -530,7 +530,8 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 // with their length, whether they went back for more planning or approved the
 // plan with them. Either is one answer. A permission prompt declined with words
 // (since 2026-09-27) is free text the same way; a permission row picked by its
-// number is a key and comes from POST /keys.
+// number is one digit, as an approve option is (through this route since
+// 2026-09-28, through POST /keys before).
 func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 	client, count := "api", 1
 	switch {
@@ -538,7 +539,7 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 		client, count = "api-text", len(*req.Chat)
 	case req.Plan != nil && req.Plan.Feedback != "":
 		client, count = "api-text", len(req.Plan.Feedback)
-	case req.Permission != nil:
+	case req.Permission != nil && req.Permission.Decline != "":
 		client, count = "api-text", len(req.Permission.Decline)
 	}
 	events.Emit("claude.answered", osUser, telemetry.Attrs{
@@ -551,7 +552,8 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 // A dialog quotes whatever the session was working on, so nothing here carries
 // a question, an option label or the words typed (ADR-0006). tl.session ties a
 // failure back to its transcript, tl.action says what kind of request it was
-// (answers, chat, plan-approve, plan-feedback, permission-decline), and a held
+// (answers, chat, plan-approve, plan-feedback, permission-decline,
+// permission-pick), and a held
 // call adds how many questions it asked and whether any was multi-select.
 //
 // The two NAMES are the ones the browser walk emitted before 2026-09-10, so

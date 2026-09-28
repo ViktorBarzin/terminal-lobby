@@ -184,3 +184,87 @@ func TestAnswerRefusesADialogThePaneIsNotDrawing(t *testing.T) {
 		t.Fatalf("a refused request moved the prompt:\n%s", pane)
 	}
 }
+
+func permPick(t *testing.T, in *Injector, osUser string, option int, label string) AnswerResponse {
+	t.Helper()
+	res, err := in.Answer(context.Background(), osUser, "demo",
+		AnswerRequest{Permission: &PermissionAnswer{Option: option, Label: label}})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	return res
+}
+
+// A row picked on the card goes in as its digit, and the reply waits for the
+// prompt to go.
+func TestAnswerPicksAPermissionRow(t *testing.T) {
+	in, osUser := permSession(t, "")
+
+	res := permPick(t, in, osUser, 1, "Yes")
+
+	if !res.Applied || !res.Done {
+		t.Fatalf("applied=%v done=%v reason=%q, want the prompt gone", res.Applied, res.Done, res.Reason)
+	}
+	if res.Action != ActionPermissionPick {
+		t.Errorf("action = %q, want %q", res.Action, ActionPermissionPick)
+	}
+	if pane := paneOf(t, in, osUser); !strings.Contains(pane, "PERMISSION 1") {
+		t.Fatalf("row 1 was not picked:\n%s", pane)
+	}
+}
+
+// With the cursor in the No row's open field, a digit is typed into the field
+// ("No, 1") and picks nothing. That is where a failed typed decline left the
+// pane, and the card's Yes then told Claude "1" instead of approving (deployed
+// review round 2). The cursor walks off the field first, which closes an empty
+// one, and only then does the digit go in.
+func TestAnswerPicksARowWhileTheNoFieldIsOpen(t *testing.T) {
+	for _, tc := range []struct{ name, field string }{
+		{"empty", "''"},
+		{"holding words", "'old words'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, osUser := permSession(t, "FAKEDIALOG_PERM_FIELD="+tc.field+" FAKEDIALOG_PERM_CURSOR=3")
+			eventually(t, in, osUser, "❯ 3. No,")
+
+			res := permPick(t, in, osUser, 1, "Yes")
+
+			if !res.Applied || !res.Done {
+				t.Fatalf("applied=%v done=%v reason=%q", res.Applied, res.Done, res.Reason)
+			}
+			pane := paneOf(t, in, osUser)
+			if !strings.Contains(pane, "PERMISSION 1") || strings.Contains(pane, "No, 1") {
+				t.Fatalf("the digit went into the field instead of picking row 1:\n%s", pane)
+			}
+		})
+	}
+}
+
+// A row the prompt does not draw, a label that is not the one drawn now, or a
+// row and words together, is refused with nothing typed.
+func TestAnswerRefusesARowItCannotPick(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  PermissionAnswer
+	}{
+		{"no such row", PermissionAnswer{Option: 7, Label: "Yes"}},
+		{"another label", PermissionAnswer{Option: 1, Label: "Yes, and always allow"}},
+		{"no label", PermissionAnswer{Option: 1}},
+		{"words too", PermissionAnswer{Option: 1, Label: "Yes", Decline: "x"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in, osUser := permSession(t, "")
+			req := tc.req
+			res, err := in.Answer(context.Background(), osUser, "demo", AnswerRequest{Permission: &req})
+			if err != nil {
+				t.Fatalf("Answer: %v", err)
+			}
+			if res.Applied || res.Reason != AnswerUnknownOption {
+				t.Fatalf("applied=%v reason=%q, want unknown-option", res.Applied, res.Reason)
+			}
+			if pane := paneOf(t, in, osUser); !strings.Contains(pane, "❯ 1.") || strings.Contains(pane, "PERMISSION") {
+				t.Fatalf("a refused request moved the prompt:\n%s", pane)
+			}
+		})
+	}
+}

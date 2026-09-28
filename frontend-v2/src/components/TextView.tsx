@@ -661,11 +661,37 @@ export const TextView: Component<{
   /** The docked permission card's press, for a row number typed on the
    *  keyboard (PermissionCard `register`). */
   let pressPermissionRow: ((row: number) => boolean) | undefined;
-  /** Press a permission row's number. */
+  /**
+   * Pick a permission row. Where this view can answer, the row goes through
+   * the answer route with its number and the label the reader saw, and the
+   * server walks the cursor off the No row's open field before the digit
+   * (sessionio permdrive.go permPick): with the cursor in that field a bare
+   * digit is typed into it. Found in deployed review round 2 (2026-09-28),
+   * after a failed typed decline left the field open and "1 Yes" made the row
+   * read "No, 1". Without the answer route the digit goes as a key.
+   */
   const pickPermission = async (n: number): Promise<boolean> => {
     if (refuseWatching()) return false;
-    const ok = (await props.onKeys?.([String(n)])) ?? false;
-    if (!ok) props.notify?.("Couldn't answer Claude's prompt. Answer it in the Terminal.", "error");
+    const label = permission()?.options.find((o) => o.number === n)?.label ?? "";
+    let ok: boolean;
+    let gone = false;
+    if (props.onAnswer) {
+      const resp = await props
+        .onAnswer({ permission: { option: n, label } })
+        .catch(() => null);
+      ok = resp?.applied ?? false;
+      gone = resp?.reason === "no-dialog" || resp?.reason === "not-drawn";
+    } else {
+      ok = (await props.onKeys?.([String(n)])) ?? false;
+    }
+    if (!ok) {
+      props.notify?.(
+        gone
+          ? "Claude's prompt has already gone."
+          : "Couldn't answer Claude's prompt. Answer it in the Terminal.",
+        "error",
+      );
+    }
     return ok;
   };
   /**

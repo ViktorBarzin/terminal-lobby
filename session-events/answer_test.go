@@ -322,6 +322,7 @@ func TestAnswerRecordsTheBlockingPromptAsAnswered(t *testing.T) {
 		{"plan feedback", `{"plan":{"feedback":"kiwi"}}`, "api-text", 4},
 		{"an approval with feedback", `{"plan":{"feedback":"kiwi","approve":true}}`, "api-text", 4},
 		{"a permission declined with words", `{"permission":{"decline":"use ls"}}`, "api-text", 6},
+		{"a permission row picked", `{"permission":{"option":1,"label":"Yes"}}`, "api", 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			sink := captureEvents(t)

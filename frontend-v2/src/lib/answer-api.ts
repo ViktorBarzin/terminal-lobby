@@ -70,7 +70,7 @@ export interface AnswerResponse {
 }
 
 /** One request: a held call's answers, a decline, a plan answer, or a
- *  permission prompt declined with words. */
+ *  permission prompt answered with a row or declined with words. */
 export interface AnswerRequest {
   /**
    * A whole AskUserQuestion call answered at once, keyed by each question's
@@ -84,23 +84,27 @@ export interface AnswerRequest {
   chat?: string;
   /** An answer to the plan approval. */
   plan?: PlanAnswer;
-  /** The tool permission prompt declined with words. */
+  /** The tool permission prompt: a row picked, or declined with words. */
   permission?: PermissionAnswer;
 }
 
 /**
- * The tool permission prompt declined with words, mirroring
- * `sessionio.PermissionAnswer`: the card's "Type your own answer".
+ * The tool permission prompt answered, mirroring `sessionio.PermissionAnswer`:
+ * a row picked, or the card's "Type your own answer". Exactly one of `option`
+ * and `decline`.
  *
- * The server walks the cursor onto the prompt's No row, opens its field with
- * Tab, types the words, reads them back off the row and only then presses
- * Enter. Claude gets the tool call rejected with "the user said: <words>" and
- * carries on (measured on CLI 2.1.283, 2026-09-27). One line of at most 2,000
- * bytes, never blank. A row picked by its number goes as a key instead.
+ * A row goes by its number AND the label the reader saw on it, as a plan
+ * approval does. The server walks the cursor off the No row's open field
+ * first, where a bare digit would be typed into the field (measured on CLI
+ * 2.1.283, 2026-09-28), then presses the digit and waits for the prompt to go.
+ *
+ * For `decline` the server walks the cursor onto the prompt's No row, opens
+ * its field with Tab, types the words, reads them back off the row and only
+ * then presses Enter. Claude gets the tool call rejected with "the user said:
+ * <words>" and carries on (measured on CLI 2.1.283, 2026-09-27). One line of
+ * at most 2,000 bytes, never blank.
  */
-export interface PermissionAnswer {
-  decline: string;
-}
+export type PermissionAnswer = { option: number; label: string } | { decline: string };
 
 /**
  * One answer to the plan approval, mirroring `sessionio.PlanAnswer`.

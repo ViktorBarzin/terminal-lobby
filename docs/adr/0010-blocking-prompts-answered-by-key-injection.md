@@ -272,3 +272,19 @@ back onto the field puts its text cursor in front of them; the words are pasted
 and read back off the row; and only then does Enter go in. A refusal types
 nothing further and carries the prompt as it stands. A row picked by its number
 is still one digit through `POST /keys`.
+
+## Amendment, 2026-09-28: a permission row picked through the answer route
+
+A row the permission card picks now goes through `POST /answer/{session}` as
+`{"permission": {"option": <n>, "label": "<label>"}}` rather than as one digit
+through `POST /keys`. Measured on Claude Code 2.1.283 on 2026-09-28 at 47
+columns: with the cursor in the No row's open field, a digit is typed into the
+field ("No, 1") and picks nothing; ↑ off an empty field closes it, and with the
+cursor off the field a digit picks its row as before. A typed decline that
+failed used to leave the pane in exactly that state, and the card's "1 Yes"
+then made the row read "No, 1". The server now refuses a label that is not the
+one drawn, walks the cursor off the open field with one ↑ read back
+(`sessionio/permdrive.go` permPick), presses the digit and waits for the prompt
+to go. The narrow pane also cuts the empty field's placeholder short ("No, and
+tell Claude what to do different…"), which the reading takes as the empty
+field; the capture is `sessionio/testdata/permission-amend-narrow.txt`.

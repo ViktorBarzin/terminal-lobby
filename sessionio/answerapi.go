@@ -18,13 +18,21 @@ type AnswerRequest struct {
 	Chat *string `json:"chat,omitempty"`
 	// Plan answers Claude Code's plan approval (plandialog.go).
 	Plan *PlanAnswer `json:"plan,omitempty"`
-	// Permission answers Claude Code's tool permission prompt (permdialog.go)
-	// with words. A row picked by its number goes as a key (POST /keys).
+	// Permission answers Claude Code's tool permission prompt (permdialog.go):
+	// a row picked by its number, or a decline with words.
 	Permission *PermissionAnswer `json:"permission,omitempty"`
 }
 
-// PermissionAnswer declines the tool permission prompt and tells Claude what to
-// do instead, the card's "Type your own answer" (permdrive.go).
+// PermissionAnswer answers the tool permission prompt (permdrive.go): a row
+// picked by its number, or the card's "Type your own answer", which declines
+// and tells Claude what to do instead. Exactly one of Option and Decline.
+//
+// Option is the row's number and Label the label the reader saw on it, which
+// must be the label drawn now, as for the plan approval's rows. The digit picks
+// the row at once, except with the cursor in the No row's open field, where it
+// is typed into the field ("No, 1"); so the cursor walks off the field first,
+// read back, and only then does the digit go in (measured on CLI 2.1.283,
+// 2026-09-28). The reply waits for the prompt to go.
 //
 // Decline is typed into the No row's field: the cursor walks onto the row,
 // Tab opens its field, whatever the field holds is cleared, the words are
@@ -33,7 +41,9 @@ type AnswerRequest struct {
 // the same turn (measured on CLI 2.1.283, 2026-09-27). The words must not be
 // blank, and nothing presses Enter on an empty field.
 type PermissionAnswer struct {
-	Decline string `json:"decline"`
+	Option  int    `json:"option,omitempty"`
+	Label   string `json:"label,omitempty"`
+	Decline string `json:"decline,omitempty"`
 }
 
 // PlanAnswer is one answer to the plan approval: an approve row, or words for
@@ -121,9 +131,11 @@ const (
 	// amendment). Each is one answer.
 	ActionPlanApprove  = "plan-approve"
 	ActionPlanFeedback = "plan-feedback"
-	// The permission prompt declined with words (since 2026-09-27). One
-	// answer.
+	// The permission prompt declined with words (since 2026-09-27), or a row
+	// of it picked by its number (since 2026-09-28, through POST /keys before
+	// that). Each is one answer.
 	ActionPermissionDecline = "permission-decline"
+	ActionPermissionPick    = "permission-pick"
 	// The mode dial (setmode.go), which session-events records into the same
 	// two event names. Answer never returns it.
 	ActionMode = "mode"
@@ -140,6 +152,8 @@ func AnswerAction(req AnswerRequest) string {
 		return ActionPlanApprove
 	case req.Plan != nil:
 		return ActionPlanFeedback
+	case req.Permission != nil && req.Permission.Option != 0:
+		return ActionPermissionPick
 	case req.Permission != nil:
 		return ActionPermissionDecline
 	}
