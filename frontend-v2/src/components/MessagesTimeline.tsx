@@ -615,16 +615,49 @@ export const MessagesTimeline: Component<{
       clearTimeout(raf);
     });
   });
-  /** The suffix of rows that is currently mounted, newest-first growth. */
+  /**
+   * The suffix of rows that is currently mounted, newest-first growth.
+   *
+   * A suffix by count, except while the reader has scrolled up: then the
+   * window keeps its oldest row and grows at the end instead. Counted alone, a
+   * row landing at the end slid the window forward, unmounting the oldest row
+   * and putting the "loading earlier rows" line in its place, both ABOVE the
+   * reader; the fill that mounted the row again compensated only for its own
+   * half. Measured on 2026-09-28: each row that changed at the live end moved a
+   * scrolled-up reader down by 42 to 165px while nothing above them changed.
+   * A pinned reader is held at the bottom, where what happens above is unseen,
+   * and the count keeps the opening fill progressive.
+   *
+   * `pinned` is read untracked: letting go of the bottom must not remount
+   * anything, only decide how the next change to the rows lands.
+   */
   const shownKeys = createMemo<string[]>(
-    () => {
+    (prev) => {
       const keys = allKeys();
       const n = Math.min(keys.length, mounted());
-      return n >= keys.length ? keys : keys.slice(keys.length - n);
+      let start = keys.length - n;
+      if (start > 0 && prev.length > 0 && !untrack(pinned)) {
+        // The oldest mounted row that is still in the list: a fold or the
+        // sliding transcript window can take the very first one away.
+        const index = new Map(keys.map((k, i) => [k, i]));
+        for (const k of prev) {
+          const at = index.get(k);
+          if (at === undefined) continue;
+          start = Math.min(start, at);
+          break;
+        }
+      }
+      return start <= 0 ? keys : keys.slice(start);
     },
     [],
     { equals: sameKeys },
   );
+  // The count follows what the window grew to, so a later change to the rows
+  // made while pinned does not shrink it back and restart the fill.
+  createEffect(() => {
+    const shown = shownKeys().length;
+    if (shown > untrack(mounted)) setMounted(shown);
+  });
   /** True while rows are still being mounted — the reader sees a hint. */
   const filling = createMemo(() => shownKeys().length < allKeys().length);
 

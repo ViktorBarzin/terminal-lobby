@@ -140,3 +140,44 @@ describe("the scroll pin after an expansion", () => {
     expect(geom.top, "still following").toBe(1100);
   });
 });
+
+/**
+ * A reader who scrolled up stays where they are while the live end changes.
+ *
+ * The rows mount as a window over the newest end. It used to be a suffix BY
+ * COUNT, so a row landing at the end slid the window forward: the oldest row
+ * unmounted and the "loading earlier rows" line took its place, both above the
+ * reader, and the fill that put the row back only compensated for its own half.
+ * Measured live on 2026-09-28: every row that changed at the end moved a
+ * scrolled-up reader down by 42 to 165px while nothing above them changed.
+ */
+describe("the mounted window while the reader reads back", () => {
+  const turns = (n: number): Event[] =>
+    Array.from({ length: n }, (_, i) => [
+      ev({ id: i * 2 + 1, kind: "user", body: `question ${i}` }),
+      ev({ id: i * 2 + 2, kind: "text", body: `answer ${i}` }),
+    ]).flat();
+  const firstRow = (el: HTMLElement) =>
+    el.querySelector<HTMLElement>(".tl-row:not(.tl-row-filling):not(.tl-row-earlier)");
+
+  it("keeps every mounted row when one lands at the end", async () => {
+    const [events, setEvents] = createSignal<Event[]>(turns(6));
+    const { container } = render(() => <MessagesTimeline events={events()} />);
+    const el = container.querySelector<HTMLElement>(".tl-timeline")!;
+    const geom = stubScroller(el, 3000, 400);
+    geom.top = 2600;
+    fireEvent.scroll(el);
+    const oldest = firstRow(el)!;
+    expect(oldest.textContent).toContain("question 0");
+
+    fireEvent.wheel(el, { deltaY: -120 }); // the reader scrolls up
+    geom.top = 900;
+    fireEvent.scroll(el);
+
+    setEvents([...turns(6), ev({ id: 13, kind: "user", body: "one more" })]);
+    await Promise.resolve();
+    expect(firstRow(el), "the oldest row stayed mounted").toBe(oldest);
+    expect(el.querySelector(".tl-row-filling"), "no line appeared above the reader").toBeNull();
+    expect(geom.top, "the reader did not move").toBe(900);
+  });
+});
