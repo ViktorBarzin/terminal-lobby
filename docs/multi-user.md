@@ -57,22 +57,21 @@ so another tab stays you.
   `session-events`) through one shared gate, `authuser`. The caller comes from
   the Authentik header Traefik sets; the target must already be a mapped
   account. Anyone else sending `?as=` gets a 403 and a log line.
-- **Two carve-outs.** Push subscriptions and the push test button resolve the
+- **One carve-out.** Push subscriptions and the push test button resolve the
   real caller, so an as-*user* tab cannot enrol your browser as one of their
-  devices. And `session-events` answers **501** rather than ignoring the
-  parameter — its cross-user transcript reader is not built yet, and serving
-  your own transcripts under their name would be worse than refusing. The Text
-  view is therefore unavailable while switched.
+  devices. The Text view works while switched: `session-events` reads the
+  target's transcripts through that user's own read child, the same access the
+  terminal gives through an act-as attach.
 - **A switched tab looks different**: an amber frame and tinted bars (fixed
   across all nine themes) plus a chip naming the user, which returns you in one
   click. With a full identity switch there is no server-side difference between
   you and them, so this is what separates a deliberate action from typing into
   the wrong tab.
 - **Every switch is recorded** — a journal line plus an `admin.actas` telemetry
-  event carrying the real caller, the target, whether it came from a page load or
-  a session attach, and (for an attach) the mode it resolved to. The mode is
-  named in words in the journal, so `DRIVING (read-write)` is greppable on its
-  own: enforcement of watch-only is client-side, which makes the audit trail the
+  event carrying the real caller, the target, whether it came from a page load, a
+  session attach or the Text view (a stream opened or a write made), and (for an
+  attach) the mode it resolved to. The mode is named in words in the journal,
+  so `DRIVING (read-write)` is greppable on its own: enforcement of watch-only is client-side, which makes the audit trail the
   thing that answers "did anyone type in their session".
 
 Design: `docs/plans/2026-08-16-admin-act-as-user-design.md`.

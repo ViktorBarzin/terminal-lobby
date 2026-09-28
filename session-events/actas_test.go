@@ -12,13 +12,12 @@ import (
 	"terminal-lobby/authuser"
 )
 
-// The Text view's cross-user reader is deliberately not built yet: this
-// service reads /home/<user>/.claude/projects directly, other homes are 0750,
-// and its tail polls every 200 ms — so it needs a persistent streaming child
-// rather than the per-operation sudo re-exec file-api uses.
-//
-// What it must NOT do in the meantime is ignore ?as= and serve the CALLER's
-// own transcripts under the target's name. These tests pin the refusal.
+// An administrator acting as another user reads that user's text view, the
+// same way the terminal already lets them attach to that user's sessions
+// (tmux-api/shares.go). The cross-user read goes through the persistent
+// per-user child (privreader.go); what these tests pin is that the request
+// reaches the routes as the TARGET, never as the caller — resolving the caller
+// would serve their own transcripts under the target's name.
 
 func actAsEnv(t *testing.T) (mapPath string, admin, other string) {
 	t.Helper()
@@ -58,22 +57,33 @@ func probeHandler(seen *string) http.Handler {
 	})
 }
 
-func TestActAsIsRefusedRatherThanServingTheCallersOwnTranscripts(t *testing.T) {
-	mapPath, _, other := actAsEnv(t)
-	var seen string
-	h := authMiddleware(mapPath, probeHandler(&seen))
+func TestAdminActAsReachesTheRoutesAsTheTarget(t *testing.T) {
+	mapPath, admin, other := actAsEnv(t)
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodGet, "/events/main"},
+		{http.MethodGet, "/commands/main"},
+		{http.MethodPost, "/prompt/main"},
+	} {
+		var seen, real string
+		h := authMiddleware(mapPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seen, real = osUserFrom(r.Context()), realOSUserFrom(r.Context())
+			w.WriteHeader(http.StatusOK)
+		}))
 
-	req := httptest.NewRequest(http.MethodGet, "/events/main?as="+other, nil)
-	req.Header.Set(authHeader, "adminauth")
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
+		req := httptest.NewRequest(tc.method, tc.path+"?as="+other, nil)
+		req.Header.Set(authHeader, "adminauth")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
 
-	if seen != "" {
-		t.Fatalf("handler ran as %q; an act-as request must not reach it while "+
-			"the cross-user reader is unbuilt — it would serve the caller's own transcripts", seen)
-	}
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status %d, want 501 (a clear 'not available here', not wrong data)", rec.Code)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s %s: status %d, want 200", tc.method, tc.path, rec.Code)
+		}
+		if seen != other {
+			t.Fatalf("%s %s: handler ran as %q, want the target %q", tc.method, tc.path, seen, other)
+		}
+		if real != admin {
+			t.Fatalf("%s %s: real user %q, want the caller %q", tc.method, tc.path, real, admin)
+		}
 	}
 }
 
@@ -123,18 +133,16 @@ func TestSessionEventsWithoutActAsIsUnchanged(t *testing.T) {
 // A refusal from the gate is never cached, and a request it lets through
 // reaches the route with no cache header of the gate's making. The picture
 // routes are cached for a year, and their contract says their errors carry
-// no-store; measured live on 2026-09-26, the 401, 403 and 501 the gate writes
-// in front of them went out without it. A 501 is cacheable by default, so an
-// act-as refusal of a picture URL could otherwise outlive the refusal.
+// no-store; measured live on 2026-09-26, the 401 and 403 the gate writes in
+// front of them went out without it.
 func TestGateRefusalsAreNeverCached(t *testing.T) {
-	mapPath, admin, other := actAsEnv(t)
+	mapPath, admin, _ := actAsEnv(t)
 	cases := []struct {
 		name, ident, as string
 		want            int
 	}{
 		{"no identity", "", "", http.StatusUnauthorized},
 		{"unmapped identity", "nobody-mapped", "", http.StatusForbidden},
-		{"admin acting as another", "adminauth", other, http.StatusNotImplemented},
 		{"non-admin acting as another", "otherauth", admin, http.StatusForbidden},
 	}
 	for _, tc := range cases {

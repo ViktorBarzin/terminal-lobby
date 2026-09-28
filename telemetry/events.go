@@ -159,10 +159,11 @@ var knownEvents = map[string]bool{
 	// -- acting as another user (admin) -------------------------------------
 	// The audit trail for the act-as switch. user.id is always the REAL caller
 	// and tl.to the target, so "who was in bob's account, and when" is
-	// answerable. Server-emitted at /whoami (once per tab) and at attach (once
-	// per session), with tl.client naming which; the SPA emits the same name
+	// answerable. Server-emitted at /whoami (once per tab), at attach (once
+	// per session) and by session-events when a text view opens or writes
+	// (tl.session), with tl.client naming which; the SPA emits the same name
 	// when the switch is asked for, and .exit when it is left.
-	"admin.actas":         true, // (tl.to = target, tl.client = whoami|attach)
+	"admin.actas":         true, // (tl.to = target, tl.client = whoami|attach|text)
 	"admin.actas.exit":    true, // (client only) back to your own lobby
 	"admin.actas.refused": true, // (tl.to = target, tl.kind = reason) a denial
 
