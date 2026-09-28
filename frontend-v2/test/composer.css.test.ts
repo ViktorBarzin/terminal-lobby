@@ -281,3 +281,15 @@ describe("the new-session screen (prototype 6-new)", () => {
     expect(rule(".tl-new-composer", coarse())).toMatch(/--kb-offset/);
   });
 });
+
+// Round 7 (2026-09-28): on Android a tap on "Watching" selected the word and
+// raised Chrome's tap-to-search sheet. The pill's words are a label, not text
+// to pick up.
+describe("the watching pill", () => {
+  it("does not let a tap select its words", () => {
+    const watch = rule(".tl-watch");
+    expect(watch).toMatch(/(^|\s)user-select:\s*none/);
+    expect(watch).toMatch(/-webkit-user-select:\s*none/);
+    expect(watch).toMatch(/-webkit-touch-callout:\s*none/);
+  });
+});

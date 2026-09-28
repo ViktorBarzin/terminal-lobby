@@ -3606,6 +3606,11 @@ label.tl-set-row-label {
   padding: 0 6px 0 14px;
   color: var(--text-muted);
   font-size: calc(14px * var(--tl-text-scale, 1));
+  /* A label, not text to pick up: a tap on "Watching" selected the word and
+     raised Chrome's tap-to-search sheet on Android (round 7, 2026-09-28). */
+  -webkit-touch-callout: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .tl-watch-eye {
   flex: none;
