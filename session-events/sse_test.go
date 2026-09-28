@@ -472,3 +472,63 @@ func TestFreshOpenReadyNamesTheLog(t *testing.T) {
 		t.Fatalf("the opening ready did not name its log:\n%s", body)
 	}
 }
+
+// movingEpoch is a source whose numbering stops being replayable after the
+// stream opened: the first Head is the opening's, every later one the moved
+// epoch (sessionio FileSource.Head).
+type movingEpoch struct {
+	*fakeSource
+	calls int
+}
+
+func (m *movingEpoch) Head() (int64, string) {
+	m.calls++
+	if m.calls == 1 {
+		return m.head, "cafebabe"
+	}
+	return m.head, "feedface"
+}
+
+// A live-only event moves the source's epoch while a client is reading. The
+// client's ids are still this source's, so it adopts the new epoch rather than
+// resyncing, and it must hear of the move BEFORE the event that caused it: a
+// cache written between the two would label this source's ids with an epoch a
+// rebuilt source also reports, which is how a reopen lost an answer, a reply
+// and a prompt on 2026-09-27.
+func TestSSEAnnouncesAnEpochThatMovesMidStream(t *testing.T) {
+	live := make(chan sessionio.Event, 2)
+	live <- sessionio.Event{ID: 2, Kind: sessionio.KindMeta, Meta: sessionio.MetaAsking, Body: "{}"}
+	live <- sessionio.Event{ID: 3, Kind: sessionio.KindText, Body: "three"}
+	close(live)
+	src := &movingEpoch{fakeSource: &fakeSource{
+		all:  []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "one"}},
+		live: live,
+		head: 1,
+	}}
+	rec := httptest.NewRecorder()
+	writeSSE(rec, httptest.NewRequest("GET", "/events/demo?rev=1", nil), src, nil, time.Hour)
+	body := rec.Body.String()
+	frame := "event: epoch\ndata: {\"epoch\":\"feedface\"}\n\n"
+	if n := strings.Count(body, frame); n != 1 {
+		t.Fatalf("epoch frame sent %d times, want once:\n%s", n, body)
+	}
+	if strings.Index(body, frame) > strings.Index(body, "id: 2") {
+		t.Fatalf("the epoch frame came after the event that moved it:\n%s", body)
+	}
+}
+
+// A legacy open named no epoch, so there is nothing to re-announce.
+func TestSSELegacyOpenAnnouncesNoEpoch(t *testing.T) {
+	live := make(chan sessionio.Event, 1)
+	live <- sessionio.Event{ID: 2, Kind: sessionio.KindText, Body: "two"}
+	close(live)
+	src := &movingEpoch{fakeSource: &fakeSource{
+		all:  []sessionio.Event{{ID: 1, Kind: sessionio.KindText, Body: "one"}},
+		live: live,
+	}}
+	rec := httptest.NewRecorder()
+	writeSSE(rec, httptest.NewRequest("GET", "/events/demo", nil), src, nil, time.Hour)
+	if strings.Contains(rec.Body.String(), "event: epoch") {
+		t.Fatalf("a legacy client was sent an epoch frame:\n%s", rec.Body.String())
+	}
+}

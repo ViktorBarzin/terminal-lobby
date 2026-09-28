@@ -444,6 +444,35 @@ describe("SseClient resync", () => {
     expect(h.client.cursor).toBe(0);
   });
 
+  // Found live on 2026-09-27: a source that had appended pane readings was
+  // dropped while nobody watched and rebuilt over the same transcript. The
+  // rebuilt one numbers the transcript's events lower, reports the replayable
+  // epoch and a head ABOVE the cursor, and the resume skipped five events. The
+  // source now moves its epoch at its first live-only event and says so on
+  // the stream; the client adopts it, so the rebuilt source reads as foreign.
+  it("adopts an epoch the stream moves, and starts over against the old one", async () => {
+    const resets: number[] = [];
+    const epochs: string[] = [];
+    const h = harness(() => 200, {
+      onReset: () => resets.push(1),
+      onEpoch: (e) => epochs.push(e),
+    });
+    h.client.connect();
+    h.sources[0]!.emit("ready", ready());
+    h.sources[0]!.emit("epoch", { epoch: "a-own" });
+    h.sources[0]!.onmessage?.({ data: line({ id: 23, kind: "meta", body: "{}" }) });
+    expect(epochs).toEqual(["a-own"]);
+    expect(resets, "its own ids are still this source's").toHaveLength(0);
+
+    h.sources[0]!.onerror?.(null);
+    await flush();
+    h.timers[0]!.fn();
+    // The rebuilt source: the replayable epoch, and a longer log.
+    h.sources[1]!.emit("ready", ready({ head: 40 }));
+    expect(resets).toHaveLength(1);
+    expect(h.client.cursor).toBe(0);
+  });
+
   it("keeps its history across an ordinary reconnect", async () => {
     const resets: number[] = [];
     const readies: unknown[] = [];

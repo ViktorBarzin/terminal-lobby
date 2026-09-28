@@ -739,6 +739,13 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       scheduleFlush();
     },
     onState: (st: SessionState) => setSessionState(st),
+    // The ids held are this source's own from here on, and a copy stored
+    // under the old epoch would resume against a rebuilt source that skips
+    // part of the conversation (found live on 2026-09-27).
+    onEpoch: (epoch: string) => {
+      cachedEpoch = epoch;
+      scheduleCacheWrite();
+    },
     onAgents: (set) => setAgents(snapshotOf(set, Date.now())),
     onStatus: (s: SseStatus) => {
       // Neither of these will ever send a `ready`, and waiting on one would

@@ -53,6 +53,15 @@ type readyFrame struct {
 	Epoch  string `json:"epoch,omitempty"`
 }
 
+// epochFrame tells a reading client that the log's epoch moved under it: the
+// source appended an event a replay of its transcript would not reproduce, so
+// its ids are its own from here on (sessionio FileSource.Head). The ids the
+// client holds are still this source's, so it adopts the new epoch and resyncs
+// only against a source that reports a different one.
+type epochFrame struct {
+	Epoch string `json:"epoch"`
+}
+
 // OpenWindowTurns is how many turns a client sees when it opens a session
 // WITHOUT asking for the reverse open.
 //
@@ -320,6 +329,9 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 
 	var lastID int64
 	var openBytes, openCount int
+	// The epoch this client was last told, so a move mid-stream is announced
+	// (epochFrame). Empty for the older contract, which was never told one.
+	var announced string
 	resume := parseLastEventID(r)
 	switch {
 	case !reverseOpen(r):
@@ -358,6 +370,7 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 		// resuming onto a REBUILT log that its history is not this session's.
 		head, epoch := src.Head()
 		sinkFrame(sink, "ready", readyFrame{Head: head, Epoch: epoch})
+		announced = epoch
 
 	default:
 		// The reverse open. The session's own state first — it is ~8 KB and the
@@ -394,6 +407,7 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 		}
 		head, epoch := src.Head()
 		sinkFrame(sink, "ready", readyFrame{Cursor: &b.Cursor, Head: head, Epoch: epoch})
+		announced = epoch
 		openCount = len(b.Events)
 	}
 	sink.flush()
@@ -413,6 +427,14 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 			}
 			if e.ID <= lastID {
 				continue // already delivered via replay
+			}
+			// Before the event: a client that cached between the two would
+			// label this source's ids with the epoch a rebuilt source reports.
+			if announced != "" {
+				if _, epoch := src.Head(); epoch != announced {
+					sinkFrame(sink, "epoch", epochFrame{Epoch: epoch})
+					announced = epoch
+				}
 			}
 			sink.printf("id: %d\ndata: %s\n\n", e.ID, e.JSON())
 			lastID = e.ID

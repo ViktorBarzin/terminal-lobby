@@ -2,11 +2,13 @@ package sessionio
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -41,6 +43,12 @@ type FileSource struct {
 	// The question the lobby's hook is holding, so only CHANGES are recorded
 	// (see SetHeld).
 	held string
+	// This source has appended an event a replay of its transcript would not
+	// produce, so its ids are its own from then on (see Head).
+	diverged bool
+	// The two epochs this source can report, fixed at construction: Head runs
+	// once per live event per reader, so neither is hashed there.
+	epochReplay, epochOwn string
 
 	// norm is written by the tail AND by Interrupt (an HTTP handler), so it has
 	// its own lock. Order is always normMu -> mu, never the reverse.
@@ -69,8 +77,18 @@ func NewFileSourceWith(session, path string, poll time.Duration, r Reader) *File
 	return &FileSource{
 		session: session, path: path, poll: poll,
 		subs: map[int]chan Event{}, norm: NewNormalizer(session),
-		reader: r,
+		reader: r, epochReplay: logEpoch(path), epochOwn: logEpoch(path + "\x00" + newNonce()),
 	}
+}
+
+// newNonce is 8 random bytes in hex. crypto/rand does not fail on Linux; if it
+// ever did, the time still tells two sources apart.
+func newNonce() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b[:])
 }
 
 // NewAgentFileSource is a source over one agent's own transcript,
@@ -93,6 +111,22 @@ func (f *FileSource) Path() string { return f.path }
 // subscribers. Slow subscribers are dropped (they resync via Replay on reconnect).
 func (f *FileSource) Append(e Event) {
 	f.mu.Lock()
+	f.appendLocked(e)
+	f.mu.Unlock()
+}
+
+// appendLive is Append for an event the transcript does not hold: a pane
+// reading, a held question, an interrupt's turn_end. A replay of the same
+// transcript never assigns it an id, so every id after it is this source's
+// own, and the epoch says so from the same moment (Head).
+func (f *FileSource) appendLive(e Event) {
+	f.mu.Lock()
+	f.diverged = true
+	f.appendLocked(e)
+	f.mu.Unlock()
+}
+
+func (f *FileSource) appendLocked(e Event) {
 	f.seq++
 	e.ID = f.seq
 	e.Session = f.session
@@ -104,7 +138,6 @@ func (f *FileSource) Append(e Event) {
 			log.Printf("FileSource[%s]: subscriber %d slow, dropped id %d (will resync)", f.session, id, e.ID)
 		}
 	}
-	f.mu.Unlock()
 }
 
 // Replay returns every event with an ID greater than `from` (0 = from the start).
@@ -246,7 +279,17 @@ func (f *FileSource) Close() {
 // keeps showing the previous conversation for as long as the tab stays open.
 // The epoch is the transcript's identity, so the two cases are distinguishable
 // on the wire; the id is there for the narrower case where the same log comes
-// back SHORTER (injected permission events are not replayed after a restart).
+// back SHORTER.
+//
+// Replaying a transcript reproduces its ids only while the log holds nothing
+// else. A live-only event (appendLive) takes an id no replay assigns, and every
+// transcript event after it lands one higher than a rebuilt source would put
+// it. The rebuilt log can then be LONGER than a client's cursor with the same
+// epoch, and the resume skips whatever sits between the two numberings: found
+// live on 2026-09-27, where an answer, a reply and the next prompt vanished
+// from a session reopened after its source was dropped. So from the first
+// live-only event the epoch also names this source, and a client holding its
+// ids resyncs against any other.
 func (f *FileSource) Head() (int64, string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -254,7 +297,14 @@ func (f *FileSource) Head() (int64, string) {
 	if n := len(f.logbuf); n > 0 {
 		newest = f.logbuf[n-1].ID
 	}
-	return newest, logEpoch(f.path)
+	return newest, f.epochLocked()
+}
+
+func (f *FileSource) epochLocked() string {
+	if f.diverged {
+		return f.epochOwn
+	}
+	return f.epochReplay
 }
 
 // eventShape names the wire shape events are normalized into. It is part of
@@ -296,7 +346,7 @@ func (f *FileSource) SetAsking(body string) bool {
 	f.mu.Unlock()
 
 	e := Event{Kind: KindMeta, Meta: MetaAsking, Body: body, At: time.Now().UnixMilli()}
-	f.Append(e)
+	f.appendLive(e)
 	return true
 }
 
@@ -314,7 +364,7 @@ func (f *FileSource) SetHeld(body string) bool {
 	f.mu.Unlock()
 
 	e := Event{Kind: KindMeta, Meta: MetaHeld, Body: body, At: time.Now().UnixMilli()}
-	f.Append(e)
+	f.appendLive(e)
 	return true
 }
 
@@ -393,9 +443,17 @@ func (f *FileSource) ImageBlock(addr ImageAddr) (ImageData, error) {
 func (f *FileSource) Interrupt(at int64) {
 	f.normMu.Lock()
 	defer f.normMu.Unlock()
-	if e, ok := f.norm.Interrupt(at); ok {
-		f.Append(e)
+	e, ok := f.norm.Interrupt(at)
+	if ok {
+		f.appendLive(e)
+		return
 	}
+	// Nothing to append, but the normalizer now settles the next prompt at
+	// or before `at` as it opens, which a replay would not: the numbering is
+	// this source's own either way.
+	f.mu.Lock()
+	f.diverged = true
+	f.mu.Unlock()
 }
 
 // Run tails the transcript until ctx is cancelled.

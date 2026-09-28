@@ -113,6 +113,35 @@ describe("a session opened from the cache", () => {
     dispose();
   });
 
+  it("stores the transcript against an epoch the stream moves mid-read", async () => {
+    // Found live on 2026-09-27: the copy kept the epoch named at the open
+    // while the source's ids stopped being replayable, and a rebuilt source
+    // reporting that same epoch resumed five events short.
+    g.EventSource = class {
+      close(): void {}
+      addEventListener(type: string, fn: (ev: { data: string }) => void): void {
+        if (type === "ready") fn({ data: JSON.stringify({ cursor: 0, epoch: "epoch-a" }) });
+        // After the ready, as the server sends it.
+        if (type === "epoch")
+          setTimeout(() => fn({ data: JSON.stringify({ epoch: "epoch-a-own" }) }), 0);
+      }
+      removeEventListener(): void {}
+    };
+    const saved: string[] = [];
+    const cache = fakeCache({
+      read: async () => ({ events: [ev(1)], epoch: "epoch-a" }),
+      save: async (_s: string, epoch: string) => void saved.push(epoch),
+    });
+    let dispose!: () => void;
+    createRoot((d) => {
+      dispose = d;
+      createSessionStore("cached", { cache });
+    });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(saved.at(-1)).toBe("epoch-a-own");
+    dispose();
+  });
+
   it("drops what it held when the server resyncs the log", async () => {
     // A rewritten, compacted or restored transcript reuses ids for different
     // events. The client already resyncs on that; the cache has to go with it,

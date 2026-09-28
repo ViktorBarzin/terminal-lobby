@@ -296,6 +296,56 @@ func TestFileSourceHeadReportsTheNewestIDAndAStableEpoch(t *testing.T) {
 	}
 }
 
+// A live-only event (a pane reading, a held question, an interrupt's turn_end)
+// takes an id a replay of the same transcript never assigns, so from then on a
+// rebuilt source numbers the same transcript events differently. Found live on
+// 2026-09-27: a browser cached ids from a source that had seen two permission
+// dialogs, the source was dropped while nobody watched and rebuilt, the epoch
+// matched, and the resume skipped the five events between the old numbering and
+// the new one. The epoch is the numbering's identity, so it moves at the first
+// live-only event and a rebuilt source does not share it.
+func TestFileSourceEpochMovesOnceTheNumberingCannotBeReplayed(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "s.jsonl")
+	os.WriteFile(p, []byte(`{"type":"user","timestamp":"2026-09-27T10:00:00Z","message":{"role":"user","content":"go"}}`+"\n"+
+		`{"type":"assistant","timestamp":"2026-09-27T10:00:01Z","message":{"role":"assistant","content":[{"type":"text","text":"one"}]}}`+"\n"), 0o644)
+
+	cases := map[string]func(fs *FileSource){
+		"asking":    func(fs *FileSource) { fs.SetAsking(`{"kind":"permission"}`) },
+		"held":      func(fs *FileSource) { fs.SetHeld(`{"questions":[]}`) },
+		"interrupt": func(fs *FileSource) { fs.Interrupt(time.Now().UnixMilli()) },
+	}
+	for name, live := range cases {
+		t.Run(name, func(t *testing.T) {
+			fs := NewFileSource("demo", p, time.Millisecond)
+			fs.TailOnce()
+			_, replayable := fs.Head()
+			before, _ := fs.Head()
+			live(fs)
+			after, moved := fs.Head()
+			if after == before {
+				t.Fatalf("%s appended nothing", name)
+			}
+			if moved == replayable {
+				t.Fatalf("epoch %q kept after a live-only event", moved)
+			}
+			// A source rebuilt over the same transcript is not that numbering.
+			rebuilt := NewFileSource("demo", p, time.Millisecond)
+			rebuilt.TailOnce()
+			if _, e := rebuilt.Head(); e == moved {
+				t.Fatalf("rebuilt source shares the live-only epoch %q", e)
+			} else if e != replayable {
+				t.Fatalf("rebuilt source epoch = %q, want the replayable %q", e, replayable)
+			}
+			// Further transcript events keep the moved epoch: the numbering is
+			// still this source's own.
+			if _, again := fs.Head(); again != moved {
+				t.Fatalf("epoch moved twice: %q -> %q", moved, again)
+			}
+		})
+	}
+}
+
 // The pane watcher appends at most one event per CHANGE: a dialog that sits on
 // screen for two minutes must not put a hundred events in the log.
 func TestFileSourceAskingAppendsOnlyOnChange(t *testing.T) {

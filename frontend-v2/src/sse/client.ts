@@ -125,6 +125,14 @@ export interface SseClientOptions {
    * underneath it.
    */
   onReset?: () => void;
+  /**
+   * The log's epoch moved while this client was reading it: the source
+   * appended an event a replay of its transcript would not reproduce, so its
+   * ids are its own from here on (session-events `epochFrame`). The ids held
+   * are still this source's, so nothing is dropped; the new epoch is what any
+   * copy of them must be stored against.
+   */
+  onEpoch?: (epoch: string) => void;
   onStatus?: (s: SseStatus) => void;
   /**
    * The opening window is complete — everything the server had when the stream
@@ -182,12 +190,26 @@ export class SseClient {
   private readonly o: Required<
     Omit<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset" | "onAgents"
+      | "onStatus"
+      | "createSource"
+      | "onReady"
+      | "onBackfill"
+      | "onState"
+      | "onReset"
+      | "onEpoch"
+      | "onAgents"
     >
   > &
     Pick<
       SseClientOptions,
-      "onStatus" | "createSource" | "onReady" | "onBackfill" | "onState" | "onReset" | "onAgents"
+      | "onStatus"
+      | "createSource"
+      | "onReady"
+      | "onBackfill"
+      | "onState"
+      | "onReset"
+      | "onEpoch"
+      | "onAgents"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -216,6 +238,7 @@ export class SseClient {
       onBackfill: opts.onBackfill,
       onState: opts.onState,
       onReset: opts.onReset,
+      onEpoch: opts.onEpoch,
       onAgents: opts.onAgents,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
@@ -293,6 +316,13 @@ export class SseClient {
       this.markAlive();
       const a = parseAgentSet(ev.data);
       if (a) this.o.onAgents?.(a);
+    });
+    es.addEventListener?.("epoch", (ev) => {
+      this.markAlive();
+      const frame = parseJSON<{ epoch?: unknown }>(ev.data);
+      if (!frame || typeof frame.epoch !== "string" || !frame.epoch) return;
+      this.epoch = frame.epoch;
+      this.o.onEpoch?.(frame.epoch);
     });
     es.addEventListener?.("ready", (ev) => {
       this.markAlive();
