@@ -430,19 +430,33 @@ func TestAnOddPasteListDoesNotDropThePrompt(t *testing.T) {
 // "[Image: source: <path>]". The desktop check on 2026-09-26 found it rendered
 // as a message from Claude, with the same picture drawn a second time under
 // it, right below the bubble that already shows it. The note is the harness's
-// bookkeeping, like a skill body, so it leaves no row.
-func TestNormalizeImageSourceNoteLeavesNoRow(t *testing.T) {
+// bookkeeping, like a skill body, so it draws no row.
+//
+// It is also the one record that still names the picture's file once the CLI
+// has put "[Image #N]" in the prompt's place for it (deployed review round 4,
+// 2026-09-28: ↑ on any browser but the one that sent it gave back the literal
+// placeholder, and Enter sent it with no picture). So it leaves as a
+// picture-source marker carrying the paths, which the composer's history
+// reads (State, and the renderer's promptHistory), and which draws nothing.
+func TestNormalizeImageSourceNoteLeavesOnlyItsPaths(t *testing.T) {
 	n := NewNormalizer("demo")
-	n.Line([]byte(pasteLine("u-3", "[Image #2] what colour?", `,"imagePasteIds":[2]`,
+	prompt := n.Line([]byte(pasteLine("u-3", "[Image #2] what colour?", `,"imagePasteIds":[2]`,
 		imageBlock("image/png", testPNG(t, 4)))))
-	for _, text := range []string{
-		"[Image: source: /tmp/pics/paste.png]",
-		"[Image: source: /tmp/a.png]\n[Image: source: /home/u/b b.jpg]",
+	for text, want := range map[string]string{
+		"[Image: source: /tmp/pics/paste.png]":                          "/tmp/pics/paste.png",
+		"[Image: source: /tmp/a.png]\n[Image: source: /home/u/b b.jpg]": "/tmp/a.png\n/home/u/b b.jpg",
 	} {
 		note := `{"type":"user","isMeta":true,"uuid":"m-2","parentUuid":"u-3","message":{"role":"user",` +
 			`"content":[{"type":"text","text":` + jsonString(text) + `}]}}`
-		if out := n.Line([]byte(note)); len(out) != 0 {
-			t.Fatalf("the source note for %q became %v", text, kinds(out))
+		out := n.Line([]byte(note))
+		if len(out) != 1 || out[0].Kind != KindMeta || out[0].Meta != MetaPictureSource {
+			t.Fatalf("the source note for %q became %v, want one picture-source marker", text, kinds(out))
+		}
+		if out[0].Body != want {
+			t.Fatalf("picture-source body = %q, want %q", out[0].Body, want)
+		}
+		if out[0].TurnID != prompt[0].TurnID {
+			t.Fatalf("picture-source names turn %q, want the prompt's %q", out[0].TurnID, prompt[0].TurnID)
 		}
 	}
 }

@@ -985,6 +985,9 @@ function collectTurnRows(turn: Turn): {
         // A prompt a Stop took back: its bubble is gone (withoutRewound), and
         // a marker saying so would put it back in other words.
         if (meta === "rewound") break;
+        // Where a prompt's pictures came from, for the composer's history
+        // (promptHistory). The bubble already draws them.
+        if (meta === "picture-source") break;
         // The queue's departures are bookkeeping for queuedPrompts(), the
         // same way the mode events are for the sheet: a divider saying a
         // prompt left the queue tells the reader nothing the queue itself
@@ -2395,8 +2398,34 @@ export function promptHistory(events: Event[], seed?: SessionState | null): stri
   for (const e of after(events, seed)) {
     const text = unwrapPasted(e.body ?? "").trim();
     if (e.kind === "user" && text && out[out.length - 1] !== text) out.push(text);
+    if (e.kind === "meta" && e.meta === "picture-source" && e.body && out.length > 0) {
+      out[out.length - 1] = withPictureSources(out[out.length - 1]!, e.body.split("\n"));
+    }
   }
   return out;
+}
+
+/** The stand-in Claude Code records for a picture it attached from a path. */
+const IMAGE_PLACEHOLDER_RE = /\[Image #\d+\]/g;
+
+/**
+ * A recorded prompt as it was sent, for ↑: each "[Image #N]" swapped, in
+ * order, for the file its picture-source marker names. The CLI takes a
+ * picture's path off the end of the paste and puts the placeholder at the
+ * start (CLI 2.1.283, 2026-09-28), so the paths go back at the end, where
+ * the composer recalls them as chips. Any browser gets this, not only the one
+ * that sent it (deployed review round 4, 2026-09-28). The same rule as
+ * session-events' PromptWithPictures, which seeds the history.
+ */
+function withPictureSources(prompt: string, paths: readonly string[]): string {
+  let taken = 0;
+  const words = prompt.replace(IMAGE_PLACEHOLDER_RE, (ph) => {
+    if (taken >= paths.length) return ph;
+    taken += 1;
+    return "";
+  });
+  if (taken === 0) return prompt;
+  return `${words.trim()} ${paths.slice(0, taken).join(" ")}`.trim();
 }
 
 /**

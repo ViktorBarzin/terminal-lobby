@@ -736,6 +736,9 @@ const META_LABEL: Record<MetaRow["meta"], string> = {
   // deriveRows drops it and the prompt it names: a prompt a Stop took back
   // left the conversation.
   rewound: "taken back",
+  // Dropped by deriveRows: the files of the pictures a prompt attached, for
+  // the composer's history (promptHistory).
+  "picture-source": "picture",
 };
 
 export const MetaRowView: Component<{ row: MetaRow }> = (props) => (

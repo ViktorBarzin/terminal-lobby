@@ -1,5 +1,7 @@
 package sessionio
 
+import "strings"
+
 // Reading a transcript backwards.
 //
 // A view of a session opens at the live end and is usually closed there: the
@@ -178,6 +180,10 @@ func (f *FileSource) State(maxPrompts int) SessionState {
 				}
 			case MetaQueueCleared:
 				st.Queue = st.Queue[:0]
+			case MetaPictureSource:
+				if n := len(st.Prompts); n > 0 && e.Body != "" {
+					st.Prompts[n-1] = PromptWithPictures(st.Prompts[n-1], strings.Split(e.Body, "\n"))
+				}
 			}
 		}
 	}

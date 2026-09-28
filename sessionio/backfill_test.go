@@ -286,3 +286,24 @@ func TestStateAtIsTheNewestEventID(t *testing.T) {
 		t.Fatalf("at = %d, want %d", got, all[len(all)-1].ID)
 	}
 }
+
+// Deployed review round 4 (2026-09-28): the CLI records a picture pasted at
+// the end of a prompt as "[Image #N]" at its start, and ↑ on any browser but
+// the one that sent it gave that back as literal text. The history carries
+// the prompt as it was sent: its words, then the picture's store path, which
+// the composer recalls as a chip.
+func TestStatePromptsNameThePicturesTheCLINumbered(t *testing.T) {
+	f := src()
+	f.Append(Event{Kind: KindUser, Body: "[Image #2]Name this colour, one word, no tools."})
+	f.Append(Event{Kind: KindMeta, Meta: MetaPictureSource, Body: "/var/lib/clipboard-store/wizard/qa/pasted-1.png"})
+	f.Append(Event{Kind: KindUser, Body: "[Image #3][Image #4] and these two?"})
+	f.Append(Event{Kind: KindMeta, Meta: MetaPictureSource, Body: "/var/lib/clipboard-store/wizard/qa/a.png\n/var/lib/clipboard-store/wizard/qa/b.png"})
+	got := f.State(20).Prompts
+	want := []string{
+		"Name this colour, one word, no tools. /var/lib/clipboard-store/wizard/qa/pasted-1.png",
+		"and these two? /var/lib/clipboard-store/wizard/qa/a.png /var/lib/clipboard-store/wizard/qa/b.png",
+	}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("prompts = %#v, want %#v", got, want)
+	}
+}

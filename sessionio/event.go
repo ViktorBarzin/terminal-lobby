@@ -78,6 +78,12 @@ const (
 	// prompt and opens no turn. It is what lets a client stop showing the
 	// command as waiting to be recorded; it renders no row.
 	MetaCommand Meta = "command"
+	// MetaPictureSource carries the files of the pictures the prompt before it
+	// attached, one path per line in Body, from the "[Image: source: <path>]"
+	// note Claude Code writes after such a prompt. The prompt itself says only
+	// "[Image #N]" by then, so this is what lets the composer's history give
+	// the picture back (PromptWithPictures). It renders no row.
+	MetaPictureSource Meta = "picture-source"
 )
 
 // Event is the renderer's contract. Field order is fixed by the struct so the

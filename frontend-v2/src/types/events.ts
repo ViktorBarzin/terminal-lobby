@@ -181,7 +181,8 @@ export type MetaKind =
   | "held"
   | "model"
   | "command"
-  | "rewound";
+  | "rewound"
+  | "picture-source";
 
 export interface TokenUsage {
   input_tokens?: number;

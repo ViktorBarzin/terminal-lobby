@@ -362,8 +362,16 @@ func (n *Normalizer) said(rec Record, role string, blocks []Block, at int64) []E
 		// it read as Claude speaking and drew the same picture again under it.
 		// A large picture Claude read gets a note of how it was scaled, which
 		// read as a reply under the work group the same way.
+		// The source note's paths leave as a marker for the composer's
+		// history, which draws nothing (MetaPictureSource).
 		if imageSourceNote(text) {
-			return nil
+			paths := imageSources(text)
+			if len(paths) == 0 {
+				return nil
+			}
+			e := n.emit(KindMeta, at)
+			e.Meta, e.Body = MetaPictureSource, strings.Join(paths, "\n")
+			return []Event{e}
 		}
 	}
 
@@ -720,6 +728,47 @@ var imageSourceRE = regexp.MustCompile(`^\[Image: source: [^\]\n]+\]$`)
 // model takes (CLI 2.1.273 to 2.1.283): "[Image: original 2880x1760, displayed
 // at 2000x1222. Multiply coordinates by 1.44 to map to original image.]".
 var imageScaleRE = regexp.MustCompile(`^\[Image: original \d+x\d+, displayed at \d+x\d+\.[^\]\n]*\]$`)
+
+// imageSources is the path each source note in text names, in order.
+func imageSources(text string) []string {
+	var out []string
+	for _, line := range strings.Split(strings.TrimSpace(text), "\n") {
+		line = strings.TrimSpace(line)
+		if imageSourceRE.MatchString(line) {
+			out = append(out, strings.TrimSuffix(strings.TrimPrefix(line, "[Image: source: "), "]"))
+		}
+	}
+	return out
+}
+
+// imagePlaceholderRE is the stand-in Claude Code records in a prompt for a
+// picture it attached from a path: "[Image #2]".
+var imagePlaceholderRE = regexp.MustCompile(`\[Image #\d+\]`)
+
+// PromptWithPictures is a recorded prompt as it was sent, for the composer's
+// history: each "[Image #N]" the CLI put in it swapped, in order, for the path
+// its source note names (MetaPictureSource). The CLI takes a picture's path
+// off the end of what was pasted and puts the placeholder at the start
+// (measured on CLI 2.1.283, 2026-09-28: "Name this colour. <path>" was
+// recorded as "[Image #2]Name this colour."), so the paths go back at the
+// end. A placeholder with no path to swap for stays as it is.
+func PromptWithPictures(prompt string, paths []string) string {
+	if len(paths) == 0 {
+		return prompt
+	}
+	taken := 0
+	words := imagePlaceholderRE.ReplaceAllStringFunc(prompt, func(ph string) string {
+		if taken >= len(paths) {
+			return ph
+		}
+		taken++
+		return ""
+	})
+	if taken == 0 {
+		return prompt
+	}
+	return strings.TrimSpace(strings.TrimSpace(words) + " " + strings.Join(paths[:taken], " "))
+}
 
 // imageSourceNote reports whether a meta record's text is nothing but such
 // notes, of either kind. Text around one is something else, and keeps its row.
