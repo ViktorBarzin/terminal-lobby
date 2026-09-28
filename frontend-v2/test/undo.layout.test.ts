@@ -766,6 +766,7 @@ const sess = (name: string, created: number): Session => ({
   lastActivity: created,
   created,
   owner: "wizard",
+  origin: "user",
 });
 
 interface Wired {

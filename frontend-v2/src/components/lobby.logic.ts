@@ -18,9 +18,9 @@
  *    sequence, or they offer the user a step onto a slot nobody can see.
  *  - a session the lobby's own create path did not make (`origin` ≠ "user")
  *    collects in the System group, which is pinned after every other group and
- *    hides while empty. The exception is a session the layout has explicitly
- *    placed in a project: that is somebody having dragged it out, and it stays
- *    out.
+ *    hides while empty. That holds wherever the layout lists it, a project
+ *    included: dragging a card out of System stamps it `user`, so a session
+ *    somebody rescued is no longer a system session at all.
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
@@ -214,20 +214,26 @@ export function deriveSidebar(layout: Layout, sessions: Session[], me: string): 
     return out;
   };
 
+  // A harness drives the ordinary create flow (that is the whole point of
+  // qa-harness), so a system session is filed in the layout exactly like a
+  // person's before its origin is overwritten to `test` a moment later. It
+  // lands in Ungrouped, or in whichever project was selected when New session
+  // was pressed. Reading either entry as a placement would leave the fleet
+  // sitting in the main list, which is the thing this group exists to stop.
+  // The rescue needs no layout entry to survive: adoptSystemSession stamps the
+  // session `user` before anything is written.
+  const systemMembers: Session[] = [];
+  const ungroupedMembers: Session[] = [];
+
   // Resolve project members first so referenced is populated before ungrouped
   // sweeps up the leftovers.
   const projectMembers = new Map<string, Session[]>();
-  for (const p of layout.projects) projectMembers.set(p.name, resolve(p.sessions));
+  for (const p of layout.projects) {
+    const members: Session[] = [];
+    for (const s of resolve(p.sessions)) (isSystemSession(s) ? systemMembers : members).push(s);
+    projectMembers.set(p.name, members);
+  }
 
-  // Ungrouped's own list, minus anything the lobby did not make. A harness
-  // drives the ordinary create flow — that is the whole point of qa-harness —
-  // so a system session is filed in `layout.ungrouped` exactly like a person's
-  // before its origin is overwritten to `test` a moment later. Reading that
-  // entry as a placement would leave the fleet sitting in the main list, which
-  // is the thing this group exists to stop. A PROJECT entry is different: only
-  // a person puts a card there, and that is the rescue.
-  const systemMembers: Session[] = [];
-  const ungroupedMembers: Session[] = [];
   for (const s of resolve(layout.ungrouped)) {
     (isSystemSession(s) ? systemMembers : ungroupedMembers).push(s);
   }

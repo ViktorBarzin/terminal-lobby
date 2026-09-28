@@ -87,9 +87,23 @@ describe("deriveSidebar / System", () => {
     expect(names(m.groups.find((g) => g.kind === "system")!.sessions)).toEqual(["qa-slug"]);
   });
 
-  it("leaves a system session where the layout explicitly put it (the rescue)", () => {
+  it("takes a system session OUT of a project the layout lists it in", () => {
+    // Measured 2026-09-28: a QA run pressed New session with the `code` project
+    // selected, so the create path filed the card in `code`, then the harness
+    // stamped it `test` and the name-from-title backfill renamed it `qa-r4-sh`.
+    // A project entry is not proof a person put the card there. The rescue does
+    // not need it to be either: dragging a card out of System stamps it `user`
+    // before the layout is written.
+    const l = layout({ projects: [{ name: "code", sessions: ["mine", "qa-r4-sh"] }], ungroupedIndex: 1 });
+    const m = deriveSidebar(l, [sess("mine"), sess("qa-r4-sh", { origin: "test" })], ME);
+    expect(names(m.groups.find((g) => g.name === "code")!.sessions)).toEqual(["mine"]);
+    expect(names(m.groups.find((g) => g.kind === "system")!.sessions)).toEqual(["qa-r4-sh"]);
+  });
+
+  it("keeps a rescued session in the project it was dragged to", () => {
+    // What adoptSystemSession leaves behind: origin `user`, then the layout.
     const l = layout({ projects: [{ name: "work", sessions: ["tlp-t1"] }], ungroupedIndex: 1 });
-    const m = deriveSidebar(l, [sess("tlp-t1", { origin: "test" })], ME);
+    const m = deriveSidebar(l, [sess("tlp-t1", { origin: "user" })], ME);
     expect(names(m.groups.find((g) => g.name === "work")!.sessions)).toEqual(["tlp-t1"]);
     expect(m.groups.find((g) => g.kind === "system")!.sessions).toEqual([]);
   });

@@ -1512,14 +1512,13 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * it out of System. Answers false when the adoption did not land, and the
    * caller then writes no layout at all.
    *
-   * The order matters and it is the opposite of the usual optimistic one. With
-   * the layout written first, a failed POST would leave the card sitting in a
-   * project while tmux still called the session `test` — and deriveSidebar
-   * honours an explicit project placement over the origin, so the next poll
-   * would AGREE with the arrangement. The card would look rescued, go on not
-   * pushing and not recording, and nothing would ever say otherwise. Asking the
-   * server first costs one round trip on the rescue alone (an ordinary move
-   * never reaches this) and leaves both halves either done or untouched.
+   * The order matters and it is the opposite of the usual optimistic one.
+   * deriveSidebar files a session by its origin wherever the layout lists it,
+   * so with the layout written first a failed POST would leave a project entry
+   * the sidebar never renders, and the card would spring back into System on
+   * the next poll with no word of why. Asking the server first costs one round
+   * trip on the rescue alone (an ordinary move never reaches this) and leaves
+   * both halves either done or untouched.
    */
   async function adoptSystemSession(name: string): Promise<boolean> {
     const s = sessions.find((x) => x.name === name);
