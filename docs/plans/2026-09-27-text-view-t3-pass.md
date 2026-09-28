@@ -285,6 +285,28 @@ emulation: both prompts came back in order, nothing was submitted, and the
 folded pill showed the draft's first line. `claude.cancelled` gains `tl.count`
 for the prompts handed back (ADR-0006).
 
+**Stop before Claude answers.** The live check on 2026-09-28 found that a
+Stop pressed in the first seconds after Send lost the message. Measured on
+Claude Code 2.1.283 on a scratch session: a C-c at 0.5, 1, 1.5, 2.5, 6 and 10
+seconds after the prompt, with nothing from Claude yet, took the prompt out of
+the conversation and put it back on the CLI's input line within 40 to 270 ms.
+The transcript keeps the prompt's record and writes no interrupt notice, so
+the Text view showed a sent bubble over an empty field, and the next send
+erased the pane's copy. So the Text view names that prompt in the cancel body
+as `returnPrompt` (the open turn's prompt while it is all the turn holds, or
+the first message sent between turns that the transcript has not recorded
+yet). After the interrupt the server waits up to 1.5 s for the text to land
+on the input line, clears it, streams a `rewound` marker for the prompt's
+turn and replies `"returned": true`; the view puts the prompt back in the
+field ahead of any queued messages and drops the bubble. The normalizer also
+marks a prompt as taken back from the transcript alone: the next user record
+with words, with nothing from Claude and no interrupt notice in between,
+unless the two were written as one queued batch (1 ms apart in every batch on
+this box, 4.6 s apart at the least for a prompt taken back, over 21 cases).
+Re-run live on desktop: Stop at 0.36, 1.5 and 2.7 s put the prompt back in
+the field with an empty input line and no bubble; with a queued message behind
+it both came back in order; a Stop 14 s in kept the bubble and the reply.
+
 **The permission card's typed answer.** Measured on Claude Code 2.1.283 on a
 scratch session: Tab on the prompt's No row opens a field ("No, and tell Claude
 what to do differently"), and Enter there rejects the tool call with "the user
