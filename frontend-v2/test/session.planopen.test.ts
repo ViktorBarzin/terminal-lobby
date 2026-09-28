@@ -117,6 +117,21 @@ describe("session store: prompt refused while the plan approval is up", () => {
     );
   });
 
+  it("keeps the text and says Claude put up a prompt as it went", async () => {
+    // Deployed review round 4 (2026-09-28): a prompt sent as Claude drew a
+    // dialog was answered 204 and lost. The server now stops it short of the
+    // dialog and refuses it, naming the dialog when it can read it.
+    g.fetch = respond(409, '{"applied":false,"reason":"dialog-open"}\n', "application/json");
+    const { ok, notes, pending } = await sendOnce("queued note 12");
+    expect(ok).toBe(false);
+    expect(pending).toBe(0);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]?.kind).toBe("warning");
+    expect(notes[0]?.msg).toBe(
+      "Claude put up a prompt as your message went. Answer it, and send your message again.",
+    );
+  });
+
   it("treats a plain-text 409 as any other failed send", async () => {
     g.fetch = respond(409, "conflict\n", "text/plain");
     const { ok, notes, pending } = await sendOnce("hi");

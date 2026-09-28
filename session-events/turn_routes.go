@@ -171,6 +171,14 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			}
 		}
 		if err := drv.Prompt(osUser, session, body.Text); err != nil {
+			// Claude drew a dialog between the guard above and the Enter, and
+			// the prompt stopped short of it (sessionio.ErrInputGone). Refused
+			// as though the dialog had been up all along, so the sender keeps
+			// its text and says where to answer.
+			if errors.Is(err, sessionio.ErrInputGone) {
+				writePromptRefusal(w, metDialogReason(r.Context(), rg, drv, osUser, session))
+				return
+			}
 			// The paste landed and no Enter took it: the text is on Claude's
 			// input line, unsent. Said by name so the sender keeps its text
 			// rather than reading a generic failure as a transport problem.
@@ -188,6 +196,31 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 		}
 		events.Emit("claude.prompt_sent", osUser, attrs)
 		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// metDialogWait bounds how long metDialogReason reads the pane for the
+// dialog a prompt met. It had taken the box's place already, so it is mostly
+// drawn; the bound is for one still finishing its first frames.
+const metDialogWait = 600 * time.Millisecond
+
+// metDialogReason names the dialog a prompt met (sessionio.ErrInputGone):
+// the guard's own reason once the pane reads as one, or dialogOpenReason for
+// one it does not know, or not by metDialogWait.
+func metDialogReason(ctx context.Context, rg *registry, drv promptDriver, osUser, session string) string {
+	deadline := time.Now().Add(metDialogWait)
+	for {
+		if reason := promptRefusal(rg, drv, osUser, session); reason != "" {
+			return reason
+		}
+		if !time.Now().Before(deadline) {
+			return dialogOpenReason
+		}
+		select {
+		case <-ctx.Done():
+			return dialogOpenReason
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 }
 

@@ -907,3 +907,35 @@ func TestModelRefusesAModeWithAModel(t *testing.T) {
 		}
 	}
 }
+
+// Deployed review round 4 (2026-09-28): a prompt sent as Claude drew a
+// permission dialog was answered 204 and never reached Claude, and its Enter
+// approved the Bash call. The guard read the pane once, before the paste.
+// sessionio now stops a prompt whose input box has gone (ErrInputGone), and
+// the route refuses it the way it refuses one sent while the dialog is up, so
+// the sender keeps its text.
+func TestPromptThatMetADialogIsRefusedWithItsReason(t *testing.T) {
+	f := &fakeTurns{pane: "❯ \n", promptErr: fmt.Errorf("wrapped: %w", sessionio.ErrInputGone)}
+	f.inPrompt = func() { f.pane = capture(t, "permission-bash.txt") }
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"queued note 12"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 for a prompt that met a dialog", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"permission-open"}` {
+		t.Errorf("body = %s", got)
+	}
+}
+
+// A dialog the pane readers do not know yet, or one still drawing, is refused
+// all the same, under a reason of its own.
+func TestPromptThatMetAnUnknownDialogIsRefused(t *testing.T) {
+	f := &fakeTurns{pane: "❯ \n", promptErr: sessionio.ErrInputGone}
+	f.inPrompt = func() { f.pane = "Something is drawing\n" }
+	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"queued note 12"}`)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409", rec.Code)
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"dialog-open"}` {
+		t.Errorf("body = %s", got)
+	}
+}

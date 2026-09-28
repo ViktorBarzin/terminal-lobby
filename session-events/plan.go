@@ -143,6 +143,9 @@ const (
 	// A codex menu (sessionio.CodexMenuOpen): the Enter picks its highlighted
 	// row, which on the devvm's startup menu is Cancel, and codex quits.
 	menuOpenReason = "menu-open"
+	// A dialog that took the input box's place while a prompt was on its way
+	// (sessionio.ErrInputGone), when the readers above do not name it.
+	dialogOpenReason = "dialog-open"
 )
 
 // writePromptRefusal is the refusal: 409, in the shape the answer routes use.

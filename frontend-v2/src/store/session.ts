@@ -311,8 +311,8 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
 /**
  * The prompt guard's reason, when this is its refusal: 409 with `{"applied":
  * false, "reason": "plan-open"}`, "permission-open" for a tool permission
- * prompt, "question-open" for a question, or "menu-open" for a codex menu
- * (session-events plan.go). "" for a 409 with any other body, JSON or
+ * prompt, "question-open" for a question, "menu-open" for a codex menu, or
+ * "dialog-open" for a dialog drawn as the prompt went (session-events plan.go). "" for a 409 with any other body, JSON or
  * not, and for a body that fails to read.
  */
 /**
@@ -1028,6 +1028,15 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
           // review round 2, 2026-09-28).
           opts.notify?.(
             "The session is showing a menu. Answer it in the Terminal, then send again.",
+            "warning",
+          );
+        } else if (refused === "dialog-open") {
+          // Claude drew a dialog as the prompt went, one the server's pane
+          // readers could not name yet, and the prompt stopped short of it
+          // (deployed review round 4, 2026-09-28). A card docks when it is
+          // one the view knows.
+          opts.notify?.(
+            "Claude put up a prompt as your message went. Answer it, and send your message again.",
             "warning",
           );
         } else {

@@ -40,7 +40,8 @@ rows, the first starting with the prompt mark, and nothing above them.
 FAKEINPUT_DIALOG=paste or FAKEINPUT_DIALOG=clear draws a permission dialog in
 the box's place the moment a bracketed paste starts, or the moment a C-e
 arrives: Claude drawing a prompt while a send is on its way (deployed review
-round 4, 2026-09-28). While it is up, Enter picks its highlighted row and a
+round 4, 2026-09-28). The paste mode turns bracketed paste on, which tmux
+needs to mark a paste's start. While it is up, Enter picks its highlighted row and a
 digit picks that row, each printed as ANSWERED=<row>, and a paste is ignored.
 
 It is a model of that contract, not of the CLI.
@@ -112,10 +113,14 @@ def main():
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
+    if DIALOG == "paste":
+        # Bracketed paste mode, so tmux marks where a paste starts.
+        out("\x1b[?2004h")
     swallow = SWALLOW
     queue = list(QUEUE)
     interrupted = False
     dialog = False
+    pasting = False
     answered = []
     try:
         submitted = []
@@ -142,7 +147,9 @@ def main():
             ch = read1()
             if ch == "":
                 return
-            if dialog and ch in ("\r", "\n"):
+            if dialog and pasting and ch != "\x1b":
+                pass
+            elif dialog and ch in ("\r", "\n"):
                 answered.append("1")
                 dialog = False
             elif dialog and ch in ("1", "2"):
@@ -182,8 +189,12 @@ def main():
                     seq += c
                     if "\x40" <= c <= "\x7e":
                         break
-                if seq == "200~" and DIALOG == "paste" and not answered:
-                    dialog = True
+                if seq == "200~":
+                    pasting = True
+                    if DIALOG == "paste" and not answered:
+                        dialog = True
+                if seq == "201~":
+                    pasting = False
                 if seq == "A" and not line and queue:
                     line = "\n".join(queue)
                     queue = []

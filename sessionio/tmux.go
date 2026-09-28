@@ -300,12 +300,15 @@ func exactSession(session string) string { return "=" + session }
 //
 // The Enter is confirmed: Prompt reads Claude Code's input box back and
 // presses Enter again while the text is still sitting there, and answers
-// ErrPromptNotSubmitted if it never leaves (pasteAndSubmit).
+// ErrPromptNotSubmitted if it never leaves (pasteAndSubmit). A box that has
+// gone by the paste or the Enter, a dialog drawn in its place, gets neither
+// and is ErrInputGone.
 func (in *Injector) Prompt(osUser, session, text string) error {
-	if err := in.clearInput(osUser, session); err != nil {
+	boxed, err := in.clearInput(osUser, session)
+	if err != nil {
 		return err
 	}
-	return in.pasteAndSubmit(osUser, session, text)
+	return in.pasteAndSubmit(osUser, session, text, boxed)
 }
 
 // promptUnconfirmed is Prompt with a single, unchecked Enter, for a command
@@ -314,7 +317,7 @@ func (in *Injector) Prompt(osUser, session, text string) error {
 // the driver must never do, so a lost Enter there is left to the picker wait
 // to report.
 func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
-	if err := in.clearInput(osUser, session); err != nil {
+	if _, err := in.clearInput(osUser, session); err != nil {
 		return err
 	}
 	if err := in.paste(osUser, session, text); err != nil {
@@ -346,25 +349,28 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 // new one on the end). A box of more than one row is read again once it has
 // redrawn, and cleared again while it still holds something, up to
 // clearRounds times. A box of one row cannot be hiding any.
-func (in *Injector) clearInput(osUser, session string) error {
+//
+// It answers whether the pane showed Claude's input box, which is what tells
+// Prompt the pane is Claude's and its box is to be looked for again.
+func (in *Injector) clearInput(osUser, session string) (bool, error) {
 	pane, err := in.CapturePane(osUser, session)
 	if err != nil {
-		return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
+		return false, in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 	}
 	box, rows, ok := boxRows(pane)
 	if !ok || strings.TrimSpace(box) == "" {
-		return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
+		return ok, in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 	}
 	for round := 0; ; round++ {
 		if err := in.backspaceBox(osUser, session, utf8.RuneCountInString(box)); err != nil {
-			return err
+			return true, err
 		}
 		if rows < 2 || round+1 >= clearRounds {
-			return nil
+			return true, nil
 		}
 		next, nextRows, redrawn := in.awaitBoxChange(osUser, session, box)
 		if !redrawn || strings.TrimSpace(next) == "" {
-			return nil
+			return true, nil
 		}
 		box, rows = next, nextRows
 	}
@@ -427,9 +433,20 @@ func (in *Injector) awaitBoxChange(osUser, session, was string) (string, int, bo
 // know the pane is live must keep using Prompt, or they reintroduce the
 // concatenation bug its prelude exists to prevent.
 //
-// The Enter is confirmed the same way Prompt's is.
+// The Enter is confirmed the same way Prompt's is, and a box that goes away
+// before it stops the prompt the same way.
 func (in *Injector) PromptUncleared(osUser, session, text string) error {
-	return in.pasteAndSubmit(osUser, session, text)
+	return in.pasteAndSubmit(osUser, session, text, in.boxShown(osUser, session))
+}
+
+// boxShown reports whether the pane can be read and shows Claude's input box.
+func (in *Injector) boxShown(osUser, session string) bool {
+	pane, err := in.CapturePane(osUser, session)
+	if err != nil {
+		return false
+	}
+	_, ok := inputBox(pane)
+	return ok
 }
 
 // Cancel sends Ctrl-C (interrupt) to the session, then re-derives

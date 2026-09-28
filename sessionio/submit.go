@@ -13,6 +13,14 @@ import (
 // Prompt clears it before it pastes.
 var ErrPromptNotSubmitted = errors.New("the prompt is still on the input line: Enter did not submit it")
 
+// ErrInputGone is a prompt that met a pane whose Claude input box had gone by
+// the time it was pasted or submitted: Claude drew a dialog in its place (a
+// permission, a question, the plan approval). Nothing was submitted and no
+// Enter was pressed, since an Enter there picks the dialog's highlighted row.
+// Words pasted before the dialog drew stay in Claude's box, out of sight, and
+// the next Prompt clears them.
+var ErrInputGone = errors.New("the input box went away before the prompt was sent: a dialog took its place")
+
 // The waits that confirm a submit. Vars only as a test seam.
 var (
 	// submitPoll is how often the box is read back.
@@ -49,11 +57,26 @@ var (
 //
 // A pane with no Claude input box (a shell, pi, codex) is not checked at all
 // and gets exactly the one Enter it always did.
-func (in *Injector) pasteAndSubmit(osUser, session, text string) error {
+//
+// boxed says the pane showed Claude's input box when the caller last read it.
+// Such a pane is read again before the paste, and again before the Enter when
+// the paste never showed, and a box gone by then is ErrInputGone. Found in
+// deployed review round 4 (2026-09-28): a prompt sent as Claude drew a
+// permission dialog was answered 204, never reached Claude, and its Enter
+// picked "1. Yes", 5 times in 5 through the API. The route's one read of the
+// pane came before the clear, and awaitHeld gives up at once on a pane with
+// no box, where the Enter then went to the dialog.
+func (in *Injector) pasteAndSubmit(osUser, session, text string, boxed bool) error {
+	if boxed && !in.hasInputBox(osUser, session) {
+		return ErrInputGone
+	}
 	if err := in.paste(osUser, session, text); err != nil {
 		return err
 	}
 	shown := in.awaitHeld(osUser, session, text)
+	if !shown && boxed && !in.hasInputBox(osUser, session) {
+		return ErrInputGone
+	}
 	if err := in.enter(osUser, session); err != nil {
 		return err
 	}
@@ -61,6 +84,17 @@ func (in *Injector) pasteAndSubmit(osUser, session, text string) error {
 		return nil
 	}
 	return in.confirmSubmitted(osUser, session, text)
+}
+
+// hasInputBox reports whether the pane shows Claude's input box. A pane that
+// cannot be read says nothing against it, and counts as showing one.
+func (in *Injector) hasInputBox(osUser, session string) bool {
+	pane, err := in.CapturePane(osUser, session)
+	if err != nil {
+		return true
+	}
+	_, ok := inputBox(pane)
+	return ok
 }
 
 func (in *Injector) enter(osUser, session string) error {
