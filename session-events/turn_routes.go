@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"terminal-lobby/sessionio"
@@ -23,6 +24,33 @@ import (
 // what a route decides is worth testing on a box with no tmux server
 // (turn_routes_test.go), and how the Injector types and waits is tested in
 // sessionio against real ones.
+
+// inputLines makes POST /prompt and POST /cancel take turns on one session's
+// input line. Both type onto it: a prompt clears the line, pastes and presses
+// Enter, and a Stop pops the queue and takes an interrupted prompt back off it
+// with Backspaces (sessionio.ClearQueue, ReclaimInterrupted). Interleaved, one
+// erases the other. Found in the round 7 check on 2026-09-28: a prompt sent
+// 300 ms after an early Stop was pasted while the Stop was still clearing the
+// returned prompt, its text went with the Backspaces, its Enter landed on an
+// empty line, and the route answered 204 for a prompt the CLI never saw.
+//
+// Keyed by user and session. Each holds a one-slot channel rather than a
+// mutex, so a request whose caller has gone stops waiting. An entry is a few
+// dozen bytes per session ever driven, so the map is left to grow, as
+// sessionio's own session locks are.
+var inputLines sync.Map // string -> chan struct{}
+
+// holdInputLine waits for the session's input line and returns the release.
+func holdInputLine(ctx context.Context, osUser, session string) (func(), error) {
+	v, _ := inputLines.LoadOrStore(osUser+"\x00"+session, make(chan struct{}, 1))
+	turn := v.(chan struct{})
+	select {
+	case turn <- struct{}{}:
+		return func() { <-turn }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
 
 // promptDriver is the half of sessionio.Injector that POST /prompt uses. It
 // has no way to read the turn state, on purpose: see handlePrompt.
@@ -106,6 +134,14 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 				return
 			}
 		}
+		// From here to the Enter the input line is this prompt's: a Stop that is
+		// clearing it goes first, and one pressed now waits (inputLines). After
+		// the ready wait, which can take seconds and types nothing.
+		release, err := holdInputLine(r.Context(), osUser, session)
+		if err != nil {
+			return
+		}
+		defer release()
 		if pi && drv.PiTrustPending(osUser, session) {
 			http.Error(w, "pi is asking whether to trust this folder; answer it in the terminal first", http.StatusConflict)
 			return
@@ -207,6 +243,14 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 				return
 			}
 		}
+		// The queue pop, the interrupt and the reclaim all act on the input
+		// line, so a prompt being typed finishes first and one sent now waits
+		// until the line is clear again (inputLines).
+		release, err := holdInputLine(r.Context(), osUser, session)
+		if err != nil {
+			return
+		}
+		defer release()
 		h := sessionio.Harness(body.Tool)
 		if h == "" {
 			h = drv.HarnessOf(osUser, session)

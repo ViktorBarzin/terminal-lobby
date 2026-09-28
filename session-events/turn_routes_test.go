@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,7 +25,13 @@ import (
 // fakeTurns records what a route asked of the Injector and answers from its
 // fields.
 type fakeTurns struct {
+	mu    sync.Mutex // calls: the input-line tests drive two routes at once
 	calls []string
+
+	// inReclaim, when set, runs inside ReclaimInterrupted, and inPrompt
+	// inside Prompt: the seams the input-line tests hold a route open with.
+	inReclaim func()
+	inPrompt  func()
 
 	awaitErr     error // AwaitInputReady and AwaitReady
 	piAwaitErr   error // AwaitPiReady
@@ -52,7 +59,15 @@ type fakeTurns struct {
 	reclaimed   string
 }
 
+func (f *fakeTurns) record(name string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, name)
+}
+
 func (f *fakeTurns) called(name string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	for _, c := range f.calls {
 		if c == name {
 			return true
@@ -62,7 +77,7 @@ func (f *fakeTurns) called(name string) bool {
 }
 
 func (f *fakeTurns) AwaitInputReady(_ context.Context, _, _ string, wait, _ time.Duration) error {
-	f.calls = append(f.calls, "AwaitInputReady")
+	f.record("AwaitInputReady")
 	if wait != PromptReadyWait {
 		return errors.New("the wait is not PromptReadyWait")
 	}
@@ -70,7 +85,7 @@ func (f *fakeTurns) AwaitInputReady(_ context.Context, _, _ string, wait, _ time
 }
 
 func (f *fakeTurns) AwaitPiReady(_ context.Context, _, _ string, wait, _ time.Duration) error {
-	f.calls = append(f.calls, "AwaitPiReady")
+	f.record("AwaitPiReady")
 	if wait != PromptReadyWait {
 		return errors.New("the wait is not PromptReadyWait")
 	}
@@ -78,7 +93,7 @@ func (f *fakeTurns) AwaitPiReady(_ context.Context, _, _ string, wait, _ time.Du
 }
 
 func (f *fakeTurns) AwaitReady(_ context.Context, _, _ string, h sessionio.Harness, wait, _ time.Duration) error {
-	f.calls = append(f.calls, "AwaitReady")
+	f.record("AwaitReady")
 	f.awaitedWith = h
 	if wait != PromptReadyWait {
 		return errors.New("the wait is not PromptReadyWait")
@@ -87,62 +102,68 @@ func (f *fakeTurns) AwaitReady(_ context.Context, _, _ string, h sessionio.Harne
 }
 
 func (f *fakeTurns) PiTrustPending(_, _ string) bool {
-	f.calls = append(f.calls, "PiTrustPending")
+	f.record("PiTrustPending")
 	return f.trustPending
 }
 
 func (f *fakeTurns) Option(_, _, name string) (string, bool) {
-	f.calls = append(f.calls, "Option "+name)
+	f.record("Option " + name)
 	return f.options[name], true
 }
 
 func (f *fakeTurns) State(_, _ string) string {
-	f.calls = append(f.calls, "State")
+	f.record("State")
 	return f.state
 }
 
 func (f *fakeTurns) Prompt(_, _, text string) error {
-	f.calls = append(f.calls, "Prompt")
+	f.record("Prompt")
+	if f.inPrompt != nil {
+		f.inPrompt()
+	}
 	f.prompted = text
 	return f.promptErr
 }
 
 func (f *fakeTurns) HarnessOf(_, _ string) sessionio.Harness {
-	f.calls = append(f.calls, "HarnessOf")
+	f.record("HarnessOf")
 	return f.harnessOf
 }
 
 func (f *fakeTurns) CancelHarness(_, _ string, h sessionio.Harness) error {
-	f.calls = append(f.calls, "CancelHarness")
+	f.record("CancelHarness")
 	f.cancelledAs = h
 	return f.cancelErr
 }
 
 func (f *fakeTurns) ClearQueue(_, _ string, queued []string) (bool, error) {
-	f.calls = append(f.calls, "ClearQueue")
+	f.record("ClearQueue")
 	f.cleared = queued
 	return f.clearTook, f.clearErr
 }
 
 func (f *fakeTurns) ReclaimInterrupted(_, _, text string) (bool, error) {
-	f.calls = append(f.calls, "ReclaimInterrupted")
+	f.record("ReclaimInterrupted")
+	if f.inReclaim != nil {
+		f.inReclaim()
+	}
 	f.reclaimed = text
 	return f.reclaimTook, f.reclaimErr
 }
 
 func (f *fakeTurns) SetModel(_ context.Context, _, _ string, h sessionio.Harness, want sessionio.ModelState) (sessionio.ModelState, error) {
-	f.calls = append(f.calls, "SetModel")
+	f.record("SetModel")
 	f.setModelFor, f.setModelReq = h, want
 	return f.setModelOut, f.setModelErr
 }
 
 func (f *fakeTurns) CapturePane(_, _ string) (string, error) {
-	f.calls = append(f.calls, "CapturePane")
+	f.record("CapturePane")
 	return f.pane, nil
 }
 
 func (f *fakeTurns) SetMode(_ context.Context, _, _, target string) (sessionio.ModeResult, error) {
-	f.calls = append(f.calls, "SetMode "+target)
+	f.record("SetMode " + target)
 	return f.modeOut, nil
 }
 
@@ -568,6 +589,93 @@ func TestCancelReturnsOnlyClaudesPrompt(t *testing.T) {
 	}
 	if strings.TrimSpace(rec.Body.String()) != `{"restored":false}` {
 		t.Fatalf("reply %q, want nothing returned", rec.Body.String())
+	}
+}
+
+// Found in the round 7 check (2026-09-28): a prompt sent 300 ms after an early
+// Stop was typed onto the input line while the cancel was still taking the
+// stopped prompt off it. The reclaim's Backspaces erased the new text, the
+// Enter landed on an empty line, and the route answered 204 for a prompt the
+// CLI never saw. A prompt now waits for a Stop that holds the line.
+func TestPromptWaitsForAStopTakingThePromptBack(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	f := &fakeTurns{reclaimTook: true}
+	f.inReclaim = func() {
+		close(entered)
+		<-release
+	}
+	mux := turnMux(t, f)
+	stopped := make(chan *httptest.ResponseRecorder, 1)
+	go func() { stopped <- postTurn(t, mux, "/cancel/demo", `{"returnPrompt":"first"}`) }()
+	<-entered
+
+	sent := make(chan *httptest.ResponseRecorder, 1)
+	go func() { sent <- postTurn(t, mux, "/prompt/demo", `{"text":"second"}`) }()
+	select {
+	case <-sent:
+		t.Fatal("the prompt went in while the Stop was still clearing the input line")
+	case <-time.After(150 * time.Millisecond):
+	}
+	if f.called("Prompt") {
+		t.Fatal("Prompt typed onto the line the Stop was clearing")
+	}
+	close(release)
+	if rec := <-stopped; rec.Code != http.StatusOK {
+		t.Fatalf("cancel status %d", rec.Code)
+	}
+	if rec := <-sent; rec.Code != http.StatusNoContent || !f.called("Prompt") {
+		t.Fatalf("prompt status %d, calls %q: want it sent once the Stop let go", rec.Code, f.calls)
+	}
+}
+
+// The other order: a Stop pressed while a prompt is still being typed waits
+// for it, so the interrupt cannot land between its paste and its Enter.
+func TestStopWaitsForAPromptBeingTyped(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	f := &fakeTurns{}
+	f.inPrompt = func() {
+		close(entered)
+		<-release
+	}
+	mux := turnMux(t, f)
+	sent := make(chan *httptest.ResponseRecorder, 1)
+	go func() { sent <- postTurn(t, mux, "/prompt/demo", `{"text":"hello"}`) }()
+	<-entered
+	stopped := make(chan *httptest.ResponseRecorder, 1)
+	go func() { stopped <- postTurn(t, mux, "/cancel/demo", ``) }()
+	select {
+	case <-stopped:
+		t.Fatal("the Stop went in while a prompt was being typed")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	<-sent
+	if rec := <-stopped; rec.Code != http.StatusNoContent || !f.called("CancelHarness") {
+		t.Fatalf("cancel status %d, calls %q", rec.Code, f.calls)
+	}
+}
+
+// Two sessions do not wait for each other.
+func TestInputLineLockIsPerSession(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	defer close(release)
+	f := &fakeTurns{reclaimTook: true}
+	f.inReclaim = func() {
+		close(entered)
+		<-release
+	}
+	mux := turnMux(t, f)
+	go postTurn(t, mux, "/cancel/demo", `{"returnPrompt":"first"}`)
+	<-entered
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- postTurn(t, mux, "/prompt/other", `{"text":"hi"}`) }()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status %d", rec.Code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("a prompt to another session waited on this session's Stop")
 	}
 }
 
