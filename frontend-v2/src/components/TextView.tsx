@@ -1211,7 +1211,7 @@ export const TextView: Component<{
         const took =
           field === "model" ? isCurrentModel(props.harness ?? "claude", id, got) : got === id;
         if (got && !took) {
-          props.notify?.(`The session stayed on ${got} — something on the box pins it`, "error");
+          props.notify?.(`The session stayed on ${got}. Something on the box pins it`, "error");
         }
       })
       .finally(() => setModelBusy(false));

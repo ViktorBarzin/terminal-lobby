@@ -83,7 +83,7 @@ export async function uploadAttachments(
   // is worth flagging at the moment it is attached rather than when the answer
   // comes back confused.
   if (added.some((a) => /\.hei[cf]$/i.test(a.name))) {
-    opts.notify?.("HEIC images may not display or be readable — a JPEG is safer", "info");
+    opts.notify?.("HEIC images may not display or be readable. A JPEG is safer", "info");
   }
   return added;
 }

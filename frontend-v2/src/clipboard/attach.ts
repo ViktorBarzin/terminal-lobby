@@ -289,7 +289,7 @@ export function installImageClipboard(deps: ImageClipboardDeps): ImageClipboard 
    *  rather than uploading into a session nothing can be typed into. */
   const refused = (): boolean => {
     if (deps.enabled && !deps.enabled()) {
-      toast("Watching this session — nothing is typed into it", "info", 4000);
+      toast("Watching this session. Nothing is typed into it", "info", 4000);
       return true;
     }
     return false;

@@ -1040,7 +1040,7 @@ export const SessionView: Component<{
     // One last try after the loop, so a row that mounted on the final frame is
     // not reported as missing.
     if (!window.__tlScrollToEvent?.(id)) {
-      props.notify?.("Couldn't reach that match — try loading earlier turns", "error");
+      props.notify?.("Couldn't reach that match. Try loading earlier turns", "error");
     }
   };
 
