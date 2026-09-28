@@ -94,7 +94,8 @@ const reclaimWait = 1500 * time.Millisecond
 // queueClearMargin. Whatever else is on the line (Claude had started
 // answering and nothing came back, or the reader's own draft) is left alone.
 //
-// Answers true when the prompt was there and the line was cleared.
+// Answers true when the prompt was there and the line was cleared. A pane
+// that shows no input box is read again until reclaimWait passes.
 func (in *Injector) ReclaimInterrupted(osUser, session, text string) (bool, error) {
 	if strings.TrimSpace(text) == "" {
 		return false, nil
@@ -105,11 +106,12 @@ func (in *Injector) ReclaimInterrupted(osUser, session, text string) (bool, erro
 		if err != nil {
 			return false, err
 		}
+		// No box drawn is a reason to keep reading: right after the interrupt
+		// something can stand in its place for a moment (Claude Code's
+		// feedback-draft panel did in the round 7 check, 2026-09-28), and the
+		// prompt lands on the line once it goes.
 		box, ok := inputBoxUpTo(pane, strings.Count(pane, "\n"))
-		if !ok {
-			return false, nil
-		}
-		if inputHolds(pane, text) {
+		if ok && inputHolds(pane, text) {
 			presses := max(utf8.RuneCountInString(box), utf8.RuneCountInString(text)) + queueClearMargin
 			if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
 				return false, err

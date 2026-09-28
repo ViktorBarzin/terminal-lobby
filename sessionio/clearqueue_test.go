@@ -158,6 +158,31 @@ func TestReclaimInterruptedTakesThePromptBackOffTheInputLine(t *testing.T) {
 	}
 }
 
+// Round 7 (2026-09-28): right after the interrupt the pane drew something in
+// the input box's place (Claude Code's feedback-draft panel), and the reclaim
+// gave up on its first read. The prompt landed on the line a moment later,
+// where the next send's clear took only its last visual line and the new
+// prompt went in glued to the rest. The box not being drawn yet is a reason
+// to keep reading, not to stop.
+func TestReclaimInterruptedWaitsForTheBoxToBeDrawnAgain(t *testing.T) {
+	const text = "Write a long story about a lighthouse keeper."
+	in, osUser := fakeInputSession(t, "FAKEINPUT_RUNNING='"+text+"' FAKEINPUT_RESTORE_MS=100 FAKEINPUT_HIDE_MS=500")
+	if err := in.Cancel(osUser, "demo"); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	took, err := in.ReclaimInterrupted(osUser, "demo", text)
+	if err != nil {
+		t.Fatalf("ReclaimInterrupted: %v", err)
+	}
+	if !took {
+		t.Fatal("ReclaimInterrupted gave up while the box was not drawn")
+	}
+	awaitPane(t, in, osUser, func(p string) bool {
+		box, ok := inputBox(p)
+		return ok && strings.TrimSpace(box) == ""
+	})
+}
+
 // Claude had started answering, so nothing comes back, and a draft of the
 // reader's own on the input line is left alone.
 func TestReclaimInterruptedLeavesOtherWordsAlone(t *testing.T) {

@@ -27,6 +27,11 @@ FAKEINPUT_RUNNING is the prompt of a turn Claude has written nothing for yet.
 C-c puts it back on the input line FAKEINPUT_RESTORE_MS later (default 150),
 as CLI 2.1.283 was measured to on 2026-09-28: 40 to 270 ms after the interrupt.
 
+FAKEINPUT_HIDE_MS draws no input box for that long after a C-c: something
+else is drawn in its place, as Claude Code's own feedback-draft panel was over
+a scratch session in the round 7 check on 2026-09-28 ("1 to review · 2 to send
+· 0 to dismiss" where the box had been).
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -45,6 +50,7 @@ QUEUE = [
 ]
 RUNNING = os.environ.get("FAKEINPUT_RUNNING", "").replace("\\n", "\n")
 RESTORE_S = int(os.environ.get("FAKEINPUT_RESTORE_MS", "150")) / 1000.0
+HIDE_S = int(os.environ.get("FAKEINPUT_HIDE_MS", "0")) / 1000.0
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
@@ -55,7 +61,7 @@ def out(s):
     sys.stdout.flush()
 
 
-def draw(submitted, line, queue, interrupted):
+def draw(submitted, line, queue, interrupted, hidden=False):
     out("\x1b[2J\x1b[H")
     out(READY + "\r\n")
     for s in submitted:
@@ -64,6 +70,9 @@ def draw(submitted, line, queue, interrupted):
         out("QUEUED=%s\r\n" % q.replace("\n", "⏎"))
     if interrupted:
         out("INTERRUPTED\r\n")
+    if hidden:
+        out("\r\n| A panel where the box was\r\n| 1 to review · 0 to dismiss\r\n")
+        return
     out("\r\n" + RULE + " ↯ ─\r\n")
     rows = line.split("\n")
     out("❯ %s\r\n" % rows[0])
@@ -91,15 +100,21 @@ def main():
         draw(submitted, line, queue, interrupted)
         running = RUNNING
         restore_at = None
+        hide_until = None
         while True:
-            if restore_at is not None:
-                wait = max(0.0, restore_at - time.monotonic())
+            timers = [t for t in (restore_at, hide_until) if t is not None]
+            if timers:
+                wait = max(0.0, min(timers) - time.monotonic())
                 ready, _, _ = select.select([fd], [], [], wait)
                 if not ready:
-                    line = running + line
-                    running = ""
-                    restore_at = None
-                    draw(submitted, line, queue, interrupted)
+                    now = time.monotonic()
+                    if restore_at is not None and now >= restore_at:
+                        line = running + line
+                        running = ""
+                        restore_at = None
+                    if hide_until is not None and now >= hide_until:
+                        hide_until = None
+                    draw(submitted, line, queue, interrupted, hide_until is not None)
                     continue
             ch = read1()
             if ch == "":
@@ -122,6 +137,8 @@ def main():
                 interrupted = True
                 if running:
                     restore_at = time.monotonic() + RESTORE_S
+                if HIDE_S > 0:
+                    hide_until = time.monotonic() + HIDE_S
             elif ch == "\x1b":
                 # A CSI sequence: ESC [ params final. Up is ESC [ A; the
                 # bracketed-paste markers are ESC [ 2 0 0 ~ and ESC [ 2 0 1 ~.
@@ -140,7 +157,7 @@ def main():
                     queue = []
             else:
                 line += ch
-            draw(submitted, line, queue, interrupted)
+            draw(submitted, line, queue, interrupted, hide_until is not None)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
