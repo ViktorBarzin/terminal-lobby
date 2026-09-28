@@ -356,6 +356,61 @@ describe("the permission card", () => {
     expect(document.activeElement).not.toBe(card());
   });
 
+  /**
+   * Deployed review round 1 (2026-09-28): typing "please fix the 2 tests and
+   * then 1 more thing" at 200 ms a key, the card docked at the ninth
+   * character, the field hid, the focus fell to the page, and the other 130
+   * characters went nowhere with no notice. The field now keeps the focus,
+   * out of sight behind the card, so the words land in the message, and no
+   * digit among them presses a row.
+   */
+  it("keeps the words typed after the card docks in the message, out of sight", async () => {
+    const { r, card, setEvents, composer, onKeys, notify } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    fireEvent.input(field, { target: { value: "please fix" } });
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    await Promise.resolve();
+    expect(document.activeElement).toBe(field);
+    expect(composer().hidden).toBe(false);
+    expect(composer().dataset.offstage).toBe("");
+    expect(notify).toHaveBeenCalledWith(
+      "Claude needs an answer. What you type stays in your message for after.",
+      "info",
+    );
+    expect(fireEvent.keyDown(field, { key: "2" })).toBe(true);
+    fireEvent.input(field, { target: { value: "please fix the 2 tests" } });
+    expect(onKeys).not.toHaveBeenCalled();
+    expect(field.value).toBe("please fix the 2 tests");
+  });
+
+  it("hides the field once the focus leaves it while the card is up", async () => {
+    const { r, card, setEvents, composer } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    fireEvent.input(field, { target: { value: "please fix" } });
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    card()!.focus();
+    await waitFor(() => expect(composer().hidden).toBe(true));
+    expect(composer().dataset.offstage).toBeUndefined();
+    expect(field.value).toBe("please fix");
+  });
+
+  it("sends nothing from the hidden field while the card is up", async () => {
+    const { r, card, setEvents, onSend, onKeys } = mount(base);
+    const field = r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    fireEvent.input(field, { target: { value: "please fix" } });
+    setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    fireEvent.keyDown(field, { key: "Enter" });
+    await waitFor(() => expect(field.value).toBe("please fix"));
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onKeys).not.toHaveBeenCalled();
+  });
+
   it("lets a click on the conversation give the keys to the view", async () => {
     // Clicking the transcript left the focus on the page's body, where a digit
     // is not the view's to take. The scroller takes the focus of a click.

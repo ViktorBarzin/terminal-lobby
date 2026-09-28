@@ -1494,6 +1494,56 @@ export const TextView: Component<{
    *  the field is where the next prompt goes, so the composer comes back. */
   const planUp = (): boolean => planDocked() !== null && planReplyNow()?.notice !== "gone";
   const composerHidden = createMemo(() => questionUp() || permissionUp() || planUp());
+  /**
+   * A card docked while the reader was typing in the field, and the field
+   * still has the focus: the composer stops drawing but stays in the page,
+   * out of sight, so the rest of the sentence lands in the message.
+   *
+   * Deployed review round 1 (2026-09-28): the card docked at the ninth
+   * character of a sentence typed at 200 ms a key, the field hid, the focus
+   * fell to the page and the other 130 characters were lost with no notice.
+   * Read when the card docks, before the field would hide; it ends when the
+   * focus leaves the field (`releaseTyping`) or the card goes. A digit typed
+   * into a field with words in it is typing, so no row is pressed.
+   */
+  const [typingReleased, releaseTyping] = createSignal(0);
+  const behind = createMemo<{ on: boolean; gen: number }>(
+    (prev) => {
+      const up = composerHidden();
+      const gen = typingReleased();
+      if (!up) return { on: false, gen };
+      if (prev.on) return { on: gen === prev.gen, gen: prev.gen };
+      return {
+        on: composerFocused() && (composerSinks()?.text() ?? "").trim() !== "",
+        gen,
+      };
+    },
+    { on: false, gen: 0 },
+  );
+  const typingBehind = (): boolean => behind().on;
+  createEffect(
+    on(typingBehind, (now, was) => {
+      if (now && !was) {
+        props.notify?.(
+          "Claude needs an answer. What you type stays in your message for after.",
+          "info",
+        );
+      }
+    }),
+  );
+  onMount(() => {
+    const el = viewEl;
+    if (!el) return;
+    const out = (e: FocusEvent): void => {
+      const t = e.target;
+      if (!typingBehind() || !(t instanceof HTMLTextAreaElement) || !t.closest(".tl-composer")) {
+        return;
+      }
+      releaseTyping((n) => n + 1);
+    };
+    el.addEventListener("focusout", out, true);
+    onCleanup(() => el.removeEventListener("focusout", out, true));
+  });
   const cardUp = createMemo(() => questionUp() || permissionUp() || planDocked() !== null);
 
   // The header's subtitle follows the conversation while it is on screen: a
@@ -1767,7 +1817,8 @@ export const TextView: Component<{
         />
       </Show>
       <Composer
-        hidden={composerHidden()}
+        hidden={composerHidden() && !typingBehind()}
+        offstage={typingBehind()}
         textSize={textSize()}
         // The open turn's row, which decides Stop, and what the session still
         // owes once the transcript has closed the turn: an agent or a workflow
@@ -1808,7 +1859,11 @@ export const TextView: Component<{
         session={props.session}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
-        onPermissionDigit={(row) => (permission() ? (pressPermissionRow?.(row) ?? false) : false)}
+        // Not from a field typing behind the card: the reader cannot see it
+        // is empty, so a digit there is typing (`typingBehind`).
+        onPermissionDigit={(row) =>
+          permission() && !typingBehind() ? (pressPermissionRow?.(row) ?? false) : false
+        }
         register={(api) => {
           setComposerSinks(api);
           props.register?.(api);

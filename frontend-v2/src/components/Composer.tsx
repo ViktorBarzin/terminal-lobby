@@ -101,6 +101,12 @@ export const Composer: Component<{
    * attachments and the registered sinks outlive the card.
    */
   hidden?: boolean;
+  /**
+   * The card docked while the reader was typing in the field: the composer
+   * stops drawing but keeps the focus, so the rest of the sentence lands in
+   * the message rather than on the page (TextView `typingBehind`).
+   */
+  offstage?: boolean;
   /** The text view's pinch size, forwarded to the field. */
   textSize?: number;
   /**
@@ -365,7 +371,12 @@ export const Composer: Component<{
   );
 
   return (
-    <div class="tl-composer" hidden={props.hidden}>
+    <div
+      class="tl-composer"
+      hidden={props.hidden}
+      data-offstage={props.offstage ? "" : undefined}
+      aria-hidden={props.offstage ? "true" : undefined}
+    >
       <Show when={props.pending.length > 0}>
         <PermissionPanel pending={props.pending} onResolve={props.onResolve} />
       </Show>

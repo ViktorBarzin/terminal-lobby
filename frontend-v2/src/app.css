@@ -6095,6 +6095,19 @@ body.tl-kb-up {
 .tl-composer[hidden] {
   display: none;
 }
+/* A card that docked while the reader was typing: the composer keeps the
+   focus but takes no room and draws nothing, so the rest of the sentence
+   lands in the message (TextView `typingBehind`). Not display: none, which
+   would drop the focus to the page. */
+.tl-composer[data-offstage] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  opacity: 0;
+  pointer-events: none;
+}
 .tl-qcard {
   flex: none;
   box-sizing: border-box;
