@@ -134,11 +134,22 @@ describe("<MessagesTimeline> while its pictures load", () => {
     [
       "a settled turn's fold",
       [
-        ...READ_SHOT,
+        READ_SHOT[0]!,
+        ev({ id: 11, kind: "text", body: "reading it" }),
+        ...READ_SHOT.slice(1),
         ev({ id: 4, kind: "text", body: "the header overlaps" }),
         ev({ id: 5, kind: "turn_end" }),
       ],
       ".tl-row-fold .tl-group-pics .tl-tool-thumb img",
+    ],
+    [
+      "a settled turn's one work group",
+      [
+        ...READ_SHOT,
+        ev({ id: 4, kind: "text", body: "the header overlaps" }),
+        ev({ id: 5, kind: "turn_end" }),
+      ],
+      ".tl-row-group .tl-group-pics .tl-tool-thumb img",
     ],
   ])("keeps the live end when a thumbnail arrives under %s", async (_what, events, selector) => {
     const { container } = render(() => (

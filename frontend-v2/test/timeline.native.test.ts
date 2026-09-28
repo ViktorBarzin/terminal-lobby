@@ -455,6 +455,7 @@ describe("the fold", () => {
   it("summarises the turn's changed files and token usage", () => {
     const rows = rowsOf(
       prompt(),
+      ev({ kind: "text", body: "on it" }),
       ev({
         kind: "tool_use",
         tool: "Edit",
@@ -481,7 +482,8 @@ describe("the fold", () => {
       ev({ kind: "text", body: "It is drawn in TextView.tsx." }),
       ev({ kind: "turn_end" }),
     ];
-    expect(deriveRows(events).map((r) => r.kind)).toEqual(["user", "turn-fold", "message"]);
+    // Folded, one group and its reply draw no fold over the group.
+    expect(deriveRows(events).map((r) => r.kind)).toEqual(["user", "work-group", "message"]);
     expect(deriveRows(events, { fold: false, group: false }).map((r) => r.kind)).toEqual([
       "user",
       "thinking",

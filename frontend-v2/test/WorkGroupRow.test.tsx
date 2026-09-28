@@ -437,3 +437,40 @@ describe("a turn the reader stopped", () => {
     expect(container.textContent).not.toContain("[Request interrupted");
   });
 });
+
+// Deployed review round 1 (2026-09-28): a finished turn's fold read "Worked for
+// 31s · 5 steps" with "notes.txt 78 tok" on the right, Quiet line's label. It
+// reads like a work group now: what the hidden calls did, the tick and the
+// time, and no token count.
+describe("a finished turn's fold", () => {
+  const FINISHED: Event[] = [
+    ev({ id: 1, kind: "user", body: "go", at: 1_000 }),
+    ev({ id: 2, kind: "text", body: "looking", at: 1_500 }),
+    bash(3, "b1", "ls", 2_000),
+    result(4, "b1", "ok", { at: 3_000 }),
+    ev({ id: 5, kind: "text", body: "one more", at: 4_000 }),
+    bash(6, "b2", "echo c", 5_000),
+    result(7, "b2", "c", { at: 6_000 }),
+    ev({ id: 8, kind: "text", body: "done", at: 32_000 }),
+    ev({ id: 9, kind: "turn_end", at: 32_000 }),
+  ];
+
+  it("says what the hidden work did, with the tick and the time", () => {
+    const fold = deriveRows(FINISHED).find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    const { container } = render(() => (
+      <TurnFoldRowView
+        row={{ ...fold, usage: { input_tokens: 70, output_tokens: 8 } }}
+        expanded={false}
+        onToggle={() => {}}
+      />
+    ));
+    expect(container.querySelector(".tl-group-sum")!.textContent).toBe(
+      "Ran 2 commands, wrote 2 replies",
+    );
+    const meta = container.querySelector(".tl-group-meta")!.textContent!;
+    expect(meta).toContain("✓");
+    expect(meta).toContain("31s");
+    expect(container.textContent).not.toContain("tok");
+    expect(container.textContent).not.toContain("Worked for");
+  });
+});

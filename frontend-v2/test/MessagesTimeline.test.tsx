@@ -32,17 +32,16 @@ describe("<MessagesTimeline> (smoke)", () => {
     expect(strong?.textContent).toBe("done");
     expect(container.textContent).toContain("All");
     // the fold summary is present, and folded work (the command) is hidden
-    expect(getByText(/Worked/)).toBeInTheDocument();
-    expect(getByText(/2 steps/)).toBeInTheDocument();
+    expect(getByText("Ran 1 command, wrote 1 reply")).toBeInTheDocument();
     expect(queryByText("ls")).toBeNull();
 
     // Expanding the fold reveals the hidden work group, and opening the group
     // lists its calls. Since 2026-08-16 a call is labelled with what it is
     // DOING (the command, not "Bash"), so the reader can tell two Bash calls
     // apart without opening either.
-    fireEvent.click(getByRole("button", { name: /Worked/ }));
+    fireEvent.click(getByRole("button", { name: /Ran 1 command, wrote 1 reply/ }));
     expect(queryByText("ls")).toBeNull();
-    fireEvent.click(getByRole("button", { name: /Ran 1 command/ }));
+    fireEvent.click(getByRole("button", { name: /^Ran 1 command ✓/ }));
     expect(getByText("ls")).toBeInTheDocument();
     expect(getByText("Ran")).toBeInTheDocument();
   });

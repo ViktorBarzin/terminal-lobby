@@ -261,6 +261,9 @@ export interface TurnFoldRow {
   turnKey: string;
   /** How many steps the fold hides, counting each call inside a work group. */
   count: number;
+  /** What the hidden rows did, in the work group's words: "Ran 2 commands,
+   *  edited 1 file, wrote 2 replies" (foldSummary). */
+  summary: string;
   durationMs?: number;
   /** The replies and work groups the fold hides, in order. */
   hidden: FoldedRow[];
@@ -1148,6 +1151,13 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
     if (visibleAt < 0) visibleAt = work.length - 1;
     const visible = work[visibleAt];
     const hidden = work.filter((_, i) => i !== visibleAt);
+    // One work group and the reply: the group's own row already stands for
+    // the calls, folded, and a fold over it drew them twice (deployed review
+    // round 1, 2026-09-28).
+    if (hidden.length === 1 && hidden[0]!.kind === "work-group") {
+      for (const r of all) rows.push(r);
+      return rows;
+    }
     const changed = [...new Set(work.flatMap(changedFilesOf))];
     const duration = turnDuration(turn);
     const fold: TurnFoldRow | null =
@@ -1157,6 +1167,7 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
             key: `fold-${turn.key}`,
             turnKey: turn.key,
             count: hidden.reduce((n, r) => n + foldedSteps(r), 0),
+            summary: foldSummary(hidden),
             hidden,
             hasError: hidden.some(foldedFailed),
             stopped: stop !== undefined || hidden.some((r) => r.kind === "work-group" && r.stopped),
@@ -1178,6 +1189,25 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
     for (const r of all) rows.push(r);
   }
   return rows;
+}
+
+/**
+ * What a fold hides, in the work group's words: the calls summed up as one
+ * group would say them, then the replies ("Ran 2 commands, edited 1 file,
+ * wrote 2 replies"). It replaced "Worked for Ns · N steps" and a token count,
+ * which the prototype does not draw (deployed review round 1, 2026-09-28).
+ */
+export function foldSummary(hidden: readonly FoldedRow[]): string {
+  const calls = hidden.flatMap((r): WorkLeaf[] =>
+    r.kind === "work-group" ? r.calls : r.kind === "tool" || r.kind === "thinking" ? [r] : [],
+  );
+  const replies = hidden.filter((r) => r.kind === "message").length;
+  const parts: string[] = [];
+  if (calls.some((c) => c.kind === "tool")) parts.push(groupSummary(calls));
+  if (replies > 0) parts.push(`wrote ${plural(replies, "reply", "replies")}`);
+  if (parts.length === 0) parts.push(plural(hidden.length, "step", "steps"));
+  const text = parts.join(", ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** The files a row changed: a call's own, or every call's in a group. A call

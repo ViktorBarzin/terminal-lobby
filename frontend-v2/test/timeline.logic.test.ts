@@ -165,9 +165,9 @@ describe("deriveRows", () => {
       ev({ id: 5, kind: "turn_end", at: 4000 }),
     ]);
 
-    expect(rows.map((r) => r.kind)).toEqual(["user", "message", "turn-fold"]);
-    const fold = rows[2] as TurnFoldRow;
-    expect(fold.hidden.map((r) => r.kind)).toEqual(["work-group"]);
+    // One group after the announcement: the group's own row stands for the
+    // call, with no fold over it (deployed review round 1, 2026-09-28).
+    expect(rows.map((r) => r.kind)).toEqual(["user", "message", "work-group"]);
   });
 
   // The common shape is unchanged: work first, then the answer it produced.
@@ -301,6 +301,7 @@ describe("deriveRows", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "text", turnId: "T1", body: "a" }),
       ev({ id: 2, kind: "tool_use", turnId: "T1", tool: "X", toolId: "t", body: "" }),
+      ev({ id: 21, kind: "text", turnId: "T1", body: "a2" }),
       ev({ id: 3, kind: "turn_end", turnId: "T1" }),
       ev({ id: 4, kind: "text", turnId: "T2", body: "b" }),
     ]);
@@ -837,11 +838,14 @@ describe("work groups", () => {
   // with the CLI's own "[Request interrupted by user]" as its visible row.
   it.each<[string, Event[]]>([
     [
-      "stopped after a reply",
+      "stopped after two replies",
       [
         ev({ id: 2, kind: "text", body: "looking" }),
-        bash(3, "t1", "sleep 60", 1000),
-        done(4, "t1", { body: "[Request interrupted by user for tool use]", isError: true }),
+        bash(3, "t1", "ls", 500),
+        done(31, "t1"),
+        ev({ id: 32, kind: "text", body: "one more" }),
+        bash(33, "t2", "sleep 60", 1000),
+        done(4, "t2", { body: "[Request interrupted by user for tool use]", isError: true }),
         ev({ id: 5, kind: "state", body: "[Request interrupted by user for tool use]" }),
         ev({ id: 6, kind: "turn_end" }),
       ],
@@ -866,6 +870,20 @@ describe("work groups", () => {
     expect(rows.indexOf(fold)).toBeLessThan(rows.length - 1);
   });
 
+  it("leaves a stopped turn of a reply and one group unfolded, the group saying stopped", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "text", body: "looking" }),
+      bash(3, "t1", "sleep 60", 1000),
+      done(4, "t1", { body: "[Request interrupted by user for tool use]", isError: true }),
+      ev({ id: 5, kind: "state", body: "[Request interrupted by user for tool use]" }),
+      ev({ id: 6, kind: "turn_end" }),
+    ]);
+    expect(rows.some((r) => r.kind === "turn-fold")).toBe(false);
+    expect(groups(rows)[0]!.stopped).toBe(true);
+    expect(rows[rows.length - 1]!.kind).toBe("status");
+  });
+
   it("leaves a stopped turn with one group unfolded, the group saying stopped", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go" }),
@@ -881,6 +899,7 @@ describe("work groups", () => {
   it("does not call a turn that finished cleanly stopped", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 11, kind: "text", body: "on it" }),
       bash(2, "t1", "ls"),
       done(3, "t1"),
       ev({ id: 4, kind: "text", body: "ok" }),
@@ -897,6 +916,7 @@ describe("work groups", () => {
   it("ends a settled turn's fold at its turn_end, not at a later local command", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go", at: 1_000 }),
+      ev({ id: 11, kind: "text", body: "on it", at: 1_500 }),
       bash(2, "t1", "ls", 2_000),
       done(3, "t1", { at: 3_000 }),
       ev({ id: 4, kind: "text", body: "done", at: 9_000 }),
@@ -1024,6 +1044,7 @@ describe("work groups", () => {
   it("reads the changed files and failures inside the groups a fold hides", () => {
     const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 11, kind: "text", body: "on it" }),
       ev({ id: 2, kind: "tool_use", tool: "Edit", toolId: "e1", body: '{"file_path":"/r/a.ts"}' }),
       done(3, "e1"),
       bash(4, "t1", "false"),
@@ -1058,5 +1079,42 @@ describe("work groups", () => {
       { fold: false, group: false },
     );
     expect(shape(rows)).toEqual(["user", "tool", "tool", "working"]);
+  });
+
+  // Deployed review round 1 (2026-09-28): a settled turn of one work group and
+  // its reply folded behind "Worked for 31s · 5 steps", and opening the fold
+  // showed the same calls again as "Ran 3 commands, edited 1 file ✓ · 26s".
+  // The group row already stands for them, as the prototype draws it.
+  it("does not fold a settled turn whose only hidden row is one work group", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "t1", "ls", 1_000),
+      done(3, "t1", { at: 2_000 }),
+      bash(4, "t2", "echo c", 2_000),
+      done(5, "t2", { at: 3_000 }),
+      ev({ id: 6, kind: "text", body: "done", at: 3_100 }),
+      ev({ id: 7, kind: "turn_end", at: 3_200 }),
+    ]);
+    expect(shape(rows)).toEqual(["user", "group(tool,tool)", "message"]);
+  });
+
+  // The fold that stays reads like a work group: what the hidden calls did and
+  // how many replies it holds, not "Worked for Ns · N steps" and a token count.
+  it("sums up what a fold hides in the work group's words", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      ev({ id: 2, kind: "text", body: "looking" }),
+      bash(3, "t1", "ls"),
+      done(4, "t1"),
+      ev({ id: 5, kind: "text", body: "now editing" }),
+      ev({ id: 6, kind: "tool_use", tool: "Edit", toolId: "e1", body: '{"file_path":"/r/a.ts"}' }),
+      done(7, "e1"),
+      bash(8, "t2", "go test"),
+      done(9, "t2"),
+      ev({ id: 10, kind: "text", body: "done" }),
+      ev({ id: 11, kind: "turn_end" }),
+    ]);
+    const fold = rows.find((r): r is TurnFoldRow => r.kind === "turn-fold")!;
+    expect(fold.summary).toBe("Ran 2 commands, edited 1 file, wrote 2 replies");
   });
 });

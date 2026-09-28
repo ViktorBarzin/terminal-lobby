@@ -1,10 +1,8 @@
 /**
- * A settled turn's fold on the phone: "Worked for 38s · 5 steps" has to read
- * whole at 390px. The live check on 2026-09-27 found it cut to "Worked for 38s
- * · 5 ste…" because the changed file's name took the room, and the prototype's
- * phone rows keep only the time on the right (6-tools, 6-idle). The fold's own
- * label already carries the time, and a failure still says "✗ failed" in
- * words, so the file name and the token count are the parts that give way.
+ * A settled turn's fold on the phone. It is drawn as a work group row since
+ * the first deployed review (2026-09-28), with no file name or token count to
+ * give way, and the prototype's phone rows keep only the time on the right
+ * (6-tools, 6-idle). A hidden failure still says "✗ failed" in words.
  *
  * Asserted as CSS text, as textview.conversation.css.test.ts does, because
  * jsdom has no layout.
@@ -36,9 +34,8 @@ function hiddenOnPhone(): string[] {
 }
 
 describe("the turn fold on the phone", () => {
-  it("gives the file name's room to the label, as it does the token count", () => {
-    expect(hiddenOnPhone()).toContain(".tl-fold-tokens");
-    expect(hiddenOnPhone()).toContain(".tl-fold-files");
+  it("gives the tick's room to the time, as a work group does", () => {
+    expect(hiddenOnPhone()).toContain(".tl-group-okm");
   });
 
   it("still says a hidden failure in words", () => {

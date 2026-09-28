@@ -361,7 +361,12 @@ draft and attachments come back as they were.
 
 - A finished turn folded to its last reply carries the pictures of its hidden
   work groups under the fold row, so pictures stay in view when folded. The
-  prototype does not draw a turn fold.
+  prototype does not draw a turn fold. The fold is drawn as a work group row
+  and says what it hides in the group's words ("Ran 2 commands, edited 1 file,
+  wrote 2 replies ✓ · 31s"). A turn whose only hidden row is one work group
+  draws no fold, since the group's own row already stands for its calls. The
+  first deployed review found Quiet line's "Worked for 31s · 5 steps" with a
+  token count there, and a second row for the same calls under it.
 - The mode list's order is Manual, Edits, Auto, Plan, where Quiet line had
   Manual, Plan, Edits, Auto.
 - Model rows carry a short description beside the name, as the prototype's

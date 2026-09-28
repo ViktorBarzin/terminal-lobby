@@ -241,6 +241,7 @@ describe("pictures on tool rows", () => {
     renderTurn(
       [
         ev({ id: 1, kind: "user", body: "look at it" }),
+        ev({ id: 11, kind: "text", body: "reading it" }),
         ev({
           id: 2,
           kind: "tool_use",
@@ -312,6 +313,7 @@ describe("pictures on tool rows", () => {
   it("shows a screenshot's file through the picture route", () => {
     const { container } = renderTurn([
       ev({ id: 1, kind: "user", body: "shoot it" }),
+      ev({ id: 11, kind: "text", body: "taking it" }),
       ev({
         id: 2,
         kind: "tool_use",

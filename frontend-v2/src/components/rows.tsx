@@ -1258,10 +1258,13 @@ export const WorkGroupRowView: Component<{
 };
 
 /**
- * A settled turn's fold, in the work group's bordered look: "Worked for 28s ·
- * 6 steps". It stands for the replies and groups it hides, so it says when
- * one of them failed, and it carries their pictures while it is shut; open, the
- * groups under it show their own.
+ * A settled turn's fold, drawn as a work group row: what the hidden calls did
+ * and how many replies it holds ("Ran 2 commands, edited 1 file, wrote 2
+ * replies"), then the tick and the turn's time. It replaced Quiet line's
+ * "Worked for 28s · 6 steps" with a file name and a token count on the right
+ * (deployed review round 1, 2026-09-28). It stands for the replies and groups
+ * it hides, so it says when one of them failed, and it carries their pictures
+ * while it is shut; open, the groups under it show their own.
  */
 export const TurnFoldRowView: Component<{
   row: TurnFoldRow;
@@ -1272,11 +1275,8 @@ export const TurnFoldRowView: Component<{
   /** the effective OS user, which decides whether a store path is ours. */
   me?: string;
 }> = (props) => {
-  const tokens = () => {
-    const u = props.row.usage;
-    if (!u) return 0;
-    return (u.input_tokens ?? 0) + (u.output_tokens ?? 0);
-  };
+  const status = () => (props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok");
+  const took = () => (props.row.durationMs ? formatDuration(props.row.durationMs) : "");
   return (
     <div class="tl-row tl-row-fold">
       <div class="tl-group-box" data-open={props.expanded ? "" : undefined}>
@@ -1287,35 +1287,28 @@ export const TurnFoldRowView: Component<{
           data-has-error={props.row.hasError ? "true" : undefined}
           onClick={() => props.onToggle(props.row.turnKey)}
         >
-          <span
-            class="tl-group-dot"
-            data-status={props.row.hasError ? "error" : props.row.stopped ? "stopped" : "ok"}
-          />
-          <span class="tl-group-sum tl-fold-label">
-            {props.row.durationMs ? `Worked for ${formatDuration(props.row.durationMs)}` : "Worked"}
-            {" · "}
-            {props.row.count} {props.row.count === 1 ? "step" : "steps"}
-          </span>
+          <span class="tl-group-dot" data-status={status()} />
+          <GroupIconSvg icon="tools" class="tl-group-ico" />
+          <span class="tl-group-sum tl-fold-label">{props.row.summary}</span>
           <span class="tl-group-meta">
-            <Show when={props.row.changedFiles.length > 0}>
-              <span class="tl-fold-files">
-                {props.row.changedFiles.length === 1
-                  ? basename(props.row.changedFiles[0]!)
-                  : `${props.row.changedFiles.length} files`}
-              </span>
-            </Show>
-            <Show when={tokens() > 0}>
-              <span class="tl-fold-tokens">{formatTokens(tokens())} tok</span>
-            </Show>
             {/* A fold is the only thing standing for the steps it hides, so a
                 hidden failure has to surface here, in words, not by colour
                 alone. */}
-            <Show when={props.row.hasError}>
+            <Show when={status() === "error"}>
               <span class="tl-fold-error">✗ failed</span>
+              {took() ? " · " : ""}
             </Show>
-            <Show when={props.row.stopped && !props.row.hasError}>
+            <Show when={status() === "stopped"}>
               <span class="tl-fold-stopped">stopped</span>
+              {took() ? " · " : ""}
             </Show>
+            <Show when={status() === "ok"}>
+              <span class="tl-group-okm">
+                <span class="tl-group-ok">✓</span>
+                {took() ? " · " : ""}
+              </span>
+            </Show>
+            {took()}
           </span>
           <GroupChevron />
         </button>

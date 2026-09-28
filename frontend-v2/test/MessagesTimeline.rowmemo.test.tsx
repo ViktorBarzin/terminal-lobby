@@ -46,11 +46,13 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({
  */
 const TRANSCRIPT: Event[] = [
   ev({ id: 1, kind: "user", body: "first prompt" }),
+  ev({ id: 101, kind: "text", body: "looking" }),
   ev({ id: 2, kind: "tool_use", tool: "Bash", toolId: "t1", body: '{"command":"ls"}' }),
   ev({ id: 3, kind: "tool_result", toolId: "t1", body: "README.md" }),
   ev({ id: 4, kind: "text", body: "first answer" }),
   ev({ id: 5, kind: "turn_end" }),
   ev({ id: 6, kind: "user", body: "second prompt" }),
+  ev({ id: 102, kind: "text", body: "reading" }),
   ev({ id: 7, kind: "tool_use", tool: "Read", toolId: "t2", body: '{"file_path":"a.txt"}' }),
   ev({ id: 8, kind: "tool_result", toolId: "t2", body: "hello" }),
   ev({ id: 9, kind: "text", body: "second answer" }),
