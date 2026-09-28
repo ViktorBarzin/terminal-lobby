@@ -61,4 +61,15 @@ describe("<TextView>: a fresh session's model", () => {
     await Promise.resolve();
     expect(label()).toBe("Sonnet 5");
   });
+
+  // Deployed review round 2 (2026-09-28): picking an effort on a fresh session
+  // put a reading with the effort alone into the transcript, and the button
+  // went back to "Model" until Claude's first reply.
+  it("keeps the banner's model when the transcript has only an effort", async () => {
+    const { label, reads } = mount([
+      { id: 1, kind: "meta", meta: "model", session: "demo", model: { effort: "xhigh" } },
+    ]);
+    await waitFor(() => expect(reads()).toBeGreaterThanOrEqual(1), { timeout: 2000 });
+    await waitFor(() => expect(label()).toBe("Opus 5.5"), { timeout: 2000 });
+  });
 });

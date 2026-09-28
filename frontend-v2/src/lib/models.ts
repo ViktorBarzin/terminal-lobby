@@ -484,6 +484,29 @@ export interface ModelState {
 }
 
 /**
+ * A reading of what a session runs as, with the model filled in from the next
+ * source when the reading has none.
+ *
+ * Before a session's first reply its transcript can hold an effort picked from
+ * the model sheet and no model, while the pane's banner names the model. Taken
+ * whole, that effort-only reading turned the model button into "Model",
+ * unticked every model and offered every effort the catalogue knows (deployed
+ * review round 2, 2026-09-28). A reading that names its model is returned as
+ * it is; one that does not takes the model, and an effort only if it has
+ * none, from the first of `rest` that names a model.
+ */
+export function fillModel(
+  first: ModelState | undefined,
+  ...rest: (ModelState | undefined)[]
+): ModelState | undefined {
+  if (first?.model) return first;
+  const named = rest.find((m) => m?.model);
+  const effort = first?.effort ?? named?.effort;
+  if (!named?.model) return effort ? { effort } : undefined;
+  return effort ? { model: named.model, effort } : { model: named.model };
+}
+
+/**
  * A model name reduced to its FAMILY, for matching a catalogue row against
  * whatever spelling the session used.
  *

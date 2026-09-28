@@ -8,6 +8,7 @@ import {
   DEFAULT_CHOICE,
   effortsFor,
   effortsForModel,
+  fillModel,
   fieldHeading,
   isEffortFor,
   isOneSessionEffort,
@@ -295,6 +296,21 @@ describe("the model a session is on", () => {
   // A change made from the chip is reported by the CLI's own receipt, which
   // the server folds into the state frame — so a reader arriving before the
   // session's next turn sees what it is on, not what it last answered on.
+  // Deployed review round 2 (2026-09-28): an effort picked from the sheet
+  // lands as a reading with the effort alone. It changes the effort, not the
+  // model, so the model before it stands.
+  it("keeps the model under a reading that carries only an effort", () => {
+    const effortOnly: Event = { id: 3, kind: "meta", session: "s", meta: "model", model: { effort: "xhigh" } };
+    expect(currentModel([meta(2, "claude-opus-5-5", "high"), effortOnly])).toEqual({
+      model: "claude-opus-5-5",
+      effort: "xhigh",
+    });
+    expect(currentModel([effortOnly], seed(1, "claude-opus-5-5", "high"))).toEqual({
+      model: "claude-opus-5-5",
+      effort: "xhigh",
+    });
+  });
+
   it("follows a change that has not been answered on yet", () => {
     const got = currentModel([meta(9, "sonnet")], seed(8, "claude-haiku-4-5", "max"));
     expect(got?.model).toBe("sonnet");
@@ -632,5 +648,36 @@ describe("contextWindow", () => {
   it("does not guess a window for a model it has not measured", () => {
     expect(contextWindow("gpt-5-codex")).toBeUndefined();
     expect(contextWindow(undefined)).toBeUndefined();
+  });
+});
+
+/**
+ * The model button's reading, from the transcript's first and then the other
+ * sources. Before a session's first reply the transcript can hold an effort
+ * picked from the sheet and no model, and the banner names the model (deployed
+ * review round 2, 2026-09-28: the button read "Model", nothing was ticked and
+ * the Effort row offered ultracode). A reading with no model takes the model
+ * from the first source that names one, and keeps its own effort.
+ */
+describe("filling the model from the next source", () => {
+  it("names the model from the next source, keeping the effort picked", () => {
+    expect(
+      fillModel({ effort: "xhigh" }, undefined, { model: "claude-opus-5-5", effort: "high" }),
+    ).toEqual({ model: "claude-opus-5-5", effort: "xhigh" });
+    expect(fillModel(undefined, { model: "claude-opus-5-5", effort: "high" })).toEqual({
+      model: "claude-opus-5-5",
+      effort: "high",
+    });
+  });
+
+  it("leaves a reading that names its model as it is", () => {
+    expect(fillModel({ model: "sonnet" }, { model: "opus", effort: "max" })).toEqual({
+      model: "sonnet",
+    });
+  });
+
+  it("says nothing when no source says anything", () => {
+    expect(fillModel(undefined, undefined)).toBeUndefined();
+    expect(fillModel({}, undefined)).toBeUndefined();
   });
 });

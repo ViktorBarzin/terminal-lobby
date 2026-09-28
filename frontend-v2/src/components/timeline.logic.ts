@@ -2210,7 +2210,11 @@ export function currentMode(events: Event[], seed?: SessionState | null): string
 export function currentModel(events: Event[], seed?: SessionState | null): ModelState | undefined {
   let state = seed?.model;
   for (const e of after(events, seed)) {
-    if (e.kind === "meta" && e.meta === "model" && e.model) state = e.model;
+    if (e.kind !== "meta" || e.meta !== "model" || !e.model) continue;
+    // A reading with only an effort (one picked from the model sheet) changes
+    // the effort and leaves the model before it standing.
+    if (!e.model.model && e.model.effort) state = { ...state, effort: e.model.effort };
+    else state = e.model;
   }
   return state;
 }

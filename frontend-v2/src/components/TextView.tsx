@@ -80,6 +80,7 @@ import type { DraftAttachment } from "../store/drafts";
 import type { StopResult } from "../store/session";
 import {
   contextWindow,
+  fillModel,
   isCurrentModel,
   modelFromBanner,
   type ModelField,
@@ -1392,7 +1393,7 @@ export const TextView: Component<{
    * wait for the transcript.
    */
   const transcriptModel = createMemo(
-    () => currentModel(props.events, props.sessionState) ?? props.stampedModel ?? bannerModel(),
+    () => fillModel(currentModel(props.events, props.sessionState), props.stampedModel, bannerModel()),
   );
   // The sheet's context line: a /context reading, or the last turn's usage
   // over the window measured for the model the session answers as.
