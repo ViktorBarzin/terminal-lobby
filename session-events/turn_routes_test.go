@@ -57,6 +57,7 @@ type fakeTurns struct {
 	prompted    string
 	cleared     []string
 	reclaimed   string
+	stamped     map[string]string // SetOption
 }
 
 func (f *fakeTurns) record(name string) {
@@ -109,6 +110,17 @@ func (f *fakeTurns) PiTrustPending(_, _ string) bool {
 func (f *fakeTurns) Option(_, _, name string) (string, bool) {
 	f.record("Option " + name)
 	return f.options[name], true
+}
+
+func (f *fakeTurns) SetOption(_, _, name, value string) error {
+	f.record("SetOption " + name)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.stamped == nil {
+		f.stamped = map[string]string{}
+	}
+	f.stamped[name] = value
+	return nil
 }
 
 func (f *fakeTurns) State(_, _ string) string {
@@ -591,6 +603,27 @@ func TestCancelReturnsTheInterruptedPrompt(t *testing.T) {
 	}
 	if cancel < 0 || reclaim < cancel {
 		t.Fatalf("calls = %q, want CancelHarness before ReclaimInterrupted", f.calls)
+	}
+}
+
+// The marker and the turn end the cancel streams live only in this process,
+// so the session is stamped too: a session-events started later reads the
+// stamp and does not show the taken-back prompt as a running turn (deployed
+// review round 1, 2026-09-28).
+func TestCancelStampsTheSessionWhenThePromptCameBack(t *testing.T) {
+	f := &fakeTurns{reclaimTook: true}
+	postTurn(t, turnMux(t, f), "/cancel/demo", `{"returnPrompt":"Write a long story"}`)
+	stamp := f.stamped[sessionio.OptionRewound]
+	n := sessionio.NewNormalizer("demo")
+	n.Line([]byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Write a long story"}]},"timestamp":"2020-01-01T00:00:00Z"}`))
+	if stamp == "" || len(n.RestoreRewound(stamp)) == 0 {
+		t.Fatalf("stamp %q does not name the returned prompt", stamp)
+	}
+	for _, g := range []*fakeTurns{{}, {reclaimErr: errors.New("tmux gone")}} {
+		postTurn(t, turnMux(t, g), "/cancel/demo", `{"returnPrompt":"Write a long story"}`)
+		if g.called("SetOption " + sessionio.OptionRewound) {
+			t.Fatalf("stamped a prompt that did not come back (calls %q)", g.calls)
+		}
 	}
 }
 

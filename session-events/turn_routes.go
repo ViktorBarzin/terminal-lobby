@@ -197,6 +197,8 @@ type cancelDriver interface {
 	HarnessOf(osUser, session string) sessionio.Harness
 	ClearQueue(osUser, session string, queued []string) (bool, error)
 	ReclaimInterrupted(osUser, session, text string) (bool, error)
+	// SetOption stamps sessionio.OptionRewound for a prompt that came back.
+	SetOption(osUser, session, name, value string) error
 }
 
 // cancelBodyLimit bounds the optional body. It carries the harness's name and,
@@ -299,6 +301,15 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 			returned = took && err == nil
 			if returned && hasSource {
 				fs.Rewind(body.ReturnPrompt, stopped)
+			}
+			// The marker and the turn end above live in this process only. A
+			// session-events started later reads the transcript alone, which
+			// ends on this prompt with nothing after it, so the session keeps
+			// the fact (sessionio.OptionRewound).
+			if returned {
+				if err := drv.SetOption(osUser, session, sessionio.OptionRewound, sessionio.RewoundStamp(body.ReturnPrompt, stopped)); err != nil {
+					log.Printf("cancel %s/%s: stamping the returned prompt: %v", osUser, session, err)
+				}
 			}
 		}
 		attrs := telemetry.Attrs{"tl.session": session, "tl.client": "api"}

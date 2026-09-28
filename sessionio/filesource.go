@@ -476,6 +476,18 @@ func (f *FileSource) Rewind(text string, at int64) {
 	}
 }
 
+// RestoreRewound streams the marker for a prompt a Stop took back before this
+// source existed, when the transcript read so far ends on it
+// (Normalizer.RestoreRewound). Called once the first read is done, with the
+// session's OptionRewound; a stamp that names nothing appends nothing.
+func (f *FileSource) RestoreRewound(stamp string) {
+	f.normMu.Lock()
+	defer f.normMu.Unlock()
+	for _, e := range f.norm.RestoreRewound(stamp) {
+		f.appendLive(e)
+	}
+}
+
 // Run tails the transcript until ctx is cancelled.
 func (f *FileSource) Run(ctx context.Context) {
 	t := time.NewTicker(f.poll)

@@ -71,6 +71,12 @@ type paneReader interface {
 	CapturePane(osUser, session string) (string, error)
 }
 
+// stampReader reads a tmux session option: the rewound stamp a Stop leaves
+// (sessionio.OptionRewound), which a source built after a restart needs.
+type stampReader interface {
+	Option(osUser, session, name string) (string, bool)
+}
+
 // registry lazily manages per-user state and per-session sources.
 type registry struct {
 	mu       sync.Mutex
@@ -83,6 +89,9 @@ type registry struct {
 	// How the pane watcher reads a pane. nil disables it, which is what a test
 	// that does not care about panes gets.
 	panes paneReader
+	// How a new source reads the session's rewound stamp
+	// (sessionio.OptionRewound). nil skips it.
+	stamps stampReader
 
 	// now is the clock the idle sweep measures against. A seam so a test can
 	// age a source without waiting; production leaves it as time.Now.
@@ -190,7 +199,11 @@ func (rg *registry) live(osUser, session string) (*liveSource, bool) {
 		reader, agents := us.reader, us.agents
 		us.mu.Unlock()
 
-		ls := rg.start(session, info.Transcript, reader, agents)
+		rewound := ""
+		if rg.stamps != nil {
+			rewound, _ = rg.stamps.Option(osUser, session, sessionio.OptionRewound)
+		}
+		ls := rg.start(session, info.Transcript, reader, agents, rewound)
 
 		us.mu.Lock()
 		delete(us.building, session)
@@ -439,7 +452,11 @@ func (rg *registry) watchPanesEvery(ctx context.Context, every time.Duration) {
 // read and scans on its own goroutine. Nothing about opening a stream waits on
 // agent files, and a watch started first has usually published its set by the
 // time the state frame goes out.
-func (rg *registry) start(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader) *liveSource {
+//
+// `rewound` is the session's OptionRewound stamp, "" for none: a prompt a Stop
+// took back before this process started, which the first read cannot tell
+// from a turn still running (sessionio.Normalizer.RestoreRewound).
+func (rg *registry) start(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader, rewound string) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
 	aw := newAgentWatch(sessionio.SessionDir(transcript), agents)
 	aw.every = rg.agentEvery
@@ -451,6 +468,9 @@ func (rg *registry) start(session, transcript string, reader sessionio.Reader, a
 	}()
 	fs := sessionio.NewFileSourceWith(session, transcript, rg.poll, reader)
 	fs.TailOnce()
+	if rewound != "" {
+		fs.RestoreRewound(rewound)
+	}
 	go func() {
 		defer running.Done()
 		fs.Run(ctx)

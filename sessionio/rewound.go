@@ -1,6 +1,12 @@
 package sessionio
 
-import "strings"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // MetaRewound says a prompt was taken back out of the conversation: Claude
 // Code put it back on its input line and its own view no longer shows it.
@@ -136,4 +142,57 @@ func (n *Normalizer) rewound(at int64, end bool) []Event {
 // of a prompt is trimmed, and the pane wraps what it shows.
 func sameWords(a, b string) bool {
 	return squashSpace(a) == squashSpace(b)
+}
+
+// OptionRewound is the session option the cancel route stamps when a Stop
+// took a prompt back (RewoundStamp): when it happened and which words. The
+// marker Rewind streams, and the turn end the Stop streams, live only in the
+// running session-events, and the transcript keeps the prompt's record with
+// nothing after it. So after a restart the prompt read as a turn still
+// running, on every device, until the next prompt (deployed review round 1,
+// 2026-09-28). A fresh source reads the stamp back (RestoreRewound). It is a
+// session option, so it goes with the session.
+const OptionRewound = "@tl_rewound"
+
+// RewoundStamp is OptionRewound's value for a prompt that went back to the
+// input line at `at` (epoch ms): the time and a hash of its words, whitespace
+// ignored. The hash keeps a long prompt out of tmux.
+func RewoundStamp(text string, at int64) string {
+	return strconv.FormatInt(at, 10) + " " + wordsKey(text)
+}
+
+// wordsKey is a hash of a text's words, whitespace ignored (sameWords).
+func wordsKey(text string) string {
+	sum := sha256.Sum256([]byte(squashSpace(text)))
+	return hex.EncodeToString(sum[:16])
+}
+
+// parseRewoundStamp reads RewoundStamp back.
+func parseRewoundStamp(v string) (int64, string, error) {
+	atStr, key, ok := strings.Cut(strings.TrimSpace(v), " ")
+	if !ok || key == "" {
+		return 0, "", fmt.Errorf("rewound stamp %q: want \"<ms> <key>\"", v)
+	}
+	at, err := strconv.ParseInt(atStr, 10, 64)
+	if err != nil || at <= 0 {
+		return 0, "", fmt.Errorf("rewound stamp %q: bad time", v)
+	}
+	return at, key, nil
+}
+
+// RestoreRewound marks the thread's trailing prompt as taken back when the
+// stamp names it: the prompt is still unanswered, was written at or before
+// the Stop, and has the stamp's words. A replay reads the transcript first,
+// so only the last prompt can match; an earlier one with the same words was
+// answered or taken back in its own right. Anything else, a malformed stamp
+// included, is nothing.
+func (n *Normalizer) RestoreRewound(stamp string) []Event {
+	at, key, err := parseRewoundStamp(stamp)
+	if err != nil || n.open == nil {
+		return nil
+	}
+	if n.open.at > at || wordsKey(n.open.text) != key {
+		return nil
+	}
+	return n.rewound(at, true)
 }

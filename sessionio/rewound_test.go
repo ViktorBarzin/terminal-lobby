@@ -163,3 +163,59 @@ func TestNormalizerRewindBeforeTheRecordMarksItOnArrival(t *testing.T) {
 		t.Fatalf("a later prompt with the same words was marked: %+v", later)
 	}
 }
+
+// Deployed review round 1 (2026-09-28): the marker and the Stop's own turn end
+// live only in the running session-events. After a restart the transcript
+// ends on the taken-back prompt with nothing after it, and every device drew
+// it as a sent bubble under a "Working…" row that never ended. The cancel
+// route stamps the session (RewoundStamp), and a fresh source reads it back.
+func TestNormalizerRestoreRewoundMarksTheTrailingPrompt(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line(promptLine("hello", "2026-09-28T08:20:00Z"))
+	n.Line([]byte(`{"type":"assistant","message":{"id":"m1","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]},"timestamp":"2026-09-28T08:20:02Z"}`))
+	opened := n.Line(promptLine("Run sleep 20 then say finished", "2026-09-28T08:30:48Z"))
+	stopped := parseAt("2026-09-28T08:30:50Z")
+	got := n.RestoreRewound(RewoundStamp("Run sleep 20  then say finished", stopped))
+	marks := rewoundOf(got)
+	if len(marks) != 1 || marks[0].TurnID != opened[0].TurnID {
+		t.Fatalf("restore produced %v, want one rewound marker for the trailing prompt", kinds(got))
+	}
+	ended := false
+	for _, e := range got {
+		if e.Kind == KindTurnEnd {
+			ended = true
+		}
+	}
+	if !ended {
+		t.Fatalf("restore produced %v and left the taken-back turn open", kinds(got))
+	}
+}
+
+func TestNormalizerRestoreRewoundLeavesOtherPromptsAlone(t *testing.T) {
+	stamp := RewoundStamp("Run sleep 20 then say finished", parseAt("2026-09-28T08:30:50Z"))
+	cases := map[string][][]byte{
+		"a different prompt": {promptLine("something else", "2026-09-28T08:30:48Z")},
+		// The same words sent again after the Stop, and running now.
+		"the same words sent later": {promptLine("Run sleep 20 then say finished", "2026-09-28T08:31:10Z")},
+		"an answered prompt": {
+			promptLine("Run sleep 20 then say finished", "2026-09-28T08:30:48Z"),
+			[]byte(`{"type":"assistant","message":{"id":"m1","role":"assistant","content":[{"type":"text","text":"ok"}]},"timestamp":"2026-09-28T08:30:49Z"}`),
+		},
+	}
+	for name, lines := range cases {
+		n := NewNormalizer("demo")
+		for _, l := range lines {
+			n.Line(l)
+		}
+		if got := n.RestoreRewound(stamp); len(got) != 0 {
+			t.Errorf("%s: restore produced %v, want nothing", name, kinds(got))
+		}
+	}
+	n := NewNormalizer("demo")
+	n.Line(promptLine("Run sleep 20 then say finished", "2026-09-28T08:30:48Z"))
+	for _, bad := range []string{"", "garbage", "12 ", "x abc"} {
+		if got := n.RestoreRewound(bad); len(got) != 0 {
+			t.Errorf("stamp %q: restore produced %v, want nothing", bad, kinds(got))
+		}
+	}
+}

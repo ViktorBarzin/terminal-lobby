@@ -303,6 +303,11 @@ marks a prompt as taken back from the transcript alone: the next user record
 with words, with nothing from Claude and no interrupt notice in between,
 unless the two were written as one queued batch (1 ms apart in every batch on
 this box, 4.6 s apart at the least for a prompt taken back, over 21 cases).
+The server also stamps the session with the prompt's time and a hash of its
+words (`@tl_rewound`), because the marker lives only in the running
+session-events: after a restart the transcript alone read the taken-back
+prompt as a running turn on every device, found in the first deployed review.
+A session-events started later reads the stamp and streams the marker again.
 Re-run live on desktop: Stop at 0.36, 1.5 and 2.7 s put the prompt back in
 the field with an empty input line and no bubble; with a queued message behind
 it both came back in order; a Stop 14 s in kept the bubble and the reply.

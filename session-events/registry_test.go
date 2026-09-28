@@ -312,6 +312,68 @@ func TestSourceIsHydratedBeforeItIsReturned(t *testing.T) {
 	}
 }
 
+// fakeStamps stands in for the tmux option read the registry does when it
+// builds a source.
+type fakeStamps map[string]string
+
+func (f fakeStamps) Option(_, _, name string) (string, bool) {
+	v, ok := f[name]
+	return v, ok
+}
+
+// Deployed review round 1 (2026-09-28): a prompt a Stop took back came back as
+// a sent bubble under an endless "Working…" row once session-events restarted,
+// because the marker lived only in the old process. A fresh source reads the
+// cancel route's stamp and streams the marker again.
+func TestSourceRestoresARewoundPromptFromTheSessionStamp(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	user := "someone"
+	root := filepath.Join(home, user, ".claude", "projects", "-x")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcript := filepath.Join(root, "sess.jsonl")
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Run sleep 20 then say finished"}]},"timestamp":"2026-09-28T08:30:48Z"}`,
+	}
+	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stopped := time.Date(2026, 9, 28, 8, 30, 50, 0, time.UTC).UnixMilli()
+
+	for name, stamps := range map[string]fakeStamps{
+		"stamped":   {sessionio.OptionRewound: sessionio.RewoundStamp("Run sleep 20 then say finished", stopped)},
+		"unstamped": {},
+	} {
+		ctx, cancel := context.WithCancel(context.Background())
+		rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"), user)
+		rg.stamps = stamps
+		if err := rg.user(user).sm.Put(sessionio.SessionInfo{
+			TmuxSession: "s", CWD: "/x", ClaudeID: "sess",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		fs, ok := rg.source(user, "s")
+		if !ok {
+			t.Fatal("source not registered")
+		}
+		rewound, ended := false, false
+		for _, e := range fs.Replay(0) {
+			if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaRewound {
+				rewound = true
+			}
+			if e.Kind == sessionio.KindTurnEnd {
+				ended = true
+			}
+		}
+		if want := name == "stamped"; rewound != want || ended != want {
+			t.Errorf("%s: rewound=%v ended=%v, want both %v", name, rewound, ended, want)
+		}
+		cancel()
+	}
+}
+
 // The regression this whole path exists for. session-events runs as one user
 // and serves several; a home is 0750, so reading another user's transcript with
 // this process's own file access fails — and it failed SILENTLY, as an empty

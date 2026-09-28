@@ -63,6 +63,7 @@ func main() {
 	// (see registry.watchPanes), so the pane of a watched, working session is
 	// read for one.
 	rg.panes = injector
+	rg.stamps = injector
 	go rg.watchPanesEvery(ctx, PaneWatchInterval)
 
 	// Authed web surface (mounted behind authMiddleware).
