@@ -28,11 +28,13 @@
 #   - session-start and prompt-submit MUST stay silent — stdout of both is
 #     injected into the conversation as context. question prints only the
 #     decision session-events hands it, which the CLI reads as the answer.
-#   - No-ops outside tmux ($TMUX unset) — headless / t3 Claude run these too.
+#   - No-ops outside tmux ($TMUX or $TMUX_PANE unset) — headless / t3 Claude
+#     run these too.
 #   - session-events unreachable -> connect-timeout fails fast -> silent no-op.
 #   - prompt-submit is on the hot path of every turn, so it does no network work
 #     unless the (name, transcript) pair actually changed. The last registered
-#     pair is remembered in a tmux pane option, which costs one show-option.
+#     pair is remembered in a tmux pane option and checked against the
+#     session's stamp, which costs two show-options.
 #
 # NOTE: the permission-request path (web-mediated PreToolUse permissions) was
 # removed 2026-07-21. Routed through the session-events broker, it returned
@@ -47,11 +49,19 @@ event="${1:-}"
 
 # Outside a tmux pane there is no lobby session to bind to.
 [ -n "${TMUX:-}" ] || exit 0
+[ -n "${TMUX_PANE:-}" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
 command -v jq   >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
 
-tmux_session="$(tmux display -p '#S' 2>/dev/null || true)"
+# The session is the one holding THIS pane, asked for by pane id. An untargeted
+# `tmux display -p '#S'` does not fail when the pane has gone: tmux answers with
+# the most recently active session instead. A speculative pool slot released
+# while its Claude was still starting then registered its never-written
+# transcript against whichever session was busiest, and that session's Text
+# view went empty (emo's marinov and monitors, 2026-09-28). A dead pane answers
+# nothing here, and nothing is registered.
+tmux_session="$(tmux display -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
 [ -n "$tmux_session" ] || exit 0
 
 input="$(cat)"
@@ -101,7 +111,12 @@ prompt-submit)
     [ -n "$sid" ] || exit 0
     tp="$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null || true)"
     prev="$(tmux show-option -qv -t "$TMUX_PANE" @se_registered 2>/dev/null || true)"
-    [ "$prev" = "$tmux_session:$sid:$tp" ] && exit 0
+    # The session's own stamp is checked as well as the pane's record. The two
+    # disagree when something registered against this session from outside
+    # the pane, and trusting the pane alone left that stamp wrong until Claude
+    # restarted. Only a hook that sent a path can compare it.
+    stamp="$(tmux show-option -qv -t "=$tmux_session:" @claude_transcript 2>/dev/null || true)"
+    [ "$prev" = "$tmux_session:$sid:$tp" ] && { [ -z "$tp" ] || [ "$stamp" = "$tp" ]; } && exit 0
     cwd="$(printf '%s' "$input" | jq -r '.cwd // empty' 2>/dev/null || true)"
     [ -n "$cwd" ] || cwd="$PWD"
     register "$sid" "$cwd" "$tp"

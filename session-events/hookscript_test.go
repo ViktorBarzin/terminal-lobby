@@ -33,6 +33,7 @@ type scriptEnv struct {
 	path    string
 	url     string
 	tmuxVar string
+	pane    string
 	script  string
 }
 
@@ -53,7 +54,7 @@ func newScriptEnv(t *testing.T) *scriptEnv {
 	}
 
 	// A scratch tmux server with a session called demo: the script names its
-	// session with `tmux display -p '#S'`, and TMUX pointing here keeps it off
+	// session from its pane ($TMUX_PANE), and TMUX pointing here keeps it off
 	// the developer's own server.
 	sock := fmt.Sprintf("se-hook-%d-%s", os.Getpid(), strings.ReplaceAll(t.Name(), "/", "-"))
 	exec.Command("tmux", "-L", sock, "kill-server").Run()
@@ -64,6 +65,11 @@ func newScriptEnv(t *testing.T) *scriptEnv {
 	sockPath, err := exec.Command("tmux", "-L", sock, "display-message", "-p", "#{socket_path}").Output()
 	if err != nil {
 		t.Fatalf("socket_path: %v", err)
+	}
+
+	pane, err := exec.Command("tmux", "-L", sock, "display-message", "-p", "-t", "=demo:", "#{pane_id}").Output()
+	if err != nil {
+		t.Fatalf("pane_id: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -87,6 +93,7 @@ func newScriptEnv(t *testing.T) *scriptEnv {
 	return &scriptEnv{
 		rg: rg, osUser: me.Username, path: path, url: srv.URL, script: script,
 		tmuxVar: strings.TrimSpace(string(sockPath)) + ",0,0",
+		pane:    strings.TrimSpace(string(pane)),
 	}
 }
 
@@ -100,7 +107,7 @@ func (e *scriptEnv) run(t *testing.T, url string) (<-chan string, *exec.Cmd) {
 	}
 	cmd := exec.Command(e.script, "question")
 	cmd.Stdin = strings.NewReader(strings.Replace(string(payload), "TRANSCRIPT", e.path, 1))
-	cmd.Env = append(os.Environ(), "TMUX="+e.tmuxVar, "TL_SE_URL="+url, "USER="+e.osUser)
+	cmd.Env = append(os.Environ(), "TMUX="+e.tmuxVar, "TMUX_PANE="+e.pane, "TL_SE_URL="+url, "USER="+e.osUser)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Start(); err != nil {

@@ -177,11 +177,15 @@ record() {
     command -v jq >/dev/null 2>&1 || return 0
     command -v curl >/dev/null 2>&1 || return 0
 
-    session="$(tmux display -p '#S' 2>/dev/null || true)"
+    # Asked for by pane id: untargeted, tmux answers a pane that has gone with
+    # the most recently active session, and the reading would be filed under
+    # somebody else's (claude-se-hook says more).
+    [ -n "${TMUX_PANE:-}" ] || return 0
+    session="$(tmux display -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     [ -n "$session" ] || return 0
 
     cost="$(session_cost)"
-    if [ -n "$cost" ] && [ -n "${TMUX_PANE:-}" ]; then
+    if [ -n "$cost" ]; then
         # -p, on both calls: without it tmux resolves the pane to its SESSION
         # and stores one option for the whole thing (measured on 3.4). Two agent
         # panes in one session would then compare against each other's totals —

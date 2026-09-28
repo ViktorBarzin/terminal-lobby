@@ -565,3 +565,27 @@ func TestRecorderRecordsNothingOutsideTmux(t *testing.T) {
 		t.Fatalf("posted %d readings from outside tmux", n)
 	}
 }
+
+// A pane that has gone names no session. Untargeted, tmux answers with the
+// most recently active session instead, and the reading would be filed under
+// somebody else's session (the same fallback that mis-stamped transcripts,
+// hookregister_test.go).
+func TestRecorderPostsNothingWhenItsPaneHasGone(t *testing.T) {
+	e := newRecorderEnv(t)
+	if err := exec.Command("tmux", "-L", e.sock, "new-session", "-d", "-s", "slot", "sh").Run(); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	dead, err := exec.Command("tmux", "-L", e.sock, "display-message", "-p", "-t", "=slot:", "#{pane_id}").Output()
+	if err != nil {
+		t.Fatalf("pane_id: %v", err)
+	}
+	exec.Command("tmux", "-L", e.sock, "kill-session", "-t", "=slot").Run()
+
+	e.run(t, `{"session_id":"s1","cost":{"total_cost_usd":1.5}}`, `printf 'x'`,
+		"TMUX_PANE="+strings.TrimSpace(string(dead)))
+	time.Sleep(settleWindow)
+	if n := e.sink.count(); n != 0 {
+		t.Fatalf("posted %d readings from a pane that has gone (first under %q), want 0",
+			n, e.sink.at(0).TmuxSession)
+	}
+}
