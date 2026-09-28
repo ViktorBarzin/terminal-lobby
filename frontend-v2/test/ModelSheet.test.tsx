@@ -194,7 +194,11 @@ describe("the sheet, on a desktop", () => {
     ));
     const rect = (top: number, left: number, width: number) => (): DOMRect =>
       ({ top, left, width, right: left + width, bottom: top + 110, height: 110 }) as DOMRect;
-    r.container.querySelector<HTMLElement>(".tl-textview")!.getBoundingClientRect = rect(444, 0, 450);
+    r.container.querySelector<HTMLElement>(".tl-textview")!.getBoundingClientRect = rect(
+      444,
+      0,
+      450,
+    );
     r.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = rect(671, 16, 418);
     open();
     const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
@@ -203,6 +207,31 @@ describe("the sheet, on a desktop", () => {
     expect(pop.style.bottom).toBe(`${800 - 671 + 8}px`);
     // Its left edge just past the +.
     expect(pop.style.left).toBe(`${16 + 36}px`);
+  });
+
+  // Found live on 2026-09-28 at 1280x800: six models tall, the popover rose
+  // over the session's title and the lobby's bar.
+  it("stays under the pane's header when the pane has room for it", () => {
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 1280);
+    const r = render(() => (
+      <div class="tl-textview">
+        <div class="tl-pill">
+          <ModelSheet harness="claude" mode="manual" onPickMode={() => {}} onPickModel={() => {}} />
+        </div>
+      </div>
+    ));
+    const rect = (top: number, left: number, width: number) => (): DOMRect =>
+      ({ top, left, width, right: left + width, bottom: top + 110, height: 110 }) as DOMRect;
+    r.container.querySelector<HTMLElement>(".tl-textview")!.getBoundingClientRect = rect(
+      100,
+      260,
+      1020,
+    );
+    r.container.querySelector<HTMLElement>(".tl-pill")!.getBoundingClientRect = rect(678, 390, 760);
+    open();
+    const pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    expect(pop.style.maxHeight).toBe(`${678 - 100 - 16}px`);
   });
 
   it("says there is more below while the rest of the sheet is out of view", () => {

@@ -98,6 +98,9 @@ const NAV: RowNav = { row: ".tl-ms-row", seg: ".tl-ms-seg" };
  * the whole sheet fits above the box in an 800px window (app.css .tl-ms-model).
  */
 const POP_MAX = 720;
+/** The least room under the pane's header the popover settles for before it
+ *  takes the window's room instead: enough for Effort and the Mode list. */
+const POP_MIN_UNDER_HEADER = 400;
 /** The popover's width, as the prototype draws it. */
 const POP_W = 360;
 /** How far past the box's left edge the popover starts: just past the +. */
@@ -241,11 +244,19 @@ export const ModelSheet: Component<{
     const vw = window.innerWidth;
     const width = Math.min(POP_W, vw - 2 * POP_GAP);
     const left = r.left + Math.min(POP_INSET, Math.max(0, r.width - width));
+    // The pane's own header stays in view: found live on 2026-09-28 at
+    // 1280x800, six models tall, the popover rose over the session's title and
+    // the lobby's bar. The Text view's top edge is the header's foot. When the
+    // pane leaves too little room under it (a short window), the window's room
+    // is used instead, as above.
+    const paneTop = pill.closest(".tl-textview")?.getBoundingClientRect().top ?? 0;
+    const underHeader = r.top - paneTop - 2 * POP_GAP;
+    const room = underHeader >= POP_MIN_UNDER_HEADER ? underHeader : r.top - 2 * POP_GAP;
     setPlace({
       left: Math.max(POP_GAP, Math.min(left, vw - POP_GAP - width)),
       bottom: window.innerHeight - r.top + POP_GAP,
       width,
-      maxHeight: Math.min(POP_MAX, Math.max(160, r.top - 2 * POP_GAP)),
+      maxHeight: Math.min(POP_MAX, Math.max(160, room)),
     });
   };
   /** Whether part of the sheet is below the popover's edge, for the fade that
