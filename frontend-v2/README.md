@@ -185,6 +185,10 @@ src/
                          same-origin credentials. Without a deadline a fetch on
                          a half-open connection never settles, which is what a
                          phone hands us when the radio drops a socket
+    leaving.ts           Prompt requests the page left behind: one that fails
+                         after beforeunload or pagehide while in flight most
+                         likely landed, so the composer does not put its words
+                         back (a reload during a wake-send duplicated them)
     storage.ts           MinStorage plus localStorageOrNull(). Four modules
                          each carried the same two lines, and reading the
                          localStorage property is itself what throws when a

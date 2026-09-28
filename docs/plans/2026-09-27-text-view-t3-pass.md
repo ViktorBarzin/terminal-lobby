@@ -410,6 +410,30 @@ draft and attachments come back as they were.
   Codex, or run a command…", "Run a command…"). Reading Codex's own
   conversation into the Text view is not part of the pass.
 
+**After the second deployed review (2026-09-28).**
+
+- "Type your own answer" on the permission card works on a phone-width pane.
+  At 47 columns Claude Code cuts the open No field's placeholder short ("No,
+  and tell Claude what to do different…"), and the reader takes that as the
+  empty field.
+- A permission row goes through `POST /answer` with its number and label. With
+  the cursor in the No row's open field a bare digit is typed into the field,
+  so the server first moves the cursor off the field with one ↑, read back.
+- Words typed into "Type your own answer" survive the pane redrawing the same
+  prompt (the decline's Tab, a resize). They are kept per prompt, not per
+  reading, and go when the prompt does.
+- A send never answers a codex menu. While a line where codex's `›` marks a
+  numbered row is on the pane, the prompt is refused as `menu-open`, and the
+  composer keeps the text and says to answer the menu in the Terminal.
+- The side gutter is 6% of the Text view rather than 6vw, so a narrow
+  workspace tile fills with its conversation and composer.
+- Picking an effort before a session's first reply keeps the model the banner
+  named on the model button and in the sheet.
+- A reload while a send is in flight (a suspended session waking takes 5-6 s)
+  no longer puts the sent words back in the field. The prompt request is kept
+  alive past the unload, and a send whose prompt request was already out
+  leaves its words out.
+
 **How the build was checked.** Unit tests for each item, then live checks: the
 cards, Stop and the queue hand-back against scratch Claude sessions; desktop at
 1280px and the phone at 390px in Chromium, in slate and T3 Light, beside the
