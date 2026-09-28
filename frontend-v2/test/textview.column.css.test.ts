@@ -296,15 +296,32 @@ describe("the card in the composer's place", () => {
     // is left, which clamps it and brings the link.
     expect(decl(appCss, ".tl-plancard .tl-qcard-body", "display")).toBe("flex");
     expect(decl(appCss, ".tl-plancard .tl-qcard-body", "flex-direction")).toBe("column");
-    expect(decl(appCss, ".tl-plancard-well", "min-height")).toBe("0");
     expect(decl(appCss, ".tl-plancard-well", "flex")).toBe("0 1 auto");
     expect(decl(appCss, ".tl-plancard-plan", "flex")).toBe("0 1 auto");
-    expect(decl(appCss, ".tl-plancard-plan", "min-height")).toBe(
+    // The formatter breaks the long value over lines inside its parentheses.
+    const floor = decl(appCss, ".tl-plancard-well", "--tl-plan-floor")
+      ?.replace(/\(\s+/g, "(")
+      .replace(/\s+\)/g, ")");
+    expect(floor).toBe(
       "min(calc(13px * 1.45 * 4 * var(--tl-text-scale, 1)), var(--tl-plan-content, 100vh))",
     );
+    expect(decl(appCss, ".tl-plancard-plan", "min-height")).toBe("var(--tl-plan-floor)");
     expect(decl(appCss, ".tl-plancard .tl-qcard-options", "flex")).toBe("none");
     // Opened in full, the plan takes its height and the body scrolls.
     expect(decl(appCss, '.tl-plancard-well[data-full="true"]', "flex")).toBe("none");
+  });
+
+  it("never lets the well shrink under the plan it holds", () => {
+    // Found live on 2026-09-28 on a phone with the keyboard up and "Tell
+    // Claude what to change" focused: the body was 182px tall, the well had
+    // shrunk to less than the plan's four-line floor, and the plan drew on
+    // top of the first option's second line. The well's floor is the plan's
+    // plus the well's own padding (10px) and border (1px), top and bottom.
+    expect(decl(appCss, ".tl-plancard-well", "min-height")).toBe(
+      "calc(var(--tl-plan-floor) + 22px)",
+    );
+    expect(decl(appCss, ".tl-plancard-well", "padding")).toBe("10px 12px");
+    expect(decl(appCss, ".tl-plancard-well", "border")).toBe("1px solid var(--border)");
   });
 
   it("gives the phone 48px rows and a 16px question", () => {

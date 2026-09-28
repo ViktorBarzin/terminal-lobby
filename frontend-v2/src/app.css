@@ -6562,9 +6562,19 @@ body.tl-kb-up {
 .tl-plancard .tl-qcard-options {
   flex: none;
 }
+/* The well gives way down to the plan's floor and no further: at min-height 0
+   it shrank under the plan it holds, and the plan drew over the first option
+   (found live on 2026-09-28 on a phone with the keyboard up and "Tell Claude
+   what to change" focused). The floor is four lines, or the plan's own height
+   when that is less (--tl-plan-content, which PlanCard measures and sets
+   here), plus the well's padding and border. */
 .tl-plancard-well {
+  --tl-plan-floor: min(
+    calc(13px * 1.45 * 4 * var(--tl-text-scale, 1)),
+    var(--tl-plan-content, 100vh)
+  );
   flex: 0 1 auto;
-  min-height: 0;
+  min-height: calc(var(--tl-plan-floor) + 22px);
   display: flex;
   flex-direction: column;
   margin: 0 4px 10px;
@@ -6584,7 +6594,7 @@ body.tl-kb-up {
    link follow the height it gets. */
 .tl-plancard-plan {
   flex: 0 1 auto;
-  min-height: min(calc(13px * 1.45 * 4 * var(--tl-text-scale, 1)), var(--tl-plan-content, 100vh));
+  min-height: var(--tl-plan-floor);
   max-height: calc(13px * 1.45 * 12 * var(--tl-text-scale, 1));
   overflow: hidden;
   font-size: calc(13px * var(--tl-text-scale, 1));
