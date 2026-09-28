@@ -135,6 +135,16 @@ func inputBox(pane string) (string, bool) {
 
 // inputBoxUpTo is inputBox reading up to maxLines continuation lines.
 func inputBoxUpTo(pane string, maxLines int) (string, bool) {
+	box, _, ok := boxUpTo(pane, maxLines)
+	return box, ok
+}
+
+// boxRows is the whole box, as inputBox reads it, and how many rows it takes.
+func boxRows(pane string) (string, int, bool) {
+	return boxUpTo(pane, strings.Count(pane, "\n"))
+}
+
+func boxUpTo(pane string, maxLines int) (string, int, bool) {
 	lines := strings.Split(pane, "\n")
 	for i := len(lines) - 1; i > 0; i-- {
 		rest, ok := strings.CutPrefix(lines[i], promptMark)
@@ -143,13 +153,15 @@ func inputBoxUpTo(pane string, maxLines int) (string, bool) {
 		}
 		var b strings.Builder
 		b.WriteString(rest)
+		rows := 1
 		for j := i + 1; j < len(lines) && j <= i+maxLines && !isBoxRule(lines[j]); j++ {
 			b.WriteString(" ")
 			b.WriteString(lines[j])
+			rows++
 		}
-		return b.String(), true
+		return b.String(), rows, true
 	}
-	return "", false
+	return "", 0, false
 }
 
 // isBoxRule is one of the rules around the input box. The top one carries
@@ -168,6 +180,13 @@ const boxCompare = 32
 // inputHolds reports whether the input box still holds text: its start, with
 // all whitespace ignored (a wrap, the non-breaking space after the mark), or
 // the stand-in Claude draws for a paste it collapsed or a path it attached.
+//
+// A text taller than the box shows only its last rows, the first of them
+// starting with the prompt mark and nothing to say more is above (measured on
+// CLI 2.1.283 on 2026-09-28: a 954-character prompt with 4 line breaks showed
+// its last 10 rows). The box then holds a run of the text rather than its
+// start, and at least boxCompare characters of it are asked to match, so a
+// few words that happen to occur in the text do not count.
 func inputHolds(pane, text string) bool {
 	box, ok := inputBox(pane)
 	if !ok {
@@ -182,7 +201,10 @@ func inputHolds(pane, text string) bool {
 	}
 	want := []rune(squashSpace(text))
 	n := min(len(got), len(want), boxCompare)
-	return n > 0 && string(got[:n]) == string(want[:n])
+	if n > 0 && string(got[:n]) == string(want[:n]) {
+		return true
+	}
+	return len(got) >= boxCompare && strings.Contains(string(want), string(got))
 }
 
 func squashSpace(s string) string {

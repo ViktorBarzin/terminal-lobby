@@ -32,6 +32,17 @@ else is drawn in its place, as Claude Code's own feedback-draft panel was over
 a scratch session in the round 7 check on 2026-09-28 ("1 to review · 2 to send
 · 0 to dismiss" where the box had been).
 
+FAKEINPUT_BOX_ROWS=N draws at most the last N rows of the box, as Claude
+Code's box does for a prompt taller than it: measured on CLI 2.1.283 on
+2026-09-28, a 954-character prompt with 4 line breaks showed only its last 10
+rows, the first starting with the prompt mark, and nothing above them.
+
+FAKEINPUT_DIALOG=paste or FAKEINPUT_DIALOG=clear draws a permission dialog in
+the box's place the moment a bracketed paste starts, or the moment a C-e
+arrives: Claude drawing a prompt while a send is on its way (deployed review
+round 4, 2026-09-28). While it is up, Enter picks its highlighted row and a
+digit picks that row, each printed as ANSWERED=<row>, and a paste is ignored.
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -51,6 +62,8 @@ QUEUE = [
 RUNNING = os.environ.get("FAKEINPUT_RUNNING", "").replace("\\n", "\n")
 RESTORE_S = int(os.environ.get("FAKEINPUT_RESTORE_MS", "150")) / 1000.0
 HIDE_S = int(os.environ.get("FAKEINPUT_HIDE_MS", "0")) / 1000.0
+BOX_ROWS = int(os.environ.get("FAKEINPUT_BOX_ROWS", "0"))
+DIALOG = os.environ.get("FAKEINPUT_DIALOG", "")
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
@@ -61,11 +74,13 @@ def out(s):
     sys.stdout.flush()
 
 
-def draw(submitted, line, queue, interrupted, hidden=False):
+def draw(submitted, line, queue, interrupted, hidden=False, dialog=False, answered=()):
     out("\x1b[2J\x1b[H")
     out(READY + "\r\n")
     for s in submitted:
         out("SUBMITTED=%s\r\n" % s.replace("\n", "⏎"))
+    for a in answered:
+        out("ANSWERED=%s\r\n" % a)
     for q in queue:
         out("QUEUED=%s\r\n" % q.replace("\n", "⏎"))
     if interrupted:
@@ -73,8 +88,14 @@ def draw(submitted, line, queue, interrupted, hidden=False):
     if hidden:
         out("\r\n| A panel where the box was\r\n| 1 to review · 0 to dismiss\r\n")
         return
+    if dialog:
+        out("\r\n" + RULE + "\r\n Bash command\r\n\r\n   rm -rf build\r\n\r\n")
+        out(" Do you want to proceed?\r\n ❯ 1. Yes\r\n   2. No\r\n")
+        return
     out("\r\n" + RULE + " ↯ ─\r\n")
     rows = line.split("\n")
+    if BOX_ROWS > 0:
+        rows = rows[-BOX_ROWS:]
     out("❯ %s\r\n" % rows[0])
     for row in rows[1:]:
         out("  %s\r\n" % row)
@@ -94,6 +115,8 @@ def main():
     swallow = SWALLOW
     queue = list(QUEUE)
     interrupted = False
+    dialog = False
+    answered = []
     try:
         submitted = []
         line = os.environ.get("FAKEINPUT_LINE", "").replace("\\n", "\n")
@@ -114,12 +137,18 @@ def main():
                         restore_at = None
                     if hide_until is not None and now >= hide_until:
                         hide_until = None
-                    draw(submitted, line, queue, interrupted, hide_until is not None)
+                    draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered)
                     continue
             ch = read1()
             if ch == "":
                 return
-            if ch in ("\r", "\n"):
+            if dialog and ch in ("\r", "\n"):
+                answered.append("1")
+                dialog = False
+            elif dialog and ch in ("1", "2"):
+                answered.append(ch)
+                dialog = False
+            elif ch in ("\r", "\n"):
                 if line and swallow > 0:
                     swallow -= 1
                 elif line:
@@ -128,7 +157,8 @@ def main():
             elif ch == "\x15":  # C-u kills the last line only, as Claude's does
                 line = line[: line.rfind("\n") + 1]
             elif ch == "\x05":  # C-e: the cursor is always at the end here
-                pass
+                if DIALOG == "clear" and not answered:
+                    dialog = True
             elif ch == "\x7f":  # Backspace
                 line = line[:-1]
             elif ch == "\x03":  # C-c: interrupt, and run what is queued
@@ -152,12 +182,14 @@ def main():
                     seq += c
                     if "\x40" <= c <= "\x7e":
                         break
+                if seq == "200~" and DIALOG == "paste" and not answered:
+                    dialog = True
                 if seq == "A" and not line and queue:
                     line = "\n".join(queue)
                     queue = []
-            else:
+            elif not dialog:
                 line += ch
-            draw(submitted, line, queue, interrupted, hide_until is not None)
+            draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -336,17 +337,78 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 //
 // Anywhere else (a shell, a pane that cannot be read) it is the C-e C-u it
 // always was.
+//
+// A box taller than Claude will draw shows only its last rows (inputHolds),
+// so the Backspaces for what it shows can leave the rows above it behind,
+// and the prompt then went in glued to them (deployed review round 4,
+// 2026-09-28: a Stop a second after a 1,029-character message, and the next
+// message reached Claude as the stopped one's first 600 characters with the
+// new one on the end). A box of more than one row is read again once it has
+// redrawn, and cleared again while it still holds something, up to
+// clearRounds times. A box of one row cannot be hiding any.
 func (in *Injector) clearInput(osUser, session string) error {
-	if pane, err := in.CapturePane(osUser, session); err == nil {
-		if box, ok := inputBoxUpTo(pane, strings.Count(pane, "\n")); ok && strings.TrimSpace(box) != "" {
-			presses := utf8.RuneCountInString(box) + queueClearMargin
-			if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
-				return err
+	pane, err := in.CapturePane(osUser, session)
+	if err != nil {
+		return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
+	}
+	box, rows, ok := boxRows(pane)
+	if !ok || strings.TrimSpace(box) == "" {
+		return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
+	}
+	for round := 0; ; round++ {
+		if err := in.backspaceBox(osUser, session, utf8.RuneCountInString(box)); err != nil {
+			return err
+		}
+		if rows < 2 || round+1 >= clearRounds {
+			return nil
+		}
+		next, nextRows, redrawn := in.awaitBoxChange(osUser, session, box)
+		if !redrawn || strings.TrimSpace(next) == "" {
+			return nil
+		}
+		box, rows = next, nextRows
+	}
+}
+
+// clearRounds bounds how many times clearInput clears a tall box. Each round
+// takes what the box shows, 10 rows of an 80-column pane or more, so this
+// covers a prompt far longer than anyone types into the Terminal's box.
+const clearRounds = 12
+
+// clearRedrawWait bounds the wait for the box to redraw after a round of
+// Backspaces. CLI 2.1.283 took over half a second to repaint after 1,000 of
+// them (measured 2026-09-28); a round is at most a box's worth.
+const clearRedrawWait = time.Second
+
+// backspaceBox presses C-e, then one Backspace for each of `chars` plus
+// queueClearMargin, as one repeated key.
+func (in *Injector) backspaceBox(osUser, session string, chars int) error {
+	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
+		return err
+	}
+	return in.Command(osUser, "send-keys", "-N", strconv.Itoa(chars+queueClearMargin), "-t", exactPane(session), "BSpace").Run()
+}
+
+// awaitBoxChange reads the box until it shows something other than `was`, and
+// returns what it shows then and how many rows. False when it had not changed
+// by clearRedrawWait, or the pane stopped showing a box.
+func (in *Injector) awaitBoxChange(osUser, session, was string) (string, int, bool) {
+	deadline := time.Now().Add(clearRedrawWait)
+	for {
+		time.Sleep(submitPoll)
+		if pane, err := in.CapturePane(osUser, session); err == nil {
+			box, rows, ok := boxRows(pane)
+			if !ok {
+				return "", 0, false
 			}
-			return in.Command(osUser, "send-keys", "-N", strconv.Itoa(presses), "-t", exactPane(session), "BSpace").Run()
+			if box != was {
+				return box, rows, true
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return "", 0, false
 		}
 	}
-	return in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 }
 
 // PromptUncleared is Prompt without the C-e C-u prelude, for a pane that has
