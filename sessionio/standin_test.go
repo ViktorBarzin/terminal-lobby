@@ -687,6 +687,9 @@ perm_cursor = int(os.environ.get("FAKEDIALOG_PERM_CURSOR", "1"))
 perm_open = os.environ.get("FAKEDIALOG_PERM_FIELD") is not None
 perm_field = os.environ.get("FAKEDIALOG_PERM_FIELD", "")
 perm_caret = 0
+# FAKEDIALOG_PERM_PLACEHOLDER is what the empty field shows after "No, ": a
+# narrow pane cuts it short with an ellipsis.
+perm_placeholder = os.environ.get("FAKEDIALOG_PERM_PLACEHOLDER", "and tell Claude what to do differently")
 # FAKEDIALOG_PERM_NEXT draws a second prompt, for this command, the moment the
 # first is answered: the second of two tool calls Claude sent together, each
 # asking in turn.
@@ -713,7 +716,7 @@ def draw_perm():
     for i, label in enumerate(PERM_OPTS, 1):
         mark_ = "❯" if perm_cursor == i else " "
         if i == n and perm_open:
-            text = perm_field if perm_field != "" else "and tell Claude what to do differently"
+            text = perm_field if perm_field != "" else perm_placeholder
             parts = wrap_words(text, WIDTH - 12)
             out((" %s %d. No, %s" % (mark_, i, parts[0])).rstrip() + "\r\n")
             for p in parts[1:]:

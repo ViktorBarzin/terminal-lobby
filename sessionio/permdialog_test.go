@@ -207,6 +207,10 @@ func TestParsePermissionReadsTheNoRowAndItsField(t *testing.T) {
 		{"permission-bash.txt", permScreen{cursor: 1, no: 4}},
 		{"permission-read.txt", permScreen{cursor: 1, no: 3}},
 		{"permission-amend-empty.txt", permScreen{cursor: 4, no: 4, amended: true}},
+		// A 47-column pane, a phone's, cuts the placeholder short with an
+		// ellipsis rather than wrapping it (CLI 2.1.283, 2026-09-28). The
+		// field is still empty.
+		{"permission-amend-narrow.txt", permScreen{cursor: 4, no: 4, amended: true}},
 		{"permission-amend-typed.txt", permScreen{cursor: 4, no: 4, amended: true, typed: "print the date instead"}},
 		{"permission-amend-wrapped.txt", permScreen{cursor: 4, no: 4, amended: true,
 			typed: "Do not write anything to a.txt at all, instead please print the current date with the date command and then list the directory contents with ls -la so I can see what is there before we go on"}},

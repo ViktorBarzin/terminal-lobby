@@ -1,0 +1,30 @@
+● I ran the command and it created
+  /var/tmp/t3r2/proj/a.txt. When I read the
+  file back, it contains hi.
+
+✻ Cogitated for 6s · done 1:49 PM
+
+❯ Run the bash command: echo two > b.txt
+
+  Writing "two" to b.txt and read it back
+  ⎿  $ echo two > /var/tmp/t3r2/proj/b.txt &&
+     cat /var/tmp/t3r2/proj/b.txt
+
+───────────────────────────────────────────────
+ Bash command
+ Tip: auto mode handles these prompts for you
+ — choose "switch to auto mode" below
+
+   echo two > /var/tmp/t3r2/proj/b.txt &&
+   cat /var/tmp/t3r2/proj/b.txt
+   Write "two" to b.txt and read it back
+
+ Do you want to proceed?
+   1. Yes
+   2. Yes, and always allow access to
+      /var/tmp/t3r2/proj from this project
+   3. Yes, and switch to auto mode · auto mode
+      handles these prompts for you
+ ❯ 4. No, and tell Claude what to do different…
+
+ Esc to cancel

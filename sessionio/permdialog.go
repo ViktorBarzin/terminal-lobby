@@ -107,6 +107,20 @@ const (
 	permNoPlaceholder = "No, and tell Claude what to do differently"
 )
 
+// isPermPlaceholder reports whether an open No row shows its placeholder, the
+// empty field. A pane too narrow for it cuts it short with an ellipsis rather
+// than wrapping it: at 47 columns, a phone's, it reads "No, and tell Claude
+// what to do different…" (CLI 2.1.283, 2026-09-28). Typed words wrap and are
+// never cut, so a label that ends in the ellipsis after a leading part of the
+// placeholder is the placeholder.
+func isPermPlaceholder(label string) bool {
+	if label == permNoPlaceholder {
+		return true
+	}
+	head, cut := strings.CutSuffix(label, "…")
+	return cut && len(head) > len(permNoLabel+",") && strings.HasPrefix(permNoPlaceholder, head)
+}
+
 // minPermLabelCol is the shallowest indent a line wrapped from the bottom row
 // can have: the row's label starts after " ❯ 1. ", column 6.
 const minPermLabelCol = 4
@@ -127,7 +141,7 @@ func parsePermission(lines []string) (permScreen, bool) {
 			// no trailing ones.
 			s.no, s.amended = o.Number, true
 			s.typed = strings.TrimSpace(strings.TrimPrefix(o.Label, permNoLabel+","))
-			if o.Label == permNoPlaceholder {
+			if isPermPlaceholder(o.Label) {
 				s.typed = ""
 			}
 		}

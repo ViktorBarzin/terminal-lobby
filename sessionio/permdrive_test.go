@@ -82,6 +82,24 @@ func TestAnswerDeclinesWithWordsThatWrap(t *testing.T) {
 	}
 }
 
+// A narrow pane, a phone's 47 columns, cuts the open field's placeholder short
+// ("No, and tell Claude what to do different…", CLI 2.1.283, 2026-09-28). It
+// is still the empty field: the decline types the words into it rather than
+// trying to clear words that are not there and waiting for a placeholder that
+// never draws in full (deployed review round 2).
+func TestAnswerDeclinesOnANarrowPane(t *testing.T) {
+	in, osUser := permSession(t, "FAKEDIALOG_PERM_PLACEHOLDER='and tell Claude what to do different…'")
+
+	res := permDecline(t, in, osUser, "write bye instead of hi")
+
+	if !res.Applied || !res.Done {
+		t.Fatalf("applied=%v done=%v reason=%q, want the prompt gone", res.Applied, res.Done, res.Reason)
+	}
+	if pane := paneOf(t, in, osUser); !strings.Contains(pane, "PERMISSION DECLINED WITH write bye instead of hi") {
+		t.Fatalf("the words did not go with the decline:\n%s", pane)
+	}
+}
+
 // Words already in the field, left by someone typing in the Terminal and
 // walking off the row, are cleared first: walking back puts the text cursor
 // in front of them, so a paste there would send both.

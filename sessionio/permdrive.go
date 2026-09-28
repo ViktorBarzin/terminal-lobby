@@ -59,7 +59,7 @@ func (in *Injector) answerPermission(ctx context.Context, osUser, session string
 	if err == nil && reason == "" && !cur.perm.amended {
 		cur, reason, err = in.permOpenField(ctx, osUser, session, cur)
 	}
-	if err == nil && reason == "" && cur.perm.dialog.Options[cur.perm.no-1].Label != permNoPlaceholder {
+	if err == nil && reason == "" && !isPermPlaceholder(cur.perm.dialog.Options[cur.perm.no-1].Label) {
 		cur, reason, err = in.permClearField(ctx, osUser, session, cur)
 	}
 	if err != nil {
@@ -147,7 +147,7 @@ func (in *Injector) permClearField(ctx context.Context, osUser, session string, 
 		return in.refusal(osUser, session)
 	}
 	return in.permAwait(ctx, osUser, session, func(s *permScreen) bool {
-		return s.cursor == no && s.amended && s.dialog.Options[no-1].Label == permNoPlaceholder
+		return s.cursor == no && s.amended && isPermPlaceholder(s.dialog.Options[no-1].Label)
 	})
 }
 
