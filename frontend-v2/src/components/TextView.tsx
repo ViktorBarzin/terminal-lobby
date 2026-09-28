@@ -408,6 +408,13 @@ export const TextView: Component<{
   /** The session is suspended (the session list's mark): the model button
    *  holds until a Send wakes it. */
   suspended?: () => boolean;
+  /**
+   * Nothing records this session's conversation here: a plain shell, or
+   * Codex, which session-events does not register (its stream answers 404).
+   * What is sent still goes to the pane and shows as a bubble, with no live
+   * row under it that nothing would end.
+   */
+  noTranscript?: boolean;
   /** show the Terminal view — where a question the pane can only half show has
    *  to be answered until the transcript catches up. */
   onOpenTerminal?: () => void;
@@ -454,7 +461,13 @@ export const TextView: Component<{
    * is the exception (liveRowOf): it may never be recorded, so the row is the
    * transcript's until it is.
    */
-  const live = createMemo(() => liveRowOf(shownRows(), baseRows(), sent()));
+  // A session with no transcript here (`noTranscript`) never records what was
+  // sent, so nothing would ever end the pending turn's live row: it counted
+  // for as long as the view was open on a shell (deployed review round 1,
+  // 2026-09-28). The bubbles stay; the live row does not.
+  const live = createMemo(() =>
+    props.noTranscript ? undefined : liveRowOf(shownRows(), baseRows(), sent()),
+  );
   const history = createMemo(() => promptHistory(props.events, props.sessionState));
   const [modeBusy, setModeBusy] = createSignal(false);
 

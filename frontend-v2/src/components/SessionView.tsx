@@ -1706,6 +1706,9 @@ export const SessionView: Component<{
             harness={modelHarness(props.tool?.())}
             onSetModel={setModel}
             suspended={() => props.suspended?.() ?? false}
+            // A shell has no transcript, and session-events registers only
+            // Claude's (a Codex stream answers 404).
+            noTranscript={props.tool?.() === "shell" || props.tool?.() === "codex"}
             onSetMode={(m) => setSessionMode({ session, mode: m })}
             stampedModel={piReading()}
             modelOffer={piOffer()}
