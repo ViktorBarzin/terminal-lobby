@@ -1007,9 +1007,9 @@ export const TerminalNative: Component<{
       // however many keys they hit (term.html:8302-8313).
       if (Date.now() - nudgedAt < WATCH_NUDGE_MS) return;
       nudgedAt = Date.now();
-      // The curly apostrophe is term.html's (:8310). Byte-for-byte, so the two
-      // builds put the same sentence on screen rather than nearly the same one.
-      showToast("Watching — this device can’t type into the session", "info", 2500);
+      // Full stops, as every other toast here has (round 7, 2026-09-28: this
+      // was the last one still joined with an em dash).
+      showToast("Watching. This device can't type into the session.", "info", 2500);
       return;
     }
     const word = heldWord(held, verdict);

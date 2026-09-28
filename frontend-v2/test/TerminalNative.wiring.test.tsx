@@ -1713,14 +1713,14 @@ describe("refused and held input become something a person can see", () => {
   });
 
   /**
-   * The apostrophe is the page's own curly one (:8310), asserted as the literal
-   * it is: a build that quietly straightened it would be showing a different
-   * sentence, and this is the assertion that notices.
+   * The nudge is one sentence in the lobby's toast style: full stops, straight
+   * apostrophe, no em dash (round 7, 2026-09-28). It used to copy term.html's
+   * line byte for byte, and term.html was deleted on 2026-09-05.
    */
-  it("says the watch nudge byte for byte", async () => {
+  it("says the watch nudge in the lobby's toast style", async () => {
     const m = await mountOpen({ watch: true });
     m.type("l");
-    expect(messages()[0]).toContain("can’t");
+    expect(messages()[0]).toBe("Watching. This device can't type into the session.");
   });
 
   /** term.html:8303, one nudge per WATCH_NUDGE_MS however many keys. */
@@ -3917,7 +3917,7 @@ describe("the key handler contract (term.html:8516-8589)", () => {
     const m = await mountOpen({ watch: true });
     press(m, { key: "ArrowLeft", code: "ArrowLeft", altKey: true });
     expect(inputs(m.socket())).toEqual([]);
-    expect(messages()).toEqual(["Watching — this device can’t type into the session"]);
+    expect(messages()).toEqual(["Watching. This device can't type into the session."]);
   });
 });
 

@@ -23,7 +23,7 @@
  *   nudge's own separate throttle, which is SHORTER: WATCH_NUDGE_MS is 4000
  *   (term.html:8303) against heldSay's 5000ms gate (term.html:8226).
  * - The WORDING of the read-only refusal. `offer` returns `refused:watching`,
- *   but "Watching — this device can't type into the session" is the
+ *   but "Watching. This device can't type into the session." is the
  *   component's line to say, at most once every few seconds.
  * - The dimmed "replayed, waiting for the pty" window. `flush` ends the hold
  *   as far as this file is concerned; the component keeps the replayed text on

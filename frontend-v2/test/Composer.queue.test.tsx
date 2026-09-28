@@ -450,7 +450,7 @@ describe("<Composer> round button: one Stop per turn", () => {
 });
 
 describe("<Composer> round button: watching", () => {
-  const WATCH = "Watching alice — take control to type in their session";
+  const WATCH = "Watching alice: take control to type in their session";
 
   it("neither stops nor sends from a watching device", () => {
     const onStop = vi.fn();

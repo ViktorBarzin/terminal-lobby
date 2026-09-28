@@ -598,7 +598,7 @@ export const SessionView: Component<{
     !watch()
       ? ""
       : lens()
-        ? `Watching ${lens()} — take control to type in their session`
+        ? `Watching ${lens()}: take control to type in their session`
         : "Watching: this device does not type into the session";
   // The sidebar reads this view's resolved state for the open session; drop it
   // when the view goes so a stale decision cannot outlive the attach it

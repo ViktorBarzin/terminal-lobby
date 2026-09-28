@@ -98,7 +98,7 @@ const KEYBOARD_MIN_PX = 150;
 
 /**
  * The words the watching pill shows: who is being watched, from the session
- * view's one sentence ("Watching alice — take control to type in their
+ * view's one sentence ("Watching alice: take control to type in their
  * session", "Watching: this device does not type into the session"). The whole
  * sentence is the pill's title.
  */
