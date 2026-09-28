@@ -579,6 +579,9 @@ src/
     drafts.ts            Per-browser composer drafts (tl:session-drafts:v1): the
                          unsent text AND the attachments anchored in it,
                          pruned to the live session list the way visits.ts prunes
+    sentPictures.ts      Per-browser messages with a picture sent from here
+                         (tl:sent-pictures:v1), so Up gives back the picture
+                         the transcript records as [Image #N]
     wake-send.ts         The composer's send at a session the idle sweep
                          suspended: resume it, then post with awaitReady so
                          the prompt waits for the resumed Claude's input line
