@@ -191,7 +191,22 @@ const PERMISSION_NOTE: Record<string, string> = {
  */
 const PermissionRowView: Component<{ row: PermissionRow }> = (props) => (
   <div class="tl-row tl-row-permission" data-decision={props.row.decision || "pending"}>
-    {PERMISSION_NOTE[props.row.decision ?? ""] ?? "Asked"}: <b>{props.row.tool || "permission"}</b>
+    <Show
+      when={props.row.said}
+      fallback={
+        <>
+          {PERMISSION_NOTE[props.row.decision ?? ""] ?? "Asked"}:{" "}
+          <b>{props.row.tool || "permission"}</b>
+        </>
+      }
+    >
+      {/* A No with the reader's own words: the prototype's "Declined: <words>". */}
+      {(said) => (
+        <>
+          Declined: <b>{said()}</b>
+        </>
+      )}
+    </Show>
   </div>
 );
 

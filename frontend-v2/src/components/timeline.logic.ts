@@ -231,6 +231,12 @@ export interface PermissionRow {
   tool: string;
   input: string;
   decision?: PermissionDecision | string;
+  /**
+   * The words the reader declined a call with, through the permission card's
+   * "Type your own answer" (`declineWords`). Such a row stands for their
+   * message, not for the prompt.
+   */
+  said?: string;
   turnKey: string;
   at?: number;
 }
@@ -451,6 +457,22 @@ export function declinedCall(call: ToolRow): boolean {
   return call.done && call.isError && (call.result ?? "").trimStart().startsWith(DECLINED_RESULT);
 }
 
+/** What precedes the reader's words in a No that came with some (CLI 2.1.283),
+ *  a plan's "Tell Claude what to change" included. */
+const USER_SAID = "To tell you how to proceed, the user said:";
+
+/**
+ * The words a declined call carries, when the reader said no to it with the
+ * permission card's "Type your own answer". "" for a No without words and for
+ * any other call.
+ */
+function declineWords(call: ToolRow): string {
+  if (!declinedCall(call)) return "";
+  const result = call.result ?? "";
+  const at = result.indexOf(USER_SAID);
+  return at < 0 ? "" : result.slice(at + USER_SAID.length).trim();
+}
+
 /** What the CLI's rejection says when no words came with it (CLI 2.1.283). */
 const STOPPED_TAIL = "STOP what you are doing";
 
@@ -547,7 +569,7 @@ interface PlanText {
 }
 
 /** What precedes the reader's words in a plan sent back with feedback. */
-const PLAN_FEEDBACK = "To tell you how to proceed, the user said:";
+const PLAN_FEEDBACK = USER_SAID;
 
 /**
  * Set a plan row's outcome and body from the tool_result that resolves it.
@@ -957,6 +979,29 @@ function collectTurnRows(turn: Turn): {
           if (existing.itemType === "collab_agent_tool_call" && lastHost === existing) {
             lastHost = null;
           }
+          // A No with words: the words are the reader's own message, so they
+          // go in the conversation where they were said, after the call they
+          // declined. Deployed review round 2 of the T3 pass (2026-09-29):
+          // Claude did what they said and wrote "as you asked", and the words
+          // showed nowhere; the plan's and the question's own answers did.
+          const said = declineWords(existing);
+          if (said) {
+            add(
+              {
+                kind: "permission",
+                key: `said-${existing.key}`,
+                id: e.id,
+                reqId: "",
+                tool: existing.tool,
+                input: "",
+                decision: "deny",
+                said,
+                turnKey: turn.key,
+                ...(e.at !== undefined ? { at: e.at } : {}),
+              },
+              e,
+            );
+          }
         } else {
           add(
             {
@@ -1163,6 +1208,7 @@ function foldedFailed(row: FoldedRow): boolean {
 /** Rows a finished turn's fold leaves in view (see foldSettledTurn). */
 function staysOutOfFold(row: FoldedRow): boolean {
   if (row.kind === "question") return !row.pending;
+  if (row.kind === "permission") return row.said !== undefined;
   return row.kind === "plan" || row.kind === "status";
 }
 

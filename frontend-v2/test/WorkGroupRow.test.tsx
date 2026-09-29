@@ -275,19 +275,79 @@ describe("<WorkGroupRowView> folded", () => {
   });
 
   it("names a declined call by what it asked to do, not by what it did", () => {
-    const g = groupOf([
+    const [asked, done] = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "b1", "echo bye > hi.txt", 1_000),
+      result(3, "b1", `${DECLINED_WITH_WORDS}write ciao instead`, { isError: true, at: 2_000 }),
+      bash(4, "b2", "echo ciao > hi.txt", 3_000),
+      result(5, "b2", "", { at: 4_000 }),
+    ]).filter((r): r is WorkGroupRow => r.kind === "work-group");
+    const first = mount(asked!);
+    fireEvent.click(first.head());
+    const [declined] = first.calls();
+    expect(declined!.getAttribute("data-status")).toBe("declined");
+    expect(kindWord(declined!)).toBe("Run");
+    cleanup();
+    const second = mount(done!);
+    fireEvent.click(second.head());
+    expect(kindWord(second.calls()[0]!)).toBe("Ran");
+  });
+
+  // Deployed review round 2 of the T3 pass (2026-09-29): "Type your own
+  // answer" on a permission card reached Claude, which did what it said, and
+  // the words showed nowhere; the group read "Ran 1 command, declined 1
+  // command" and Claude's "as you asked" pointed at nothing. The words are the
+  // reader's own message, so they sit in the conversation where they were
+  // said, between the work before them and the work they asked for, and stay
+  // in view when the turn folds.
+  it("puts a No's own words in the conversation, where they were said", () => {
+    const rows = deriveRows([
       ev({ id: 1, kind: "user", body: "go" }),
       bash(2, "b1", "echo bye > hi.txt", 1_000),
       result(3, "b1", `${DECLINED_WITH_WORDS}write ciao instead`, { isError: true, at: 2_000 }),
       bash(4, "b2", "echo ciao > hi.txt", 3_000),
       result(5, "b2", "", { at: 4_000 }),
     ]);
-    const { head, calls } = mount(g);
-    fireEvent.click(head());
-    const [declined, ran] = calls();
-    expect(declined!.getAttribute("data-status")).toBe("declined");
-    expect(kindWord(declined!)).toBe("Run");
-    expect(kindWord(ran!)).toBe("Ran");
+    expect(rows.map((r) => r.kind)).toEqual([
+      "user",
+      "work-group",
+      "permission",
+      "work-group",
+      "working",
+    ]);
+    const [first, second] = rows.filter((r): r is WorkGroupRow => r.kind === "work-group");
+    expect(first!.calls).toHaveLength(1);
+    expect(second!.calls).toHaveLength(1);
+    const { container } = render(() => (
+      <MessagesTimeline
+        events={[
+          ev({ id: 1, kind: "user", body: "go", at: 500 }),
+          bash(2, "b1", "echo bye > hi.txt", 1_000),
+          result(3, "b1", `${DECLINED_WITH_WORDS}write ciao instead`, {
+            isError: true,
+            at: 2_000,
+          }),
+          bash(4, "b2", "echo ciao > hi.txt", 3_000),
+          result(5, "b2", "", { at: 4_000 }),
+          ev({ id: 6, kind: "text", body: "I wrote ciao, as you asked.", at: 5_000 }),
+          ev({ id: 7, kind: "turn_end", at: 5_000 }),
+        ]}
+      />
+    ));
+    // Folded: the note stays out of the fold, between it and the reply.
+    const note = container.querySelector(".tl-row-permission");
+    expect(note?.textContent).toBe("Declined: write ciao instead");
+    expect(note?.querySelector("b")?.textContent).toBe("write ciao instead");
+  });
+
+  it("leaves a plain No, which has no words, as the declined call alone", () => {
+    const rows = deriveRows([
+      ev({ id: 1, kind: "user", body: "go" }),
+      bash(2, "b1", "echo bye > hi.txt", 1_000),
+      result(3, "b1", `${DECLINED_WITH_WORDS}`, { isError: true, at: 2_000 }),
+      bash(4, "b2", "echo ciao > hi.txt", 3_000),
+    ]);
+    expect(rows.map((r) => r.kind)).toEqual(["user", "work-group", "working"]);
   });
 
   it("answers for its calls' events, so a search hit inside it can find it", () => {
