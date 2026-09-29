@@ -302,7 +302,14 @@ export const PromptField: Component<{
       item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
-  /** Where ↑ has walked to in history; -1 is "not browsing". */
+  /**
+   * Where ↑ has walked to in history; -1 is "not browsing".
+   *
+   * Only an untouched recall is browsing. Any edit makes the text the writer's
+   * own, and from then the arrows move the caret as they would in any text
+   * (deployed review round 5, 2026-09-29: an arrow after an edit swapped the
+   * writer's words for another entry, and nothing brought them back).
+   */
   const [histAt, setHistAt] = createSignal(-1);
 
   /**
@@ -810,8 +817,12 @@ export const PromptField: Component<{
   const catalogue = createMemo<SlashCommand[]>(() =>
     mergeCommands(BUILTIN_COMMANDS, props.commands ?? []),
   );
+  // A recalled entry opens no menu: `/model` coming back from history would
+  // otherwise raise the `/` list, which takes every further ↑ and leaves older
+  // entries out of reach (deployed review round 5, 2026-09-29). Typing leaves
+  // history (see the field's onInput), so the menu is back on the next key.
   const completion = createMemo<Completion | null>(() =>
-    completionFor(draft(), caret(), paths(), catalogue()),
+    histAt() >= 0 ? null : completionFor(draft(), caret(), paths(), catalogue()),
   );
   /** The `/` menu is open and the session's own commands are not in it. */
   const slashUnreadable = createMemo(
@@ -1402,6 +1413,7 @@ export const PromptField: Component<{
               aria-label={props.label}
               onInput={() => {
                 setPlusOpen(false);
+                setHistAt(-1);
                 sync();
                 setPicked(0);
                 void refreshPaths();
