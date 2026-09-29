@@ -31,6 +31,12 @@ export interface WakeSendOptions {
   /** The session store's send, POST /prompt. */
   send: (text: string, opts?: { awaitReady?: boolean }) => Promise<boolean>;
   notify?: (msg: string, kind: "info") => void;
+  /**
+   * Show the message as sent while the session wakes, and hand back what takes
+   * it down again. Before this the field emptied and nothing showed it for
+   * about 2 s (deployed review round 5, 2026-09-29).
+   */
+  hold?: (text: string) => () => void;
 }
 
 /** The composer's send for one session, waking it first when it is suspended. */
@@ -38,7 +44,13 @@ export function sendWaking(o: WakeSendOptions): (text: string) => Promise<boolea
   return async (text) => {
     if (!o.suspended()) return o.send(text);
     o.notify?.("Waking the session. Your message goes in once Claude is ready.", "info");
-    if (!(await o.resume())) return false;
-    return o.send(text, { awaitReady: true });
+    const release = o.hold?.(text);
+    try {
+      if (!(await o.resume())) return false;
+      return await o.send(text, { awaitReady: true });
+    } finally {
+      // After the send, which shows the message itself once it lands.
+      release?.();
+    }
   };
 }

@@ -121,6 +121,9 @@ export interface SessionStore {
    *  suspended one, store/wake-send.ts). Its 503, "not ready yet", is tried
    *  again up to READY_TRIES times in all. */
   send: (text: string, opts?: { awaitReady?: boolean }) => Promise<boolean>;
+  /** Show `text` as sent before it is, while a suspended session wakes
+   *  (store/wake-send.ts); what it returns takes it down again. */
+  hold: (text: string) => () => void;
   /**
    * Interrupt the running turn. `restoreQueue` is the prompts Claude has
    * queued behind it, oldest first, for a Stop that hands them back to the
@@ -1068,6 +1071,22 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     }
   };
 
+  const hold = (text: string): (() => void) => {
+    pendingSeq += 1;
+    const id = -pendingSeq;
+    setPendingPrompts((cur) => [
+      ...cur,
+      {
+        id,
+        text: text.trim(),
+        at: Date.now(),
+        command: isSlashCommand(text),
+        afterId: events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0,
+      },
+    ]);
+    return () => setPendingPrompts((cur) => cur.filter((p) => p.id !== id));
+  };
+
   const interrupt = async (
     restoreQueue?: readonly string[],
     returnPrompt?: string,
@@ -1272,6 +1291,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   };
 
   return {
+    hold,
     events,
     status,
     start,

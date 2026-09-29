@@ -1062,6 +1062,7 @@ export const SessionView: Component<{
     resume: () => props.resume?.() ?? Promise.resolve(false),
     send: (t, o) => store.send(t, o),
     notify: (msg, kind) => props.notify?.(msg, kind),
+    hold: (t) => store.hold(t),
   });
   /** Stop, handing back the queued prompts the Text view names (item 8). */
   const stop = (restoreQueue?: readonly string[], returnPrompt?: string) =>

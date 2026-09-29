@@ -49,3 +49,45 @@ describe("sendWaking", () => {
     expect(s.send).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Deployed review round 5 (2026-09-29): for about 2 s after Send the field was
+ * empty, no bubble showed, and only a toast said the message existed. It shows
+ * as sent from the moment the wake starts, and goes if the wake fails (the
+ * field gets it back).
+ */
+describe("sendWaking: the message while the session wakes", () => {
+  it("shows the message from the moment the wake starts until the send has it", async () => {
+    const order: string[] = [];
+    let wake!: (ok: boolean) => void;
+    const go = sendWaking({
+      suspended: () => true,
+      resume: () => new Promise<boolean>((r) => (wake = r)),
+      send: async (t) => {
+        order.push(`send:${t}`);
+        return true;
+      },
+      hold: (t) => {
+        order.push(`hold:${t}`);
+        return () => order.push("release");
+      },
+    });
+    const sending = go("Reply AWAKE");
+    expect(order).toEqual(["hold:Reply AWAKE"]);
+    wake(true);
+    expect(await sending).toBe(true);
+    expect(order).toEqual(["hold:Reply AWAKE", "send:Reply AWAKE", "release"]);
+  });
+
+  it("takes the message back down when the session would not wake", async () => {
+    const release = vi.fn();
+    const go = sendWaking({
+      suspended: () => true,
+      resume: async () => false,
+      send: async () => true,
+      hold: () => release,
+    });
+    expect(await go("hello")).toBe(false);
+    expect(release).toHaveBeenCalledTimes(1);
+  });
+});
