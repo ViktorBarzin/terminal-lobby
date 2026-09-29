@@ -676,7 +676,7 @@ export function codexModelFromPane(pane: string): ModelState | undefined {
 const MODEL_NOTES: Readonly<Record<string, string>> = {
   "claude-opus-5-5": "Most capable",
   "claude-opus-5": "The previous Opus",
-  "claude-opus-5[1m]": "Opus 5 with a 1M context",
+  "claude-opus-5[1m]": "A 1M context window",
   "claude-sonnet-5": "Fast, strong at code",
   "claude-haiku-4-5-20251001": "Fastest",
   "claude-opus-4-8": "An older Opus",

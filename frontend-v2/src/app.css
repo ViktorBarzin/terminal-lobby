@@ -3520,13 +3520,22 @@ label.tl-set-row-label {
   flex-basis: 100%;
   padding-left: 21px;
 }
-/* The desktop popover's columns are 165px, where a note beside or under the
-   name was cut to "Opus 5 with a …" and still left No ask and the context
-   line under the scroll at 1280x800 (602px of rows in a 561px popover, round
-   7 check). There each cell is the name alone, and the note is in the row's
-   tooltip. */
-.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub {
-  display: none;
+/* The desktop popover is 440px wide, so each model's note fits under its name
+   in a column, and a mode's line sits beside its name on one row. The notes
+   had been dropped from the 360px popover for room (round 7, 2026-09-28), and
+   the reviews after kept missing them; the mode rows' second lines were the
+   room that was really needed (deployed review rounds 3 to 5). */
+.tl-ms-pop .tl-ms-mode {
+  grid-template-columns: auto minmax(0, 1fr) 18px;
+  column-gap: 10px;
+}
+.tl-ms-pop .tl-ms-mode .tl-ms-desc {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.tl-ms-pop .tl-ms-mode .tl-ms-tick {
+  grid-column: 3;
 }
 .tl-ms-sheet .tl-ms-desc {
   font-size: calc(13px * var(--tl-text-scale, 1));

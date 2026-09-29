@@ -46,7 +46,7 @@ import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
  * became one button in the box's bottom row, "✳ Opus 5.5 ⌄", and one sheet
  * behind it with four parts: the Model list, an Effort segmented control, the
  * Mode list, and a quiet "Context N% used" line. With a fine pointer the sheet
- * is a 360px popover above the box; with a coarse one it is a bottom sheet
+ * is a 440px popover above the box; with a coarse one it is a bottom sheet
  * over a scrim, drawn at phone sizes (48px rows, 16px text).
  *
  * WHAT THE BUTTON SAYS. The model's name, which keeps the version and drops
@@ -105,8 +105,10 @@ const POP_MAX = 720;
 /** The least room under the pane's header the popover settles for before it
  *  takes the window's room instead: enough for Effort and the Mode list. */
 const POP_MIN_UNDER_HEADER = 400;
-/** The popover's width, as the prototype draws it. */
-const POP_W = 360;
+/** The popover's width: wide enough for each model's note under its name and
+ *  each mode's line beside its name (app.css .tl-ms-pop). The prototype drew
+ *  360px for three models. */
+const POP_W = 440;
 /** How far past the box's left edge the popover starts: just past the +. */
 const POP_INSET = 36;
 /** The gap between the popover and the box, and its least distance from the

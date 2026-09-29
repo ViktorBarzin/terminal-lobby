@@ -4,7 +4,7 @@
  * The T3 pass (2026-09-27, docs/plans/2026-09-27-text-view-t3-pass.md)
  * replaced the Quiet line's three dials with ONE button, "✳ Opus 5.5 ⌄", and
  * one sheet behind it: Model, Effort, Mode and a quiet context line. On a
- * desktop the sheet is a 360px popover above the box; with a coarse pointer it
+ * desktop the sheet is a 440px popover above the box; with a coarse pointer it
  * is a bottom sheet. Bypass and No ask put a small red shield on the button.
  *
  * What the button shows is the SESSION's own reading (the transcript for
