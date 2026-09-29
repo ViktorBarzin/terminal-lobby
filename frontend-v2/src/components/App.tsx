@@ -1099,7 +1099,7 @@ export const App: Component = () => {
   createEffect(() => {
     if (!flip() || !collapsed()) return;
     writeBackedOut(false);
-    enterContent();
+    enterContent(() => flip() && collapsed());
   });
   onCleanup(
     listenPhoneBack({

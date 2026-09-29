@@ -32,8 +32,30 @@ function isOverlay(state: unknown): boolean {
  * the list's. The current entry becomes the list's, with the session taken
  * off its URL, and the new one keeps the URL as it is. Nothing happens when
  * the current entry is already the session's.
+ *
+ * Chrome skips an entry a page pushed before anyone pressed anything on it
+ * (its history manipulation intervention): the emulator check of this fix
+ * opened the lobby straight onto a session, the boot pushed the entry, and
+ * Back still closed the tab. On a page nobody has touched yet the entry waits
+ * for the first press or key, and is pushed then only if `stillShowing()`.
  */
-export function enterContent(): void {
+export function enterContent(stillShowing: () => boolean = () => true): void {
+  const activation = (navigator as Navigator & { userActivation?: { hasBeenActive: boolean } })
+    .userActivation;
+  if (activation && !activation.hasBeenActive) {
+    const first = (): void => {
+      window.removeEventListener("pointerdown", first, true);
+      window.removeEventListener("keydown", first, true);
+      if (stillShowing()) pushContent();
+    };
+    window.addEventListener("pointerdown", first, true);
+    window.addEventListener("keydown", first, true);
+    return;
+  }
+  pushContent();
+}
+
+function pushContent(): void {
   try {
     if (isContent(window.history.state)) return;
     const url = window.location.href;

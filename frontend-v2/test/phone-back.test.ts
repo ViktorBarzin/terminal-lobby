@@ -106,3 +106,44 @@ describe("the phone's session entry", () => {
     expect(fallback).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Chrome skips a history entry a page pushed before anyone touched it: the
+ * emulator check of this fix opened the lobby on a session, where the boot
+ * pushed the entry, and Back still closed the tab. The entry waits for the
+ * first press or key on a page nobody has touched yet.
+ */
+describe("the session entry on a page nobody has touched yet", () => {
+  const nav = navigator as Navigator & { userActivation?: { hasBeenActive: boolean } };
+  let saved: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/#alpha");
+    saved = Object.getOwnPropertyDescriptor(nav, "userActivation");
+    Object.defineProperty(nav, "userActivation", {
+      configurable: true,
+      value: { hasBeenActive: false },
+    });
+  });
+  afterEach(() => {
+    if (saved) Object.defineProperty(nav, "userActivation", saved);
+    else delete (nav as { userActivation?: unknown }).userActivation;
+  });
+
+  // Read off the entry's state: jsdom's history length also drops the
+  // forward entries the tests above left behind.
+  it("is pushed at the first press, not before", () => {
+    enterContent(() => true);
+    expect(window.history.state).toBeNull();
+    window.dispatchEvent(new Event("pointerdown"));
+    expect(window.history.state).toEqual({ tlView: 1 });
+    expect(window.location.hash).toBe("#alpha");
+  });
+
+  it("is not pushed when the screen left for the list before the press", () => {
+    let showing = true;
+    enterContent(() => showing);
+    showing = false;
+    window.dispatchEvent(new Event("keydown"));
+    expect(window.history.state).toBeNull();
+  });
+});
