@@ -39,6 +39,17 @@ func TestInputHoldsReadsOnlyTheInputBox(t *testing.T) {
 			"one\ntwo\nthree", true},
 		{"a path the box attached as an image", paneWithBox("", "❯ [Image #1]"),
 			"/home/wizard/pic.png", true},
+		// Deployed review round 3 of the T3 pass (CLI 2.1.284, 2026-09-29): an
+		// early Stop on "words <picture> words" put the prompt back drawn with
+		// "[Image #N]" where each path was, and a match on the path text alone
+		// never came, so the prompt was left on the line and lost.
+		{"words before the pictures the box attached", paneWithBox("",
+			"❯ Look at [Image #5]  and [Image #6]  then think hard and write a 200 word poem about both."),
+			"Look at /var/lib/clipboard-store/wizard/s/pasted-a.png  and /var/lib/clipboard-store/wizard/s/pasted-b.png  then think hard and write a 200 word poem about both.", true},
+		{"a short prompt ending on a picture", paneWithBox("", "❯ hi [Image #1]"),
+			"hi /var/lib/clipboard-store/wizard/s/pasted-a.png", true},
+		{"a picture and other words", paneWithBox("", "❯ Look at [Image #1] and something else"),
+			"Look at /var/lib/clipboard-store/wizard/s/pasted-a.png and a different ending", false},
 		{"an empty box", paneWithBox("", "❯ "), sent, false},
 		{"a real idle capture", string(idle), sent, false},
 		// Dim placeholder text reads as plain text in a capture.

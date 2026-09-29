@@ -308,19 +308,56 @@ func inputHolds(pane, text string) bool {
 	if !ok {
 		return false
 	}
-	got := []rune(squashSpace(box))
-	if len(got) == 0 {
+	got := squashSpace(box)
+	if got == "" {
 		return false
 	}
-	if s := string(got); strings.HasPrefix(s, "[Pastedtext#") || strings.HasPrefix(s, "[Image#") {
+	if strings.HasPrefix(got, "[Pastedtext#") || strings.HasPrefix(got, "[Image#") {
 		return true
 	}
-	want := []rune(squashSpace(text))
+	// A picture's path reads as the "[Image #N]" Claude draws in its place, or
+	// as itself when Claude left it as text (pictureWords).
+	return sameStart([]rune(got), []rune(squashSpace(text))) ||
+		sameStart([]rune(pictureWords(box)), []rune(pictureWords(text)))
+}
+
+// sameStart reports whether the box's words are the text's: its start, or,
+// for a box holding at least boxCompare characters, a run of it.
+func sameStart(got, want []rune) bool {
 	n := min(len(got), len(want), boxCompare)
 	if n > 0 && string(got[:n]) == string(want[:n]) {
 		return true
 	}
 	return len(got) >= boxCompare && strings.Contains(string(want), string(got))
+}
+
+// pictureMark is what a picture reads as in pictureWords.
+const pictureMark = "\x00"
+
+// pictureWords is a text's words with whitespace ignored (squashSpace) and
+// every picture read as pictureMark, whether the text names it by its path,
+// as the lobby sends it, or by the "[Image #N]" Claude Code draws in the input
+// box and records in the transcript once it attached the path. Two copies of
+// one prompt then compare equal on either side of that swap (deployed review
+// round 3 of the T3 pass, CLI 2.1.284, 2026-09-29: a Stop sent the paths and
+// the box and transcript held "[Image #N]", so the prompt was never found).
+// Text without pictures reads exactly as squashSpace reads it.
+func pictureWords(text string) string {
+	text = imagePlaceholderRE.ReplaceAllString(text, pictureMark)
+	var b strings.Builder
+	for base := 0; ; {
+		m := picturePath.FindStringSubmatchIndex(text[base:])
+		if m == nil {
+			b.WriteString(text[base:])
+			break
+		}
+		b.WriteString(text[base : base+m[2]])
+		b.WriteString(pictureMark)
+		// Resume at the path's end, so a whitespace that ended one path can
+		// begin the next.
+		base += m[3]
+	}
+	return squashSpace(b.String())
 }
 
 func squashSpace(s string) string {
