@@ -56,6 +56,22 @@ func (p *openPrompt) words() string {
 	return strings.Join(texts, "\n")
 }
 
+// startsWith reports whether text is the batch's first prompts, all of them
+// or some, whitespace ignored.
+func (p *openPrompt) startsWith(text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	var texts []string
+	for _, q := range p.all() {
+		texts = append(texts, q.text)
+		if sameWords(strings.Join(texts, "\n"), text) {
+			return true
+		}
+	}
+	return false
+}
+
 // opened records a prompt that has just opened a turn as the one a Stop can
 // still take back. A slash command never reaches Claude, and a `!` command's
 // output follows it as another user record, so neither is one. A prompt
@@ -119,8 +135,13 @@ func (n *Normalizer) takenBack(rec Record, role string, blocks []Block, at int64
 //
 // The caller has just interrupted the turn, and Interrupt has already streamed
 // its end, so the turn is closed here without a second one.
+//
+// The text may name only the batch's first prompts: the client's copy of the
+// first was still waiting on the transcript when the batch started. The
+// reclaim clears the whole input line, which holds the whole batch, so the
+// whole batch is marked (deployed review round 5, 2026-09-29).
 func (n *Normalizer) Rewind(text string, at int64) []Event {
-	if n.open != nil && sameWords(n.open.words(), text) {
+	if n.open != nil && n.open.startsWith(text) {
 		return n.rewound(at, false)
 	}
 	n.rewindText, n.rewindAt = text, at

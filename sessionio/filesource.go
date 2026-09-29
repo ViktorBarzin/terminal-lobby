@@ -464,9 +464,17 @@ func (f *FileSource) Interrupt(at int64) {
 // at `at` (epoch ms), and streams the marker that takes it out of the
 // conversation (Normalizer.Rewind). When the tail has not read the prompt's
 // record yet, the record is marked as it arrives, which a replay would not do.
-func (f *FileSource) Rewind(text string, at int64) {
+//
+// It returns the words it took out: the whole batch when `text` named only its
+// first prompts, else `text`. That is what the session's stamp should name
+// (RewoundStamp), so a later source marks the same prompts.
+func (f *FileSource) Rewind(text string, at int64) string {
 	f.normMu.Lock()
 	defer f.normMu.Unlock()
+	words := text
+	if f.norm.open != nil && f.norm.open.startsWith(text) {
+		words = f.norm.open.words()
+	}
 	evs := f.norm.Rewind(text, at)
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -474,6 +482,7 @@ func (f *FileSource) Rewind(text string, at int64) {
 	for _, e := range evs {
 		f.appendLocked(e)
 	}
+	return words
 }
 
 // RestoreRewound streams the marker for a prompt a Stop took back before this

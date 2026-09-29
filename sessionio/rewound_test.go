@@ -313,3 +313,51 @@ func TestNormalizerBatchFollowedByAPromptWasRewoundWhole(t *testing.T) {
 		t.Fatalf("next prompt after a taken-back batch produced %d markers, want 2", len(got))
 	}
 }
+
+// A Stop can name only the first prompt of a batch: the client's own copy of
+// it was still waiting on the transcript when the batch started. The reclaim
+// clears the whole input line, which holds the whole batch, so every prompt of
+// it went back and every one is marked (deployed review round 5, 2026-09-29:
+// the others' bubbles stayed in the conversation as if sent).
+func TestNormalizerRewindOfABatchsFirstPromptMarksItAll(t *testing.T) {
+	n := NewNormalizer("demo")
+	var all []Event
+	for _, l := range batchLines() {
+		all = append(all, n.Line(l)...)
+	}
+	users := userTurns(all)
+	at := mustAt(t, "2026-09-28T19:10:42Z")
+	n.Interrupt(at)
+	got := rewoundTurns(n.Rewind("queued msg 1", at))
+	if len(got) != 2 || got[0] != users[1] || got[1] != users[2] {
+		t.Fatalf("Rewind of the first prompt marked %v, want the whole batch %v", got, users[1:])
+	}
+}
+
+// Words that are not how the batch starts still mark nothing.
+func TestNormalizerRewindOfTheBatchsLastPromptAloneMarksNothing(t *testing.T) {
+	n := NewNormalizer("demo")
+	for _, l := range batchLines() {
+		n.Line(l)
+	}
+	at := mustAt(t, "2026-09-28T19:10:42Z")
+	n.Interrupt(at)
+	if got := rewoundOf(n.Rewind("queued msg 2", at)); len(got) != 0 {
+		t.Fatalf("Rewind of words the batch does not start with marked %d prompts", len(got))
+	}
+}
+
+// The source reports the words it marked, so the stamp a later source reads
+// back names the whole batch (RestoreRewound).
+func TestFileSourceRewindReportsTheWordsItMarked(t *testing.T) {
+	n := NewNormalizer("demo")
+	for _, l := range batchLines() {
+		n.Line(l)
+	}
+	f := &FileSource{norm: n}
+	at := mustAt(t, "2026-09-28T19:10:42Z")
+	n.Interrupt(at)
+	if got := f.Rewind("queued msg 1", at); !sameWords(got, "queued msg 1\nqueued msg 2") {
+		t.Fatalf("Rewind reported %q, want the batch's words", got)
+	}
+}

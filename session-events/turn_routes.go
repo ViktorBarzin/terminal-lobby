@@ -399,15 +399,18 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 				log.Printf("cancel %s/%s: reclaiming the interrupted prompt failed: %v", osUser, session, err)
 			}
 			returned = took && err == nil
+			// The words that left the conversation: the whole batch when the
+			// caller named only its first prompt (sessionio Rewind).
+			rewound := body.ReturnPrompt
 			if returned && hasSource {
-				fs.Rewind(body.ReturnPrompt, stopped)
+				rewound = fs.Rewind(body.ReturnPrompt, stopped)
 			}
 			// The marker and the turn end above live in this process only. A
 			// session-events started later reads the transcript alone, which
 			// ends on this prompt with nothing after it, so the session keeps
 			// the fact (sessionio.OptionRewound).
 			if returned {
-				if err := drv.SetOption(osUser, session, sessionio.OptionRewound, sessionio.RewoundStamp(body.ReturnPrompt, stopped)); err != nil {
+				if err := drv.SetOption(osUser, session, sessionio.OptionRewound, sessionio.RewoundStamp(rewound, stopped)); err != nil {
 					log.Printf("cancel %s/%s: stamping the returned prompt: %v", osUser, session, err)
 				}
 			}
