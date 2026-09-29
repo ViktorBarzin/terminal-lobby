@@ -100,15 +100,15 @@ export const AttachmentView: Component<{
   me: string;
   /** open a DOCUMENT in the file preview overlay. A picture opens the lightbox. */
   onOpen?: (path: string) => void;
-  /** the newline that ended this path's line, owed back only as text. */
-  lineEnd?: boolean;
+  /** the whitespace that ended this path's line, owed back only as text. */
+  owed?: string;
 }> = (props) => {
   const url = createMemo(() => contentUrlFor(props.path, props.me));
   const label = createMemo(() => storedDisplayName(props.name));
   const asText = () => (
     <>
       <span class="tl-attach-path">{props.path}</span>
-      {props.lineEnd ? "\n" : ""}
+      {props.owed ?? ""}
     </>
   );
 
@@ -148,11 +148,15 @@ export const AttachmentView: Component<{
 const drawsAsBlock = (seg: Segment | undefined): boolean =>
   !!seg && (seg.kind === "block" || (seg.kind === "file" && seg.fileKind === "image"));
 
-/** One segment to render, and whether it owes the newline after it. */
+/** One segment to render, and the whitespace after it that it owes back. */
 interface Line {
   seg: Segment;
-  lineEnd: boolean;
+  owed: string;
 }
+
+/** What separates a block from the text after it: a line's end with any
+ *  spaces before it, or else a run of spaces. */
+const AFTER_BLOCK_RE = /^[ \t]*\n|^[ \t]+/;
 
 /**
  * Hand each picture the newline that ended its line.
@@ -162,20 +166,23 @@ interface Line {
  * terminal paste is `[Image #1]\n\n` and then the prompt, and the bubble showed
  * two empty lines under the picture. That newline moves onto the picture, which
  * renders it only when it falls back to text, where the line break is needed
- * again.
+ * again. The same goes for the space after a picture Claude Code put at the
+ * front of a prompt ("[Image #1] Name this colour"), which left the bubble's
+ * words starting with a stray space (deployed review rounds 3 to 5).
  */
 function lines(segments: readonly Segment[]): Line[] {
   const out: Line[] = [];
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i]!;
     const next = segments[i + 1];
-    const owes = drawsAsBlock(seg) && next?.kind === "text" && next.text.startsWith("\n");
+    const owed =
+      drawsAsBlock(seg) && next?.kind === "text" ? (AFTER_BLOCK_RE.exec(next.text)?.[0] ?? "") : "";
     const prev = out[out.length - 1];
-    if (seg.kind === "text" && prev?.lineEnd) {
-      out.push({ seg: { kind: "text", text: seg.text.slice(1) }, lineEnd: false });
+    if (seg.kind === "text" && prev?.owed) {
+      out.push({ seg: { kind: "text", text: seg.text.slice(prev.owed.length) }, owed: "" });
       continue;
     }
-    out.push({ seg, lineEnd: owes });
+    out.push({ seg, owed });
   }
   return out;
 }
@@ -207,7 +214,7 @@ export const MessageSegments: Component<{
   const shown = createMemo(() => lines(props.segments));
   return (
     <For each={shown()}>
-      {({ seg, lineEnd }) => {
+      {({ seg, owed }) => {
         if (seg.kind === "text") return <>{seg.text}</>;
         if (seg.kind === "file") {
           return (
@@ -217,14 +224,14 @@ export const MessageSegments: Component<{
               kind={seg.fileKind}
               me={props.me}
               onOpen={props.onOpen}
-              lineEnd={lineEnd}
+              owed={owed}
             />
           );
         }
         const placeholder = () => (
           <>
             <span class="tl-attach-path">{seg.text}</span>
-            {lineEnd ? "\n" : ""}
+            {owed}
           </>
         );
         return (

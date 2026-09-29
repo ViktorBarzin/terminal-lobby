@@ -188,6 +188,18 @@ describe("MessageSegments", () => {
     expect(container.textContent).toBe("[Image #1]\n\nwhat is wrong?");
   });
 
+  // Claude Code puts a picture's placeholder at the front of the prompt, and
+  // the space after it began the bubble's words (deployed review round 5).
+  it("does not start the words after a picture with a stray space", () => {
+    const segs = segmentPrompt("[Image #1] Name this colour.", [PASTE]);
+    const { container } = render(() => (
+      <MessageSegments segments={segs} me="wizard" session="s" record={RECORD} />
+    ));
+    expect(container.textContent).toBe("Name this colour.");
+    fireEvent.error(container.querySelector("img")!);
+    expect(container.textContent).toBe("[Image #1] Name this colour.");
+  });
+
   it("gives a stored picture's line break back when it falls back to its path", () => {
     const { container } = render(() => (
       <MessageSegments segments={segmentMessage(`look\n${IMG}\nnext`)} me="wizard" />
