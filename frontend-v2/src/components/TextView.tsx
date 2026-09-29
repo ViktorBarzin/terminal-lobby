@@ -1570,6 +1570,10 @@ export const TextView: Component<{
         if (got && !took) {
           props.notify?.(`The session stayed on ${got}. Something on the box pins it`, "error");
         }
+        // A switch can move the mode too: Claude Code drops Auto to Manual on
+        // a model that does not offer it (Haiku 4.5, deployed review round 4,
+        // 2026-09-29), and the button kept saying Auto until a reload.
+        void readMode(untrack(mode));
       })
       .finally(() => setModelBusy(false));
   };
