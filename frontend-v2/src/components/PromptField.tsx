@@ -1227,8 +1227,18 @@ export const PromptField: Component<{
    */
   const press = (): void => {
     if (buttonDisabled()) return;
-    if (kind() === "send") submit();
-    else props.onStop?.();
+    if (kind() === "stop") {
+      // The caller gives the field the focus back once whatever the Stop
+      // hands back has landed in it (TextView stopHandingBack).
+      props.onStop?.();
+      return;
+    }
+    submit();
+    // A mouse press took the focus from the field, and the next message is
+    // typed there (deployed review rounds 3 to 5, 2026-09-28). A finger's
+    // press keeps it already when the field had it (keepFocusOnSend); raising
+    // a phone's keyboard it did not have would cover the conversation.
+    if (!coarse() && !watching()) ta?.focus({ preventScroll: true });
   };
 
   return (

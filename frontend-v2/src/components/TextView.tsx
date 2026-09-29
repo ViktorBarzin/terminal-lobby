@@ -75,6 +75,7 @@ import { AgentTranscript } from "./AgentTranscript";
 import { panelPresent, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
+import { isCoarsePointer } from "../mobile/pointer";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -961,7 +962,25 @@ export const TextView: Component<{
     } finally {
       if (handingBack === settled) handingBack = null;
       done();
+      focusAfterStop();
     }
+  };
+
+  /**
+   * After a Stop, the field has the focus again on a desktop, so the next
+   * message (or the words handed back) can be typed at once: the press on
+   * Stop took it (deployed review rounds 3 to 5, 2026-09-28). Given only once
+   * what came back has landed, so the focus says the reader came back to the
+   * field and saw it (`land`). A phone keeps the keyboard it had: a finger's
+   * press does not take the focus, and raising one would cover the
+   * conversation.
+   */
+  const focusAfterStop = (): void => {
+    if (isCoarsePointer() || props.onScreen === false) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !viewEl?.contains(active)) return;
+    if (active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement) return;
+    composerSinks()?.focus();
   };
 
   /**
@@ -1758,6 +1777,36 @@ export const TextView: Component<{
     }),
   );
   onCleanup(() => clearTimeout(armTimer));
+  // A card answered and gone hands the focus back to the field that comes
+  // back in its place, so the next message can be typed at once (deployed
+  // review rounds 3 to 5, 2026-09-28: it fell to the page). On a phone only
+  // when the reader was typing in the card's own field: raising a keyboard
+  // after a tap on a row would cover the conversation.
+  let typedInCard = false;
+  onMount(() => {
+    const el = viewEl;
+    if (!el) return;
+    const onFocusIn = (e: FocusEvent): void => {
+      const t = e.target;
+      typedInCard = t instanceof HTMLTextAreaElement && !!t.closest(".tl-qcard");
+    };
+    el.addEventListener("focusin", onFocusIn);
+    onCleanup(() => el.removeEventListener("focusin", onFocusIn));
+  });
+  createEffect(
+    on(cardUp, (up, was) => {
+      if (up || !was) return;
+      const typed = typedInCard;
+      queueMicrotask(() => {
+        if (props.onScreen === false || !tileFocused() || props.inertReason) return;
+        const active = document.activeElement;
+        const inView = !!active && !!viewEl?.contains(active);
+        if (active && active !== document.body && !inView) return;
+        if (isCoarsePointer() && !typed) return;
+        composerSinks()?.focus();
+      });
+    }),
+  );
   createEffect(
     on(cardUp, (up) => {
       if (!up) return;

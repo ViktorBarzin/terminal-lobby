@@ -441,6 +441,23 @@ describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
+  // Deployed review rounds 3 to 5 (2026-09-28): after a Stop the focus stayed
+  // on the button, so the next message had to be clicked into first. It comes
+  // back to the field once what the Stop handed back has landed there, which
+  // also says the reader came back to it: the whole field goes on Enter.
+  it("gives the field the focus once the prompt has come back", async () => {
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const onSend = vi.fn(async (_t: string) => true);
+    const { button, field } = mount(() => "running", onStop, { events: OPENED, onSend });
+    button().focus();
+    fireEvent.click(button());
+    await waitFor(() => expect(field().value).toBe("Write a long story"));
+    await waitFor(() => expect(document.activeElement).toBe(field()));
+    fireEvent.input(field(), { target: { value: "Write a long story in French please" } });
+    fireEvent.keyDown(field(), { key: "Enter" });
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("Write a long story in French please"));
+  });
+
   it("sends the whole field when the reader pressed into it after the prompt came back", async () => {
     const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
     const onSend = vi.fn(async (_t: string) => true);

@@ -348,6 +348,26 @@ describe("the permission card", () => {
     await waitFor(() => expect(card()).toBeNull());
   });
 
+  // Answered, the card goes and the field is back: the focus goes with it,
+  // so the next message can be typed at once (deployed review rounds 3 to 5,
+  // 2026-09-28: it fell to the page).
+  it("gives the field the focus back when the card goes", async () => {
+    const { r, card, setEvents } = mount([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+    ]);
+    await waitFor(() => expect(card()).not.toBeNull());
+    card()!.querySelector<HTMLButtonElement>(".tl-qcard-option")!.focus();
+    setEvents([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+      ev({ id: 4, kind: "tool_result", toolId: "b1", body: "" }),
+    ]);
+    await waitFor(() => expect(card()).toBeNull());
+    const field = r.container.querySelector<HTMLTextAreaElement>(".tl-composer-input")!;
+    await waitFor(() => expect(document.activeElement).toBe(field));
+  });
+
   /**
    * The spec keeps "1 or 2 on an empty field answers a pending permission".
    * Found in review on 2026-09-27: the digit went into the field, because the
@@ -464,7 +484,9 @@ describe("the permission card", () => {
     setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
     await waitFor(() => expect(card()).not.toBeNull());
     fireEvent.keyDown(field, { key: "Enter" });
-    await waitFor(() => expect(field.value).toBe("please fix"));
+    // Kept, ending on a new line so the next words typed out of sight start
+    // their own (Composer.queue.test.tsx, "a send refused behind a card").
+    await waitFor(() => expect(field.value).toBe("please fix\n"));
     expect(onSend).not.toHaveBeenCalled();
     expect(onKeys).not.toHaveBeenCalled();
   });

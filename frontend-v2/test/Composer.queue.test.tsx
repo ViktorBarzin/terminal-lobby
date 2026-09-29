@@ -579,3 +579,17 @@ describe("<Composer> a send refused behind a card", () => {
     expect(field.value).toBe("first message");
   });
 });
+
+// A mouse press on the round button takes the focus from the field; the next
+// message is typed there, so it comes back (deployed review rounds 3 to 5).
+// After a Stop the Text view gives it back once the words handed back have
+// landed (TextView.stop.test.tsx).
+describe("<Composer> focus after the round button", () => {
+  it("gives the field the focus back after a Send", async () => {
+    const { button, field, type } = mount({});
+    type("ship it");
+    button().focus();
+    fireEvent.click(button());
+    expect(document.activeElement).toBe(field);
+  });
+});
