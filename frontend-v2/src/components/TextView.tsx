@@ -1697,12 +1697,23 @@ export const TextView: Component<{
   createEffect(() => {
     const tell = props.onLiveState;
     if (!tell) return;
-    if (props.opening || props.textShown === false || props.onScreen === false) {
+    if (props.textShown === false || props.onScreen === false) {
+      tell(undefined);
+      return;
+    }
+    // The trust dialog comes before any transcript, so it is said while the
+    // conversation is still opening, which it can stay for a session with
+    // none.
+    if (trustUp()) {
+      tell("awaiting");
+      return;
+    }
+    if (props.opening) {
       tell(undefined);
       return;
     }
     const l = lineLive();
-    tell(cardUp() || trustUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
+    tell(cardUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
   });
   onCleanup(() => props.onLiveState?.(undefined));
 

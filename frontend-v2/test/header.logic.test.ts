@@ -37,6 +37,16 @@ describe("headerSubtitle", () => {
     );
   });
 
+  // A fresh Claude on its folder-trust dialog has stamped no state yet, and the
+  // header read "idle" over it (deployed review round 5, 2026-09-29). The Text
+  // view saying Claude waits on the reader is enough on its own.
+  it("says waiting for you when the Text view does, before any state is stamped", () => {
+    expect(headerSubtitle({ ...base, state: "", live: "awaiting", tool: "claude" })).toEqual({
+      dot: "waiting",
+      text: "code · waiting for you",
+    });
+  });
+
   it("says watching over whatever the session is doing, since this device cannot act", () => {
     expect(headerSubtitle({ ...base, state: "awaiting", watching: true })).toEqual({
       dot: "watching",

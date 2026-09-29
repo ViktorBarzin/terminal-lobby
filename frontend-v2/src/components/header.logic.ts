@@ -41,11 +41,16 @@ export function headerSubtitle(input: {
   /** What the open Text view's conversation says the session is doing. It
    *  moves with the transcript, where `state` waits for the session list's
    *  next poll, so it wins while there is one. Not over a suspended session,
-   *  and not for a session no Claude reported on. */
+   *  and for a session no Claude reported on only when it says the session
+   *  waits on the reader (the folder-trust dialog). */
   live?: "running" | "awaiting" | "done";
 }): HeaderSubtitle {
+  // Waiting on the reader is said even before a state is stamped: a fresh
+  // Claude on its folder-trust dialog has stamped none.
   const state =
-    input.live && input.state && input.state !== "suspended" ? input.live : input.state;
+    input.live && input.state !== "suspended" && (input.state || input.live === "awaiting")
+      ? input.live
+      : input.state;
   const [dot, word]: [HeaderDot, string] = input.watching
     ? ["watching", "watching"]
     : state

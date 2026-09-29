@@ -181,22 +181,7 @@ func main() {
 	})
 	// What the pane currently shows. The text view reads it to mirror a blocking
 	// prompt, which the transcript does not report while it is pending (ADR-0010).
-	web.HandleFunc("GET /pane/{session}", func(w http.ResponseWriter, r *http.Request) {
-		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
-		if _, ok := rg.source(osUser, session); !ok {
-			http.Error(w, "session not registered", http.StatusNotFound)
-			return
-		}
-		text, err := injector.CapturePane(osUser, session)
-		if err != nil {
-			http.Error(w, "cannot read the pane", http.StatusBadGateway)
-			return
-		}
-		writeJSON(w, struct {
-			Pane  string `json:"pane"`
-			State string `json:"state"`
-		}{text, injector.State(osUser, session)})
-	})
+	web.HandleFunc("GET /pane/{session}", handlePane(injector))
 	// The slash commands this session can run that the CLI does not build in:
 	// the user's skills and custom commands, the project's, and those of the
 	// plugins they have switched on. The composer offers them beside the

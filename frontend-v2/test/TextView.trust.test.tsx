@@ -48,6 +48,7 @@ describe("<TextView> with the trust dialog on the pane", () => {
         onStop={() => {}}
         onResolve={() => {}}
         onPane={async () => ({ pane: TRUST_PANE, state: "done" })}
+        opening
         onOpenTerminal={onOpenTerminal}
         onLiveState={onLiveState}
       />
