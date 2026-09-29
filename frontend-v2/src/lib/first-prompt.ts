@@ -1,3 +1,4 @@
+import { modeFromPane } from "../logic/compose.logic";
 import { promptUrl } from "./config";
 import { fetchWithDeadline } from "./http";
 import type { ModelHarness } from "./models";
@@ -123,6 +124,16 @@ export interface DeliverFirstPromptOptions {
  */
 export const TRUST_NOTICE =
   "Claude is asking whether to trust this folder. Answer it in the Terminal, then send again.";
+
+/**
+ * Whether a pane shows Claude's folder-trust dialog: its two rows, and no
+ * status line under an input box, which a conversation quoting the rows would
+ * have. The same reading as session-events' (sessionio ClaudeTrustPending).
+ */
+export function trustDialogUp(pane: string): boolean {
+  if (!pane.includes("No, exit") || !pane.toLowerCase().includes("trust this folder")) return false;
+  return modeFromPane(pane) === "";
+}
 
 /** The harnesses a first prompt names for the server's wait. */
 export type FirstPromptTool = "pi" | "codex";

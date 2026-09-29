@@ -5940,6 +5940,27 @@ body.tl-kb-up {
   font-size: calc(12.5px * var(--tl-text-scale, 1));
   text-align: center;
 }
+/* Claude's folder-trust dialog is up (TextView trustUp): said in a band of
+   its own above the composer, as Latest is, with the Terminal one press away. */
+.tl-trust-band {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 4px 10px;
+  box-sizing: border-box;
+  width: calc(100% - 24px);
+  max-width: 760px;
+  margin: 0 auto 6px;
+  padding: 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--state-awaiting) 45%, var(--border));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--state-awaiting) 8%, var(--bg-card));
+  color: var(--text-primary);
+  font-family: var(--font-text);
+  font-size: calc(14px * var(--tl-text-scale, 1));
+}
 .tl-latest-band {
   flex: none;
   display: flex;

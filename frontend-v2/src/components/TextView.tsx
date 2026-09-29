@@ -76,6 +76,7 @@ import { panelPresent, type AgentSnapshot } from "./agents.logic";
 import { TileFocusContext } from "../lib/ownwhile";
 import { isEditingTarget } from "../keybindings/editing";
 import { isCoarsePointer } from "../mobile/pointer";
+import { trustDialogUp } from "../lib/first-prompt";
 import { installTextZoom, loadTextSize, saveTextSize, scaleFor } from "../mobile/textzoom";
 import { Composer, type ComposerSinks } from "./Composer";
 import type { DraftAttachment } from "../store/drafts";
@@ -532,6 +533,16 @@ export const TextView: Component<{
    * the transcript says nothing (transcriptModel).
    */
   const [bannerModel, setBannerModel] = createSignal<ModelState | undefined>();
+  /**
+   * Claude's folder-trust dialog is on the pane (lib/first-prompt.ts). No card
+   * answers it, so a band above the composer says Claude is waiting on it and
+   * offers the Terminal, and the header reads "waiting for you" (deployed
+   * review round 5, 2026-09-29: the view read idle and empty, with the parked
+   * prompt in the field and only a toast to explain). Read with the mode, and
+   * gone once the transcript starts, which it cannot while the dialog is up.
+   */
+  const [trustOnPane, setTrustOnPane] = createSignal(false);
+  const trustUp = (): boolean => trustOnPane() && props.events.length === 0;
   const mode = createMemo(() => {
     const t = transcriptMode();
     const p = paneRead();
@@ -551,6 +562,7 @@ export const TextView: Component<{
       if (props.harness === "claude") {
         const banner = modelFromBanner(pane);
         if (banner) setBannerModel(banner);
+        setTrustOnPane(trustDialogUp(pane));
       }
       const seen = modeFromPane(pane);
       if (!seen) continue;
@@ -1686,7 +1698,7 @@ export const TextView: Component<{
       return;
     }
     const l = lineLive();
-    tell(cardUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
+    tell(cardUp() || trustUp() || l?.waiting ? "awaiting" : l ? "running" : "done");
   });
   onCleanup(() => props.onLiveState?.(undefined));
 
@@ -1932,6 +1944,16 @@ export const TextView: Component<{
           the session's or the drill-in's. A card Claude is waiting on holds the
           bottom of the view and says what it is waiting on, so the band stays
           away while one is up. */}
+      <Show when={trustUp() && !cardUp()}>
+        <div class="tl-trust-band" role="status">
+          <span>Claude is asking whether to trust this folder.</span>
+          <Show when={props.onOpenTerminal}>
+            <button type="button" class="tl-linkbtn" onClick={() => props.onOpenTerminal?.()}>
+              Answer in the Terminal
+            </button>
+          </Show>
+        </div>
+      </Show>
       <Show when={latestShown()}>
         <div class="tl-latest-band">
           <button
