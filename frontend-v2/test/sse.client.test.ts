@@ -174,13 +174,51 @@ describe("SseClient", () => {
 
       expect(h.statuses).not.toContain("reconnecting");
       expect(h.statuses[h.statuses.length - 1]).toBe("no-transcript");
-      // The only timer armed is the slow re-probe — NOT a backoff retry.
+      // The only timer armed is the re-probe — NOT a backoff retry.
       expect(h.timers).toHaveLength(1);
-      expect(h.timers[0]!.ms).toBe(5000);
+      expect(h.timers[0]!.ms).toBe(1000);
       expect(h.sources).toHaveLength(1); // no second connection attempt
     });
 
-    it("re-probes slowly instead of reconnecting, and stays quiet while absent", async () => {
+    // Seen on 0.83.3 (2026-09-29): a session opened within ~1.5s of `claude
+    // --resume` 404s because its SessionStart hook has not registered it yet,
+    // and a first re-probe 30s out left the Text view on "No messages yet."
+    // for 30s. The re-probe now starts at a second and doubles up to the slow
+    // interval, so a session that is about to register is picked up at once
+    // and a plain shell still settles to one probe per interval.
+    it("re-probes soon after the 404 and backs off to the slow interval", async () => {
+      const h = harness(() => 404);
+      h.client.connect();
+      h.sources[0]!.onerror?.(null);
+      await flush();
+      for (let i = 0; i < 4; i++) {
+        h.timers[h.timers.length - 1]!.fn();
+        await flush();
+      }
+      expect(h.timers.map((t) => t.ms)).toEqual([1000, 2000, 4000, 5000, 5000]);
+    });
+
+    it("starts soon again when a stream that was open 404s later", async () => {
+      let status = 404;
+      const h = harness(() => status);
+      h.client.connect();
+      h.sources[0]!.onerror?.(null);
+      await flush();
+      h.timers[h.timers.length - 1]!.fn();
+      await flush();
+      h.timers[h.timers.length - 1]!.fn(); // 404, 404: now at 4000
+      await flush();
+      status = 200;
+      h.timers[h.timers.length - 1]!.fn();
+      await flush();
+      h.sources[1]!.onopen?.(null);
+      status = 404;
+      h.sources[1]!.onerror?.(null);
+      await flush();
+      expect(h.timers[h.timers.length - 1]!.ms).toBe(1000);
+    });
+
+    it("re-probes instead of reconnecting, and stays quiet while absent", async () => {
       const h = harness(() => 404);
       h.client.connect();
       h.sources[0]!.onerror?.(null);
@@ -193,7 +231,7 @@ describe("SseClient", () => {
       }
       expect(h.sources).toHaveLength(1);
       expect(h.probes).toHaveLength(4); // the classification + 3 re-probes
-      expect(h.timers.every((t) => t.ms === 5000)).toBe(true);
+      expect(h.timers.every((t) => t.ms <= 5000)).toBe(true);
       expect(h.statuses[h.statuses.length - 1]).toBe("no-transcript");
     });
 
@@ -207,7 +245,7 @@ describe("SseClient", () => {
 
       // The session registers with session-events (POST /hooks/session-start).
       status = 200;
-      h.timers[h.timers.length - 1]!.fn(); // the slow re-probe fires
+      h.timers[h.timers.length - 1]!.fn(); // the re-probe fires
       await flush();
 
       expect(h.sources).toHaveLength(2);

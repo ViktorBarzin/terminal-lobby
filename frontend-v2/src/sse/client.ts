@@ -162,8 +162,12 @@ export interface SseClientOptions {
   now?: () => number;
   baseDelayMs?: number;
   maxDelayMs?: number;
-  /** how often to re-check a session whose stream does not exist yet. */
+  /** how often to re-check a session whose stream does not exist yet, once
+   *  the quick first re-checks have found nothing. */
   probeIntervalMs?: number;
+  /** the first re-check after a 404, doubled on each miss up to
+   *  probeIntervalMs. */
+  firstProbeMs?: number;
   /** silence after which a wake signal stops trusting an open source. */
   stallTimeoutMs?: number;
 }
@@ -214,6 +218,8 @@ export class SseClient {
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private attempt = 0;
+  /** 404s in a row since the stream last opened, which sets the re-probe. */
+  private misses = 0;
   private lastEventId = 0;
   /** Which log the held ids belong to — the server's `ready.epoch`. */
   private epoch = "";
@@ -249,6 +255,7 @@ export class SseClient {
       baseDelayMs: opts.baseDelayMs ?? 500,
       maxDelayMs: opts.maxDelayMs ?? 15000,
       probeIntervalMs: opts.probeIntervalMs ?? 30000,
+      firstProbeMs: opts.firstProbeMs ?? 1000,
       stallTimeoutMs: opts.stallTimeoutMs ?? DEFAULT_STALL_MS,
     };
   }
@@ -283,6 +290,7 @@ export class SseClient {
     this.markAlive();
     es.onopen = () => {
       this.attempt = 0;
+      this.misses = 0;
       this.markAlive();
       this.setStatus("open");
     };
@@ -417,18 +425,26 @@ export class SseClient {
 
   /**
    * There is no stream for this session. Leave the retry ladder, report the
-   * state honestly, and re-check on a slow timer — a session becomes
-   * registered the moment a Claude starts in it (POST /hooks/session-start),
-   * and that must still be picked up.
+   * state honestly, and re-check — a session becomes registered the moment a
+   * Claude starts in it (POST /hooks/session-start), and that must still be
+   * picked up.
+   *
+   * The first re-check comes a second later and each miss doubles the wait up
+   * to the slow interval. A session opened right after it started 404s for
+   * the second or so before its hook registers it, and a first re-check 30s
+   * out left the Text view on "No messages yet." for all of that (measured on
+   * 0.83.3, 2026-09-29). A plain shell still settles to one probe per interval.
    */
   private enterNoTranscript(): void {
     this.attempt = 0; // the next real connect is a first attempt, not a retry
     this.setStatus("no-transcript");
     this.clearTimer();
+    const wait = Math.min(this.o.probeIntervalMs, this.o.firstProbeMs * 2 ** this.misses);
+    this.misses += 1;
     this.timer = this.o.setTimer(() => {
       this.timer = null;
       void this.reprobe();
-    }, this.o.probeIntervalMs);
+    }, wait);
   }
 
   private async reprobe(): Promise<void> {
