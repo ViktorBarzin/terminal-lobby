@@ -6217,22 +6217,29 @@ body.tl-kb-up {
   flex-wrap: wrap;
   align-items: center;
   gap: 0 8px;
-  /* One line while the words keep their floor (16em, below); on a phone
-     where they cannot, the links move to a line of their own at the right,
-     rather than the words being cut to "Claude wants to use a t… · C…"
-     (deployed review rounds 3 to 5, 2026-09-28). */
+  /* One line while the words fit in full beside the links; on a phone where
+     they cannot, the links move to a line of their own at the right, rather
+     than the words being cut to "Claude wants to use a t… · C…" (deployed
+     review rounds 3 to 5, 2026-09-28, and round 1 of the T3 pass,
+     2026-09-29, where a 16em floor still left the words 40px short). */
   padding: 0 4px;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-qcard-lead,
 .tl-qcard-fold {
-  flex: 1 1 16em;
+  flex: 1 1 auto;
   min-width: 0;
   display: inline-flex;
   align-items: center;
   gap: 8px;
   padding: 4px 0;
+}
+/* Folded, the head also holds the question as a reminder, which is meant to
+   be cut: a floor, or a long question would put the links on a line of their
+   own every time. */
+.tl-qcard-fold:has(.tl-qcard-peek) {
+  flex-basis: 16em;
 }
 .tl-qcard-fold {
   border: 0;
