@@ -551,3 +551,31 @@ describe("<Composer> round button: queued prompts starting", () => {
     expect(container.querySelector<HTMLButtonElement>(".tl-send")!.dataset.kind).toBe("send");
   });
 });
+
+/**
+ * Typing behind a card: the card docked while the reader typed, and the field
+ * stopped drawing but kept the focus. Enter is refused there ("Answer it from
+ * the card first"), the words stay, and the next message typed used to land
+ * straight after them with no space or newline, one garbled message once the
+ * card went (deployed review round 5, 2026-09-29). A refused message put back
+ * behind a card now ends on a new line, so the next one starts its own.
+ */
+describe("<Composer> a send refused behind a card", () => {
+  it("ends the message it puts back on a new line", async () => {
+    const { field, type } = mount({ offstage: true, onSend: async () => false });
+    type("first queued message alpha");
+    fireEvent.keyDown(field, { key: "Enter" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(field.value).toBe("first queued message alpha\n");
+  });
+
+  it("puts a refused message back exactly as it was with the field in view", async () => {
+    const { field, type } = mount({ onSend: async () => false });
+    type("first message");
+    fireEvent.keyDown(field, { key: "Enter" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(field.value).toBe("first message");
+  });
+});

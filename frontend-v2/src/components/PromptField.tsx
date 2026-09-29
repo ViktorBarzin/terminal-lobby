@@ -162,6 +162,9 @@ export const PromptField: Component<{
   onAttach?: (files: File[]) => Promise<DraftAttachment[]>;
   /** Watching: the controls that type are inert, and so is attaching. */
   inertReason?: string;
+  /** The field is out of sight behind a card but keeps the focus (Composer
+   *  `offstage`): a refused send's words come back ending on a new line. */
+  offstage?: boolean;
   /** Cycle the permission mode (Shift+Tab in the CLI). */
   onCycleMode?: () => void;
   /**
@@ -921,8 +924,12 @@ export const PromptField: Component<{
         // an attachment needs it more, because re-attaching means finding the
         // file again — and the tokens are still in the text that comes back,
         // so the chips land where they were.
-        ta.value = raw;
-        setDraft(raw);
+        // Out of sight behind a card, the reader goes on typing the next
+        // message without seeing this one, which ran the two together
+        // (deployed review round 5, 2026-09-29). It ends on a new line.
+        const back = props.offstage && raw !== "" && !raw.endsWith("\n") ? `${raw}\n` : raw;
+        ta.value = back;
+        setDraft(back);
         setAttached(held);
         autosize();
         return ok;

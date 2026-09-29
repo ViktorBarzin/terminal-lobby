@@ -435,6 +435,7 @@ export const Composer: Component<{
         draftKey={props.session}
         onAttach={props.onAttach}
         inertReason={props.inertReason}
+        offstage={props.offstage}
         onTakeControl={props.onTakeControl}
         onCycleMode={props.onCycleMode}
         onEmptyDigit={onEmptyDigit}
