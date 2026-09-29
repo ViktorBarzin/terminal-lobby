@@ -499,25 +499,36 @@ func (in *Injector) Cancel(osUser, session string) error {
 	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-c").Run(); err != nil {
 		return err
 	}
+	in.stampStopped(osUser, session)
+	return nil
+}
+
+// stampStopped writes the state of a turn that was stopped without a Stop hook
+// firing: a C-c (Cancel), or a plain No on a permission prompt, which
+// interrupts the turn the same way. Nothing happens on a session no hook has
+// ever stamped.
+func (in *Injector) stampStopped(osUser, session string) {
 	if in.State(osUser, session) == "" {
-		return nil
+		return
 	}
 	// A C-c takes a blocking dialog down, and the hook script holds the
 	// session at StateAwaiting for as long as OptionAsk says one is up
 	// (ADR-0001). Left standing, it would turn the next stamp of a session
 	// that is working again back into awaiting. Unset before the state is
-	// written, so the two cannot be read in a contradictory order.
-	if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), OptionAsk).Run(); err != nil {
-		log.Printf("cancel %s/%s: clearing %s failed: %v", osUser, session, OptionAsk, err)
+	// written, so the two cannot be read in a contradictory order. No tool
+	// call is in flight after either (OptionTool).
+	for _, opt := range []string{OptionAsk, OptionTool} {
+		if err := in.Command(osUser, "set-option", "-u", "-t", exactPane(session), opt).Run(); err != nil {
+			log.Printf("stop %s/%s: clearing %s failed: %v", osUser, session, opt, err)
+		}
 	}
 	state := StateDone
 	if bg, _ := in.Option(osUser, session, OptionBackground); strings.TrimSpace(bg) != "" {
 		state = StateRunning
 	}
 	if err := in.Command(osUser, "set-option", "-t", exactPane(session), OptionState, state).Run(); err != nil {
-		log.Printf("cancel %s/%s: stamping %s failed: %v", osUser, session, OptionState, err)
+		log.Printf("stop %s/%s: stamping %s failed: %v", osUser, session, OptionState, err)
 	}
-	return nil
 }
 
 // MaxKeys bounds one answer. A permission dialog is answered with a digit and

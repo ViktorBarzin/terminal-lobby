@@ -116,9 +116,16 @@ func (in *Injector) permPick(ctx context.Context, osUser, session string, before
 		return cur.reply(AnswerRefused), nil
 	}
 	pressed := cur.dialog
-	return in.awaitGone(ctx, osUser, session, cur, func(r answerReading) bool {
+	res, err := in.awaitGone(ctx, osUser, session, cur, func(r answerReading) bool {
 		return onPerm(r) && reflect.DeepEqual(r.dialog, pressed)
 	})
+	// A plain No interrupts the turn, and no hook the box wires fires for
+	// that: the session read "running" everywhere but the Text view until the
+	// next turn (deployed review round 5, 2026-09-29).
+	if err == nil && res.Done && n == cur.perm.no {
+		in.stampStopped(osUser, session)
+	}
+	return res, err
 }
 
 // permOffField moves the cursor off the No row while its field is open under

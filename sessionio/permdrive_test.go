@@ -268,3 +268,38 @@ func TestAnswerRefusesARowItCannotPick(t *testing.T) {
 		})
 	}
 }
+
+// A plain No interrupts Claude's turn, and none of the hooks the box wires
+// fires for that, so the session read "running" in the Terminal view and the
+// session list while the Text view read idle (deployed review round 5,
+// 2026-09-29). A No picked from the card stamps the session the way Cancel
+// does. Yes carries the turn on, and leaves the stamp alone.
+func TestAnswerPickingNoSettlesTheSessionsState(t *testing.T) {
+	t.Run("no", func(t *testing.T) {
+		in, osUser := permSession(t, "")
+		stamp(t, in, osUser, OptionState, StateRunning)
+		stamp(t, in, osUser, OptionTool, "toolu_declined")
+
+		res := permPick(t, in, osUser, 3, "No")
+
+		if !res.Applied || !res.Done {
+			t.Fatalf("applied=%v done=%v reason=%q", res.Applied, res.Done, res.Reason)
+		}
+		if got := in.State(osUser, "demo"); got != StateDone {
+			t.Errorf("state after No = %q, want %q", got, StateDone)
+		}
+		if got, _ := in.Option(osUser, "demo", OptionTool); strings.TrimSpace(got) != "" {
+			t.Errorf("%s after No = %q, want unset", OptionTool, got)
+		}
+	})
+	t.Run("yes", func(t *testing.T) {
+		in, osUser := permSession(t, "")
+		stamp(t, in, osUser, OptionState, StateRunning)
+
+		permPick(t, in, osUser, 1, "Yes")
+
+		if got := in.State(osUser, "demo"); got != StateRunning {
+			t.Errorf("state after Yes = %q, want %q", got, StateRunning)
+		}
+	})
+}
