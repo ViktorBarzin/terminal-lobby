@@ -254,6 +254,33 @@ describe("the sheet, on a desktop", () => {
     expect(pop.hasAttribute("data-more")).toBe(false);
   });
 
+  // Deployed review round 2 of the T3 pass (2026-09-29): in a workspace tile
+  // at 1280x800 the popover was 20px shorter than its 551px of rows, because
+  // the tile's name strip sits above the pane, and the "Context N% used" line
+  // was cut through the middle at its edge; at 1024x700 Bypass, No ask and
+  // the line were all out of view. A popover shorter than its rows draws
+  // them tighter before it asks for a scroll.
+  it("draws its rows tighter when they do not fit, and not when they do", async () => {
+    const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+    mount({ model: { model: "claude-opus-5-5", effort: "high" } });
+    open();
+    let pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    Object.defineProperty(pop, "scrollHeight", { value: 551, configurable: true });
+    Object.defineProperty(pop, "clientHeight", { value: 531, configurable: true });
+    await frame();
+    await frame();
+    expect(pop.hasAttribute("data-tight")).toBe(true);
+
+    open(); // closes
+    open();
+    pop = document.querySelector<HTMLElement>(".tl-ms-pop")!;
+    Object.defineProperty(pop, "scrollHeight", { value: 551, configurable: true });
+    Object.defineProperty(pop, "clientHeight", { value: 551, configurable: true });
+    await frame();
+    await frame();
+    expect(pop.hasAttribute("data-tight")).toBe(false);
+  });
+
   // Round 7 (2026-09-28): with six models the popover was 563px tall over
   // 651px of rows at 1280x800, and No ask and the context line needed a
   // scroll. The prototype's one column held three; more go in two columns on

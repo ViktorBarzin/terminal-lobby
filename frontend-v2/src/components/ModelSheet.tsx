@@ -168,6 +168,14 @@ export const ModelSheet: Component<{
   const [sheet, setSheet] = createSignal(false);
   const [place, setPlace] = createSignal<PopPlace | null>(null);
   const [more, setMore] = createSignal(false);
+  /**
+   * The popover is shorter than its rows, and draws them tighter (app.css,
+   * `.tl-ms-pop[data-tight]`) before it asks for a scroll. Deployed review
+   * round 2 of the T3 pass (2026-09-29): in a workspace tile at 1280x800 the
+   * tile's name strip left the popover 20px short and cut the context line in
+   * half at its edge, and a 1024x700 window hid Bypass, No ask and the line.
+   */
+  const [tight, setTight] = createSignal(false);
   let root: HTMLSpanElement | undefined;
   let btn: HTMLButtonElement | undefined;
   let popEl: HTMLDivElement | undefined;
@@ -304,15 +312,30 @@ export const ModelSheet: Component<{
     const el = popEl;
     setMore(!!el && el.scrollTop + el.clientHeight < el.scrollHeight - 1);
   };
+  /** Draw the rows tighter when they overflow the popover, then say whether
+   *  more is still below. Measured a frame after the rows change. */
+  const fit = (): void => {
+    const el = popEl;
+    if (el && !untrack(tight) && el.scrollHeight > el.clientHeight + 1) {
+      setTight(true);
+      requestAnimationFrame(checkMore);
+      return;
+    }
+    checkMore();
+  };
   // A window that changes size moves the box; the popover follows it.
   createEffect(() => {
-    if (!open() || sheet()) return;
+    if (!open() || sheet()) {
+      setTight(false);
+      return;
+    }
     const follow = (): void => {
       placePop();
-      checkMore();
+      setTight(false);
+      requestAnimationFrame(fit);
     };
     window.addEventListener("resize", follow);
-    requestAnimationFrame(checkMore);
+    requestAnimationFrame(fit);
     onCleanup(() => window.removeEventListener("resize", follow));
   });
 
@@ -542,7 +565,7 @@ export const ModelSheet: Component<{
                   data-danger={m.tone === "danger" ? "" : undefined}
                   aria-checked={current() === m.id}
                   aria-disabled={why(m.id) ? "true" : undefined}
-                  title={why(m.id) || undefined}
+                  title={why(m.id) || (tight() ? m.line : undefined)}
                   onClick={() => pickMode(m.id)}
                 >
                   <span class="tl-ms-lab">
@@ -624,6 +647,7 @@ export const ModelSheet: Component<{
             role="dialog"
             aria-label={sheetName()}
             data-more={more() ? "" : undefined}
+            data-tight={tight() ? "" : undefined}
             style={(() => {
               const p = place();
               return p

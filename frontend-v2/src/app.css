@@ -3548,6 +3548,37 @@ label.tl-set-row-label {
 .tl-ms-pop .tl-ms-mode .tl-ms-tick {
   grid-column: 3;
 }
+/* A popover shorter than its rows (ModelSheet `tight`): a workspace tile's
+   name strip left it 20px short at 1280x800 and cut the context line in half,
+   and a 1024x700 window hid Bypass and No ask (deployed review round 2 of the
+   T3 pass). The rows close up first, a mode's line keeps to one row, and each
+   model's note, which its row's title still carries, gives way before
+   anything is out of view. */
+.tl-ms-pop[data-tight] .tl-ms-h {
+  margin: 5px 4px 2px;
+}
+.tl-ms-pop[data-tight] .tl-ms-models .tl-ms-sub {
+  display: none;
+}
+.tl-ms-pop[data-tight] .tl-ms-row {
+  min-height: 28px;
+  padding-block: 2px;
+}
+.tl-ms-pop[data-tight] .tl-ms-mode .tl-ms-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tl-ms-pop[data-tight] .tl-ms-rule {
+  margin-block: 3px;
+}
+.tl-ms-pop[data-tight] .tl-ms-seg button {
+  height: 26px;
+}
+.tl-ms-pop[data-tight] .tl-ms-ctx {
+  margin-top: 5px;
+  padding-top: 6px;
+}
 .tl-ms-sheet .tl-ms-desc {
   font-size: calc(13px * var(--tl-text-scale, 1));
   line-height: 17px;
