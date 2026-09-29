@@ -53,7 +53,7 @@ describe("one grammar per act", () => {
   it("fills Submit the way Send is filled", () => {
     // The card's commit and the composer's commit sit ~100px apart.
     expect(rule(".tl-qcard-send")).toMatch(/background:\s*var\(--accent\)/);
-    expect(rule(".tl-qcard-send")).toMatch(/color:\s*#fff/);
+    expect(rule(".tl-qcard-send")).toMatch(/color:\s*var\(--on-accent\)/);
   });
 
   it("keeps the walk's own steps secondary", () => {

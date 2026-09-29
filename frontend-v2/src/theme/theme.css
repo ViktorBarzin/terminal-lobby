@@ -123,6 +123,10 @@
   --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   /* T3 radius scale: buttons/menus/inputs = --radius, cards/dialog = +8. */
   --radius: 10px;
+  /* What is drawn on the accent (Send's arrow, Submit). A theme whose accent
+     is pale sets its own dark ink here: white on Mono's #e8e8e8 was all but
+     invisible (theme.onaccent.test.ts). */
+  --on-accent: #ffffff;
 }
 
 /* Themes — set on <body> as theme-{carbon,slate,mono,ink,t3-dark,
@@ -138,6 +142,7 @@ body.theme-carbon,
   --border: #2a2826;
   --border-strong: #3a3733;
   --accent: #d4a574;
+  --on-accent: #0c0c0a;
   --danger: #c47a5a;
   --success: #88a888;
   --state-running: #d4a574;
@@ -214,6 +219,7 @@ body.theme-mono,
   --border: #2a2a2a;
   --border-strong: #3a3a3a;
   --accent: #e8e8e8;
+  --on-accent: #0d0d0d;
   --danger: #cc7070;
   --success: #9ccb9c;
   --state-running: #e8e8e8;
@@ -371,6 +377,7 @@ body.theme-catppuccin-mocha,
   --border: #45475a; /* surface1 */
   --border-strong: #585b70; /* surface2 */
   --accent: #cba6f7; /* mauve */
+  --on-accent: #1e1e2e;
   --danger: #f38ba8; /* red */
   --success: #a6e3a1; /* green */
   --state-running: #89b4fa; /* blue */

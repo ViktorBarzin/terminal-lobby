@@ -3707,11 +3707,11 @@ label.tl-set-row-label {
 .tl-plus[aria-busy="true"] .tl-disc {
   animation: tl-breathe 1.2s ease-in-out infinite;
 }
-/* Send is filled, and in the same grammar as the answer card's Submit: white
-   on the accent (composer.aesthetics). */
+/* Send is filled, and in the same grammar as the answer card's Submit: the
+   theme's on-accent ink on the accent (composer.aesthetics). */
 .tl-send .tl-disc {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .tl-send:hover .tl-disc {
   filter: brightness(1.1);
@@ -4899,7 +4899,7 @@ body.tl-kb-up {
 }
 .tl-preview-toggle button.on {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .tl-preview-close {
   flex: 0 0 auto;
@@ -6373,7 +6373,7 @@ body.tl-kb-up {
 .tl-qcard-option[data-chosen="true"] .tl-qcard-key {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 /* Multi-select is a different promise (several of these travel together), so
    the chip carries a tick rather than pretending to be a radio. It is drawn
@@ -6563,7 +6563,7 @@ body.tl-kb-up {
 .tl-qcard-send {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
 }
 .tl-qcard-next {
   border-color: var(--accent);
