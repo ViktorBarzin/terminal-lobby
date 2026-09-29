@@ -3234,10 +3234,19 @@ label.tl-set-row-label {
 }
 
 /* More of the sheet is below the edge: its last rows fade out, so the reader
-   knows to scroll. */
-.tl-ms-pop[data-more] {
-  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 36px), transparent);
+   knows to scroll. The fade is drawn OVER the rows in the card's own colour,
+   pinned to the bottom edge as the list scrolls. It was a mask on the popover
+   until deployed review round 1 of the T3 pass (2026-09-29), and a mask fades
+   the background too: the conversation behind showed through the last rows. */
+.tl-ms-pop[data-more]::after {
+  content: "";
+  display: block;
+  position: sticky;
+  bottom: 0;
+  height: 36px;
+  margin: -36px -10px 0;
+  background: linear-gradient(to bottom, transparent, var(--bg-card));
+  pointer-events: none;
 }
 
 /* The phone's bottom sheet, in the document's body (see BottomSheet), so it
