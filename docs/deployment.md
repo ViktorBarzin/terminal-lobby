@@ -162,6 +162,33 @@ gh run list --repo ViktorBarzin/terminal-lobby --workflow=release --limit 1
 homelab logs query '{unit="ttyd"}' --since 15m
 ```
 
+## Claude Code's paste limits
+
+The Text view sends a long or multi-line message as several bracketed pastes
+(`sessionio/pastechunks.go`), each small enough that Claude Code keeps it as
+typed text: at most 640 UTF-16 units and 2 line breaks. Claude Code collapses a
+bigger paste into `[Pasted text #N]` and tells the model the words may not be
+the user's own. Its limits were 800 units and 2 line breaks on CLI 2.1.283.
+
+Claude Code updates itself on the box, separately from the lobby's releases, so
+a check reads both limits out of the installed binary:
+
+```sh
+cd sessionio && go test -run 'TestInstalledClaude|TestReadPasteLimits' -v .
+```
+
+It runs with the rest of the `sessionio` suite, which is part of the checks run
+on the devvm before a push to master. It fails when either limit drops below
+the chunk size, and when it cannot find the handlers at all, which means the
+CLI changed how it decides and needs measuring again. It skips where no
+`claude` is installed, such as GitHub Actions. `CLAUDE_BIN` points it at
+another binary, for example a version under `~/.local/share/claude/versions/`
+before the box moves to it.
+
+One case the chunk size does not cover yet: the prompt input allows
+`min(rows - 10, 2)` line breaks, so a pane under 12 rows collapses a paste with
+fewer breaks than 2.
+
 ## Machine health thresholds
 
 The lobby reports whether the box itself is stalling, as a sixth row, `This

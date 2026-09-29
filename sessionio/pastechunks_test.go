@@ -15,7 +15,12 @@ import (
 // \r\n, \r or \n, where this counts \r\n as two, which is the stricter reading.
 func chunkBreaks(s string) int { return strings.Count(s, "\r") + strings.Count(s, "\n") }
 
-func chunkUnits(s string) int { return len(utf16.Encode([]rune(s))) }
+// chunkUnits measures a paste the way Claude Code does: in UTF-16 units, after
+// it has replaced every tab with four spaces (CLI 2.1.283, read from the
+// binary on 2026-09-29).
+func chunkUnits(s string) int {
+	return len(utf16.Encode([]rune(strings.ReplaceAll(s, "\t", "    "))))
+}
 
 // Every chunk must stay under the size at which Claude Code 2.1.283 collapses
 // a paste into "[Pasted text #N +M lines]" and records it wrapped in
@@ -38,6 +43,7 @@ func TestPasteChunksStayUnderTheCollapseLimits(t *testing.T) {
 		{"astral characters", strings.Repeat("😀", 700), 0},
 		{"crlf", "a\r\nb\r\nc\r\nd", 0},
 		{"a path mid-sentence", "What is in /var/lib/clipboard-store/u/s/a.png ?\nand this\nand that", 0},
+		{"tabs, which the CLI widens to four spaces", strings.Repeat("\tx", 400), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			chunks := pasteChunks(tc.text)

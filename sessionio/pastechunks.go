@@ -13,7 +13,12 @@ import (
 // and a 1,000-character line sent from the Text view were both declined that
 // way ("You pasted it without a message of your own"). The same words sent as
 // several pastes under these limits were recorded exactly, unwrapped, and
-// acted on. The unit limit keeps a margin under the CLI's 800.
+// acted on. The unit limit keeps a margin under the CLI's 800. The CLI
+// measures after widening every tab to four spaces, so a tab counts as four.
+//
+// TestInstalledClaudeKeepsThesePastesInline (pastelimits_test.go) reads both
+// limits out of the installed claude binary and fails if either drops below
+// these sizes.
 const (
 	pasteChunkUnits  = 640
 	pasteChunkBreaks = 2
@@ -46,8 +51,11 @@ func chunkEnd(text string) int {
 	units, breaks, lastSpace := 0, 0, -1
 	for i, r := range text {
 		n := 1
-		if r >= 0x10000 {
+		switch {
+		case r >= 0x10000:
 			n = 2 // a surrogate pair in UTF-16
+		case r == '\t':
+			n = 4 // the CLI widens a tab to four spaces before it measures
 		}
 		if units+n > pasteChunkUnits {
 			if lastSpace > 0 {
