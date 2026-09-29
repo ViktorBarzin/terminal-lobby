@@ -749,6 +749,8 @@ function collectTurnRows(turn: Turn): {
   for (const e of turn.events) {
     switch (e.kind) {
       case "user": {
+        // The model sheet's own keystrokes: its receipt says what changed.
+        if (!e.sidechain && isPickerCommand(e.body ?? "")) break;
         // The record a clear context opens with is drawn as the continuation,
         // in the turn's user-row slot. A subagent's prompt never is.
         const cont = e.sidechain ? null : continuationRow(e, turn.key);
@@ -2399,11 +2401,23 @@ function isHarnessNotice(text: string): boolean {
   return /^<(task-notification|system-reminder|local-command-stdout)\b/.test(text);
 }
 
+/**
+ * A bare `/model` or `/effort`: what the model sheet types to open the CLI's
+ * picker (sessionio/setmodel.go). Recorded as a user record, it drew a bubble
+ * nobody wrote and a history entry ↑ kept landing on (deployed review round 5,
+ * 2026-09-29). The CLI's receipt after it says what changed. A command typed
+ * with an argument is the writer's own and is kept.
+ */
+function isPickerCommand(text: string): boolean {
+  return /^\/(model|effort)$/.test(text.trim());
+}
+
 /** Every prompt this session has sent, oldest first — the composer's history. */
 export function promptHistory(events: Event[], seed?: SessionState | null): string[] {
-  const out: string[] = (seed?.prompts ?? []).map(unwrapPasted);
+  const out: string[] = (seed?.prompts ?? []).map(unwrapPasted).filter((p) => !isPickerCommand(p));
   for (const e of after(events, seed)) {
     const text = unwrapPasted(e.body ?? "").trim();
+    if (isPickerCommand(text)) continue;
     if (e.kind === "user" && text && out[out.length - 1] !== text) out.push(text);
     if (e.kind === "meta" && e.meta === "picture-source" && e.body && out.length > 0) {
       out[out.length - 1] = withPictureSources(out[out.length - 1]!, e.body.split("\n"));
