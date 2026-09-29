@@ -156,6 +156,25 @@ func TestScanImageBlockFromAUserRecord(t *testing.T) {
 	}
 }
 
+// A message with a picture that Claude took into the turn it was running has
+// no user record: its account is a queued_command attachment whose prompt
+// holds the blocks (CLI 2.1.284, 2026-09-29). Its picture is read from there.
+func TestScanImageBlockFromAnAbsorbedPrompt(t *testing.T) {
+	pic := testPNG(t, 4)
+	uuid := "021f44fa-fd19-4b58-ba20-b25d1cfcfebe"
+	line := `{"parentUuid":"e719f4b6-b4a8-4096-a1f9-bb8a63e427cc","isSidechain":false,` +
+		`"attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #1]  pic in queue"},` +
+		imageBlock("image/png", pic) + `],"imagePasteIds":[1],"commandMode":"prompt","origin":{"kind":"human"}},` +
+		`"type":"attachment","uuid":"` + uuid + `","timestamp":"2026-09-29T07:37:30.298Z"}`
+	got, err := scanOf(ImageAddr{Record: uuid, N: 0}, line)
+	if err != nil {
+		t.Fatalf("ScanImageBlock: %v", err)
+	}
+	if !bytes.Equal(got.Data, pic) || got.MediaType != "image/png" {
+		t.Fatalf("got %d bytes of %q, want the %d-byte PNG", len(got.Data), got.MediaType, len(pic))
+	}
+}
+
 func TestScanImageBlockOutOfRangeIsNoImage(t *testing.T) {
 	_, err := scanOf(ImageAddr{ToolID: "toolu_01read", N: 1}, readResultLine("toolu_01read", testPNG(t, 2)))
 	if !errors.Is(err, ErrNoImage) {

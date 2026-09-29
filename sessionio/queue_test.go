@@ -1,6 +1,9 @@
 package sessionio
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 // Every way a prompt LEAVES Claude's queue has to reach the client.
 //
@@ -119,11 +122,28 @@ func TestQueuedCommandThatIsNotAHumanPromptIsNotSpoken(t *testing.T) {
 }
 
 // A prompt with a pasted picture is written as content blocks rather than a
-// string. Its words still make the row.
+// string. Its words make the row, and its picture rides on it the way a user
+// record's does: by the record's uuid and the block's index. Deployed review
+// round 2 of the T3 pass (2026-09-29): a picture queued mid-turn drew as the
+// words "[Image #1]  pic in queue" with no picture, where the same message
+// taken between turns drew the picture.
 func TestAbsorbedPromptWithBlocksKeepsItsText(t *testing.T) {
-	line := `{"attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #1] what is this?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}],"commandMode":"prompt","origin":{"kind":"human"}},"type":"attachment","timestamp":"2026-09-27T01:20:45.162Z"}`
+	line := `{"attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #1] what is this?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}],"imagePasteIds":[1],"commandMode":"prompt","origin":{"kind":"human"}},"type":"attachment","uuid":"021f44fa-fd19-4b58-ba20-b25d1cfcfebe","timestamp":"2026-09-27T01:20:45.162Z"}`
 	evs := (&Normalizer{}).Line([]byte(line))
 	if len(evs) != 1 || evs[0].Kind != KindUser || evs[0].Body != "[Image #1] what is this?" {
 		t.Fatalf("got %+v, want one user event with the prompt's text", evs)
+	}
+	want := []ImageRef{{N: 0, MediaType: "image/png", Bytes: 3, Paste: 1}}
+	if !reflect.DeepEqual(evs[0].Images, want) || evs[0].RecordID != "021f44fa-fd19-4b58-ba20-b25d1cfcfebe" {
+		t.Fatalf("images %+v on record %q, want %+v on the attachment's uuid", evs[0].Images, evs[0].RecordID, want)
+	}
+}
+
+// Without the record's uuid a picture could never be fetched, so none is sent.
+func TestAbsorbedPromptWithNoUUIDSendsNoPicture(t *testing.T) {
+	line := `{"attachment":{"type":"queued_command","prompt":[{"type":"text","text":"[Image #1] what is this?"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}],"commandMode":"prompt","origin":{"kind":"human"}},"type":"attachment","timestamp":"2026-09-27T01:20:45.162Z"}`
+	evs := (&Normalizer{}).Line([]byte(line))
+	if len(evs) != 1 || len(evs[0].Images) != 0 || evs[0].RecordID != "" {
+		t.Fatalf("got %+v, want the words alone", evs)
 	}
 }

@@ -267,6 +267,11 @@ func ScanImageBlock(r io.Reader, addr ImageAddr) (ImageData, error) {
 			if rec.UUID != addr.Record {
 				continue
 			}
+			// A prompt Claude took mid-turn keeps its blocks in its
+			// queued_command attachment, not in a message (absorbedPrompt).
+			if at, ok := queuedCommand(line); ok && at.Type == "queued_command" {
+				return nthPicture(at.Prompt, addr.N)
+			}
 			return nthPicture(rec.Message.Content, addr.N)
 		}
 		for _, bl := range rec.Blocks() {
