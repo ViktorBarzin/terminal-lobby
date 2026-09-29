@@ -228,6 +228,13 @@ func CursorOption(opts []PickerOption) (PickerOption, bool) {
 // onto the next line, "lo"/"w", "medi"/"um", "ultrac"/"ode". So a line of
 // labels takes up to two more lines whose words each start at the column of
 // a label above, and reads them as that label's tail.
+//
+// Claude Code 2.1.284 moved ultracode off the ladder onto a toggle of its own,
+// drawn as a column to the right of the slider at a wide pane, so the label
+// line ends "max      Tab to toggle" (measured 2026-09-29). Words after the
+// labels are let through when they start past the right end of the slider's
+// bar, which is what makes them a separate column rather than more labels or
+// prose that happens to open with effort words.
 func EffortLadder(pane string) ([]string, bool) {
 	if !strings.Contains(pane, "←/→ to adjust") {
 		return nil, false
@@ -236,24 +243,26 @@ func EffortLadder(pane string) ([]string, bool) {
 	for _, e := range ClaudeEfforts {
 		known[e] = true
 	}
-	allKnown := func(ws []columnWord) bool {
-		if len(ws) < 3 {
-			return false
-		}
-		for _, w := range ws {
-			if !known[w.text] {
-				return false
-			}
-		}
-		return true
-	}
 	lines := strings.Split(pane, "\n")
+	// labels is the run of known words the line opens with, when it is the
+	// whole line or everything after it sits past the bar's right end.
+	labels := func(ws []columnWord, barEnd int) []columnWord {
+		n := 0
+		for n < len(ws) && known[ws[n].text] {
+			n++
+		}
+		if n < 3 || (n < len(ws) && ws[n].col <= barEnd) {
+			return nil
+		}
+		return ws[:n]
+	}
 	for i := range lines {
 		words := columnWords(lines[i])
+		barEnd := sliderBarEnd(lines, i)
 		for next := i + 1; ; next++ {
-			if allKnown(words) {
-				out := make([]string, len(words))
-				for k, w := range words {
+			if ls := labels(words, barEnd); ls != nil {
+				out := make([]string, len(ls))
+				for k, w := range ls {
 					out[k] = w.text
 				}
 				return out, true
@@ -269,6 +278,39 @@ func EffortLadder(pane string) ([]string, bool) {
 		}
 	}
 	return nil, false
+}
+
+// sliderBarEnd is the column the slider's bar ends at, read off the nearest of
+// the three lines above line i that draws it (a run of ─ holding the ▲), or
+// the width of the pane's widest line when none does, which lets no word past.
+func sliderBarEnd(lines []string, i int) int {
+	for k := i - 1; k >= 0 && k >= i-3; k-- {
+		runes := []rune(lines[k])
+		start := -1
+		for c, r := range runes {
+			inBar := r == '─' || r == '▲' || r == '┆'
+			if inBar && start < 0 {
+				start = c
+			}
+			if start >= 0 && (!inBar || c == len(runes)-1) {
+				end := c - 1
+				if inBar {
+					end = c
+				}
+				if strings.ContainsRune(string(runes[start:end+1]), '▲') {
+					return end
+				}
+				start = -1
+			}
+		}
+	}
+	widest := 0
+	for _, l := range lines {
+		if n := len([]rune(l)); n > widest {
+			widest = n
+		}
+	}
+	return widest
 }
 
 // columnWord is a word on a pane line and the column it starts at, in runes.

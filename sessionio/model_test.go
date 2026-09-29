@@ -214,6 +214,43 @@ func TestEffortLadderReadsASliderWrappedAtPhoneWidth(t *testing.T) {
 	}
 }
 
+// CLAUDE CODE 2.1.284 REDREW THE SLIDER. Ultracode left the ladder for a
+// toggle of its own, drawn as a column to the right of the labels, so at a
+// wide pane the label line ends "max      Tab to toggle". Reading only lines
+// of known words refused that line, and every pick from the sheet's Effort
+// row failed with "this build's effort slider is not the one expected".
+// Captured on the box's 2.1.284 on 2026-09-29, at 80 and 47 columns; at 47
+// the toggle moves below the labels and "high" wraps to "hig"/"h".
+func TestEffortLadderReadsThe2_1_284Slider(t *testing.T) {
+	want := []string{"low", "medium", "high", "xhigh", "max"}
+	for _, name := range []string{"picker-claude-effort-2.1.284.txt", "picker-claude-effort-2.1.284-narrow.txt"} {
+		ladder, ok := EffortLadder(fixture(t, name))
+		if !ok {
+			t.Errorf("%s: the effort slider was not recognised", name)
+			continue
+		}
+		if strings.Join(ladder, " ") != strings.Join(want, " ") {
+			t.Errorf("%s: ladder = %v, want %v", name, ladder, want)
+		}
+	}
+}
+
+// The column to the right of the labels is only let through when it is a
+// column: set apart by a gap wider than the gaps between the labels. Words
+// that run on at the labels' own spacing are prose that happens to start with
+// effort words, and pressing arrows at prose sends keys into a conversation.
+func TestEffortLadderRefusesLabelsThatRunOnIntoProse(t *testing.T) {
+	cases := map[string]string{
+		"prose at label spacing": "   ←/→ to adjust\n   low medium high is what I said\n",
+		"too few labels":         "   ←/→ to adjust\n   low medium          Tab to toggle\n",
+	}
+	for name, pane := range cases {
+		if ladder, ok := EffortLadder(pane); ok {
+			t.Errorf("%s: read %v", name, ladder)
+		}
+	}
+}
+
 // A second line that does not line up with the labels is not their tail.
 func TestEffortLadderDoesNotJoinLinesThatDoNotLineUp(t *testing.T) {
 	pane := "   ←/→ to adjust\n   lo   medi\n  w   um\n"
