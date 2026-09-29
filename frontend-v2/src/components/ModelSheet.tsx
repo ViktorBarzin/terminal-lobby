@@ -64,7 +64,8 @@ import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
  * WHEN IT CANNOT ACT. A dialog on the pane holds the button: the picker and
  * the walk both type keys, and a dialog would take them (on the plan
  * approval's feedback row Shift+Tab approves the plan, memory #13896). A
- * dialog that lands while the sheet is open holds every row instead. So does
+ * dialog that lands while the phone's sheet is open holds every row instead,
+ * and closes the desktop popover, whose box the card moves. So does
  * watching another device drive, and a change already in flight holds the rows
  * it would race.
  *
@@ -189,11 +190,24 @@ export const ModelSheet: Component<{
     if (props.harness) return name() || "Model";
     return modeTitle(props.mode ?? "") || "Model";
   };
+  /**
+   * The effort the session runs at, or undefined when its model has none: a
+   * leftover level from the model before Haiku 4.5 is not one Haiku uses
+   * (deployed review round 4, 2026-09-28).
+   */
+  const shownEffort = (): string | undefined => {
+    const h = props.harness;
+    const m = props.model?.model;
+    if (h && m && m !== DEFAULT_CHOICE && effortsForModel(h, m, props.modelOffer).length === 0) {
+      return undefined;
+    }
+    return props.model?.effort;
+  };
   /** The model and the effort by name, for the button's accessible name. */
   const spoken = (): string => {
     const h = props.harness;
     if (!h) return "";
-    const effort = props.model?.effort;
+    const effort = shownEffort();
     const e = effort && effort !== DEFAULT_CHOICE ? labelFor(h, "effort", effort) : "";
     return [name(), e].filter((s) => s !== "").join(" · ");
   };
@@ -205,7 +219,7 @@ export const ModelSheet: Component<{
     if (props.buttonName) {
       return `Model and effort for the new session: ${props.model?.model ?? DEFAULT_CHOICE} · ${props.model?.effort ?? DEFAULT_CHOICE}`;
     }
-    const exact = summarise(props.model);
+    const exact = summarise({ model: props.model?.model, effort: shownEffort() });
     return exact ? `${chipName(h)}: ${exact}` : `${chipName(h)}. The session has not answered yet`;
   };
   const ariaLabel = (): string => {
@@ -227,6 +241,13 @@ export const ModelSheet: Component<{
   // A watch hides the model button, so a sheet it had open closes with it.
   createEffect(() => {
     if (props.inertReason) untrack(() => close(false));
+  });
+  // A dialog landing docks its card under the box and moves it, and the
+  // popover, placed against the box when it opened, was left floating over
+  // the card (deployed review rounds 3 to 5, 2026-09-28). It closes. The
+  // phone's sheet is anchored to the screen, and holds its rows instead.
+  createEffect(() => {
+    if (held()) untrack(() => !sheet() && close(false));
   });
 
   dismissFloat({
@@ -415,7 +436,10 @@ export const ModelSheet: Component<{
                 onClick={() => pickModel("model", o.id)}
               >
                 <span class="tl-ms-lab">
-                  <SparkleIcon size={14} class="tl-ms-spark" />
+                  {/* Claude's mark, on Claude's rows only. */}
+                  <Show when={h() === "claude"}>
+                    <SparkleIcon size={14} class="tl-ms-spark" />
+                  </Show>
                   <span class="tl-ms-name">{rowName(o.id)}</span>
                   {/* A short note beside the name, as the prototype's rows
                       have. The exact slug, which Viktor asked to see

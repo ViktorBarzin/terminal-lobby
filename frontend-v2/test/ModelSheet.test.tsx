@@ -99,11 +99,9 @@ describe("the model button", () => {
 
   // The name drops the rest of the slug, so the title carries all of it.
   it("puts the exact slug and the effort in its title", () => {
-    mount({ model: { model: "claude-haiku-4-5-20251001", effort: "low" } });
-    expect(button().querySelector(".tl-model-name")?.textContent).toBe("Haiku 4.5");
-    expect(button().getAttribute("title")).toBe(
-      "Model and effort: claude-haiku-4-5-20251001 · low",
-    );
+    mount({ model: { model: "claude-sonnet-5", effort: "low" } });
+    expect(button().querySelector(".tl-model-name")?.textContent).toBe("Sonnet 5");
+    expect(button().getAttribute("title")).toBe("Model and effort: claude-sonnet-5 · low");
   });
 
   // A session that has not answered yet has said nothing true to show.
@@ -726,8 +724,10 @@ describe("rows that cannot act", () => {
     expect(float()!.textContent).toContain("Watching: another device is typing");
   });
 
-  // A dialog can arrive while the sheet is open: every row is held then.
-  it("are held when a dialog lands on the pane while the sheet is open", () => {
+  // A dialog can arrive while the sheet is open. The phone's sheet holds every
+  // row then; the desktop popover closes (below).
+  it("are held when a dialog lands on the pane while the phone's sheet is open", () => {
+    coarse();
     const [held, setHeld] = createSignal("");
     const onPickMode = vi.fn();
     render(() => (
@@ -749,5 +749,53 @@ describe("rows that cannot act", () => {
     fireEvent.click(modeRow("Plan"));
     expect(onPickMode).not.toHaveBeenCalled();
     expect(float()!.textContent).toContain("Answer Claude first");
+  });
+
+  // The popover is placed against the box when it opens. A card that docks
+  // under it moves the box, and the popover was left floating over the card
+  // (deployed review rounds 3 to 5, 2026-09-28). It closes instead: nothing in
+  // it could be picked while the dialog is up anyway.
+  it("closes the desktop popover when a dialog lands on the pane", () => {
+    const [held, setHeld] = createSignal("");
+    render(() => (
+      <ModelSheet
+        harness="claude"
+        mode="manual"
+        model={{ model: "claude-opus-5-5", effort: "high" }}
+        modeHeld={held()}
+        modelHeld={held()}
+        onPickMode={() => {}}
+        onPickModel={() => {}}
+      />
+    ));
+    open();
+    expect(document.querySelector(".tl-ms-pop")).not.toBeNull();
+    setHeld("Answer Claude first");
+    expect(document.querySelector(".tl-ms-pop")).toBeNull();
+  });
+});
+
+describe("the model rows' marks", () => {
+  // The sparkle is Claude's mark, and a Codex sheet drew it on every GPT row
+  // (deployed review rounds 3 to 5, 2026-09-28).
+  it("draws Claude's sparkle on Claude's rows only", () => {
+    mount({ harness: "codex", model: { model: "gpt-5.6-terra", effort: "medium" } });
+    open();
+    expect(modelRows().length).toBeGreaterThan(0);
+    expect(document.querySelector(".tl-ms-model .tl-ms-spark")).toBeNull();
+    cleanup();
+    mount({ model: { model: "claude-opus-5-5", effort: "high" } });
+    open();
+    expect(modelRows().every((r) => r.querySelector(".tl-ms-spark"))).toBe(true);
+  });
+});
+
+describe("a model with one effort level", () => {
+  // Haiku 4.5 has no effort control, so a leftover effort from the model before
+  // it is not something it is running at (deployed review round 4).
+  it("names no effort for Haiku 4.5 on the button", () => {
+    mount({ model: { model: "claude-haiku-4-5-20251001", effort: "xhigh" } });
+    expect(button().getAttribute("title")).toBe("Model and effort: claude-haiku-4-5-20251001");
+    expect(button().getAttribute("aria-label")).not.toMatch(/xhigh|Extra high/i);
   });
 });
