@@ -211,6 +211,16 @@ describe("<Composer>: pill or box", () => {
     expect(container.querySelector(".tl-pill-draft")).toBeNull();
   });
 
+  // Seen on the Android emulator on 2026-09-29: a photo draft folded to
+  // "[img] Look at this one". The token reads as a chip naming the picture.
+  it("draws an attachment token in a folded draft as a chip that names it", () => {
+    const { ta, container } = mount({}, "phone");
+    fireEvent.input(ta, { target: { value: "[img] Look at this one" } });
+    const line = container.querySelector(".tl-pill-draft");
+    expect(line?.textContent).toBe("Photo Look at this one");
+    expect(line?.querySelector(".tl-inline-chip")?.textContent).toBe("Photo");
+  });
+
   it("shows no draft line in an empty pill, so the placeholder reads", () => {
     const { container } = mount({}, "phone");
     expect(container.querySelector(".tl-pill-draft")).toBeNull();

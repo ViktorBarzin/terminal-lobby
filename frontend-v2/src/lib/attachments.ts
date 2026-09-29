@@ -482,6 +482,38 @@ export function attachToken(
   return body(n);
 }
 
+/** One piece of a line read for a person: plain text, or a token as the chip
+ *  that names what it stands for. */
+export type ReadablePiece = { text: string } | { chip: string; kind: AttachmentKind };
+
+/** The token's parts: head, disambiguator, label. */
+const TOKEN_PARTS_RE = /^\[(img|file)(?:\s(\d+))?(?::\s([^\][\n]{1,80}))? *\]$/;
+
+/**
+ * A line of the draft with each token swapped for words a person reads: its
+ * label when it carries one, else "Photo" or "File", numbered past the first.
+ *
+ * For the places that draw a draft without the chip layer behind it, which is
+ * the folded pill: there `[img]` is the only thing on screen, and it reads as
+ * markup rather than the picture it stands for.
+ */
+export function readableTokens(line: string): ReadablePiece[] {
+  const out: ReadablePiece[] = [];
+  let at = 0;
+  for (const m of line.matchAll(TOKEN_RE)) {
+    const parts = TOKEN_PARTS_RE.exec(m[0]);
+    if (!parts) continue;
+    if (m.index > at) out.push({ text: line.slice(at, m.index) });
+    const kind: AttachmentKind = parts[1] === "img" ? "image" : "doc";
+    const label = parts[3]?.split(PAD).join("").trim();
+    const chip = label || `${kind === "image" ? "Photo" : "File"}${parts[2] ? ` ${parts[2]}` : ""}`;
+    out.push({ chip, kind });
+    at = m.index + m[0].length;
+  }
+  if (at < line.length) out.push({ text: line.slice(at) });
+  return out;
+}
+
 /**
  * Cut `[start, end)` out of the text, taking one separating space with it, and
  * say where the caret should land. Removing a chip from the middle of a

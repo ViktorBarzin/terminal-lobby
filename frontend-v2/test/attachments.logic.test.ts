@@ -13,6 +13,7 @@ import {
   isRenderablePath,
   parseStorePath,
   previewContentUrl,
+  readableTokens,
   segmentMessage,
   segmentPrompt,
   storedDisplayName,
@@ -544,6 +545,36 @@ describe("cutSpan and dropToken", () => {
 
   it("says where the caret lands", () => {
     expect(cutSpan("look at [img] here", 8, 13)).toEqual({ text: "look at here", at: 8 });
+  });
+});
+
+/**
+ * A folded pill draws a draft's first line with no chip layer behind it, so a
+ * token has to read on its own. Seen on the Android emulator on 2026-09-29:
+ * after attaching a photo and closing the keyboard the pill read
+ * "[img] Look at this one".
+ */
+describe("readableTokens", () => {
+  it("names a picture with no name of its own a Photo, and numbers the rest", () => {
+    expect(readableTokens("[img] Look at this one")).toEqual([
+      { chip: "Photo", kind: "image" },
+      { text: " Look at this one" },
+    ]);
+    expect(readableTokens("[img 2]")).toEqual([{ chip: "Photo 2", kind: "image" }]);
+  });
+
+  it("uses the label a token carries, without the padding a thumbnail needs", () => {
+    expect(readableTokens(`see [img: chart.png${PAD.repeat(3)}] and [file: report.pdf]`)).toEqual([
+      { text: "see " },
+      { chip: "chart.png", kind: "image" },
+      { text: " and " },
+      { chip: "report.pdf", kind: "doc" },
+    ]);
+    expect(readableTokens("[file]")).toEqual([{ chip: "File", kind: "doc" }]);
+  });
+
+  it("leaves a line with no token as one piece of text", () => {
+    expect(readableTokens("just words")).toEqual([{ text: "just words" }]);
   });
 });
 

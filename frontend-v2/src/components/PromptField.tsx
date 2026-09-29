@@ -34,6 +34,7 @@ import {
   cutSpan,
   tokenizeStorePaths,
   previewContentUrl,
+  readableTokens,
   storedDisplayName,
 } from "../lib/attachments";
 import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
@@ -1386,7 +1387,19 @@ export const PromptField: Component<{
             <Show when={foldedLine()}>
               {(line) => (
                 <span class="tl-pill-draft" aria-hidden="true">
-                  {line()}
+                  {/* No chip layer sits behind this line, so a token is
+                      drawn as a chip naming its file here instead. */}
+                  <For each={readableTokens(line())}>
+                    {(piece) =>
+                      "chip" in piece ? (
+                        <span class="tl-inline-chip" data-kind={piece.kind}>
+                          {piece.chip}
+                        </span>
+                      ) : (
+                        piece.text
+                      )
+                    }
+                  </For>
                 </span>
               )}
             </Show>

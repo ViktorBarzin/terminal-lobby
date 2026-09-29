@@ -62,6 +62,15 @@ describe("an attached image in the composer", () => {
     }
   });
 
+  // Measured on the Android emulator on 2026-09-29: with a picture attached
+  // the folded pill's field took the room for the row (56px on top, 68px in
+  // all) and ran past the 50px pill, pushing + and Send over its bottom edge.
+  // The pill shows no pictures, so it keeps its own one-line padding.
+  it("leaves the folded pill's one line alone while a picture is attached", () => {
+    const r = rule('.tl-pill[data-shape="pill"] .tl-field[data-thumbs] .tl-composer-input');
+    expect(r).toMatch(/padding-top:\s*12px/);
+  });
+
   it("draws the pictures in a row in that room, above the field", () => {
     const strip = rule(".tl-thumb-strip");
     expect(strip).toMatch(/position:\s*absolute/);

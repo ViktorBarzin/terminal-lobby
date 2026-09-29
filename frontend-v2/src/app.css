@@ -3983,6 +3983,20 @@ label.tl-set-row-label {
 .tl-field[data-thumbs] .tl-composer-mirror {
   padding-top: calc(var(--tl-thumb-h) + 12px);
 }
+/* The folded pill shows no pictures, so it keeps its own one-line padding
+   rather than the room above. The rule above has the same weight as the
+   pill's and comes later, so without this a picture draft's field grew to
+   68px inside the 50px pill and pushed + and Send over its bottom edge
+   (Android emulator, 2026-09-29). */
+.tl-pill[data-shape="pill"] .tl-field[data-thumbs] .tl-composer-input {
+  padding-top: 12px;
+}
+/* A token in the folded line, drawn as a chip with the file's name in it.
+   The mirror's chips sit behind text that is already spaced; this one holds
+   its own words, so it pads them. */
+.tl-pill-draft .tl-inline-chip {
+  padding: 1px 5px;
+}
 
 /* ---- the permission panel, docked above the composer ------------------ */
 .tl-permpanel {
