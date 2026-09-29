@@ -1832,9 +1832,14 @@ export const TextView: Component<{
     if (e.key.length !== 1 || e.key === " " || props.inertReason) return false;
     const sinks = composerSinks();
     if (!sinks || !cardUp()) return false;
-    sinks.insertText(e.key);
+    // Not into the field's focus on a phone: that raises the keyboard the
+    // card has just put away, over its lower rows. The key came from that
+    // keyboard as it slid away (deployed review round 4, 2026-09-29), and any
+    // after it land on the card and come here the same way.
+    const phone = isCoarsePointer();
+    sinks.insertText(e.key, { focus: !phone });
     typeOnCard((n) => n + 1);
-    sinks.focus();
+    if (!phone) sinks.focus();
     return true;
   };
 

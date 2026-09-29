@@ -86,8 +86,10 @@ import { PlusMenu } from "./PlusMenu";
 export interface PromptFieldSinks {
   /** Put attachments into the message (a window drop, a gallery tile). */
   add: (items: DraftAttachment[]) => void;
-  /** Insert text at the caret (a clipboard paste that is not an image). */
-  insertText: (text: string) => void;
+  /** Insert text at the caret (a clipboard paste that is not an image), and
+   *  put the focus in the field unless `focus` is false: on a phone that
+   *  raises the keyboard. */
+  insertText: (text: string, opts?: { focus?: boolean }) => void;
   /** Put text at the START of the message, a blank line before whatever the
    *  field already holds: the queued prompts a Stop hands back. */
   prependText: (text: string) => void;
@@ -616,7 +618,12 @@ export const PromptField: Component<{
    * and the word typed next is a word of its own: attach-then-type is how a
    * phone writes a message about a picture.
    */
-  const splice = (text: string, pad: boolean, padAfter: boolean = pad): void => {
+  const splice = (
+    text: string,
+    pad: boolean,
+    padAfter: boolean = pad,
+    focus: boolean = true,
+  ): void => {
     if (!ta || !text) return;
     const at = caretKnown ? (ta.selectionStart ?? ta.value.length) : ta.value.length;
     const end = caretKnown ? (ta.selectionEnd ?? at) : at;
@@ -630,7 +637,7 @@ export const PromptField: Component<{
     const pos = at + body.length;
     ta.setSelectionRange(pos, pos);
     sync();
-    ta.focus();
+    if (focus) ta.focus();
   };
 
   /**
@@ -639,7 +646,8 @@ export const PromptField: Component<{
    * paste behaves like typing: the caret lands after the inserted text and the
    * rest of the message survives.
    */
-  const insertText = (text: string): void => splice(text, false);
+  const insertText = (text: string, opts?: { focus?: boolean }): void =>
+    splice(text, false, false, opts?.focus !== false);
 
   /**
    * Put text in front of the message, with a blank line between it and what

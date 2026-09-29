@@ -987,6 +987,19 @@ describe("a card that docks over the phone's keyboard", () => {
     await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
   });
 
+  // Same replay: a key the keyboard sent as it slid away landed on the card,
+  // which put it in the draft and focused the field, and that raised the
+  // keyboard again over the card's lower rows. On a phone the key still goes
+  // into the draft, and the focus stays off the field.
+  it("puts a key the going keyboard sent into the draft without raising it again", async () => {
+    const v = mount(base);
+    const field = await dock(v, "my draft");
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    fireEvent.keyDown(v.card()!, { key: "e" });
+    expect(field.value).toBe("my drafte");
+    expect(document.activeElement).not.toBe(field);
+  });
+
   it("waits a full second after taking the keyboard away before a tap presses", async () => {
     const v = mount(base);
     await dock(v, "my draft");
