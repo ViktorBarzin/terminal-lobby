@@ -38,6 +38,16 @@ describe("<PictureLightbox>", () => {
     expect(img?.getAttribute("alt")).toBe("a.png");
   });
 
+  // Android's Back left the lightbox up and moved the browser's history
+  // instead (deployed reviews, 2026-09-28).
+  it("closes on the phone's Back", () => {
+    const { container } = render(() => <PictureLightbox />);
+    openPicture(PIC, "bubble", "file");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(container.querySelector(".tl-lightbox")).toBeNull();
+    expect(picture()).toBeNull();
+  });
+
   it("closes on a press anywhere on it", () => {
     const { container } = render(() => <PictureLightbox />);
     openPicture(PIC, "tool", "block");

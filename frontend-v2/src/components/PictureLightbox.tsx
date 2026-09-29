@@ -1,6 +1,7 @@
 import { Show, onCleanup, onMount, type Component } from "solid-js";
 import { closePicture, picture } from "../store/picture";
 import { dismissOnPress } from "./overlay";
+import { closeOnBack } from "../lib/back-closes";
 
 /**
  * The Text view's pictures, full size (2026-09-24).
@@ -15,6 +16,8 @@ import { dismissOnPress } from "./overlay";
  * reaches the composer (which would also close its completion menu) or the
  * terminal (which would send ESC to Claude).
  *
+ * The phone's Back closes it too, rather than moving the browser's history.
+ *
  * Mounted once, in App.
  */
 export const PictureLightbox: Component = () => {
@@ -25,6 +28,8 @@ export const PictureLightbox: Component = () => {
     closePicture();
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
+  // The phone's Back closes it rather than leaving the page (lib/back-closes).
+  closeOnBack(() => picture() !== null, closePicture);
   onCleanup(() => document.removeEventListener("keydown", onKey, true));
 
   return (

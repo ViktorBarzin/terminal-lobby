@@ -799,3 +799,16 @@ describe("a model with one effort level", () => {
     expect(button().getAttribute("aria-label")).not.toMatch(/xhigh|Extra high/i);
   });
 });
+
+describe("the phone's Back", () => {
+  // Android's Back left the sheet up and moved the browser's history
+  // (deployed reviews, 2026-09-28).
+  it("closes the sheet", () => {
+    coarse();
+    mount({ model: { model: "claude-opus-5-5", effort: "high" } });
+    open();
+    expect(float()).not.toBeNull();
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    expect(float()).toBeNull();
+  });
+});

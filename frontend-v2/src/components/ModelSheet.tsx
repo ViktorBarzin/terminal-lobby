@@ -34,6 +34,7 @@ import {
 } from "../lib/models";
 import { contextSummary, contextTone, percentFull, type ContextState } from "./context.logic";
 import { CheckIcon, ChevronDownIcon, ShieldIcon, SparkleIcon } from "./Icons";
+import { closeOnBack } from "../lib/back-closes";
 import { dismissFloat, focusChosen, walkNav, type RowNav } from "./overlay";
 
 /**
@@ -255,6 +256,8 @@ export const ModelSheet: Component<{
     inside: (t) => !!(root?.contains(t) || popEl?.contains(t) || layerEl?.contains(t)),
     close: (why) => close(why === "escape"),
   });
+  // The phone's Back closes it rather than leaving the page (lib/back-closes).
+  closeOnBack(open, () => close(false));
 
   /**
    * Place the popover over the page, above the box, capped at the WINDOW's
