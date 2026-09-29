@@ -351,8 +351,8 @@ func (in *Injector) promptUnconfirmed(osUser, session, text string) error {
 // clearInput empties the pane's input line before a paste, as Prompt's
 // comment explains.
 //
-// On a pane with Claude's input box it presses C-e, then one Backspace for
-// every character the box shows plus queueClearMargin, as one repeated key. C-u
+// On a pane with Claude's input box it wipes the box (wipeBox): C-e, then C-u
+// and Backspace in pairs, enough for every row the box shows. C-u
 // alone kills one visual line of the box, and what a Stop leaves there is
 // often longer: an interrupt before Claude's first token puts the prompt back
 // on the input line, wrapped. Found in the live check of the T3 pass on
@@ -384,7 +384,7 @@ func (in *Injector) clearInput(osUser, session string) (bool, error) {
 		return ok, in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e", "C-u").Run()
 	}
 	for round := 0; ; round++ {
-		if err := in.backspaceBox(osUser, session, utf8.RuneCountInString(box)); err != nil {
+		if err := in.wipeBox(osUser, session, utf8.RuneCountInString(box)); err != nil {
 			return true, err
 		}
 		if rows < 2 || round+1 >= clearRounds {
@@ -408,13 +408,47 @@ const clearRounds = 12
 // them (measured 2026-09-28); a round is at most a box's worth.
 const clearRedrawWait = time.Second
 
-// backspaceBox presses C-e, then one Backspace for each of `chars` plus
-// queueClearMargin, as one repeated key.
-func (in *Injector) backspaceBox(osUser, session string, chars int) error {
-	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
+// wipeBox empties Claude's input box of about `chars` characters: C-e, then
+// C-u and Backspace in pairs (wipeKeys). C-u kills one visual line and the
+// Backspace joins the line above, so a pair takes a whole row where a
+// Backspace took one character, and CLI 2.1.283 repaints the box after every
+// key: a 3,167 character prompt handed back by a Stop sat in the box for about
+// 11 s under one Backspace each (deployed review round 5, 2026-09-29), in the
+// Terminal where an Enter would resend it. A box too big for wipeMaxPairs gets
+// the Backspaces it always had for the rest.
+func (in *Injector) wipeBox(osUser, session string, chars int) error {
+	args := append([]string{"send-keys", "-t", exactPane(session)}, wipeKeys(chars)...)
+	if err := in.Command(osUser, args...).Run(); err != nil {
 		return err
 	}
+	if chars/wipeWidth+wipeMargin <= wipeMaxPairs {
+		return nil
+	}
 	return in.Command(osUser, "send-keys", "-N", strconv.Itoa(chars+queueClearMargin), "-t", exactPane(session), "BSpace").Run()
+}
+
+const (
+	// wipeWidth is the narrowest pane a wipe counts rows for: one row per
+	// this many characters at the most. Extra pairs on an empty box do
+	// nothing.
+	wipeWidth = 20
+	// wipeMargin covers the line breaks in the text and a first row that
+	// starts part way.
+	wipeMargin = 8
+	// wipeMaxPairs bounds one send-keys call.
+	wipeMaxPairs = 800
+)
+
+// wipeKeys is the key list wipeBox sends for a box of about `chars`
+// characters: C-e, then one C-u, BSpace pair per row it can hold.
+func wipeKeys(chars int) []string {
+	n := min(chars/wipeWidth+wipeMargin, wipeMaxPairs)
+	keys := make([]string, 0, 1+2*n)
+	keys = append(keys, "C-e")
+	for range n {
+		keys = append(keys, "C-u", "BSpace")
+	}
+	return keys
 }
 
 // awaitBoxChange reads the box until it shows something other than `was`, and

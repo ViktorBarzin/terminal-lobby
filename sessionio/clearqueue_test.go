@@ -202,3 +202,30 @@ func TestReclaimInterruptedLeavesOtherWordsAlone(t *testing.T) {
 		t.Fatalf("the input line holds %q, want the reader's draft untouched", box)
 	}
 }
+
+// Emptying Claude's input box one Backspace per character took seconds for a
+// long prompt: CLI 2.1.283 repaints the box after every key, and a 3,167
+// character prompt a Stop had handed back sat in the box for about 11 s, where
+// an Enter in the Terminal would resend it (deployed review round 5). C-u
+// kills one visual line, and a Backspace after it joins the line above:
+// measured on 2026-09-29, 30 such pairs emptied a 1,800 character, 18-row box
+// in 0.12 s where 1,900 Backspaces took 2.8 s. The pairs are counted for a
+// pane as narrow as wipeWidth columns, with a margin.
+func TestWipeKeysKillALineAtATime(t *testing.T) {
+	keys := wipeKeys(1800)
+	if keys[0] != "C-e" {
+		t.Fatalf("keys start %q, want C-e", keys[0])
+	}
+	pairs := (len(keys) - 1) / 2
+	if want := 1800/wipeWidth + wipeMargin; pairs != want {
+		t.Errorf("%d C-u/BSpace pairs, want %d", pairs, want)
+	}
+	for i := 1; i < len(keys); i += 2 {
+		if keys[i] != "C-u" || keys[i+1] != "BSpace" {
+			t.Fatalf("key %d is %q %q, want C-u BSpace", i, keys[i], keys[i+1])
+		}
+	}
+	if got := len(wipeKeys(10_000_000)); got > 1+2*wipeMaxPairs {
+		t.Errorf("a huge box asked for %d keys, want at most %d", got, 1+2*wipeMaxPairs)
+	}
+}

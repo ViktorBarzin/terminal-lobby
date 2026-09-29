@@ -1,7 +1,6 @@
 package sessionio
 
 import (
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -24,11 +23,10 @@ const queueClearMargin = 8
 // "popAll"), joined by line breaks, and an interrupt after that leaves the text
 // in the box with nothing sent.
 //
-// The box is then cleared in full: C-e, then one Backspace per character of
-// the popped text plus queueClearMargin, sent as one repeated key (tmux
-// send-keys -N). Prompt's C-e C-u prelude would not do it: C-u kills one line
-// of a multi-line box, and the next prompt would be submitted concatenated
-// onto the rest. A long paste pops back as its collapsed "[Pasted text #1 +29
+// The box is then cleared in full (wipeBox): C-e, then C-u and Backspace in
+// pairs, a row at a time, enough for the popped text. Prompt's old C-e C-u
+// prelude would not do it: C-u kills one line of a multi-line box, and the
+// next prompt would be submitted concatenated onto the rest. A long paste pops back as its collapsed "[Pasted text #1 +29
 // lines]" stand-in; the same count clears it, measured the same day.
 //
 // queued is the text the caller expects the queue to hold, oldest first. It
@@ -61,11 +59,7 @@ func (in *Injector) ClearQueue(osUser, session string, queued []string) (bool, e
 	if !in.awaitHeld(osUser, session, text) {
 		return false, nil
 	}
-	presses := utf8.RuneCountInString(text) + queueClearMargin
-	if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
-		return false, err
-	}
-	if err := in.Command(osUser, "send-keys", "-N", strconv.Itoa(presses), "-t", exactPane(session), "BSpace").Run(); err != nil {
+	if err := in.wipeBox(osUser, session, utf8.RuneCountInString(text)); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -112,11 +106,7 @@ func (in *Injector) ReclaimInterrupted(osUser, session, text string) (bool, erro
 		// prompt lands on the line once it goes.
 		box, ok := inputBoxUpTo(pane, strings.Count(pane, "\n"))
 		if ok && inputHolds(pane, text) {
-			presses := max(utf8.RuneCountInString(box), utf8.RuneCountInString(text)) + queueClearMargin
-			if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "C-e").Run(); err != nil {
-				return false, err
-			}
-			if err := in.Command(osUser, "send-keys", "-N", strconv.Itoa(presses), "-t", exactPane(session), "BSpace").Run(); err != nil {
+			if err := in.wipeBox(osUser, session, max(utf8.RuneCountInString(box), utf8.RuneCountInString(text))); err != nil {
 				return false, err
 			}
 			return true, nil
