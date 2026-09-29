@@ -204,8 +204,7 @@ describe("<PromptField> — a send the page leaves behind", () => {
     const gate = new Promise<boolean>((_, reject) => {
       fail = () => reject(new TypeError("Failed to fetch"));
     });
-    const send = (): Promise<boolean> =>
-      (tracked ? trackPrompt(gate) : gate).catch(() => false);
+    const send = (): Promise<boolean> => (tracked ? trackPrompt(gate) : gate).catch(() => false);
     return { send, fail: () => fail() };
   };
   const settle = () => new Promise((r) => setTimeout(r, 0));
@@ -213,19 +212,22 @@ describe("<PromptField> — a send the page leaves behind", () => {
   // Chromium rejects the request right after beforeunload, before pagehide
   // (measured on the local build, 2026-09-28: beforeunload at 3608 ms, the
   // rejection at 3619, pagehide at 3645). iOS Safari fires no beforeunload.
-  it.each(["beforeunload", "pagehide"])("does not bring back words whose prompt request was in flight (%s)", async (going) => {
-    const s = cutOff(true);
-    const { container } = render(() => (
-      <PromptField onSend={s.send} label="Message" draftKey="k7m2q9x4tp0v" />
-    ));
-    type(field(container), "reply with mango");
-    fireEvent.keyDown(field(container), { key: "Enter" });
-    window.dispatchEvent(new Event(going));
-    s.fail();
-    await settle();
-    expect(field(container).value).toBe("");
-    expect(loadDraft("k7m2q9x4tp0v")).toBeNull();
-  });
+  it.each(["beforeunload", "pagehide"])(
+    "does not bring back words whose prompt request was in flight (%s)",
+    async (going) => {
+      const s = cutOff(true);
+      const { container } = render(() => (
+        <PromptField onSend={s.send} label="Message" draftKey="k7m2q9x4tp0v" />
+      ));
+      type(field(container), "reply with mango");
+      fireEvent.keyDown(field(container), { key: "Enter" });
+      window.dispatchEvent(new Event(going));
+      s.fail();
+      await settle();
+      expect(field(container).value).toBe("");
+      expect(loadDraft("k7m2q9x4tp0v")).toBeNull();
+    },
+  );
 
   it("brings back words that never left, and words refused while the page stays", async () => {
     const early = cutOff(false);
