@@ -635,11 +635,40 @@ const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
  * the conversation. Last match wins, as the newest thing on the pane.
  */
 const BANNER_RE = /(claude-[a-z0-9.-]+(?:\[1m\])?) with ([a-z]+) effort · /g;
+/**
+ * The same line on a narrow pane. At 47 columns Claude wraps the banner where
+ * the " · " was, so "effort" ends the row (CLI 2.1.284, 2026-09-29; deployed
+ * review round 1 of the T3 pass read "Model" on a fresh phone-width session).
+ * Only a row led by the logo's block glyphs counts, which a line of the
+ * conversation is not.
+ */
+const BANNER_WRAPPED_RE =
+  /^[^\S\n]*[\u2580-\u259f][\u2580-\u259f ]*(claude-[a-z0-9.-]+(?:\[1m\])?) with ([a-z]+) effort[^\S\n]*$/gm;
+/**
+ * Narrower still (36 columns and under) the banner cuts the effort short with
+ * "…". The model then comes off the line managed settings add under it,
+ * "▎ Using claude-opus-5-5 (from managed settings)", and the effort off the
+ * hint Claude draws above its box, "● high · /effort", when it shows one.
+ */
+const USING_RE = /^▎ Using (claude-[a-z0-9.-]+(?:\[1m\])?) \(from/gm;
+const EFFORT_HINT_RE = /● ([a-z]+) · \/effort/g;
 
 export function modelFromBanner(pane: string): ModelState | undefined {
   let found: ModelState | undefined;
-  for (const m of pane.matchAll(BANNER_RE)) found = { model: m[1]!, effort: m[2]! };
-  return found;
+  let at = -1;
+  for (const re of [BANNER_RE, BANNER_WRAPPED_RE]) {
+    for (const m of pane.matchAll(re)) {
+      if ((m.index ?? 0) >= at) {
+        at = m.index ?? 0;
+        found = { model: m[1]!, effort: m[2]! };
+      }
+    }
+  }
+  if (found) return found;
+  const model = [...pane.matchAll(USING_RE)].at(-1)?.[1];
+  if (!model) return undefined;
+  const effort = [...pane.matchAll(EFFORT_HINT_RE)].at(-1)?.[1];
+  return effort ? { model, effort } : { model };
 }
 
 /**
