@@ -87,6 +87,7 @@ import {
   contextWindow,
   fillModel,
   isCurrentModel,
+  codexModelFromPane,
   modelFromBanner,
   type ModelField,
   type ModelHarness,
@@ -563,6 +564,9 @@ export const TextView: Component<{
         const banner = modelFromBanner(pane);
         if (banner) setBannerModel(banner);
         setTrustOnPane(trustDialogUp(pane));
+      } else if (props.harness === "codex") {
+        const named = codexModelFromPane(pane);
+        if (named) setBannerModel(named);
       }
       const seen = modeFromPane(pane);
       if (!seen) continue;

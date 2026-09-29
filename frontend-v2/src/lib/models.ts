@@ -643,6 +643,31 @@ export function modelFromBanner(pane: string): ModelState | undefined {
 }
 
 /**
+ * The model and effort a Codex pane names, or undefined. Codex draws them in
+ * its header box ("model:  gpt-5.6-terra medium   /model to change") and in
+ * the line under its input ("gpt-5.6-terra medium · /tmp"), codex-cli 0.144.3.
+ * The lobby keeps no transcript for a Codex session, so the pane is the only
+ * source, and the model button read "Model" without it (deployed review rounds
+ * 3 to 5, 2026-09-28). Last match wins, as the newest thing on the pane.
+ */
+const CODEX_HEADER_RE = /model:\s+(\S+)\s+([a-z]+)\s+\/model to change/g;
+const CODEX_FOOT_RE = /^\s*((?:gpt|o\d|codex)[\w.-]*)\s+([a-z]+)\s+·\s/gm;
+
+export function codexModelFromPane(pane: string): ModelState | undefined {
+  let found: ModelState | undefined;
+  let at = -1;
+  for (const re of [CODEX_HEADER_RE, CODEX_FOOT_RE]) {
+    for (const m of pane.matchAll(re)) {
+      if ((m.index ?? 0) >= at) {
+        at = m.index ?? 0;
+        found = { model: m[1]!, effort: m[2]! };
+      }
+    }
+  }
+  return found;
+}
+
+/**
  * The short note under a model's name in the model sheet, as the prototype
  * writes its rows ("Most capable", "Fast, strong at code", "Fastest";
  * composer/6-t3.html). The exact slug stays in the row's title. Only Claude's
