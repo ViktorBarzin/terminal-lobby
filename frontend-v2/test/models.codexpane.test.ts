@@ -35,7 +35,10 @@ describe("codexModelFromPane", () => {
       resolve(process.cwd(), "../sessionio/testdata/status-codex-0158-idle.txt"),
       "utf8",
     );
-    expect(codexModelFromPane(pane)).toEqual({ model: "GPT-6-Astra", effort: "medium" });
+    // Kept as the slug (config.toml says model = "gpt-6-astra"), which is how the
+    // model sheet lists it: the button read "GPT-6-Astra" over a sheet row
+    // "gpt-6-astra" (deployed review round 2).
+    expect(codexModelFromPane(pane)).toEqual({ model: "gpt-6-astra", effort: "medium" });
   });
 
   it("says nothing for a pane that names no model", () => {

@@ -122,6 +122,16 @@ const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.
  * (sessionio/answerdrive.go).
  */
 const PANE_READ_DELAYS_MS = [150, 600];
+/**
+ * How often, and for how long, a Codex view with no model named reads the
+ * pane again. Codex has no transcript here, so no turn opens or closes to
+ * prompt a reading, and a view opened during codex's start-up dialogs read
+ * "Model" until a reload (deployed review round 2 of the T3 pass, 2026-09-29).
+ * Ten minutes covers a person reading those dialogs; the view coming back on
+ * screen starts it again.
+ */
+const CODEX_MODEL_POLL_MS = 2_000;
+const CODEX_MODEL_POLLS = 300;
 
 /**
  * Why the mode cannot change while a dialog is on the pane.
@@ -608,6 +618,17 @@ export const TextView: Component<{
   };
   createEffect(() => {
     if (onScreen()) rereadMode();
+  });
+  // A Codex session names its model only on its pane (CODEX_MODEL_POLL_MS).
+  // Reading is all this does: nothing is typed into the session.
+  createEffect(() => {
+    if (props.harness !== "codex" || !onScreen() || bannerModel()) return;
+    let polls = 0;
+    const timer = setInterval(() => {
+      if (++polls > CODEX_MODEL_POLLS) clearInterval(timer);
+      else rereadMode();
+    }, CODEX_MODEL_POLL_MS);
+    onCleanup(() => clearInterval(timer));
   });
   const turnOpen = createMemo(() => live() !== undefined);
   // And when the transcript's own mode moves. That is usually a new turn's

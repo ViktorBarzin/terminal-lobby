@@ -681,7 +681,9 @@ export function modelFromBanner(pane: string): ModelState | undefined {
  *
  * codex-cli 0.158.0 capitalises the name under the input ("GPT-6-Astra medium
  * · ~/code") and draws no "model:" header line, so the footer is read in any
- * case (deployed review round 1 of the T3 pass, 2026-09-29).
+ * case (deployed review round 1 of the T3 pass, 2026-09-29), and the name is
+ * given back as the slug codex's config and the model sheet use: the button
+ * read "GPT-6-Astra" over a sheet row "gpt-6-astra" (round 2).
  */
 const CODEX_HEADER_RE = /model:\s+(\S+)\s+([a-z]+)\s+\/model to change/g;
 const CODEX_FOOT_RE = /^\s*((?:gpt|o\d|codex)[\w.-]*)\s+([a-z]+)\s+·\s/gim;
@@ -693,7 +695,7 @@ export function codexModelFromPane(pane: string): ModelState | undefined {
     for (const m of pane.matchAll(re)) {
       if ((m.index ?? 0) >= at) {
         at = m.index ?? 0;
-        found = { model: m[1]!, effort: m[2]! };
+        found = { model: m[1]!.toLowerCase(), effort: m[2]! };
       }
     }
   }
