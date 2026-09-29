@@ -3,6 +3,7 @@ package sessionio
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Claude Code's tool permission prompt, read off the pane.
@@ -247,19 +248,59 @@ func parsePermissionRows(lines []string) (permScreen, bool) {
 	// title, then what the tool will do. Without the rule on screen (a prompt
 	// taller than the pane) there is no telling where the prompt starts, so
 	// none of it is read.
-	var head []string
+	var head []headLine
+	content := false
 	for j := 0; i >= 0 && j < maxRegionLines; i, j = i-1, j+1 {
 		line := lines[i]
 		if isRuleLine(line) {
-			d.Title, d.Detail = permissionHead(head)
+			edge := utf8.RuneCountInString(strings.TrimRight(line, " "))
+			d.Title, d.Detail = permissionHead(unwrapHead(head, edge))
 			return s, true
 		}
-		// Blank lines are kept, as "", because they end the tip's paragraph.
-		if !reDottedRule.MatchString(line) {
-			head = append([]string{strings.TrimSpace(line)}, head...)
+		// A Write's file sits between two dotted rules, each line behind its
+		// line number.
+		if reDottedRule.MatchString(line) {
+			content = !content
+			continue
 		}
+		// Blank lines are kept, as "", because they end the tip's paragraph.
+		head = append([]headLine{{raw: line, content: content}}, head...)
 	}
 	return s, true
+}
+
+// headLine is a line over a permission prompt's question, as the pane drew it.
+type headLine struct {
+	raw string
+	// Inside a Write's dotted rules: a line of the file, behind its number.
+	content bool
+}
+
+// reGutter is the line number a Write draws in front of each line of the file.
+var reGutter = regexp.MustCompile(`^\s*\d+ ?`)
+
+// unwrapHead reads the lines over the question back as they were written.
+// Claude Code wraps them at the pane's edge, mid-word where a path has no space
+// to break at, so a line that runs to the edge carries on in the next one and
+// the two are joined with nothing between them (deployed review rounds 3 to 5,
+// 2026-09-28: a file name split in two on the card). A Write's lines lose the
+// line numbers drawn beside them. Each line comes back trimmed.
+func unwrapHead(head []headLine, edge int) []string {
+	var out []string
+	joining := false
+	for _, h := range head {
+		text := strings.TrimSpace(h.raw)
+		if h.content && !joining {
+			text = strings.TrimSpace(reGutter.ReplaceAllString(h.raw, ""))
+		}
+		if joining && len(out) > 0 && text != "" {
+			out[len(out)-1] += text
+		} else {
+			out = append(out, text)
+		}
+		joining = edge > 0 && utf8.RuneCountInString(strings.TrimRight(h.raw, " ")) >= edge
+	}
+	return out
 }
 
 // permissionHead splits the lines between the rule and the question into the

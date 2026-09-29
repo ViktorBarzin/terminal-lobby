@@ -40,9 +40,11 @@ func TestParsePermissionDialogReadsThePromptAsDrawn(t *testing.T) {
 			},
 		}},
 		{"permission-write.txt", Dialog{
-			Kind:   DialogKindPermission,
-			Title:  "Create file",
-			Detail: []string{"b.txt", "1 bee"},
+			Kind:  DialogKindPermission,
+			Title: "Create file",
+			// The file's own lines, without the gutter numbers the pane draws
+			// beside them (deployed review round 5, 2026-09-29).
+			Detail: []string{"b.txt", "bee"},
 			Prompt: "Do you want to create b.txt?",
 			Options: []PlanOption{
 				{Number: 1, Label: "Yes"},
@@ -272,5 +274,62 @@ func TestParsePermissionRefusesStrayLinesUnderTheRows(t *testing.T) {
 	}, "\n")
 	if d := ParsePermissionDialog(pane); d != nil {
 		t.Errorf("parsed as %+v", d)
+	}
+}
+
+// Claude Code wraps what the tool will do at the pane's edge, mid-word when a
+// path has no space to break at, and the card copied the break into the
+// command, splitting a file name (deployed review rounds 3 to 5, 2026-09-28).
+// A line that runs to the pane's edge carries on in the next one, and is read
+// back as one line. The edge is the rule's width.
+func TestParsePermissionDialogJoinsWhatThePaneWrappedAtItsEdge(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	pane := strings.Join([]string{
+		rule,
+		" Read file",
+		"",
+		"  Read(/var/tmp/permission-wrap/nested/f",
+		"  ile-with-a-long-name.txt)",
+		"",
+		" Do you want to proceed?",
+		" ❯ 1. Yes",
+		"   2. No",
+		"",
+		" Esc to cancel · Tab to amend",
+		"",
+	}, "\n")
+	d := ParsePermissionDialog(pane)
+	if d == nil {
+		t.Fatal("did not parse")
+	}
+	want := []string{"Read(/var/tmp/permission-wrap/nested/file-with-a-long-name.txt)"}
+	if !reflect.DeepEqual(d.Detail, want) {
+		t.Errorf("detail = %q, want %q", d.Detail, want)
+	}
+}
+
+// A line that ends short of the edge is its own line, however long.
+func TestParsePermissionDialogKeepsLinesThatEndBeforeTheEdge(t *testing.T) {
+	rule := strings.Repeat("─", 40)
+	pane := strings.Join([]string{
+		rule,
+		" Bash command",
+		"",
+		"   ls /tmp",
+		"   List the files",
+		"",
+		" Do you want to proceed?",
+		" ❯ 1. Yes",
+		"   2. No",
+		"",
+		" Esc to cancel · Tab to amend",
+		"",
+	}, "\n")
+	d := ParsePermissionDialog(pane)
+	if d == nil {
+		t.Fatal("did not parse")
+	}
+	if want := []string{"ls /tmp", "List the files"}; !reflect.DeepEqual(d.Detail, want) {
+		t.Errorf("detail = %q, want %q", d.Detail, want)
 	}
 }
