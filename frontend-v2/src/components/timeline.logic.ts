@@ -274,6 +274,14 @@ export interface TurnFoldRow {
   durationMs?: number;
   /** The replies and work groups the fold hides, in order. */
   hidden: FoldedRow[];
+  /**
+   * What opening the fold shows, in order, when a row the fold keeps in view
+   * (a plan, an answered question, a status line) happened between two rows
+   * it hides: those, with the kept rows back in their place. Absent when
+   * opening shows `hidden` as it is. Opened, a kept row shows here and not
+   * after the fold (`visibleRows`).
+   */
+  opened?: FoldedRow[];
   /** At least one hidden row is a failure — the collapsed row must say so. */
   hasError: boolean;
   /** The reader stopped the turn: the fold is drawn stopped, not done. */
@@ -1203,6 +1211,14 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
     }
     const changed = [...new Set(work.flatMap(changedFilesOf))];
     const duration = turnDuration(turn);
+    // Deployed review round 1 of the T3 pass (2026-09-29): opened, a plan
+    // approved between two work groups read as coming after both.
+    const firstHidden = work.findIndex((r, i) => !kept(r, i));
+    let lastHidden = -1;
+    work.forEach((r, i) => {
+      if (!kept(r, i)) lastHidden = i;
+    });
+    const span = firstHidden >= 0 ? work.slice(firstHidden, lastHidden + 1) : [];
     const fold: TurnFoldRow | null =
       hidden.length > 0
         ? {
@@ -1216,6 +1232,7 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
             stopped: stop !== undefined || hidden.some((r) => r.kind === "work-group" && r.stopped),
             changedFiles: changed,
             pictures: hidden.flatMap((r) => (r.kind === "work-group" ? r.pictures : [])),
+            ...(span.length > hidden.length ? { opened: span } : {}),
             ...(turn.usage !== undefined ? { usage: turn.usage } : {}),
             ...(duration !== undefined ? { durationMs: duration } : {}),
           }
@@ -1811,10 +1828,17 @@ export function visibleRows(
   expandedTurns: ReadonlySet<string>,
 ): TimelineRow[] {
   const out: TimelineRow[] = [];
+  // Kept rows an opened fold has already drawn in their place (`opened`).
+  let drawn: Set<string> | null = null;
   for (const r of rows) {
+    if (drawn?.has(r.key)) continue;
     out.push(r);
     if (r.kind === "turn-fold" && expandedTurns.has(r.turnKey)) {
-      for (const h of r.hidden) out.push(h);
+      for (const h of r.opened ?? r.hidden) out.push(h);
+      if (r.opened) {
+        drawn ??= new Set();
+        for (const h of r.opened) drawn.add(h.key);
+      }
     }
   }
   return out;
