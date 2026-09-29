@@ -1693,8 +1693,11 @@ export const TextView: Component<{
       if (!up) return { on: false, gen, typed };
       if (prev.on) return { on: gen === prev.gen, gen: prev.gen, typed };
       if (typed !== prev.typed) return { on: true, gen, typed };
+      // Not on a phone: there the field lets go of the focus as the card
+      // docks (`letGoOnPhone`), or its keyboard covers the card.
       return {
-        on: composerFocused() && (composerSinks()?.text() ?? "").trim() !== "",
+        on:
+          !isCoarsePointer() && composerFocused() && (composerSinks()?.text() ?? "").trim() !== "",
         gen,
         typed,
       };
@@ -1832,14 +1835,69 @@ export const TextView: Component<{
     el instanceof HTMLTextAreaElement && !!el.closest(".tl-composer") && el.value === "";
   const [cardKeysArmed, setCardKeysArmed] = createSignal(false);
   let armTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Disarm the card's keys and arm them CARD_KEYS_ARM_MS from now. */
+  const armCardKeys = (): void => {
+    clearTimeout(armTimer);
+    setCardKeysArmed(false);
+    armTimer = setTimeout(() => setCardKeysArmed(true), CARD_KEYS_ARM_MS);
+  };
   createEffect(
     on(cardUp, (up) => {
       clearTimeout(armTimer);
       setCardKeysArmed(false);
-      if (up) armTimer = setTimeout(() => setCardKeysArmed(true), CARD_KEYS_ARM_MS);
+      if (up) armCardKeys();
     }),
   );
   onCleanup(() => clearTimeout(armTimer));
+  /**
+   * On a phone, a card that docks while the field has the focus takes it off
+   * the field, which puts the keyboard away. The draft stays in the field,
+   * which stays mounted, and comes back with it once the card goes.
+   *
+   * Deployed review round 3 of the T3 pass (2026-09-29, Android emulator):
+   * the field kept the focus behind the card, as it does on a desktop
+   * (`behind`), so the keyboard stayed up. The card got the 471px above it,
+   * its No row and "Type your own answer" were scrolled out of sight, and a
+   * "1" typed next went into the field nobody could see.
+   *
+   * The card's rows land where the keys were, so its keys and taps arm only
+   * once the keyboard has finished going: each step of the viewport growing
+   * back starts CARD_KEYS_ARM_MS again (`tapTooSoon`).
+   */
+  createEffect(
+    on(composerHidden, (up) => {
+      if (!up || !isCoarsePointer() || !composerFocused()) return;
+      const draft = (composerSinks()?.text() ?? "").trim() !== "";
+      const active = document.activeElement;
+      if (active instanceof HTMLElement) active.blur();
+      if (draft) props.notify?.("Claude needs an answer. Your message is kept for after.", "info");
+      const vv = window.visualViewport;
+      if (!vv) return;
+      const rearm = (): void => {
+        if (cardUp() && !cardKeysArmed()) armCardKeys();
+      };
+      vv.addEventListener("resize", rearm);
+      onCleanup(() => vv.removeEventListener("resize", rearm));
+    }),
+  );
+  /**
+   * A tap on a card's button before its keys arm presses nothing on a phone:
+   * it was meant for the keyboard that was there a moment ago, or for the
+   * conversation the card has just covered.
+   */
+  onMount(() => {
+    const el = viewEl;
+    if (!el) return;
+    const tapTooSoon = (e: MouseEvent): void => {
+      if (!cardUp() || cardKeysArmed() || !isCoarsePointer()) return;
+      const t = e.target;
+      if (!(t instanceof Element) || !t.closest(".tl-qcard button")) return;
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    el.addEventListener("click", tapTooSoon, true);
+    onCleanup(() => el.removeEventListener("click", tapTooSoon, true));
+  });
   // A card answered and gone hands the focus back to the field that comes
   // back in its place, so the next message can be typed at once (deployed
   // review rounds 3 to 5, 2026-09-28: it fell to the page). On a phone only

@@ -8,7 +8,7 @@
  * rows. A row's number is the key that picks it (measured: "1" ran the command
  * with no Enter), so a tap presses that digit.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, waitFor, fireEvent } from "@solidjs/testing-library";
 import { createSignal, type ComponentProps } from "solid-js";
 import { TextView } from "../src/components/TextView";
@@ -885,5 +885,98 @@ describe("keys typed as a permission card docks", () => {
     );
     expect(fireEvent.keyDown(v.card()!, { key: "3" })).toBe(false);
     await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["3"]));
+  });
+});
+
+/**
+ * Deployed review round 3 of the T3 pass (2026-09-29, Android emulator, real
+ * Chrome): a card docked while the phone's keyboard was up for a draft. The
+ * hidden field kept the focus, so the keyboard stayed up and hid the card's
+ * No row and "Type your own answer", and every key went into a field nobody
+ * could see. On a phone the field now lets go of the focus as a card docks,
+ * which puts the keyboard away; the draft stays in it for after. The card's
+ * rows then sit where the keys were, so a tap meant for a key does not press
+ * one until the card has been still for a moment.
+ */
+describe("a card that docks over the phone's keyboard", () => {
+  const original = window.matchMedia;
+  const originalVV = Object.getOwnPropertyDescriptor(window, "visualViewport");
+  beforeEach(() => {
+    window.matchMedia = ((q: string) =>
+      ({
+        media: q,
+        matches: q.includes("pointer: coarse"),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        onchange: null,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  });
+  afterEach(() => {
+    window.matchMedia = original;
+    if (originalVV) Object.defineProperty(window, "visualViewport", originalVV);
+    else Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  const dock = async (v: ReturnType<typeof mount>, draft: string) => {
+    const field = v.r.container.querySelector<HTMLTextAreaElement>("textarea")!;
+    field.focus();
+    fireEvent.input(field, { target: { value: draft } });
+    v.setEvents([...base, ev({ id: 3, kind: "meta", meta: "asking", body: READING })]);
+    await waitFor(() => expect(v.card()).not.toBeNull());
+    return field;
+  };
+
+  it("lets go of the field's focus, keeps the draft, and says so", async () => {
+    const v = mount(base);
+    const field = await dock(v, "my draft");
+    await waitFor(() => expect(document.activeElement).not.toBe(field));
+    expect(v.composer().hidden).toBe(true);
+    expect(field.value).toBe("my draft");
+    expect(v.notify).toHaveBeenCalledWith(
+      "Claude needs an answer. Your message is kept for after.",
+      "info",
+    );
+    expect(v.notify).not.toHaveBeenCalledWith(
+      "Claude needs an answer. What you type stays in your message for after.",
+      "info",
+    );
+    v.setEvents([
+      ...base,
+      ev({ id: 3, kind: "meta", meta: "asking", body: READING }),
+      ev({ id: 4, kind: "tool_result", toolId: "b1", body: "" }),
+    ]);
+    await waitFor(() => expect(v.card()).toBeNull());
+    expect(field.value).toBe("my draft");
+  });
+
+  it("presses no row for a tap the moment it docks, and does once it has been up", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    const row = () => v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!;
+    fireEvent.click(row());
+    await Promise.resolve();
+    expect(v.onKeys).not.toHaveBeenCalled();
+    await armed(v.r.container);
+    fireEvent.click(row());
+    await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
+  });
+
+  it("waits for the keyboard to finish going before a tap presses a row", async () => {
+    const vv = Object.assign(new EventTarget(), { height: 471 });
+    Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });
+    const v = mount(base);
+    await dock(v, "my draft");
+    const docked = Date.now();
+    // The keyboard is still sliding away 400 ms in.
+    await new Promise((done) => setTimeout(done, 400));
+    vv.height = 783;
+    vv.dispatchEvent(new Event("resize"));
+    await new Promise((done) => setTimeout(done, 300));
+    expect(Date.now() - docked).toBeGreaterThan(600);
+    expect(v.r.container.querySelector('[data-card-keys="armed"]')).toBeNull();
+    await armed(v.r.container);
   });
 });
