@@ -10,7 +10,7 @@
  * tap outside the input. The fix takes focus during the gesture, on
  * pointerdown, before any layout change can move anything.
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
 import { Composer } from "../src/components/Composer";
 
@@ -114,18 +114,17 @@ describe("the composer's affordances", () => {
 });
 
 /**
- * The phone keyboard's blue send/return key.
+ * Enter on a DESKTOP keyboard sends.
  *
- * Reported 2026-08-17: pressing it cleared the field and sent nothing, while the
- * app's own Send button worked. Two things were wrong. The send itself forked on
- * a coarse pointer into the terminal iframe, which in Text mode has not attached
- * (the attach is lazy), so the bytes were dropped and the field cleared anyway.
- * And Enter on a textarea does not reach a keydown handler the same way on every
- * mobile keyboard — with a composition in progress it arrives as a commit and is
- * correctly skipped, leaving the message unsent. `beforeinput` with inputType
- * "insertLineBreak" is that key, unambiguously.
+ * The key's `beforeinput` (inputType "insertLineBreak") is handled as well as
+ * its keydown, because an input method committing a candidate can deliver the
+ * keydown as a composition keystroke, which is correctly skipped. These tests
+ * pinned the phone's send key until 2026-09-28, when Viktor chose the T3 and
+ * ChatGPT rule for a phone: its return key adds a line and the round button
+ * sends (see "the phone keyboard's return key" below). jsdom has no
+ * matchMedia, so these mount as a fine pointer, which is the desktop.
  */
-describe("the keyboard's send key", () => {
+describe("a desktop keyboard's Enter", () => {
   const type = (ta: HTMLTextAreaElement, value: string) =>
     fireEvent.input(ta, { target: { value } });
 
@@ -199,5 +198,86 @@ describe("the keyboard's send key", () => {
     type(ta, "にほんご");
     fireEvent.keyDown(ta, { key: "Enter", isComposing: true });
     expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The phone keyboard's return key adds a line (Viktor, 2026-09-28), as it does
+ * in T3 Code, ChatGPT and Claude on an iPhone; the round button sends. It
+ * reversed the rule from 2026-08-17 where the phone's send key sent through
+ * `beforeinput` insertLineBreak. "Phone" is a coarse pointer, the same test the
+ * rest of the touch ergonomics use.
+ */
+describe("the phone keyboard's return key", () => {
+  const original = window.matchMedia;
+  beforeEach(() => {
+    window.matchMedia = ((q: string) =>
+      ({
+        media: q,
+        matches: q.includes("pointer: coarse"),
+        addEventListener: () => {},
+        removeEventListener: () => {},
+        addListener: () => {},
+        removeListener: () => {},
+        onchange: null,
+        dispatchEvent: () => false,
+      }) as unknown as MediaQueryList) as typeof window.matchMedia;
+  });
+  afterEach(() => {
+    window.matchMedia = original;
+  });
+  const type = (ta: HTMLTextAreaElement, value: string) =>
+    fireEvent.input(ta, { target: { value } });
+  const lineBreak = (ta: HTMLTextAreaElement) =>
+    fireEvent(
+      ta,
+      new InputEvent("beforeinput", {
+        inputType: "insertLineBreak",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+
+  it("adds a newline and sends nothing", () => {
+    const onSend = vi.fn(async () => true);
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+    ));
+    const ta = field(container);
+    type(ta, "first line");
+    const keyNotPrevented = fireEvent.keyDown(ta, { key: "Enter" });
+    const inputNotPrevented = lineBreak(ta);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(keyNotPrevented).toBe(true);
+    expect(inputNotPrevented).toBe(true); // the field keeps the newline
+  });
+
+  it("labels the key return, not send", () => {
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={async () => true} onStop={() => {}} onResolve={() => {}} />
+    ));
+    expect(field(container).getAttribute("enterkeyhint")).toBe("enter");
+  });
+
+  it("leaves sending to the round button, with every line intact", async () => {
+    const onSend = vi.fn(async () => true);
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+    ));
+    const ta = field(container);
+    type(ta, "first line\nsecond line");
+    fireEvent.click(container.querySelector<HTMLButtonElement>(".tl-send")!);
+    expect(onSend).toHaveBeenCalledWith("first line\nsecond line", []);
+  });
+
+  it("still sends on Ctrl or Cmd+Enter from a hardware keyboard", () => {
+    const onSend = vi.fn(async () => true);
+    const { container } = render(() => (
+      <Composer pending={[]} onSend={onSend} onStop={() => {}} onResolve={() => {}} />
+    ));
+    const ta = field(container);
+    type(ta, "ship it");
+    fireEvent.keyDown(ta, { key: "Enter", metaKey: true });
+    expect(onSend).toHaveBeenCalledWith("ship it", []);
   });
 });

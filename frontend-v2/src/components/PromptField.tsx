@@ -36,7 +36,7 @@ import {
   storedDisplayName,
 } from "../lib/attachments";
 import { EyeIcon, PlusIcon, SendArrowIcon, StopSquareIcon } from "./Icons";
-import { createMobileFlip } from "../mobile/pointer";
+import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { dismissFloat, dismissOnPress } from "./overlay";
 import { PlusMenu } from "./PlusMenu";
 
@@ -50,9 +50,10 @@ import { PlusMenu } from "./PlusMenu";
  * composer writes the prompt a session will be CREATED with and puts a
  * project, a command and a model above it. Everything about the act of
  * writing lives here — multi-line with Enter to send and Shift+Enter for a
- * newline, `/` and `@` completion, attachments, the unsent draft, ↑ history,
+ * newline on a desktop (a phone's return key adds a line and the round button
+ * sends), `/` and `@` completion, attachments, the unsent draft, ↑ history,
  * and the mobile input attributes (autocapitalize off, autocorrect and
- * spellcheck on, enterkeyhint send) that restore QuickType and swipe typing.
+ * spellcheck on) that restore QuickType and swipe typing.
  *
  * An attached file lives IN the message, as a token the mirror layer draws a
  * chip behind — see `mirror` below and lib/attachments.ts for the token
@@ -302,6 +303,8 @@ export const PromptField: Component<{
       item.getBoundingClientRect().top - menu.getBoundingClientRect().top + menu.scrollTop;
     menu.scrollTop = scrollTopFor(top, item.offsetHeight, menu.scrollTop, menu.clientHeight);
   });
+  /** A touch keyboard, whose return key adds a line rather than sending. */
+  const coarse = createCoarsePointer();
   /**
    * Where ↑ has walked to in history; -1 is "not browsing".
    *
@@ -1026,6 +1029,10 @@ export const PromptField: Component<{
       allowLineBreak = true;
       return;
     }
+    // A phone's return key adds a line and the round button sends (Viktor,
+    // 2026-09-28, as in T3 Code, ChatGPT and Claude on an iPhone). Ctrl or
+    // Cmd+Enter from a hardware keyboard on the same device still sends.
+    if (e.key === "Enter" && coarse() && !e.metaKey && !e.ctrlKey) return;
     if (e.key === "Enter" && !e.isComposing) {
       e.preventDefault();
       submit();
@@ -1033,7 +1040,8 @@ export const PromptField: Component<{
   };
 
   /**
-   * The phone keyboard's blue send/return key.
+   * The keyboard's Enter as `beforeinput` sees it, on a desktop. A phone's
+   * return key adds a line instead (see onKeyDown).
    *
    * Enter on a textarea is a line break, and which events a mobile keyboard
    * fires for that key varies — with an IME or autocorrect committing a
@@ -1048,6 +1056,8 @@ export const PromptField: Component<{
   let allowLineBreak = false;
   const onBeforeInput = (e: InputEvent) => {
     if (e.inputType !== "insertLineBreak") return;
+    // On a phone the key is return: the line goes in (see onKeyDown).
+    if (coarse()) return;
     if (allowLineBreak) {
       allowLineBreak = false;
       return;
@@ -1409,7 +1419,7 @@ export const PromptField: Component<{
               autocapitalize="off"
               autocorrect="on"
               spellcheck={true}
-              enterkeyhint="send"
+              enterkeyhint={coarse() ? "enter" : "send"}
               aria-label={props.label}
               onInput={() => {
                 setPlusOpen(false);
