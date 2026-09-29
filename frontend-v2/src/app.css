@@ -5969,7 +5969,6 @@ body.tl-kb-up {
   border-radius: 12px;
   background: color-mix(in srgb, var(--state-awaiting) 8%, var(--bg-card));
   color: var(--text-primary);
-  font-family: var(--font-text);
   font-size: calc(14px * var(--tl-text-scale, 1));
 }
 .tl-latest-band {

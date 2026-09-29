@@ -295,11 +295,17 @@ describe("the watching pill", () => {
 });
 
 // Round 7 (2026-09-28): six models in the desktop popover left No ask and the
-// context line under its scroll at 1280x800. In two columns there each cell is
-// the name alone; the phone's sheet keeps the note under it.
+// context line under its scroll at 1280x800, and the notes under the model
+// names were dropped for room. The deployed reviews kept missing them, so the
+// popover grew to 440px (ModelSheet POP_W) and each mode's line moved beside
+// its name instead, which frees more height than the notes take (1c5a2788).
 describe("the desktop model popover", () => {
-  it("drops the note under a model's name in two columns", () => {
-    expect(rule('.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub')).toMatch(/display:\s*none/);
+  it("keeps the note under a model's name", () => {
+    expect(() => rule('.tl-ms-pop .tl-ms-models[data-cols="2"] .tl-ms-sub')).toThrow();
+  });
+
+  it("puts a mode's line beside its name", () => {
+    expect(rule(".tl-ms-pop .tl-ms-mode .tl-ms-desc")).toMatch(/grid-row:\s*1/);
   });
 });
 

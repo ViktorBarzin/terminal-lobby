@@ -197,6 +197,9 @@ src/
     focus-trap.ts        The modal dialog contract — Tab wraps at both ends,
                          focus lands on the dialog and returns to its opener.
                          Shared by Settings, Skills and the file preview
+    back-closes.ts       The phone's Back closes the overlay on top (the
+                         picture lightbox, the model sheet): each open overlay
+                         pushes one history entry that says how deep it is
     ownwhile.ts          Hold a window.__tl* handle only while a view is the one
                          on screen. With several sessions mounted, mount order
                          stopped meaning anything; handover is order-independent
