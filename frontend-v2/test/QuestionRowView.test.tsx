@@ -62,3 +62,23 @@ describe("<QuestionRowView> once answered", () => {
     expect(qs[1]!.querySelector(".tl-question-answer")).toBeNull();
   });
 });
+
+describe("<QuestionRowView> after Chat about this", () => {
+  it("shows the words the reader sent instead of an answer, once", () => {
+    const r = render(() => (
+      <QuestionRowView row={{ ...row, answers: [], replied: "Why do you ask?" }} />
+    ));
+    const lines = [...r.container.querySelectorAll(".tl-question-answer")].map(
+      (e) => e.textContent,
+    );
+    expect(lines).toEqual(["replied instead: Why do you ask?"]);
+  });
+
+  it("says the questions were declined when no words came with it", () => {
+    const r = render(() => <QuestionRowView row={{ ...row, answers: [], replied: "" }} />);
+    const lines = [...r.container.querySelectorAll(".tl-question-answer")].map(
+      (e) => e.textContent,
+    );
+    expect(lines).toEqual(["not answered: you chose to talk about it instead"]);
+  });
+});

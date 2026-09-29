@@ -184,12 +184,63 @@ describe("questions", () => {
         toolId: "q2",
         body: "",
         result: {
-          answers: { "Which fruits do you want?": "Apple, Plum", "Which drink do you want?": "Coffee" },
+          answers: {
+            "Which fruits do you want?": "Apple, Plum",
+            "Which drink do you want?": "Coffee",
+          },
         },
       }),
     );
     const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
     expect(q.answers).toEqual(["Coffee", "Apple, Plum"]);
+  });
+
+  // Deployed review round 1 of the T3 pass (2026-09-29): "Chat about this" on
+  // the card sent Claude the words, and the record showed only the options,
+  // so the reader could not see what they had said. session-events' hold
+  // declines the call with the words in its message (hold.go chatMessage).
+  it("records the words sent with Chat about this instead of an answer", () => {
+    const rows = rowsOf(
+      prompt(),
+      askEvent(),
+      ev({
+        kind: "tool_result",
+        toolId: "q1",
+        isError: true,
+        body: "The user chose not to pick an answer and replied instead: Why do you ask?",
+      }),
+    );
+    const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
+    expect(q.pending).toBe(false);
+    expect(q.answers).toEqual([]);
+    expect(q.replied).toBe("Why do you ask?");
+  });
+
+  it("records a Chat about this with no words as declined", () => {
+    const rows = rowsOf(
+      prompt(),
+      askEvent(),
+      ev({
+        kind: "tool_result",
+        toolId: "q1",
+        isError: true,
+        body:
+          "The user chose not to answer these questions and wants to talk about them instead. " +
+          "Do not ask them again; wait for the user's next message.",
+      }),
+    );
+    const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
+    expect(q.replied).toBe("");
+  });
+
+  it("says nothing of a reply for an ordinary answer", () => {
+    const rows = rowsOf(
+      prompt(),
+      askEvent(),
+      ev({ kind: "tool_result", toolId: "q1", body: "", result: { answers: { Route: "Right" } } }),
+    );
+    const q = flat(rows).find((r) => r.kind === "question") as QuestionRow;
+    expect(q.replied).toBeUndefined();
   });
 
   // The working row is what a LIVE question is followed by: the turn cannot

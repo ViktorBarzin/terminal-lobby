@@ -144,6 +144,12 @@ export interface QuestionRow {
    * string joined by ", ", as the CLI records them (see `pickedIn`).
    */
   answers: string[];
+  /**
+   * What the reader sent instead of an answer, through the card's "Chat about
+   * this": their words, "" when they sent none, undefined for any other
+   * outcome (`chatReply`).
+   */
+  replied?: string;
   pending: boolean;
   /** Asked, never resolved, and no longer on screen — the session moved past
    *  it. See `markSuperseded`. */
@@ -493,6 +499,24 @@ function answersFrom(payload: unknown, questions: readonly Question[]): string[]
         return text(byKey[q.question]) || text(byKey[q.header]);
       });
   return out.some((a) => a !== "") ? out : [];
+}
+
+/**
+ * The words a declined question carries, when the reader declined it through
+ * the card's "Chat about this": session-events' hold denies the call with a
+ * message saying so (session-events/hold.go chatMessage), and the CLI records
+ * it as an error result with no answers. "" when the reader sent no words,
+ * undefined for any other result. Deployed review round 1 of the T3 pass
+ * (2026-09-29): the words reached Claude and the record showed only the
+ * options, so Claude's next reply seemed to answer nothing.
+ */
+function chatReply(body: string): string | undefined {
+  const words = /The user chose not to pick an answer and replied instead: ([\s\S]*)$/.exec(body);
+  if (words) return words[1]!.trim();
+  if (body.includes("The user chose not to answer these questions and wants to talk about them")) {
+    return "";
+  }
+  return undefined;
 }
 
 /**
@@ -897,6 +921,8 @@ function collectTurnRows(turn: Turn): {
           waiting.pending = false;
           if (waiting.kind === "question") {
             waiting.answers = answersFrom(e.result, waiting.questions);
+            const replied = e.isError ? chatReply(e.body ?? "") : undefined;
+            if (replied !== undefined) waiting.replied = replied;
           } else {
             resolvePlan(waiting, e, planText.get(waiting));
             if (waiting.outcome.kind === "approved") awaitingMode = waiting;

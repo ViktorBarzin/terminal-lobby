@@ -573,6 +573,15 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
           </div>
         )}
       </For>
+      {/* "Chat about this" answers none of the questions, so the words go
+        under all of them, once (deployed review round 1 of the T3 pass). */}
+      <Show when={props.row.replied !== undefined}>
+        <div class="tl-question-answer">
+          {props.row.replied
+            ? `replied instead: ${props.row.replied}`
+            : "not answered: you chose to talk about it instead"}
+        </div>
+      </Show>
     </div>
   );
 };
