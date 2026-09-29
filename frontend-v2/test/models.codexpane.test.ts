@@ -27,6 +27,17 @@ describe("codexModelFromPane", () => {
     });
   });
 
+  // codex-cli 0.158.0, installed here on 2026-09-29, spells its model in
+  // capitals under the input and draws no "model: … /model to change" line.
+  // Deployed review round 1 of the T3 pass saw the button stay on "Model".
+  it("reads the capitalised model codex 0.158 draws under its input", () => {
+    const pane = readFileSync(
+      resolve(process.cwd(), "../sessionio/testdata/status-codex-0158-idle.txt"),
+      "utf8",
+    );
+    expect(codexModelFromPane(pane)).toEqual({ model: "GPT-6-Astra", effort: "medium" });
+  });
+
   it("says nothing for a pane that names no model", () => {
     expect(codexModelFromPane("$ ls\nfoo bar\n")).toBeUndefined();
   });

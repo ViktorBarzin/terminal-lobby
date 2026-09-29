@@ -678,9 +678,13 @@ export function modelFromBanner(pane: string): ModelState | undefined {
  * The lobby keeps no transcript for a Codex session, so the pane is the only
  * source, and the model button read "Model" without it (deployed review rounds
  * 3 to 5, 2026-09-28). Last match wins, as the newest thing on the pane.
+ *
+ * codex-cli 0.158.0 capitalises the name under the input ("GPT-6-Astra medium
+ * · ~/code") and draws no "model:" header line, so the footer is read in any
+ * case (deployed review round 1 of the T3 pass, 2026-09-29).
  */
 const CODEX_HEADER_RE = /model:\s+(\S+)\s+([a-z]+)\s+\/model to change/g;
-const CODEX_FOOT_RE = /^\s*((?:gpt|o\d|codex)[\w.-]*)\s+([a-z]+)\s+·\s/gm;
+const CODEX_FOOT_RE = /^\s*((?:gpt|o\d|codex)[\w.-]*)\s+([a-z]+)\s+·\s/gim;
 
 export function codexModelFromPane(pane: string): ModelState | undefined {
   let found: ModelState | undefined;
