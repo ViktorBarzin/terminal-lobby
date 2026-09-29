@@ -188,9 +188,11 @@ func (n *Normalizer) rewound(at int64, end bool) []Event {
 }
 
 // sameWords compares two texts with all whitespace ignored: the client's copy
-// of a prompt is trimmed, and the pane wraps what it shows.
+// of a prompt is trimmed, and the pane wraps what it shows. A picture reads
+// the same named by its path, as the client sends it, or by the "[Image #N]"
+// the transcript records (pictureWords).
 func sameWords(a, b string) bool {
-	return squashSpace(a) == squashSpace(b)
+	return pictureWords(a) == pictureWords(b)
 }
 
 // OptionRewound is the session option the cancel route stamps when a Stop
@@ -210,9 +212,11 @@ func RewoundStamp(text string, at int64) string {
 	return strconv.FormatInt(at, 10) + " " + wordsKey(text)
 }
 
-// wordsKey is a hash of a text's words, whitespace ignored (sameWords).
+// wordsKey is a hash of a text's words, read as sameWords reads them. Text
+// without pictures hashes as it did before pictures were read this way, so an
+// older stamp still names its prompt.
 func wordsKey(text string) string {
-	sum := sha256.Sum256([]byte(squashSpace(text)))
+	sum := sha256.Sum256([]byte(pictureWords(text)))
 	return hex.EncodeToString(sum[:16])
 }
 

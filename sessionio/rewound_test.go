@@ -1,6 +1,10 @@
 package sessionio
 
-import "testing"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"testing"
+)
 
 // A Stop that lands before Claude has written anything for the turn takes the
 // prompt OUT of the conversation: Claude Code puts it back on its input line
@@ -359,5 +363,75 @@ func TestFileSourceRewindReportsTheWordsItMarked(t *testing.T) {
 	n.Interrupt(at)
 	if got := f.Rewind("queued msg 1", at); !sameWords(got, "queued msg 1\nqueued msg 2") {
 		t.Fatalf("Rewind reported %q, want the batch's words", got)
+	}
+}
+
+// Deployed review round 3 of the T3 pass (CLI 2.1.284, 2026-09-29): the Stop
+// names each picture by the path the lobby sent, and the transcript records
+// "[Image #N]" in its place, beside the picture's image block. Compared as
+// plain words the two never matched, so a picture prompt a Stop took back
+// stayed in the chat as sent, on every device and after a reload.
+const (
+	picturePrompt = "[Image #1] [Image #2]  Which words are in these pictures?"
+	pictureReturn = "/var/lib/clipboard-store/wizard/s/pasted-a.png /var/lib/clipboard-store/wizard/s/pasted-b.png  Which words are in these pictures?"
+)
+
+func picturePromptLine(ts string) []byte {
+	return []byte(`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"` + picturePrompt + `"},` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}},` +
+		`{"type":"image","source":{"type":"base64","media_type":"image/png","data":"iVBORw0KGgo="}}]},"timestamp":"` + ts + `"}`)
+}
+
+func TestNormalizerRewindMarksAPicturePrompt(t *testing.T) {
+	n := NewNormalizer("demo")
+	first := n.Line(picturePromptLine("2026-09-29T11:52:24Z"))
+	at := mustAt(t, "2026-09-29T11:52:25Z")
+	n.Interrupt(at)
+	got := rewoundOf(n.Rewind(pictureReturn, at))
+	if len(got) != 1 || got[0].TurnID != first[0].TurnID {
+		t.Fatalf("Rewind of the picture prompt produced %+v, want one marker for turn %q", got, first[0].TurnID)
+	}
+}
+
+func TestNormalizerRewindBeforeAPicturePromptArrivesMarksIt(t *testing.T) {
+	n := NewNormalizer("demo")
+	at := mustAt(t, "2026-09-29T11:52:25Z")
+	n.Interrupt(at)
+	if out := n.Rewind(pictureReturn, at); len(out) != 0 {
+		t.Fatalf("nothing recorded yet, Rewind produced %v", kinds(out))
+	}
+	if got := rewoundOf(n.Line(picturePromptLine("2026-09-29T11:52:24Z"))); len(got) != 1 {
+		t.Fatalf("the picture prompt arrived unmarked: %+v", got)
+	}
+}
+
+func TestNormalizerRestoreRewoundMarksAPicturePrompt(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line(picturePromptLine("2026-09-29T11:52:24Z"))
+	stamp := RewoundStamp(pictureReturn, parseAt("2026-09-29T11:52:25Z"))
+	if got := rewoundOf(n.RestoreRewound(stamp)); len(got) != 1 {
+		t.Fatalf("restore left the picture prompt as sent: %+v", got)
+	}
+}
+
+// Other words around the same pictures are another prompt.
+func TestNormalizerRewindOfOtherWordsAroundPicturesMarksNothing(t *testing.T) {
+	n := NewNormalizer("demo")
+	n.Line(picturePromptLine("2026-09-29T11:52:24Z"))
+	other := "/var/lib/clipboard-store/wizard/s/pasted-a.png /var/lib/clipboard-store/wizard/s/pasted-b.png  Something else entirely"
+	if got := rewoundOf(n.Rewind(other, mustAt(t, "2026-09-29T11:52:25Z"))); len(got) != 0 {
+		t.Fatalf("Rewind marked a picture prompt with other words: %+v", got)
+	}
+}
+
+// A stamp written before pictures were read this way names a text-only
+// prompt by the same key, so a session stamped by the previous build still
+// restores.
+func TestRewoundStampOfPlainWordsIsUnchanged(t *testing.T) {
+	const want = "1790682744917 "
+	stamp := RewoundStamp("Run sleep 20 then say finished", 1790682744917)
+	sum := sha256.Sum256([]byte("Runsleep20thensayfinished"))
+	if stamp != want+hex.EncodeToString(sum[:16]) {
+		t.Fatalf("stamp %q no longer matches the previous build's key", stamp)
 	}
 }
