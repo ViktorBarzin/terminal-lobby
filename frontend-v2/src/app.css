@@ -1051,12 +1051,14 @@ label.tl-set-row-label {
 /* A labelled segmented control: bold weight, cursor shape, scroll speed. */
 
 /* ---- Toast stack (top-right) ------------------------------------------- */
-/* Under the session bar (56px, 58px on the phone, below the safe area), not
-   on it: pinned 12px from the corner, a toast covered the bar's icon group,
-   the Terminal button a toast may ask you to press included (toaster.css). */
+/* Under the session bar, not on it: pinned 12px from the corner, a toast
+   covered the bar's icon group, the Terminal button a toast may ask you to
+   press included (toaster.css). On a desktop the bar (56px) sits under the
+   lobby's own 42px top bar, so its foot is at 98px; on the phone the bar is
+   58px under the safe area. */
 .tl-toaster {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 66px);
+  top: calc(env(safe-area-inset-top, 0px) + 108px);
   right: 12px;
   z-index: 70;
   display: flex;

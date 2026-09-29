@@ -4,8 +4,9 @@
  * The stack was pinned 12px from the top-right corner, which is where the
  * session bar keeps its icon group: a toast covered the Terminal button,
  * including the toast that tells you to press it (deployed review rounds 3 to
- * 5, 2026-09-28). The bar is 56px, 58px on the phone, under the phone's safe
- * area, so the stack starts below that.
+ * 5, 2026-09-28). On a desktop the bar (56px) sits under the lobby's 42px
+ * top bar, on the phone it is 58px under the safe area, so the stack starts
+ * below the lower of the two.
  *
  * CSS text, because none of this is behaviour.
  */
@@ -24,6 +25,6 @@ describe("the toast stack", () => {
     const top = /top:\s*([^;]+);/.exec(rule)?.[1] ?? "";
     expect(top).toContain("env(safe-area-inset-top");
     const px = Number(/(\d+)px\s*\)?\s*$/.exec(top)?.[1] ?? 0);
-    expect(px).toBeGreaterThanOrEqual(58 + 6);
+    expect(px).toBeGreaterThanOrEqual(42 + 56 + 6);
   });
 });
