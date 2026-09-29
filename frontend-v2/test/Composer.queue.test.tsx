@@ -476,3 +476,78 @@ describe("<Composer> round button: sending mid-turn", () => {
     expect(onSend).toHaveBeenCalledWith("the next thing", []);
   });
 });
+
+/**
+ * Between a turn and the queued prompts it hands over to, the transcript
+ * closes the turn and the stamp reads `done` for a moment before the batch
+ * starts. The button went Stop, greyed Send, Stop again for about 215 ms, the
+ * moment a reader who wants to stop the batch taps, and a tap in that gap sent
+ * nothing (deployed review round 5, 2026-09-29). While ghosts wait, Stop stays.
+ */
+describe("<Composer> round button: queued prompts starting", () => {
+  it("stays Stop through the gap before a queued batch starts", () => {
+    vi.useFakeTimers();
+    const [live, setLive] = createSignal<WorkingRow | undefined>(WORKING);
+    const [state, setState] = createSignal<ClaudeState>("running");
+    const onStop = vi.fn();
+    const { container } = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={onStop}
+        onResolve={noop}
+        live={live()}
+        claudeState={state()}
+        queued={2}
+      />
+    ));
+    const button = () => container.querySelector<HTMLButtonElement>(".tl-send")!;
+    // The turn ends; the batch has not started yet.
+    setLive(undefined);
+    setState("done");
+    expect(button().dataset.kind).toBe("stop");
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives Stop up when nothing queued follows the turn", () => {
+    const [live, setLive] = createSignal<WorkingRow | undefined>(WORKING);
+    const [state, setState] = createSignal<ClaudeState>("running");
+    const { container } = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={noop}
+        onResolve={noop}
+        live={live()}
+        claudeState={state()}
+        queued={0}
+      />
+    ));
+    setLive(undefined);
+    setState("done");
+    expect(container.querySelector<HTMLButtonElement>(".tl-send")!.dataset.kind).toBe("send");
+  });
+
+  it("does not hold Stop for ghosts forever once no turn comes", () => {
+    vi.useFakeTimers();
+    const [live, setLive] = createSignal<WorkingRow | undefined>(WORKING);
+    const [state, setState] = createSignal<ClaudeState>("running");
+    const { container } = render(() => (
+      <Composer
+        pending={[]}
+        onSend={sent}
+        onStop={noop}
+        onResolve={noop}
+        live={live()}
+        claudeState={state()}
+        queued={1}
+      />
+    ));
+    setLive(undefined);
+    setState("done");
+    vi.advanceTimersByTime(5_000);
+    expect(container.querySelector<HTMLButtonElement>(".tl-send")!.dataset.kind).toBe("send");
+  });
+});

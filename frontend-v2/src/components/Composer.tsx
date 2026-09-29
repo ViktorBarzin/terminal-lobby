@@ -5,6 +5,7 @@ import {
   on,
   onCleanup,
   Show,
+  untrack,
   type Component,
   type JSX,
 } from "solid-js";
@@ -81,6 +82,13 @@ export type ComposerSinks = PromptFieldSinks;
  * the reader's to make.
  */
 const STOP_SETTLE_MS = 20_000;
+/**
+ * How long Stop outlives a turn that has prompts queued behind it. The turn
+ * closes and the stamp reads `done` for about 200 ms before the batch starts
+ * (measured in deployed review round 5, 2026-09-29), and a Stop tap in that
+ * gap found a greyed Send. A batch that has not started by then is not coming.
+ */
+const QUEUE_GAP_MS = 1_500;
 
 /**
  * How long a prompt this composer sent speaks for the turn it opened, while
@@ -131,6 +139,8 @@ export const Composer: Component<{
    * Absent, or any other state, offers no Stop.
    */
   claudeState?: ClaudeState;
+  /** How many prompts Claude holds queued behind the turn (the ghosts). */
+  queued?: number;
   /** What the session still owes once its turn has closed ("2 agents"). */
   background?: string;
   pending: PendingPermission[];
@@ -270,11 +280,41 @@ export const Composer: Component<{
    * composer just opened. What it guards against is a STALE row on a finished
    * session, and a row newer than the send is not that.
    */
-  const turnRunning = (): boolean =>
-    working() &&
-    (claudeState() === "running" ||
-      claudeState() === "awaiting" ||
-      (justSent() && claudeState() === "done"));
+  const turnReading = createMemo(
+    (): boolean =>
+      working() &&
+      (claudeState() === "running" ||
+        claudeState() === "awaiting" ||
+        (justSent() && claudeState() === "done")),
+  );
+  /**
+   * The gap between a turn and the queued prompts it hands over to counts as
+   * running (QUEUE_GAP_MS): the ghosts are about to be the next turn, and a
+   * Stop there hands them back.
+   */
+  const [bridging, setBridging] = createSignal(false);
+  let bridgeTimer: ReturnType<typeof setTimeout> | undefined;
+  const endBridge = (): void => {
+    clearTimeout(bridgeTimer);
+    bridgeTimer = undefined;
+    setBridging(false);
+  };
+  createEffect(
+    on(turnReading, (now, was) => {
+      if (now) {
+        endBridge();
+        return;
+      }
+      if (was && untrack(() => (props.queued ?? 0) > 0)) {
+        setBridging(true);
+        bridgeTimer = setTimeout(endBridge, QUEUE_GAP_MS);
+      }
+    }),
+  );
+  // Not ended when the ghosts go: they leave as the batch starts, a moment
+  // before the stamp and the transcript say the new turn runs.
+  onCleanup(endBridge);
+  const turnRunning = (): boolean => turnReading() || bridging();
 
   // ---- Stop, once per turn ---------------------------------------------------
   const [stopping, setStopping] = createSignal(false);

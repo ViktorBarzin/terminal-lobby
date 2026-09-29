@@ -2011,6 +2011,7 @@ export const TextView: Component<{
         // the two cannot disagree.
         live={lineLive()}
         claudeState={props.claudeState?.()}
+        queued={queued().length}
         background={showAgents() ? undefined : backgroundLabel(props.background?.())}
         pending={props.pending}
         onSend={send}
