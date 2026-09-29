@@ -193,3 +193,22 @@ func TestPasteChunksEndAPasteAfterEveryPicturesPath(t *testing.T) {
 		})
 	}
 }
+
+func TestEndingPictureIsOnlyAPathThatEndsThePiece(t *testing.T) {
+	for _, tc := range []struct {
+		chunk, want string
+		ok          bool
+	}{
+		{"/var/tmp/a.png", "/var/tmp/a.png", true},
+		{" /var/tmp/b.JPG", "/var/tmp/b.JPG", true},
+		{"look at /var/tmp/c.webp", "/var/tmp/c.webp", true},
+		{"/var/tmp/a.png and words", "", false},
+		{"words only", "", false},
+		{"relative/a.png", "", false},
+	} {
+		got, ok := endingPicture(tc.chunk)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("endingPicture(%q) = %q, %v; want %q, %v", tc.chunk, got, ok, tc.want, tc.ok)
+		}
+	}
+}

@@ -117,13 +117,30 @@ func chunkEnd(text string) int {
 // (pasteChunks), one after another, with no Enter.
 func (in *Injector) paste(osUser, session, text string) error {
 	for _, chunk := range pasteChunks(text) {
-		if err := in.loadBuffer(osUser, chunk); err != nil {
-			return err
-		}
-		// -p = bracketed paste, -d = delete the buffer afterwards.
-		if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run(); err != nil {
+		if err := in.pasteOne(osUser, session, chunk); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// pasteOne puts one piece into the pane as a single bracketed paste.
+func (in *Injector) pasteOne(osUser, session, chunk string) error {
+	if err := in.loadBuffer(osUser, chunk); err != nil {
+		return err
+	}
+	// -p = bracketed paste, -d = delete the buffer afterwards.
+	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+}
+
+// endingPicture is the picture's path a piece ends with, if it ends with one.
+func endingPicture(chunk string) (string, bool) {
+	m := endingPicturePath.FindStringSubmatch(chunk)
+	if m == nil {
+		return "", false
+	}
+	return m[1], true
+}
+
+// endingPicturePath is picturePath at the very end of a piece.
+var endingPicturePath = regexp.MustCompile(`(?i)(?:^|\s)(/\S+\.(?:png|jpe?g|gif|webp))$`)

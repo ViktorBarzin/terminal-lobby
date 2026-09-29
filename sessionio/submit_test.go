@@ -196,3 +196,49 @@ func TestPromptUnclearedAlsoConfirmsTheSubmit(t *testing.T) {
 		t.Fatalf("submitted = %q, want the prompt exactly once", got)
 	}
 }
+
+// Two pictures in one message: Claude Code reads a pasted picture's file
+// before it draws "[Image #N]", and a large one takes longer. Deployed review
+// round 1 of the T3 pass (2026-09-29) found the Enter pressed once the FIRST
+// picture showed, with the second still being read: it attached after the
+// submit, was left in the box, and the next send wiped it. Each picture is now
+// attached before anything after it is pasted, so the message goes out whole
+// and in the order it was written.
+func TestPromptWaitsForEveryPictureBeforeTheEnter(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_IMAGE_MS=20,400")
+	const text = "/var/tmp/one.png /var/tmp/two.jpg Name both colours."
+	if err := in.Prompt(osUser, "demo", text); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	want := "[Image #1][Image #2] Name both colours."
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := submittedLines(t, in, osUser)
+		if len(got) == 1 && got[0] == want {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("submitted = %q, want only %q", got, want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if pane, _ := in.CapturePane(osUser, "demo"); strings.Contains(pane, "❯ [Image") {
+		t.Fatalf("a picture was left in the box; pane:\n%s", pane)
+	}
+}
+
+// A path to a picture Claude cannot attach (no such file) stays in the box as
+// text. The send does not wait on it.
+func TestPromptDoesNotWaitOnAPictureThatStaysText(t *testing.T) {
+	in, osUser := inputSession(t, 0)
+	start := time.Now()
+	if err := in.Prompt(osUser, "demo", "/var/tmp/gone.png then words"); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	if took := time.Since(start); took > pictureAttachWait/2 {
+		t.Fatalf("Prompt took %v", took)
+	}
+	if got := submittedLines(t, in, osUser); len(got) != 1 || got[0] != "/var/tmp/gone.png then words" {
+		t.Fatalf("submitted = %q", got)
+	}
+}

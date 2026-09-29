@@ -47,10 +47,20 @@ FAKEINPUT_DIALOG=start has it up from the start. The paste mode turns bracketed 
 needs to mark a paste's start. While it is up, Enter picks its highlighted row and a
 digit picks that row, each printed as ANSWERED=<row>, and a paste is ignored.
 
+FAKEINPUT_IMAGE_MS holds a delay in ms for each picture, separated by ",": a
+bracketed paste that ends with an absolute path to a picture is held back and
+drawn that much later as "[Image #N]" followed by the rest of the paste,
+appended to whatever the box holds by then. That is how CLI 2.1.283 was
+measured to attach a pasted picture on 2026-09-29: nothing shows while it
+reads the file, a 12 MB JPEG took 240 ms where a small PNG took 25 ms, and the
+placeholder lands at the end of the box, after words pasted in the meantime.
+A picture past the end of the list takes the last delay.
+
 It is a model of that contract, not of the CLI.
 """
 
 import os
+import re
 import select
 import sys
 import termios
@@ -68,6 +78,10 @@ RESTORE_S = int(os.environ.get("FAKEINPUT_RESTORE_MS", "150")) / 1000.0
 HIDE_S = int(os.environ.get("FAKEINPUT_HIDE_MS", "0")) / 1000.0
 BOX_ROWS = int(os.environ.get("FAKEINPUT_BOX_ROWS", "0"))
 DIALOG = os.environ.get("FAKEINPUT_DIALOG", "")
+IMAGE_S = [
+    int(ms) / 1000.0 for ms in os.environ.get("FAKEINPUT_IMAGE_MS", "").split(",") if ms
+]
+PICTURE_END = re.compile(r"(?i)(?:^|\s)/\S+\.(?:png|jpe?g|gif|webp)$")
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
@@ -116,7 +130,7 @@ def main():
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
-    if DIALOG == "paste":
+    if DIALOG == "paste" or IMAGE_S:
         # Bracketed paste mode, so tmux marks where a paste starts.
         out("\x1b[?2004h")
     swallow = SWALLOW
@@ -125,6 +139,11 @@ def main():
     dialog = DIALOG == "start"
     pasting = False
     answered = []
+    # Pictures being read: (when it attaches, what it draws), and the text of
+    # the paste under way, kept only when pictures are modelled.
+    attaching = []
+    pictures = 0
+    pasted = None
     try:
         submitted = []
         line = os.environ.get("FAKEINPUT_LINE", "").replace("\\n", "\n")
@@ -134,6 +153,7 @@ def main():
         hide_until = None
         while True:
             timers = [t for t in (restore_at, hide_until) if t is not None]
+            timers += [t for t, _ in attaching]
             if timers:
                 wait = max(0.0, min(timers) - time.monotonic())
                 ready, _, _ = select.select([fd], [], [], wait)
@@ -145,6 +165,9 @@ def main():
                         restore_at = None
                     if hide_until is not None and now >= hide_until:
                         hide_until = None
+                    for t, text in [a for a in attaching if a[0] <= now]:
+                        line += text
+                        attaching.remove((t, text))
                     draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered)
                     continue
             ch = read1()
@@ -196,15 +219,29 @@ def main():
                         break
                 if seq == "200~":
                     pasting = True
+                    if IMAGE_S:
+                        pasted = ""
                     if DIALOG == "paste" and not answered:
                         dialog = True
                 if seq == "201~":
                     pasting = False
+                    m = PICTURE_END.search(pasted or "")
+                    if m:
+                        delay = IMAGE_S[min(pictures, len(IMAGE_S) - 1)]
+                        pictures += 1
+                        line = line[: len(line) - len(pasted)]
+                        rest = pasted[: m.start()]
+                        attaching.append(
+                            (time.monotonic() + delay, "[Image #%d]%s" % (pictures, rest))
+                        )
+                    pasted = None
                 if seq == "A" and not line and queue:
                     line = "\n".join(queue)
                     queue = []
             elif not dialog:
                 line += ch
+                if pasted is not None:
+                    pasted += ch
             draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)

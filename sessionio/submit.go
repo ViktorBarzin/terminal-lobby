@@ -45,6 +45,10 @@ var (
 	enterRetryAfter = 800 * time.Millisecond
 	// maxEnters is every Enter one prompt may press, the first included.
 	maxEnters = 3
+	// pictureAttachWait bounds the wait for Claude to attach one pasted
+	// picture (pasteAttaching). Measured on CLI 2.1.283 on 2026-09-29: a
+	// small PNG attached in 25 ms and a 12 MB JPEG in 240 ms.
+	pictureAttachWait = 5 * time.Second
 )
 
 // pasteAndSubmit pastes text into the pane and presses Enter, then reads
@@ -78,7 +82,7 @@ func (in *Injector) pasteAndSubmit(osUser, session, text string, boxed bool) err
 	if boxed && !in.hasInputBox(osUser, session) {
 		return ErrInputGone
 	}
-	if err := in.paste(osUser, session, text); err != nil {
+	if err := in.pasteAttaching(osUser, session, text); err != nil {
 		return err
 	}
 	shown := in.awaitHeld(osUser, session, text)
@@ -92,6 +96,69 @@ func (in *Injector) pasteAndSubmit(osUser, session, text string, boxed bool) err
 		return nil
 	}
 	return in.confirmSubmitted(osUser, session, text)
+}
+
+// pasteAttaching is paste for Claude's input box: after a piece that ends
+// with a picture's path it waits for Claude to attach the picture before it
+// pastes the next piece.
+//
+// WHY. Claude Code reads a pasted picture's file before it draws "[Image #N]",
+// shows nothing of that paste meanwhile, and then draws the placeholder at the
+// end of the box (measured on CLI 2.1.283 on 2026-09-29: 25 ms for a small
+// PNG, 240 ms for a 12 MB JPEG). Deployed review round 1 of the T3 pass sent
+// two photos and some words as one message: the box showed the first picture
+// and the words, the Enter went out, and the second picture attached after the
+// submit, left in the box for the next send to wipe. Waiting after each
+// picture keeps every one of them in the message, in the order written.
+//
+// A pane with no input box gets the plain paste.
+func (in *Injector) pasteAttaching(osUser, session, text string) error {
+	pane, err := in.CapturePane(osUser, session)
+	box, ok := inputBox(pane)
+	if err != nil || !ok {
+		return in.paste(osUser, session, text)
+	}
+	attached := picturesIn(box)
+	for _, chunk := range pasteChunks(text) {
+		if err := in.pasteOne(osUser, session, chunk); err != nil {
+			return err
+		}
+		if path, ok := endingPicture(chunk); ok {
+			attached = in.awaitAttached(osUser, session, path, attached+1)
+		}
+	}
+	return nil
+}
+
+// awaitAttached waits for the box to show want pictures, and answers how many
+// it shows. It stops early when the box holds path as text (Claude did not
+// take it as a picture: no such file, say) or has gone, and after
+// pictureAttachWait.
+func (in *Injector) awaitAttached(osUser, session, path string, want int) int {
+	deadline := time.Now().Add(pictureAttachWait)
+	got := want - 1
+	for {
+		pane, err := in.CapturePane(osUser, session)
+		if err == nil {
+			box, ok := inputBox(pane)
+			if !ok {
+				return got
+			}
+			got = picturesIn(box)
+			if got >= want || strings.Contains(squashSpace(box), squashSpace(path)) {
+				return got
+			}
+		}
+		if !time.Now().Before(deadline) {
+			return got
+		}
+		time.Sleep(submitPoll)
+	}
+}
+
+// picturesIn counts the pictures a box shows attached.
+func picturesIn(box string) int {
+	return strings.Count(squashSpace(box), "[Image#")
 }
 
 // hasInputBox reports whether the pane shows Claude's input box. A pane that
