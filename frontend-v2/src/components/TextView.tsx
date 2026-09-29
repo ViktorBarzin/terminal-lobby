@@ -938,10 +938,18 @@ export const TextView: Component<{
    * prompt is the whole batch, oldest first, a blank line between each: the
    * user rows before the working row that the CLI wrote within BATCH_MS of
    * each other.
+   *
+   * `text` is what the server is told, and for a recorded prompt it is the
+   * transcript's words: the CLI's input line and the record both hold
+   * "[Image #N]" where a picture was. `back` is what the field gets, the
+   * message as it was sent from here with its pictures' paths
+   * (`withSentPictures`), which the field turns back into chips. Deployed
+   * review round 2 of the T3 pass (2026-09-29): a Stop 1 to 2.5 s after
+   * sending two pictures put the placeholders in the field and no pictures.
    */
-  const stoppable = createMemo((): { text: string; held?: PendingPrompt } | null => {
+  const stoppable = createMemo((): { text: string; back: string; held?: PendingPrompt } | null => {
     const early = sent().find((p) => !p.command);
-    if (early) return { text: early.text, held: early };
+    if (early) return { text: early.text, back: early.text, held: early };
     const rows = baseRows();
     if (rows.at(-1)?.kind !== "working") return null;
     const batch: UserRow[] = [];
@@ -953,7 +961,12 @@ export const TextView: Component<{
         break;
       batch.unshift(row);
     }
-    return batch.length > 0 ? { text: batch.map((r) => r.body).join("\n\n") } : null;
+    if (batch.length === 0) return null;
+    const bodies = batch.map((r) => r.body);
+    return {
+      text: bodies.join("\n\n"),
+      back: withSentPictures(bodies, sentPics()).join("\n\n"),
+    };
   });
 
   /**
@@ -992,7 +1005,7 @@ export const TextView: Component<{
       const got = await asking;
       if (!got) return;
       const text = [
-        ...(got.returned && stopped ? [stopped.text] : []),
+        ...(got.returned && stopped ? [stopped.back] : []),
         ...(got.restored ? back : []),
       ];
       if (text.length === 0) return;

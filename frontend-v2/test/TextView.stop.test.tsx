@@ -15,6 +15,7 @@ import type { Event } from "../src/types/events";
 import type { ClaudeState } from "../src/types/lobby";
 import type { PendingPrompt } from "../src/logic/compose.logic";
 import type { StopResult } from "../src/store/session";
+import { rememberSent } from "../src/store/sentPictures";
 
 const g = globalThis as unknown as { EventSource: unknown };
 const realES = g.EventSource;
@@ -610,6 +611,30 @@ describe("<TextView>: Stop before Claude answers hands the prompt back", () => {
     fireEvent.click(button());
     expect(onStop).toHaveBeenCalledWith(undefined, "queued msg 1\n\nqueued msg 2");
     await waitFor(() => expect(field().value).toBe("queued msg 1\n\nqueued msg 2"));
+  });
+
+  // Deployed review round 2 of the T3 pass (2026-09-29): a Stop 1 to 2.5 s
+  // after sending two pictures, once the transcript had the prompt and before
+  // Claude wrote anything, filled the field with the transcript's
+  // "[Image #9]Describe these[Image #10]" and no chips, and Send would have
+  // sent the placeholders with no pictures. The server is still told the
+  // transcript's words, which are what Claude's input line and the record
+  // hold; the field gets the message as it was sent from here.
+  it("hands a recorded prompt's pictures back as chips", async () => {
+    const one = "/var/lib/clipboard-store/wizard/demo/pasted-20260929-101010-0123abcd.png";
+    const two = "/var/lib/clipboard-store/wizard/demo/pasted-20260929-101011-4567abcd.png";
+    rememberSent("demo", `Describe these ${one} ${two}`);
+    const onStop = vi.fn<StopFn>(async () => ({ restored: false, returned: true }));
+    const recorded: Event[] = [
+      { ...OPENED[0]!, body: "[Image #9]Describe these[Image #10]", at: 1_000 },
+    ];
+    const { button, field, container } = mount(() => "running", onStop, { events: recorded });
+    fireEvent.click(button());
+    expect(onStop).toHaveBeenCalledWith(undefined, "[Image #9]Describe these[Image #10]");
+    await waitFor(() => expect(field().value).toContain("Describe these"));
+    expect(field().value).not.toContain("[Image #");
+    expect(field().value).not.toContain("/var/lib");
+    expect(container.querySelectorAll(".tl-composer .tl-inline-thumb")).toHaveLength(2);
   });
 
   // The queue race from the same check: the CLI had just taken the first
