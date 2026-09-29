@@ -27,6 +27,7 @@ import {
   type DraftAttachment,
 } from "../store/drafts";
 import { takeLeftBehind } from "../lib/leaving";
+import { closeOnBack } from "../lib/back-closes";
 import {
   anchorRestored,
   attachToken,
@@ -1166,6 +1167,9 @@ export const PromptField: Component<{
       if (why === "escape") plusEl?.focus();
     },
   });
+  // The phone's Back closes it, as it does the model sheet (deployed review
+  // round 1 of the T3 pass, 2026-09-29: Back went past the open menu).
+  closeOnBack(plusOpen, () => setPlusOpen(false));
   // The watch hides the `+`, so a menu it had open goes with it.
   createEffect(() => {
     if (watching()) setPlusOpen(false);

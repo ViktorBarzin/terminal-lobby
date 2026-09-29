@@ -60,6 +60,7 @@ import {
 import { attachTileDrop, beginTileDrag, tileDropPreview } from "../dnd/tiles";
 import { sessionDragActive } from "../dnd/sidebar";
 import { newSessionId } from "../lib/session-id";
+import { enterContent, leaveContent, listenPhoneBack } from "../lib/phone-back";
 import { resolvedWatchFor } from "../store/watchmode";
 import { TileHeader } from "./TileHeader";
 import { WorkspaceCanvas } from "./WorkspaceCanvas";
@@ -1072,19 +1073,41 @@ export const App: Component = () => {
    * (deployed review round 3, 2026-09-28). The selection stays, so the list
    * still marks where you were.
    */
-  const backToList = () => {
+  const showList = () => {
     setCollapsed(false);
     writeBackedOut(true);
     try {
-      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+      window.history.replaceState(
+        window.history.state,
+        "",
+        window.location.pathname + window.location.search,
+      );
     } catch {
       /* no history */
     }
   };
-  // Any screen past the list again (a session, the composer) ends it.
+  /**
+   * It takes the screen's history entry back off when there is one
+   * (lib/phone-back.ts), so the browser's Back and this button leave the
+   * same history behind.
+   */
+  const backToList = () => leaveContent(showList);
+  // Any screen past the list again (a session, the composer) ends it, and
+  // gets a history entry of its own, so the phone's Back goes to the list
+  // rather than out of the lobby (deployed review round 1 of the T3 pass,
+  // 2026-09-29).
   createEffect(() => {
-    if (flip() && collapsed()) writeBackedOut(false);
+    if (!flip() || !collapsed()) return;
+    writeBackedOut(false);
+    enterContent();
   });
+  onCleanup(
+    listenPhoneBack({
+      showing: () => (flip() ? (collapsed() ? "content" : "list") : null),
+      toList: showList,
+      toContent: () => setCollapsed(true),
+    }),
+  );
   /** Is a session bar — and so its connection badge — on screen? The sidebar's
    *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
   const barOnScreen = () =>

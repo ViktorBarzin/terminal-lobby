@@ -894,8 +894,10 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       const hash = sel
         ? "#" + sel.name + (sel.owner && sel.owner !== me() ? "@" + sel.owner : "")
         : "";
+      // The entry's state is kept: it can mark the phone's screen past the
+      // list (lib/phone-back.ts) or an open overlay (lib/back-closes.ts).
       window.history.replaceState(
-        null,
+        window.history.state,
         "",
         window.location.pathname + window.location.search + hash,
       );

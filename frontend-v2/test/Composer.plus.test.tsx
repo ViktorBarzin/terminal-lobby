@@ -253,3 +253,17 @@ describe("the + menu's size", () => {
     expect(rule(".tl-plus[data-hidden]")).toMatch(/visibility:\s*hidden/);
   });
 });
+
+// Deployed review round 1 of the T3 pass (2026-09-29): the + menu pushed no
+// history entry, so the phone's Back with it open went past it.
+describe("the + menu and the phone's Back", () => {
+  it("pushes an entry of its own while open, and Back closes it", () => {
+    const push = vi.spyOn(window.history, "pushState");
+    const { container } = mount();
+    fireEvent.click(plus(container));
+    expect(push).toHaveBeenCalledWith({ tlOverlay: expect.any(Number) }, "", expect.any(String));
+    window.dispatchEvent(new PopStateEvent("popstate", { state: null }));
+    expect(menu(container)).toBeNull();
+    push.mockRestore();
+  });
+});

@@ -200,6 +200,10 @@ src/
     back-closes.ts       The phone's Back closes the overlay on top (the
                          picture lightbox, the model sheet): each open overlay
                          pushes one history entry that says how deep it is
+    phone-back.ts        The phone's Back goes from a session to the list: the
+                         screen past the list gets a history entry of its own,
+                         over the list's, and popstate shows the screen the
+                         entry it landed on stands for
     ownwhile.ts          Hold a window.__tl* handle only while a view is the one
                          on screen. With several sessions mounted, mount order
                          stopped meaning anything; handover is order-independent
