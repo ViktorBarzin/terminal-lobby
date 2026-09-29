@@ -1711,8 +1711,9 @@ export const TextView: Component<{
         if (pressPermissionRow?.(Number(e.key))) e.preventDefault();
         return;
       }
-      // A row digit on an armed question card is the card's (QuestionCard).
-      if (digit && questionUp() && cardKeysArmed()) return;
+      // A row digit on an armed question or plan card is the card's
+      // (QuestionCard, PlanCard).
+      if (digit && (questionUp() || planUp()) && cardKeysArmed()) return;
       if (typeBehind(e)) e.preventDefault();
     };
     document.addEventListener("keydown", onKey);
@@ -1987,6 +1988,7 @@ export const TextView: Component<{
           onApproveWithFeedback={(words) => sendPlanFeedback(words, true)}
           onTerminal={props.onOpenTerminal}
           onTakeControl={props.onTakeControl}
+          keysActive={props.onScreen !== false && tileFocused() && cardKeysArmed()}
         />
       </Show>
       <Composer

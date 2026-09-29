@@ -520,3 +520,53 @@ describe("<PlanCard> notes about the feedback", () => {
     );
   });
 });
+
+/**
+ * The numbered keycaps are shortcuts, as they are on the question and
+ * permission cards (deployed review rounds 3 to 5, 2026-09-28: the plan card
+ * drew them and a digit typed into the hidden message instead). Armed the same
+ * way: only once the Text view says the card's keys are live, which it does a
+ * moment after the card docks, and only from inside the view with nothing
+ * editable focused, so the rest of a sentence typed as the card docks is not
+ * an approval.
+ */
+describe("<PlanCard> digits", () => {
+  const key = (el: Element, k: string) => fireEvent.keyDown(el, { key: k, bubbles: true });
+
+  it("approves the row a digit names once its keys are live", () => {
+    const { container, onApprove } = mount({ keysActive: true });
+    const card = container.querySelector<HTMLElement>(".tl-qcard")!;
+    card.focus();
+    key(card, "2");
+    expect(onApprove).toHaveBeenCalledWith({ number: 2, label: READING.options[1]!.label });
+  });
+
+  it("takes no digit before its keys are live", () => {
+    const { container, onApprove } = mount({ keysActive: false });
+    key(container.querySelector(".tl-qcard")!, "1");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("leaves a digit typed into its own field alone", async () => {
+    const { container, onApprove } = mount({ keysActive: true });
+    await typeOwn(container, "use");
+    key(ownField(container)!, "1");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+
+  it("takes no digit while an answer is in flight or on a watching device", () => {
+    const flying = mount({ keysActive: true, sending: { kind: "option", number: 1 } });
+    key(flying.container.querySelector(".tl-qcard")!, "2");
+    expect(flying.onApprove).not.toHaveBeenCalled();
+    flying.unmount();
+    const watching = mount({ keysActive: true, inert: "Watching" });
+    key(watching.container.querySelector(".tl-qcard")!, "2");
+    expect(watching.onApprove).not.toHaveBeenCalled();
+  });
+
+  it("ignores a digit with no row", () => {
+    const { container, onApprove } = mount({ keysActive: true });
+    key(container.querySelector(".tl-qcard")!, "7");
+    expect(onApprove).not.toHaveBeenCalled();
+  });
+});

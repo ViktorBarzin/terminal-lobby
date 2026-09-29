@@ -6,6 +6,7 @@ import {
   createSignal,
   on,
   onCleanup,
+  onMount,
   type Component,
 } from "solid-js";
 import type { PlanOptionView } from "../lib/answer-api";
@@ -52,9 +53,16 @@ const UNREADABLE = "Couldn't read the plan's choices. Open the Terminal to answe
  * holds text, approves carrying them. The card holds the words, and drops
  * them only once a send has landed.
  *
- * WHAT IT LEAVES OUT, ON PURPOSE. No digit shortcuts, and no raw keypad when
- * the pane cannot be read: option 1 in the usual layout clears the context and
- * starts carrying out the plan, so a stray 1 must never reach the pane. No
+ * DIGITS. A digit approves the row it names, as the question and permission
+ * cards' keycaps do (deployed review rounds 3 to 5, 2026-09-28: the card drew
+ * numbered keycaps while a digit typed into the hidden message). Option 1 in
+ * the usual layout clears the context and starts carrying out the plan, so a
+ * stray 1 must never be one: digits count only once the Text view arms the
+ * card's keys, a moment after it docks, and only from inside the view with
+ * nothing editable focused.
+ *
+ * WHAT IT LEAVES OUT, ON PURPOSE. No raw keypad when the pane cannot be read,
+ * for the same reason. No
  * Reject button (open point 10): the CLI rejects only through Esc or Enter on
  * an empty feedback row, and the Terminal's Esc still does that. An approval
  * carries only the words in the card's own field, never the hidden composer's
@@ -85,6 +93,8 @@ export const PlanCard: Component<{
   onTerminal?: () => void;
   /** Stop watching and answer from this device. */
   onTakeControl?: () => void;
+  /** The Text view says the card's keys are live: a digit approves its row. */
+  keysActive?: boolean;
 }> = (props) => {
   const [full, setFull] = createSignal(false);
   const [overflows, setOverflows] = createSignal(false);
@@ -92,6 +102,7 @@ export const PlanCard: Component<{
   const [words, setWords] = createSignal("");
   let planEl: HTMLDivElement | undefined;
   let wellEl: HTMLDivElement | undefined;
+  let cardEl: HTMLDivElement | undefined;
 
   /**
    * Whether the clamped plan hides anything, which is when "Show all" is
@@ -158,8 +169,34 @@ export const PlanCard: Component<{
   };
   const offerTerminal = () => props.notice === "unverified" || unreadable();
 
+  // Keys 1-9 approve the row they name, the way the question and permission
+  // cards' keycaps do: when the Text view says the card's keys are live (a
+  // moment after it docks), the focus is in this card's view, and nothing
+  // editable has it, so the rest of a sentence typed as the card docked is
+  // never an approval.
+  onMount(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!props.keysActive || !answerable() || held()) return;
+      const t = e.target;
+      const view = cardEl?.closest(".tl-textview") ?? cardEl;
+      if (!(t instanceof Node) || !view?.contains(t)) return;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) return;
+      if (t instanceof HTMLElement && t.closest('[contenteditable]:not([contenteditable="false"])'))
+        return;
+      if (!/^[1-9]$/.test(e.key)) return;
+      const option = props.reading?.options.find((o) => o.number === Number(e.key));
+      if (!option) return;
+      e.preventDefault();
+      props.onApprove({ number: option.number, label: option.label });
+    };
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => document.removeEventListener("keydown", onKey));
+  });
+
   return (
     <div
+      ref={cardEl}
       class="tl-qcard tl-plancard"
       role="dialog"
       aria-label="Claude's plan is ready"
@@ -232,8 +269,8 @@ export const PlanCard: Component<{
                     disabled={held()}
                     onClick={() => props.onApprove({ number: option.number, label: option.label })}
                   >
-                    {/* The CLI's own number, shown so the row reads as the
-                        Terminal's does. It is not a shortcut. */}
+                    {/* The CLI's own number, which a digit presses once the
+                        card's keys are live. */}
                     <span class="tl-qcard-key" aria-hidden="true">
                       {option.number}
                     </span>
