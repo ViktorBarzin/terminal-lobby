@@ -229,7 +229,9 @@ func modeDangerous(m string) bool {
 // bypass or dontAsk while Claude works. Before every press after the first the
 // hooks' options are read again, because a turn can start mid-walk and a
 // dialog can be announced: the PreToolUse that marks one fires about a second
-// before it is drawn.
+// before it is drawn. A permission prompt has no such marker, so before every
+// press a tool call in flight (OptionTool) is watched for the prompt it may
+// raise, and the pane is read once more just before the key goes.
 //
 // The error is for a pane that could not be read at all; every refusal is a
 // ModeResult.
@@ -284,14 +286,34 @@ func (in *Injector) SetMode(ctx context.Context, osUser, session, target string)
 	}
 	seen := map[string]bool{from: true}
 	cur := from
+	// Tool calls this walk has watched for toolDraw without a prompt following.
+	quiet := map[string]bool{}
 	for res.Presses < maxModePresses {
 		if res.Presses > 0 && in.dialogMarked(osUser, session, stale) {
+			res.Reason = ModeDialogOpen
+			return res, nil
+		}
+		up, err := in.awaitToolPrompt(ctx, osUser, session, quiet)
+		if err != nil {
+			return res, err
+		}
+		if up {
 			res.Reason = ModeDialogOpen
 			return res, nil
 		}
 		busy := in.busy(osUser, session, stale != "")
 		if busy && passesDangerOn(cycle, cur, target) {
 			res.Reason = ModeUnsafePath
+			return res, nil
+		}
+		// The last reading before the key: a dialog drawn since the walk last
+		// looked is where this Shift+Tab would land.
+		blocked, err := in.paneBlocksPress(osUser, session, cur)
+		if err != nil {
+			return res, err
+		}
+		if blocked {
+			res.Reason = ModeDialogOpen
 			return res, nil
 		}
 		if err := in.Keys(osUser, session, []string{"BTab"}); err != nil {
@@ -406,6 +428,57 @@ func (in *Injector) dialogPending(ctx context.Context, osUser, session string) (
 		}
 	}
 	return "", false, nil
+}
+
+// toolDraw is how long a walk watches a tool call in flight (OptionTool) for
+// the permission prompt it may raise before taking the call to be one that
+// asks nothing. The prompt follows the PreToolUse that stamps the call within
+// a fraction of a second when a rule decides; auto mode's classifier can take
+// longer, and a prompt it raises after this is not covered. A var so a test
+// can shorten it.
+var toolDraw = 1500 * time.Millisecond
+
+// awaitToolPrompt reports whether a permission prompt drew for the tool call
+// in flight. A call the walk has not seen before is watched for toolDraw, or
+// until it finishes; one that drew nothing in that time goes into `quiet` and
+// is not waited on again. A new call seen while watching is watched afresh.
+func (in *Injector) awaitToolPrompt(ctx context.Context, osUser, session string, quiet map[string]bool) (bool, error) {
+	id, _ := in.Option(osUser, session, OptionTool)
+	id = strings.TrimSpace(id)
+	deadline := time.Now().Add(toolDraw)
+	for id != "" && !quiet[id] {
+		pane, err := in.CapturePane(osUser, session)
+		if err != nil {
+			return false, err
+		}
+		if PaneMode(pane) == "" {
+			return true, nil
+		}
+		if !time.Now().Before(deadline) {
+			quiet[id] = true
+			return false, nil
+		}
+		if err := answerWait(ctx, keySettle); err != nil {
+			return false, err
+		}
+		now, _ := in.Option(osUser, session, OptionTool)
+		if now = strings.TrimSpace(now); now != id {
+			id, deadline = now, time.Now().Add(toolDraw)
+		}
+	}
+	return false, nil
+}
+
+// paneBlocksPress reads the pane just before a press and reports whether the
+// press must not go: the status line is gone, which a drawn dialog takes the
+// place of, or it no longer shows `cur`, so the walk has lost track of where
+// Shift+Tab would take it.
+func (in *Injector) paneBlocksPress(osUser, session, cur string) (bool, error) {
+	pane, err := in.CapturePane(osUser, session)
+	if err != nil {
+		return false, err
+	}
+	return PaneMode(pane) != cur, nil
 }
 
 // dialogMarked reports whether the hooks say a blocking dialog is up

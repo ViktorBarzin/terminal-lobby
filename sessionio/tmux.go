@@ -74,6 +74,17 @@ const (
 	// Nothing outside the hook script and Cancel needs to read it: the state
 	// it produces is already OptionState.
 	OptionAsk = "@claude_ask"
+	// OptionTool holds the tool_use_id of the main thread's newest tool call,
+	// from its PreToolUse until the PostToolUse, Stop, prompt or session start
+	// that says it is over. Written by the same hook script as OptionState, in
+	// the same tmux call, so it costs no fork of its own.
+	//
+	// It exists for the mode walk (SetMode). A permission prompt has no marker
+	// the way a question or a plan has OptionAsk, and Shift+Tab on one is an
+	// answer, so a walk that sees a call in flight waits to see whether a
+	// prompt follows before it presses. The PreToolUse hooks finish before the
+	// CLI decides to ask, so the stamp is always there before the prompt is.
+	OptionTool = "@claude_tool"
 	// OptionLastActivity is the unix second the session last did something a
 	// person would call using it: a prompt they sent, or a turn that finished.
 	// Written by the same hook script as OptionState, on UserPromptSubmit (a

@@ -46,6 +46,10 @@ mode="${1:-}"
 # Set by an event that means no blocking dialog can be on screen any more; the
 # next stamp acts on it. See "The drawn blocking dialog" below.
 ask_clear=0
+# The tool call in flight, for the next stamp to record (tool_set) or forget
+# (tool_clear). See "The tool call in flight" below.
+tool_set=""
+tool_clear=0
 
 stamp() {
     # Usage event (docs/adr/0006-usage-telemetry.md) on a REAL transition only.
@@ -81,9 +85,11 @@ stamp() {
     # resolves a user option through the pane's own option hierarchy, which is
     # the same lookup show-option was doing. The marker is validated by id_ok
     # before it is written, so it can never contain the separator.
-    marks="$(tmux display-message -p -t "$TMUX_PANE" '#{@claude_ask} #{@claude_state}' 2>/dev/null || true)"
+    marks="$(tmux display-message -p -t "$TMUX_PANE" '#{@claude_ask} #{@claude_tool} #{@claude_state}' 2>/dev/null || true)"
     ask="${marks%% *}"
-    prev="${marks#* }"
+    rest="${marks#* }"
+    tool="${rest%% *}"
+    prev="${rest#* }"
     # A DRAWN blocking dialog outranks every other reading. Between the
     # PreToolUse that opens an AskUserQuestion or an ExitPlanMode and the
     # PostToolUse that closes it, the session is blocked on a person, whatever
@@ -105,7 +111,15 @@ stamp() {
             [ "$want" = awaiting ] || want=awaiting
         fi
     fi
-    tmux set-option -t "$TMUX_PANE" @claude_state "$want" >/dev/null 2>&1 || true
+    # The tool marker rides the state's own tmux call, so the hot path gains no
+    # fork: set on a main-thread PreToolUse, unset only when there is one.
+    if [ -n "$tool_set" ]; then
+        tmux set-option -t "$TMUX_PANE" @claude_state "$want" \; set-option -t "$TMUX_PANE" @claude_tool "$tool_set" >/dev/null 2>&1 || true
+    elif [ "$tool_clear" = 1 ] && [ -n "$tool" ]; then
+        tmux set-option -t "$TMUX_PANE" @claude_state "$want" \; set-option -u -t "$TMUX_PANE" @claude_tool >/dev/null 2>&1 || true
+    else
+        tmux set-option -t "$TMUX_PANE" @claude_state "$want" >/dev/null 2>&1 || true
+    fi
     if [ "$prev" != "$want" ]; then
         sess="$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null || true)"
         case "$sess" in
@@ -135,6 +149,7 @@ if [ "$mode" = clear ]; then
     tmux set-option -u -t "$TMUX_PANE" @claude_state >/dev/null 2>&1 || true
     tmux set-option -u -t "$TMUX_PANE" @claude_bg >/dev/null 2>&1 || true
     tmux set-option -u -t "$TMUX_PANE" @claude_ask >/dev/null 2>&1 || true
+    tmux set-option -u -t "$TMUX_PANE" @claude_tool >/dev/null 2>&1 || true
     # Record that this ending was DELIBERATE, so tl-session-watch does not
     # report it as a lost session (2026-09-03).
     #
@@ -249,6 +264,17 @@ id_ok() {
 # The clearers set ask_clear and let stamp do the write, which keeps the unset
 # off the hot path (see stamp).
 ask_write() { tmux set-option -t "$TMUX_PANE" @claude_ask "$1" >/dev/null 2>&1 || true; }
+
+# ---- The tool call in flight ------------------------------------------------
+# @claude_tool holds the tool_use_id of the main thread's newest tool call,
+# from its PreToolUse until the PostToolUse, Stop, prompt or session start
+# that says it is over. The lobby's mode walk reads it (sessionio SetMode): a
+# permission prompt has no marker the way a question or a plan has
+# @claude_ask, and Shift+Tab on one is an answer, so a walk that finds a call
+# in flight waits to see whether a prompt follows before it presses. The
+# PreToolUse hooks finish before Claude Code decides to ask, so the stamp is
+# there before any prompt is. A subagent's calls are left out, as they are
+# for the state.
 
 # ---- Last activity ---------------------------------------------------------
 # The two moments a person would call using a session: they sent a prompt, or a
@@ -558,8 +584,9 @@ UserPromptSubmit)
     *) activity ;;
     esac
     # Whatever dialog was up is not up any more: this prompt is what took it
-    # down, including the prompt of a re-ask.
+    # down, including the prompt of a re-ask. No tool call is in flight either.
     ask_clear=1
+    tool_clear=1
     stamp running
     ;;
 PreToolUse)
@@ -589,6 +616,8 @@ PreToolUse)
     # never came — the abandoned call of a dialog Claude Code took down and
     # re-asked, which reports nothing of its own.
     ask_clear=1
+    json_field tool_use_id
+    if id_ok "$jv"; then tool_set="$jv"; else tool_set=drawn; fi
     stamp running
     ;;
 PostToolUse)
@@ -596,8 +625,9 @@ PostToolUse)
     # The dialog has been answered or escaped. Its id is not compared with the
     # one recorded: an abandoned call never reaches here, so the marker may be
     # a LATER call's, and either way no dialog is on screen once a blocking
-    # tool has returned.
+    # tool has returned. The call is no longer in flight.
     ask_clear=1
+    tool_clear=1
     record_launch
     stamp running
     ;;
@@ -609,6 +639,7 @@ Stop)
     bg_sync
     bg_read
     activity
+    tool_clear=1
     if [ -n "$bg" ]; then stamp running; else stamp "done"; fi
     ;;
 SessionStart)
@@ -630,6 +661,7 @@ SessionStart)
     # No dialog survives any of the four. A new process redraws nothing, and a
     # compaction or a /clear happens between turns, which a dialog cannot.
     ask_clear=1
+    tool_clear=1
     # Whatever survived decides the state, the same way Stop decides it: keeping
     # the ids and then stamping done would paint the session green anyway.
     bg_read

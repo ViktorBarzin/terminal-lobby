@@ -983,3 +983,64 @@ func TestCancelClearsTheAskMarker(t *testing.T) {
 		t.Fatalf("%s after Cancel = %q, want %q", OptionState, got, StateDone)
 	}
 }
+
+// The main thread's tool call in flight is recorded from its PreToolUse until
+// whatever says it is over, for the mode walk to wait on (OptionTool): a
+// permission prompt only ever follows a PreToolUse, and has no marker of its
+// own.
+func TestAToolCallInFlightIsRecordedUntilItIsOver(t *testing.T) {
+	for _, tc := range []struct{ name, mode, fixture string }{
+		{"its result", "running", "post_bash_launch.json"},
+		{"the turn stopping", "done", "stop_tasks_finished.json"},
+		{"a prompt", "running", "userprompt_human.json"},
+		{"a restart", "done", "sessionstart.json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newHookEnv(t)
+			e.fire(t, "running", "userprompt_human.json")
+
+			e.fire(t, "running", "pre_main.json")
+			if got := e.opt(t, OptionTool); got == "" {
+				t.Fatalf("%s after a PreToolUse = unset, want the call's id", OptionTool)
+			}
+			if got := e.opt(t, OptionState); got != StateRunning {
+				t.Fatalf("%s = %q, want %q", OptionState, got, StateRunning)
+			}
+
+			e.fire(t, tc.mode, tc.fixture)
+
+			if got := e.opt(t, OptionTool); got != "" {
+				t.Errorf("%s after %s = %q, want unset", OptionTool, tc.fixture, got)
+			}
+		})
+	}
+}
+
+// A subagent's calls are not the main thread's and leave the marker alone,
+// the same way they leave the state alone.
+func TestASubagentsToolCallsLeaveTheToolMarkerAlone(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+	e.fire(t, "running", "pre_subagent.json")
+	if got := e.opt(t, OptionTool); got != "" {
+		t.Fatalf("%s after a subagent's call = %q, want unset", OptionTool, got)
+	}
+	e.fire(t, "running", "pre_main.json")
+	was := e.opt(t, OptionTool)
+	e.fire(t, "running", "post_bash_launch_by_subagent.json")
+	if got := e.opt(t, OptionTool); got != was {
+		t.Errorf("%s after a subagent's result = %q, want %q", OptionTool, got, was)
+	}
+}
+
+// SessionEnd unsets it with the rest.
+func TestSessionEndClearsTheToolMarker(t *testing.T) {
+	e := newHookEnv(t)
+	e.set(t, OptionTool, "toolu_x")
+
+	e.fire(t, "clear", "stop.json")
+
+	if got := e.opt(t, OptionTool); got != "" {
+		t.Fatalf("%s after SessionEnd = %q, want unset", OptionTool, got)
+	}
+}

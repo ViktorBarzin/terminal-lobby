@@ -433,3 +433,85 @@ func TestSetModeNeverPressesPastTheBound(t *testing.T) {
 		t.Fatalf("got %+v, want unavailable at plan after two presses", res)
 	}
 }
+
+// A permission prompt has no marker of its own: nothing but the pane says one
+// is coming. Shift+Tab over it is an answer ("Yes, and switch to accept edits"
+// on a Write), which is how a mode picked about 150 ms before a prompt drew
+// approved a file write nobody answered (deployed review round 5,
+// 2026-09-29). The hooks stamp OptionTool on the PreToolUse that comes before
+// any prompt, so a walk that finds a call in flight waits to see whether a
+// dialog follows before it presses.
+func TestSetModeWaitsOnAToolCallThatMayDrawAPrompt(t *testing.T) {
+	was := toolDraw
+	toolDraw = 900 * time.Millisecond
+	t.Cleanup(func() { toolDraw = was })
+
+	t.Run("the prompt draws: nothing is pressed", func(t *testing.T) {
+		in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" ")
+		stamp(t, in, osUser, OptionTool, "toolu_write")
+		draw := time.AfterFunc(300*time.Millisecond, func() {
+			_ = in.Command(osUser, "send-keys", "-t", exactPane("demo"), "-l", "!").Run()
+		})
+		t.Cleanup(func() { draw.Stop() })
+
+		res := setMode(t, in, osUser, ModeAuto)
+
+		if res.Applied || res.Reason != ModeDialogOpen || res.Presses != 0 {
+			t.Fatalf("got %+v, want dialog-open with nothing pressed", res)
+		}
+		if pane := paneOf(t, in, osUser); !strings.Contains(pane, "Would you like to proceed?") {
+			t.Fatalf("the dialog went away:\n%s", pane)
+		}
+	})
+
+	t.Run("no prompt follows: the walk goes on", func(t *testing.T) {
+		in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" ")
+		stamp(t, in, osUser, OptionTool, "toolu_long_bash")
+
+		res := setMode(t, in, osUser, ModePlan)
+
+		if !res.Applied || res.Mode != ModePlan || res.Presses != 2 {
+			t.Fatalf("got %+v, want plan after two presses", res)
+		}
+	})
+
+	t.Run("a call that starts mid-walk stops it before the next press", func(t *testing.T) {
+		in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" FAKEDIALOG_MODE_LAG=0.3 ")
+		// Lands while the first press is being read back.
+		start := time.AfterFunc(150*time.Millisecond, func() {
+			_ = in.SetOption(osUser, "demo", OptionTool, "toolu_edit")
+		})
+		draw := time.AfterFunc(700*time.Millisecond, func() {
+			_ = in.Command(osUser, "send-keys", "-t", exactPane("demo"), "-l", "!").Run()
+		})
+		t.Cleanup(func() { start.Stop(); draw.Stop() })
+
+		res := setMode(t, in, osUser, ModeAuto)
+
+		if res.Applied || res.Reason != ModeDialogOpen || res.Presses != 1 {
+			t.Fatalf("got %+v, want dialog-open after the one press made before the call", res)
+		}
+		if pane := paneOf(t, in, osUser); !strings.Contains(pane, "Would you like to proceed?") {
+			t.Fatalf("the dialog went away:\n%s", pane)
+		}
+	})
+}
+
+// Just before every press the pane is read again: a dialog drawn since the last
+// reading is where the next Shift+Tab would land.
+func TestSetModeReadsThePaneBeforeEveryPress(t *testing.T) {
+	in, osUser := composerSession(t, "FAKEDIALOG_MODES="+cyclePlain+" ")
+	if err := in.Command(osUser, "send-keys", "-t", exactPane("demo"), "-l", "!").Run(); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(3 * time.Second); !strings.Contains(paneOf(t, in, osUser), "Would you like to proceed?"); {
+		if time.Now().After(deadline) {
+			t.Fatalf("the dialog never drew:\n%s", paneOf(t, in, osUser))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	// The walk's opening read is past: the pre-press read is what must see it.
+	if blocked, err := in.paneBlocksPress(osUser, "demo", ModeManual); err != nil || !blocked {
+		t.Fatalf("paneBlocksPress = %v, %v; want the drawn dialog to block", blocked, err)
+	}
+}
