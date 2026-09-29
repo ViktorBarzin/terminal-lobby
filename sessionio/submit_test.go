@@ -210,7 +210,7 @@ func TestPromptWaitsForEveryPictureBeforeTheEnter(t *testing.T) {
 	if err := in.Prompt(osUser, "demo", text); err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
-	want := "[Image #1][Image #2] Name both colours."
+	want := "[Image #1] [Image #2] Name both colours."
 	deadline := time.Now().Add(3 * time.Second)
 	for {
 		got := submittedLines(t, in, osUser)
@@ -224,6 +224,32 @@ func TestPromptWaitsForEveryPictureBeforeTheEnter(t *testing.T) {
 	}
 	if pane, _ := in.CapturePane(osUser, "demo"); strings.Contains(pane, "❯ [Image") {
 		t.Fatalf("a picture was left in the box; pane:\n%s", pane)
+	}
+}
+
+// Claude Code draws a picture's "[Image #N]" at the front of the paste that
+// attached it. Deployed review round 2 of the T3 pass (2026-09-29) sent
+// "Colour of first picture: <red>  and colour of second picture: <blue>" and
+// Claude got "[Image #3]Colour of first picture:[Image #4]  and colour of
+// second picture:", each picture one slot early. Every picture stays where
+// the person put it.
+func TestPromptKeepsEveryPictureWhereItWasWritten(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_IMAGE_MS=20")
+	const text = "Colour of first picture: /var/tmp/one.png  and second: /var/tmp/two.jpg  Reply."
+	if err := in.Prompt(osUser, "demo", text); err != nil {
+		t.Fatalf("Prompt: %v", err)
+	}
+	want := "Colour of first picture: [Image #1]  and second: [Image #2]  Reply."
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		got := submittedLines(t, in, osUser)
+		if len(got) == 1 && got[0] == want {
+			break
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("submitted = %q, want only %q", got, want)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

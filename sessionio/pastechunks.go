@@ -35,19 +35,23 @@ const (
 //
 // Empty text is one empty piece, so a caller pastes exactly what it did before.
 //
-// Every picture's path also ends a paste (picturePathEnds): Claude Code
-// attaches a picture from a path only when the path is the end of what was
-// pasted (measured on CLI 2.1.283, 2026-09-29). A path at the front was sent
-// as text, and Claude read the file with its Read tool, which asks permission
-// outside the project in Manual, Edits and Plan mode (deployed review round 5:
-// every photo sent from a phone asked to read the lobby's upload folder).
+// Every picture's path is also a paste of its own (picturePathCuts). Claude
+// Code attaches a picture from a path only when the path is the end of what
+// was pasted (measured on CLI 2.1.283, 2026-09-29). A path at the front was
+// sent as text, and Claude read the file with its Read tool, which asks
+// permission outside the project in Manual, Edits and Plan mode (deployed
+// review round 5: every photo sent from a phone asked to read the lobby's
+// upload folder). And Claude draws the picture's "[Image #N]" at the FRONT of
+// the paste that attached it, so "words /red.png" as one paste became
+// "[Image #1]words", every picture one slot early in the message (deployed
+// review round 2 of the T3 pass, CLI 2.1.284, 2026-09-29).
 func pasteChunks(text string) []string {
 	if text == "" {
 		return []string{text}
 	}
 	var out []string
 	start := 0
-	for _, end := range append(picturePathEnds(text), len(text)) {
+	for _, end := range append(picturePathCuts(text), len(text)) {
 		for part := text[start:end]; part != ""; {
 			n := chunkEnd(part)
 			out = append(out, part[:n])
@@ -62,17 +66,21 @@ func pasteChunks(text string) []string {
 // Code attaches when it ends a paste.
 var picturePath = regexp.MustCompile(`(?i)(?:^|\s)(/\S+\.(?:png|jpe?g|gif|webp))(?:\s|$)`)
 
-// picturePathEnds is the byte offset just past each picture's path in text, in
-// order, leaving out one that ends the text already.
-func picturePathEnds(text string) []int {
-	var ends []int
+// picturePathCuts is the byte offset of the start of each picture's path in
+// text and the offset just past it, in order, leaving out the text's own
+// start and end.
+func picturePathCuts(text string) []int {
+	var cuts []int
 	for rest, base := text, 0; ; {
 		m := picturePath.FindStringSubmatchIndex(rest)
 		if m == nil {
-			return ends
+			return cuts
+		}
+		if begin := base + m[2]; begin > 0 {
+			cuts = append(cuts, begin)
 		}
 		if end := base + m[3]; end < len(text) {
-			ends = append(ends, end)
+			cuts = append(cuts, end)
 		}
 		// Resume at the path's end, so a whitespace that ended one path can
 		// begin the next.

@@ -74,7 +74,7 @@ func TestPasteChunksStayUnderTheCollapseLimits(t *testing.T) {
 
 // A long line is cut after a space where there is one, so a word or a path is
 // never split across two pastes. A picture's path ends a paste of its own
-// (TestPasteChunksEndAPasteAfterEveryPicturesPath).
+// (TestPasteChunksPasteEveryPicturesPathOnItsOwn).
 func TestPasteChunksCutALongLineAtASpace(t *testing.T) {
 	path := "/var/lib/clipboard-store/wizard/demo/file-20260928-101010-0123abcd-shot.png"
 	text := strings.Repeat("word ", 120) + path + " " + strings.Repeat("more ", 120)
@@ -171,8 +171,15 @@ func TestPromptSendsALongMessageAsPastesClaudeKeepsInline(t *testing.T) {
 // which asks permission in Manual, Edits and Plan mode for a folder outside
 // the project (measured on CLI 2.1.283, 2026-09-29; deployed review round 5:
 // every photo sent from a phone asked to read the lobby's upload folder). So
-// every picture's path ends a paste of its own.
-func TestPasteChunksEndAPasteAfterEveryPicturesPath(t *testing.T) {
+// every picture's path ends a paste.
+//
+// A path also starts one. Claude Code draws a picture's "[Image #N]" at the
+// front of the paste that attached it, so "words /red.png" became
+// "[Image #1]words" and every picture moved one slot early in the message
+// (deployed review round 2 of the T3 pass, CLI 2.1.284, 2026-09-29). The same
+// words with each path pasted on its own kept every picture where it was
+// written.
+func TestPasteChunksPasteEveryPicturesPathOnItsOwn(t *testing.T) {
 	for _, tc := range []struct {
 		name, text string
 		want       []string
@@ -180,9 +187,11 @@ func TestPasteChunksEndAPasteAfterEveryPicturesPath(t *testing.T) {
 		{"picture first", "/var/lib/clipboard-store/u/s/pasted-1.png second picture message",
 			[]string{"/var/lib/clipboard-store/u/s/pasted-1.png", " second picture message"}},
 		{"picture last", "Name this colour. /var/tmp/x/red.PNG",
-			[]string{"Name this colour. /var/tmp/x/red.PNG"}},
+			[]string{"Name this colour. ", "/var/tmp/x/red.PNG"}},
 		{"two pictures", "/a/one.jpg /a/two.webp compare them",
-			[]string{"/a/one.jpg", " /a/two.webp", " compare them"}},
+			[]string{"/a/one.jpg", " ", "/a/two.webp", " compare them"}},
+		{"pictures between words", "Colour of first picture: /a/red.png  and second: /a/blue.png  Reply.",
+			[]string{"Colour of first picture: ", "/a/red.png", "  and second: ", "/a/blue.png", "  Reply."}},
 		{"not a picture", "/var/tmp/notes.txt read this", []string{"/var/tmp/notes.txt read this"}},
 		{"a relative name", "red.png is the file", []string{"red.png is the file"}},
 	} {
