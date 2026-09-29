@@ -543,7 +543,9 @@ export const QuestionRowView: Component<{ row: QuestionRow }> = (props) => {
                   {(o, oi) => (
                     <div
                       class="tl-question-option"
-                      data-chosen={pickedIn(props.row.answers[qi()], o.label) ? "true" : undefined}
+                      data-chosen={
+                        pickedIn(props.row.answers[qi()], o.label, q) ? "true" : undefined
+                      }
                     >
                       <span class="tl-option-key">{oi() + 1}</span>
                       <span class="tl-option-label">{o.label}</span>

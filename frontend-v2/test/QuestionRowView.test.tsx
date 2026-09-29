@@ -56,6 +56,29 @@ describe("<QuestionRowView> once answered", () => {
     expect(chosen).toEqual(["Coffee", "Apple", "Plum"]);
   });
 
+  // Deployed review round 3 of the T3 pass (2026-09-29): "Tabs, but sticky on
+  // scroll" typed through "Type your own answer" drew the Tabs row as picked,
+  // because the ", " split meant for a multi-select's picks read free text too.
+  it("marks no option for typed words that start with a label and a comma", () => {
+    const r = render(() => (
+      <QuestionRowView
+        row={{ ...row, answers: ["Coffee, but decaf please", "Apple, and a plum if ripe"] }}
+      />
+    ));
+    expect(r.container.querySelectorAll('.tl-question-option[data-chosen="true"]')).toHaveLength(0);
+    const qs = r.container.querySelectorAll(".tl-question");
+    expect(qs[0]!.querySelector(".tl-question-answer")?.textContent).toBe(
+      "answered: Coffee, but decaf please",
+    );
+  });
+
+  it("marks no option for typed words that hold ', <label>'", () => {
+    const r = render(() => (
+      <QuestionRowView row={{ ...row, answers: ["None, Tea", "Fig, Pear"] }} />
+    ));
+    expect(r.container.querySelectorAll('.tl-question-option[data-chosen="true"]')).toHaveLength(0);
+  });
+
   it("says nothing under a question the answer left out", () => {
     const r = render(() => <QuestionRowView row={{ ...row, answers: ["Tea", ""] }} />);
     const qs = r.container.querySelectorAll(".tl-question");

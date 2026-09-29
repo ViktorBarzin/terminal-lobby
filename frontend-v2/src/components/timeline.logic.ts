@@ -550,13 +550,21 @@ function chatReply(body: string): string | undefined {
 }
 
 /**
- * Whether `label` is among the picks an answer records. A multi-select's picks
- * are joined by ", ", so a label is picked when it is the whole answer or one
- * of its parts.
+ * Whether `label` is among the picks an answer to `q` records. A label is
+ * picked when it is the whole answer. A multi-select's picks are joined by
+ * ", ", so there it is also picked when the answer is nothing but option
+ * labels joined that way and it is one of them. Words typed through "Type
+ * your own answer" are recorded the same way as picks, so "Tabs, but sticky
+ * on scroll" is free text, not a pick of Tabs: a part that is no label says
+ * so (deployed review round 3 of the T3 pass, 2026-09-29).
  */
-export function pickedIn(answer: string | undefined, label: string): boolean {
+export function pickedIn(answer: string | undefined, label: string, q: Question): boolean {
   if (!answer) return false;
-  return answer === label || answer.split(", ").includes(label);
+  if (answer === label) return true;
+  if (!q.multiSelect) return false;
+  const parts = answer.split(", ");
+  const labels = new Set(q.options.map((o) => o.label));
+  return parts.includes(label) && parts.every((p) => labels.has(p));
 }
 
 /** A plan's text as the dialog draws it, tracked while the call is open. */
