@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -72,13 +73,15 @@ func TestPasteChunksStayUnderTheCollapseLimits(t *testing.T) {
 }
 
 // A long line is cut after a space where there is one, so a word or a path is
-// never split across two pastes.
+// never split across two pastes. A picture's path ends a paste of its own
+// (TestPasteChunksEndAPasteAfterEveryPicturesPath).
 func TestPasteChunksCutALongLineAtASpace(t *testing.T) {
 	path := "/var/lib/clipboard-store/wizard/demo/file-20260928-101010-0123abcd-shot.png"
 	text := strings.Repeat("word ", 120) + path + " " + strings.Repeat("more ", 120)
-	for i, c := range pasteChunks(text) {
-		if i > 0 && !strings.HasSuffix(pasteChunks(text)[i-1], " ") {
-			t.Fatalf("chunk %d does not start after a space: %q", i, c)
+	chunks := pasteChunks(text)
+	for i, c := range chunks {
+		if i > 0 && !strings.HasSuffix(chunks[i-1], " ") && !strings.HasSuffix(chunks[i-1], path) {
+			t.Fatalf("chunk %d does not start after a space or a picture: %q", i, c)
 		}
 		if strings.Contains(c, "/var/lib") && !strings.Contains(c, path) {
 			t.Fatalf("the path was split: %q", c)
@@ -159,5 +162,34 @@ func TestPromptSendsALongMessageAsPastesClaudeKeepsInline(t *testing.T) {
 		if chunkBreaks(b) > pasteChunkBreaks || chunkUnits(b) > pasteChunkUnits {
 			t.Fatalf("paste %d would be collapsed: %d breaks, %d units", i, chunkBreaks(b), chunkUnits(b))
 		}
+	}
+}
+
+// Claude Code attaches a picture from a path only when the path ends a paste:
+// "Name this colour. <path>" is attached as [Image #1], "<path> Name this
+// colour." is sent as text, and Claude then reads the file with its Read tool,
+// which asks permission in Manual, Edits and Plan mode for a folder outside
+// the project (measured on CLI 2.1.283, 2026-09-29; deployed review round 5:
+// every photo sent from a phone asked to read the lobby's upload folder). So
+// every picture's path ends a paste of its own.
+func TestPasteChunksEndAPasteAfterEveryPicturesPath(t *testing.T) {
+	for _, tc := range []struct {
+		name, text string
+		want       []string
+	}{
+		{"picture first", "/var/lib/clipboard-store/u/s/pasted-1.png second picture message",
+			[]string{"/var/lib/clipboard-store/u/s/pasted-1.png", " second picture message"}},
+		{"picture last", "Name this colour. /var/tmp/x/red.PNG",
+			[]string{"Name this colour. /var/tmp/x/red.PNG"}},
+		{"two pictures", "/a/one.jpg /a/two.webp compare them",
+			[]string{"/a/one.jpg", " /a/two.webp", " compare them"}},
+		{"not a picture", "/var/tmp/notes.txt read this", []string{"/var/tmp/notes.txt read this"}},
+		{"a relative name", "red.png is the file", []string{"red.png is the file"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pasteChunks(tc.text); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("pasteChunks = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

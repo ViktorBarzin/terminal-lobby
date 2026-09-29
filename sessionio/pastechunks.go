@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"regexp"
 	"unicode"
 	"unicode/utf8"
 )
@@ -33,17 +34,51 @@ const (
 // which is stricter than the CLI's reading of \r\n as one.
 //
 // Empty text is one empty piece, so a caller pastes exactly what it did before.
+//
+// Every picture's path also ends a paste (picturePathEnds): Claude Code
+// attaches a picture from a path only when the path is the end of what was
+// pasted (measured on CLI 2.1.283, 2026-09-29). A path at the front was sent
+// as text, and Claude read the file with its Read tool, which asks permission
+// outside the project in Manual, Edits and Plan mode (deployed review round 5:
+// every photo sent from a phone asked to read the lobby's upload folder).
 func pasteChunks(text string) []string {
 	if text == "" {
 		return []string{text}
 	}
 	var out []string
-	for text != "" {
-		end := chunkEnd(text)
-		out = append(out, text[:end])
-		text = text[end:]
+	start := 0
+	for _, end := range append(picturePathEnds(text), len(text)) {
+		for part := text[start:end]; part != ""; {
+			n := chunkEnd(part)
+			out = append(out, part[:n])
+			part = part[n:]
+		}
+		start = end
 	}
 	return out
+}
+
+// picturePath is an absolute path to a picture, as a whole word: what Claude
+// Code attaches when it ends a paste.
+var picturePath = regexp.MustCompile(`(?i)(?:^|\s)(/\S+\.(?:png|jpe?g|gif|webp))(?:\s|$)`)
+
+// picturePathEnds is the byte offset just past each picture's path in text, in
+// order, leaving out one that ends the text already.
+func picturePathEnds(text string) []int {
+	var ends []int
+	for rest, base := text, 0; ; {
+		m := picturePath.FindStringSubmatchIndex(rest)
+		if m == nil {
+			return ends
+		}
+		if end := base + m[3]; end < len(text) {
+			ends = append(ends, end)
+		}
+		// Resume at the path's end, so a whitespace that ended one path can
+		// begin the next.
+		base += m[3]
+		rest = text[base:]
+	}
 }
 
 // chunkEnd is the byte length of the first piece of text.
