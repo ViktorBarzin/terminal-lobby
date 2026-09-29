@@ -6195,17 +6195,20 @@ body.tl-kb-up {
 .tl-qcard-head {
   flex: none;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
-  /* One line: on a narrow card the words give way (an ellipsis) before the
-     links do, so "Open in Terminal" never drops onto a line of its own. */
+  gap: 0 8px;
+  /* One line while the words keep their floor (16em, below); on a phone
+     where they cannot, the links move to a line of their own at the right,
+     rather than the words being cut to "Claude wants to use a t… · C…"
+     (deployed review rounds 3 to 5, 2026-09-28). */
   padding: 0 4px;
   color: var(--text-muted);
   font-size: calc(12px * var(--tl-text-scale, 1));
 }
 .tl-qcard-lead,
 .tl-qcard-fold {
-  flex: 1 1 auto;
+  flex: 1 1 16em;
   min-width: 0;
   display: inline-flex;
   align-items: center;
