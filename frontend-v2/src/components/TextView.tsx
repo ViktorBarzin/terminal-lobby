@@ -28,6 +28,7 @@ import {
   pendingQuestion,
   promptHistory,
   handedBack,
+  queuedGhosts,
   queuedPrompts,
   withoutQueued,
   withPendingPrompts,
@@ -473,7 +474,8 @@ export const TextView: Component<{
    *  not recorded yet. */
   const ghosts = createMemo(() => {
     const waiting = waitingHeld();
-    return waiting.length === 0 ? queued() : [...queued(), ...waiting.map((p) => p.text)];
+    const fromQueue = queuedGhosts(queued(), props.pendingPrompts?.() ?? []);
+    return waiting.length === 0 ? fromQueue : [...fromQueue, ...waiting.map((p) => p.text)];
   });
   const shown = createMemo(() => withPendingPrompts(props.events, sent()));
   /** What the timeline draws. `withPendingPrompts` returns `events` itself when

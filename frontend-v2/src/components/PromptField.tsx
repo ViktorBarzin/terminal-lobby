@@ -645,10 +645,22 @@ export const PromptField: Component<{
    * written first, so they read first, and a line typed while the Stop was in
    * flight stays after them. The caret goes to the end and the field is not
    * focused, which on a phone would raise the keyboard under the reader.
+   *
+   * A store path in it comes back as the chip it was sent from, as a history
+   * recall does (deployed review round 1 of the T3 pass, 2026-09-29: a queued
+   * picture came back as its raw path). The pending composer holds files it
+   * has not uploaded, so a path there stays text.
    */
   const prependText = (text: string): void => {
     if (!ta || !text) return;
-    ta.value = ta.value ? `${text}\n\n${ta.value}` : text;
+    let body = text;
+    if (!props.pendingAttachments) {
+      const current = attached();
+      const back = tokenizeStorePaths(text, current);
+      body = back.text;
+      if (back.items.length > 0) setAttached([...current, ...back.items]);
+    }
+    ta.value = ta.value ? `${body}\n\n${ta.value}` : body;
     ta.setSelectionRange(ta.value.length, ta.value.length);
     sync();
   };

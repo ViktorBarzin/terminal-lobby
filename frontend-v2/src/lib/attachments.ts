@@ -564,10 +564,17 @@ export interface RecalledAttachment {
  * A recalled message with every store path turned back into a chip token, and
  * the attachments those tokens stand for. A path outside the store is left as
  * text: nothing on this device put it there as a chip.
+ *
+ * `known` are chips the field already holds: a path among them keeps its
+ * token and is not returned again, and a new chip takes a token none of them
+ * has.
  */
-export function tokenizeStorePaths(text: string): { text: string; items: RecalledAttachment[] } {
+export function tokenizeStorePaths(
+  text: string,
+  known: ReadonlyArray<{ path: string; token?: string }> = [],
+): { text: string; items: RecalledAttachment[] } {
   const items: RecalledAttachment[] = [];
-  const taken = new Set<string>();
+  const taken = new Set<string>(known.flatMap((a) => (a.token ? [a.token] : [])));
   let out = "";
   for (const seg of segmentMessage(text)) {
     const stored = seg.kind === "file" ? parseStorePath(seg.path) : null;
@@ -575,9 +582,9 @@ export function tokenizeStorePaths(text: string): { text: string; items: Recalle
       out += seg.kind === "file" ? seg.path : seg.text;
       continue;
     }
-    const known = items.find((a) => a.path === seg.path);
-    if (known) {
-      out += known.token;
+    const seen = items.find((a) => a.path === seg.path) ?? known.find((a) => a.path === seg.path);
+    if (seen?.token) {
+      out += seen.token;
       continue;
     }
     const token = attachToken(stored.name, seg.fileKind, taken);
@@ -590,7 +597,7 @@ export function tokenizeStorePaths(text: string): { text: string; items: Recalle
 
 /** A message's words alone: no paths, no placeholders, no whitespace. What a
  *  sent message and the CLI's record of it still agree on. */
-function wordsOf(text: string): string {
+export function wordsOf(text: string): string {
   return segmentMessage(text)
     .map((s) => (s.kind === "text" ? s.text : ""))
     .join("")

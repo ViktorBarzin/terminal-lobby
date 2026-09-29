@@ -9,7 +9,12 @@
  * this box: enqueue 1261, remove 841, dequeue 393, popAll 13.
  */
 import { describe, it, expect } from "vitest";
-import { queuedPrompts, withoutQueued } from "../src/components/timeline.logic";
+import {
+  handedBack,
+  queuedGhosts,
+  queuedPrompts,
+  withoutQueued,
+} from "../src/components/timeline.logic";
 import type { PendingPrompt } from "../src/logic/compose.logic";
 import type { Event, MetaKind } from "../src/types/events";
 
@@ -144,5 +149,48 @@ describe("a pending prompt Claude has already queued", () => {
   it("returns the same list when nothing is queued, so the fold is reused", () => {
     const sent = [pending(1, "x")];
     expect(withoutQueued(sent, [])).toBe(sent);
+  });
+});
+
+/**
+ * A queued message with a picture. The CLI records it as "[Image #N]" and the
+ * words, with no path, and the prompt sent from here holds the picture's store
+ * path. Deployed review round 1 of the T3 pass (2026-09-29): the two never
+ * matched, so one message drew two ghosts, and a Stop handed back both copies,
+ * the placeholder and the raw path as text, with the chip gone.
+ */
+describe("a queued message with a picture", () => {
+  const path = "/var/lib/clipboard-store/wizard/qa-d1a/pasted-20260929-041427-9a47007d.png";
+  const sentText = `queued with pic ${path}  after chip`;
+  const recorded = "[Image #2]queued with pic  after chip";
+  const pending = (id: number, text: string): PendingPrompt => ({
+    id: -id,
+    text,
+    at: id,
+    command: false,
+    afterId: 0,
+  });
+
+  it("is one message: the pending prompt steps aside for the ghost", () => {
+    expect(withoutQueued([pending(1, sentText)], [recorded])).toEqual([]);
+  });
+
+  it("keeps two different messages apart", () => {
+    expect(withoutQueued([pending(1, `other words ${path}`)], [recorded])).toHaveLength(1);
+  });
+
+  it("draws the ghost as the message sent from here, picture included", () => {
+    expect(queuedGhosts([recorded, "plain"], [pending(1, sentText)])).toEqual([sentText, "plain"]);
+  });
+
+  it("comes back once from a Stop, as it was written, with its picture's path", () => {
+    expect(handedBack([recorded], [pending(1, sentText)])).toEqual([sentText]);
+  });
+
+  it("still hands back text-only queues once each, in order", () => {
+    expect(handedBack(["one", "two"], [pending(1, "one"), pending(2, "two")])).toEqual([
+      "one",
+      "two",
+    ]);
   });
 });

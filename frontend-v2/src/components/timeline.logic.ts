@@ -12,6 +12,7 @@ import type { PendingPrompt } from "../logic/compose.logic";
 import type { DialogView, PlanOptionView } from "../lib/answer-api";
 import { modeId, modeTitle } from "../logic/modes";
 import { heldFromEvents } from "./question.logic";
+import { withSentPictures, wordsOf } from "../lib/attachments";
 import {
   describe as describeTool,
   extractTodoSteps,
@@ -2331,6 +2332,11 @@ export function queuedPrompts(events: Event[], seed?: SessionState | null): stri
  * the store releases pending prompts one transcript record at a time: two
  * identical messages with one of them queued are still two messages. Returns
  * `sent` itself when nothing is left out, so the caller's fold is reused.
+ *
+ * They are matched on their words (`wordsOf`): the CLI records a picture
+ * attached from a path as "[Image #N]", with no path, where the prompt sent
+ * from here holds the path. Matched on the whole text, a queued message with
+ * a picture drew twice (deployed review round 1 of the T3 pass, 2026-09-29).
  */
 export function withoutQueued<T extends { text: string }>(
   sent: readonly T[],
@@ -2338,17 +2344,33 @@ export function withoutQueued<T extends { text: string }>(
 ): readonly T[] {
   if (sent.length === 0 || queued.length === 0) return sent;
   const waiting = new Map<string, number>();
-  for (const q of queued) waiting.set(q, (waiting.get(q) ?? 0) + 1);
+  for (const q of queued) waiting.set(wordsOf(q), (waiting.get(wordsOf(q)) ?? 0) + 1);
   let dropped = false;
   const kept = sent.filter((p) => {
-    const text = p.text.trim();
-    const n = waiting.get(text) ?? 0;
+    const words = wordsOf(p.text);
+    const n = waiting.get(words) ?? 0;
     if (n === 0) return true;
-    waiting.set(text, n - 1);
+    waiting.set(words, n - 1);
     dropped = true;
     return false;
   });
   return dropped ? kept : sent;
+}
+
+/**
+ * The ghosts for Claude's queue: each queued entry the CLI rewrote with
+ * "[Image #N]" drawn as the message sent from here with the same words, whose
+ * picture's path draws the picture (`withSentPictures`). An entry nothing
+ * here sent stays as the CLI recorded it.
+ */
+export function queuedGhosts(
+  queued: readonly string[],
+  sent: ReadonlyArray<Pick<PendingPrompt, "text">>,
+): string[] {
+  return withSentPictures(
+    queued,
+    sent.map((p) => p.text.trim()),
+  );
 }
 
 /**
@@ -2357,11 +2379,13 @@ export function withoutQueued<T extends { text: string }>(
  * recorded at all, which never reached the queue or is still on its way.
  *
  * `held` is the store's pending prompts, in send order, and that order is kept.
- * Each queued prompt stands for the oldest held one with the same text, and a
- * held prompt the queue does not have goes back before the next queued one
- * that was sent after it. Found in the live check on 2026-09-27: two sends
- * 100ms apart, the CLI recorded only the second one's enqueue, and the first
- * came back after it. Queued prompts nothing here sent (typed in the terminal)
+ * Each queued prompt stands for the oldest held one with the same words
+ * (`wordsOf`) and goes back as that one was written, so a picture comes back
+ * as its path rather than the CLI's "[Image #N]" (deployed review round 1 of
+ * the T3 pass, 2026-09-29). A held prompt the queue does not have goes back
+ * before the next queued one that was sent after it. Found in the live check
+ * on 2026-09-27: two sends 100ms apart, the CLI recorded only the second
+ * one's enqueue, and the first came back after it. Queued prompts nothing here sent (typed in the terminal)
  * keep their place in the queue.
  *
  * A slash command is left out: it may never be recorded at all
@@ -2381,10 +2405,15 @@ export function handedBack(queued: readonly string[], held: readonly PendingProm
   };
   for (const q of queued) {
     const text = unwrapPasted(q);
-    const at = prose.findIndex((t, n) => t !== "" && !matched.has(n) && t === text.trim());
+    const words = wordsOf(text);
+    const at = prose.findIndex((t, n) => t !== "" && !matched.has(n) && wordsOf(t) === words);
     if (at >= 0) {
       matched.add(at);
       flushTo(at);
+      // As it was written here: a picture's path in place of the CLI's
+      // "[Image #N]", which the field turns back into its chip.
+      out.push(prose[at]!);
+      continue;
     }
     out.push(text);
   }

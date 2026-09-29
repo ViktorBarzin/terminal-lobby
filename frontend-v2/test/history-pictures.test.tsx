@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
-import { Composer } from "../src/components/Composer";
+import { Composer, type ComposerSinks } from "../src/components/Composer";
 import { tokenizeStorePaths, withSentPictures } from "../src/lib/attachments";
 import { rememberSent, sentPictures, SENT_PICTURES_KEY } from "../src/store/sentPictures";
 
@@ -22,7 +22,9 @@ describe("a store path in a recalled message", () => {
     const got = tokenizeStorePaths(`What is in this picture? ${PIC} and ${DOC} too`);
     expect(got.items.map((a) => a.path)).toEqual([PIC, DOC]);
     expect(got.items.map((a) => a.kind)).toEqual(["image", "doc"]);
-    expect(got.text).toBe(`What is in this picture? ${got.items[0]!.token} and ${got.items[1]!.token} too`);
+    expect(got.text).toBe(
+      `What is in this picture? ${got.items[0]!.token} and ${got.items[1]!.token} too`,
+    );
     expect(got.text).not.toContain("/var/lib");
   });
 
@@ -36,7 +38,9 @@ describe("a history entry the CLI rewrote with [Image #N]", () => {
   const sent = [`What is in this picture, in five words? ${PIC}`];
 
   it("comes back as the message this device sent", () => {
-    expect(withSentPictures(["[Image #1]What is in this picture, in five words?"], sent)).toEqual(sent);
+    expect(withSentPictures(["[Image #1]What is in this picture, in five words?"], sent)).toEqual(
+      sent,
+    );
   });
 
   it("stays as it was when nothing sent from here matches", () => {
@@ -113,5 +117,36 @@ describe("↑ in the composer", () => {
     fireEvent.keyDown(ta, { key: "ArrowDown" });
     expect(ta.value).toBe("");
     expect(container.querySelector(".tl-inline-thumb")).toBeNull();
+  });
+});
+
+/**
+ * A Stop hands a queued message back into the field. Deployed review round 1
+ * of the T3 pass (2026-09-29): one with a picture came back with the raw
+ * store path as text and the chip gone.
+ */
+describe("a message a Stop hands back", () => {
+  it("brings its picture back as a chip, next to a chip the field already has", async () => {
+    const onSend = vi.fn(async (_text: string) => true);
+    let sinks: ComposerSinks | undefined;
+    const { container } = render(() => (
+      <Composer
+        pending={[]}
+        onSend={onSend}
+        onStop={() => {}}
+        onResolve={() => {}}
+        register={(api) => (sinks = api)}
+      />
+    ));
+    const ta = container.querySelector<HTMLTextAreaElement>(".tl-composer-input")!;
+    sinks!.add([{ path: DOC, name: "report.pdf", kind: "doc" }]);
+    sinks!.prependText(`queued with pic ${PIC}  after chip`);
+    expect(ta.value).not.toContain("/var/lib");
+    expect(ta.value).toMatch(/^queued with pic \[img[^\]]*\]  after chip\n\n\[file[^\]]*\] ?$/);
+    expect(container.querySelector(".tl-inline-thumb")).not.toBeNull();
+    fireEvent.keyDown(ta, { key: "Enter" });
+    await Promise.resolve();
+    expect(onSend.mock.calls[0]![0]).toContain(`queued with pic ${PIC}  after chip`);
+    expect(onSend.mock.calls[0]![0]).toContain(DOC);
   });
 });
