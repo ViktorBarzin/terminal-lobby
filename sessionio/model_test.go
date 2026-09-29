@@ -277,6 +277,38 @@ func TestClaudeEffortHintReadsTheLiveLevel(t *testing.T) {
 	}
 }
 
+// THE HINT CAN LAG THE CHANGE. Picking xhigh from the sheet on 2026-09-29
+// (Claude Code 2.1.284) read back "medium": the slider had closed and the
+// receipt said "Set effort level to xhigh", but the line above the input had
+// not repainted yet, and the sheet then said something on the box pinned the
+// session to medium. A reading taken while the newest receipt names the level
+// asked for and the hint still names another is not settled yet.
+func TestEffortSettledWaitsForTheHintToCatchUpWithTheReceipt(t *testing.T) {
+	stale := "" +
+		"❯ /effort\n" +
+		"  ⎿  Set effort level to xhigh (this session only): Deeper reasoning\n" +
+		"                                                   ◐ medium · /effort\n" +
+		"❯ \n"
+	fresh := strings.Replace(stale, "◐ medium", "◉ xhigh", 1)
+	cases := []struct {
+		name  string
+		pane  string
+		asked string
+		want  bool
+	}{
+		{"hint not repainted yet", stale, "xhigh", false},
+		{"hint agrees", fresh, "xhigh", true},
+		{"receipt names another level", stale, "max", true},
+		{"no receipt at all", "                    ◐ medium · /effort\n❯ \n", "xhigh", true},
+		{"no hint, the receipt stands in", "  ⎿  Set effort level to xhigh (this session only)\n❯ \n", "xhigh", true},
+	}
+	for _, c := range cases {
+		if got := effortSettled(c.pane, c.asked); got != c.want {
+			t.Errorf("%s: effortSettled = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
 // THE GLYPH RAMPS WITH THE LEVEL, and the top step does not even end the same
 // way. Read off a live pane on 2026-09-05 by setting each level in turn: a
 // reader keyed to the ◈ of `max` — the level the first capture happened to be

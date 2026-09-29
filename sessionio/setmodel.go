@@ -97,6 +97,9 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 		}
 	}
 	pane, err := in.CapturePane(osUser, session)
+	if err == nil && want.Effort != "" {
+		pane, err = in.awaitEffortHint(ctx, osUser, session, pane, want.Effort)
+	}
 	if err != nil {
 		return ModelState{}, fmt.Errorf("set model: reading the pane back: %w", err)
 	}
@@ -106,6 +109,27 @@ func (in *Injector) setClaudeModel(ctx context.Context, osUser, session string, 
 	// walk confirmed — the cursor sat on this row before `s` was pressed — is
 	// the evidence. The effort DOES have a hint of its own, so it is read.
 	return ModelState{Model: want.Model, Effort: ClaudeEffortHint(pane)}, nil
+}
+
+// awaitEffortHint gives the hint above the input a moment to repaint after an
+// effort change, and returns the pane once it agrees with the receipt or the
+// moment runs out (effortSettled). A short look, like confirmSwitch's: the
+// hint is normally repainted by the time the slider has closed.
+func (in *Injector) awaitEffortHint(ctx context.Context, osUser, session, pane, asked string) (string, error) {
+	deadline := time.Now().Add(switchWait)
+	for !effortSettled(pane, asked) && time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return pane, nil
+		case <-time.After(pickerPoll):
+		}
+		next, err := in.CapturePane(osUser, session)
+		if err != nil {
+			return "", err
+		}
+		pane = next
+	}
+	return pane, nil
 }
 
 // confirmSwitch answers the warm-cache confirmation, when there is one.

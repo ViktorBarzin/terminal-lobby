@@ -389,6 +389,27 @@ func ClaudeEffortHint(pane string) string {
 	return ""
 }
 
+// effortSettled reports whether a Claude pane's effort reading can be taken
+// after asking for `asked`. Not while the newest receipt names that level and
+// the hint above the input still names another: the slider has closed but the
+// hint has not repainted, and reading it then reported the level the change
+// replaced (Claude Code 2.1.284, 2026-09-29). A hint that stays on another
+// level is a pin, which the caller reads once its short wait runs out.
+func effortSettled(pane, asked string) bool {
+	hints := reClaudeEffort.FindAllStringSubmatch(pane, -1)
+	if len(hints) == 0 {
+		return true
+	}
+	receipt := ""
+	for _, line := range strings.Split(pane, "\n") {
+		if level, ok := EffortFromReceipt(line); ok {
+			receipt = level
+		}
+	}
+	hint := strings.ToLower(hints[len(hints)-1][1])
+	return hint == asked || receipt != asked
+}
+
 // CodexState reads the model and reasoning level off a codex pane.
 //
 // Codex fetches its model list AFTER the TUI is up — the box reads "loading"
