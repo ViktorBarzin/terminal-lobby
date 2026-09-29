@@ -118,6 +118,25 @@ import {
 } from "../lib/new-commands";
 
 const SIDEBAR_KEY = "tmux-sidebar-collapsed";
+/** sessionStorage: this tab went back to the phone's list (opensOnContent). */
+const PHONE_LIST_KEY = "tl:phone-list";
+
+function readBackedOut(): boolean {
+  try {
+    return sessionStorage.getItem(PHONE_LIST_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeBackedOut(on: boolean): void {
+  try {
+    if (on) sessionStorage.setItem(PHONE_LIST_KEY, "1");
+    else sessionStorage.removeItem(PHONE_LIST_KEY);
+  } catch {
+    /* no storage */
+  }
+}
 
 function readInitialSelection(): SelectedSession | null {
   if (typeof window === "undefined") return null;
@@ -1044,8 +1063,28 @@ export const App: Component = () => {
       flip: isMobileFlip(),
       hasSelection: !!readInitialSelection(),
       savedCollapse: readSidebarCollapsed(),
+      backedOut: readBackedOut(),
     }),
   );
+  /**
+   * The phone header's back button: the list, and the session's hash off the
+   * URL, so a reload in this tab opens the list again rather than the session
+   * (deployed review round 3, 2026-09-28). The selection stays, so the list
+   * still marks where you were.
+   */
+  const backToList = () => {
+    setCollapsed(false);
+    writeBackedOut(true);
+    try {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    } catch {
+      /* no history */
+    }
+  };
+  // Any screen past the list again (a session, the composer) ends it.
+  createEffect(() => {
+    if (flip() && collapsed()) writeBackedOut(false);
+  });
   /** Is a session bar — and so its connection badge — on screen? The sidebar's
    *  own badge reads this and stands down (rule + tests in lobby.logic.ts). */
   const barOnScreen = () =>
@@ -2489,7 +2528,7 @@ export const App: Component = () => {
                     type="button"
                     class="tl-back-btn"
                     aria-label="Back to sessions"
-                    onClick={() => setCollapsed(false)}
+                    onClick={backToList}
                   >
                     <BackGlyph />
                   </button>
@@ -2770,7 +2809,7 @@ export const App: Component = () => {
                             type="button"
                             class="tl-back-btn"
                             aria-label="Back to sessions"
-                            onClick={() => setCollapsed(false)}
+                            onClick={backToList}
                           >
                             <BackGlyph />
                           </button>

@@ -723,6 +723,20 @@ describe("opensOnContent", () => {
     expect(opensOnContent({ flip: true, hasSelection: false, savedCollapse: true })).toBe(true);
   });
 
+  // The header's back button leaves the session for the list and takes the
+  // session's hash with it, so a reload in the same tab lands on the list it
+  // left from rather than reopening the session (deployed review round 3,
+  // 2026-09-28).
+  it("reopens a phone on the list it went back to", () => {
+    expect(
+      opensOnContent({ flip: true, hasSelection: false, savedCollapse: false, backedOut: true }),
+    ).toBe(false);
+    // A session named in the URL since then wins.
+    expect(
+      opensOnContent({ flip: true, hasSelection: true, savedCollapse: false, backedOut: true }),
+    ).toBe(true);
+  });
+
   it("leaves a desktop on whatever the user last set", () => {
     expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: true })).toBe(true);
     expect(opensOnContent({ flip: false, hasSelection: true, savedCollapse: false })).toBe(false);

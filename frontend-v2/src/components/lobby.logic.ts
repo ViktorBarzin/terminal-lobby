@@ -795,11 +795,20 @@ export function sessionBarOnScreen(o: {
  *
  * The saved collapse is honoured only off a phone, where it means what it was
  * written to mean: a width preference for a device with room for both panes.
+ *
+ * One exception on a phone: a tab that went back to the list with the header's
+ * back button, and opened nothing since, reopens on the list. The back button
+ * takes the session's hash away, so without this a reload landed on the
+ * composer, and before the hash went it reopened the session.
  */
 export function opensOnContent(o: {
   flip: boolean;
   hasSelection: boolean;
   savedCollapse: boolean;
+  /** phone only: this tab went back to the list with the header's back
+   *  button and has opened nothing since. A reload lands there again. */
+  backedOut?: boolean;
 }): boolean {
-  return o.flip ? true : o.savedCollapse;
+  if (o.flip) return o.hasSelection || !o.backedOut;
+  return o.savedCollapse;
 }
