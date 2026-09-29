@@ -229,3 +229,46 @@ func TestWipeKeysKillALineAtATime(t *testing.T) {
 		t.Errorf("a huge box asked for %d keys, want at most %d", got, 1+2*wipeMaxPairs)
 	}
 }
+
+// Stop a moment after Claude took the queued prompt into its turn. The page
+// still thinks it is queued, so it asks for it back, and Up on the now empty
+// queue RECALLS the prompt from history instead of popping it: the box shows
+// the same words under a rule titled "History N/M" (CLI 2.1.284, measured
+// 2026-09-29). Deployed review round 2 of the T3 pass: a picture message came
+// back as a draft that Claude had already answered, and a Send would have
+// delivered it twice. A recall is not the queue, and the box is left empty.
+func TestClearQueueDoesNotTakeAPromptRecalledFromHistory(t *testing.T) {
+	for _, text := range []string{"[Image #1]  pic in queue", "queued words Claude already took"} {
+		t.Run(text, func(t *testing.T) {
+			in, osUser := fakeInputSession(t, "FAKEINPUT_HISTORY='"+text+"'")
+			took, err := in.ClearQueue(osUser, "demo", []string{text})
+			if err != nil {
+				t.Fatalf("ClearQueue: %v", err)
+			}
+			if took {
+				t.Fatal("ClearQueue took a prompt Up recalled from history as the queue")
+			}
+			pane := awaitPane(t, in, osUser, func(p string) bool {
+				box, ok := inputBox(p)
+				return ok && strings.TrimSpace(box) == ""
+			})
+			if strings.Contains(pane, "History") {
+				t.Fatalf("the box was left browsing history:\n%s", pane)
+			}
+		})
+	}
+}
+
+// The rows as CLI 2.1.284 drew them on 2026-09-29, after Up on an empty queue
+// and after Up on a real one.
+func TestRecallingHistoryReadsTheRuleAboveTheBox(t *testing.T) {
+	rule := strings.Repeat("─", 100)
+	recalled := "· Jitterbugging…\n─── History 4/4 " + rule + "\n❯ queued two say FIG\n" + rule + "\n  ⏸ manual mode on\n"
+	popped := "  timing of each constituent.\n" + rule + " ↯ ─\n❯ queued three say KIWI\n" + rule + "\n  ⏸ manual mode on\n"
+	if !recallingHistory(recalled) {
+		t.Error("a recalled prompt was not seen as one")
+	}
+	if recallingHistory(popped) {
+		t.Error("a popped queue was read as a history recall")
+	}
+}

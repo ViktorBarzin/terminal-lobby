@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -56,13 +57,43 @@ func (in *Injector) ClearQueue(osUser, session string, queued []string) (bool, e
 		return false, err
 	}
 	text := strings.Join(queued, "\n")
-	if !in.awaitHeld(osUser, session, text) {
+	held := in.awaitHeld(osUser, session, text)
+	// Up on an EMPTY queue recalls the last prompt from history, under a rule
+	// titled "History N/M" (CLI 2.1.284, measured 2026-09-29). That is where a
+	// Stop lands a moment after Claude took the queued prompt into its turn:
+	// the caller still thinks it is queued, the recall shows the same words,
+	// and it came back as a draft Claude had already answered (deployed
+	// review round 2 of the T3 pass). Down leaves the recall with the box as
+	// it was.
+	if pane, err := in.CapturePane(osUser, session); err == nil && recallingHistory(pane) {
+		if err := in.Command(osUser, "send-keys", "-t", exactPane(session), "Down").Run(); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	if !held {
 		return false, nil
 	}
 	if err := in.wipeBox(osUser, session, utf8.RuneCountInString(text)); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// historyRule is the rule Claude Code draws above its input box while the box
+// shows a prompt recalled from history: "─── History 4/4 ───…".
+var historyRule = regexp.MustCompile(`^\s*─+ History \d+/\d+ ─`)
+
+// recallingHistory reports whether the input box shows a prompt recalled from
+// history rather than text typed or popped into it.
+func recallingHistory(pane string) bool {
+	lines := strings.Split(pane, "\n")
+	for i := len(lines) - 1; i > 0; i-- {
+		if strings.HasPrefix(lines[i], promptMark) && isBoxRule(lines[i-1]) {
+			return historyRule.MatchString(lines[i-1])
+		}
+	}
+	return false
 }
 
 // reclaimWait bounds how long ReclaimInterrupted waits for the interrupted
