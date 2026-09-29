@@ -1125,6 +1125,12 @@ function foldedFailed(row: FoldedRow): boolean {
 }
 
 /** How many steps a folded row stands for: a work group counts its rows. */
+/** Rows a finished turn's fold leaves in view (see foldSettledTurn). */
+function staysOutOfFold(row: FoldedRow): boolean {
+  if (row.kind === "question") return !row.pending;
+  return row.kind === "plan" || row.kind === "status";
+}
+
 function foldedSteps(row: FoldedRow): number {
   return row.kind === "work-group" ? row.calls.length : 1;
 }
@@ -1154,8 +1160,13 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
       }
     }
     if (visibleAt < 0) visibleAt = work.length - 1;
-    const visible = work[visibleAt];
-    const hidden = work.filter((_, i) => i !== visibleAt);
+    // What stays in view besides the answer: the conversation rather than
+    // Claude's work. An answered question names the question and shows the
+    // reader's answer, a plan shows what was approved, and a status line is
+    // already one quiet line; folded, each read "1 step" (deployed review
+    // rounds 3 to 5, 2026-09-28).
+    const kept = (r: FoldedRow, i: number): boolean => i === visibleAt || staysOutOfFold(r);
+    const hidden = work.filter((r, i) => !kept(r, i));
     // One work group and the reply: the group's own row already stands for
     // the calls, folded, and a fold over it drew them twice (deployed review
     // round 1, 2026-09-28).
@@ -1182,13 +1193,18 @@ function foldSettledTurn(turn: Turn, all: FoldedRow[], settled: boolean): Timeli
             ...(duration !== undefined ? { durationMs: duration } : {}),
           }
         : null;
-    // Chronology: the fold stands for the run of hidden rows that begins at
-    // the first one, so it goes above the visible message only when hidden
-    // work preceded it. A turn whose last item is a tool call keeps the
-    // message that ANNOUNCED the call above the fold holding it.
-    if (fold && visibleAt > 0) rows.push(fold);
-    if (visible) rows.push(visible);
-    if (fold && visibleAt === 0) rows.push(fold);
+    // Chronology: the fold stands in where its first hidden row was, and what
+    // stays in view keeps its place around it. A turn whose last item is a
+    // tool call keeps the message that ANNOUNCED the call above the fold
+    // holding it.
+    let placed = false;
+    work.forEach((r, i) => {
+      if (kept(r, i)) rows.push(r);
+      else if (fold && !placed) {
+        rows.push(fold);
+        placed = true;
+      }
+    });
     if (stop) rows.push(stop);
   } else {
     for (const r of all) rows.push(r);
