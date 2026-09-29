@@ -971,7 +971,11 @@ export const PromptField: Component<{
       }
       if (e.key === "Escape") {
         e.preventDefault();
+        // Forget which folder the emptied listing was for as well, or the
+        // next @ in that folder never fetches it again and the menu stays
+        // shut for the rest of the session (deployed review round 2).
         setPaths([]);
+        lastDir = "\0";
         setCaret(-1); // closes the menu until the next keystroke
         return;
       }

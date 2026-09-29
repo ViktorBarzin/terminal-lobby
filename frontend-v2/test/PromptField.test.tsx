@@ -252,3 +252,40 @@ describe("<PromptField> — a send the page leaves behind", () => {
     expect(field(b.container).value).toBe("reply with pear");
   });
 });
+
+describe("<PromptField> — @ completion after an Escape", () => {
+  const options = (c: HTMLElement) =>
+    Array.from(c.querySelectorAll(".tl-complete-item")).map((o) => o.textContent ?? "");
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  // Deployed review round 2 of the T3 pass (2026-09-29): one Escape on the @
+  // menu emptied the listing but kept the note of which folder it was for, so
+  // no later @ in that folder fetched it again and the menu never reopened,
+  // not even after a trip to the Terminal view and back.
+  it("opens again on the next @ in the same folder", async () => {
+    const asked: string[] = [];
+    const onListDir = async (dir: string) => {
+      asked.push(dir);
+      return ["alpha.txt", "sub/"];
+    };
+    const { container } = render(() => (
+      <PromptField onSend={onSend} label="Message" onListDir={onListDir} />
+    ));
+    const ta = field(container);
+    type(ta, "@");
+    await settle();
+    expect(options(container).some((o) => o.includes("@alpha.txt"))).toBe(true);
+
+    fireEvent.keyDown(ta, { key: "Escape" });
+    expect(options(container)).toEqual([]);
+
+    type(ta, "");
+    type(ta, "@");
+    await settle();
+    expect(options(container).some((o) => o.includes("@alpha.txt"))).toBe(true);
+
+    type(ta, "hello @al");
+    await settle();
+    expect(options(container).some((o) => o.includes("@alpha.txt"))).toBe(true);
+  });
+});
