@@ -964,6 +964,37 @@ describe("a card that docks over the phone's keyboard", () => {
     await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
   });
 
+  // Deployed review round 4 (2026-09-29, Android emulator): a reader kept
+  // tapping the keyboard's "e" about every 0.4 s after the card docked. The
+  // first two taps were swallowed, and the third, 647 ms after the keyboard
+  // went, landed on "Yes" where the top letter row had been and ran the tool.
+  // A tap too soon is still typing, so it starts the wait again, and once the
+  // card has put the keyboard away the wait is a full second.
+  it("keeps a run of taps meant for the keyboard from pressing a row", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    const row = () => v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!;
+    for (let i = 0; i < 6; i++) {
+      await new Promise((done) => setTimeout(done, 400));
+      fireEvent.click(row());
+    }
+    await Promise.resolve();
+    expect(v.onKeys).not.toHaveBeenCalled();
+    expect(v.r.container.querySelector('[data-card-keys="armed"]')).toBeNull();
+    // The taps stop: the reader has looked up, and the next tap is meant.
+    await armed(v.r.container);
+    fireEvent.click(row());
+    await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
+  });
+
+  it("waits a full second after taking the keyboard away before a tap presses", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    await new Promise((done) => setTimeout(done, 800));
+    expect(v.r.container.querySelector('[data-card-keys="armed"]')).toBeNull();
+    await armed(v.r.container);
+  });
+
   it("waits for the keyboard to finish going before a tap presses a row", async () => {
     const vv = Object.assign(new EventTarget(), { height: 471 });
     Object.defineProperty(window, "visualViewport", { configurable: true, value: vv });

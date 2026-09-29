@@ -296,6 +296,15 @@ const UNSEEN_TYPING_MS = 700;
  */
 const CARD_KEYS_ARM_MS = 600;
 
+/**
+ * The same wait once a card has put the phone's keyboard away. Its rows sit
+ * where the keys were, and a reader typing in flow keeps tapping for a moment
+ * before looking up: deployed review round 4 (2026-09-29, Android emulator)
+ * tapped the "e" key every 0.4 s, and the tap 647 ms after the keyboard went
+ * pressed "Yes". Each tap swallowed in the wait starts it again.
+ */
+const CARD_KEYS_ARM_AFTER_KEYBOARD_MS = 1_000;
+
 /** Keys that move the caret: pressing one means the reader is placing it in
  *  the text that is there. */
 const CARET_KEYS = new Set([
@@ -1839,16 +1848,21 @@ export const TextView: Component<{
     el instanceof HTMLTextAreaElement && !!el.closest(".tl-composer") && el.value === "";
   const [cardKeysArmed, setCardKeysArmed] = createSignal(false);
   let armTimer: ReturnType<typeof setTimeout> | undefined;
-  /** Disarm the card's keys and arm them CARD_KEYS_ARM_MS from now. */
+  /** This card put the phone's keyboard away as it docked. */
+  let tookKeyboard = false;
+  /** Disarm the card's keys and arm them a wait from now: CARD_KEYS_ARM_MS,
+   *  or CARD_KEYS_ARM_AFTER_KEYBOARD_MS once the card took the keyboard. */
   const armCardKeys = (): void => {
     clearTimeout(armTimer);
     setCardKeysArmed(false);
-    armTimer = setTimeout(() => setCardKeysArmed(true), CARD_KEYS_ARM_MS);
+    const wait = tookKeyboard ? CARD_KEYS_ARM_AFTER_KEYBOARD_MS : CARD_KEYS_ARM_MS;
+    armTimer = setTimeout(() => setCardKeysArmed(true), wait);
   };
   createEffect(
     on(cardUp, (up) => {
       clearTimeout(armTimer);
       setCardKeysArmed(false);
+      if (!up) tookKeyboard = false;
       if (up) armCardKeys();
     }),
   );
@@ -1865,8 +1879,9 @@ export const TextView: Component<{
    * "1" typed next went into the field nobody could see.
    *
    * The card's rows land where the keys were, so its keys and taps arm only
-   * once the keyboard has finished going: each step of the viewport growing
-   * back starts CARD_KEYS_ARM_MS again (`tapTooSoon`).
+   * once the keyboard has finished going and the taps meant for it have
+   * stopped: each step of the viewport growing back, and each tap swallowed,
+   * starts CARD_KEYS_ARM_AFTER_KEYBOARD_MS again (`tapTooSoon`).
    */
   createEffect(
     on(composerHidden, (up) => {
@@ -1874,6 +1889,8 @@ export const TextView: Component<{
       const draft = (composerSinks()?.text() ?? "").trim() !== "";
       const active = document.activeElement;
       if (active instanceof HTMLElement) active.blur();
+      tookKeyboard = true;
+      if (cardUp()) armCardKeys();
       if (draft) props.notify?.("Claude needs an answer. Your message is kept for after.", "info");
       const vv = window.visualViewport;
       if (!vv) return;
@@ -1887,7 +1904,8 @@ export const TextView: Component<{
   /**
    * A tap on a card's button before its keys arm presses nothing on a phone:
    * it was meant for the keyboard that was there a moment ago, or for the
-   * conversation the card has just covered.
+   * conversation the card has just covered. It starts the wait again, since a
+   * tap that soon means the reader is still typing and has not looked up.
    */
   onMount(() => {
     const el = viewEl;
@@ -1898,6 +1916,7 @@ export const TextView: Component<{
       if (!(t instanceof Element) || !t.closest(".tl-qcard button")) return;
       e.preventDefault();
       e.stopPropagation();
+      armCardKeys();
     };
     el.addEventListener("click", tapTooSoon, true);
     onCleanup(() => el.removeEventListener("click", tapTooSoon, true));
