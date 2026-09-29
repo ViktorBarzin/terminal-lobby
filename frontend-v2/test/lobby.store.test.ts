@@ -226,6 +226,22 @@ describe("lobby store", () => {
     });
   });
 
+  // Deployed review round 5 (2026-09-29): a named shell's header read "New
+  // session" for several seconds, because the first poll that knows the
+  // session came before its title stamp and dropped the optimistic card. The
+  // name holds, as a prompt's first line does, until the server has a title.
+  it("create: a NAME survives the poll that comes before its title stamp", async () => {
+    const api = new FakeApi();
+    await withStore(api, async (store) => {
+      await store.refresh();
+      const id = await store.create("my shell", "", "name");
+      api.sessionsVal = [sess(id)];
+      api.layoutVal = { ...emptyLayout(), ungrouped: [id] };
+      await store.refresh();
+      expect(store.sessions.find((s) => s.name === id)?.title).toBe("my shell");
+    });
+  });
+
   it("create: a PROMPT is never stamped, or the summary could never land", async () => {
     // The auto-title rule only fires while @title is unset (tmux-api/autotitle.go),
     // so stamping the prompt's first line would freeze the placeholder in place

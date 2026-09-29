@@ -1102,7 +1102,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // The line the card reads until Claude's summary lands. Persisted rather
     // than left on the optimistic card, which the first poll that knows the
     // session removes — several seconds before any summary.
-    if (kind === "prompt") rememberPromptLine(n, t);
+    // A shell's NAME the same way, until its stamp lands: the first poll that
+    // knows the session can come before it, and the header read "New session"
+    // for seconds (deployed review round 5, 2026-09-29). Only the placeholder:
+    // the server's title replaces it the moment it has one.
+    if (t !== "") rememberPromptLine(n, t);
     const saved = await saveLayout(addSessionToGroup(layout(), n, group));
     if (!saved) {
       // The layout PUT is the only record a create makes, so a write that did
