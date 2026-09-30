@@ -238,6 +238,38 @@ func TestPromptWaitsForEveryPictureBeforeTheEnter(t *testing.T) {
 	}
 }
 
+// The stand-in shows nothing of a picture's paste until it attaches, as
+// Claude Code does (measured on CLI 2.1.283 on 2026-09-29, fakeinput.py
+// FAKEINPUT_IMAGE_MS). It used to draw the path a character at a time as the
+// paste arrived, and the Stop replay failed on that under load in 1 run of
+// about 50 (2026-09-30): awaitAttached read the path in the box before the
+// paste had ended, took it for a path Claude had left as text, stopped
+// waiting, and the words after it went in ahead of the picture.
+func TestFakeInputShowsNothingOfAPicturePasteBeforeItAttaches(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_IMAGE_MS=500")
+	path := "/var/tmp/" + strings.Repeat("a", 2000) + ".png"
+	if err := in.pasteOne(osUser, "demo", path); err != nil {
+		t.Fatalf("paste: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for reads := 0; ; reads++ {
+		pane, err := in.CapturePane(osUser, "demo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		box, _ := inputBox(pane)
+		if strings.Contains(box, "/var/tmp") {
+			t.Fatalf("read %d shows the path in the box before the picture attached; pane:\n%s", reads, pane)
+		}
+		if strings.Contains(box, "[Image #1]") {
+			return
+		}
+		if !time.Now().Before(deadline) {
+			t.Fatalf("the picture never attached; pane:\n%s", pane)
+		}
+	}
+}
+
 // Claude Code draws a picture's "[Image #N]" at the front of the paste that
 // attached it. Deployed review round 2 of the T3 pass (2026-09-29) sent
 // "Colour of first picture: <red>  and colour of second picture: <blue>" and

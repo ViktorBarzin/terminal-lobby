@@ -61,6 +61,7 @@ appended to whatever the box holds by then. That is how CLI 2.1.283 was
 measured to attach a pasted picture on 2026-09-29: nothing shows while it
 reads the file, a 12 MB JPEG took 240 ms where a small PNG took 25 ms, and the
 placeholder lands at the end of the box, after words pasted in the meantime.
+Nothing of a paste is drawn until it ends, so the path never shows as text.
 A picture past the end of the list takes the last delay.
 
 FAKEINPUT_TURN_MS models Claude's turn, for the Stop replay
@@ -373,6 +374,13 @@ def main():
                 line += ch
                 if pasted is not None:
                     pasted += ch
+            if pasting and pasted is not None:
+                # Nothing of a paste shows until it has ended: Claude Code
+                # takes a paste whole, and draws a picture's only once it has
+                # read the file. Drawn a character at a time, the path showed
+                # in the box before the paste ended, where it reads as a
+                # path Claude left as text.
+                continue
             draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered, recalled, turn, rewound)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
