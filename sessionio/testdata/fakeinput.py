@@ -76,6 +76,15 @@ what is still queued runs as the next turn. A line break inside a bracketed
 paste is a line break in the box rather than a submit. The SUBMITTED= lines
 are then the conversation.
 
+FAKEINPUT_TEAR_MS draws the frame an Enter submits in two writes that far
+apart, so a read in between sees it half drawn: the rows above the cut are
+the new frame and the rows below are the last one, with no whole input box
+anywhere. That is what the Stop replay caught in CI on 2026-09-30: a capture
+taken while tmux had read only part of a long prompt's frame showed the rule
+above the box half overwritten and the old box's rows under it, and a
+re-read a moment later showed the empty box. A pty hands a big frame over in
+pieces, and tmux draws each piece as it reads it.
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -102,6 +111,7 @@ HISTORY = [h for h in [os.environ.get("FAKEINPUT_HISTORY", "").replace("\\n", "\
 IMAGE_S = [
     int(ms) / 1000.0 for ms in os.environ.get("FAKEINPUT_IMAGE_MS", "").split(",") if ms
 ]
+TEAR_S = int(os.environ.get("FAKEINPUT_TEAR_MS", "0")) / 1000.0
 TURN_S = (
     int(os.environ["FAKEINPUT_TURN_MS"]) / 1000.0 if os.environ.get("FAKEINPUT_TURN_MS") else None
 )
@@ -117,6 +127,8 @@ RULE = "─" * 60
 # A frame being drawn, written out in one go by flush_frame: a screen
 # redrawn in many small writes can be captured half drawn.
 FRAME = []
+# The next frame is written in two halves, TEAR_S apart (FAKEINPUT_TEAR_MS).
+TEAR = {"next": False}
 
 
 def out(s):
@@ -131,8 +143,17 @@ def flush_frame():
         # pieces, and a cleared screen caught between two of them has no box.
         frame = "".join(FRAME).replace("\x1b[2J\x1b[H", "\x1b[H")
         frame = frame.replace("\r\n", "\x1b[K\r\n") + "\x1b[K\x1b[J"
-        os.write(sys.stdout.fileno(), frame.encode("utf-8"))
         FRAME.clear()
+        if TEAR["next"] and TEAR_S > 0:
+            TEAR["next"] = False
+            # Cut on a row's end, halfway down, so the rows above are the new
+            # frame's and every row below is still the last frame's.
+            rows = frame.split("\r\n")
+            half = len(rows) // 2
+            os.write(sys.stdout.fileno(), ("\r\n".join(rows[:half]) + "\r\n").encode("utf-8"))
+            time.sleep(TEAR_S)
+            frame = "\r\n".join(rows[half:])
+        os.write(sys.stdout.fileno(), frame.encode("utf-8"))
 
 
 def draw(*args, **kwargs):
@@ -272,6 +293,7 @@ def main():
                 elif line:
                     submitted.append(line)
                     HISTORY.append(line)
+                    TEAR["next"] = True
                     if TURN_S is not None:
                         turn = {"prompts": [line], "reply_at": time.monotonic() + TURN_S, "replied": False}
                     line = ""

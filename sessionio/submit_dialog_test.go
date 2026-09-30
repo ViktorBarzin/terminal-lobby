@@ -46,6 +46,23 @@ func TestPromptSaysItCannotTellWhenTheBoxGoesAtTheEnter(t *testing.T) {
 	}
 }
 
+// The Stop replay failed in CI on 2026-09-30: a long prompt went, Claude
+// took it, and POST /prompt answered 409 dialog-open, so the sender kept the
+// text as unsent while Claude ran it. The read after the Enter had caught
+// the pane half repainted, the box's rows overwritten from the top and no
+// whole box anywhere, and took that for a dialog; a re-read a moment later
+// showed the empty box. A box that is back within boxGoneSettle was being
+// repainted, not replaced.
+func TestPromptTakesAHalfDrawnFrameForARepaint(t *testing.T) {
+	in, osUser := fakeInputSession(t, "FAKEINPUT_TEAR_MS=100")
+	if err := in.Prompt(osUser, "demo", "queued note 12"); err != nil {
+		t.Fatalf("Prompt = %v, want nil", err)
+	}
+	if got := submittedLines(t, in, osUser); len(got) != 1 || got[0] != "queued note 12" {
+		t.Fatalf("submitted = %q, want the prompt exactly once", got)
+	}
+}
+
 // A slash command opens a screen of its own in the box's place (/config, a
 // picker), which is its submit working.
 func TestPromptTakesACommandThatOpensAScreenAsSubmitted(t *testing.T) {

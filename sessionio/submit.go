@@ -49,6 +49,11 @@ var (
 	// picture (pasteAttaching). Measured on CLI 2.1.283 on 2026-09-29: a
 	// small PNG attached in 25 ms and a 12 MB JPEG in 240 ms.
 	pictureAttachWait = 5 * time.Second
+	// boxGoneSettle is how long a box must stay out of the pane before it
+	// counts as gone rather than being repainted (boxStaysGone). tmux draws
+	// a frame as it reads it, which takes well under this even on a loaded
+	// box; a dialog stays up far longer.
+	boxGoneSettle = 250 * time.Millisecond
 )
 
 // pasteAndSubmit pastes text into the pane and presses Enter, then reads
@@ -197,12 +202,36 @@ func (in *Injector) awaitHeld(osUser, session, text string) bool {
 	}
 }
 
+// boxStaysGone reports whether a pane that was just read with no input box
+// still shows none after boxGoneSettle of reads. One read is not enough: it
+// can catch a repaint half drawn, the rows above the cut the new frame and
+// the rows below the last one, with no whole box anywhere (the Stop replay in
+// CI, 2026-09-30, on a long prompt's submit). A dialog that took the box's
+// place is still there when the repaint is done. A read that fails says
+// nothing against the box, as in hasInputBox.
+func (in *Injector) boxStaysGone(osUser, session string) bool {
+	deadline := time.Now().Add(boxGoneSettle)
+	for {
+		time.Sleep(submitPoll)
+		pane, err := in.CapturePane(osUser, session)
+		if err != nil {
+			return false
+		}
+		if _, ok := inputBox(pane); ok {
+			return false
+		}
+		if !time.Now().Before(deadline) {
+			return true
+		}
+	}
+}
+
 // confirmSubmitted waits for the box to let go of text, pressing Enter again
 // each time it has held on for enterRetryAfter, up to maxEnters in all.
 //
-// A box that is gone rather than empty is ErrSubmitUnconfirmed, except for a
-// slash command, whose submit opens a screen of its own there (a picker,
-// /config).
+// A box that is gone rather than empty, and stays gone (boxStaysGone), is
+// ErrSubmitUnconfirmed, except for a slash command, whose submit opens a
+// screen of its own there (a picker, /config).
 func (in *Injector) confirmSubmitted(osUser, session, text string) error {
 	enters := 1
 	pressed := time.Now()
@@ -215,7 +244,10 @@ func (in *Injector) confirmSubmitted(osUser, session, text string) error {
 			return nil
 		}
 		if _, ok := inputBox(pane); !ok && !strings.HasPrefix(strings.TrimSpace(text), "/") {
-			return ErrSubmitUnconfirmed
+			if in.boxStaysGone(osUser, session) {
+				return ErrSubmitUnconfirmed
+			}
+			continue
 		}
 		if !inputHolds(pane, text) {
 			return nil
