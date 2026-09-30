@@ -11,7 +11,14 @@ import {
 import { Portal } from "solid-js/web";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
-import { isDangerMode, MODES, modeHangsOnModel, modeId, modeTitle, type ModeId } from "../logic/modes";
+import {
+  isDangerMode,
+  MODES,
+  modeHangsOnModel,
+  modeId,
+  modeTitle,
+  type ModeId,
+} from "../logic/modes";
 import {
   chipName,
   DEFAULT_CHOICE,
