@@ -93,3 +93,37 @@ Reaching it from the Android emulator wants `adb reverse tcp:7912 tcp:7912`,
 which also keeps the origin on `127.0.0.1` so `isSecureContext` stays true and
 the clipboard API works. One caveat: the SPA registers a service worker, so drop
 it and its caches before trusting that a tab is on the new bundle.
+
+## The Stop replay
+
+`session-events/stopreplay_test.go` presses Stop at every moment from 0 to
+3 s after a send, in 200 ms steps, for five messages: a plain one, a long one
+that goes as several pastes, one with a picture, one with two pictures, and a
+batch of three queued behind a running turn. No real Claude is involved. It
+drives the real `POST /prompt` and `POST /cancel` routes and the real
+`sessionio.Injector` against `sessionio/testdata/fakeinput.py`, which stands in
+for Claude Code's input box with its turn modelled (`FAKEINPUT_TURN_MS`: a
+Stop before the reply puts the prompt back on the input line, one after it
+leaves the prompt in the conversation) and its delayed picture attach
+(`FAKEINPUT_IMAGE_MS`). The Stop it sends is the one the Text view sends before
+the transcript has caught up: the first message as `returnPrompt`, the rest as
+`restoreQueue`.
+
+Every run checks that each message reached Claude exactly once or came back
+whole to the field, that Claude's input box is left empty, and that a message
+the server handed back is out of the conversation and named by the rewound
+stamp. It fails on the regressions the T3 pass's review rounds found by hand:
+a prompt left on the input line, a queued prompt both run and handed back, a
+picture attached after the Enter.
+
+It runs in CI in the `test (go)` step of `.github/workflows/release.yml`, with
+the rest of `go test -race ./...` in `session-events`, and takes about 45 s. It
+needs `tmux` and `python3`. On a developer's box without them it skips; under
+CI (`CI` set) it fails instead, so a missing tool cannot let a Stop regression
+through. To run it alone:
+
+```sh
+cd session-events && go test -race -run TestStopReplay -v .
+```
+
+`-short` takes 600 ms steps instead of 200 ms.

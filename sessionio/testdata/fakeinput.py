@@ -63,6 +63,19 @@ reads the file, a 12 MB JPEG took 240 ms where a small PNG took 25 ms, and the
 placeholder lands at the end of the box, after words pasted in the meantime.
 A picture past the end of the list takes the last delay.
 
+FAKEINPUT_TURN_MS models Claude's turn, for the Stop replay
+(session-events/stopreplay_test.go). A prompt submitted with no turn running
+opens one, and Claude has written something for it FAKEINPUT_TURN_MS later,
+printed as REPLIED=<prompt>. A prompt submitted while a turn runs is queued
+instead (QUEUED=), as Claude Code queues typed input mid-turn. C-c before the
+reply takes the turn's prompts out of the conversation (their SUBMITTED= lines
+go, and each is printed as REWOUND=) and puts them back on the input line
+FAKEINPUT_RESTORE_MS later, joined by line breaks, as CLI 2.1.283 was measured
+to on 2026-09-28; C-c after the reply leaves them where they are. Either way
+what is still queued runs as the next turn. A line break inside a bracketed
+paste is a line break in the box rather than a submit. The SUBMITTED= lines
+are then the conversation.
+
 It is a model of that contract, not of the CLI.
 """
 
@@ -89,22 +102,53 @@ HISTORY = [h for h in [os.environ.get("FAKEINPUT_HISTORY", "").replace("\\n", "\
 IMAGE_S = [
     int(ms) / 1000.0 for ms in os.environ.get("FAKEINPUT_IMAGE_MS", "").split(",") if ms
 ]
+TURN_S = (
+    int(os.environ["FAKEINPUT_TURN_MS"]) / 1000.0 if os.environ.get("FAKEINPUT_TURN_MS") else None
+)
 PICTURE_END = re.compile(r"(?i)(?:^|\s)/\S+\.(?:png|jpe?g|gif|webp)$")
+# How wide the box's rows are when the turn is modelled, inside a 120-column
+# pane.
+BOX_WIDTH = 100
 # Printed once raw mode is on, so the test waits on it rather than sleeping.
 READY = "INPUT-READY"
 RULE = "─" * 60
 
 
+# A frame being drawn, written out in one go by flush_frame: a screen
+# redrawn in many small writes can be captured half drawn.
+FRAME = []
+
+
 def out(s):
-    sys.stdout.write(s)
-    sys.stdout.flush()
+    FRAME.append(s)
 
 
-def draw(submitted, line, queue, interrupted, hidden=False, dialog=False, answered=(), recalled=False):
+def flush_frame():
+    if FRAME:
+        # Drawn over the last frame rather than onto a cleared screen, each
+        # row erased to its end and the rest of the screen after the last,
+        # the way Claude Code repaints: a pty can hand a big frame over in
+        # pieces, and a cleared screen caught between two of them has no box.
+        frame = "".join(FRAME).replace("\x1b[2J\x1b[H", "\x1b[H")
+        frame = frame.replace("\r\n", "\x1b[K\r\n") + "\x1b[K\x1b[J"
+        os.write(sys.stdout.fileno(), frame.encode("utf-8"))
+        FRAME.clear()
+
+
+def draw(*args, **kwargs):
+    render(*args, **kwargs)
+    flush_frame()
+
+
+def render(submitted, line, queue, interrupted, hidden=False, dialog=False, answered=(), recalled=False, turn=None, rewound=()):
     out("\x1b[2J\x1b[H")
     out(READY + "\r\n")
     for s in submitted:
         out("SUBMITTED=%s\r\n" % s.replace("\n", "⏎"))
+    for s in rewound:
+        out("REWOUND=%s\r\n" % s.replace("\n", "⏎"))
+    if turn is not None and turn["replied"]:
+        out("REPLIED=%s\r\n" % "⏎".join(turn["prompts"]).replace("\n", "⏎"))
     for a in answered:
         out("ANSWERED=%s\r\n" % a)
     for q in queue:
@@ -123,6 +167,10 @@ def draw(submitted, line, queue, interrupted, hidden=False, dialog=False, answer
     else:
         out("\r\n" + RULE + " ↯ ─\r\n")
     rows = line.split("\n")
+    if TURN_S is not None:
+        # Claude Code wraps a long row itself, under the text rather than
+        # under the prompt mark, where tmux would wrap it at the pane's edge.
+        rows = [r[i : i + BOX_WIDTH] for r in rows for i in range(0, max(len(r), 1), BOX_WIDTH)]
     if BOX_ROWS > 0:
         rows = rows[-BOX_ROWS:]
     out("❯ %s\r\n" % rows[0])
@@ -133,7 +181,11 @@ def draw(submitted, line, queue, interrupted, hidden=False, dialog=False, answer
 
 
 def read1():
-    b = sys.stdin.buffer.read(1)
+    # Straight off the descriptor: a buffered read takes everything waiting
+    # and hands back one byte, and the select() that waits on a timer then
+    # sees nothing left to read, so the rest of a paste sat unseen until the
+    # timer fired.
+    b = os.read(sys.stdin.fileno(), 1)
     return b.decode("utf-8", "replace") if b else ""
 
 
@@ -141,9 +193,10 @@ def main():
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     tty.setraw(fd)
-    if DIALOG == "paste" or IMAGE_S:
+    if DIALOG == "paste" or IMAGE_S or TURN_S is not None:
         # Bracketed paste mode, so tmux marks where a paste starts.
         out("\x1b[?2004h")
+        flush_frame()
     swallow = SWALLOW
     queue = list(QUEUE)
     interrupted = False
@@ -157,6 +210,10 @@ def main():
     attaching = []
     pictures = 0
     pasted = None
+    # Claude's turn (FAKEINPUT_TURN_MS): the prompts it opened with, when
+    # Claude writes something for them, and whether it has. None at idle.
+    turn = None
+    rewound = []
     try:
         submitted = []
         line = os.environ.get("FAKEINPUT_LINE", "").replace("\\n", "\n")
@@ -167,6 +224,8 @@ def main():
         while True:
             timers = [t for t in (restore_at, hide_until) if t is not None]
             timers += [t for t, _ in attaching]
+            if turn is not None and not turn["replied"]:
+                timers.append(turn["reply_at"])
             if timers:
                 wait = max(0.0, min(timers) - time.monotonic())
                 ready, _, _ = select.select([fd], [], [], wait)
@@ -181,7 +240,9 @@ def main():
                     for t, text in [a for a in attaching if a[0] <= now]:
                         line += text
                         attaching.remove((t, text))
-                    draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered, recalled)
+                    if turn is not None and not turn["replied"] and now >= turn["reply_at"]:
+                        turn["replied"] = True
+                    draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered, recalled, turn, rewound)
                     continue
             ch = read1()
             if ch == "":
@@ -196,12 +257,23 @@ def main():
             elif dialog and ch in ("1", "2"):
                 answered.append(ch)
                 dialog = False
+            elif pasting and TURN_S is not None and ch in ("\r", "\n"):
+                line += "\n"
+                if pasted is not None:
+                    pasted += "\n"
             elif ch in ("\r", "\n"):
                 if line and swallow > 0:
                     swallow -= 1
+                elif line and TURN_S is not None and turn is not None:
+                    queue.append(line)
+                    HISTORY.append(line)
+                    line = ""
+                    recalled = False
                 elif line:
                     submitted.append(line)
                     HISTORY.append(line)
+                    if TURN_S is not None:
+                        turn = {"prompts": [line], "reply_at": time.monotonic() + TURN_S, "replied": False}
                     line = ""
                     recalled = False
             elif ch == "\x15":  # C-u kills the last line only, as Claude's does
@@ -211,6 +283,22 @@ def main():
                     dialog = True
             elif ch == "\x7f":  # Backspace
                 line = line[:-1]
+            elif ch == "\x03" and TURN_S is not None:
+                # C-c on a modelled turn: an unanswered one goes back to the
+                # input line, and what is queued runs as the next turn.
+                if turn is not None and not turn["replied"]:
+                    for p in turn["prompts"]:
+                        if p in submitted:
+                            del submitted[len(submitted) - 1 - submitted[::-1].index(p)]
+                        rewound.append(p)
+                    running = "\n".join(turn["prompts"]) + running
+                    restore_at = time.monotonic() + RESTORE_S
+                turn = None
+                if queue:
+                    submitted.extend(queue)
+                    turn = {"prompts": list(queue), "reply_at": time.monotonic() + TURN_S, "replied": False}
+                    queue = []
+                interrupted = True
             elif ch == "\x03":  # C-c: interrupt, and run what is queued
                 submitted.extend(queue)
                 queue = []
@@ -263,7 +351,7 @@ def main():
                 line += ch
                 if pasted is not None:
                     pasted += ch
-            draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered, recalled)
+            draw(submitted, line, queue, interrupted, hide_until is not None, dialog, answered, recalled, turn, rewound)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
 
