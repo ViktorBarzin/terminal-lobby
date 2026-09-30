@@ -1978,19 +1978,64 @@ export const TextView: Component<{
    * conversation the card has just covered. It starts the wait again, since a
    * tap that soon means the reader is still typing and has not looked up.
    */
+  //
+  // Nor does the focus such a tap gives a row stay on it. Deployed review
+  // round 6 (2026-09-30, Android emulator): Android Chrome focuses a button
+  // as the finger goes down, before the click this swallows, and once the
+  // card armed one Space pressed that row; once it granted "Yes, and don't
+  // ask again" and wrote an allow rule into the project's settings. A row
+  // that takes the focus before the card arms hands it to the card, where
+  // keys go into the draft (`typeBehind`), and Space or Enter on a row
+  // before then presses nothing. A tap that went down before the card armed
+  // is swallowed even when it lifts after.
   onMount(() => {
     const el = viewEl;
     if (!el) return;
+    const tooSoon = (): boolean => cardUp() && !cardKeysArmed() && isCoarsePointer();
+    const cardButton = (t: EventTarget | null): HTMLElement | null =>
+      t instanceof Element ? t.closest<HTMLElement>(".tl-qcard button") : null;
+    const toCard = (b: HTMLElement): void => {
+      if (document.activeElement !== b) return;
+      const card = b.closest<HTMLElement>(".tl-qcard");
+      if (card) card.focus({ preventScroll: true });
+      if (document.activeElement === b) b.blur();
+    };
+    let downTooSoon = false;
+    const down = (e: PointerEvent): void => {
+      downTooSoon = !!cardButton(e.target) && tooSoon();
+    };
     const tapTooSoon = (e: MouseEvent): void => {
-      if (!cardUp() || cardKeysArmed() || !isCoarsePointer()) return;
-      const t = e.target;
-      if (!(t instanceof Element) || !t.closest(".tl-qcard button")) return;
+      const early = downTooSoon;
+      downTooSoon = false;
+      const b = cardButton(e.target);
+      if (!b || !cardUp() || !(tooSoon() || (early && isCoarsePointer()))) return;
       e.preventDefault();
       e.stopPropagation();
+      toCard(b);
       armCardKeys();
     };
+    const focusTooSoon = (e: FocusEvent): void => {
+      const b = cardButton(e.target);
+      if (b && tooSoon()) toCard(b);
+    };
+    const keyTooSoon = (e: KeyboardEvent): void => {
+      if (e.key !== " " && e.key !== "Enter") return;
+      const t = e.target;
+      if (!(t instanceof Element) || !t.closest(".tl-qcard-option")) return;
+      if (cardUp() && !cardKeysArmed()) e.preventDefault();
+    };
+    el.addEventListener("pointerdown", down, true);
     el.addEventListener("click", tapTooSoon, true);
-    onCleanup(() => el.removeEventListener("click", tapTooSoon, true));
+    el.addEventListener("focusin", focusTooSoon, true);
+    el.addEventListener("keydown", keyTooSoon, true);
+    el.addEventListener("keyup", keyTooSoon, true);
+    onCleanup(() => {
+      el.removeEventListener("pointerdown", down, true);
+      el.removeEventListener("click", tapTooSoon, true);
+      el.removeEventListener("focusin", focusTooSoon, true);
+      el.removeEventListener("keydown", keyTooSoon, true);
+      el.removeEventListener("keyup", keyTooSoon, true);
+    });
   });
   // A card answered and gone hands the focus back to the field that comes
   // back in its place, so the next message can be typed at once (deployed

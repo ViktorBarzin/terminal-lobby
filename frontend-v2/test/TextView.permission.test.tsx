@@ -1000,6 +1000,64 @@ describe("a card that docks over the phone's keyboard", () => {
     expect(document.activeElement).not.toBe(field);
   });
 
+  // Deployed review round 6 (2026-09-30, Android emulator, real Chrome): a
+  // swallowed tap still focused the row, since Android Chrome focuses a button
+  // as the finger goes down. Once the card armed, one Space pressed that row,
+  // and once it granted "Yes, and don't ask again", writing an allow rule into
+  // the project's settings. A row a guarded tap focused hands the focus to the
+  // card, and a key that would press a row before it arms presses nothing.
+  it("leaves no row with the focus after a tap it swallowed", async () => {
+    const v = mount(base);
+    const field = await dock(v, "my draft");
+    const row = () => v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[1]!;
+    fireEvent.pointerDown(row());
+    row().focus();
+    fireEvent.click(row());
+    expect(v.onKeys).not.toHaveBeenCalled();
+    expect(document.activeElement).not.toBe(row());
+    expect(document.activeElement).toBe(v.card());
+    await armed(v.r.container);
+    // The Space that pressed "Yes, and don't ask again" lands on the card.
+    fireEvent.keyDown(document.activeElement!, { key: " " });
+    fireEvent.keyUp(document.activeElement!, { key: " " });
+    expect(v.onKeys).not.toHaveBeenCalled();
+    expect(field.value.startsWith("my draft")).toBe(true);
+  });
+
+  it("hands the focus to the card when a row takes it before the card arms", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    const row = v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[1]!;
+    // A touch that focused the row and never became a click.
+    row.focus();
+    expect(document.activeElement).toBe(v.card());
+  });
+
+  it("presses no row for Space or Enter before the card arms", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    const row = v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[1]!;
+    expect(fireEvent.keyDown(row, { key: " " })).toBe(false);
+    expect(fireEvent.keyUp(row, { key: " " })).toBe(false);
+    expect(fireEvent.keyDown(row, { key: "Enter" })).toBe(false);
+    expect(v.onKeys).not.toHaveBeenCalled();
+  });
+
+  it("swallows a tap that went down before the card armed and lifted after", async () => {
+    const v = mount(base);
+    await dock(v, "my draft");
+    const row = () => v.card()!.querySelectorAll<HTMLButtonElement>(".tl-qcard-option")[0]!;
+    fireEvent.pointerDown(row());
+    await armed(v.r.container);
+    fireEvent.click(row());
+    await Promise.resolve();
+    expect(v.onKeys).not.toHaveBeenCalled();
+    await armed(v.r.container);
+    fireEvent.pointerDown(row());
+    fireEvent.click(row());
+    await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
+  });
+
   it("waits a full second after taking the keyboard away before a tap presses", async () => {
     const v = mount(base);
     await dock(v, "my draft");
