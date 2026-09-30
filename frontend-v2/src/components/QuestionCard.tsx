@@ -115,6 +115,12 @@ export const QuestionCard: Component<{
     const had = !!cardEl && cardEl.contains(document.activeElement);
     setIndex(i);
     setFocused(null);
+    // Each question opens at the top of the card's scroll box. Kept where
+    // the last one was scrolled, a tall question opened on the tail of its
+    // options with its title out of sight (deployed review round 6,
+    // 2026-09-30, a phone at 390x664).
+    const body = cardEl?.querySelector<HTMLElement>(".tl-qcard-body");
+    if (body) body.scrollTop = 0;
     if (had) queueMicrotask(() => keepFocusIn(cardEl));
   };
 
