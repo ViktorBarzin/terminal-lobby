@@ -1111,9 +1111,9 @@ export const PromptField: Component<{
    * keyboard-height ABOVE the field was the only way to hit it.
    *
    * Focusing here — inside the user gesture, before any layout change — means
-   * the field already holds focus when that stray click arrives, so there is
-   * nothing left to steal. preventDefault stops the browser's own
-   * focus-on-click, which is what would otherwise blur it.
+   * the field already holds focus when that stray click arrives. It is not
+   * enough on its own on WebKit, whose compat mousedown still follows touchend
+   * and still blurs the field when it lands off it (`holdTap`).
    *
    * Only when the field is NOT already focused: taking the gesture over on every
    * touch would break placing the caret inside existing text.
@@ -1127,7 +1127,7 @@ export const PromptField: Component<{
     const opening = shape() === "pill";
     e.preventDefault();
     ta.focus();
-    if (opening) swallowNextClick();
+    holdTap(opening);
   };
 
   /**
@@ -1145,26 +1145,45 @@ export const PromptField: Component<{
   };
 
   /**
-   * Eat the click of the tap that opened the pill.
+   * The rest of the tap that focused the field is the field's, wherever it
+   * lands.
    *
-   * The box grows upward from where the pill sat, so by the time that tap's
-   * click fires the finger is over the box's bottom row. Measured in
-   * Chromium's phone emulation on 2026-09-27: the click landed on the model
-   * button and opened its sheet, which then held the focus, so typing went
-   * nowhere. One click, within the time a tap takes, and nothing after it.
+   * WebKit sends a tap's compat mousedown and click after touchend, hit-tested
+   * at the finger against the layout as it is by then, and the keyboard has
+   * already moved it. A mousedown on a non-focusable element blurs the field,
+   * the same mechanism the terminal guards against (terminal/keepfocus.ts).
+   * Seen on an iPhone on 2026-09-30, new-session screen: the field focused,
+   * the keyboard started up, and the focus was on <body> 5 to 32ms later, on
+   * three taps in a row. So a mousedown off the field has its default (moving
+   * the focus) cancelled, and a click off it is eaten, so whatever slid under
+   * the finger does not fire either.
+   *
+   * On the field itself both go through, to place the caret, except the click
+   * of the tap that opened the pill: the box grows upward from where the pill
+   * sat, and measured in Chromium's phone emulation on 2026-09-27 that click
+   * landed on the model button and opened its sheet. One tap's worth, within
+   * the time a tap takes, and nothing after it.
    */
-  const swallowNextClick = (): void => {
-    const eat = (ev: Event) => {
-      ev.preventDefault();
-      ev.stopPropagation();
+  const holdTap = (opening: boolean): void => {
+    const offField = (ev: Event): boolean => !(ev.target instanceof Node && ta?.contains(ev.target));
+    const onDown = (ev: Event): void => {
+      if (offField(ev)) ev.preventDefault();
+    };
+    const onClick = (ev: Event): void => {
+      if (opening || offField(ev)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
       done();
     };
-    const done = () => {
+    const done = (): void => {
       clearTimeout(timer);
-      document.removeEventListener("click", eat, true);
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("click", onClick, true);
     };
     const timer = setTimeout(done, 700);
-    document.addEventListener("click", eat, true);
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("click", onClick, true);
   };
 
   // ---- the + menu ----------------------------------------------------------

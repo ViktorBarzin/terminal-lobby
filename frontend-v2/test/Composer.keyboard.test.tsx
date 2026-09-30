@@ -57,6 +57,71 @@ describe("the composer takes focus during the touch, not after it", () => {
   });
 });
 
+/**
+ * The same bug on the new-session screen, on an iPhone (2026-09-30, Viktor:
+ * "a flicker when trying to open the keyboard"). The flight recorder's
+ * viewport records show the field taking focus, the keyboard starting up, and
+ * the focus on <body> 5 to 32ms later, three taps in a row.
+ *
+ * Focusing on pointerdown is not enough on WebKit: the tap's compat mousedown
+ * still arrives after touchend, hit-tested at the finger against the layout the
+ * keyboard has already moved (a standalone PWA's innerHeight drops 812 -> 629),
+ * and a mousedown on a non-focusable element blurs the field. The same
+ * mechanism as the terminal's (terminal/keepfocus.ts). The tap that focused
+ * the field owns its own mousedown and click, wherever they land.
+ */
+describe("the tap that focused the field keeps it", () => {
+  const press = (el: Element, type: "mousedown" | "click"): boolean =>
+    el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+
+  it("holds the focus through its mousedown landing off the field", () => {
+    const { container } = mount();
+    const ta = field(container);
+    fireEvent.pointerDown(ta, { pointerType: "touch" });
+    expect(document.activeElement).toBe(ta);
+    // Landed beside the field, on the column the keyboard slid under it.
+    expect(press(container.firstElementChild!, "mousedown")).toBe(false);
+  });
+
+  it("does not fire what its click lands on", () => {
+    const { container } = mount();
+    const ta = field(container);
+    const btn = document.createElement("button");
+    let fired = 0;
+    btn.addEventListener("click", () => fired++);
+    container.appendChild(btn);
+    fireEvent.pointerDown(ta, { pointerType: "touch" });
+    press(btn, "mousedown");
+    press(btn, "click");
+    expect(fired).toBe(0);
+    // The next press is the reader's own.
+    press(btn, "mousedown");
+    press(btn, "click");
+    expect(fired).toBe(1);
+  });
+
+  it("lets its mousedown and click on the field through, to place the caret", () => {
+    const { container } = mount();
+    const ta = field(container);
+    fireEvent.pointerDown(ta, { pointerType: "touch" });
+    expect(press(ta, "mousedown")).toBe(true);
+    expect(press(ta, "click")).toBe(true);
+  });
+
+  it("gives up the hold when no mousedown comes", () => {
+    vi.useFakeTimers();
+    try {
+      const { container } = mount();
+      const ta = field(container);
+      fireEvent.pointerDown(ta, { pointerType: "touch" });
+      vi.advanceTimersByTime(1000);
+      expect(press(container.firstElementChild!, "mousedown")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("the composer's affordances", () => {
   it("recalls the previous prompt with ↑ from an empty field", () => {
     const { container } = render(() => (
