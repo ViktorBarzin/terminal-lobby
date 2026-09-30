@@ -1974,6 +1974,9 @@ export const TextView: Component<{
       ref={viewEl}
       style={{ "--tl-text-scale": String(scaleFor(textSize())) }}
       data-card-keys={cardUp() && cardKeysArmed() ? "armed" : undefined}
+      // The agent panel is in the right margin, so the composer and the cards
+      // below the transcript centre on what is left of it (app.css).
+      data-rail={showAgents() && agentSet() && !narrow() ? "true" : undefined}
     >
       {/* What size the pinch has reached, while it is being made. */}
       <Show when={sizing() !== null}>
