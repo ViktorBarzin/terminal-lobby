@@ -573,11 +573,11 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    * across the two accounts would move this user's records onto a stranger's
    * name. Same reason `followRenamedSelection` will not follow one.
    */
-  function carryRenamedRecords(prev: readonly Session[], next: readonly Session[]): void {
+  function carryRenamedRecords(moves: ReadonlyArray<readonly [string, string]>): void {
     // The same namespace the views record under, so a decision made about bob's
     // session through a lens is carried against bob's session and not your own.
     const as = lensTarget(whoami(), ACT_AS);
-    for (const [was, now] of renamesBetween(prev, next)) {
+    for (const [was, now] of moves) {
       carryWatch(was, now, as);
       carryViewMode(was, now);
       carryDraft(was, now);
@@ -635,11 +635,42 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     return moved;
   }
 
-  function followRenamedSelection(prev: readonly Session[], next: readonly Session[]): void {
+  /**
+   * The renames between two polls, and the selected session's own when the
+   * id link missed it.
+   *
+   * tmux-api renames a session a moment before it stamps the birth name
+   * (tmux-api/rename_cascade.go), so one poll can list the new name with no
+   * birth name. That poll files the row's tmux id under the new name, and from
+   * then on the id link matches the row to itself, so the birth name arriving
+   * a poll later was never read. Deployed review round 6 (2026-09-30): a shell
+   * named on the new-session screen kept its pane on the minted id, reading
+   * "New session", for 30 s+ on a desktop. Only for the selection, which is
+   * the one record that must follow: a birth name stays stamped for the
+   * session's life, and reading it on every poll for every session would
+   * carry the other records again each time.
+   */
+  function renamesWithSelection(
+    prev: readonly Session[],
+    next: readonly Session[],
+  ): Array<[string, string]> {
+    const moves = renamesBetween(prev, next);
+    const sel = selected();
+    if (!sel || sel.owner || moves.some(([was]) => was === sel.name)) return moves;
+    if (next.some((s) => s.name === sel.name)) return moves; // still there
+    const mine = (s: Session) => !s.owner || s.owner === me();
+    const born = next.find((s) => mine(s) && s.bornAs === sel.name);
+    return born ? [...moves, [sel.name, born.name]] : moves;
+  }
+
+  function followRenamedSelection(
+    moves: ReadonlyArray<readonly [string, string]>,
+    next: readonly Session[],
+  ): void {
     const sel = selected();
     if (!sel || sel.owner) return; // foreign sessions are not ours to follow
     if (next.some((s) => s.name === sel.name)) return; // still there
-    const moved = renamesBetween(prev, next).find(([was]) => was === sel.name);
+    const moved = moves.find(([was]) => was === sel.name);
     if (!moved) return; // genuinely gone, not renamed
     applySelection(moved[1], undefined);
   }
@@ -739,8 +770,9 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       // Before setSessions, which is what makes `sessions` the OLD list here.
       // The carry runs FIRST: moving the selection is what mounts a view under
       // the new name, and that view reads the records this call moves.
-      carryRenamedRecords(sessions, sRes.value);
-      followRenamedSelection(sessions, sRes.value);
+      const moves = renamesWithSelection(sessions, sRes.value);
+      carryRenamedRecords(moves);
+      followRenamedSelection(moves, sRes.value);
       // Reconcile by name rather than replace: a re-parsed but unchanged
       // payload must write nothing, or every memo downstream recomputes and
       // <For> re-creates every group and card (taking open menus with it).
