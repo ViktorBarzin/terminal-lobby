@@ -1376,6 +1376,26 @@ label.tl-set-row-label {
 .tl-textview-body-strip {
   flex-direction: column;
 }
+/* The rail takes the right margin of the transcript's row only. What sits
+   below that row (the composer, a card docked in its place, the bands above
+   them) spans the whole view, so while the rail shows it gives the rail's
+   width back on the right and centres on the conversation's column instead
+   of on the view (TextView `data-rail`). Without it the box sat 140px right
+   of the column (seen at 2000px on 2026-09-30). */
+.tl-textview {
+  --tl-rail-w: 280px;
+}
+.tl-textview[data-rail] > .tl-composer,
+.tl-textview[data-rail] > .tl-latest-band,
+.tl-textview[data-rail] > .tl-terminal-note {
+  margin-right: var(--tl-rail-w);
+}
+.tl-textview[data-rail] > .tl-qcard,
+.tl-textview[data-rail] > .tl-trust-band {
+  width: calc(100% - var(--tl-rail-w) - 2 * var(--tl-gutter));
+  margin-left: max(var(--tl-gutter), calc((100% - var(--tl-rail-w) - 760px) / 2));
+  margin-right: auto;
+}
 /* Claude Code names a colour per agent; these are the fixed mapping, the
    prototype's, and legible as a 2px rule on the light themes too. An agent it
    gave no colour draws the neutral one. The drill-in's header carries the same
@@ -1399,7 +1419,7 @@ label.tl-set-row-label {
 }
 .tl-agents[data-form="rail"] {
   flex: none;
-  width: 280px;
+  width: var(--tl-rail-w);
   min-height: 0;
   border-left: 1px solid var(--border);
   overflow-y: auto;

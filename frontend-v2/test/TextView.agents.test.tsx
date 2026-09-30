@@ -115,6 +115,18 @@ describe("the agent panel in the text view", () => {
     expect(panel?.getAttribute("data-form")).toBe("rail");
   });
 
+  // The composer and the cards docked in its place sit below the transcript
+  // and the rail both, so they span the whole view. Without being told the
+  // rail is there they centred on the whole width, 140px right of the
+  // conversation's column (seen at 2000px on 2026-09-30).
+  it("tells the view the rail takes the right margin, so the dock centres on the column", () => {
+    const v = mount({ agents: snap([agent("a1")]), working: true });
+    const view = v.container.querySelector(".tl-textview");
+    expect(view?.getAttribute("data-rail")).toBe("true");
+    v.setAgents(null);
+    expect(view?.hasAttribute("data-rail")).toBe(false);
+  });
+
   it("stays while the session list still counts the agent after the turn closed", () => {
     const v = mount({ agents: snap([agent("a1")]), working: false, bg: { agents: 1 } });
     expect(v.panel()).not.toBeNull();
@@ -244,6 +256,8 @@ describe("the background line, folded into the panel", () => {
       for (const o of seen) if (o.target.classList.contains("tl-textview-body")) o.fire();
       expect(v.panel()?.getAttribute("data-form")).toBe("strip");
       expect(v.strip()).toBeNull();
+      // A strip takes no margin, so the dock keeps the whole width.
+      expect(v.container.querySelector(".tl-textview")?.hasAttribute("data-rail")).toBe(false);
     });
   });
 });
