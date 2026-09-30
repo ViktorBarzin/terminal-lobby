@@ -821,7 +821,10 @@ src/
                          terminal pastes included
     PictureLightbox.tsx  The Text view's lightbox, mounted once in App: every
                          picture in a bubble, in Claude's prose or on a tool row
-                         opens it full size. Escape closes it and goes no further
+                         opens it full size, stepping through the pictures of
+                         its timeline. Escape closes it and goes no further
+    LightboxNav.tsx      Both lightboxes' arrows, the ← and → keys (stepKey)
+                         and the "2/5" count. Stops at either end
     Mermaid.tsx          Lazy mermaid render (dynamic import; folds into 1 file)
     Composer.tsx         The LIVE session's composer, after the T3 pass: a
                          50px pill on a phone at rest, a box when focused and

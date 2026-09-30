@@ -16,6 +16,7 @@ import { clipboardImgUrl } from "../lib/config";
 import { refocusTerminal } from "../keybindings/refocus";
 import { PaperclipIcon } from "./Icons";
 import { dismissOnPress } from "./overlay";
+import { LightboxNav, stepKey } from "./LightboxNav";
 
 /**
  * The session image-gallery overlay (feature-inventory Cat.8). A pure view over
@@ -94,8 +95,16 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
   };
 
   // Escape steps back one view; while the lightbox is up it lands on the grid,
-  // from the grid it closes. Capture + stop so it never leaks to other chrome.
+  // from the grid it closes. ← and → step through the lightbox. Capture + stop
+  // so neither leaks to other chrome.
   const onKey = (e: KeyboardEvent): void => {
+    const step = s.view() === "lightbox" ? stepKey(e) : 0;
+    if (step !== 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      s.stepLightbox(step);
+      return;
+    }
     if (e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
@@ -152,76 +161,66 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
                 <div class="tl-gallery-note">Loading…</div>
               </Match>
               <Match when={s.status() === "error"}>
-                <div class="tl-gallery-note">
-                  Loading images failed: {s.error()}
-                </div>
+                <div class="tl-gallery-note">Loading images failed: {s.error()}</div>
               </Match>
               <Match when={s.images().length === 0}>
-                <div class="tl-gallery-note">
-                  Nothing pasted or shown in this session yet
-                </div>
+                <div class="tl-gallery-note">Nothing pasted or shown in this session yet</div>
               </Match>
               <Match when={s.images().length > 0}>
                 <For each={s.images()}>
                   {(im, i) => (
                     <div class="tl-gallery-item">
-                    <button
-                      type="button"
-                      class="tl-gallery-cell"
-                      title={
-                        isBroken(im.name)
-                          ? `${im.name} — not a readable image`
-                          : im.name
-                      }
-                      onClick={() => s.openLightbox(i())}
-                    >
-                      <Show
-                        when={!isBroken(im.name)}
-                        fallback={
-                          <span class="tl-gallery-broken" style={brokenTileStyle}>
-                            <span aria-hidden="true" style={{ "font-size": "18px" }}>
-                              ⚠
-                            </span>
-                            <span>{im.name}</span>
-                            <span>not a readable image</span>
-                          </span>
-                        }
+                      <button
+                        type="button"
+                        class="tl-gallery-cell"
+                        title={isBroken(im.name) ? `${im.name} — not a readable image` : im.name}
+                        onClick={() => s.openLightbox(i())}
                       >
-                        <img
-                          loading="lazy"
-                          alt={im.name}
-                          src={src(im.name)}
-                          onError={() => markBroken(im.name)}
-                        />
-                      </Show>
-                      <Show when={badgeLabel(im)}>
-                        {(label) => (
-                          <span class="tl-gallery-badge">{label()}</span>
-                        )}
-                      </Show>
-                    </button>
-                    {/* Attach an image the session already holds to the message
+                        <Show
+                          when={!isBroken(im.name)}
+                          fallback={
+                            <span class="tl-gallery-broken" style={brokenTileStyle}>
+                              <span aria-hidden="true" style={{ "font-size": "18px" }}>
+                                ⚠
+                              </span>
+                              <span>{im.name}</span>
+                              <span>not a readable image</span>
+                            </span>
+                          }
+                        >
+                          <img
+                            loading="lazy"
+                            alt={im.name}
+                            src={src(im.name)}
+                            onError={() => markBroken(im.name)}
+                          />
+                        </Show>
+                        <Show when={badgeLabel(im)}>
+                          {(label) => <span class="tl-gallery-badge">{label()}</span>}
+                        </Show>
+                      </button>
+                      {/* Attach an image the session already holds to the message
                         being written (design 2026-08-17 decision 14) — including a
                         `show-image` render Claude produced. The path is already
                         known, so this costs one call and saves re-uploading a
                         screenshot from an hour ago. Hidden when no text-view
                         composer is mounted to receive it. */}
-                    <Show when={!isBroken(im.name)}>
-                      <button
-                        type="button"
-                        class="tl-gallery-attach"
-                        aria-label={`Attach ${im.name} to the message`}
-                        title="Attach to the message"
-                        onClick={() => {
-                          const ok = window.__tlAttachToComposer?.([
-                            { path: im.path, name: im.name, kind: "image" },
-                          ]);
-                          if (ok) s.close();
-                        }}
-                      >
-                        <PaperclipIcon />
-                      </button>
-                    </Show>
+                      <Show when={!isBroken(im.name)}>
+                        <button
+                          type="button"
+                          class="tl-gallery-attach"
+                          aria-label={`Attach ${im.name} to the message`}
+                          title="Attach to the message"
+                          onClick={() => {
+                            const ok = window.__tlAttachToComposer?.([
+                              { path: im.path, name: im.name, kind: "image" },
+                            ]);
+                            if (ok) s.close();
+                          }}
+                        >
+                          <PaperclipIcon />
+                        </button>
+                      </Show>
                     </div>
                   )}
                 </For>
@@ -246,17 +245,13 @@ export const Gallery: Component<{ store: GalleryStore }> = (props) => {
                 </div>
               }
             >
-              <img
-                alt={img().name}
-                src={src(img().name)}
-                onError={() => markBroken(img().name)}
-              />
+              <img alt={img().name} src={src(img().name)} onError={() => markBroken(img().name)} />
             </Show>
-            <Show when={s.images().length > 1}>
-              <div class="tl-lightbox-chip">
-                {s.lightboxIndex() + 1}/{s.images().length}
-              </div>
-            </Show>
+            <LightboxNav
+              index={s.lightboxIndex()}
+              count={s.images().length}
+              onStep={(d) => s.stepLightbox(d)}
+            />
           </div>
         )}
       </Show>

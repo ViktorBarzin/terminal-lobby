@@ -4895,6 +4895,39 @@ body.tl-kb-up {
   pointer-events: none;
 }
 
+/* A lightbox's arrows (LightboxNav): round, on the dark surface either side of
+   the picture, which leaves 7.5vw a side. On a phone that is narrower than the
+   44px target, so the arrows overlap the picture's edge there. */
+.tl-lightbox-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  cursor: pointer;
+}
+.tl-lightbox-nav:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.tl-lightbox-nav:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.tl-lightbox-prev {
+  left: calc(12px + env(safe-area-inset-left));
+}
+.tl-lightbox-next {
+  right: calc(12px + env(safe-area-inset-right));
+}
+
 /* Full-screen dashed-accent overlay while a file-bearing drag is over the
    window; pointer-events:none so the drag keeps reaching the drop target. */
 .tl-drop-overlay {

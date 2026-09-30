@@ -32,6 +32,9 @@ export interface GalleryStore {
   open: () => Promise<void>;
   /** enlarge the image at grid index i (no-op unless the grid is showing i). */
   openLightbox: (i: number) => void;
+  /** show the previous (-1) or next (1) image in the lightbox, stopping at
+   *  either end. A no-op unless the lightbox is showing. */
+  stepLightbox: (delta: number) => void;
   /** step back one view: lightbox → grid → closed. Escape / backdrop click. */
   stepBack: () => void;
   /** close outright (session switch). */
@@ -48,8 +51,7 @@ export interface GalleryDeps {
 }
 
 async function defaultFetchList(session: string): Promise<StoredImage[]> {
-  const resp = await fetchWithDeadline(clipboardListUrl(session), {
-  });
+  const resp = await fetchWithDeadline(clipboardListUrl(session), {});
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = (await resp.json()) as unknown;
   return Array.isArray(data) ? (data as StoredImage[]) : [];
@@ -103,6 +105,11 @@ export function createGalleryStore(deps: GalleryDeps): GalleryStore {
     track("gallery.image_opened", { "tl.count": i });
   }
 
+  function stepLightbox(delta: number): void {
+    if (view() !== "lightbox") return;
+    setLightboxIndex((i) => Math.min(images().length - 1, Math.max(0, i + delta)));
+  }
+
   function stepBack(): void {
     setView((v) => stepBackView(v));
   }
@@ -128,6 +135,7 @@ export function createGalleryStore(deps: GalleryDeps): GalleryStore {
     lightboxIndex,
     open,
     openLightbox,
+    stepLightbox,
     stepBack,
     close,
   };

@@ -51,6 +51,8 @@ function stubStore(
         setLightboxIndex(i);
         sv("lightbox");
       },
+      stepLightbox: (d: number) =>
+        setLightboxIndex((i) => Math.min(images.length - 1, Math.max(0, i + d))),
       stepBack: () => sv("grid"),
       close: () => sv("closed"),
     };
@@ -296,9 +298,7 @@ describe("attaching from the gallery", () => {
     const { store, dispose } = stubStore([img("broken.png")]);
     const { container } = render(() => <Gallery store={store} />);
     fireEvent.error(container.querySelector("img")!);
-    await waitFor(() =>
-      expect(container.querySelector(".tl-gallery-attach")).toBeNull(),
-    );
+    await waitFor(() => expect(container.querySelector(".tl-gallery-attach")).toBeNull());
     dispose();
   });
 });
@@ -323,6 +323,68 @@ describe("<Gallery> lightbox dismissal", () => {
     const { container } = render(() => <Gallery store={store} />);
     fireEvent.keyDown(document, { key: "Escape" });
     await waitFor(() => expect(container.querySelector(".tl-lightbox")).toBeNull());
+    dispose();
+  });
+});
+
+/**
+ * The lightbox steps through the grid's images: an arrow on each side and the
+ * ← and → keys (Viktor, 2026-09-30). It stops at either end rather than
+ * wrapping, and the arrow that would go past the end is not drawn.
+ */
+describe("<Gallery> lightbox stepping", () => {
+  const three = [img("pasted-1.png"), img("pasted-2.png"), img("pasted-3.png")];
+  const shown = (root: HTMLElement): string | null =>
+    root.querySelector(".tl-lightbox img")?.getAttribute("alt") ?? null;
+
+  it("steps with the arrows, and a press on an arrow does not close it", async () => {
+    const { store, dispose } = stubStore(three, "grid");
+    const { container } = render(() => <Gallery store={store} />);
+    fireEvent.click(cell(container, 0));
+    expect(container.querySelector(".tl-lightbox-prev")).toBeNull();
+    fireEvent.click(container.querySelector(".tl-lightbox-next")!);
+    expect(shown(container)).toBe("pasted-2.png");
+    expect(container.querySelector(".tl-lightbox-chip")?.textContent).toBe("2/3");
+    fireEvent.click(container.querySelector(".tl-lightbox-next")!);
+    expect(shown(container)).toBe("pasted-3.png");
+    expect(container.querySelector(".tl-lightbox-next")).toBeNull();
+    fireEvent.click(container.querySelector(".tl-lightbox-prev")!);
+    expect(shown(container)).toBe("pasted-2.png");
+    dispose();
+  });
+
+  it("steps with the arrow keys, which go no further", async () => {
+    const { store, dispose } = stubStore(three, "grid");
+    const { container } = render(() => <Gallery store={store} />);
+    fireEvent.click(cell(container, 1));
+    const later = vi.fn();
+    document.addEventListener("keydown", later);
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    expect(shown(container)).toBe("pasted-3.png");
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    fireEvent.keyDown(document.body, { key: "ArrowLeft" });
+    expect(shown(container)).toBe("pasted-1.png");
+    document.removeEventListener("keydown", later);
+    expect(later).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("leaves the arrow keys alone on the grid", async () => {
+    const { store, dispose } = stubStore(three, "grid");
+    render(() => <Gallery store={store} />);
+    const later = vi.fn();
+    document.addEventListener("keydown", later);
+    fireEvent.keyDown(document.body, { key: "ArrowRight" });
+    document.removeEventListener("keydown", later);
+    expect(later).toHaveBeenCalledTimes(1);
+    expect(store.lightboxIndex()).toBe(0);
+    dispose();
+  });
+
+  it("draws no arrows for a single image", async () => {
+    const { store, dispose } = stubStore([img("pasted-1.png")], "lightbox");
+    const { container } = render(() => <Gallery store={store} />);
+    expect(container.querySelector(".tl-lightbox-prev, .tl-lightbox-next")).toBeNull();
     dispose();
   });
 });

@@ -15,7 +15,12 @@ import {
   type Segment,
 } from "../lib/attachments";
 import { promptImageUrl } from "../lib/config";
-import { openPicture, type PictureKind, type PictureSource } from "../store/picture";
+import {
+  openPicture,
+  type PictureKind,
+  type PictureSet,
+  type PictureSource,
+} from "../store/picture";
 import { FileTextIcon } from "./Icons";
 
 /**
@@ -52,6 +57,32 @@ import { FileTextIcon } from "./Icons";
  * has one, and nothing where the picture was only ever an extra (a tool row
  * keeps its label and its path chip).
  */
+/** Every picture button a timeline draws, in `picturesAround`'s order. */
+const PICTURE_BUTTONS = ".tl-attach-image, .tl-tool-thumb";
+
+/**
+ * The pictures the lightbox can step to from this one: every picture in the
+ * same timeline, in the order they are drawn, which is the conversation's
+ * order. Scoped to the timeline, so the drill-in's pictures and the session's
+ * never mix. Read off the page at the press, so it is the pictures loaded then;
+ * one that is not in a timeline (a card's markdown) stands alone.
+ */
+function picturesAround(button: HTMLElement): PictureSet | undefined {
+  const timeline = button.closest(".tl-timeline");
+  if (!timeline) return undefined;
+  const buttons = Array.from(timeline.querySelectorAll<HTMLElement>(PICTURE_BUTTONS));
+  const items = [];
+  let index = -1;
+  for (const b of buttons) {
+    const img = b.querySelector("img");
+    const src = img?.getAttribute("src");
+    if (!img || !src) continue;
+    if (b === button) index = items.length;
+    items.push({ src, alt: img.alt });
+  }
+  return index < 0 ? undefined : { items, index };
+}
+
 export const Picture: Component<{
   src: string;
   alt: string;
@@ -84,7 +115,14 @@ export const Picture: Component<{
         // it, and gives it back on close, so it has to find that field still
         // focused. The composer's picture chip does the same.
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => openPicture({ src: props.src, alt: props.alt }, props.source, props.kind)}
+        onClick={(e) =>
+          openPicture(
+            { src: props.src, alt: props.alt },
+            props.source,
+            props.kind,
+            picturesAround(e.currentTarget),
+          )
+        }
       >
         <img src={props.src} alt={props.alt} loading="lazy" onError={() => setBroken(true)} />
       </button>

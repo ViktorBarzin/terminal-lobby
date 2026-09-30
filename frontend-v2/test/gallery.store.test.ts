@@ -15,9 +15,7 @@ const img = (name: string, mtime: number, kind = "pasted"): StoredImage => ({
 });
 
 /** run body in a reactive root; returns [store, dispose]. */
-function withStore(
-  deps: Parameters<typeof createGalleryStore>[0],
-): [GalleryStore, () => void] {
+function withStore(deps: Parameters<typeof createGalleryStore>[0]): [GalleryStore, () => void] {
   let store!: GalleryStore;
   const dispose = createRoot((d) => {
     store = createGalleryStore(deps);
@@ -113,6 +111,40 @@ describe("gallery store — lightbox step-back state", () => {
   });
 });
 
+describe("gallery store — stepping through the lightbox", () => {
+  it("moves to the next and previous image, and stops at either end", async () => {
+    const [g, dispose] = withStore({
+      session: () => "s",
+      fetchList: async () => [img("a", 1), img("b", 2), img("c", 3)],
+    });
+    await g.open();
+    g.openLightbox(1);
+    g.stepLightbox(1);
+    expect(g.lightboxIndex()).toBe(2);
+    g.stepLightbox(1); // the last one: no wrap to the first
+    expect(g.lightboxIndex()).toBe(2);
+    g.stepLightbox(-1);
+    g.stepLightbox(-1);
+    expect(g.lightboxIndex()).toBe(0);
+    g.stepLightbox(-1);
+    expect(g.lightboxIndex()).toBe(0);
+    expect(g.view()).toBe("lightbox");
+    dispose();
+  });
+
+  it("does nothing while the grid is showing", async () => {
+    const [g, dispose] = withStore({
+      session: () => "s",
+      fetchList: async () => [img("a", 1), img("b", 2)],
+    });
+    await g.open();
+    g.stepLightbox(1);
+    expect(g.view()).toBe("grid");
+    expect(g.lightboxIndex()).toBe(0);
+    dispose();
+  });
+});
+
 describe("gallery store — session switch closes it", () => {
   it("closes when the selected session changes out from under it", async () => {
     let setSel!: (v: string | null) => void;
@@ -148,10 +180,7 @@ describe("gallery store — image_opened telemetry fires only on a real open", (
     g.openLightbox(5); // out of range → rejected
     g.close();
     g.openLightbox(0); // not on the grid → rejected
-    expect(vi.mocked(track)).not.toHaveBeenCalledWith(
-      "gallery.image_opened",
-      expect.anything(),
-    );
+    expect(vi.mocked(track)).not.toHaveBeenCalledWith("gallery.image_opened", expect.anything());
     dispose();
   });
 

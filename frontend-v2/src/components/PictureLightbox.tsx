@@ -1,6 +1,7 @@
 import { Show, onCleanup, onMount, type Component } from "solid-js";
-import { closePicture, picture } from "../store/picture";
+import { closePicture, picture, pictureSpot, stepPicture } from "../store/picture";
 import { dismissOnPress } from "./overlay";
+import { LightboxNav, stepKey } from "./LightboxNav";
 import { closeOnBack } from "../lib/back-closes";
 
 /**
@@ -16,16 +17,23 @@ import { closeOnBack } from "../lib/back-closes";
  * reaches the composer (which would also close its completion menu) or the
  * terminal (which would send ESC to Claude).
  *
+ * ← and → step through the pictures of the timeline it was opened from, and so
+ * do the arrows at its sides (LightboxNav). While it is up those keys go no
+ * further either, or they would move the caret in the composer underneath.
+ *
  * The phone's Back closes it too, rather than moving the browser's history.
  *
  * Mounted once, in App.
  */
 export const PictureLightbox: Component = () => {
   const onKey = (e: KeyboardEvent): void => {
-    if (e.key !== "Escape" || !picture()) return;
+    if (!picture()) return;
+    const step = stepKey(e);
+    if (step === 0 && e.key !== "Escape") return;
     e.preventDefault();
     e.stopPropagation();
-    closePicture();
+    if (step === 0) closePicture();
+    else stepPicture(step);
   };
   onMount(() => document.addEventListener("keydown", onKey, true));
   // The phone's Back closes it rather than leaving the page (lib/back-closes).
@@ -37,6 +45,11 @@ export const PictureLightbox: Component = () => {
       {(pic) => (
         <div class="tl-lightbox" ref={dismissOnPress(closePicture, { keepFocus: true })}>
           <img src={pic().src} alt={pic().alt} />
+          <Show when={pictureSpot()}>
+            {(spot) => (
+              <LightboxNav index={spot().index} count={spot().count} onStep={stepPicture} />
+            )}
+          </Show>
         </div>
       )}
     </Show>

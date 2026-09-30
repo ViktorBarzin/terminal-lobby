@@ -178,6 +178,18 @@ export const ChevronDownIcon: Component<{ class?: string }> = (props) => (
   </Glyph>
 );
 
+/** A lightbox's arrows, to the previous and the next picture. */
+export const ChevronLeftIcon: Component = () => (
+  <Glyph box="0 0 16 16" size={20} width={1.8}>
+    <path d="m10 3.5-4.5 4.5 4.5 4.5" />
+  </Glyph>
+);
+export const ChevronRightIcon: Component = () => (
+  <Glyph box="0 0 16 16" size={20} width={1.8}>
+    <path d="m6 3.5 4.5 4.5-4.5 4.5" />
+  </Glyph>
+);
+
 /** The new-session strip's project button (prototype 6-t3's `folder`). */
 export const FolderGlyph: Component = () => (
   <Glyph box="0 0 16 16" size={14}>
