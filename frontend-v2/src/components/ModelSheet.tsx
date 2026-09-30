@@ -11,7 +11,14 @@ import {
 import { Portal } from "solid-js/web";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
-import { isDangerMode, MODES, modeId, modeTitle, type ModeId } from "../logic/modes";
+import {
+  isDangerMode,
+  MODES,
+  modeHangsOnModel,
+  modeId,
+  modeTitle,
+  type ModeId,
+} from "../logic/modes";
 import {
   chipName,
   DEFAULT_CHOICE,
@@ -163,6 +170,8 @@ export const ModelSheet: Component<{
   modelTitle?: string;
   /** A pick leaves the phone's sheet up, for a second choice in one visit. */
   keepSheetOpen?: boolean;
+  /** Called as the sheet opens: the moment the reader asks what is in force. */
+  onOpen?: () => void;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [sheet, setSheet] = createSignal(false);
@@ -352,6 +361,7 @@ export const ModelSheet: Component<{
     const phone = isCoarsePointer();
     setSheet(phone || !placePop());
     setOpen(true);
+    props.onOpen?.();
     // A keyboard activation is a click with no pointer detail. The list takes
     // the focus then, or the arrows would have nothing to walk. A pointer
     // leaves the focus where it was, as a menu does. The phone's sheet takes
@@ -410,7 +420,10 @@ export const ModelSheet: Component<{
   const why = (id: ModeId): string => {
     const hold = modeHold();
     if (hold) return hold;
-    if (props.modesUnavailable?.has(id)) return "Not offered in this session";
+    if (props.modesUnavailable?.has(id)) {
+      const on = modeHangsOnModel(id) ? name() : "";
+      return on ? `Not offered on ${on}` : "Not offered in this session";
+    }
     // No ask is not a stop on Shift+Tab: a session can start in it, and the
     // first press leaves it for good (CLI 2.1.281, memory #13911).
     if (id === "dontAsk" && current() !== "dontAsk") return NO_ASK_WHY;

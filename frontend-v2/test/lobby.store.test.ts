@@ -542,6 +542,32 @@ describe("lobby store", () => {
     });
   });
 
+  // Deployed review round 6 (2026-09-30, desktop): a shell named on the
+  // new-session screen was renamed, the sidebar and tmux showed the name, and
+  // the pane stayed on the minted id reading "New session" for 30 s+. tmux-api
+  // renames the session a moment before it stamps the birth name, so one poll
+  // can list the new name with no birth name. That poll records the row's
+  // tmux id under the new name, and the id link then matched the next poll's
+  // row to itself and never looked at the birth name that had arrived.
+  it("follows a rename whose birth name arrives a poll after the new name", async () => {
+    const api = new FakeApi();
+    api.sessionsVal = [];
+    await withStore(api, async (store) => {
+      await store.refresh();
+      store.select("e352nq5kreyr");
+      publishResolvedWatch("e352nq5kreyr", false);
+
+      api.sessionsVal = [{ ...sess("qa-shell"), id: "$41" }];
+      await store.refresh();
+      expect(store.selected()?.name).toBe("e352nq5kreyr");
+
+      api.sessionsVal = [{ ...sess("qa-shell"), id: "$41", bornAs: "e352nq5kreyr" }];
+      await store.refresh();
+      expect(store.selected()?.name).toBe("qa-shell");
+      expect(loadWatch("qa-shell")).toBe(false);
+    });
+  });
+
   it("carries the watch decision across a rename it never saw either", async () => {
     const api = new FakeApi();
     api.sessionsVal = [];

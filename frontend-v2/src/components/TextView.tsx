@@ -88,6 +88,7 @@ import {
   contextWindow,
   fillModel,
   isCurrentModel,
+  modelName,
   codexModelFromPane,
   modelFromBanner,
   type ModelField,
@@ -97,7 +98,7 @@ import {
 } from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
 import type { SetModeReply, SetModeResult } from "../lib/mode-api";
-import { isDangerMode, modeTitle, type ModeId } from "../logic/modes";
+import { isDangerMode, modeHangsOnModel, modeTitle, type ModeId } from "../logic/modes";
 
 /**
  * A model reading, as one comparable string.
@@ -131,6 +132,18 @@ const PANE_READ_DELAYS_MS = [150, 600];
  * screen starts it again.
  */
 const CODEX_MODEL_POLL_MS = 2_000;
+
+/**
+ * How often an open Claude session's pane is read for its permission mode.
+ *
+ * A mode changed from another device's Terminal, or by keys on the pane,
+ * writes nothing to the transcript until the next prompt, and the view read
+ * the pane only at moments of its own (deployed review round 6, 2026-09-30:
+ * Bypass on the pane, Manual on the button 15 s later, and a pick of Manual
+ * sent nothing). One read is a capture of a few KB; a view reads only while
+ * it is on screen and the page is visible.
+ */
+const MODE_POLL_MS = 4_000;
 const CODEX_MODEL_POLLS = 300;
 
 /**
@@ -188,13 +201,14 @@ function refusal(
   target: ModeId,
   was: string,
   reply: SetModeReply,
+  model = "",
 ): { text: string; tone: "warning" | "error" } {
   const to = modeTitle(target);
   const now = modeTitle(reply.mode || was);
   switch (reply.reason) {
     case "unavailable":
       return {
-        text: `${to} is not offered in this session, so it stayed on ${now}.`,
+        text: `${to} is not offered ${model ? `on ${model}` : "in this session"}, so it stayed on ${now}.`,
         tone: "warning",
       };
     case "unsafe-path":
@@ -627,6 +641,33 @@ export const TextView: Component<{
   };
   createEffect(() => {
     if (onScreen()) rereadMode();
+  });
+  // A mode changed from somewhere else: another device's Terminal, or keys on
+  // the pane. The transcript does not move for it at idle, so the pane is read
+  // on a clock while the view is on screen and the page is visible
+  // (MODE_POLL_MS), and whenever the window gets the focus back, which is the
+  // moment a reader returns from the other device.
+  const [pageVisible, setPageVisible] = createSignal(document.visibilityState !== "hidden");
+  onMount(() => {
+    const seen = (): void => {
+      const now = document.visibilityState !== "hidden";
+      setPageVisible(now);
+      if (now && onScreen()) rereadMode();
+    };
+    const focused = (): void => {
+      if (onScreen()) rereadMode();
+    };
+    document.addEventListener("visibilitychange", seen);
+    window.addEventListener("focus", focused);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", seen);
+      window.removeEventListener("focus", focused);
+    });
+  });
+  createEffect(() => {
+    if (props.harness !== "claude" || !onScreen() || !pageVisible()) return;
+    const timer = setInterval(rereadMode, MODE_POLL_MS);
+    onCleanup(() => clearInterval(timer));
   });
   // A Codex session names its model only on its pane (CODEX_MODEL_POLL_MS).
   // Reading is all this does: nothing is typed into the session.
@@ -1624,9 +1665,28 @@ export const TextView: Component<{
   /** A model pick is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
   const modelHeld = (): string =>
     dialogUp() ? MODEL_HELD_BY_DIALOG : props.suspended?.() ? MODEL_HELD_ASLEEP : "";
-  /** Modes the server has said this session does not offer. They stay out of
-   *  reach until the view remounts, since launch flags do not change mid-run. */
-  const [unavailable, setUnavailable] = createSignal<ReadonlySet<string>>(new Set());
+  /**
+   * Modes the server has said the session does not offer, and the model it
+   * was on when it said so. Launch flags do not change mid-run, but the model
+   * does, and whether Auto is offered depends on it: deployed review round 6
+   * (2026-09-30) refused Auto on Haiku 4.5, and the row stayed greyed out after
+   * the switch back to Opus 5.5, which offers it, until a reload. So the set
+   * holds only while the session is on the model it was refused on.
+   */
+  const [refused, setRefused] = createSignal<{ model: string; modes: ReadonlySet<string> }>({
+    model: "",
+    modes: new Set(),
+  });
+  const currentModelId = (): string => modelState()?.model ?? "";
+  /** The model's name when it is what decides whether `id` is offered. */
+  const modelOffering = (id: ModeId): string => {
+    const m = currentModelId();
+    return modeHangsOnModel(id) && m && props.harness ? modelName(props.harness, m) : "";
+  };
+  const unavailable = createMemo((): ReadonlySet<string> => {
+    const r = refused();
+    return r.model === currentModelId() ? r.modes : new Set();
+  });
 
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
@@ -1663,8 +1723,14 @@ export const TextView: Component<{
         }
         if (r.reply.mode) setPaneRead({ mode: r.reply.mode, against: transcriptMode() });
         if (r.reply.applied) return;
-        if (r.reply.reason === "unavailable") setUnavailable((u) => new Set(u).add(id));
-        const said = refusal(id, was, r.reply);
+        if (r.reply.reason === "unavailable") {
+          const model = currentModelId();
+          setRefused((u) => ({
+            model,
+            modes: new Set(u.model === model ? u.modes : []).add(id),
+          }));
+        }
+        const said = refusal(id, was, r.reply, modelOffering(id));
         props.notify?.(said.text, said.tone);
       })
       .finally(() => setModeBusy(false));
@@ -1825,13 +1891,20 @@ export const TextView: Component<{
    * digit before the rows arm is typing too (deployed review round 3,
    * 2026-09-28). Only on the card itself: a row or a link with the focus keeps
    * its own keys, Space included. True when it took the key.
+   *
+   * A space is typing once there are words for it to follow. On a phone the
+   * focus stays on the card, so every key of the sentence comes here, and
+   * dropping spaces sent back "keeptypingwhilethecardarrives" (deployed
+   * review round 6, 2026-09-30). A space on a card over an empty field is
+   * left alone.
    */
   const typeBehind = (e: KeyboardEvent): boolean => {
     const t = e.target;
     if (!(t instanceof HTMLElement) || !t.classList.contains("tl-qcard")) return false;
-    if (e.key.length !== 1 || e.key === " " || props.inertReason) return false;
+    if (e.key.length !== 1 || props.inertReason) return false;
     const sinks = composerSinks();
     if (!sinks || !cardUp()) return false;
+    if (e.key === " " && sinks.text() === "") return false;
     // Not into the field's focus on a phone: that raises the keyboard the
     // card has just put away, over its lower rows. The key came from that
     // keyboard as it slid away (deployed review round 4, 2026-09-29), and any
@@ -1912,19 +1985,64 @@ export const TextView: Component<{
    * conversation the card has just covered. It starts the wait again, since a
    * tap that soon means the reader is still typing and has not looked up.
    */
+  //
+  // Nor does the focus such a tap gives a row stay on it. Deployed review
+  // round 6 (2026-09-30, Android emulator): Android Chrome focuses a button
+  // as the finger goes down, before the click this swallows, and once the
+  // card armed one Space pressed that row; once it granted "Yes, and don't
+  // ask again" and wrote an allow rule into the project's settings. A row
+  // that takes the focus before the card arms hands it to the card, where
+  // keys go into the draft (`typeBehind`), and Space or Enter on a row
+  // before then presses nothing. A tap that went down before the card armed
+  // is swallowed even when it lifts after.
   onMount(() => {
     const el = viewEl;
     if (!el) return;
+    const tooSoon = (): boolean => cardUp() && !cardKeysArmed() && isCoarsePointer();
+    const cardButton = (t: EventTarget | null): HTMLElement | null =>
+      t instanceof Element ? t.closest<HTMLElement>(".tl-qcard button") : null;
+    const toCard = (b: HTMLElement): void => {
+      if (document.activeElement !== b) return;
+      const card = b.closest<HTMLElement>(".tl-qcard");
+      if (card) card.focus({ preventScroll: true });
+      if (document.activeElement === b) b.blur();
+    };
+    let downTooSoon = false;
+    const down = (e: PointerEvent): void => {
+      downTooSoon = !!cardButton(e.target) && tooSoon();
+    };
     const tapTooSoon = (e: MouseEvent): void => {
-      if (!cardUp() || cardKeysArmed() || !isCoarsePointer()) return;
-      const t = e.target;
-      if (!(t instanceof Element) || !t.closest(".tl-qcard button")) return;
+      const early = downTooSoon;
+      downTooSoon = false;
+      const b = cardButton(e.target);
+      if (!b || !cardUp() || !(tooSoon() || (early && isCoarsePointer()))) return;
       e.preventDefault();
       e.stopPropagation();
+      toCard(b);
       armCardKeys();
     };
+    const focusTooSoon = (e: FocusEvent): void => {
+      const b = cardButton(e.target);
+      if (b && tooSoon()) toCard(b);
+    };
+    const keyTooSoon = (e: KeyboardEvent): void => {
+      if (e.key !== " " && e.key !== "Enter") return;
+      const t = e.target;
+      if (!(t instanceof Element) || !t.closest(".tl-qcard-option")) return;
+      if (cardUp() && !cardKeysArmed()) e.preventDefault();
+    };
+    el.addEventListener("pointerdown", down, true);
     el.addEventListener("click", tapTooSoon, true);
-    onCleanup(() => el.removeEventListener("click", tapTooSoon, true));
+    el.addEventListener("focusin", focusTooSoon, true);
+    el.addEventListener("keydown", keyTooSoon, true);
+    el.addEventListener("keyup", keyTooSoon, true);
+    onCleanup(() => {
+      el.removeEventListener("pointerdown", down, true);
+      el.removeEventListener("click", tapTooSoon, true);
+      el.removeEventListener("focusin", focusTooSoon, true);
+      el.removeEventListener("keydown", keyTooSoon, true);
+      el.removeEventListener("keyup", keyTooSoon, true);
+    });
   });
   // A card answered and gone hands the focus back to the field that comes
   // back in its place, so the next message can be typed at once (deployed
@@ -2236,6 +2354,7 @@ export const TextView: Component<{
         modeHeld={modeHeld()}
         modelHeld={modelHeld()}
         modesUnavailable={unavailable()}
+        onModelSheetOpen={rereadMode}
         onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel

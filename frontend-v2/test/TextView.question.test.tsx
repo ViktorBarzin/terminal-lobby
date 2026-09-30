@@ -445,6 +445,22 @@ describe("a held call", () => {
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
   });
 
+  // Deployed review round 6 (2026-09-30, iPhone 13 emulation at 390x664):
+  // after scrolling to answer question 1, questions 2 and 3 opened at
+  // scrollTop 201, the tail of their options showing and the title out of
+  // sight. The card's scroll box starts each question at its top.
+  it("opens each question of a tall card at the top of its scroll box", async () => {
+    const v = mount([held([fruits, colour])]);
+    await waitFor(() => expect(v.option("Apple")).toBeTruthy());
+    const body = () => v.card()!.querySelector<HTMLElement>(".tl-qcard-body")!;
+    body().scrollTop = 201;
+    expect(body().scrollTop).toBe(201);
+    v.option("Apple")!.click();
+    v.button("Next")!.click();
+    await waitFor(() => expect(v.option("Blue")).toBeTruthy());
+    await waitFor(() => expect(body().scrollTop).toBe(0));
+  });
+
   it("keeps the focus in the card after Next, so the next question's digits work", async () => {
     // Found live on 2026-09-27: Next turns disabled on a question with no
     // answer yet, the focus fell to the page, and "2" did nothing.
