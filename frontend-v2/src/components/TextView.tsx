@@ -1891,13 +1891,20 @@ export const TextView: Component<{
    * digit before the rows arm is typing too (deployed review round 3,
    * 2026-09-28). Only on the card itself: a row or a link with the focus keeps
    * its own keys, Space included. True when it took the key.
+   *
+   * A space is typing once there are words for it to follow. On a phone the
+   * focus stays on the card, so every key of the sentence comes here, and
+   * dropping spaces sent back "keeptypingwhilethecardarrives" (deployed
+   * review round 6, 2026-09-30). A space on a card over an empty field is
+   * left alone.
    */
   const typeBehind = (e: KeyboardEvent): boolean => {
     const t = e.target;
     if (!(t instanceof HTMLElement) || !t.classList.contains("tl-qcard")) return false;
-    if (e.key.length !== 1 || e.key === " " || props.inertReason) return false;
+    if (e.key.length !== 1 || props.inertReason) return false;
     const sinks = composerSinks();
     if (!sinks || !cardUp()) return false;
+    if (e.key === " " && sinks.text() === "") return false;
     // Not into the field's focus on a phone: that raises the keyboard the
     // card has just put away, over its lower rows. The key came from that
     // keyboard as it slid away (deployed review round 4, 2026-09-29), and any

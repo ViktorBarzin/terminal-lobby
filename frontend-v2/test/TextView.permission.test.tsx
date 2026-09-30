@@ -1058,6 +1058,21 @@ describe("a card that docks over the phone's keyboard", () => {
     await waitFor(() => expect(v.onKeys).toHaveBeenCalledWith(["1"]));
   });
 
+  // Deployed review round 6 (2026-09-30, iPhone emulation and the Android
+  // emulator): words typed on to a card that docked mid-sentence came back as
+  // "keeptypingwhilethecardarrives", every space dropped, while the toast
+  // said what you type stays for after.
+  it("keeps the spaces of words typed on to the card", async () => {
+    const v = mount(base);
+    const field = await dock(v, "follow up draft text that I");
+    await waitFor(() => expect(document.activeElement).toBe(v.card()));
+    for (const key of " keep typing while it arrives") {
+      fireEvent.keyDown(document.activeElement!, { key });
+    }
+    expect(field.value).toBe("follow up draft text that I keep typing while it arrives");
+    expect(v.onKeys).not.toHaveBeenCalled();
+  });
+
   it("waits a full second after taking the keyboard away before a tap presses", async () => {
     const v = mount(base);
     await dock(v, "my draft");
