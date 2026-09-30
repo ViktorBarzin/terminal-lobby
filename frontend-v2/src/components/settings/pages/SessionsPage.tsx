@@ -1,54 +1,17 @@
-import { For, type Component } from "solid-js";
-import { NEW_COMMANDS, type NewCommand, type PrefsStore } from "../../../store/prefs";
-import { canRun, COMMAND_LABELS, type CommandAvailability } from "../../../lib/new-commands";
+import type { Component } from "solid-js";
+import type { PrefsStore } from "../../../store/prefs";
 import { Group, Row, Toggle } from "../controls";
 
-// Every command but pi can be the default. Claude stays the default harness
-// (Viktor, 2026-09-26), and a pi pick in the composer lasts one session
-// (store/prefs.ts, oneSessionCleared), so pi offered here could never stick.
-const DEFAULT_COMMANDS = NEW_COMMANDS.filter((c) => c !== "pi");
-
-/** What a new session starts as, and what the sidebar tells you about the ones
- *  you already have.
+/** What the sidebar tells you about the sessions you already have.
  *
- *  `availableCommands` is the same answer the sidebar's create row uses. Both
- *  write this one pref, so offering a command here that the row greys out would
- *  only move the dead option somewhere less visible. */
-export const SessionsPage: Component<{
-  prefs: PrefsStore;
-  availableCommands?: () => CommandAvailability;
-}> = (props) => {
-  const avail = (): CommandAvailability => props.availableCommands?.() ?? {};
+ *  There is no default command to choose here: every new session starts on
+ *  Claude, and another command picked in the composer lasts that one session
+ *  (store/prefs.ts, oneSessionCleared; Viktor, 2026-09-30). */
+export const SessionsPage: Component<{ prefs: PrefsStore }> = (props) => {
   const p = () => props.prefs.prefs();
 
   return (
     <Group>
-      <Row
-        label="New session runs"
-        labelFor="tl-set-newcmd"
-        hint="Applies to newly created sessions only. Sessions already running keep whatever they were started with."
-      >
-        <select
-          id="tl-set-newcmd"
-          class="tl-set-select"
-          value={p().session.newCommand}
-          onChange={(e) =>
-            props.prefs.setPref({
-              session: { newCommand: e.currentTarget.value as NewCommand },
-            })
-          }
-        >
-          <For each={DEFAULT_COMMANDS}>
-            {(c) => (
-              <option value={c} disabled={!canRun(c, avail())}>
-                {COMMAND_LABELS[c]}
-                {canRun(c, avail()) ? "" : " (not installed)"}
-              </option>
-            )}
-          </For>
-        </select>
-      </Row>
-
       <Row
         label="Show when each session was last driven"
         hint="The last time someone was attached to it and able to type — watching a session does not move this. A running session shows its live timer instead, which counts the turn in flight."

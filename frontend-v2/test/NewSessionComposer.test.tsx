@@ -483,18 +483,16 @@ describe("<NewSessionComposer> — speculative pre-warm", () => {
   // The pool only ever claims a slot for the `claude` key (tmux-user-attach),
   // so a slot warmed for any other command is a ~530MB Claude that sits until
   // the server's TTL collects it.
-  // Pi is not in this list because it cannot be stored as the command: a
-  // stored pi loads as Claude (store/prefs.ts). Moving onto pi in the composer
-  // is the next test.
+  // Picked after the mount, because a stored command other than Claude loads
+  // as Claude (store/prefs.ts, oneSessionCleared). Moving onto pi in the
+  // composer is the next test.
   it("warms nothing when the command is not Claude", async () => {
-    for (const newCommand of ["codex", "shell"]) {
-      localStorage.setItem(
-        PREFS_KEY,
-        JSON.stringify({ session: { newProject: "alpha", newCommand } }),
-      );
+    for (const newCommand of ["codex", "shell"] as const) {
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newProject: "alpha" } }));
       const api = new FakeApi();
       withProjects(api);
       const m = mount(api);
+      m.prefs.setPref({ session: { newCommand } });
       await m.store.refresh();
       await Promise.resolve();
       expect(api.prewarmed, newCommand).toEqual([]);
@@ -649,11 +647,14 @@ describe("<NewSessionComposer> — the command it runs", () => {
     m.store.dispose();
   });
 
-  it("keeps the stored preference when it runs", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "codex" } }));
-    const m = mount(new FakeApi(), { claude: true, codex: true, shell: true });
+  // Every new session starts on Claude (Viktor, 2026-09-30: "make the default
+  // for all new sessions Claude. not shell"). Another command picked for an
+  // earlier session, on this device or another, is not a default.
+  it.each(["codex", "pi", "shell"])("opens on Claude over a stored %s", async (newCommand) => {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand } }));
+    const m = mount(new FakeApi(), { claude: true, codex: true, pi: true, shell: true });
     await m.store.refresh();
-    await waitFor(() => expect(chosen(pick(m.container, "Command for new session"))).toBe("codex"));
+    await waitFor(() => expect(chosen(pick(m.container, "Command for new session"))).toBe("claude"));
     m.store.dispose();
   });
 
@@ -681,8 +682,8 @@ describe("<NewSessionComposer> — the command it runs", () => {
 
 describe("<NewSessionComposer> — shell turns the box back into a name box", () => {
   it("swaps the prompt field for a name field", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
     const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     expect(field(m.container)).toBeNull();
@@ -694,8 +695,8 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
   // Prototype 6-shell: the same box, with its + held out of sight so the
   // name field and the round button keep the places they have for a prompt.
   it("holds the + out of sight, keeping its room, since a name takes no files", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
     const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     const held = m.container.querySelector<HTMLElement>(".tl-pill-name .tl-plus")!;
@@ -718,9 +719,9 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
   });
 
   it("stamps the typed name as the title, because no summary is coming", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
     const api = new FakeApi();
     const m = mount(api);
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
 
@@ -738,9 +739,9 @@ describe("<NewSessionComposer> — shell turns the box back into a name box", ()
   // starting the same session, so it holds the same line: nothing typed,
   // nothing created.
   it("refuses an unnamed shell", async () => {
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
     const api = new FakeApi();
     const m = mount(api);
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     const send = () => m.container.querySelector<HTMLButtonElement>(".tl-send")!;
@@ -1155,17 +1156,14 @@ describe("<NewSessionComposer> — the box, the hero and the strip", () => {
 });
 
 describe("<NewSessionComposer> — a new shell", () => {
-  const shellPref = (): void =>
-    localStorage.setItem(PREFS_KEY, JSON.stringify({ session: { newCommand: "shell" } }));
-
   it("asks for a name in the hero and the box", async () => {
-    shellPref();
     const api = new FakeApi();
     api.layoutVal = {
       ...emptyLayout(),
       projects: [{ name: "alpha", sessions: [], dir: "/home/wizard/code/alpha" }],
     };
     const m = mount(api);
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     m.setPreset("alpha");
     await waitFor(() =>
@@ -1176,8 +1174,8 @@ describe("<NewSessionComposer> — a new shell", () => {
   });
 
   it("hides the + by visibility and leaves the model button out", async () => {
-    shellPref();
     const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     expect(m.container.querySelector(".tl-pill-name .tl-plus")!.hasAttribute("data-hidden")).toBe(
@@ -1188,8 +1186,8 @@ describe("<NewSessionComposer> — a new shell", () => {
   });
 
   it("keeps the strip, so the command can be changed back", async () => {
-    shellPref();
     const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     expect(opener(m.container, "Command for new session")!.textContent).toContain("shell");
@@ -1199,8 +1197,8 @@ describe("<NewSessionComposer> — a new shell", () => {
   });
 
   it("keeps a pasted newline out of a name", async () => {
-    shellPref();
     const m = mount(new FakeApi());
+    m.prefs.setPref({ session: { newCommand: "shell" } });
     await m.store.refresh();
     await waitFor(() => expect(nameBox(m.container)).not.toBeNull());
     type(nameBox(m.container)!, "one\ntwo");

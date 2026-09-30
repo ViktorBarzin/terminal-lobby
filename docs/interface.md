@@ -193,7 +193,7 @@ right. The pages, in rail order:
 |---|---|
 | Appearance | the nine themes, as cards painting their own colours |
 | Terminal | font size, line height, letter spacing, bold weight, cursor, scrolling, the link copy button, flow control |
-| Sessions | what a new session runs, and the session list's last-driven time |
+| Sessions | the session list's last-driven time. Every new session starts on Claude; another command picked in the composer lasts that one session |
 | Keyboard | the app-shortcut layer's on/off |
 | Notifications | when to notify, this device's permission and subscription, two tests |
 | Network | the Full/Auto/Light link pin, which network you are on, and "Data used" |

@@ -639,16 +639,17 @@ export function readPersistedPrefs(): Prefs {
 
 /**
  * The picks that last one session, cleared: a Claude max or ultracode, pi's
- * max, and pi as the command. Claude stays the default harness (Viktor,
- * 2026-09-26: "let's keep Claude as default harness, don't change to pi"), so
- * picking pi starts that one session on pi. Returns null when there is nothing
- * to clear.
+ * max, and any command but Claude. Every new session starts on Claude (Viktor,
+ * 2026-09-26: "let's keep Claude as default harness, don't change to pi";
+ * 2026-09-30: "make the default for all new sessions Claude. not shell"), so
+ * picking codex, pi or a shell starts that one session on it. Returns null when
+ * there is nothing to clear.
  */
 function oneSessionCleared(s: Prefs["session"]): Partial<Prefs["session"]> | null {
   const cleared: Partial<Prefs["session"]> = {};
   if (isOneSessionEffort("claude", s.newEffort)) cleared.newEffort = DEFAULT_CHOICE;
   if (isOneSessionEffort("pi", s.newPiEffort)) cleared.newPiEffort = DEFAULT_CHOICE;
-  if (s.newCommand === "pi") cleared.newCommand = DEFAULT_NEW_COMMAND;
+  if (s.newCommand !== DEFAULT_NEW_COMMAND) cleared.newCommand = DEFAULT_NEW_COMMAND;
   return Object.keys(cleared).length > 0 ? cleared : null;
 }
 
@@ -665,7 +666,7 @@ function withoutOneSessionEffort(p: Prefs): Prefs {
 }
 
 /**
- * Put a one-session pick (max, ultracode, pi) back to default once the session
+ * Put a one-session pick (max, ultracode, a command but Claude) back to default once the session
  * it was picked for exists.
  *
  * The attach reads the pick when the created session first connects

@@ -3145,7 +3145,6 @@ export const App: Component = () => {
       <Show when={settingsOpen()}>
         <SettingsPanel
           prefs={prefs}
-          availableCommands={cmdAvail}
           onClose={() => setSettingsOpen(false)}
           initialPage={settingsPage()}
           onPageChange={setSettingsPage}
