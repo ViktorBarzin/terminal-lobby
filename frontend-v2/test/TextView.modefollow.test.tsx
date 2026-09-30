@@ -18,7 +18,7 @@
  * became the model button in the T3 pass (2026-09-27), which carries the mode
  * as `data-mode` and wears a red shield in Bypass.
  */
-import { describe, it, expect, vi } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, waitFor } from "@solidjs/testing-library";
 import { createSignal } from "solid-js";
 import { TextView } from "../src/components/TextView";
@@ -39,6 +39,9 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session
 const modeEvent = (id: number, mode: string): Event =>
   ev({ id, kind: "meta", meta: "permission-mode", body: mode });
 
+/** Longer than TextView's MODE_POLL_MS. */
+const MODE_POLL_TEST_MS = 5_000;
+
 const PLAN = {
   kind: "plan" as const,
   options: [
@@ -51,7 +54,7 @@ const PLAN = {
 };
 const PLAN_TEXT = "# Write hello.txt\n\n1. Write it.\n";
 
-function mount(opts: { events: Event[]; onScreen?: boolean }) {
+function mount(opts: { events: Event[]; onScreen?: boolean; harness?: "claude" }) {
   const [events, setEvents] = createSignal<Event[]>(opts.events);
   const [onScreen, setOnScreen] = createSignal(opts.onScreen ?? true);
   const [textShown, setTextShown] = createSignal(true);
@@ -71,6 +74,7 @@ function mount(opts: { events: Event[]; onScreen?: boolean }) {
       onScreen={onScreen()}
       textShown={textShown()}
       notify={() => {}}
+      harness={opts.harness}
     />
   ));
   const dial = () => r.container.querySelector<HTMLElement>(".tl-model-btn");
@@ -201,5 +205,75 @@ describe("<TextView>: the model button follows mode changes it did not make", ()
     v.setEvents([...v.events(), ev({ id: 3, kind: "turn_end", at: 3000 })]);
     await new Promise((r) => setTimeout(r, 50));
     expect(v.onPane).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A mode changed from somewhere else while this view stays open.
+ *
+ * Deployed review round 6 (2026-09-30, 0.83.4): a Shift+Tab from another
+ * device's Terminal put the session in Bypass while the desktop's Text view
+ * read Manual with no danger border 15 s later, and picking Manual sent
+ * nothing, because the view thought it was on Manual already. Nothing in the
+ * transcript moves for a mode change at idle. The pane is now also read on a
+ * clock while the view is on screen and the page is visible, when the window
+ * gets the focus back, and as the model sheet opens.
+ */
+describe("<TextView>: the model button follows a mode changed from another device", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Only the clock's interval is faked, once the view has opened: waitFor
+  // polls on an interval of its own.
+  it("reads the pane on a clock while the view is open", async () => {
+    const v = mount({ events: [modeEvent(1, "manual")], harness: "claude" });
+    v.paneShows(STATUS.manual);
+    await v.opened();
+    await waitFor(() => expect(v.shown()).toBe("Manual"));
+    v.setOnScreen(false);
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    v.setOnScreen(true);
+    await new Promise((r) => setTimeout(r, 900));
+
+    v.paneShows(STATUS.bypass);
+    vi.advanceTimersByTime(MODE_POLL_TEST_MS);
+    vi.useRealTimers();
+    await waitFor(() => expect(v.shown()).toBe("Bypass"), { timeout: 2000 });
+  });
+
+  it("does not read the pane on the clock for a view nobody is looking at", async () => {
+    const v = mount({ events: [modeEvent(1, "manual")], harness: "claude" });
+    await v.opened();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    v.setOnScreen(false);
+    await new Promise((r) => setTimeout(r, 900));
+    const before = v.onPane.mock.calls.length;
+    vi.advanceTimersByTime(MODE_POLL_TEST_MS * 3);
+    await new Promise((r) => setTimeout(r, 900));
+    expect(v.onPane.mock.calls.length).toBe(before);
+  });
+
+  it("reads the pane when the window gets the focus back", async () => {
+    const v = mount({ events: [modeEvent(1, "manual")], harness: "claude" });
+    v.paneShows(STATUS.manual);
+    await v.opened();
+    await waitFor(() => expect(v.shown()).toBe("Manual"));
+
+    v.paneShows(STATUS.edits);
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(v.shown()).toBe("Edits"), { timeout: 2000 });
+  });
+
+  it("reads the pane as the model sheet opens, so the sheet shows the mode in force", async () => {
+    const v = mount({ events: [modeEvent(1, "manual")], harness: "claude" });
+    v.paneShows(STATUS.manual);
+    await v.opened();
+    await waitFor(() => expect(v.shown()).toBe("Manual"));
+
+    v.paneShows(STATUS.bypass);
+    const btn = document.querySelector<HTMLElement>(".tl-model-btn")!;
+    btn.click();
+    await waitFor(() => expect(v.shown()).toBe("Bypass"), { timeout: 2000 });
   });
 });

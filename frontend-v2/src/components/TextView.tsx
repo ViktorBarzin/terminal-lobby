@@ -132,6 +132,18 @@ const PANE_READ_DELAYS_MS = [150, 600];
  * screen starts it again.
  */
 const CODEX_MODEL_POLL_MS = 2_000;
+
+/**
+ * How often an open Claude session's pane is read for its permission mode.
+ *
+ * A mode changed from another device's Terminal, or by keys on the pane,
+ * writes nothing to the transcript until the next prompt, and the view read
+ * the pane only at moments of its own (deployed review round 6, 2026-09-30:
+ * Bypass on the pane, Manual on the button 15 s later, and a pick of Manual
+ * sent nothing). One read is a capture of a few KB; a view reads only while
+ * it is on screen and the page is visible.
+ */
+const MODE_POLL_MS = 4_000;
 const CODEX_MODEL_POLLS = 300;
 
 /**
@@ -629,6 +641,33 @@ export const TextView: Component<{
   };
   createEffect(() => {
     if (onScreen()) rereadMode();
+  });
+  // A mode changed from somewhere else: another device's Terminal, or keys on
+  // the pane. The transcript does not move for it at idle, so the pane is read
+  // on a clock while the view is on screen and the page is visible
+  // (MODE_POLL_MS), and whenever the window gets the focus back, which is the
+  // moment a reader returns from the other device.
+  const [pageVisible, setPageVisible] = createSignal(document.visibilityState !== "hidden");
+  onMount(() => {
+    const seen = (): void => {
+      const now = document.visibilityState !== "hidden";
+      setPageVisible(now);
+      if (now && onScreen()) rereadMode();
+    };
+    const focused = (): void => {
+      if (onScreen()) rereadMode();
+    };
+    document.addEventListener("visibilitychange", seen);
+    window.addEventListener("focus", focused);
+    onCleanup(() => {
+      document.removeEventListener("visibilitychange", seen);
+      window.removeEventListener("focus", focused);
+    });
+  });
+  createEffect(() => {
+    if (props.harness !== "claude" || !onScreen() || !pageVisible()) return;
+    const timer = setInterval(rereadMode, MODE_POLL_MS);
+    onCleanup(() => clearInterval(timer));
   });
   // A Codex session names its model only on its pane (CODEX_MODEL_POLL_MS).
   // Reading is all this does: nothing is typed into the session.
@@ -2260,6 +2299,7 @@ export const TextView: Component<{
         modeHeld={modeHeld()}
         modelHeld={modelHeld()}
         modesUnavailable={unavailable()}
+        onModelSheetOpen={rereadMode}
         onTakeControl={props.onTakeControl}
         {...(context() ? { context: context()! } : {})}
         {...(props.harness && props.onSetModel

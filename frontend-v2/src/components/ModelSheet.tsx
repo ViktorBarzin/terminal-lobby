@@ -163,6 +163,8 @@ export const ModelSheet: Component<{
   modelTitle?: string;
   /** A pick leaves the phone's sheet up, for a second choice in one visit. */
   keepSheetOpen?: boolean;
+  /** Called as the sheet opens: the moment the reader asks what is in force. */
+  onOpen?: () => void;
 }> = (props) => {
   const [open, setOpen] = createSignal(false);
   const [sheet, setSheet] = createSignal(false);
@@ -352,6 +354,7 @@ export const ModelSheet: Component<{
     const phone = isCoarsePointer();
     setSheet(phone || !placePop());
     setOpen(true);
+    props.onOpen?.();
     // A keyboard activation is a click with no pointer detail. The list takes
     // the focus then, or the arrows would have nothing to walk. A pointer
     // leaves the focus where it was, as a menu does. The phone's sheet takes

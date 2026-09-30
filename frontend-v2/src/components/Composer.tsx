@@ -173,6 +173,8 @@ export const Composer: Component<{
   onCycleMode?: () => void;
   /** Put the session in a mode picked from the sheet's list. */
   onPickMode?: (mode: ModeId) => void;
+  /** The model sheet is opening. */
+  onModelSheetOpen?: () => void;
   /** The newest `/context` reading, the sheet's context line. */
   context?: ContextState;
   /** Which CLI this session runs, when it is one with a model to pick. Absent
@@ -393,6 +395,7 @@ export const Composer: Component<{
           modeBusy={props.modeBusy === true}
           modesUnavailable={props.modesUnavailable}
           onPickMode={props.onPickMode}
+          onOpen={props.onModelSheetOpen}
           modeHeld={props.modeHeld}
           modelHeld={props.modelHeld}
           context={props.context}
