@@ -88,6 +88,7 @@ import {
   contextWindow,
   fillModel,
   isCurrentModel,
+  modelName,
   codexModelFromPane,
   modelFromBanner,
   type ModelField,
@@ -97,7 +98,7 @@ import {
 } from "../lib/models";
 import type { SetModelResult } from "../lib/model-api";
 import type { SetModeReply, SetModeResult } from "../lib/mode-api";
-import { isDangerMode, modeTitle, type ModeId } from "../logic/modes";
+import { isDangerMode, modeHangsOnModel, modeTitle, type ModeId } from "../logic/modes";
 
 /**
  * A model reading, as one comparable string.
@@ -188,13 +189,14 @@ function refusal(
   target: ModeId,
   was: string,
   reply: SetModeReply,
+  model = "",
 ): { text: string; tone: "warning" | "error" } {
   const to = modeTitle(target);
   const now = modeTitle(reply.mode || was);
   switch (reply.reason) {
     case "unavailable":
       return {
-        text: `${to} is not offered in this session, so it stayed on ${now}.`,
+        text: `${to} is not offered ${model ? `on ${model}` : "in this session"}, so it stayed on ${now}.`,
         tone: "warning",
       };
     case "unsafe-path":
@@ -1624,9 +1626,28 @@ export const TextView: Component<{
   /** A model pick is held for the same dialogs (MODEL_HELD_BY_DIALOG). */
   const modelHeld = (): string =>
     dialogUp() ? MODEL_HELD_BY_DIALOG : props.suspended?.() ? MODEL_HELD_ASLEEP : "";
-  /** Modes the server has said this session does not offer. They stay out of
-   *  reach until the view remounts, since launch flags do not change mid-run. */
-  const [unavailable, setUnavailable] = createSignal<ReadonlySet<string>>(new Set());
+  /**
+   * Modes the server has said the session does not offer, and the model it
+   * was on when it said so. Launch flags do not change mid-run, but the model
+   * does, and whether Auto is offered depends on it: deployed review round 6
+   * (2026-09-30) refused Auto on Haiku 4.5, and the row stayed greyed out after
+   * the switch back to Opus 5.5, which offers it, until a reload. So the set
+   * holds only while the session is on the model it was refused on.
+   */
+  const [refused, setRefused] = createSignal<{ model: string; modes: ReadonlySet<string> }>({
+    model: "",
+    modes: new Set(),
+  });
+  const currentModelId = (): string => modelState()?.model ?? "";
+  /** The model's name when it is what decides whether `id` is offered. */
+  const modelOffering = (id: ModeId): string => {
+    const m = currentModelId();
+    return modeHangsOnModel(id) && m && props.harness ? modelName(props.harness, m) : "";
+  };
+  const unavailable = createMemo((): ReadonlySet<string> => {
+    const r = refused();
+    return r.model === currentModelId() ? r.modes : new Set();
+  });
 
   const cycleMode = () => {
     // Shift+Tab in the CLI cycles the permission mode. One press, then the pane
@@ -1663,8 +1684,14 @@ export const TextView: Component<{
         }
         if (r.reply.mode) setPaneRead({ mode: r.reply.mode, against: transcriptMode() });
         if (r.reply.applied) return;
-        if (r.reply.reason === "unavailable") setUnavailable((u) => new Set(u).add(id));
-        const said = refusal(id, was, r.reply);
+        if (r.reply.reason === "unavailable") {
+          const model = currentModelId();
+          setRefused((u) => ({
+            model,
+            modes: new Set(u.model === model ? u.modes : []).add(id),
+          }));
+        }
+        const said = refusal(id, was, r.reply, modelOffering(id));
         props.notify?.(said.text, said.tone);
       })
       .finally(() => setModeBusy(false));

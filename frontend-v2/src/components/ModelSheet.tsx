@@ -11,7 +11,7 @@ import {
 import { Portal } from "solid-js/web";
 import { isCoarsePointer } from "../mobile/pointer";
 import { installDialogFocus, wrapTab } from "../lib/focus-trap";
-import { isDangerMode, MODES, modeId, modeTitle, type ModeId } from "../logic/modes";
+import { isDangerMode, MODES, modeHangsOnModel, modeId, modeTitle, type ModeId } from "../logic/modes";
 import {
   chipName,
   DEFAULT_CHOICE,
@@ -410,7 +410,10 @@ export const ModelSheet: Component<{
   const why = (id: ModeId): string => {
     const hold = modeHold();
     if (hold) return hold;
-    if (props.modesUnavailable?.has(id)) return "Not offered in this session";
+    if (props.modesUnavailable?.has(id)) {
+      const on = modeHangsOnModel(id) ? name() : "";
+      return on ? `Not offered on ${on}` : "Not offered in this session";
+    }
     // No ask is not a stop on Shift+Tab: a session can start in it, and the
     // first press leaves it for good (CLI 2.1.281, memory #13911).
     if (id === "dontAsk" && current() !== "dontAsk") return NO_ASK_WHY;

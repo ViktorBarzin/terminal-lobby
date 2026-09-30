@@ -105,3 +105,12 @@ export function modeTitle(mode: string): string {
 export function isDangerMode(mode: string): boolean {
   return modeRow(mode)?.tone === "danger";
 }
+
+/**
+ * Whether the model decides if this mode is offered. Claude Code offers Auto
+ * on some models and not others (Haiku 4.5 drops it, deployed review round 4,
+ * 2026-09-29); the others are the launch flags' to decide.
+ */
+export function modeHangsOnModel(mode: ModeId): boolean {
+  return mode === "auto";
+}
