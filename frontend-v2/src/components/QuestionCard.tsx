@@ -43,6 +43,9 @@ export type QuestionCardState = "open" | "connecting" | "terminal";
  */
 export const QuestionCard: Component<{
   questions: Question[];
+  /** How many more calls Claude asked alongside this one. Each is answered on
+   *  its own, and the next takes this card's place once this one is answered. */
+  more?: number;
   state: QuestionCardState;
   /** A request is in flight. */
   busy: boolean;
@@ -227,6 +230,14 @@ export const QuestionCard: Component<{
             <Show when={count() > 1}>
               <span class="tl-qcard-step">
                 {index() + 1}/{count()}
+              </span>
+            </Show>
+            <Show when={(props.more ?? 0) > 0}>
+              <span
+                class="tl-qcard-step tl-qcard-more"
+                title="Claude asked more questions at the same time. They show here once these are answered."
+              >
+                +{props.more} more
               </span>
             </Show>
             <Show when={collapsed()}>

@@ -8,6 +8,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildAnswers,
+  heldCallsFromEvents,
   heldFromEvents,
   resolveAnswer,
   setCustom,
@@ -159,5 +160,59 @@ describe("heldFromEvents", () => {
   it("is null for a body with no questions", () => {
     expect(heldFromEvents([held("{}")])).toBeNull();
     expect(heldFromEvents([held("not json")])).toBeNull();
+  });
+  it("is the oldest call when several are held", () => {
+    expect(heldFromEvents([held(twoCalls)])?.[0]?.question).toBe("Pick a colour");
+  });
+});
+
+const size = { question: "Pick a size", header: "Size", options: [{ label: "S" }, { label: "L" }] };
+const colourQ = JSON.parse(heldBody).questions[0];
+/** Two calls asked together, as the server publishes them: oldest first under
+ *  "calls", and the oldest again under "questions". */
+const twoCalls = JSON.stringify({
+  questions: [colourQ],
+  calls: [{ questions: [colourQ] }, { questions: [size] }],
+});
+const askCall = (toolId: string, questions: unknown[]): Event =>
+  ev({
+    kind: "tool_use",
+    tool: "AskUserQuestion",
+    toolId,
+    body: JSON.stringify({ questions }),
+  } as Partial<Event> & { kind: string });
+const resultOf = (toolId: string): Event =>
+  ev({ kind: "tool_result", toolId } as Partial<Event> & { kind: string });
+const firsts = (calls: Question[][]) => calls.map((c) => c[0]!.question);
+
+describe("heldCallsFromEvents", () => {
+  it("reads every held call, oldest first", () => {
+    expect(firsts(heldCallsFromEvents([held(twoCalls)]))).toEqual(["Pick a colour", "Pick a size"]);
+  });
+  it("reads a body from before calls as one call", () => {
+    expect(firsts(heldCallsFromEvents([held(heldBody)]))).toEqual(["Pick a colour"]);
+  });
+  it("is empty once withdrawn, or once the turn ends", () => {
+    expect(heldCallsFromEvents([held(twoCalls), held("")])).toEqual([]);
+    expect(heldCallsFromEvents([held(twoCalls), ev({ kind: "turn_end" })])).toEqual([]);
+  });
+  it("drops only the call whose result is in", () => {
+    const calls = heldCallsFromEvents([
+      held(twoCalls),
+      askCall("t1", [colourQ]),
+      askCall("t2", [size]),
+      resultOf("t1"),
+    ]);
+    expect(firsts(calls)).toEqual(["Pick a size"]);
+  });
+  it("keeps both calls while a result it cannot place is in", () => {
+    const calls = heldCallsFromEvents([
+      held(twoCalls),
+      ev({ kind: "tool_use", tool: "AskUserQuestion", toolId: "t9" } as Partial<Event> & {
+        kind: string;
+      }),
+      resultOf("t9"),
+    ]);
+    expect(firsts(calls)).toEqual(["Pick a colour", "Pick a size"]);
   });
 });

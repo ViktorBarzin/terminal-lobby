@@ -126,7 +126,7 @@ func (e *scriptEnv) waitHeld(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if e.rg.holds.get(holdKey(e.osUser, e.path)) != nil {
+		if e.rg.holds.find(holdKey(e.osUser, e.path), sessionio.AnswerRequest{}) != nil {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
@@ -202,7 +202,7 @@ func TestTheHookScriptWithdrawsTheQuestionWhenStopped(t *testing.T) {
 	cmd.Process.Signal(os.Interrupt)
 	<-done
 	deadline := time.Now().Add(5 * time.Second)
-	for e.rg.holds.get(holdKey(e.osUser, e.path)) != nil {
+	for e.rg.holds.find(holdKey(e.osUser, e.path), sessionio.AnswerRequest{}) != nil {
 		if time.Now().After(deadline) {
 			t.Fatal("the question is still held after the hook was stopped")
 		}

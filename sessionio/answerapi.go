@@ -16,6 +16,11 @@ type AnswerRequest struct {
 	// Chat declines a held call and hands Claude these words instead, the
 	// card's "Chat about this". Present and empty declines with no words.
 	Chat *string `json:"chat,omitempty"`
+	// Call names the held call that Answers or Chat is for, by its question
+	// texts in order. Claude can ask several calls at once and each is held
+	// on its own. Without it, Answers goes to the call its keys belong to and
+	// Chat to the oldest.
+	Call []string `json:"call,omitempty"`
 	// Plan answers Claude Code's plan approval (plandialog.go).
 	Plan *PlanAnswer `json:"plan,omitempty"`
 	// Permission answers Claude Code's tool permission prompt (permdialog.go):

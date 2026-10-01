@@ -38,8 +38,10 @@ const maxHold = 24 * time.Hour
 type hold struct {
 	input     map[string]json.RawMessage // the tool input, echoed back whole
 	questions []heldQuestion
+	texts     string      // the question texts joined, which name the call
 	reply     chan []byte // the hook's stdout; buffered, written once
 	since     time.Time
+	calls     int // how many calls the session held once this one was added
 	once      sync.Once
 }
 
@@ -63,40 +65,99 @@ func (h *hold) settle(out []byte) bool {
 // transcript and not the tmux name, because a session can be renamed while its
 // question waits, and the transcript is what both the hook and a lookup by
 // name agree on.
+//
+// A session can hold SEVERAL calls at once. Claude Code runs the hook for every
+// AskUserQuestion in one assistant message together, and the terminal shows
+// their menus one after another. Measured 2026-10-01: five grilling rounds
+// across two sessions asked two or three calls at once, and while a newer call
+// replaced the older here, the card answered the last one and every other had
+// to be answered in the terminal. They are kept in the order the hooks arrived,
+// which is the order the terminal shows them in.
 type holdSet struct {
 	mu sync.Mutex
-	m  map[string]*hold
+	m  map[string][]*hold
 }
 
-func newHoldSet() *holdSet { return &holdSet{m: map[string]*hold{}} }
+func newHoldSet() *holdSet { return &holdSet{m: map[string][]*hold{}} }
 
 func holdKey(osUser, transcript string) string { return osUser + "\x00" + transcript }
 
-// put records h and returns whatever it replaced: a newer call for the same
-// session means the older one is over.
-func (s *holdSet) put(key string, h *hold) *hold {
+// put adds h after the session's other holds and publishes the lot. A hold
+// asking exactly what h asks is the same call asked again (Claude Code takes a
+// dialog down and re-asks when something else claims the turn, and the first
+// call never gets a result), so h takes its place and it is returned. n is how
+// many calls the session holds now.
+//
+// publish runs under the set's lock, so two hooks changing one session's holds
+// at once cannot publish them out of order.
+func (s *holdSet) put(key string, h *hold, publish func(string) bool) (prev *hold, n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	prev := s.m[key]
-	s.m[key] = h
-	return prev
-}
-
-// drop removes h if it is still the session's hold, and reports whether it was.
-func (s *holdSet) drop(key string, h *hold) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.m[key] != h {
-		return false
+	list := s.m[key]
+	for i, o := range list {
+		if o.texts == h.texts {
+			prev = o
+			list = append(list[:i:i], list[i+1:]...)
+			break
+		}
 	}
-	delete(s.m, key)
-	return true
+	list = append(list, h)
+	s.m[key] = list
+	publish(heldBody(list))
+	return prev, len(list)
 }
 
-func (s *holdSet) get(key string) *hold {
+// drop removes h and publishes what is left, and reports whether h was still
+// held: a hold that was replaced is gone already.
+func (s *holdSet) drop(key string, h *hold, publish func(string) bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.m[key]
+	list := s.m[key]
+	for i, o := range list {
+		if o != h {
+			continue
+		}
+		list = append(list[:i:i], list[i+1:]...)
+		if len(list) == 0 {
+			delete(s.m, key)
+		} else {
+			s.m[key] = list
+		}
+		publish(heldBody(list))
+		return true
+	}
+	return false
+}
+
+// find returns the hold req answers, or nil. The call req names, when it names
+// one. Otherwise, for a client from before Call: the first hold that asks one
+// of the questions Answers is keyed by, and failing that the oldest, which is
+// also where Chat goes. An answer that reaches the oldest with keys that are
+// not its questions is refused as incomplete, as it always was.
+func (s *holdSet) find(key string, req sessionio.AnswerRequest) *hold {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.m[key]
+	if len(list) == 0 {
+		return nil
+	}
+	if len(req.Call) > 0 {
+		want := strings.Join(req.Call, "\x00")
+		for _, h := range list {
+			if h.texts == want {
+				return h
+			}
+		}
+		return nil
+	}
+	for _, h := range list {
+		for _, q := range h.questions {
+			if _, ok := req.Answers[q.Question]; ok {
+				return h
+			}
+		}
+	}
+	return list[0]
 }
 
 // questionHookBody is the hook's stdin plus the three fields the hook adds.
@@ -148,7 +209,8 @@ func (rg *registry) handleQuestionHook() http.HandlerFunc {
 		if b.Since <= 0 {
 			since = time.Now()
 		}
-		h := &hold{input: input, questions: parsed.Questions, reply: make(chan []byte, 1), since: since}
+		h := &hold{input: input, questions: parsed.Questions, texts: joinTexts(parsed.Questions),
+			reply: make(chan []byte, 1), since: since}
 
 		// Subscribe BEFORE reading what is already there, so nothing written
 		// between the two is missed. Holding a subscription also keeps the
@@ -165,17 +227,14 @@ func (rg *registry) handleQuestionHook() http.HandlerFunc {
 		}
 
 		key := holdKey(b.User, fs.Path())
-		if prev := rg.holds.put(key, h); prev != nil {
+		prev, n := rg.holds.put(key, h, fs.SetHeld)
+		if prev != nil {
 			prev.settle(nil)
 		}
-		fs.SetHeld(heldBody(input))
-		defer func() {
-			// Withdrawn only while it is still ours: a newer call has
-			// published its own questions by now.
-			if rg.holds.drop(key, h) {
-				fs.SetHeld("")
-			}
-		}()
+		h.calls = n
+		// Withdrawn only while it is still held: the same call asked again
+		// has taken its place by now.
+		defer rg.holds.drop(key, h, fs.SetHeld)
 		emitHold(b.User, b.TmuxSession, "held", h)
 
 		limit := time.NewTimer(maxHold)
@@ -217,9 +276,25 @@ func (rg *registry) handleQuestionHook() http.HandlerFunc {
 	}
 }
 
-// heldBody is the MetaHeld body: the call's questions exactly as sent.
-func heldBody(input map[string]json.RawMessage) string {
-	b, err := json.Marshal(map[string]json.RawMessage{"questions": input["questions"]})
+// heldBody is the MetaHeld body for a session's holds, or "" for none: each
+// call's questions exactly as sent, oldest first, under "calls", and the
+// oldest's again under "questions", which is all a page from before "calls"
+// reads. That page then answers the oldest, by its keys, which find accepts.
+func heldBody(list []*hold) string {
+	if len(list) == 0 {
+		return ""
+	}
+	type call struct {
+		Questions json.RawMessage `json:"questions"`
+	}
+	calls := make([]call, len(list))
+	for i, h := range list {
+		calls[i] = call{Questions: h.input["questions"]}
+	}
+	b, err := json.Marshal(struct {
+		Questions json.RawMessage `json:"questions"`
+		Calls     []call          `json:"calls"`
+	}{calls[0].Questions, calls})
 	if err != nil {
 		return ""
 	}
@@ -237,7 +312,7 @@ type settleWatch struct {
 }
 
 func newSettleWatch(h *hold) *settleWatch {
-	return &settleWatch{h: h, texts: joinTexts(h.questions), ids: map[string]bool{}}
+	return &settleWatch{h: h, texts: h.texts, ids: map[string]bool{}}
 }
 
 func joinTexts(qs []heldQuestion) string {
@@ -274,10 +349,10 @@ func (s *settleWatch) after(e sessionio.Event) bool {
 	return e.At == 0 || !time.UnixMilli(e.At).Before(s.h.since)
 }
 
-// heldQuestions is the shape of the session's held call, for the answer
-// record's tl.questions and tl.multi, or nil when nothing is held.
-func (rg *registry) heldQuestions(osUser, transcript string) []sessionio.DialogQuestion {
-	h := rg.holds.get(holdKey(osUser, transcript))
+// heldQuestions is the shape of the held call req answers, for the answer
+// record's tl.questions and tl.multi, or nil when no such call is held.
+func (rg *registry) heldQuestions(osUser, transcript string, req sessionio.AnswerRequest) []sessionio.DialogQuestion {
+	h := rg.holds.find(holdKey(osUser, transcript), req)
 	if h == nil {
 		return nil
 	}
@@ -288,11 +363,11 @@ func (rg *registry) heldQuestions(osUser, transcript string) []sessionio.DialogQ
 	return out
 }
 
-// settleHeld answers the session's held call with the request's Answers or
-// Chat. The reply carries no dialog: once the hook has the answer the CLI takes
-// its menu down and the transcript records the result.
+// settleHeld answers the held call req names with its Answers or Chat. The
+// reply carries no dialog: once the hook has the answer the CLI takes its menu
+// down and the transcript records the result.
 func (rg *registry) settleHeld(osUser, transcript string, req sessionio.AnswerRequest) sessionio.AnswerResponse {
-	h := rg.holds.get(holdKey(osUser, transcript))
+	h := rg.holds.find(holdKey(osUser, transcript), req)
 	if h == nil {
 		return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
 	}
@@ -354,12 +429,13 @@ func chatMessage(words string) string {
 	return "The user chose not to pick an answer and replied instead: " + words
 }
 
-// emitHold records a hold beginning or ending: tl.outcome says how, and
-// tl.questions how many questions the call asked. Never the questions
-// themselves (ADR-0008).
+// emitHold records a hold beginning or ending: tl.outcome says how,
+// tl.questions how many questions the call asked, and tl.calls how many calls
+// the session held once it was added (above 1 for calls asked together). Never
+// the questions themselves (ADR-0008).
 func emitHold(osUser, session, outcome string, h *hold) {
 	events.Emit("question.hold", osUser, telemetry.Attrs{
 		"tl.session": session, "tl.outcome": outcome, "tl.questions": len(h.questions),
-		"tl.held_ms": time.Since(h.since).Milliseconds(),
+		"tl.calls": h.calls, "tl.held_ms": time.Since(h.since).Milliseconds(),
 	})
 }

@@ -82,6 +82,10 @@ export interface AnswerRequest {
   /** Decline a held call and hand Claude these words instead ("Chat about
    *  this"). An empty string declines with no words. */
   chat?: string;
+  /** The held call `answers` or `chat` is for, by its question texts in
+   *  order. Claude can ask several calls at once, and each is held on its own
+   *  (`sessionio.AnswerRequest.Call`). */
+  call?: string[];
   /** An answer to the plan approval. */
   plan?: PlanAnswer;
   /** The tool permission prompt: a row picked, or declined with words. */

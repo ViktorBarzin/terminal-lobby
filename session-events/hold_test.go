@@ -425,31 +425,208 @@ func TestOtherToolsAreNotHeld(t *testing.T) {
 	}
 }
 
-// A newer call for the same session means the older one is over.
-func TestANewerHoldReplacesTheOlder(t *testing.T) {
-	e := newHoldEnv(t)
-	old := e.hook("AskUserQuestion", holdInput, holdSince)
-	e.waitHeld()
-
-	const next = `{"questions":[{"question":"Pick a size","header":"Size","options":[{"label":"S"},{"label":"L"}]}]}`
-	c := e.hook("AskUserQuestion", next, holdSince+1)
-	if rec := old.wait(t); rec.Code != http.StatusNoContent {
-		t.Fatalf("older hook: want 204, got %d", rec.Code)
+// heldCalls is the newest MetaHeld body's calls, each as its question texts.
+func (e *holdEnv) heldCalls() [][]string {
+	e.t.Helper()
+	b, _ := e.held()
+	if b == "" {
+		return nil
 	}
+	type texts struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	var got struct {
+		texts
+		Calls []texts `json:"calls"`
+	}
+	if err := json.Unmarshal([]byte(b), &got); err != nil {
+		e.t.Fatalf("held body %s: %v", b, err)
+	}
+	var out [][]string
+	for _, c := range got.Calls {
+		var qs []string
+		for _, q := range c.Questions {
+			qs = append(qs, q.Question)
+		}
+		out = append(out, qs)
+	}
+	// The top level is the first call, for a page from before "calls".
+	if len(out) == 0 || len(got.Questions) != len(out[0]) || got.Questions[0].Question != out[0][0] {
+		e.t.Fatalf("held body's top-level questions are not its first call's: %s", b)
+	}
+	return out
+}
+
+// waitCalls waits for the stream to hold exactly these calls, in order, each
+// named by its first question.
+func (e *holdEnv) waitCalls(first ...string) {
+	e.t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		if b, _ := e.held(); strings.Contains(b, "Pick a size") {
-			break
+		var got []string
+		for _, c := range e.heldCalls() {
+			got = append(got, c[0])
+		}
+		if strings.Join(got, "|") == strings.Join(first, "|") {
+			return
 		}
 		if time.Now().After(deadline) {
-			b, _ := e.held()
-			t.Fatalf("the newer question is not the held one: %s", b)
+			e.t.Fatalf("held calls = %q, want %q", got, first)
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	e.answer(`{"answers":{"Pick a size":["L"]}}`)
-	d := decodeHook(t, c.wait(t)).HookSpecificOutput.Decision
-	if d.Behavior != "allow" {
+}
+
+// sizeInput is a second call asked alongside holdInput. Claude Code runs the
+// hook for every AskUserQuestion in one assistant message at once, while the
+// terminal shows their menus one after another (measured 2026-10-01: five
+// grilling rounds of two or three parallel calls across two sessions).
+const sizeInput = `{"questions":[{"question":"Pick a size","header":"Size","options":[{"label":"S"},{"label":"L"}]}]}`
+
+const (
+	sizeAskLine = `{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[` +
+		`{"type":"tool_use","id":"tu_s","name":"AskUserQuestion","input":` + sizeInput + `}]},` +
+		`"uuid":"s1","timestamp":"2026-09-27T12:00:02Z"}`
+	sizeResultLine = `{"type":"user","message":{"role":"user","content":[` +
+		`{"type":"tool_result","tool_use_id":"tu_s","content":"L"}]},` +
+		`"uuid":"s2","timestamp":"2026-09-27T12:00:08Z"}`
+)
+
+// heldPair starts holdInput's hook and then sizeInput's, and waits until both
+// are held, oldest first.
+func (e *holdEnv) heldPair() (first, second *hookCall) {
+	e.t.Helper()
+	first = e.hook("AskUserQuestion", holdInput, holdSince)
+	e.waitCalls("Pick a colour")
+	second = e.hook("AskUserQuestion", sizeInput, holdSince+1)
+	e.waitCalls("Pick a colour", "Pick a size")
+	return first, second
+}
+
+// Two calls asked together are both held, oldest first, and each is answered
+// on its own. Until 2026-10-01 the second replaced the first, which left the
+// first answerable only in the terminal.
+func TestParallelCallsAreHeldTogetherAndAnsweredOneByOne(t *testing.T) {
+	sink := captureEvents(t)
+	e := newHoldEnv(t)
+	first, second := e.heldPair()
+	first.stillWaiting(t)
+
+	resp := e.answer(`{"call":["Pick a size"],"answers":{"Pick a size":["L"]}}`)
+	if !resp.Applied {
+		t.Fatalf("answer to the second call: %+v", resp)
+	}
+	if got := sink.only(t, "text.answer_sent"); got["tl.questions"] != float64(1) || got["tl.multi"] != false {
+		t.Fatalf("text.answer_sent describes the wrong call: %v", got)
+	}
+	if d := decodeHook(t, second.wait(t)).HookSpecificOutput.Decision; d.Behavior != "allow" {
+		t.Fatalf("second decision = %+v", d)
+	}
+	e.waitCalls("Pick a colour")
+	first.stillWaiting(t)
+
+	resp = e.answer(`{"call":["Pick a colour","Pick fruits"],` +
+		`"answers":{"Pick a colour":["Red"],"Pick fruits":["Pear"]}}`)
+	if !resp.Applied {
+		t.Fatalf("answer to the first call: %+v", resp)
+	}
+	var answers map[string]string
+	d := decodeHook(t, first.wait(t)).HookSpecificOutput.Decision
+	if err := json.Unmarshal(d.UpdatedInput["answers"], &answers); err != nil || answers["Pick a colour"] != "Red" {
+		t.Fatalf("first answers = %v (%v)", answers, err)
+	}
+	e.waitReleased()
+}
+
+// An answer that does not name its call goes to the call its keys belong to,
+// and "Chat about this" with no call declines the oldest: what a page from
+// before "call" sends.
+func TestAnAnswerWithoutACallFindsItsOwn(t *testing.T) {
+	e := newHoldEnv(t)
+	first, second := e.heldPair()
+
+	if resp := e.answer(`{"answers":{"Pick a size":["S"]}}`); !resp.Applied {
+		t.Fatalf("keyed answer: %+v", resp)
+	}
+	decodeHook(t, second.wait(t))
+	e.waitCalls("Pick a colour")
+
+	if resp := e.answer(`{"chat":"later"}`); !resp.Applied {
+		t.Fatalf("chat: %+v", resp)
+	}
+	if d := decodeHook(t, first.wait(t)).HookSpecificOutput.Decision; d.Behavior != "deny" {
+		t.Fatalf("chat decision = %+v", d)
+	}
+	e.waitReleased()
+}
+
+// "Chat about this" declines only the call it names.
+func TestChatAboutThisDeclinesOnlyItsCall(t *testing.T) {
+	e := newHoldEnv(t)
+	first, second := e.heldPair()
+
+	if resp := e.answer(`{"call":["Pick a size"],"chat":"skip sizes"}`); !resp.Applied {
+		t.Fatalf("chat: %+v", resp)
+	}
+	if d := decodeHook(t, second.wait(t)).HookSpecificOutput.Decision; d.Behavior != "deny" {
+		t.Fatalf("decision = %+v", d)
+	}
+	e.waitCalls("Pick a colour")
+	first.stillWaiting(t)
+}
+
+// An answer naming a call nothing holds is refused, and nothing is settled.
+func TestAnAnswerNamingAnUnheldCallIsRefused(t *testing.T) {
+	e := newHoldEnv(t)
+	c := e.hook("AskUserQuestion", holdInput, holdSince)
+	e.waitCalls("Pick a colour")
+	for _, body := range []string{
+		`{"call":["Pick a size"],"answers":{"Pick a size":["L"]}}`,
+		`{"call":["Pick a size"],"chat":"no"}`,
+	} {
+		if resp := e.answer(body); resp.Applied || resp.Reason != sessionio.AnswerNotHeld {
+			t.Fatalf("%s: %+v", body, resp)
+		}
+	}
+	c.stillWaiting(t)
+}
+
+// The terminal answering one of two parallel calls lets only that hook go.
+func TestTheTerminalAnsweringOneParallelCallKeepsTheOther(t *testing.T) {
+	e := newHoldEnv(t)
+	first, second := e.heldPair()
+
+	e.appendLines(holdAskLine, sizeAskLine, holdResultLine)
+	if rec := first.wait(t); rec.Code != http.StatusNoContent {
+		t.Fatalf("first hook: want 204, got %d", rec.Code)
+	}
+	e.waitCalls("Pick a size")
+	second.stillWaiting(t)
+
+	e.appendLines(sizeResultLine)
+	if rec := second.wait(t); rec.Code != http.StatusNoContent {
+		t.Fatalf("second hook: want 204, got %d", rec.Code)
+	}
+	e.waitReleased()
+}
+
+// The same call asked again replaces the one before it: Claude Code takes a
+// dialog down and re-asks when something else claims the turn, and the first
+// call never gets a result.
+func TestTheSameCallAskedAgainReplacesTheOlder(t *testing.T) {
+	e := newHoldEnv(t)
+	old := e.hook("AskUserQuestion", holdInput, holdSince)
+	e.waitCalls("Pick a colour")
+
+	c := e.hook("AskUserQuestion", holdInput, holdSince+1)
+	if rec := old.wait(t); rec.Code != http.StatusNoContent {
+		t.Fatalf("older hook: want 204, got %d", rec.Code)
+	}
+	e.waitCalls("Pick a colour")
+	e.answer(`{"answers":{"Pick a colour":["Red"],"Pick fruits":["Pear"]}}`)
+	if d := decodeHook(t, c.wait(t)).HookSpecificOutput.Decision; d.Behavior != "allow" {
 		t.Fatalf("decision = %+v", d)
 	}
 }

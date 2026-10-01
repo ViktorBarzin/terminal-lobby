@@ -457,7 +457,7 @@ func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
 		// is typed. With no hold there is nothing else to try: the terminal
 		// is the only place left to answer it.
 		if req.Answers != nil || req.Chat != nil {
-			held := rg.heldQuestions(osUser, fs.Path())
+			held := rg.heldQuestions(osUser, fs.Path(), req)
 			resp := rg.settleHeld(osUser, fs.Path(), req)
 			action := sessionio.AnswerAction(req)
 			emitAnswer(osUser, session, held, resp, action)

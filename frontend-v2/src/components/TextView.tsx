@@ -52,7 +52,7 @@ import {
 } from "../lib/answer-api";
 import type { Question } from "./canonicalize";
 import { QuestionCard, type QuestionCardState } from "./QuestionCard";
-import { heldFromEvents } from "./question.logic";
+import { heldCallsFromEvents } from "./question.logic";
 import { PlanCard } from "./PlanCard";
 import { PermissionCard, type OwnDraft } from "./PermissionCard";
 import { permissionPreview, permissionPromptKey } from "./permission.logic";
@@ -721,8 +721,14 @@ export const TextView: Component<{
    * being asked and where to answer it.
    */
   const recorded = createMemo(() => pendingQuestion(baseRows()));
-  const held = createMemo(() => heldFromEvents(props.events));
+  /** Every call the hook holds, oldest first. Claude asks several at once
+   *  more often than not when it grills; the card answers the oldest, as the
+   *  terminal does, and the next takes its place. */
+  const heldCalls = createMemo(() => heldCallsFromEvents(props.events));
+  const held = (): Question[] | null => heldCalls()[0] ?? null;
   const asked = createMemo((): Question[] => held() ?? recorded()?.questions ?? []);
+  /** The call on show, named the way the server finds its hold. */
+  const askedCall = (): string[] => asked().map((q) => q.question);
   /** WHAT is being asked, as the call's question texts; empty when nothing is. */
   const asking = createMemo(() =>
     asked()
@@ -1217,12 +1223,13 @@ export const TextView: Component<{
     return false;
   };
   const submitAnswers = (answers: Record<string, string[]>): Promise<boolean> =>
-    answerHeld({ answers });
+    answerHeld({ call: askedCall(), answers });
   /** "Chat about this": decline the question and hand Claude the words typed
    *  in the card's own field. The composer is hidden behind the card, so its
-   *  draft stays in it and goes nowhere. */
+   *  draft stays in it and goes nowhere. Only the call on show is declined;
+   *  another asked with it stays for the card to answer next. */
   const chatInstead = (words: string): void => {
-    void answerHeld({ chat: words });
+    void answerHeld({ call: askedCall(), chat: words });
   };
 
   /**
@@ -2269,6 +2276,7 @@ export const TextView: Component<{
         {(_call) => (
           <QuestionCard
             questions={asked()}
+            more={Math.max(0, heldCalls().length - 1)}
             state={cardState()}
             busy={answering()}
             keysActive={props.onScreen !== false && tileFocused() && cardKeysArmed()}

@@ -190,6 +190,7 @@ describe("a held call", () => {
     v.button("Submit")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour", "Pick fruits"],
       answers: { "Pick a colour": ["Blue"], "Pick fruits": ["Apple", "Pear"] },
     });
     await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
@@ -212,7 +213,10 @@ describe("a held call", () => {
     expect(v.card()!.querySelector(".tl-qcard-step")).toBeNull();
     v.option("Red")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Red"] } });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour"],
+      answers: { "Pick a colour": ["Red"] },
+    });
   });
 
   it("ends the options with a Type your own answer row", async () => {
@@ -250,6 +254,7 @@ describe("a held call", () => {
     v.sendOwn("mango");
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour", "Pick fruits"],
       answers: { "Pick a colour": ["green, actually"], "Pick fruits": ["mango"] },
     });
     expect(onSend).not.toHaveBeenCalled();
@@ -264,7 +269,10 @@ describe("a held call", () => {
     expect(onAnswer).not.toHaveBeenCalled();
     fireEvent.keyDown(v.ownField()!, { key: "Enter" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["teal"] } });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour"],
+      answers: { "Pick a colour": ["teal"] },
+    });
   });
 
   it("keeps multi-select ticks under typed words, and submits them once", async () => {
@@ -293,7 +301,10 @@ describe("a held call", () => {
     submit.click();
     submit.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick fruits": ["Apple", "Pear"] } });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick fruits"],
+      answers: { "Pick fruits": ["Apple", "Pear"] },
+    });
     await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
     expect(onAnswer).toHaveBeenCalledTimes(1);
   });
@@ -332,6 +343,7 @@ describe("a held call", () => {
     v.button("Submit")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour", "Pick fruits"],
       answers: { "Pick a colour": ["Blue"], "Pick fruits": ["Pear"] },
     });
 
@@ -348,7 +360,10 @@ describe("a held call", () => {
     v.typeOwn("  neither, let's talk about contrast  ");
     v.button("Chat about this")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "neither, let's talk about contrast" });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour"],
+      chat: "neither, let's talk about contrast",
+    });
   });
 
   it("declines without the hidden composer's words on Chat about this", async () => {
@@ -358,7 +373,7 @@ describe("a held call", () => {
     v.typeInComposer("a draft for later");
     v.button("Chat about this")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "" });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ call: ["Pick a colour"], chat: "" });
     expect((v.getByLabelText("Message to send to the session") as HTMLTextAreaElement).value).toBe(
       "a draft for later",
     );
@@ -385,7 +400,7 @@ describe("a held call", () => {
     await waitFor(() => expect(v.button("Chat about this")).toBeTruthy());
     v.button("Chat about this")!.click();
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ chat: "" });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({ call: ["Pick a colour"], chat: "" });
   });
 
   it("shows the preview of the option in focus", async () => {
@@ -409,7 +424,10 @@ describe("a held call", () => {
     await armed(v.container);
     fireEvent.keyDown(v.card()!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
-    expect(onAnswer.mock.calls[0]![0]).toEqual({ answers: { "Pick a colour": ["Blue"] } });
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour"],
+      answers: { "Pick a colour": ["Blue"] },
+    });
   });
 
   it("leaves a digit typed outside the Text view alone", async () => {
@@ -477,6 +495,7 @@ describe("a held call", () => {
     fireEvent.keyDown(document.activeElement!, { key: "2" });
     await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
     expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick fruits", "Pick a colour"],
       answers: { "Pick fruits": ["Apple"], "Pick a colour": ["Blue"] },
     });
   });
@@ -556,6 +575,72 @@ describe("a held call", () => {
     expect(v.notify).toHaveBeenCalled();
     v.button("Open Terminal")!.click();
     expect(v.onOpenTerminal).toHaveBeenCalled();
+  });
+});
+
+describe("calls asked together", () => {
+  const size = question("Size", "Pick a size", ["S", "L"]);
+  /** The server's body for several held calls: oldest first under "calls",
+   *  and the oldest again under "questions". */
+  const heldCalls = (...calls: unknown[][]): Event =>
+    ({
+      id: nextId++,
+      kind: "meta",
+      meta: "held",
+      session: "qa",
+      body: JSON.stringify({
+        questions: calls[0],
+        calls: calls.map((questions) => ({ questions })),
+      }),
+    }) as unknown as Event;
+
+  it("answers the oldest, says another waits, then answers that one", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([heldCalls([colour], [size])], onAnswer);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
+    expect(v.text(".tl-qcard-more")).toBe("+1 more");
+
+    v.option("Red")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour"],
+      answers: { "Pick a colour": ["Red"] },
+    });
+
+    // The server withdraws the answered call and the next takes its place,
+    // with nothing carried over from the first.
+    v.setEvents([...v.events(), heldCalls([size])]);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a size"));
+    expect(v.text(".tl-qcard-more")).toBeNull();
+    expect(v.option("S")!.getAttribute("aria-pressed")).toBe("false");
+    expect(v.container.textContent).not.toContain("Answer sent.");
+
+    v.option("L")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(2));
+    expect(onAnswer.mock.calls[1]![0]).toEqual({
+      call: ["Pick a size"],
+      answers: { "Pick a size": ["L"] },
+    });
+  });
+
+  it("declines only the call on show with Chat about this", async () => {
+    const onAnswer = vi.fn(async (_req: AnswerRequest) => applied);
+    const v = mount([heldCalls([colour, fruits], [size])], onAnswer);
+    await waitFor(() => expect(v.button("Chat about this")).toBeTruthy());
+    v.button("Chat about this")!.click();
+    await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+    expect(onAnswer.mock.calls[0]![0]).toEqual({
+      call: ["Pick a colour", "Pick fruits"],
+      chat: "",
+    });
+  });
+
+  it("moves to the next call when the terminal answers the one on show", async () => {
+    const v = mount([heldCalls([colour], [size]), ask("t1", [colour]), ask("t2", [size])]);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
+    v.setEvents([...v.events(), result("t1")]);
+    await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a size"));
+    expect(v.option("S")!.disabled).toBe(false);
   });
 });
 
