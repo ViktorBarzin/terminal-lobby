@@ -184,6 +184,25 @@ page's selection.
 or that was last created. playwright-mcp does not expose its current tab, so
 this is an approximation, and the tab strip covers the cases it misses.
 
+### What a headless frame does not show
+
+Measured on 2026-10-01 against headless Chrome 148: the screencast and CDP input
+work as described above. Text typed through `Input.insertText` appeared in the
+next frame. Native popup widgets are drawn outside the page, so they are absent
+from every frame and from `Page.captureScreenshot`. Clicking a `<select>` opened
+a dropdown the frame never showed. The panel draws these itself:
+
+| Popup | What the panel does |
+|---|---|
+| `<select>` dropdown | Lists the focused select's options as its own overlay. Picking one selects it in the page |
+| `alert`, `confirm`, `prompt` | Shows the dialog's text with OK and Cancel (and a field for `prompt`), from the dialog event |
+| Date and colour pickers, autofill | Not drawn. Typing into the field still works |
+| File chooser | Not supported. The panel says so when a page opens one |
+
+The protocol gains `{"t":"popup","kind":"select"|"dialog","options":[...],"message":"..."}`
+from the host and `{"t":"choose","value":"..."}` / `{"t":"dialog","accept":true|false,"text":"..."}`
+from a viewer in control.
+
 ## Lifecycle
 
 ```mermaid
