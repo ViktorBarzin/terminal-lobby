@@ -173,5 +173,23 @@ func (c *HandshakeCache) write(raw []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), c.Path())
+	if err := os.Rename(tmp.Name(), c.Path()); err != nil {
+		return err
+	}
+	c.prune()
+	return nil
+}
+
+// prune removes the handshake files of other host versions. Each release
+// writes a new one, so without this they would pile up, one per upgrade. It
+// runs only after a write, which happens on the first session of a new
+// version; a session of the old version that is still running already holds
+// its handshake in memory and never reads the file again.
+func (c *HandshakeCache) prune() {
+	old, _ := filepath.Glob(filepath.Join(c.Dir, "handshake-*.json"))
+	for _, p := range old {
+		if p != c.Path() {
+			_ = os.Remove(p)
+		}
+	}
 }

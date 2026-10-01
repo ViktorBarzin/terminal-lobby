@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -170,5 +171,55 @@ func TestDescribeFailureIsAnError(t *testing.T) {
 	}
 	if _, err := os.Stat(c.Path()); err == nil {
 		t.Fatal("a failed describe left a cache file")
+	}
+}
+
+// Each host release writes a new cache file, so the old ones are pruned as the
+// new one lands rather than piling up in ~/.cache. Files that are not handshake
+// caches are left alone.
+func TestWritingTheCachePrunesOlderHandshakes(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"handshake-0000000000000001.json", "handshake-0000000000000002.json", "notes.txt", "handshake-x.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c := &HandshakeCache{
+		Dir:      dir,
+		Version:  "00000000000000ff",
+		Describe: []string{os.Args[0], "--describe"},
+		Env:      []string{"TLB_FAKE_HOST=1"},
+	}
+	if _, err := c.Load(); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	want := []string{"handshake-00000000000000ff.json", "handshake-x.txt", "notes.txt"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("cache dir holds %v, want %v", got, want)
+	}
+}
+
+// A cache hit writes nothing, so it prunes nothing either: a session of an
+// older release still running beside a newer one keeps its file.
+func TestACacheHitLeavesOtherHandshakes(t *testing.T) {
+	dir := t.TempDir()
+	c := &HandshakeCache{Dir: dir, Version: "00000000000000ff", Describe: []string{"/bin/false"}}
+	other := filepath.Join(dir, "handshake-0000000000000001.json")
+	valid := []byte(`{"initialize":{},"tools":{}}`)
+	os.WriteFile(other, valid, 0o600)
+	os.WriteFile(c.Path(), valid, 0o600)
+	if _, err := c.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(other); err != nil {
+		t.Fatalf("a cache hit removed another release's handshake: %v", err)
 	}
 }
