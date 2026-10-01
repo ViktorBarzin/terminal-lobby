@@ -259,6 +259,70 @@ func TestBrowserSocketWithin(t *testing.T) {
 	}
 }
 
+// Every host socket of one owner sits in the same directory, so the directory
+// check alone lets session A's option name session B's socket. The name has to
+// carry the session's own tmux id.
+func TestBrowserSocketOfSession(t *testing.T) {
+	cases := []struct {
+		name, sessionID string
+		ok              bool
+	}{
+		{"s12.sock", "$12", true},
+		{"s12-959431.sock", "$12", true},
+		{"s12.sock", "$1", false},
+		{"s1.sock", "$12", false},
+		{"s120.sock", "$12", false},
+		{"s12-959431.sock", "$959431", false},
+		// A host outside tmux records no option, so a pid name is never the
+		// session's own.
+		{"pid-4242.sock", "$4242", false},
+		{"s12.sock", "", false},
+		{"s12.sock", "12", false},
+		{"s12.sock", "$12x", false},
+		{"s12.sock.bak", "$12", false},
+	}
+	for _, c := range cases {
+		err := browserSocketOfSession(filepath.Join("/run/user/1000/tl-browser", c.name), c.sessionID)
+		if (err == nil) != c.ok {
+			t.Errorf("%s for session %q: err %v, want ok=%v", c.name, c.sessionID, err, c.ok)
+		}
+	}
+}
+
+// Session A's option pointing at session B's live socket, which passes every
+// directory and ownership check, is not A's browser: the state route says none,
+// the stream refuses, and B's host is never dialled.
+func TestBrowserRelayRefusesAnotherSessionsSocket(t *testing.T) {
+	_, dir := browserTestBases(t)
+	bSock := filepath.Join(dir, "s4.sock")
+	bHost := startFakeHost(t, bSock, fakeHostHello)
+	opts := fakeOptions{
+		"alice/aaaa00000000": {optBrowser: "live", optBrowserSock: bSock, optSessionID: "$3"},
+		"alice/bbbb00000000": {optBrowser: "live", optBrowserSock: bSock, optSessionID: "$4"},
+	}
+	b := testRelay(opts, nil)
+	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+	t.Cleanup(srv.Close)
+
+	if code, body := getState(t, browserMux(b, "alice", "alice"), "/browser/aaaa00000000"); code != http.StatusOK || body.State != "none" {
+		t.Fatalf("state: status %d body %+v, want none", code, body)
+	}
+	_, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/browser/aaaa00000000/stream",
+		http.Header{"Origin": {srv.URL}})
+	if err == nil || resp == nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("stream: err %v resp %v, want 404", err, resp)
+	}
+	select {
+	case l := <-bHost.lines:
+		t.Fatalf("session B's host received %s on session A's behalf", l)
+	case <-time.After(100 * time.Millisecond):
+	}
+	// B itself still reaches its own browser.
+	if code, body := getState(t, browserMux(b, "alice", "alice"), "/browser/bbbb00000000"); code != http.StatusOK || body.State != "frozen" {
+		t.Fatalf("B's own state: status %d body %+v", code, body)
+	}
+}
+
 func TestBrowserSocketOwnedChecksWhatIsOnDisk(t *testing.T) {
 	base, sockDir := browserTestBases(t)
 	uid := os.Getuid()
@@ -440,7 +504,7 @@ func TestBrowserStateReadsTheHostsHello(t *testing.T) {
 	_, dir := browserTestBases(t)
 	sock := filepath.Join(dir, "s3.sock")
 	host := startFakeHost(t, sock, fakeHostHello)
-	opts := fakeOptions{"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock}}
+	opts := fakeOptions{"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock, optSessionID: "$3"}}
 	code, body := getState(t, browserMux(testRelay(opts, nil), "alice", "alice"), "/browser/k7m2q9x4tpz3")
 	if code != http.StatusOK {
 		t.Fatalf("status %d", code)
@@ -469,9 +533,9 @@ func TestBrowserStateWithoutABrowser(t *testing.T) {
 		"alice/none00000000": {},
 		"alice/junk00000000": {optBrowser: "maybe", optBrowserSock: filepath.Join(dir, "s1.sock")},
 		// The options outlived the host (killed outright): nothing listens.
-		"alice/stale0000000": {optBrowser: "live", optBrowserSock: filepath.Join(dir, "s2.sock")},
+		"alice/stale0000000": {optBrowser: "live", optBrowserSock: filepath.Join(dir, "s2.sock"), optSessionID: "$2"},
 		// An option pointing anywhere else is never dialled.
-		"alice/elsewhere000": {optBrowser: "live", optBrowserSock: "/run/docker.sock"},
+		"alice/elsewhere000": {optBrowser: "live", optBrowserSock: "/run/docker.sock", optSessionID: "$2"},
 	}
 	h := browserMux(testRelay(opts, nil), "alice", "alice")
 	for _, s := range []string{"none00000000", "junk00000000", "stale0000000", "elsewhere000"} {
@@ -530,9 +594,9 @@ func streamFixture(t *testing.T, eff, real string) (*httptest.Server, *fakeHost)
 	sock := filepath.Join(dir, "s5.sock")
 	host := startFakeHost(t, sock, fakeHostHello)
 	opts := fakeOptions{
-		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock},
-		"bob/rw0000000000":   {optBrowser: "live", optBrowserSock: sock},
-		"bob/ro0000000000":   {optBrowser: "live", optBrowserSock: sock},
+		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock, optSessionID: "$5"},
+		"bob/rw0000000000":   {optBrowser: "live", optBrowserSock: sock, optSessionID: "$5"},
+		"bob/ro0000000000":   {optBrowser: "live", optBrowserSock: sock, optSessionID: "$5"},
 	}
 	rows := map[[3]string]string{
 		{"bob", "rw0000000000", "alice"}: "rw",
@@ -592,8 +656,8 @@ func TestBrowserStreamOwnerParamPicksWhoseSession(t *testing.T) {
 	aliceHost := startFakeHost(t, aliceSock, fakeHostHello)
 	bobHost := startFakeHost(t, bobSock, fakeHostHello)
 	opts := fakeOptions{
-		"alice/same00000000": {optBrowser: "live", optBrowserSock: aliceSock},
-		"bob/same00000000":   {optBrowser: "live", optBrowserSock: bobSock},
+		"alice/same00000000": {optBrowser: "live", optBrowserSock: aliceSock, optSessionID: "$1"},
+		"bob/same00000000":   {optBrowser: "live", optBrowserSock: bobSock, optSessionID: "$2"},
 	}
 	b := testRelay(opts, map[[3]string]string{{"bob", "same00000000", "alice"}: "ro"})
 	dialled := make(chan string, 4)
@@ -824,8 +888,8 @@ func recheckFixture(t *testing.T, every time.Duration) (*httptest.Server, *fakeH
 	sock := filepath.Join(dir, "s6.sock")
 	host := startFakeHost(t, sock, fakeHostHello)
 	opts := fakeOptions{
-		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock},
-		"bob/sh0000000000":   {optBrowser: "live", optBrowserSock: sock},
+		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock, optSessionID: "$6"},
+		"bob/sh0000000000":   {optBrowser: "live", optBrowserSock: sock, optSessionID: "$6"},
 	}
 	shares := &shareTable{rows: map[[3]string]string{{"bob", "sh0000000000", "alice"}: "rw"}}
 	b := testRelay(opts, nil)

@@ -53,6 +53,10 @@ const (
 	// on launch and unsets on exit (tl-browser/host/lib/tmux.mjs).
 	optBrowser     = "@tl_browser"
 	optBrowserSock = "@tl_browser_sock"
+	// optSessionID is tmux's own id for the session ($N), which the host's
+	// socket name carries (protocol.mjs socketName). A format, not an option,
+	// so nothing in the session can set it.
+	optSessionID = "session_id"
 
 	browserLive   = "live"
 	browserFrozen = "frozen"
@@ -278,11 +282,14 @@ var (
 // session (viewers.mjs listen).
 var browserSockNameRe = regexp.MustCompile(`^(s[0-9]{1,10}|pid-[0-9]{1,10})(-[0-9]{1,10})?\.sock$`)
 
-// browserSocketWithin is the boundary on a socket path read from a tmux
+// browserSocketWithin is the first bound on a socket path read from a tmux
 // option, which anything running in the session can set. It must be a host
 // socket name in one of the two directories the host uses for uid, written
 // exactly (no "..", no trailing slash), so the option cannot point this
-// service, or the bridge running as the owner, at any other socket.
+// service, or the bridge running as the owner, at a socket that is not one of
+// that owner's browser hosts. It does not say WHICH session's host: every
+// session of one owner shares the directory, so locate also holds the name to
+// the session's own id (browserSocketOfSession).
 func browserSocketWithin(sock string, uid int) error {
 	if !filepath.IsAbs(sock) || filepath.Clean(sock) != sock {
 		return fmt.Errorf("browser: %q is not a clean absolute path", sock)
@@ -295,6 +302,27 @@ func browserSocketWithin(sock string, uid int) error {
 	if dir != filepath.Join(browserRuntimeBase, u, "tl-browser") &&
 		dir != filepath.Join(browserTmpBase, "tl-browser-"+u) {
 		return fmt.Errorf("browser: %q is outside uid %d's browser directories", sock, uid)
+	}
+	return nil
+}
+
+// browserSessionIDRe is tmux's #{session_id}: a dollar sign and a number.
+var browserSessionIDRe = regexp.MustCompile(`^\$([0-9]{1,10})$`)
+
+// browserSocketOfSession holds a socket path to the session it was read from:
+// its name must be s<N>.sock or s<N>-<pid>.sock where $N is that session's own
+// #{session_id}. Without it, an option set in session A could name session B's
+// socket, which passes every directory and ownership check, and a guest let
+// into A would watch, or drive, B's browser. A pid-<pid> name never passes: a
+// host outside tmux records no option, so no session's option names one.
+func browserSocketOfSession(sock, sessionID string) error {
+	id := browserSessionIDRe.FindStringSubmatch(sessionID)
+	if id == nil {
+		return fmt.Errorf("browser: %q is not a tmux session id", sessionID)
+	}
+	m := browserSockNameRe.FindStringSubmatch(filepath.Base(sock))
+	if m == nil || m[1] != "s"+id[1] {
+		return fmt.Errorf("browser: %q is not session %s's socket", sock, sessionID)
 	}
 	return nil
 }
@@ -490,8 +518,10 @@ func (b *browserRelay) access(w http.ResponseWriter, r *http.Request) (browserAc
 	return acc, true
 }
 
-// locate reads the two options. ok=false is a session tmux does not have; an
-// empty state is a session with no browser.
+// locate reads the two options, and the session's id to hold the socket to.
+// ok=false is a session tmux does not have; an empty state is a session with
+// no browser, which includes an option naming a socket that is not this
+// session's own.
 func (b *browserRelay) locate(owner, session string) (state, sock string, ok bool) {
 	state, ok = b.opts.Option(owner, session, optBrowser)
 	if !ok {
@@ -502,6 +532,11 @@ func (b *browserRelay) locate(owner, session string) (state, sock string, ok boo
 	}
 	sock, _ = b.opts.Option(owner, session, optBrowserSock)
 	if sock == "" {
+		return "", "", true
+	}
+	id, _ := b.opts.Option(owner, session, optSessionID)
+	if err := browserSocketOfSession(sock, id); err != nil {
+		log.Printf("browser: %s/%s: %v", owner, session, err)
 		return "", "", true
 	}
 	return state, sock, true
