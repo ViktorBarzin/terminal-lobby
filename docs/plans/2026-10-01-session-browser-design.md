@@ -1,7 +1,7 @@
 # See the browser a session is driving
 
 Status: approved, being implemented. Viktor, 2026-10-01.
-Decision record: [ADR-0029, each session gets its own browser, started on first use](../adr/0029-each-session-gets-its-own-browser-started-on-first-use.md).
+Decision record: [ADR-0035, each session gets its own browser, started on first use](../adr/0035-each-session-gets-its-own-browser-started-on-first-use.md).
 Terms: **Session browser**, **Browsing run**, **Browser card**, **Browser panel**,
 **Control**, **Frozen** in `CONTEXT.md`.
 
@@ -49,9 +49,9 @@ browser and hand playwright-mcp the context to drive.
 
 | Area | Decision |
 |---|---|
-| What counts | The browser the agent's built-in browser tool drives, and a pool browser a session borrows for a `homelab browser` run. The cluster's logged-in master (`--shared-context`) is never shown |
-| Where Chrome runs | Locally by default, one per session. A pool worker only when the agent reaches for `homelab browser` |
-| Whose browser | One per session, started on the first browser action by a small launcher that answers Claude's startup handshake itself (ADR-0029) |
+| What counts | The browser the agent's built-in browser tool drives. `homelab browser` runs are not shown for now (see "Cluster browser runs") |
+| Where Chrome runs | Locally, one per session, headless |
+| Whose browser | One per session, started on the first browser action by a small launcher that answers Claude's startup handshake itself (ADR-0035) |
 | Where it shows | Text view: a **Browser card** per **Browsing run**. Both views: a **Browser panel** inside that session's own pane |
 | Opening | Only when someone opens it. The card stays in the conversation as a record |
 | Live | Streams whenever a live card or an open panel is on screen. Pauses when scrolled away, in a background tab, or when the session is parked |
@@ -214,11 +214,13 @@ stateDiagram-v2
   Frozen --> Live: tool call or panel opened
   Live --> None: browser_close
   Frozen --> None: frozen 2 h
-  Live --> None: session ends
+  Live --> None: session ends or is suspended
 ```
 
 "Idle" means no tool call, no viewer subscribed and nobody in control. A
-session ending closes a frozen browser too.
+session ending closes a frozen browser too, and so does the lobby suspending a
+quiet session (ADR-0030): suspending stops Claude, which closes the launcher's
+input, and the launcher stops the host.
 
 Freezing sends SIGSTOP to Chrome's process group and SIGCONT to wake it. The
 host stays responsive, so it can wake Chrome before forwarding a call.
@@ -230,7 +232,7 @@ lists tool uses in order. A card streams only while its run is the current
 one. A finished card shows the last frame it held, or no picture after a
 reload, and never wakes a frozen browser. Only opening the panel does that.
 
-## Cluster browser runs
+## Cluster browser runs, not in this build
 
 Viktor, 2026-10-01, after the design was first approved: *"why can't we use the
 homelab cli for controlling the browser?"* The design interview had treated
@@ -239,35 +241,14 @@ homelab cli for controlling the browser?"* The design interview had treated
 the master's cookies, and only `--shared-context` reaches the master
 (`infra/docs/architecture/chrome-service.md`, "Browser pool").
 
-The pool is not every session's browser, for reasons the pool's own design
-sets: 6 workers for the cluster against about 29 Claude sessions, one script
-per call (acquire, run, release), a 1-hour hard limit per pod, and every frame
-crossing a `kubectl port-forward`. It is the right browser when a site blocks
-headless Chrome. So the lobby shows a pool run the same way it shows the
-session's own browser:
-
-- When `homelab browser run` or `open` runs inside tmux and `tl-browser` is
-  installed, the CLI starts `tl-browser attach --cdp <local CDP URL>` beside
-  its runner. That starts the browser host in attach mode: no MCP, no Chrome of
-  its own, the same viewer socket and tmux registration, with
-  `@tl_browser_kind cluster`.
-- The attach host speaks raw CDP over WebSocket (`Target.*`, `Page.startScreencast`,
-  `Input.dispatch*`) and never enables the Runtime domain. Plain Playwright's
-  CDP attach enables it, which is the detection leak the pool's patchright
-  exists to close, so attaching a viewer must not reopen it.
-- When the script finishes, the CLI waits for the attach host before releasing
-  the pod. The host exits at once unless a person holds control, and otherwise
-  when control is handed back or lapses. The CLI's existing heartbeat keeps the
-  pod borrowed meanwhile, within the pod's 1-hour limit.
-- The agent's script is not paused by take control: it is one batch run with no
-  per-step hook to refuse. Taking control of a pool run is for the moment after
-  the script ends, or alongside it, and the panel says so.
-- The text view treats a `Bash` tool use running `homelab browser run` or
-  `homelab browser open` as a browsing run, and its card reads "Cluster
-  browser".
-- Freezing and the 2-hour close do not apply. The pool's own idle release and
-  pod deadline end those browsers, and they use no devvm memory beyond the
-  attach host's Node process.
+The pool does not fit as every session's browser: 6 workers for the cluster
+against about 29 Claude sessions, one script per call (acquire, run, release),
+a 1-hour hard limit per pod, and every frame crossing a `kubectl port-forward`.
+Showing pool runs in the lobby as well was discussed and set aside for now
+(Viktor, 2026-10-01: *"let's use this approach for now. each session would get
+its own browser that it can manage"*). If it comes back, the host can attach to
+a worker over raw CDP without enabling the Runtime domain, so the viewer side
+stays the same.
 
 ## Memory
 
@@ -327,11 +308,9 @@ lobby package installs.
    The `.deb` installs `/usr/local/bin/tl-browser`, the host under
    `/usr/lib/terminal-lobby/tl-browser-host/` with its `node_modules`, and
    `tl-browser.slice` as a user unit.
-2. infra: the `/browser/` ingress prefix, the reaper's slice list,
+2. infra: the `/browser/` ingress prefix, the reaper's slice list, and
    `t3-provision-users` wiring each user's `playwright` MCP as
-   `tl-browser` over stdio in place of the HTTP entry, and the `homelab
-   browser` CLI starting `tl-browser attach` and waiting for it before
-   releasing the pod.
+   `tl-browser` over stdio in place of the HTTP entry.
 3. The per-user `playwright-mcp@` units stay up for running sessions, which
    read `~/.claude.json` only at start. The provisioner disables a user's unit
    once none of their Claude processes started before the switch. The hourly
@@ -364,6 +343,3 @@ lobby package installs.
   hit them.
 - Running sessions keep the shared server until they restart, so for a while
   some sessions will not show their browser in the lobby.
-- Whether a raw-CDP screencast on a pool worker is itself visible to anti-bot
-  scripts has not been measured. It does not enable Runtime, which is the leak
-  known to matter.

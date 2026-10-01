@@ -1329,12 +1329,9 @@ what one agent opens is never another session's page, and the lobby always
 knows which session a browser belongs to. It exists only from the agent's
 first browser action until the agent closes it, it has sat **Frozen** for two
 hours, or the session ends; a session that never browses has none. Closing it
-is how an agent gives its memory back. Usually it is the session's own
-browser, which the agent's built-in browser tool drives. It may instead be a
-cluster browser the session borrowed for a `homelab browser` run, which is
-shown while the run lasts and stays borrowed while someone holds **Control**.
-The cluster's own logged-in browser, which `--shared-context` drives, is never
-shown.
+is how an agent gives its memory back. Only the browser the agent's built-in
+browser tool drives counts; a cluster browser borrowed through `homelab
+browser` is not a session browser.
 _Avoid_: the browser (ambiguous against the viewer's own browser tab),
 headless browser, Playwright (names the tool, not the thing)
 
