@@ -696,7 +696,8 @@ describe("the chain this module deliberately does not duplicate", () => {
     // The bar comes first in that column, so the views start below it.
     const view = read("frontend-v2/src/components/SessionView.tsx");
     const bar = view.indexOf('<div class="tl-session-bar"');
-    const views = view.indexOf('<main class="tl-views"');
+    // The <main> carries a ref before its class since the browser split.
+    const views = view.indexOf('class="tl-views"');
     expect(bar).toBeGreaterThan(-1);
     expect(views).toBeGreaterThan(bar);
   });

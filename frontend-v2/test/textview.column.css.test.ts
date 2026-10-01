@@ -179,13 +179,15 @@ describe("the system font", () => {
 
   // A rule that names DM Sans on its own beats the view's inherited face, so
   // each one that can render inside the Text view needs the scoped override.
-  // The three exempt ones are overlays the session view opens, not the view.
+  // The exempt ones are overlays the session view opens, not the view; the
+  // Browser panel sits beside the Text view in the session pane, not in it.
   it("overrides every explicit DM Sans rule that renders inside the view", () => {
     const outside = new Set([
       "body",
       ".tl-gallery-panel",
       ".tl-lightbox-chip",
       ".tl-preview-panel",
+      ".tl-browser-panel",
     ]);
     const scoped = new Set(
       rules(appCss)

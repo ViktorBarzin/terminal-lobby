@@ -929,6 +929,9 @@ src/
     BrowserCard.tsx      The Browser card: one per Browsing run in the Text
                          view, live while the run is current, then the last
                          frame it held, and "Open browser"
+    BrowserPopups.tsx    What a headless frame leaves out, drawn by the panel:
+                         a select's option list, a page dialog, and the
+                         file-chooser notice
     BrowserPanel.tsx     The Browser panel: the session's browser beside its
                          chat or terminal (full screen on a phone), with tabs,
                          an address bar, Stop, and Take control / Hand back
