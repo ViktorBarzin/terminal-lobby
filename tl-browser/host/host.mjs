@@ -13,6 +13,8 @@
 //   TL_BROWSER_CHANNEL            Chrome channel (default "chrome")
 //   TL_BROWSER_STORAGE_STATE      storage state to seed cookies from; empty
 //                                 for none (default ~/.cache/playwright-shared-storage-state.json)
+//   TL_BROWSER_NO_SANDBOX         "1" runs Chrome without its sandbox, for a
+//                                 container without the setuid helper (default: sandboxed)
 //   TL_BROWSER_IDLE_FREEZE_MS     idle time before Frozen (default 10 min)
 //   TL_BROWSER_FROZEN_CLOSE_MS    frozen time before the host closes (default 2 h)
 //   TL_BROWSER_CONTROL_LAPSE_MS   time without input before control lapses (default 10 min)
@@ -20,7 +22,7 @@
 import os from "node:os";
 import { createConnection } from "@playwright/mcp";
 import { summarize } from "./lib/activity.mjs";
-import { BrowserSession, storageStatePath, VIEWPORT } from "./lib/browser.mjs";
+import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/browser.mjs";
 import { Control } from "./lib/control.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
@@ -62,7 +64,11 @@ const MAX_MCP_LINE = 64_000_000;
 
 const mcpConfig = {
   browser: {
-    launchOptions: { channel: env.TL_BROWSER_CHANNEL || "chrome", headless: true },
+    launchOptions: {
+      channel: env.TL_BROWSER_CHANNEL || "chrome",
+      headless: true,
+      chromiumSandbox: sandboxed(env),
+    },
     contextOptions: { viewport: VIEWPORT },
   },
 };
@@ -214,6 +220,7 @@ async function serve() {
     const s = await BrowserSession.launch(
       {
         channel: mcpConfig.browser.launchOptions.channel,
+        sandbox: sandboxed(env),
         storageState: storageStatePath(env, os.homedir()),
       },
       {

@@ -33,6 +33,37 @@ export function storageStatePath(env, home) {
 }
 
 /**
+ * Chrome's sandbox stays on: the agent browses untrusted pages with the
+ * user's cookies loaded. Only an explicit TL_BROWSER_NO_SANDBOX=1 turns it
+ * off, for a container without the setuid chrome-sandbox helper.
+ * @param {Record<string, string | undefined>} env
+ * @returns {boolean}
+ */
+export function sandboxed(env) {
+  return env.TL_BROWSER_NO_SANDBOX !== "1";
+}
+
+/**
+ * Playwright adds --no-sandbox unless chromiumSandbox is true, and
+ * playwright-mcp's own default for channel "chrome" never applies here
+ * because the host launches Chrome itself.
+ * @param {{ channel: string, sandbox: boolean }} opts
+ * @returns {import("playwright-core").LaunchOptions}
+ */
+export function chromeLaunchOptions({ channel, sandbox }) {
+  return {
+    channel,
+    headless: true,
+    chromiumSandbox: sandbox,
+    // The host handles its own signals so it can clear tmux and the socket
+    // before Chrome goes.
+    handleSIGINT: false,
+    handleSIGTERM: false,
+    handleSIGHUP: false,
+  };
+}
+
+/**
  * @template T
  * @param {Promise<T>} p
  * @param {number} ms
@@ -85,20 +116,12 @@ export class BrowserSession {
   }
 
   /**
-   * @param {{ channel: string, storageState: string | undefined }} opts
+   * @param {{ channel: string, sandbox: boolean, storageState: string | undefined }} opts
    * @param {ConstructorParameters<typeof BrowserSession>[3]} hooks
    */
-  static async launch({ channel, storageState }, hooks) {
+  static async launch({ channel, sandbox, storageState }, hooks) {
     const before = new Set(childPids(process.pid));
-    const browser = await chromium.launch({
-      channel,
-      headless: true,
-      // The host handles its own signals so it can clear tmux and the socket
-      // before Chrome goes.
-      handleSIGINT: false,
-      handleSIGTERM: false,
-      handleSIGHUP: false,
-    });
+    const browser = await chromium.launch(chromeLaunchOptions({ channel, sandbox }));
     try {
       const context = await browser.newContext({ viewport: VIEWPORT, storageState });
       const roots = childPids(process.pid).filter((pid) => !before.has(pid));
