@@ -1322,3 +1322,52 @@ by `TL_MULTI_USER`, whose `auto` default means "a user map exists". This is what
 **share**, **project** membership and **lens** are for.
 _Avoid_: shared mode (that names sharing a session, which is a **share**),
 team mode
+
+**Session browser**:
+The web browser a **Session**'s agent drives. Each session has its own, so
+what one agent opens is never another session's page, and the lobby always
+knows which session a browser belongs to. It exists only from the agent's
+first browser action until the agent closes it, it has sat **Frozen** for two
+hours, or the session ends; a session that never browses has none. Closing it
+is how an agent gives its memory back. Only the browser the agent's built-in browser
+tool drives counts. The shared cluster browser that `homelab browser` drives
+is not a session browser and is never shown in the lobby.
+_Avoid_: the browser (ambiguous against the viewer's own browser tab),
+headless browser, Playwright (names the tool, not the thing)
+
+**Browsing run**:
+One stretch of a **Session browser** in use: it starts at the agent's first
+browser action and ends when the browser closes or the agent's turn ends,
+whichever comes first. Each run gets one **Browser card** in the conversation.
+_Avoid_: browser session (collides with **Session**)
+
+**Browser card**:
+The entry in the Text view that records one **Browsing run**: what the browser
+is doing and a picture of its page, live while the run lasts and fixed on the
+last frame once it ends. Stays in the conversation as a record; the picture
+does not outlive the page being reloaded.
+_Avoid_: browser message, thumbnail
+
+**Browser panel**:
+The live view of a **Session browser**, opened beside that session's chat or
+terminal, within the session's own pane. It shows the page the agent last
+acted on and lets the viewer look at its other tabs. Opened by the viewer,
+never by itself; says the browser closed once it has.
+_Avoid_: side panel, browser window, viewer
+
+**Control** (of a session browser):
+Who is driving a **Session browser**: the agent, or one person. Taking control
+locks the agent out (its browser actions are refused, and it is told to wait)
+until the person hands back or leaves it untouched for ten minutes. Exactly one
+person holds it at a time; anyone else allowed to take it may take it over.
+Who is allowed follows the session's **Attach mode**: rw may take control, ro
+and a **Lens** only watch. Handing back tells the agent nothing.
+_Avoid_: takeover, remote control, drive (that word belongs to the terminal's
+**Watch mode**)
+
+**Frozen** (session browser):
+A **Session browser** the agent left open but has not used for ten minutes,
+paused so it costs no processor time. Its pages are kept; the next agent
+action, or someone opening the **Browser panel**, wakes it. A browser left
+frozen for two hours is closed, because freezing alone gives no memory back.
+_Avoid_: suspended, sleeping, closed (a closed browser has lost its pages)
