@@ -300,10 +300,14 @@ typed into that session since the last one, while the badge counts a
 standing population and `done` is where a finished session rests. So a
 session stays in the count for as long as it stays finished and unread.
 
-**A message Claude sends arrives as written.** When Claude calls its
-`PushNotification` tool, the push carries the session's name as the
-title and Claude's message as the body, cut at 200 characters, instead
-of a generic "needs input". It goes out whenever there is a new
+**Pushes quote Claude.** A "finished" push carries the reply that
+ended the turn as its body, flattened to one line of plain text and
+cut at 200 characters, in place of "Claude finished its turn". A turn
+that left no reply keeps the generic wording.
+
+When Claude calls its `PushNotification` tool, the push carries the
+session's name as the title and Claude's message as the body, cut at
+200 characters, instead of a generic "needs input". It goes out whenever there is a new
 message, even if the session already has a notification you have not
 opened. It counts as that turn's notification, so the "finished" push
 that usually follows is held back and does not replace the message.

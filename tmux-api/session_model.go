@@ -65,6 +65,10 @@ type Session struct {
 	// PushNotification tool (sessionio.OptionNotice), zero when it has sent
 	// none. Only the push sender reads it, so it stays off the wire.
 	Notice sessionio.Notice `json:"-"`
+	// Reply is the reply that ended the session's last turn
+	// (sessionio.OptionReply), zero when there is none. Push sender only, like
+	// Notice.
+	Reply sessionio.Notice `json:"-"`
 	// Title is the DISPLAY TITLE a person chose — arbitrary text, up to 64
 	// runes, read from the session's @title option. Distinct from PaneTitle,
 	// which whatever is running in the pane sets for itself. Empty means the

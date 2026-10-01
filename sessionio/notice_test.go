@@ -18,6 +18,11 @@ func TestParseNotice(t *testing.T) {
 		{"no text", "1790894512 ", Notice{}, false},
 		{"whitespace only text", `1790894512 \n `, Notice{}, false},
 		{"no stamp", "hello there", Notice{}, false},
+		// A reply is markdown. A notification shows one plain line.
+		{"bold and code marks go", "1790894512 **Done.** Fixed `app.go` and __this__", Notice{1790894512, "Done. Fixed app.go and this"}, true},
+		{"list and heading markers go", `1790894512 ## Result\n- 3 tests pass\n* one skipped\n2. next\n> quoted`, Notice{1790894512, "Result 3 tests pass one skipped next quoted"}, true},
+		{"table rules and fences go", "1790894512 | a | b |\\n|---|:-:|\\n| 1 | 2 |\\n```go\\nx := 1\\n```", Notice{1790894512, "a b 1 2 x := 1"}, true},
+		{"a lone asterisk survives", "1790894512 2 * 3 = 6", Notice{1790894512, "2 * 3 = 6"}, true},
 		{"zero stamp", "0 hello", Notice{}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
