@@ -89,6 +89,15 @@ const (
 	// at most recheckEvery while holding control without sending.
 	browserRecheckEvery = 5 * time.Second
 	browserRecheckMin   = time.Second
+
+	// browserGrantLinger is how long after a guest's last stream closes the
+	// relay keeps checking their share, to free control they may still hold
+	// (controlGrants). The host keeps control across a closed connection until
+	// it lapses, 10 minutes after the last input by default
+	// (TL_BROWSER_CONTROL_LAPSE_MS); past that there is nothing left to free.
+	// A host configured with a longer lapse outlives this, and then a revoked
+	// guest's control ends at the host's own lapse, as it did before.
+	browserGrantLinger = 11 * time.Minute
 )
 
 // watchOnlyMessages are the viewer messages a watch-only connection may send:
@@ -238,15 +247,16 @@ func encodeViewerHello(acc browserAccess) []byte {
 // per name and no raw newline, which makes what was checked and what the host
 // parses the same message.
 //
-// A "hello" is always dropped: only this file writes the hello, and the host
-// reads only the first one, but nothing after it should look like one either.
+// A "hello" or a "release" is always dropped: only this file writes either,
+// and only as a connection's first line, which the host alone honours, but
+// nothing a viewer sends should look like one either.
 func filterViewerMessage(raw []byte, canControl bool) ([]byte, bool) {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
 		return nil, false
 	}
 	var t string
-	if err := json.Unmarshal(m["t"], &t); err != nil || t == "" || t == "hello" {
+	if err := json.Unmarshal(m["t"], &t); err != nil || t == "" || t == "hello" || t == "release" {
 		return nil, false
 	}
 	if !canControl && !watchOnlyMessages[t] {
@@ -492,9 +502,16 @@ type browserRelay struct {
 	// helloTimeout bounds the state route's wait for the host's hello.
 	helloTimeout time.Duration
 	// recheckEvery and recheckMin pace an open stream's re-reading of the
-	// share that let it in (streamGuard).
+	// share that let it in (streamGuard). recheckEvery also paces the sweep
+	// of closed guests' grants.
 	recheckEvery time.Duration
 	recheckMin   time.Duration
+	// grantLinger is browserGrantLinger, a field only as a test seam.
+	grantLinger time.Duration
+
+	grantMu  sync.Mutex
+	grants   map[controlGrant]*grantState
+	sweeping bool
 }
 
 func newBrowserRelay(opts stampReader, self string) *browserRelay {
@@ -514,6 +531,7 @@ func newBrowserRelay(opts stampReader, self string) *browserRelay {
 		helloTimeout: browserHelloTimeout,
 		recheckEvery: browserRecheckEvery,
 		recheckMin:   browserRecheckMin,
+		grantLinger:  browserGrantLinger,
 	}
 }
 
@@ -730,13 +748,28 @@ func (b *browserRelay) handleStream() http.HandlerFunc {
 		events.Emit("browser.stream_opened", acc.viewer, attrs)
 		start := time.Now()
 		eff, real, ownerParam := osUserFrom(r.Context()), realOSUserFrom(r.Context()), r.URL.Query().Get("owner")
+		resolve := func() (browserAccess, error) {
+			return resolveBrowserAccess(eff, real, ownerParam, session, b.shares)
+		}
 		guard := &streamGuard{
 			canControl: acc.canControl,
-			resolve: func() (browserAccess, error) {
-				return resolveBrowserAccess(eff, real, ownerParam, session, b.shares)
-			},
-			every: b.recheckEvery,
-			min:   b.recheckMin,
+			resolve:    resolve,
+			every:      b.recheckEvery,
+			min:        b.recheckMin,
+		}
+		// A guest able to control may take it and close the tab still holding
+		// it, so their grant outlives the stream (controlGrants). The owner's
+		// control never ends by a share, and a watcher holds none.
+		if acc.canControl && acc.owner != eff {
+			key := controlGrant{owner: acc.owner, session: session, sock: sock, name: acc.hostName()}
+			closed, released := b.openGrant(key, resolve)
+			defer closed()
+			guard.release = func() {
+				released()
+				if err := b.release(key.owner, key.sock, key.name); err != nil {
+					log.Printf("browser: releasing %s's control of %s/%s: %v", key.name, key.owner, key.session, err)
+				}
+			}
 		}
 		relayBrowser(conn, host, guard)
 		events.Emit("browser.stream_closed", acc.viewer, telemetry.Attrs{
@@ -762,6 +795,9 @@ type streamGuard struct {
 	resolve func() (browserAccess, error)
 	every   time.Duration
 	min     time.Duration
+	// release frees any control the caller holds, on whichever connection,
+	// when the stream loses its authority. nil when there is none to free.
+	release func()
 }
 
 // holds reports whether the caller still has the authority the stream was
@@ -776,10 +812,6 @@ func (g *streamGuard) holds() bool {
 	}
 	return acc.canControl || !g.canControl
 }
-
-// handBackMessage releases control if this connection's user holds it. The
-// host ignores it from anyone else.
-var handBackMessage = []byte(`{"t":"handBack"}` + "\n")
 
 // relayBrowser pipes one viewer connection until either end goes, or the
 // guard stops holding: host lines out as WebSocket text messages, lobby
@@ -812,18 +844,19 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGu
 		return err
 	}
 	// revoke ends a stream whose authority lapsed. Control the caller may hold
-	// is handed back first: the host keeps control across a dropped connection
+	// is released first: the host keeps control across a dropped connection
 	// (a reload should not lose it), so without this the agent would stay
-	// locked out until the control lapse.
+	// locked out until the control lapse. It is a release rather than a
+	// handBack on this stream, because the host holds control by connection
+	// and the caller may hold it on another one, a tab already closed.
 	revoke := func() {
 		hostMu.Lock()
-		if !revoked {
-			revoked = true
-			if guard.canControl {
-				host.Write(handBackMessage)
-			}
-		}
+		first := !revoked
+		revoked = true
 		hostMu.Unlock()
+		if first && guard.canControl && guard.release != nil {
+			guard.release()
+		}
 		conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access changed"),
 			time.Now().Add(time.Second))
@@ -917,4 +950,186 @@ func isWatchMessage(out []byte) bool {
 		T string `json:"t"`
 	}
 	return json.Unmarshal(out, &m) == nil && watchOnlyMessages[m.T]
+}
+
+// --- control a closed stream leaves behind ---------------------------------------
+
+// controlGrants: a guest let in able to control a session's browser can take
+// control and close the tab. The host keeps that control until it lapses, so a
+// reload does not lose it, and with no stream left nothing re-reads the share.
+// If the owner then revokes the share or turns it ro, the agent stays locked
+// out until the lapse. So the relay remembers each such guest per session and
+// host, and after their last stream closes keeps checking their share on the
+// recheck ticker. The moment it no longer allows control, the relay frees
+// that guest's control on a connection of its own (release) and forgets them.
+// A grant is forgotten too once browserGrantLinger has passed since its last
+// stream closed, by which time the control has lapsed at the host anyway.
+//
+// The sweep only runs while there is a grant, so a box nobody shares a browser
+// on runs nothing.
+
+// controlGrant names one guest's control of one host: by the name the host
+// shows as holder, which is what release matches on.
+type controlGrant struct {
+	owner, session, sock, name string
+}
+
+type grantState struct {
+	open     int
+	closedAt time.Time
+	// released is set when an open stream of this grant lost its authority and
+	// released the control already; the sweep then forgets it without a second
+	// release.
+	released bool
+	resolve  func() (browserAccess, error)
+}
+
+// openGrant records one more open stream for key. closed is called when that
+// stream ends, released when it has freed the guest's control itself.
+func (b *browserRelay) openGrant(key controlGrant, resolve func() (browserAccess, error)) (closed, released func()) {
+	b.grantMu.Lock()
+	defer b.grantMu.Unlock()
+	if b.grants == nil {
+		b.grants = map[controlGrant]*grantState{}
+	}
+	g := b.grants[key]
+	if g == nil {
+		g = &grantState{}
+		b.grants[key] = g
+	}
+	g.open++
+	g.released = false
+	g.resolve = resolve
+	if !b.sweeping {
+		b.sweeping = true
+		go b.sweepGrants()
+	}
+	var once sync.Once
+	closed = func() {
+		once.Do(func() {
+			b.grantMu.Lock()
+			defer b.grantMu.Unlock()
+			if b.grants[key] != g {
+				return
+			}
+			g.open--
+			g.closedAt = time.Now()
+			if g.open == 0 && g.released {
+				delete(b.grants, key)
+			}
+		})
+	}
+	released = func() {
+		b.grantMu.Lock()
+		defer b.grantMu.Unlock()
+		if b.grants[key] == g {
+			g.released = true
+		}
+	}
+	return closed, released
+}
+
+// grantCount is how many grants the relay is holding, for tests.
+func (b *browserRelay) grantCount() int {
+	b.grantMu.Lock()
+	defer b.grantMu.Unlock()
+	return len(b.grants)
+}
+
+// sweepGrants runs while any grant exists, and stops when none is left.
+func (b *browserRelay) sweepGrants() {
+	t := time.NewTicker(b.recheckEvery)
+	defer t.Stop()
+	for range t.C {
+		if !b.sweepOnce() {
+			return
+		}
+	}
+}
+
+// sweepOnce checks every grant with no open stream, releasing the control of
+// a guest whose share no longer allows it. It reports whether grants remain;
+// when none do it clears sweeping under the lock, so the next openGrant starts
+// a new sweep.
+func (b *browserRelay) sweepOnce() bool {
+	type due struct {
+		key controlGrant
+		g   *grantState
+	}
+	var check []due
+	b.grantMu.Lock()
+	for k, g := range b.grants {
+		if g.open > 0 {
+			continue
+		}
+		if g.released || time.Since(g.closedAt) > b.grantLinger {
+			delete(b.grants, k)
+			continue
+		}
+		check = append(check, due{k, g})
+	}
+	b.grantMu.Unlock()
+
+	for _, d := range check {
+		// A store that cannot be read counts as no share, as it does for an
+		// open stream: control nobody can confirm is freed.
+		if acc, err := d.g.resolve(); err == nil && acc.canControl {
+			continue
+		}
+		if err := b.release(d.key.owner, d.key.sock, d.key.name); err != nil {
+			log.Printf("browser: releasing %s's control of %s/%s: %v", d.key.name, d.key.owner, d.key.session, err)
+		}
+		b.grantMu.Lock()
+		if b.grants[d.key] == d.g && d.g.open == 0 {
+			delete(b.grants, d.key)
+		}
+		b.grantMu.Unlock()
+	}
+
+	b.grantMu.Lock()
+	defer b.grantMu.Unlock()
+	if len(b.grants) == 0 {
+		b.sweeping = false
+		return false
+	}
+	return true
+}
+
+// releaseLine is the first line of a release connection. The host honours it
+// only as a connection's first line, which only this service writes, and the
+// filter drops it from anything a viewer sends.
+type releaseLine struct {
+	T    string `json:"t"`
+	User string `json:"user"`
+}
+
+// release frees whatever control name holds on the host at sock, on whichever
+// connection holds it: a connection of the relay's own whose first line is
+// the release, in place of a viewer hello. The host answers with one control
+// line and hangs up. Waiting for that answer, rather than closing at once,
+// lets a bridge child deliver the line before it is stopped. A host that is
+// gone is not an error worth more than a log line: with no host there is no
+// control to free.
+func (b *browserRelay) release(owner, sock, name string) error {
+	conn, err := b.dial(owner, sock)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	line, _ := json.Marshal(releaseLine{T: "release", User: name})
+	done := make(chan error, 1)
+	go func() {
+		if _, err := conn.Write(append(line, '\n')); err != nil {
+			done <- err
+			return
+		}
+		_, err := readHostLine(bufio.NewReader(conn), maxHostLine)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(b.helloTimeout):
+		return errors.New("browser: no answer to the release")
+	}
 }

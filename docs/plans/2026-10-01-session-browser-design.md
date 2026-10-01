@@ -201,6 +201,15 @@ whichever connection, answers with one `control` line and closes the
 connection. Only session-events writes a connection's first line, so the host
 honours `release` there and drops it anywhere later in a viewer's stream.
 
+session-events sends `release` at two moments. An open stream re-reads the
+share that let it in every 5 seconds, and before a control message, and when
+the share no longer allows control it releases the guest's control and ends
+the stream. A guest whose last stream closed while able to control stays on
+that 5-second check for 11 minutes, past the host's default 10-minute lapse,
+and is released the moment the share is revoked or turned ro. The relay's own
+filter drops `release` and `hello` from anything a viewer sends, before the
+host's rule does.
+
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs
 only while at least one viewer is subscribed. Input goes through Playwright's

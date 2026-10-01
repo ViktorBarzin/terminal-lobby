@@ -144,6 +144,9 @@ func TestFilterViewerMessage(t *testing.T) {
 		{"watcher cannot pick several", `{"t":"choose","values":["a"]}`, false, ""},
 		{"watcher cannot dismiss a dialog", `{"t":"dialog","accept":false}`, false, ""},
 		{"nobody sends a hello", `{"t":"hello","user":"root","canControl":true}`, true, ""},
+		// Only the relay frees someone's control, on a connection of its own.
+		{"nobody sends a release", `{"t":"release","user":"bob"}`, true, ""},
+		{"a release hidden behind a duplicate key", `{"t":"subscribe","t":"release","user":"bob"}`, true, ""},
 		{"not JSON", `subscribe`, true, ""},
 		{"an array", `[{"t":"subscribe"}]`, true, ""},
 		{"null", `null`, true, ""},
@@ -924,6 +927,15 @@ func (s *shareTable) set(owner, name, guest, mode string) {
 // ticker of the given period.
 func recheckFixture(t *testing.T, every time.Duration) (*httptest.Server, *fakeHost, *shareTable) {
 	t.Helper()
+	b, host, shares := recheckRelay(t, every)
+	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+	t.Cleanup(srv.Close)
+	return srv, host, shares
+}
+
+// recheckRelay is recheckFixture's relay, for a test that serves it itself.
+func recheckRelay(t *testing.T, every time.Duration) (*browserRelay, *fakeHost, *shareTable) {
+	t.Helper()
 	_, dir := browserTestBases(t)
 	sock := filepath.Join(dir, "s6.sock")
 	host := startFakeHost(t, sock, fakeHostHello)
@@ -936,9 +948,7 @@ func recheckFixture(t *testing.T, every time.Duration) (*httptest.Server, *fakeH
 	b.shares = shares.lookup
 	b.recheckEvery = every
 	b.recheckMin = 0
-	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
-	t.Cleanup(srv.Close)
-	return srv, host, shares
+	return b, host, shares
 }
 
 // readClose reads until the stream ends and returns how it ended.
@@ -978,8 +988,8 @@ func TestBrowserStreamEndsWhenTheShareNoLongerAllowsControl(t *testing.T) {
 			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"mouse","type":"click","x":5,"y":6}`))
 			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"insertText","text":"secret"}`))
 
-			if got := host.next(t); got != `{"t":"handBack"}` {
-				t.Fatalf("the host received %s after the share changed, want only handBack", got)
+			if got := host.next(t); got != `{"t":"release","user":"alice"}` {
+				t.Fatalf("the host received %s after the share changed, want only the release", got)
 			}
 			if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
 				t.Fatalf("closed with %d, want %d", ce.Code, websocket.ClosePolicyViolation)
@@ -1001,11 +1011,17 @@ func TestBrowserStreamTickerEndsARevokedStream(t *testing.T) {
 	host.next(t)
 	readWS(t, ws)
 	shares.set("bob", "sh0000000000", "alice", "")
-	if got := host.next(t); got != `{"t":"handBack"}` {
-		t.Fatalf("got %s, want handBack", got)
+	if got := host.next(t); got != `{"t":"release","user":"alice"}` {
+		t.Fatalf("got %s, want the release", got)
 	}
 	if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
 		t.Fatalf("closed with %d", ce.Code)
+	}
+	// Released once: the closed stream's grant is not released again.
+	select {
+	case l := <-host.lines:
+		t.Fatalf("the host received %s after the release", l)
+	case <-time.After(250 * time.Millisecond):
 	}
 }
 
@@ -1024,8 +1040,8 @@ func TestBrowserStreamEndsWhenTheShareCannotBeRead(t *testing.T) {
 	}
 }
 
-// A watcher has no control to hand back; a revoked ro share just ends.
-func TestBrowserStreamEndsARevokedWatcherWithoutAHandBack(t *testing.T) {
+// A watcher holds no control to release; a revoked ro share just ends.
+func TestBrowserStreamEndsARevokedWatcherWithoutARelease(t *testing.T) {
 	srv, host, shares := recheckFixture(t, 50*time.Millisecond)
 	shares.set("bob", "sh0000000000", "alice", "ro")
 	ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
@@ -1055,5 +1071,102 @@ func TestBrowserStreamKeepsAStreamWhoseShareHolds(t *testing.T) {
 		if got := host.next(t); got != `{"key":"Enter","t":"key","type":"press"}` {
 			t.Fatalf("%s: got %s", path, got)
 		}
+	}
+}
+
+// A guest who took control and then closed the tab still holds it: the host
+// keeps control across a dropped connection so a reload does not lose it. When
+// their share is then revoked or turned ro there is no stream left to notice,
+// so the relay remembers the grant and frees that guest's control itself, by
+// the name the host shows, on a connection of its own.
+func TestBrowserReleasesAClosedGuestsControlWhenTheShareEnds(t *testing.T) {
+	for _, c := range []struct{ name, mode string }{{"revoked", ""}, {"turned ro", "ro"}} {
+		t.Run(c.name, func(t *testing.T) {
+			b, host, shares := recheckRelay(t, 30*time.Millisecond)
+			srv := httptest.NewServer(browserMuxNamed(b, "alice", "alice", "vbarzin"))
+			t.Cleanup(srv.Close)
+			ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+			host.next(t)
+			readWS(t, ws)
+			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"takeControl"}`))
+			if got := host.next(t); got != `{"t":"takeControl"}` {
+				t.Fatalf("got %s", got)
+			}
+			ws.Close()
+
+			// While the share holds, nothing is released.
+			select {
+			case l := <-host.lines:
+				t.Fatalf("the host received %s while the share still held", l)
+			case <-time.After(150 * time.Millisecond):
+			}
+
+			shares.set("bob", "sh0000000000", "alice", c.mode)
+			if got := host.next(t); got != `{"t":"release","user":"vbarzin"}` {
+				t.Fatalf("got %s, want the guest's control released by name", got)
+			}
+			select {
+			case l := <-host.lines:
+				t.Fatalf("the host received %s after the release", l)
+			case <-time.After(150 * time.Millisecond):
+			}
+			if n := b.grantCount(); n != 0 {
+				t.Fatalf("%d grants left after the release", n)
+			}
+		})
+	}
+}
+
+// The owner's own streams, and a watcher's, leave nothing to release, and a
+// guest's grant is forgotten once any control it led to has lapsed, so the
+// relay does not keep re-reading the share store for every guest ever seen.
+func TestBrowserControlGrantsAreBounded(t *testing.T) {
+	b, host, shares := recheckRelay(t, 20*time.Millisecond)
+	b.grantLinger = 100 * time.Millisecond
+	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+	t.Cleanup(srv.Close)
+
+	own := dialStream(t, srv, "/browser/k7m2q9x4tpz3/stream")
+	host.next(t)
+	readWS(t, own)
+	if n := b.grantCount(); n != 0 {
+		t.Fatalf("the owner's stream left %d grants", n)
+	}
+	own.Close()
+
+	guest := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+	host.next(t)
+	readWS(t, guest)
+	if n := b.grantCount(); n != 1 {
+		t.Fatalf("an rw guest's stream left %d grants, want 1", n)
+	}
+	guest.Close()
+	deadline := time.Now().Add(3 * time.Second)
+	for b.grantCount() != 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the grant outlived its linger")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	shares.set("bob", "sh0000000000", "alice", "")
+	select {
+	case l := <-host.lines:
+		t.Fatalf("the host received %s for a forgotten grant", l)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// The release a relay sends is a whole connection: its first line, then the
+// host's one-line answer, then nothing.
+func TestReleaseBrowserControl(t *testing.T) {
+	_, dir := browserTestBases(t)
+	sock := filepath.Join(dir, "s7.sock")
+	host := startFakeHost(t, sock, `{"t":"control","holder":null,"holderId":null,"since":null,"lapseAt":null}`)
+	b := testRelay(nil, nil)
+	if err := b.release("bob", sock, "vbarzin"); err != nil {
+		t.Fatal(err)
+	}
+	if got := host.next(t); got != `{"t":"release","user":"vbarzin"}` {
+		t.Fatalf("got %s", got)
 	}
 }
