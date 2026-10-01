@@ -54,6 +54,10 @@ type Launcher struct {
 	Spawner       Spawner
 	ChooseSpawner func() Spawner
 	StopUnit      func(unit string)
+	// HostGone runs after every host exit, clean or not, with the host's pid,
+	// before any new host starts. A host that was SIGKILLed never cleared its
+	// tmux options or socket, so this does (Registration.Clear).
+	HostGone func(pid int)
 
 	InitTimeout time.Duration // how long a new host has to answer initialize
 	KillGrace   time.Duration // SIGTERM to SIGKILL
@@ -404,11 +408,7 @@ func (s *state) hostExited(err error) {
 		s.deadline.Stop()
 		s.deadline = nil
 	}
-	// A host that died rather than closing can leave Chrome behind in its
-	// scope; stopping the scope takes that with it.
-	if s.l.StopUnit != nil {
-		s.l.StopUnit(h.unit)
-	}
+	s.gone(h)
 	waiting := append(s.queued, s.inflight...)
 	s.queue, s.queued, s.inflight = nil, nil, nil
 	for _, p := range waiting {
@@ -569,18 +569,14 @@ func (s *state) shutdown() {
 			if ev.gen == h.gen && ev.exited {
 				close(h.stdin)
 				s.host = nil
-				if s.l.StopUnit != nil {
-					s.l.StopUnit(h.unit)
-				}
+				s.gone(h)
 				return
 			}
 		case <-grace.C:
 			if killed {
 				// Not even SIGKILL ended it within the grace period; leave
 				// the rest to the scope stop and PR_SET_PDEATHSIG.
-				if s.l.StopUnit != nil {
-					s.l.StopUnit(h.unit)
-				}
+				s.gone(h)
 				return
 			}
 			killed = true
@@ -590,6 +586,18 @@ func (s *state) shutdown() {
 			}
 			grace.Reset(s.l.KillGrace)
 		}
+	}
+}
+
+// gone cleans up after a host that has exited. A host that died rather than
+// closing can leave Chrome behind in its scope, which stopping the scope takes
+// with it, and its registration in tmux, which HostGone clears.
+func (s *state) gone(h *host) {
+	if s.l.StopUnit != nil {
+		s.l.StopUnit(h.unit)
+	}
+	if s.l.HostGone != nil {
+		s.l.HostGone(h.cmd.Process.Pid)
 	}
 }
 

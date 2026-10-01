@@ -25,6 +25,7 @@ type harness struct {
 	logPath string
 	cache   *HandshakeCache
 	spawner *recordingSpawner
+	gone    chan int // pids the launcher reported gone, in order
 }
 
 // recordingSpawner spawns directly and remembers each argv it was handed.
@@ -61,6 +62,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		done:    make(chan error, 1),
 		logPath: filepath.Join(dir, "fake.log"),
 		spawner: &recordingSpawner{},
+		gone:    make(chan int, 16),
 	}
 	inR, inW := io.Pipe()
 	outR, outW := io.Pipe()
@@ -82,6 +84,7 @@ func newHarness(t *testing.T, opts ...harnessOpt) *harness {
 		},
 		InitTimeout: 10 * time.Second,
 		KillGrace:   2 * time.Second,
+		HostGone:    func(pid int) { h.gone <- pid },
 	}
 	for _, o := range opts {
 		o(l, h)
@@ -508,6 +511,116 @@ func TestStubbornHostIsKilled(t *testing.T) {
 	}
 	if h.count("term") != 1 {
 		t.Fatalf("the host was not sent SIGTERM before SIGKILL: %q", h.fakeLog())
+	}
+}
+
+// goneWithin returns the next pid the launcher reported gone.
+func (h *harness) goneWithin(d time.Duration) (int, bool) {
+	h.t.Helper()
+	select {
+	case pid := <-h.gone:
+		return pid, true
+	case <-time.After(d):
+		return 0, false
+	}
+}
+
+func TestHostKilledFromOutsideIsReportedGone(t *testing.T) {
+	// SIGKILL, from the OOM killer or a person, gives the host no chance to
+	// unregister itself, so the launcher has to.
+	h := newHarness(t)
+	writeCache(t, h.cache)
+
+	h.send(initLine)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_navigate"}}`)
+	h.recv()
+	pid := h.hostPid()
+
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := h.goneWithin(10 * time.Second)
+	if !ok || got != pid {
+		t.Fatalf("gone = %d (%v), want host %d", got, ok, pid)
+	}
+}
+
+func TestCrashedHostIsReportedGoneBeforeTheRespawn(t *testing.T) {
+	h := newHarness(t)
+	writeCache(t, h.cache)
+
+	h.send(initLine)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","id":"a","method":"tools/call","params":{"name":"die"}}`)
+	h.recv()
+	first := h.hostPid()
+	got, ok := h.goneWithin(10 * time.Second)
+	if !ok || got != first {
+		t.Fatalf("gone = %d (%v), want host %d", got, ok, first)
+	}
+
+	// The new host registers under the same names, so the old one must be
+	// cleared first, not after.
+	h.send(`{"jsonrpc":"2.0","id":"b","method":"tools/call","params":{"name":"browser_navigate"}}`)
+	h.recv()
+	if _, ok := h.goneWithin(300 * time.Millisecond); ok {
+		t.Fatalf("the live respawned host was reported gone")
+	}
+}
+
+func TestStoppedHostIsReportedGoneBeforeTheLauncherExits(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts []harnessOpt
+		tool string
+	}{
+		{"sigterm", nil, "browser_navigate"},
+		{"sigkill", []harnessOpt{withEnv("TLB_FAKE_IGNORE_TERM=1"), withKillGrace(300 * time.Millisecond)}, "hang"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, tc.opts...)
+			writeCache(t, h.cache)
+
+			h.send(initLine)
+			h.recv()
+			h.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + tc.tool + `"}}`)
+			h.waitFor("the call to reach the host", func() bool {
+				return strings.Contains(strings.Join(h.fakeLog(), "\n"), `"`+tc.tool+`"`)
+			})
+			pid := h.hostPid()
+
+			h.in.Close()
+			select {
+			case <-h.done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("launcher did not exit")
+			}
+			h.done <- nil
+			var got int
+			select {
+			case got = <-h.gone:
+			default:
+			}
+			if got != pid {
+				t.Fatalf("gone = %d when Run returned, want host %d", got, pid)
+			}
+		})
+	}
+}
+
+func TestBrowserCloseIsReportedGone(t *testing.T) {
+	h := newHarness(t)
+	writeCache(t, h.cache)
+
+	h.send(initLine)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_close"}}`)
+	h.recv()
+	pid := h.hostPid()
+	got, ok := h.goneWithin(10 * time.Second)
+	if !ok || got != pid {
+		t.Fatalf("gone = %d (%v), want host %d", got, ok, pid)
 	}
 }
 

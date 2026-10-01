@@ -72,6 +72,9 @@ func main() {
 			return DirectSpawner{}
 		},
 		StopUnit: func(unit string) { stopUnit(unit, env) },
+		HostGone: Registration{Env: env, UID: os.Getuid(), Tmux: func(args ...string) (string, error) {
+			return runTmux(env, args...)
+		}}.Clear,
 	}
 
 	// Claude closing our stdin is the usual end. SIGTERM and SIGHUP end the
