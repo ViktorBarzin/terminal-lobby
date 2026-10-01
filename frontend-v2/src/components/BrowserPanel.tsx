@@ -69,6 +69,9 @@ export const BrowserPanel: Component<{
   canControl: () => boolean;
   /** Full screen, with taps for clicks and the soft keyboard for typing. */
   phone: () => boolean;
+  /** Over the whole pane rather than beside the view: the pane is too narrow
+   *  for both (browser.logic `panelLayout`). Layout only; input is unchanged. */
+  full?: () => boolean;
   /** Interrupt the agent's turn, the same as Esc. */
   onStop: () => void;
   onClose: () => void;
@@ -479,6 +482,7 @@ export const BrowserPanel: Component<{
     <aside
       class="tl-browser-panel"
       data-phone={props.phone() ? "" : undefined}
+      data-full={props.full?.() ? "" : undefined}
       aria-label="Session browser"
     >
       <header class="tl-browser-head">

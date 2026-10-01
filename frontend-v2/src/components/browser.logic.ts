@@ -362,3 +362,25 @@ export function streamWanted(o: {
 }): boolean {
   return o.wanted && o.intersecting && o.documentVisible && !o.parked;
 }
+
+// ---- where the panel goes ---------------------------------------------------
+
+/** Below this much pane, a panel beside the view leaves the view too little:
+ *  the panel's own floor is 360px, and the chat was left about 30px. */
+const PANEL_SIDE_MIN_PANE = 720;
+
+/**
+ * Where the Browser panel goes in a session's pane: beside the view ("side"),
+ * over the whole pane ("full"), or over the whole screen on a phone
+ * ("phone"). The pane's width decides, not the pointer, so a narrow desktop
+ * window and a narrow tile get the full-pane layout too. A pane not measured
+ * yet, or laid out at zero (not on screen), keeps the panel beside the view.
+ */
+export function panelLayout(o: {
+  phone: boolean;
+  paneWidth: number | null;
+}): "phone" | "full" | "side" {
+  if (o.phone) return "phone";
+  if (o.paneWidth === null || o.paneWidth <= 0) return "side";
+  return o.paneWidth < PANEL_SIDE_MIN_PANE ? "full" : "side";
+}

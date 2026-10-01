@@ -71,6 +71,7 @@ import { setSessionMode } from "../lib/mode-api";
 import { ensurePiModels, piModels } from "../lib/pi-models";
 import { sendWaking } from "../store/wake-send";
 import { BrowserPanel } from "./BrowserPanel";
+import { panelLayout } from "./browser.logic";
 import type { BrowserCardHost } from "./BrowserCard";
 import type { BrowserState } from "../lib/browser-stream";
 import { track } from "../telemetry/track";
@@ -1152,6 +1153,21 @@ export const SessionView: Component<{
   // conversation, or from the bar's browser button.
   const flip = createMobileFlip();
   const [browserOpen, setBrowserOpen] = createSignal(false);
+  // The pane's width decides whether the panel sits beside the view or covers
+  // the pane (browser.logic `panelLayout`): a narrow desktop window or tile
+  // has no room for both. Measured only while the panel is open.
+  let views: HTMLElement | undefined;
+  const [paneWidth, setPaneWidth] = createSignal<number | null>(null);
+  createEffect(() => {
+    if (!browserOpen() || !views || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver((entries) => {
+      const last = entries.at(-1);
+      if (last) setPaneWidth(last.contentRect.width);
+    });
+    ro.observe(views);
+    onCleanup(() => ro.disconnect());
+  });
+  const browserLayout = () => panelLayout({ phone: flip(), paneWidth: paneWidth() });
   const openBrowser = (from: "card" | "bar"): void => {
     if (browserOpen()) return;
     setBrowserOpen(true);
@@ -1738,10 +1754,11 @@ export const SessionView: Component<{
           tap that opened the keyboard. The Text view keeps the reservation: its
           composer is out here. */}
       <main
+        ref={views}
         class="tl-views"
         classList={{
           "tl-kb-inline": mode() === "terminal",
-          "tl-browser-split": browserOpen() && !flip(),
+          "tl-browser-split": browserOpen() && browserLayout() === "side",
         }}
       >
         <section
@@ -1930,7 +1947,8 @@ export const SessionView: Component<{
           </Show>
         </section>
         {/* Beside the view on a desktop, the view giving up the right of the
-            pane (`.tl-browser-split`); over the whole screen on a phone. */}
+            pane (`.tl-browser-split`); over the whole pane when it is under
+            720px wide; over the whole screen on a phone. */}
         <Show when={browserOpen()}>
           <BrowserPanel
             session={session}
@@ -1939,6 +1957,7 @@ export const SessionView: Component<{
             active={() => onScreen() && !store.parked()}
             canControl={canControlBrowser}
             phone={flip}
+            full={() => browserLayout() === "full"}
             onStop={() => void store.interrupt()}
             onClose={() => setBrowserOpen(false)}
           />

@@ -7748,6 +7748,14 @@ body.tl-kb-up {
   border-left: 1px solid var(--border);
   font-family: var(--font-ui);
 }
+/* A pane under 720px (browser.logic `panelLayout`) has no room for the view
+   and a 360px panel side by side, so the panel covers the pane and the view
+   keeps its full width behind it. */
+.tl-browser-panel[data-full] {
+  left: 0;
+  width: auto;
+  border-left: 0;
+}
 /* z 64: over the session bar and the soft keys, under the gallery (66) and
    everything stacked above it. */
 .tl-browser-panel[data-phone] {

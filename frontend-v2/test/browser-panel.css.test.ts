@@ -41,3 +41,11 @@ describe("the page's box", () => {
     expect(rule(".tl-browser-stage")).toMatch(/flex:\s*1 1 auto/);
   });
 });
+
+describe("the panel over a narrow pane", () => {
+  it("covers the pane instead of taking its right side", () => {
+    const full = rule(".tl-browser-panel[data-full]");
+    expect(full).toMatch(/left:\s*0/);
+    expect(full).toMatch(/width:\s*auto/);
+  });
+});

@@ -15,6 +15,7 @@ import {
   clientBox,
   listPlacement,
   pagePoint,
+  panelLayout,
   streamWanted,
 } from "../src/components/browser.logic";
 
@@ -355,5 +356,35 @@ describe("where a popup sits over the scaled page", () => {
     const off = listPlacement({ left: -50, top: -40, width: 100, height: 20 }, stage);
     expect(off.left).toBe(0);
     expect(off.top).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * Where the Browser panel goes. Beside the view it takes about half the pane
+ * and at least 360px, which in a pane of 700px left the chat about 30px wide
+ * when a desktop window was narrow (review 2026-10-01). Below 720px of pane it
+ * covers the pane instead, whatever the pointer; a phone keeps its own
+ * full-screen layout.
+ */
+describe("panelLayout", () => {
+  it("puts the panel beside the view in a wide pane", () => {
+    expect(panelLayout({ phone: false, paneWidth: 1440 })).toBe("side");
+    expect(panelLayout({ phone: false, paneWidth: 720 })).toBe("side");
+  });
+
+  it("covers a narrow pane, whatever the pointer", () => {
+    expect(panelLayout({ phone: false, paneWidth: 719 })).toBe("full");
+    expect(panelLayout({ phone: false, paneWidth: 390 })).toBe("full");
+  });
+
+  it("keeps a phone on its full-screen layout", () => {
+    expect(panelLayout({ phone: true, paneWidth: 390 })).toBe("phone");
+    expect(panelLayout({ phone: true, paneWidth: 1024 })).toBe("phone");
+  });
+
+  it("stays beside the view until the pane has been measured", () => {
+    expect(panelLayout({ phone: false, paneWidth: null })).toBe("side");
+    // A pane laid out at zero is not on screen; nothing to decide yet.
+    expect(panelLayout({ phone: false, paneWidth: 0 })).toBe("side");
   });
 });
