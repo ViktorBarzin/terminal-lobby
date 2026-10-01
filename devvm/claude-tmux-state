@@ -551,6 +551,41 @@ record_launch() {
 }
 
 # ---- Notification ---------------------------------------------------------
+# A PushNotification call is Claude telling the person something, in its own
+# words, and the Notification hook is where those words arrive: `message` holds
+# the text and `notification_type` is "push_notification" (measured on 2.1.286,
+# 2026-10-01). It is not a request for input, so it stamps no state. The text
+# goes into @claude_notice as "<unix second> <message>", and tmux-api's push
+# sender sends it as the notification body instead of a generic "needs input".
+#
+# The message is stored still JSON-escaped, exactly as it sits in the payload,
+# and tmux-api decodes it. The shell has no JSON parser and this keeps it from
+# needing one: the string ends where `","notification_type":"` begins, a
+# sequence the message itself cannot contain unescaped. A payload laid out
+# differently stores nothing rather than a guess.
+#
+# Two things about a tmux option value, both measured on tmux 3.4:
+#   - an argument ending in `;` loses it, because tmux reads a trailing
+#     semicolon as a command separator. A final `;` is written as ;,
+#     which the JSON decode turns back into one.
+#   - the value is capped at 1000 bytes. The tool asks for under 200
+#     characters, and a cut that splits an escape only costs the decode, which
+#     tmux-api falls back from by showing the raw text.
+record_notice() {
+    case "$payload" in
+    *'"message":"'*'","notification_type":"push_notification"'*) ;;
+    *) return 0 ;;
+    esac
+    raw="${payload#*\"message\":\"}"
+    raw="${raw%%\",\"notification_type\":\"push_notification\"*}"
+    [ -n "$raw" ] || return 0
+    raw="$(printf '%.1000s' "$raw")"
+    case "$raw" in
+    *';') raw="${raw%;}\\u003b" ;;
+    esac
+    tmux set-option -t "$TMUX_PANE" @claude_notice "$(date +%s) $raw" >/dev/null 2>&1 || true
+}
+
 # Notifications are not all "awaiting input". BLOCKED asks — permission /
 # approval dialogs and "needs your input" — always stamp awaiting (amber): the
 # turn cannot proceed without the user, and that is true whether the block is
@@ -564,6 +599,12 @@ record_launch() {
 # background work is not mid-turn, and a done session stays done. Matching
 # stays case-insensitive since Claude's phrasing drifts between versions.
 handle_notify() {
+    case "$payload" in
+    *'"notification_type":"push_notification"'*)
+        record_notice
+        return 0
+        ;;
+    esac
     msg_lc="$(printf '%s' "$payload" | tr '[:upper:]' '[:lower:]')"
     case "$msg_lc" in
     *permission* | *approval* | *"needs your input"*)

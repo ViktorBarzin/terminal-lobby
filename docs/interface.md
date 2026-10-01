@@ -300,6 +300,15 @@ typed into that session since the last one, while the badge counts a
 standing population and `done` is where a finished session rests. So a
 session stays in the count for as long as it stays finished and unread.
 
+**A message Claude sends arrives as written.** When Claude calls its
+`PushNotification` tool, the push carries the session's name as the
+title and Claude's message as the body, cut at 200 characters, instead
+of a generic "needs input". It goes out whenever there is a new
+message, even if the session already has a notification you have not
+opened. It counts as that turn's notification, so the "finished" push
+that usually follows is held back and does not replace the message.
+Turning off both notification kinds in settings silences these too.
+
 The number is the same whether the app is open or shut. The server sends
 which sessions are awaiting or finished, by name, and the device subtracts
 the ones it has already shown you — so a notification arriving cannot

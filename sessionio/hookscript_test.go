@@ -1137,3 +1137,61 @@ func TestThePanesOwnClaudeStillStamps(t *testing.T) {
 		t.Fatalf("after the pane's own SessionEnd: state+bg = %q, want both unset", got)
 	}
 }
+
+// A PushNotification call is Claude saying something in its own words, and the
+// Notification hook is where the words arrive (captured on 2.1.286,
+// 2026-10-01, with a quote, a backslash and an em dash in the message). The
+// text lands in OptionNotice for the push sender to send, and the session's
+// state is left alone: a message is not a request for input, and painting a
+// working session amber for it was what the generic "needs input" push came
+// from.
+func TestAPushNotificationRecordsItsMessageAndStampsNothing(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+
+	e.fire(t, "notify", "notification_push.json")
+
+	if got := e.opt(t, OptionState); got != StateRunning {
+		t.Fatalf("%s after a push notification = %q, want it left at %q", OptionState, got, StateRunning)
+	}
+	n, ok := ParseNotice(e.opt(t, OptionNotice))
+	if !ok {
+		t.Fatalf("%s = %q, want a parseable notice", OptionNotice, e.opt(t, OptionNotice))
+	}
+	if want := `build "auth" failed — 2 tests in C:\src`; n.Text != want {
+		t.Fatalf("notice text = %q, want %q", n.Text, want)
+	}
+	if age := time.Since(time.Unix(n.At, 0)); age < 0 || age > time.Minute {
+		t.Fatalf("notice stamped %v ago, want now", age)
+	}
+}
+
+// A message that mentions permission is still a message. The blocked-ask
+// wording match reads the whole payload, so without the push branch first a
+// session would go amber because Claude used the word.
+func TestAPushNotificationMentioningPermissionDoesNotAskForInput(t *testing.T) {
+	e := newHookEnv(t)
+	e.set(t, OptionState, StateDone)
+
+	e.fireRaw(t, "notify", `{"hook_event_name":"Notification","message":"deploy blocked on a permission check","notification_type":"push_notification"}`)
+
+	if got := e.opt(t, OptionState); got != StateDone {
+		t.Fatalf("%s = %q, want %q", OptionState, got, StateDone)
+	}
+	if n, _ := ParseNotice(e.opt(t, OptionNotice)); n.Text != "deploy blocked on a permission check" {
+		t.Fatalf("notice text = %q", n.Text)
+	}
+}
+
+// tmux reads an argument ending in ';' as a command separator and drops the
+// semicolon (measured on tmux 3.4), so the script escapes a final one and the
+// decode brings it back.
+func TestAPushNotificationEndingInASemicolonKeepsIt(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fireRaw(t, "notify", `{"hook_event_name":"Notification","message":"done; see PR;","notification_type":"push_notification"}`)
+
+	if n, _ := ParseNotice(e.opt(t, OptionNotice)); n.Text != "done; see PR;" {
+		t.Fatalf("notice text = %q, want the trailing semicolon kept", n.Text)
+	}
+}

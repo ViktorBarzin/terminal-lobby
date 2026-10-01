@@ -80,11 +80,12 @@ const (
 		"#{" + sessionio.OptionPiLevels + "}" + listSep +
 		"#{" + sessionio.OptionLastActivity + "}" + listSep +
 		"#{pane_current_path}" + listSep +
+		"#{" + sessionio.OptionNotice + "}" + listSep +
 		"#{" + browserOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 24
+	listFields = 25
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -166,12 +167,21 @@ const (
 	// column before it is.
 	cwdColumn = 21
 
+	// noticeColumn is @claude_notice, the newest message the session's Claude
+	// sent with its PushNotification tool (sessionio.OptionNotice). The push
+	// sender sends a new one as the notification body. It rides this list
+	// because the sender already reads it every tick, so the message costs no
+	// tmux call of its own. The value is JSON-escaped text, which carries no
+	// raw tab; it sits before pane_title anyway, for the reason every column
+	// before it does.
+	noticeColumn = 22
+
 	// browserColumn is @tl_browser, which a session browser's host stamps
 	// live or frozen while the session's agent has a browser open, and unsets
 	// when it closes (ADR-0035). It rides this list so the session bar's
 	// browser indicator costs no request of its own. Last before pane_title
 	// for the reason every column before it is.
-	browserColumn = 22
+	browserColumn = 23
 
 	// browserOption is the host's stamp (tl-browser/host/lib/tmux.mjs).
 	// Spelled here as a literal, the way @tl_created is: nothing in Go writes

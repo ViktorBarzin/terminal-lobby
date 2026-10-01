@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"terminal-lobby/sessionio"
 )
 
 func handleSessions(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +308,8 @@ func parseSessions(out []byte) []Session {
 			PiLevels:   piLevelsOf(parts[piLevelsColumn]),
 			Cwd:        parts[cwdColumn],
 			Browser:    browserStateOf(parts[browserColumn]),
+			// An unset option, or one this cannot read, is no notice at all.
+			Notice: noticeOf(parts[noticeColumn]),
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.
@@ -313,6 +317,13 @@ func parseSessions(out []byte) []Session {
 		})
 	}
 	return sessions
+}
+
+// noticeOf reads @claude_notice, leaving the zero Notice for anything
+// sessionio.ParseNotice does not accept.
+func noticeOf(v string) sessionio.Notice {
+	n, _ := sessionio.ParseNotice(v)
+	return n
 }
 
 // browserStateOf holds @tl_browser to the two values the host writes. Anything

@@ -15,6 +15,8 @@ import (
 	"time"
 
 	webpush "github.com/SherClockHolmes/webpush-go"
+
+	"terminal-lobby/sessionio"
 )
 
 const (
@@ -41,8 +43,15 @@ const (
 const (
 	kindAwaiting = "awaiting"
 	kindDone     = "done"
-	kindTest     = "test" // the on-demand /push/test self-diagnosis send
+	kindNotice   = "notice" // a message the session's Claude sent (sessionio.OptionNotice)
+	kindTest     = "test"   // the on-demand /push/test self-diagnosis send
 )
+
+// noticeBodyRunes is where a notice's body is cut. It is the PushNotification
+// tool's own limit ("Keep it under 200 characters; mobile OSes truncate"), and
+// it is what keeps the worst notice inside the encrypted payload budget
+// (TestWorstCaseNoticeFitsTheEncryptedBudget).
+const noticeBodyRunes = 200
 
 // sessionStater reads a user's session name→state map plus the latest
 // client-activity (user keystroke) time per session. Abstracted so the
@@ -66,10 +75,14 @@ type sessionStater interface {
 	// in the push's wording: "Pi is awaiting your input" rather than calling
 	// every harness Claude.
 	//
-	// One method rather than five because they all come out of the same tmux
+	// The sixth return is each session's newest PushNotification message
+	// (sessionio.OptionNotice), absent for a session that has sent none. A new
+	// stamp is a push whose body is the message.
+	//
+	// One method rather than six because they all come out of the same tmux
 	// reads, and asking separately forked `list-clients` twice per user per
 	// tick.
-	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool, tools map[string]string)
+	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool, tools map[string]string, notices map[string]sessionio.Notice)
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -85,10 +98,22 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string) {
+func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]sessionio.Notice) {
 	sessions, activity := userSessionsAndActivity(osUser)
 	states, titles, tools := statesTitlesAndTools(sessions)
-	return states, titles, activity, systemNames(sessions), tools
+	return states, titles, activity, systemNames(sessions), tools, noticesOf(sessions)
+}
+
+// noticesOf is each session's newest PushNotification message, leaving out
+// the sessions that have sent none.
+func noticesOf(sessions []Session) map[string]sessionio.Notice {
+	out := make(map[string]sessionio.Notice)
+	for _, s := range sessions {
+		if s.Notice.At > 0 {
+			out[s.Name] = s.Notice
+		}
+	}
+	return out
 }
 
 // systemNames is the set of a user's sessions that belong to tooling rather
@@ -168,6 +193,10 @@ type pushSender struct {
 	// not engaged with yet — the "one per thread" memory. Cleared when the
 	// session goes back to running.
 	outstanding map[string]map[string]bool
+	// noticeAt is the stamp of the newest notice already handled per
+	// user/session (sessionio.OptionNotice). A notice is sent when its stamp
+	// is past this; the first read of a user only records it.
+	noticeAt map[string]map[string]int64
 	// focus is what each DEVICE says it is showing right now (pushfocus.go).
 	// Read per subscription in send: a device looking at the session stays
 	// quiet, every other device is told. Nil means nothing is ever suppressed.
@@ -338,6 +367,7 @@ func newPushSender(store *pushStore, prefs prefsLoader, stater sessionStater, va
 		last:      map[string]map[string]string{},
 		seenAct:   map[string]map[string]int64{},
 		pushedAct: map[string]map[string]int64{},
+		noticeAt:  map[string]map[string]int64{},
 	}
 }
 
@@ -634,6 +664,16 @@ func buildDonePayloadFor(tool, label, session string, badge int, waiting *waitLi
 	return marshalPayload(label+" finished", pushHarnessName(tool)+" finished its turn.", session, badge, waiting, origin)
 }
 
+// buildNoticePayload is a message the session's agent sent: the session's
+// label as the title and the message as the body, cut at noticeBodyRunes. Same
+// tag as every other push for the session (marshalPayload).
+func buildNoticePayload(label, session, text string, badge int, waiting *waitList, origin string) []byte {
+	if r := []rune(text); len(r) > noticeBodyRunes {
+		text = strings.TrimRight(string(r[:noticeBodyRunes-1]), " ") + "…"
+	}
+	return marshalPayload(label, text, session, badge, waiting, origin)
+}
+
 // pushHarnessName is what a push calls the agent in a session, from the
 // session's tool (proc.go). A tool the scan could not name, or a shell, keeps
 // "Claude": only Claude and pi stamp the state a push reports, and Claude is
@@ -675,11 +715,12 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur, titles, act, system, tools := p.stater.read(u)
+		cur, titles, act, system, tools, notices := p.stater.read(u)
 		p.absorbManualStates(u, cur)
 		p.forgetSystemSessions(u, system, cur, titles, act)
 		p.last[u] = cur
 		p.observeActivity(u, act)
+		fresh := p.freshNotices(u, cur, notices)
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
@@ -692,6 +733,11 @@ func (p *pushSender) tick() {
 			// which is the engagement that lets it ring again.
 			if st == stateRunning && was != stateRunning {
 				p.clearOutstanding(u, name)
+			}
+			// A message Claude sent goes out before the edges are read, so a
+			// turn that ends in the same tick is held behind it (see sendNotice).
+			if n, ok := fresh[name]; ok && (np.onDone || np.onAwaiting) {
+				p.sendNotice(u, name, titles[name], n, badge, waiting)
 			}
 			switch {
 			case st == stateAwaiting && was != stateAwaiting:
@@ -730,8 +776,63 @@ func (p *pushSender) tick() {
 			delete(p.last, u)
 			delete(p.seenAct, u)
 			delete(p.pushedAct, u)
+			delete(p.noticeAt, u)
 		}
 	}
+}
+
+// freshNotices returns the notices in this reading that have not been handled
+// yet, and records every one it sees as handled. `cur` is this tick's states
+// with tooling's sessions already dropped, so a system session's notice is
+// never fresh.
+//
+// The record is rebuilt from the sessions in this reading, which keeps it to
+// live sessions. A reading with no sessions at all leaves it alone: that is
+// what a failed tmux read looks like, and forgetting there would resend every
+// session's last message when the next read succeeds.
+func (p *pushSender) freshNotices(u string, cur map[string]string, notices map[string]sessionio.Notice) map[string]sessionio.Notice {
+	if len(cur) == 0 {
+		return nil
+	}
+	handled := p.noticeAt[u]
+	next := make(map[string]int64, len(notices))
+	var fresh map[string]sessionio.Notice
+	for name, n := range notices {
+		if _, live := cur[name]; !live {
+			continue
+		}
+		next[name] = n.At
+		if n.At > handled[name] {
+			if fresh == nil {
+				fresh = map[string]sessionio.Notice{}
+			}
+			fresh[name] = n
+		}
+	}
+	p.noticeAt[u] = next
+	return fresh
+}
+
+// sendNotice pushes a message the session's Claude sent with its
+// PushNotification tool, with the message as the body (Viktor, 2026-10-01: "I
+// want to be able to see the message sent, not that a session sent a
+// notification only").
+//
+// It is not held by the one-outstanding rule or the activity gate. Those exist
+// to stop a session repeating "finished" at every internal turn boundary; a
+// message is new content each time, and Claude Code already declines to send
+// one while the person is active in the terminal. It does count as the turn's
+// notification, though: it marks the session outstanding and spends the
+// activity credit, so the "finished" that usually follows a moment later is
+// held instead of replacing the message on the phone (both carry the tag
+// tl-<session>).
+func (p *pushSender) sendNotice(u, session, title string, n sessionio.Notice, badge int, waiting *waitList) {
+	p.markPushed(u, session)
+	p.markSent(u, session)
+	label := pushLabel(session, title)
+	p.send(u, session, func(origin string) []byte {
+		return buildNoticePayload(label, session, n.Text, badge, waiting, origin)
+	}, kindNotice)
 }
 
 // forgetSystemSessions takes tooling's sessions out of one tick's reading, and

@@ -124,19 +124,19 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 }
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
-// activityColumn, the pane's working directory at cwdColumn and @tl_browser at
-// browserColumn, the last three columns before pane_title, spliced for the
-// reason rowCreated gives. EMPTY is what every session reports until its
-// Claude next sees a prompt or finishes a turn, the directory is left empty,
-// as a dead pane reports it, and so is the browser, which most sessions never
-// open.
+// activityColumn, the pane's working directory at cwdColumn, @claude_notice at
+// noticeColumn and @tl_browser at browserColumn, the last four columns before
+// pane_title, spliced for the reason rowCreated gives. EMPTY is what every
+// session reports until its Claude next sees a prompt or finishes a turn, the
+// directory is left empty, as a dead pane reports it, and so are the notice
+// and the browser, which most sessions never send or open.
 func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+3)
+	out := make([]string, 0, len(cols)+4)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity, "", "")
+	out = append(out, activity, "", "", "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
 }
@@ -154,6 +154,21 @@ func TestParseSessionsReadsTheWorkingDirectory(t *testing.T) {
 	}
 	if got[0].Cwd != "/home/wizard/qa/rd1" || got[0].PaneTitle != "t" {
 		t.Fatalf("Cwd %q, PaneTitle %q", got[0].Cwd, got[0].PaneTitle)
+	}
+}
+
+// The push sender reads Claude's newest PushNotification message off the
+// session list, decoded from the JSON-escaped text the hook stores.
+func TestParseSessionsReadsTheNotice(t *testing.T) {
+	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
+	cols := strings.Split(line, listSep)
+	cols[noticeColumn] = `1800000200 build \"auth\" failed`
+	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+	if len(got) != 1 {
+		t.Fatalf("parsed %d rows, want 1", len(got))
+	}
+	if want := (sessionio.Notice{At: 1800000200, Text: `build "auth" failed`}); got[0].Notice != want || got[0].PaneTitle != "t" {
+		t.Fatalf("Notice %+v, PaneTitle %q", got[0].Notice, got[0].PaneTitle)
 	}
 }
 

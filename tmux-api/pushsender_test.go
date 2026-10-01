@@ -21,6 +21,7 @@ import (
 
 	webpush "github.com/SherClockHolmes/webpush-go"
 
+	"terminal-lobby/sessionio"
 	"terminal-lobby/slug"
 )
 
@@ -72,12 +73,13 @@ func genSubKeys(t *testing.T) pushKeys {
 // snapshot never aliases what the next tick reads (aliasing would erase the
 // very transition the edge detector looks for).
 type stubStater struct {
-	mu     sync.Mutex
-	m      map[string]string
-	titles map[string]string
-	act    map[string]int64
-	system map[string]bool
-	tools  map[string]string
+	mu      sync.Mutex
+	m       map[string]string
+	titles  map[string]string
+	act     map[string]int64
+	system  map[string]bool
+	tools   map[string]string
+	notices map[string]sessionio.Notice
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -92,7 +94,13 @@ func (s *stubStater) setTitles(m map[string]string) {
 	s.titles = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string) {
+func (s *stubStater) setNotices(m map[string]sessionio.Notice) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notices = m
+}
+
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]sessionio.Notice) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
@@ -115,7 +123,11 @@ func (s *stubStater) read(string) (map[string]string, map[string]string, map[str
 	for k, v := range s.tools {
 		tools[k] = v
 	}
-	return cp, titles, act, system, tools
+	notices := make(map[string]sessionio.Notice, len(s.notices))
+	for k, v := range s.notices {
+		notices[k] = v
+	}
+	return cp, titles, act, system, tools, notices
 }
 
 func (s *stubStater) setAct(m map[string]int64) {
