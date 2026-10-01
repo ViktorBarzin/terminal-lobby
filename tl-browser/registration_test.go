@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"net"
 	"os"
@@ -29,6 +30,9 @@ func (f *fakeTmux) run(args ...string) (string, error) {
 		return v + "\n", nil
 	case len(args) == 5 && args[0] == "set-option" && args[1] == "-u":
 		delete(f.opts, args[4])
+		return "", nil
+	case len(args) == 5 && args[0] == "set-option" && args[1] == "-t":
+		f.opts[args[3]] = args[4]
 		return "", nil
 	}
 	return "", errors.New("unexpected tmux call: " + strings.Join(args, " "))
@@ -232,5 +236,109 @@ func TestSocketNameMatchesTheHost(t *testing.T) {
 		if got := socketName(c.session, 77); got != c.want {
 			t.Errorf("socketName(%q) = %q, want %q", c.session, got, c.want)
 		}
+	}
+}
+
+// helloHost is a live host's viewer socket: it answers a connection's first
+// line with a host hello in the given state, and records the hello it got.
+func helloHost(t *testing.T, path, state string) chan string {
+	t.Helper()
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	got := make(chan string, 8)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				line, err := bufio.NewReader(c).ReadString('\n')
+				if err != nil {
+					return
+				}
+				got <- strings.TrimSpace(line)
+				c.Write([]byte(`{"t":"hello","state":"` + state + `","tabs":[],"agentTab":null}` + "\n"))
+			}()
+		}
+	}()
+	return got
+}
+
+func TestClearHandsTheOptionsToTheSessionsOtherLiveHost(t *testing.T) {
+	// Two Claudes in one tmux session. The host that registered last exited,
+	// cleanly (it unset the options itself) or killed (its socket is stale).
+	// The first host is still serving, so the options go back to it, in its
+	// own state, rather than leaving a running browser the lobby cannot see.
+	for _, c := range []struct {
+		name   string
+		killed bool
+	}{{"clean exit", false}, {"killed", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			tm := &fakeTmux{sessionID: "$12", opts: map[string]string{}}
+			r, dir := newRegistration(t, tm)
+			first := filepath.Join(dir, "s12.sock")
+			hellos := helloHost(t, first, "frozen")
+			if c.killed {
+				mine := filepath.Join(dir, "s12-4242.sock")
+				staleSocket(t, mine)
+				tm.opts["@tl_browser"] = "live"
+				tm.opts["@tl_browser_sock"] = mine
+			}
+
+			r.Clear(4242)
+
+			if tm.opts["@tl_browser_sock"] != first || tm.opts["@tl_browser"] != "frozen" {
+				t.Fatalf("options %v, want the first host's socket in its state", tm.opts)
+			}
+			// Asking its state must not let the launcher drive it.
+			select {
+			case h := <-hellos:
+				if !strings.Contains(h, `"canControl":false`) {
+					t.Errorf("hello %s, want a watch-only one", h)
+				}
+			default:
+				t.Error("the other host was never asked its state")
+			}
+		})
+	}
+}
+
+func TestClearHandsOverToASecondHostsSocketName(t *testing.T) {
+	// The first host was the one that registered last and exited; the one
+	// still serving took s12-<pid>.sock.
+	tm := &fakeTmux{sessionID: "$12", opts: map[string]string{}}
+	r, dir := newRegistration(t, tm)
+	mine := filepath.Join(dir, "s12.sock")
+	staleSocket(t, mine)
+	tm.opts["@tl_browser"] = "live"
+	tm.opts["@tl_browser_sock"] = mine
+	other := filepath.Join(dir, "s12-5151.sock")
+	helloHost(t, other, "live")
+
+	r.Clear(4242)
+
+	if tm.opts["@tl_browser_sock"] != other || tm.opts["@tl_browser"] != "live" {
+		t.Fatalf("options %v, want %s live", tm.opts, other)
+	}
+}
+
+func TestClearHandsOverOnlyToThisSessionsHosts(t *testing.T) {
+	tm := &fakeTmux{sessionID: "$12", opts: map[string]string{}}
+	r, dir := newRegistration(t, tm)
+	helloHost(t, filepath.Join(dir, "s120.sock"), "live")
+	helloHost(t, filepath.Join(dir, "s1.sock"), "live")
+	helloHost(t, filepath.Join(dir, "s12-x.sock"), "live")
+	// A socket that accepts but is not a host answering a hello.
+	liveSocket(t, filepath.Join(dir, "s12-6161.sock"))
+
+	r.Clear(4242)
+
+	if len(tm.opts) != 0 {
+		t.Fatalf("options %v, want none: no other host of this session answers", tm.opts)
 	}
 }

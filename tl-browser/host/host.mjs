@@ -27,7 +27,7 @@ import { Control } from "./lib/control.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
 import { LineSplitter, normalizeUrl, socketDir, socketName } from "./lib/protocol.mjs";
-import { OPT_SOCK, OPT_STATE, TmuxRegistration } from "./lib/tmux.mjs";
+import { TmuxRegistration } from "./lib/tmux.mjs";
 import { ViewerServer } from "./lib/viewers.mjs";
 
 /**
@@ -249,8 +249,7 @@ async function serve() {
     try {
       const name = socketName(await tmux.sessionId(), process.pid);
       const sock = await viewers.listen(socketDir(env, process.getuid?.() ?? 0), name);
-      await tmux.set(OPT_SOCK, sock);
-      await tmux.set(OPT_STATE, "live");
+      await tmux.register(sock);
     } catch (err) {
       // The browser still works for the agent; only the lobby cannot see it.
       log(`viewer socket: ${err instanceof Error ? err.message : String(err)}`);
@@ -262,7 +261,7 @@ async function serve() {
   function wake() {
     if (!idle.thaw() || !session) return;
     session.thaw();
-    void tmux.set(OPT_STATE, "live");
+    void tmux.setState("live");
     viewers.broadcast({ t: "state", state: "live" });
   }
 
@@ -274,7 +273,7 @@ async function serve() {
     const due = idle.check(busy);
     if (due === "freeze") {
       session.freeze();
-      void tmux.set(OPT_STATE, "frozen");
+      void tmux.setState("frozen");
       viewers.broadcast({ t: "state", state: "frozen" });
     } else if (due === "close") {
       log("closing a browser left frozen");

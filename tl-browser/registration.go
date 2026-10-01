@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"os/exec"
@@ -22,6 +24,12 @@ import (
 // launcher clears the same things again. Nothing it removes can belong to a
 // live host: a socket is removed only when nothing accepts on it, and the
 // options only when the socket they name is dead.
+//
+// The options are the session's, not one host's, and two Claudes in one tmux
+// session each run a host: the second listens on s<N>-<pid>.sock and writes
+// the options last. When the host that exits held them, and the other host is
+// still serving, the options are handed to that host rather than cleared, so
+// its browser stays visible in the lobby.
 
 const (
 	optBrowser     = "@tl_browser"
@@ -72,9 +80,86 @@ func (r Registration) Clear(hostPid int) {
 	if sock != "" && filepath.Dir(sock) == dir {
 		removeStaleSocket(sock)
 	}
+	if sessionID != "" && r.handOver(pane, dir, name) {
+		return
+	}
 	for _, opt := range []string{optBrowser, optBrowserSock} {
 		_, _ = r.Tmux("set-option", "-u", "-t", pane, opt)
 	}
+}
+
+// handOver points the session's options at another live host of the same
+// session, in the state that host reports, and says whether it found one.
+func (r Registration) handOver(pane, dir, name string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.Type()&os.ModeSocket == 0 || !sessionSocketName(e.Name(), name) {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		state, ok := hostState(path)
+		if !ok {
+			continue
+		}
+		_, _ = r.Tmux("set-option", "-t", pane, optBrowserSock, path)
+		_, _ = r.Tmux("set-option", "-t", pane, optBrowser, state)
+		return true
+	}
+	return false
+}
+
+// sessionSocketName reports whether file is one of the names a host of the
+// session called name listens on: <name>.sock, or <name>-<pid>.sock.
+func sessionSocketName(file, name string) bool {
+	if file == name+".sock" {
+		return true
+	}
+	pid, ok := strings.CutPrefix(file, name+"-")
+	if !ok {
+		return false
+	}
+	pid, ok = strings.CutSuffix(pid, ".sock")
+	if !ok || pid == "" {
+		return false
+	}
+	for _, c := range pid {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// hostState asks the host on path for its state the way the lobby's state
+// route does: a watch-only viewer hello, then the host's own hello. Only a
+// host that answers with live or frozen counts.
+func hostState(path string) (string, bool) {
+	c, err := net.DialTimeout("unix", path, time.Second)
+	if err != nil {
+		return "", false
+	}
+	defer c.Close()
+	_ = c.SetDeadline(time.Now().Add(2 * time.Second))
+	// The user is only shown when a viewer takes control, which a watch-only
+	// connection cannot.
+	if _, err := c.Write([]byte(`{"t":"hello","user":"tl-browser","canControl":false}` + "\n")); err != nil {
+		return "", false
+	}
+	line, err := bufio.NewReader(c).ReadBytes('\n')
+	if err != nil {
+		return "", false
+	}
+	var h struct {
+		T     string `json:"t"`
+		State string `json:"state"`
+	}
+	if json.Unmarshal(line, &h) != nil || h.T != "hello" || (h.State != "live" && h.State != "frozen") {
+		return "", false
+	}
+	return h.State, true
 }
 
 // runTmux runs one tmux command with the host's environment, so it reaches the
