@@ -38,3 +38,7 @@ Design: [See the browser a session is driving](../plans/2026-10-01-session-brows
 - A session that never browses costs a few MB. One that browses pays for Node
   and Chrome until the agent calls `browser_close` or the browser has been
   frozen for 2 hours.
+- A `homelab browser` pool run is shown through the same host in attach mode,
+  so the lobby has one viewer for both. The pool stays the browser for sites
+  that block headless Chrome, not every session's default: it has 6 workers for
+  the cluster and a 1-hour limit per pod.
