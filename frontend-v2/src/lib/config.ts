@@ -148,6 +148,21 @@ export function cancelUrl(session: string): string {
 }
 
 /**
+ * WebSocket for a session's browser (session-events, design
+ * 2026-10-01-session-browser-design.md): the viewer protocol, one JSON message
+ * per text frame, relayed to the browser host's socket. An http(s) path like
+ * every other builder here; the stream client swaps the scheme.
+ *
+ * `owner` names whose session it is when that is somebody else (a share), so
+ * the relay knows whose runtime directory holds the socket. Absent for your
+ * own sessions, which is every session outside a share.
+ */
+export function browserStreamUrl(session: string, owner?: string): string {
+  const path = `${API_BASE}/browser/${encodeURIComponent(session)}/stream`;
+  return withActAs(owner ? `${path}?owner=${encodeURIComponent(owner)}` : path);
+}
+
+/**
  * POST target that types an answer into the session's pane (session-events).
  * Body: {keys:[…]}. The server allowlists the keys — this is how the text view
  * answers a blocking prompt (ADR-0010).

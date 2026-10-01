@@ -156,6 +156,11 @@ export interface Session {
   owner?: string;
   /** For a foreign session, how the caller may attach it. Empty for own sessions. */
   access?: AttachAccess | "";
+  /** The session's browser (tmux-api reads its `@tl_browser`): `live` while
+   *  it runs, `frozen` while it sits paused after ten idle minutes. Absent
+   *  when the session has no browser open, and from a server that predates the
+   *  field (docs/plans/2026-10-01-session-browser-design.md). */
+  browser?: "live" | "frozen";
   pane_current_command?: string;
   pane_title?: string;
   /** Which command the session runs; drives the sidebar tool mark. */

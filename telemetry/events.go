@@ -189,6 +189,13 @@ var knownEvents = map[string]bool{
 	"file.edit_opened": true,
 	"file.saved":       true,
 
+	// -- the session browser, as the lobby sees it -------------------------
+	// Browser-emitted (v2 lobby, docs/plans/2026-10-01-session-browser-design.md).
+	// Never a URL or anything from the page.
+	"browser.panel_open":   true, // the Browser panel opened (tl.kind = card|bar, tl.to = text|terminal)
+	"browser.take_control": true, // a person took control from the agent
+	"browser.hand_back":    true, // ...and handed it back (tl.ms = how long they held it)
+
 	// -- terminal surface ---------------------------------------------------
 	"terminal.copied": true,
 	"terminal.pasted": true,

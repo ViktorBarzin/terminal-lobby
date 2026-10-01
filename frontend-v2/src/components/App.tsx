@@ -2880,6 +2880,11 @@ export const App: Component = () => {
                       // rows in one list.
                       suspended={() => tileSession()?.state === SUSPENDED}
                       resume={() => store.resume(k.name)}
+                      // The session's browser, and how far this caller may
+                      // drive it. BY KEY, through `tileSession`, for the
+                      // reason that lookup exists.
+                      browser={() => tileSession()?.browser}
+                      access={() => tileSession()?.access}
                       // THE SESSION'S OWN WINDOW SIZE, for a tile that is
                       // WATCHING: it never claims the Grid, so this is the only
                       // thing that can tell its terminal how big the session it

@@ -7633,3 +7633,333 @@ body.tl-kb-up {
   flex: 0 0 auto;
   white-space: nowrap;
 }
+
+/* ---- the session browser (docs/plans/2026-10-01-session-browser-design.md)
+   The Browser card wears the work group's box, so a run reads as part of the
+   conversation's work rather than as a message. The Browser panel takes the
+   right of the session's pane: the views give it the room (`.tl-browser-split`
+   moves their right edge), so the terminal refits beside it rather than under
+   it. On a phone the panel is the whole screen. */
+.tl-row-browser {
+  display: flex;
+  flex-direction: column;
+}
+.tl-browser-card {
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-card) 70%, transparent);
+  overflow: hidden;
+}
+.tl-browser-card[data-live] {
+  border-color: color-mix(in srgb, var(--state-running) 45%, var(--border-strong));
+}
+.tl-browser-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  color: var(--text-primary);
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  line-height: 18px;
+}
+.tl-browser-card-head svg {
+  flex: none;
+  color: var(--text-muted);
+}
+.tl-browser-card-title {
+  flex: none;
+  font-weight: 600;
+}
+.tl-browser-card-sum {
+  min-width: 0;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A current run's dot is the running colour; a finished one keeps the
+   group's done colour. */
+.tl-group-dot[data-status="live"] {
+  background: var(--state-running);
+}
+.tl-browser-card-shot {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: var(--bg-page);
+  cursor: pointer;
+}
+.tl-browser-card-shot:disabled {
+  cursor: default;
+}
+.tl-browser-card-shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 360px;
+  aspect-ratio: 16 / 10;
+  object-fit: contain;
+}
+.tl-browser-card-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+}
+
+/* The bar's browser button: the live dot says it is running, a grey one that
+   it is Frozen. */
+.tl-browser-indicator.on {
+  background: var(--hover-tint);
+}
+.tl-browser-indicator-dot {
+  position: absolute;
+  top: 6px;
+  right: 9px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-running);
+}
+.tl-browser-indicator[data-state="frozen"] .tl-browser-indicator-dot {
+  background: var(--text-muted);
+}
+
+.tl-views {
+  --tl-browser-w: clamp(360px, 50%, 1100px);
+}
+.tl-views.tl-browser-split > .tl-view {
+  right: var(--tl-browser-w);
+}
+.tl-browser-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  width: var(--tl-browser-w);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border);
+  font-family: var(--font-ui);
+}
+/* z 64: over the session bar and the soft keys, under the gallery (66) and
+   everything stacked above it. */
+.tl-browser-panel[data-phone] {
+  position: fixed;
+  inset: 0;
+  z-index: 64;
+  width: auto;
+  border-left: 0;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: var(--safe-b, 0px);
+}
+.tl-browser-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-browser-head > svg {
+  flex: none;
+  color: var(--text-muted);
+}
+.tl-browser-titles {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.tl-browser-title {
+  font-weight: 600;
+  font-size: calc(13.5px * var(--tl-text-scale, 1));
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-browser-url {
+  font-family: var(--font-mono);
+  font-size: calc(11.5px * var(--tl-text-scale, 1));
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tl-browser-stop,
+.tl-browser-take,
+.tl-browser-close {
+  flex: none;
+}
+.tl-browser-take:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.tl-browser-close {
+  min-width: 32px;
+  min-height: 32px;
+}
+.tl-browser-note {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--state-awaiting) 14%, transparent);
+  color: var(--text-primary);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-browser-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tl-browser-tab {
+  flex: 0 1 180px;
+  min-width: 80px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  text-align: left;
+  cursor: pointer;
+}
+.tl-browser-tab[aria-selected="true"] {
+  background: var(--bg-page);
+  color: var(--text-primary);
+}
+.tl-browser-tab-label {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The tab the agent last acted on. */
+.tl-browser-tab[data-agent] .tl-browser-tab-label::before {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--state-running);
+  vertical-align: middle;
+}
+.tl-browser-urlbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.tl-browser-urlbar .tl-icon-btn {
+  display: grid;
+  place-items: center;
+  min-width: 30px;
+  min-height: 30px;
+}
+.tl-browser-urlbar .tl-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tl-browser-address {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin-left: 4px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-page);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+}
+.tl-browser-address:read-only {
+  color: var(--text-muted);
+}
+.tl-browser-address:focus {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+/* The page. Scrolls only once a pinch has zoomed it past the stage; a single
+   finger then pans, and two fingers are left to the panel's own pinch. */
+.tl-browser-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y;
+  background: var(--bg-page);
+  outline: none;
+}
+.tl-browser-stage[data-control] {
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.tl-browser-stage:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.tl-browser-canvas {
+  min-width: 100%;
+  min-height: 100%;
+}
+/* No pointer events of its own: the stage takes every press, and the picture
+   is only where `pagePoint` reads the drawn box from. */
+.tl-browser-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tl-browser-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-muted);
+  font-size: calc(13px * var(--tl-text-scale, 1));
+  text-align: center;
+  pointer-events: none;
+}
+.tl-browser-error {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: calc(12.5px * var(--tl-text-scale, 1));
+  pointer-events: none;
+}
+/* The phone's typing target: on screen, so a focus raises the keyboard, and
+   at 16px so iOS does not zoom the page to it. */
+.tl-browser-ime {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  font-size: 16px;
+}

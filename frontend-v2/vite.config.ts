@@ -115,6 +115,20 @@ const proxy: Record<string, ProxyOptions> = {
   // which is exactly why the order is written down rather than left to luck.
   "/answer": sessionEventsProxy,
   "/model": sessionEventsProxy,
+  // The session browser's viewer stream is a WebSocket (GET
+  // /browser/<session>/stream), so this one prefix forwards upgrades too. The
+  // identity header rides the upgrade through `proxyReqWs`, as it does for ttyd.
+  "/browser": {
+    target: SESSION_EVENTS,
+    changeOrigin: true,
+    ws: true,
+    // session-events refuses a stream whose Origin does not name the host it
+    // was asked on (a page elsewhere must not drive the browser), and
+    // changeOrigin rewrites Host to the backend. X-Forwarded-Host carries the
+    // dev server's own host, which is what the Origin names.
+    xfwd: true,
+    configure: injectAuth,
+  },
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole
   // /api/sessions prefix, mirroring the PROD ingress `PathPrefix /api/sessions/`).
   // Covers whoami/sessions/layout/dirs/prefs/projects/users/shares AND Web Push

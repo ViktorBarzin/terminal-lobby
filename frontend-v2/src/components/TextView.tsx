@@ -68,6 +68,7 @@ import {
   type PlanNotice,
   type PlanSending,
 } from "./plan.logic";
+import type { BrowserCardHost } from "./BrowserCard";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork, ClaudeState, SessionTool } from "../types/lobby";
@@ -422,6 +423,9 @@ export const TextView: Component<{
   /** The session's stream is parked while nobody reads it. An agent's
    *  transcript open in the drill-in parks with it. */
   parked?: boolean;
+  /** The session's browser, for the Browser cards in the conversation.
+   *  Absent, the conversation draws none. */
+  browser?: BrowserCardHost;
   /** fetch a capped tool result in full. */
   onLoadFull?: (toolId: string) => Promise<string | null>;
   /** take one step further back through the transcript. */
@@ -2142,6 +2146,7 @@ export const TextView: Component<{
           registerToEnd={(fn) => {
             toEnd = fn;
           }}
+          browser={props.browser}
         />
         <Show when={drill()} keyed>
           {(id) => (

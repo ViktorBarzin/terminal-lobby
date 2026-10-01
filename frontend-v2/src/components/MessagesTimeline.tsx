@@ -63,6 +63,8 @@ import {
   WorkGroupRowView,
   WorkingRowView,
 } from "./rows";
+import { browsingRuns, cardAnchors, type BrowsingRun } from "./browser.logic";
+import { BrowserCard, type BrowserCardHost } from "./BrowserCard";
 
 const USER_COLLAPSE_CHARS = 600;
 
@@ -448,11 +450,33 @@ export const MessagesTimeline: Component<{
   /** Hands the owner the call that brings the reader to the latest message
    *  and pins the view there: what "Latest" does when pressed. */
   registerToEnd?: (toEnd: () => void) => void;
+  /**
+   * The session's browser, for a Browser card after each Browsing run
+   * (BrowserCard.tsx). Absent, no card is drawn: the drill-in, the tests, and
+   * any caller with no session to stream from.
+   */
+  browser?: BrowserCardHost;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
   const derived = createMemo<TimelineRow[]>(() => props.rows ?? deriveRows(props.events));
   const rows = createMemo<TimelineRow[]>(() => visibleRows(derived(), expandedTurns()));
+  /**
+   * The Browsing runs, and which row each run's card is drawn after.
+   *
+   * Read off the DERIVED rows, where every call appears once; an opened fold
+   * lists its hidden rows again. The card is placed by key and handed its run
+   * by key, so a stream event that re-derives every row object does not
+   * remount a card, and a live card keeps its connection while its run grows.
+   */
+  const runs = createMemo<BrowsingRun[]>(() => (props.browser ? browsingRuns(derived()) : []));
+  const runByKey = createMemo(() => new Map(runs().map((r) => [r.key, r])));
+  // Compared by content: the map is rebuilt on every event, and each row reads
+  // it, so a fresh-but-equal map must not wake every mounted row. It changes
+  // only when a run starts or a turn folds over one.
+  const anchors = createMemo(() => cardAnchors(runs(), rows()), new Map<string, string[]>(), {
+    equals: (a, b) => a.size === b.size && [...a].every(([k, v]) => sameKeys(v, b.get(k) ?? [])),
+  });
 
   /**
    * The rows indexed by a render key, unique even if an event id repeats.
@@ -811,8 +835,24 @@ export const MessagesTimeline: Component<{
     }
   }, "");
 
+  /** A row, then the Browser card of any run it anchors (`anchors`). */
   const renderRow = (key: string): JSX.Element => {
     const row = rowAt(key);
+    const view = renderRowView(row);
+    const host = props.browser;
+    if (!host) return view;
+    const cards = createMemo(() => anchors().get(row().key) ?? [], [], { equals: sameKeys });
+    return (
+      <>
+        {view}
+        <For each={cards()}>
+          {(runKey) => <BrowserCard run={() => runByKey().get(runKey)} host={host} />}
+        </For>
+      </>
+    );
+  };
+
+  const renderRowView = (row: Accessor<TimelineRow>): JSX.Element => {
     switch (row().kind) {
       case "user":
         return (

@@ -109,7 +109,7 @@ without CORS (`vite.config.ts`):
 
 | Prefix | Target | Mapping |
 |---|---|---|
-| `/events`, `/prompt`, `/cancel`, `/earlier`, `/result`, `/pane`, `/keys`, `/commands`, `/search`, `/answer-text`, `/answer`, `/model` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root. The list is the prod IngressRoute's, prefix for prefix; a prefix missing here reaches ttyd's `location /` and answers 200 with the SPA's own index.html, so `res.json()` throws and the caller's catch returns an empty fallback with nothing logged |
+| `/events`, `/prompt`, `/cancel`, `/earlier`, `/result`, `/pane`, `/keys`, `/commands`, `/search`, `/answer-text`, `/answer`, `/model`, `/browser` | **session-events** (`TL_SESSION_EVENTS`, default `http://127.0.0.1:7685`) | verbatim — the service serves these at its root. The list is the prod IngressRoute's, prefix for prefix; a prefix missing here reaches ttyd's `location /` and answers 200 with the SPA's own index.html, so `res.json()` throws and the caller's catch returns an empty fallback with nothing logged. `/browser` also forwards WebSocket upgrades: it carries the session browser's viewer stream |
 | `/api/sessions` | **tmux-api** (`TL_TMUX_API`, default `:7684`) | strips the whole prefix |
 | `/clipboard` | **clipboard-upload** (`TL_CLIPBOARD_UPLOAD`, default `:7683`) | strips the prefix |
 | `/files` | **file-api** (`TL_FILE_API`, default `:7686`) | verbatim — its own routes carry `/files` |
@@ -231,6 +231,11 @@ src/
                          server; its first title renames it (ADR-0022). Mirrored
                          by tmux-api/sessionid.go, which the one-time migration
                          reads to tell a migrated session from a named one
+    browser-stream.ts    The lobby's end of a Session browser's viewer stream:
+                         a WebSocket to session-events' /browser/<session>/
+                         stream that connects only while somebody can see the
+                         picture, never wakes a Frozen browser for a card, and
+                         keeps each card's last frame in memory (2026-10-01)
     file-api.ts          file-api client (list/read/write; maps 404/413/400).
                          contentUrl() re-exports the resolver below, so a read
                          of a clipboard-store path goes to clipboard-upload
@@ -921,6 +926,15 @@ src/
                          — no `permission_request` can arrive (header comment)
     Gallery.tsx          Session image-gallery overlay + shared lightbox
     FilePreview.tsx      File-preview overlay (markdown/HTML/image/code/binary)
+    BrowserCard.tsx      The Browser card: one per Browsing run in the Text
+                         view, live while the run is current, then the last
+                         frame it held, and "Open browser"
+    BrowserPanel.tsx     The Browser panel: the session's browser beside its
+                         chat or terminal (full screen on a phone), with tabs,
+                         an address bar, Stop, and Take control / Hand back
+    browser.logic.ts     PURE Browsing runs off the derived rows, where each
+                         card sits, what its header says, a press on the scaled
+                         page in page pixels, and when frames may flow
     CodeView.tsx         Read-only highlighted code (lazy highlight.js)
     CodeEditor.tsx       CodeMirror 6 host (uncontrolled; onChange/onSave)
     codemirror-view.ts   The lazy-imported EditorView factory

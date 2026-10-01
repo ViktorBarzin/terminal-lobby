@@ -283,3 +283,29 @@ export const DotsGlyph: Component = () => (
     <circle cx="15.5" cy="10" r="1.3" />
   </svg>
 );
+
+/** The session browser: a window with a toolbar and two dots, in the header's
+ *  20-box and stroke. On the session bar, the Browser card and the panel. */
+export const BrowserGlyph: Component<{ size?: number }> = (props) => (
+  <Glyph box="0 0 20 20" size={props.size ?? 20}>
+    <rect x="2.5" y="3.5" width="15" height="13" rx="2.4" />
+    <path d="M2.5 7.5h15M5.2 5.5h.01M7.4 5.5h.01" />
+  </Glyph>
+);
+
+/** The panel's back, forward and reload, in the 16-box the chevrons use. */
+export const ArrowLeftGlyph: Component = () => (
+  <Glyph box="0 0 16 16" size={16}>
+    <path d="M13 8H3.5M7.5 4 3.5 8l4 4" />
+  </Glyph>
+);
+export const ArrowRightGlyph: Component = () => (
+  <Glyph box="0 0 16 16" size={16}>
+    <path d="M3 8h9.5M8.5 4l4 4-4 4" />
+  </Glyph>
+);
+export const ReloadGlyph: Component = () => (
+  <Glyph box="0 0 16 16" size={16}>
+    <path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v3h-3" />
+  </Glyph>
+);

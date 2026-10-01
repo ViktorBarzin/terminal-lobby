@@ -32,13 +32,20 @@ import { FindInSession } from "./FindInSession";
 import { isLoaded, MAX_JUMP_STEPS } from "./find.logic";
 import { createPreviewStore } from "../store/preview";
 import { SoftKeys } from "./SoftKeys";
-import { createCoarsePointer } from "../mobile/pointer";
+import { createCoarsePointer, createMobileFlip } from "../mobile/pointer";
 import { createDismissableMenu, stopMenuActivationKey, stopMenuClick } from "./menu";
 import { dismissOnPress } from "./overlay";
 import { installImageClipboard, type TileBox } from "../clipboard/attach";
 import { pasteIntoTerminal } from "../clipboard/paste-into-terminal";
 import { ownWhile, TileFocusContext } from "../lib/ownwhile";
-import { CameraIcon, ClipboardIcon, DotsGlyph, TerminalGlyph, TextGlyph } from "./Icons";
+import {
+  BrowserGlyph,
+  CameraIcon,
+  ClipboardIcon,
+  DotsGlyph,
+  TerminalGlyph,
+  TextGlyph,
+} from "./Icons";
 import { headerSubtitle } from "./header.logic";
 import { clampFontSize, type PrefsStore } from "../store/prefs";
 import { listDir as fileList } from "../lib/file-api";
@@ -51,12 +58,22 @@ import { terminalFrameArgs } from "../lib/terminal-url";
 import { setSessionGrid } from "../lib/lobby-api";
 import { refocusTerminal } from "../keybindings/refocus";
 import { SESSION_CHANNELS, type Channel, type TerminalReport } from "../diagnostics/status";
-import type { BackgroundWork, ClaudeState, PiStamp, SessionTool } from "../types/lobby";
+import type {
+  AttachAccess,
+  BackgroundWork,
+  ClaudeState,
+  PiStamp,
+  SessionTool,
+} from "../types/lobby";
 import { modelHarness, piLevels, type ModelState, type PiOffer } from "../lib/models";
 import { setSessionModel } from "../lib/model-api";
 import { setSessionMode } from "../lib/mode-api";
 import { ensurePiModels, piModels } from "../lib/pi-models";
 import { sendWaking } from "../store/wake-send";
+import { BrowserPanel } from "./BrowserPanel";
+import type { BrowserCardHost } from "./BrowserCard";
+import type { BrowserState } from "../lib/browser-stream";
+import { track } from "../telemetry/track";
 
 /**
  * The per-session two-view surface (text + terminal), extracted from the old
@@ -222,6 +239,14 @@ export const SessionView: Component<{
    *  and is remembered under this user rather than against your own session of
    *  the same name. */
   lens?: () => string;
+  /** The session's browser, from the session list (tmux-api reads the
+   *  session's `@tl_browser`): live, frozen, or absent when it has none. It
+   *  draws the bar's browser button and lets a Browser card offer the panel.
+   *  Absent on callers with no list, where no browser is ever shown. */
+  browser?: () => BrowserState | undefined;
+  /** How the caller may attach someone else's session, from the session list.
+   *  A ro share only watches its browser; empty or absent for your own. */
+  access?: () => AttachAccess | "" | undefined;
   /** current roamed newCommand key, for a newly-created session's terminal. */
   newCommand?: () => string;
   /** The model and effort a NEWLY-CREATED session launches on, as flags on the
@@ -1119,6 +1144,33 @@ export const SessionView: Component<{
   // contract belongs to the sidebar's menus, whose list a poll can rebuild
   // underneath them.
   const barMenu = createDismissableMenu(() => () => {});
+
+  // ---- the session browser (design 2026-10-01-session-browser-design.md) ---
+  //
+  // The Browser panel opens inside this session's own pane, beside whichever
+  // view shows, and only when somebody opens it: from a Browser card in the
+  // conversation, or from the bar's browser button.
+  const flip = createMobileFlip();
+  const [browserOpen, setBrowserOpen] = createSignal(false);
+  const openBrowser = (from: "card" | "bar"): void => {
+    if (browserOpen()) return;
+    setBrowserOpen(true);
+    track("browser.panel_open", { "tl.kind": from, "tl.to": mode() });
+  };
+  /** Somebody else's session: the relay finds its socket under their user. */
+  const browserOwner = (): string | undefined =>
+    props.owner && props.owner !== props.me?.() ? props.owner : undefined;
+  /** Who may drive the browser follows Attach mode: a Lens and a ro share only
+   *  watch. session-events enforces it; this only hides what would not work. */
+  const canControlBrowser = (): boolean => !lens() && props.access?.() !== "ro";
+  const browserCards: BrowserCardHost = {
+    session,
+    owner: browserOwner(),
+    state: () => props.browser?.(),
+    active: () => onScreen() && mode() === "text" && !store.parked(),
+    onOpen: () => openBrowser("card"),
+  };
+
   /** What the Text view's conversation says the session is doing, while it
    *  is on screen (TextView onLiveState). */
   const [textLive, setTextLive] = createSignal<"running" | "awaiting" | "done" | undefined>();
@@ -1532,6 +1584,29 @@ export const SessionView: Component<{
               place, and the Text icon carries the conversation's unseen dot.
               setMode is what records the view.switched telemetry. */}
             <div class="tl-bar-group">
+              {/* The session's browser, while it has one (the session list's
+                `browser`). Opens the panel; pressed again, closes it. */}
+              <Show when={props.browser?.()}>
+                {(state) => (
+                  <button
+                    type="button"
+                    class="tl-bar-group-btn tl-browser-indicator"
+                    classList={{ on: browserOpen() }}
+                    data-state={state()}
+                    aria-pressed={browserOpen()}
+                    aria-label={state() === "frozen" ? "Browser (paused)" : "Browser"}
+                    title={
+                      state() === "frozen"
+                        ? "This session's browser, paused while idle. Opening it wakes it"
+                        : "This session's browser"
+                    }
+                    onClick={() => (browserOpen() ? setBrowserOpen(false) : openBrowser("bar"))}
+                  >
+                    <BrowserGlyph />
+                    <span class="tl-browser-indicator-dot" aria-hidden="true" />
+                  </button>
+                )}
+              </Show>
               <button
                 type="button"
                 class="tl-bar-group-btn tl-view-toggle"
@@ -1662,7 +1737,13 @@ export const SessionView: Component<{
           terminal/viewport.ts), so the terminal never moves out from under the
           tap that opened the keyboard. The Text view keeps the reservation: its
           composer is out here. */}
-      <main class="tl-views" classList={{ "tl-kb-inline": mode() === "terminal" }}>
+      <main
+        class="tl-views"
+        classList={{
+          "tl-kb-inline": mode() === "terminal",
+          "tl-browser-split": browserOpen() && !flip(),
+        }}
+      >
         <section
           class="tl-view"
           classList={{ "tl-hidden": mode() !== "text" }}
@@ -1726,6 +1807,7 @@ export const SessionView: Component<{
             // watching.
             onTakeControl={() => toggleWatch()}
             register={(api) => (composer = api)}
+            browser={browserCards}
           />
         </section>
         <section
@@ -1847,6 +1929,20 @@ export const SessionView: Component<{
             />
           </Show>
         </section>
+        {/* Beside the view on a desktop, the view giving up the right of the
+            pane (`.tl-browser-split`); over the whole screen on a phone. */}
+        <Show when={browserOpen()}>
+          <BrowserPanel
+            session={session}
+            owner={browserOwner()}
+            state={() => props.browser?.()}
+            active={() => onScreen() && !store.parked()}
+            canControl={canControlBrowser}
+            phone={flip}
+            onStop={() => void store.interrupt()}
+            onClose={() => setBrowserOpen(false)}
+          />
+        </Show>
       </main>
 
       {/* TERMINAL view only. The keys are terminal affordances — Tab, Esc, the
