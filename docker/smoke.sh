@@ -118,6 +118,48 @@ for path in /commands/smoke /pane/smoke; do
   ok "$path reaches session-events"
 done
 
+# The session browser's viewer stream (ADR-0035) checks that the WebSocket's
+# Origin names the same host and port the request was sent to. The container is
+# reached on a published port (17681 here, 7681 by default), so this holds only
+# if nginx forwards the Host header WITH the port: nginx's $host drops it, and
+# every stream was then refused 403 while the prod ingress, which forwards Host
+# unchanged, worked.
+#
+# A session with no browser answers 404 before the origin is ever checked, so
+# the check needs a host socket to reach. Perl (perl-base, always present) plays
+# the host: it accepts, writes a hello, and holds the connection briefly.
+dev_uid=$(docker exec -u dev "$NAME" id -u)
+fake_dir="/tmp/tl-browser-$dev_uid"
+fake_sock="$fake_dir/s0.sock"
+docker exec -u dev "$NAME" sh -c "install -d -m 0700 '$fake_dir' && rm -f '$fake_sock'"
+docker exec -d -u dev "$NAME" perl -MIO::Socket::UNIX -e '
+  my $s = IO::Socket::UNIX->new(Type => SOCK_STREAM(), Local => $ARGV[0], Listen => 5) or die $!;
+  chmod 0600, $ARGV[0];
+  while (my $c = $s->accept) {
+    $c->autoflush(1);
+    print $c "{\"t\":\"hello\",\"state\":\"live\",\"tabs\":[],\"agentTab\":null,\"control\":{\"holder\":null,\"since\":null,\"lapseAt\":null},\"viewport\":{\"w\":1280,\"h\":800}}\n";
+    sleep 2; close $c;
+  }' "$fake_sock"
+for _ in $(seq 1 20); do docker exec -u dev "$NAME" test -S "$fake_sock" && break; sleep 0.25; done
+docker exec -u dev "$NAME" tmux set-option -t smoke @tl_browser live
+docker exec -u dev "$NAME" tmux set-option -t smoke @tl_browser_sock "$fake_sock"
+ws_handshake() {
+  curl -s -o /dev/null -w '%{http_code}' --max-time 3 \
+    -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    -H "Origin: $1" "http://127.0.0.1:17681/browser/smoke/stream" || true
+}
+same=$(ws_handshake "http://127.0.0.1:17681")
+other=$(ws_handshake "http://elsewhere.example:17681")
+docker exec -u dev "$NAME" tmux set-option -u -t smoke @tl_browser || true
+docker exec -u dev "$NAME" tmux set-option -u -t smoke @tl_browser_sock || true
+docker exec -u dev "$NAME" pkill -f IO::Socket::UNIX || true
+[[ "$same" == "101" ]] \
+  || fail "the browser stream from its own origin on :17681 got $same, want 101; nginx must forward Host with the port"
+[[ "$other" == "403" ]] \
+  || fail "the browser stream from a foreign origin got $other, want 403"
+ok "the browser stream opens from its own origin on a published port, and refuses a foreign one"
+
 # The services write projects, layout, titles and pasted images under /var/lib.
 # Those directories have to exist and belong to the user the services run as, or
 # every write fails and the failures are only visible in the log.

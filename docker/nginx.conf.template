@@ -34,7 +34,13 @@ server {
   proxy_send_timeout 24h;
   client_max_body_size 512m;
 
-  proxy_set_header Host $host;
+  # $http_host, not $host: $host drops the port, and the session browser's
+  # stream compares the WebSocket's Origin with Host, port included. The image
+  # is reached on a port (7681 by default), so with $host every stream was
+  # refused 403. Set for the whole server rather than in /browser/, because a
+  # proxy_set_header inside a location discards every one inherited from here,
+  # the identity header among them.
+  proxy_set_header Host $http_host;
   proxy_set_header X-Real-IP $remote_addr;
   proxy_set_header Upgrade $http_upgrade;
   proxy_set_header Connection $connection_upgrade;
