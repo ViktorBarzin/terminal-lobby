@@ -88,7 +88,10 @@ const (
 )
 
 // watchOnlyMessages are the viewer messages a watch-only connection may send:
-// choosing what to look at, and nothing that touches the page or control.
+// choosing what to look at, and nothing that touches the page or control. That
+// includes the answers to popups the host shows the person in control (choose
+// for a select's list, dialog for alert, confirm and prompt): they change the
+// page, so only a connection that may control passes them.
 // An allowlist, so a message type the host learns later is refused to a
 // watcher until someone decides otherwise here.
 var watchOnlyMessages = map[string]bool{

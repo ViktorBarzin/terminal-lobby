@@ -138,6 +138,11 @@ func TestFilterViewerMessage(t *testing.T) {
 		{"an unknown type is not a watch message", `{"t":"somethingNew"}`, false, ""},
 		{"controller clicks", `{"t":"mouse","type":"click","x":1,"y":2}`, true, `{"t":"mouse","type":"click","x":1,"y":2}`},
 		{"controller takes control", `{"t":"takeControl"}`, true, `{"t":"takeControl"}`},
+		{"controller picks from a list", `{"t":"choose","value":"b","tab":"t1"}`, true, `{"t":"choose","tab":"t1","value":"b"}`},
+		{"controller picks several", `{"t":"choose","values":["a","b"]}`, true, `{"t":"choose","values":["a","b"]}`},
+		{"controller answers a prompt", `{"t":"dialog","accept":true,"text":"Grace"}`, true, `{"accept":true,"t":"dialog","text":"Grace"}`},
+		{"watcher cannot pick several", `{"t":"choose","values":["a"]}`, false, ""},
+		{"watcher cannot dismiss a dialog", `{"t":"dialog","accept":false}`, false, ""},
 		{"nobody sends a hello", `{"t":"hello","user":"root","canControl":true}`, true, ""},
 		{"not JSON", `subscribe`, true, ""},
 		{"an array", `[{"t":"subscribe"}]`, true, ""},
@@ -558,6 +563,15 @@ func TestBrowserStreamLetsTheOwnerDrive(t *testing.T) {
 	if got := host.next(t); got != `{"button":"left","clickCount":1,"t":"mouse","type":"click","x":5,"y":6}` {
 		t.Fatalf("got %s", got)
 	}
+	// The answers to the popups the host shows the person in control.
+	c.WriteMessage(websocket.TextMessage, []byte(`{"t":"choose","value":"b"}`))
+	c.WriteMessage(websocket.TextMessage, []byte(`{"t":"dialog","accept":false}`))
+	if got := host.next(t); got != `{"t":"choose","value":"b"}` {
+		t.Fatalf("got %s, want the choice", got)
+	}
+	if got := host.next(t); got != `{"accept":false,"t":"dialog"}` {
+		t.Fatalf("got %s, want the dialog answer", got)
+	}
 }
 
 func TestBrowserStreamRWShareDrives(t *testing.T) {
@@ -631,6 +645,8 @@ func TestBrowserStreamWatchersCannotDrive(t *testing.T) {
 				`{"t":"insertText","text":"secret"}`,
 				`{"t":"navigate","url":"https://example.com"}`,
 				`{"t":"copy"}`,
+				`{"t":"choose","value":"b"}`,
+				`{"t":"dialog","accept":true,"text":"yes"}`,
 				"{\"t\":\"subscribe\"}\n{\"t\":\"takeControl\"}",
 				`{"t":"subscribe","tab":null}`,
 			} {
