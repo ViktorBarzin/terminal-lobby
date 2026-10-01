@@ -19,7 +19,9 @@ import (
 //
 // LAZY: no host. initialize, tools/list and ping are answered from the
 // handshake cache; notifications and stray responses are dropped. The first
-// other request starts a host.
+// tools/call starts a host. Any other request, such as the server/discover
+// probe Claude sends before it initializes, is answered "method not found",
+// since starting a browser to answer it would make every session pay for one.
 //
 // STARTING: the host is running but has not answered the initialize the
 // launcher replayed to it. Everything from Claude queues, in order.
@@ -272,6 +274,10 @@ func (s *state) fromClient(line []byte) {
 	case m.Method == "ping" && m.hasID():
 		s.reply(m.ID, json.RawMessage("{}"))
 	case m.Method != "" && m.hasID():
+		if s.host == nil && m.Method != "tools/call" {
+			s.replyError(m.ID, -32601, "Method not found")
+			return
+		}
 		if s.host == nil {
 			if err := s.spawn(); err != nil {
 				s.l.Log.Printf("start the browser host: %v", err)

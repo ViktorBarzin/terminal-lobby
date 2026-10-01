@@ -249,6 +249,65 @@ func TestHandshakeServedFromCacheWithoutSpawning(t *testing.T) {
 	}
 }
 
+// Claude Code probes with server/discover before it initializes, and may ask
+// for resources or prompts. None of that is worth starting a browser for.
+func TestOtherRequestsWithoutAHostAreNotFoundAndSpawnNothing(t *testing.T) {
+	h := newHarness(t)
+	writeCache(t, h.cache)
+
+	h.send(`{"jsonrpc":"2.0","id":"server-discover-probe-1","method":"server/discover"}`)
+	r := h.recv()
+	if string(r["id"]) != `"server-discover-probe-1"` {
+		t.Fatalf("server/discover reply id = %s", r["id"])
+	}
+	var e struct {
+		Code int `json:"code"`
+	}
+	if err := json.Unmarshal(r["error"], &e); err != nil || e.Code != -32601 {
+		t.Fatalf("server/discover reply = %v, want a -32601 error", r)
+	}
+
+	h.send(initLine)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","method":"notifications/initialized"}`)
+	for i, method := range []string{"resources/list", "prompts/list"} {
+		h.send(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":%q}`, 20+i, method))
+		r := h.recv()
+		e.Code = 0
+		if err := json.Unmarshal(r["error"], &e); err != nil || e.Code != -32601 {
+			t.Fatalf("%s reply = %v, want a -32601 error", method, r)
+		}
+	}
+	h.noMore()
+
+	if n := h.count("spawn"); n != 0 {
+		t.Fatalf("started %d hosts without a tool call: %q", n, h.fakeLog())
+	}
+	if len(h.spawner.argvs) != 0 {
+		t.Fatalf("spawner was asked for a host: %q", h.spawner.argvs)
+	}
+}
+
+// Once a tool call has started the host, other requests go to it, since it
+// may know them.
+func TestOtherRequestsGoToARunningHost(t *testing.T) {
+	h := newHarness(t)
+	writeCache(t, h.cache)
+
+	h.send(initLine)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"browser_navigate"}}`)
+	h.recv()
+	h.send(`{"jsonrpc":"2.0","id":2,"method":"resources/list"}`)
+	r := h.recv()
+	if string(r["id"]) != "2" || len(r["result"]) == 0 {
+		t.Fatalf("resources/list reply = %v, want the host's answer", r)
+	}
+	if h.count("spawn") != 1 {
+		t.Fatalf("spawned %d hosts, want 1", h.count("spawn"))
+	}
+}
+
 func TestInitializeEchoesTheClientsProtocolVersion(t *testing.T) {
 	h := newHarness(t)
 	writeCache(t, h.cache)
