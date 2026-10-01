@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -23,9 +26,9 @@ import (
 // answers from a file instead: the host's own initialize result and tool list,
 // captured once by running the host in describe mode.
 //
-// The file is keyed by a hash of host.mjs and its package-lock.json, so a
-// release that changes the host or bumps playwright-mcp gets a fresh one rather
-// than an old tool list.
+// The file is keyed by a hash of the host's sources (host.mjs and lib/) and its
+// package-lock.json, so a release that changes the host or bumps playwright-mcp
+// gets a fresh one rather than an old tool list and instructions.
 
 // Handshake is what `node host.mjs --describe` prints and the cache holds.
 type Handshake struct {
@@ -56,20 +59,49 @@ func CacheDir(xdgCacheHome, home string) string {
 	return filepath.Join(home, ".cache", "tl-browser")
 }
 
-// HostVersion is the first 16 hex digits of sha256(host.mjs + package-lock.json).
-// A host without a lockfile beside it is hashed alone.
+// HostVersion is the first 16 hex digits of a sha256 over every file the host
+// loads that can change what it answers: host.mjs, each lib/**/*.mjs and
+// package-lock.json. The server instructions and the browser_close note live
+// in lib/, so hashing host.mjs alone would serve a stale handshake after a lib
+// change. Files go in a fixed order (host.mjs, lib/ sorted by path, then the
+// lockfile), each framed by its path and length so content moving between
+// files changes the key too. A missing lib/ or lockfile is skipped.
 func HostVersion(hostPath string) (string, error) {
+	dir := filepath.Dir(hostPath)
+	files := []string{filepath.Base(hostPath)}
+	var lib []string
+	err := filepath.WalkDir(filepath.Join(dir, "lib"), func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(p, ".mjs") {
+			rel, err := filepath.Rel(dir, p)
+			if err != nil {
+				return err
+			}
+			lib = append(lib, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return "", err
+	}
+	sort.Strings(lib)
+	files = append(files, lib...)
+	files = append(files, "package-lock.json")
+
 	h := sha256.New()
-	src, err := os.ReadFile(hostPath)
-	if err != nil {
-		return "", err
+	for i, rel := range files {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+		if errors.Is(err, fs.ErrNotExist) && i > 0 {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", rel, len(b))
+		h.Write(b)
 	}
-	h.Write(src)
-	lock, err := os.ReadFile(filepath.Join(filepath.Dir(hostPath), "package-lock.json"))
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return "", err
-	}
-	h.Write(lock)
 	return hex.EncodeToString(h.Sum(nil))[:16], nil
 }
 

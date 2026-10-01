@@ -1,35 +1,115 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
 )
 
-func TestHostVersionHashesHostAndLockfile(t *testing.T) {
+// hostTree writes a host directory: host.mjs, a lockfile, and the given lib
+// files keyed by their path under lib/.
+func hostTree(t *testing.T, lib map[string]string) string {
+	t.Helper()
 	dir := t.TempDir()
-	host := filepath.Join(dir, "host.mjs")
-	os.WriteFile(host, []byte("console.log(1)\n"), 0o644)
-	os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0o644)
+	write := func(rel, body string) {
+		p := filepath.Join(dir, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("host.mjs", "console.log(1)\n")
+	write("package-lock.json", `{"lockfileVersion":3}`)
+	for rel, body := range lib {
+		write(filepath.Join("lib", rel), body)
+	}
+	return filepath.Join(dir, "host.mjs")
+}
 
-	sum := sha256.Sum256([]byte("console.log(1)\n" + `{"lockfileVersion":3}`))
-	want := hex.EncodeToString(sum[:])[:16]
-
-	got, err := HostVersion(host)
+func hostVersion(t *testing.T, host string) string {
+	t.Helper()
+	v, err := HostVersion(host)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != want {
-		t.Fatalf("HostVersion = %s, want %s", got, want)
+	if len(v) != 16 {
+		t.Fatalf("HostVersion = %q, want 16 hex digits", v)
 	}
+	return v
+}
 
-	// Bumping a dependency changes the version, so a stale cache is never read.
-	os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3,"x":1}`), 0o644)
-	if again, _ := HostVersion(host); again == got {
-		t.Fatalf("a lockfile change did not change the version")
+func TestHostVersionIsStableForTheSameTree(t *testing.T) {
+	lib := map[string]string{"a.mjs": "export const a = 1\n", "b.mjs": "export const b = 2\n", "x/c.mjs": "c\n"}
+	if a, b := hostVersion(t, hostTree(t, lib)), hostVersion(t, hostTree(t, lib)); a != b {
+		t.Fatalf("two identical host trees hash differently: %s, %s", a, b)
 	}
+}
+
+// Every file the host loads at runtime feeds the key, so an edit to any of them
+// describes the host afresh instead of serving the old instructions and tool
+// list from the cache.
+func TestHostVersionCoversEveryHostSource(t *testing.T) {
+	base := map[string]string{"control.mjs": "export const c = 1\n", "deep/tabs.mjs": "export const t = 1\n"}
+	want := hostVersion(t, hostTree(t, base))
+
+	for name, edit := range map[string]func(dir string){
+		"host.mjs": func(d string) { os.WriteFile(filepath.Join(d, "host.mjs"), []byte("console.log(2)\n"), 0o644) },
+		"package-lock": func(d string) {
+			os.WriteFile(filepath.Join(d, "package-lock.json"), []byte(`{"lockfileVersion":3,"x":1}`), 0o644)
+		},
+		"a lib file": func(d string) {
+			os.WriteFile(filepath.Join(d, "lib", "control.mjs"), []byte("export const c = 2\n"), 0o644)
+		},
+		"a nested lib": func(d string) {
+			os.WriteFile(filepath.Join(d, "lib", "deep", "tabs.mjs"), []byte("export const t = 2\n"), 0o644)
+		},
+		"a new lib file": func(d string) { os.WriteFile(filepath.Join(d, "lib", "popup.mjs"), []byte("export {}\n"), 0o644) },
+		"a removed lib":  func(d string) { os.Remove(filepath.Join(d, "lib", "control.mjs")) },
+		"a renamed lib":  func(d string) { os.Rename(filepath.Join(d, "lib", "control.mjs"), filepath.Join(d, "lib", "gate.mjs")) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			host := hostTree(t, base)
+			edit(filepath.Dir(host))
+			if got := hostVersion(t, host); got == want {
+				t.Fatalf("changing %s left the version at %s", name, got)
+			}
+		})
+	}
+}
+
+// Content moving from one file to the next is a different host, even though
+// the bytes run together the same.
+func TestHostVersionSeparatesFiles(t *testing.T) {
+	a := hostVersion(t, hostTree(t, map[string]string{"a.mjs": "xy", "b.mjs": "z"}))
+	b := hostVersion(t, hostTree(t, map[string]string{"a.mjs": "x", "b.mjs": "yz"}))
+	if a == b {
+		t.Fatal("moving bytes between lib files did not change the version")
+	}
+}
+
+// What is not the host's own source stays out: tests, and anything that is
+// not a module.
+func TestHostVersionIgnoresWhatTheHostDoesNotLoad(t *testing.T) {
+	base := map[string]string{"control.mjs": "export const c = 1\n"}
+	want := hostVersion(t, hostTree(t, base))
+
+	host := hostTree(t, base)
+	dir := filepath.Dir(host)
+	os.MkdirAll(filepath.Join(dir, "test"), 0o755)
+	os.WriteFile(filepath.Join(dir, "test", "control.test.mjs"), []byte("test\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "lib", "notes.txt"), []byte("notes\n"), 0o644)
+	if got := hostVersion(t, host); got != want {
+		t.Fatalf("a test or a non-module file changed the version: %s, want %s", got, want)
+	}
+}
+
+func TestHostVersionWithoutLibOrLockfile(t *testing.T) {
+	dir := t.TempDir()
+	host := filepath.Join(dir, "host.mjs")
+	os.WriteFile(host, []byte("console.log(1)\n"), 0o644)
+	hostVersion(t, host)
 }
 
 func TestHostVersionNeedsTheHost(t *testing.T) {

@@ -94,6 +94,9 @@ check "the browser launcher ships, executable" \
   "$(printf '%s' "$contents" | grep -c '^-rwxr-xr-x.*usr/local/bin/tl-browser$' || true)" 1
 check "the browser host ships" \
   "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-browser-host/host\.mjs$' || true)" 1
+# host.mjs imports lib/, and tl-browser hashes lib/ into its handshake cache key.
+check "the browser host ships its lib" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-browser-host/lib/protocol\.mjs$' || true)" 1
 check "the browser host carries playwright-mcp" \
   "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-browser-host/node_modules/@playwright/mcp/package\.json$' || true)" 1
 check "the browser host ships without its tests" \
