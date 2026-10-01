@@ -41,6 +41,51 @@ set -u
 [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ] || exit 0
 command -v tmux >/dev/null 2>&1 || exit 0
 
+# ---- Only the pane's own claude --------------------------------------------
+# A claude started from inside the session's own work, such as an agent's Bash
+# running `claude -p` or `claude mcp get`, inherits TMUX_PANE and fires these
+# same org-wide hooks against the session it was started in. Its SessionEnd
+# unsets the session's state and outstanding set; its SessionStart and Stop
+# stamp done and rebuild the set from its own empty registry. Any of them drops
+# a workflow that is still running: the lobby reads the session as idle and the
+# text view's agent panel goes away (2026-10-01, browser-view-in-session: a
+# workflow member ran `claude mcp get` at 05:37:18 and 05:37:53, SessionEnd
+# cleared the session at 05:37:20 and 05:37:55, and the run went on unseen).
+#
+# The pane's own claude is the only claude between this hook and the tmux
+# server. Every long-lived claude on the box sits straight under its pane's
+# shell (31 of 31, 2026-10-01), so a second claude above this one means it was
+# started from a tool call. Subagents and workflow members run inside the
+# session's own process and pass this check like the main thread.
+#
+# The walk reads /proc with `read`, so it costs no fork on the hot path.
+# Anything it cannot read counts as the pane's own claude, which is how the
+# script behaved before the check.
+nested_claude() {
+    p=$PPID
+    owners=0
+    while :; do
+        case "$p" in
+        "" | *[!0-9]* | 0 | 1) return 1 ;;
+        esac
+        comm=""
+        read -r comm 2>/dev/null <"/proc/$p/comm" || return 1
+        case "$comm" in
+        "tmux: server") return 1 ;;
+        claude | pi) owners=$((owners + 1)) ;;
+        esac
+        [ "$owners" -ge 2 ] && return 0
+        stat=""
+        read -r stat 2>/dev/null <"/proc/$p/stat" || return 1
+        # "pid (comm) state ppid ...": the name may hold spaces and
+        # parentheses, so the fields are counted from the last ") ".
+        stat="${stat##*) }"
+        stat="${stat#* }"
+        p="${stat%% *}"
+    done
+}
+nested_claude && exit 0
+
 mode="${1:-}"
 
 # Set by an event that means no blocking dialog can be on screen any more; the

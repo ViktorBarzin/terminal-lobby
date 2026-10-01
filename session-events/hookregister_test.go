@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // `claude-se-hook session-start` and `prompt-submit` against a scratch tmux
@@ -160,5 +162,64 @@ func TestAPromptHealsASessionStampWrittenFromElsewhere(t *testing.T) {
 	regs := e.registered()
 	if len(regs) != 2 || regs[1].TmuxSession != "mine" || regs[1].TranscriptPath != tp {
 		t.Fatalf("registrations %+v; the prompt should have re-registered %s for \"mine\"", regs, tp)
+	}
+}
+
+// runUnder fires the hook from inside session's pane, as a child of `claudes`
+// nested processes named claude: the process tree a real hook sees. The pane's
+// own claude is the only claude between a hook and the tmux server; a claude an
+// agent started from a tool call has a second one above it. Run from the pane
+// rather than from the test, because a test run from a Claude session already
+// has a real claude among its own ancestors.
+func (e *hookEnv) runUnder(t *testing.T, claudes int, event, session, sid, transcript string) {
+	t.Helper()
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	dir := t.TempDir()
+	// The kernel names a process after the file it was started from, so a link
+	// called claude gives a shell the name the script looks for.
+	claude := filepath.Join(dir, "claude")
+	if err := os.Symlink(sh, claude); err != nil {
+		t.Fatal(err)
+	}
+	payload := filepath.Join(dir, "payload.json")
+	body := fmt.Sprintf(`{"session_id":%q,"cwd":"/home/x","transcript_path":%q}`, sid, transcript)
+	if err := os.WriteFile(payload, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// The trailing `:` keeps each shell alive around its child, rather than
+	// letting it exec the command in its own place.
+	cmd := "TL_SE_URL=" + shellQuote(e.url) + " " + shellQuote(e.script) + " " + event + " <" + shellQuote(payload) + "; :"
+	for range claudes {
+		cmd = shellQuote(claude) + " -c " + shellQuote(cmd) + "; :"
+	}
+	ch := fmt.Sprintf("fired-%d", time.Now().UnixNano())
+	e.tmux(t, "new-window", "-d", "-t", "="+session+":", cmd+"; tmux wait-for -S "+ch)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "tmux", "-L", e.sock, "wait-for", ch).Run(); err != nil {
+		t.Fatalf("waiting for the hook in the pane: %v", err)
+	}
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// A nested `claude -p`, started by an agent from inside a session, fires
+// SessionStart and UserPromptSubmit with the session's TMUX_PANE. Registered,
+// it pointed the session's text view at the nested claude's transcript, and
+// the text view showed that one-prompt conversation and none of the session's
+// own agents.
+func TestANestedClaudeRegistersNothing(t *testing.T) {
+	e := newHookEnv(t, "mine")
+
+	e.runUnder(t, 1, "session-start", "mine", "outer", "/p/outer.jsonl")
+	e.runUnder(t, 2, "session-start", "mine", "nested", "/p/nested.jsonl")
+	e.runUnder(t, 2, "prompt-submit", "mine", "nested", "/p/nested.jsonl")
+
+	regs := e.registered()
+	if len(regs) != 1 || regs[0].SessionID != "outer" {
+		t.Fatalf("registered %+v, want only the pane's own claude (session_id outer)", regs)
 	}
 }
