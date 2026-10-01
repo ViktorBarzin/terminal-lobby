@@ -18,7 +18,12 @@ import path from "node:path";
  *   | { t: "insertText", text: string }
  *   | { t: "navigate", url: string }
  *   | { t: "back" } | { t: "forward" } | { t: "reload" } | { t: "copy" }
- *   | { t: "takeControl" } | { t: "handBack" }} ViewerMessage
+ *   | { t: "takeControl" } | { t: "handBack" }
+ *   | { t: "choose", value: string, tab?: string }
+ *   | { t: "choose", values: string[], tab?: string }
+ *   | { t: "dialog", accept: boolean, text?: string, tab?: string }} ViewerMessage
+ *   choose answers a select popup, dialog a JavaScript dialog; both name the
+ *   popup's tab, or mean the viewer's own tab when they do not
  *
  * @typedef {import("./tabs.mjs").TabInfo} TabInfo
  * @typedef {import("./control.mjs").ControlSnapshot} ControlSnapshot
@@ -30,7 +35,18 @@ import path from "node:path";
  *   | { t: "state", state: BrowserState | "closed" }
  *   | { t: "activity", tool: string, summary: string }
  *   | { t: "copied", text: string }
- *   | { t: "error", message: string }} HostMessage what the host sends a viewer
+ *   | { t: "error", message: string }
+ *   | PopupMessage} HostMessage what the host sends a viewer
+ *
+ * @typedef {{ value: string, label: string, selected: boolean, disabled: boolean }} SelectOption
+ * @typedef {{ x: number, y: number, w: number, h: number }} Rect in the page's CSS pixels
+ * @typedef {"alert" | "confirm" | "prompt" | "beforeunload"} DialogType
+ * @typedef {{ t: "popup", kind: "select", tab: string, options: SelectOption[], multiple: boolean, rect: Rect }
+ *   | { t: "popup", kind: "dialog", tab: string, type: DialogType, message: string, defaultValue: string }
+ *   | { t: "popup", kind: "filechooser", tab: string }
+ *   | { t: "popup", kind: "none", tab: string }} PopupMessage
+ *   a native widget the screencast cannot show, drawn by the panel instead;
+ *   sent only to the person in control. "none" means the tab's popup is gone.
  */
 
 /** A paste is capped at about a megabyte of text. */
@@ -39,6 +55,8 @@ const MAX_TEXT = 1_000_000;
 const MAX_KEY = 64;
 const MAX_URL = 8192;
 const MAX_ID = 64;
+/** More options than any real select offers in one list. */
+const MAX_CHOICES = 10_000;
 
 const MOUSE_TYPES = new Set(["move", "down", "up", "click"]);
 const KEY_TYPES = new Set(["down", "up", "press"]);
@@ -75,6 +93,22 @@ const num = (v) => typeof v === "number" && Number.isFinite(v);
  * @returns {v is string}
  */
 const text = (v, max) => typeof v === "string" && v.length > 0 && v.length <= max;
+
+/**
+ * @param {unknown} v
+ * @returns {v is string}
+ */
+const optionValue = (v) => typeof v === "string" && v.length <= MAX_TEXT;
+
+/**
+ * The optional tab a popup answer names: absent, or a tab id.
+ * @param {Record<string, unknown>} m
+ * @returns {{ tab?: string } | null} null when the field is there but not a tab id
+ */
+function popupTab(m) {
+  if (!("tab" in m)) return {};
+  return text(m.tab, MAX_ID) ? { tab: m.tab } : null;
+}
 
 /**
  * @param {string} line
@@ -133,6 +167,21 @@ export function parseViewerMessage(line) {
       return text(m.text, MAX_TEXT) ? { t, text: m.text } : null;
     case "navigate":
       return text(m.url, MAX_URL) ? { t, url: m.url } : null;
+    case "choose": {
+      const tab = popupTab(m);
+      if (!tab || ("value" in m) === ("values" in m)) return null;
+      if ("value" in m) return optionValue(m.value) ? { t, value: m.value, ...tab } : null;
+      const values = m.values;
+      if (!Array.isArray(values) || values.length > MAX_CHOICES || !values.every(optionValue))
+        return null;
+      return { t, values: /** @type {string[]} */ (values), ...tab };
+    }
+    case "dialog": {
+      const tab = popupTab(m);
+      if (!tab || typeof m.accept !== "boolean") return null;
+      if (!("text" in m)) return { t, accept: m.accept, ...tab };
+      return optionValue(m.text) ? { t, accept: m.accept, text: m.text, ...tab } : null;
+    }
     default:
       return null;
   }

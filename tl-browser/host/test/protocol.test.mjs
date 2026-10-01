@@ -55,6 +55,16 @@ const valid = [
   { t: "copy" },
   { t: "takeControl" },
   { t: "handBack" },
+  { t: "choose", value: "b" },
+  { t: "choose", value: "" },
+  { t: "choose", value: "b", tab: "t2" },
+  { t: "choose", values: ["a", "c"] },
+  { t: "choose", values: [] },
+  { t: "dialog", accept: true },
+  { t: "dialog", accept: false },
+  { t: "dialog", accept: true, text: "an answer" },
+  { t: "dialog", accept: true, text: "" },
+  { t: "dialog", accept: false, tab: "t1" },
 ];
 
 for (const msg of valid) {
@@ -105,6 +115,18 @@ const invalid = [
   '{"t":"insertText","text":5}',
   '{"t":"navigate"}',
   '{"t":"navigate","url":""}',
+  '{"t":"choose"}',
+  '{"t":"choose","value":5}',
+  '{"t":"choose","value":null}',
+  '{"t":"choose","value":"a","values":["a"]}',
+  '{"t":"choose","values":"a"}',
+  '{"t":"choose","values":["a",1]}',
+  '{"t":"choose","value":"a","tab":""}',
+  '{"t":"choose","value":"a","tab":7}',
+  '{"t":"dialog"}',
+  '{"t":"dialog","accept":"yes"}',
+  '{"t":"dialog","accept":true,"text":5}',
+  '{"t":"dialog","accept":true,"tab":null}',
 ];
 
 for (const line of invalid) {
@@ -116,6 +138,15 @@ for (const line of invalid) {
 test("a pasted text over the limit is refused", () => {
   const big = JSON.stringify({ t: "insertText", text: "x".repeat(1_000_001) });
   assert.equal(parseViewerMessage(big), null);
+});
+
+test("a choice over the limits is refused", () => {
+  const longValue = JSON.stringify({ t: "choose", value: "x".repeat(1_000_001) });
+  assert.equal(parseViewerMessage(longValue), null);
+  const many = JSON.stringify({ t: "choose", values: Array.from({ length: 10_001 }, (_, i) => `${i}`) });
+  assert.equal(parseViewerMessage(many), null);
+  const longText = JSON.stringify({ t: "dialog", accept: true, text: "x".repeat(1_000_001) });
+  assert.equal(parseViewerMessage(longText), null);
 });
 
 test("the URL bar accepts a bare host and refuses schemes that reach outside the web", () => {

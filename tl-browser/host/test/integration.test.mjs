@@ -83,10 +83,13 @@ function procState(pid) {
   return stat.slice(stat.lastIndexOf(")") + 2).split(" ")[0];
 }
 
-test("a session browser end to end", {
-  skip: !haveChrome && "Google Chrome is not installed",
-  timeout: 90_000,
-}, async (t) => {
+/**
+ * Starts a host the way the launcher does, with its own HOME and runtime dir,
+ * and gets it through the MCP handshake.
+ * @param {import("node:test").TestContext} t
+ * @param {Record<string, string>} env
+ */
+async function startHost(t, env) {
   const tmp = mkdtempSync(path.join(tmpdir(), "tl-browser-it-"));
   t.after(() => rmSync(tmp, { recursive: true, force: true }));
   const child = spawn(process.execPath, [host], {
@@ -95,7 +98,7 @@ test("a session browser end to end", {
       HOME: tmp,
       XDG_RUNTIME_DIR: tmp,
       TL_BROWSER_STORAGE_STATE: "",
-      TL_BROWSER_IDLE_FREEZE_MS: "1500",
+      ...env,
     },
     stdio: ["pipe", "pipe", "inherit"],
   });
@@ -127,24 +130,44 @@ test("a session browser end to end", {
   });
   assert.match(init.result.instructions, /browser_close/);
   child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
-
-  const nav = await callTool("browser_navigate", { url: PAGE });
-  assert.notEqual(nav.isError, true, JSON.stringify(nav));
-
   const sockPath = path.join(tmp, "tl-browser", `pid-${child.pid}.sock`);
-  assert.ok(existsSync(sockPath), "the viewer socket exists once Chrome runs");
-  assert.equal(statSync(sockPath).mode & 0o777, 0o600);
-  assert.equal(statSync(path.dirname(sockPath)).mode & 0o777, 0o700);
+  return { child, exited, callTool, sockPath };
+}
 
+/**
+ * Connects to the viewer socket as session-events would for one person.
+ * @param {string} sockPath
+ * @param {string} user
+ * @param {boolean} canControl
+ */
+async function connectViewer(sockPath, user, canControl) {
   const sock = net.connect(sockPath);
   await new Promise((resolve, reject) => sock.once("connect", resolve).once("error", reject));
   /** @type {Lines<HostMessage>} */
   const view = new Lines(sock);
   /** @param {object} msg */
   const send = (msg) => sock.write(`${JSON.stringify(msg)}\n`);
-  send({ t: "hello", user: "tester", canControl: true });
+  send({ t: "hello", user, canControl });
+  const hello = await view.next((m) => m.t === "hello", `${user}'s hello`);
+  return { sock, view, send, hello };
+}
 
-  const hello = await view.next((m) => m.t === "hello", "host hello");
+test("a session browser end to end", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: 90_000,
+}, async (t) => {
+  const { child, exited, callTool, sockPath } = await startHost(t, {
+    TL_BROWSER_IDLE_FREEZE_MS: "1500",
+  });
+
+  const nav = await callTool("browser_navigate", { url: PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  assert.ok(existsSync(sockPath), "the viewer socket exists once Chrome runs");
+  assert.equal(statSync(sockPath).mode & 0o777, 0o600);
+  assert.equal(statSync(path.dirname(sockPath)).mode & 0o777, 0o700);
+
+  const { view, send, hello } = await connectViewer(sockPath, "tester", true);
   assert.equal(hello.state, "live");
   assert.equal(hello.tabs.length, 1);
   assert.equal(hello.agentTab, hello.tabs[0].id);
@@ -166,23 +189,19 @@ test("a session browser end to end", {
   assert.deepEqual([frame.w, frame.h], [1280, 800]);
 
   // A watch-only viewer sees frames but cannot take control or type.
-  const roSock = net.connect(sockPath);
-  await new Promise((resolve, reject) => roSock.once("connect", resolve).once("error", reject));
-  /** @type {Lines<HostMessage>} */
-  const roView = new Lines(roSock);
-  roSock.write(`${JSON.stringify({ t: "hello", user: "watcher", canControl: false })}\n`);
-  await roView.next((m) => m.t === "hello", "watch-only hello");
-  roSock.write(`${JSON.stringify({ t: "subscribe", tab: null })}\n`);
+  const ro = await connectViewer(sockPath, "watcher", false);
+  const roView = ro.view;
+  ro.send({ t: "subscribe", tab: null });
   await roView.next((m) => m.t === "frame", "a frame for the watch-only viewer");
-  roSock.write(`${JSON.stringify({ t: "takeControl" })}\n`);
-  roSock.write(`${JSON.stringify({ t: "insertText", text: "nope" })}\n`);
+  ro.send({ t: "takeControl" });
+  ro.send({ t: "insertText", text: "nope" });
   await new Promise((r) => setTimeout(r, 300));
   assert.equal(
     [...view.seen, ...roView.seen].some((m) => m.t === "control" || m.t === "error"),
     false,
     "a watch-only viewer changes nothing and is not answered",
   );
-  roSock.destroy();
+  ro.sock.destroy();
 
   // Input without control is refused.
   send({ t: "insertText", text: "nope" });
@@ -266,4 +285,161 @@ test("a session browser end to end", {
     await new Promise((r) => setTimeout(r, 100));
   for (const pid of chrome)
     assert.equal(existsSync(`/proc/${pid}`), false, `Chrome process ${pid} is gone`);
+});
+
+const POPUP_PAGE = `data:text/html,${encodeURIComponent(
+  "<title>Popups</title>" +
+    '<select id="s" style="position:absolute;left:10px;top:10px;width:200px;height:30px">' +
+    '<option value="a">Apple</option><option value="b">Banana</option>' +
+    '<option value="c" disabled>Cherry</option></select>' +
+    '<button id="al" style="position:absolute;left:10px;top:100px;width:100px;height:30px"' +
+    " onclick=\"alert('Saved');log.push('alert')\">alert</button>" +
+    '<button id="pr" style="position:absolute;left:10px;top:150px;width:100px;height:30px"' +
+    " onclick=\"log.push('prompt:'+prompt('Your name?','Ada'))\">prompt</button>" +
+    '<input id="f" type="file" style="position:absolute;left:10px;top:200px;width:200px;height:30px">' +
+    "<script>window.log=[];s.addEventListener('input',()=>log.push('input:'+s.value));" +
+    "s.addEventListener('change',()=>log.push('change:'+s.value))</script>",
+)}`;
+
+/**
+ * @param {(msg: object) => void} send
+ * @param {number} x
+ * @param {number} y
+ */
+function press(send, x, y) {
+  send({ t: "mouse", type: "down", x, y, button: "left", clickCount: 1 });
+  send({ t: "mouse", type: "up", x, y, button: "left", clickCount: 1 });
+}
+
+/** @param {{ content?: { text?: string }[] }} result */
+const resultText = (result) => (result.content ?? []).map((c) => c.text ?? "").join("\n");
+
+test("a person in control answers the popups a frame does not show", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: 90_000,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: POPUP_PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const { view, send, hello } = await connectViewer(sockPath, "tester", true);
+  const tab = hello.agentTab;
+  const ro = await connectViewer(sockPath, "watcher", false);
+
+  // With the agent in control, a dialog is playwright-mcp's, as it always was.
+  const raised = await callTool("browser_evaluate", {
+    function: "() => { setTimeout(() => alert('from the agent'), 0); return 1; }",
+  });
+  assert.notEqual(raised.isError, true, JSON.stringify(raised));
+  let handled;
+  for (let i = 0; i < 30; i++) {
+    handled = await callTool("browser_handle_dialog", { accept: true });
+    if (handled.isError !== true) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  assert.notEqual(handled?.isError, true, JSON.stringify(handled));
+
+  // A dialog left open for the agent goes to the person who takes control.
+  await callTool("browser_evaluate", {
+    function: "() => { setTimeout(() => log.push('confirm:' + confirm('Leave?')), 0); return 1; }",
+  });
+  for (let i = 0; i < 30; i++) {
+    const r = await callTool("browser_snapshot");
+    if (r.isError === true && /modal state/.test(resultText(r))) break;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  send({ t: "takeControl" });
+  await view.next((m) => m.t === "control" && m.holder === "tester", "control taken");
+  const confirmed = await view.next((m) => m.t === "popup", "the pending confirm");
+  assert.deepEqual(confirmed, {
+    t: "popup",
+    kind: "dialog",
+    tab,
+    type: "confirm",
+    message: "Leave?",
+    defaultValue: "",
+  });
+  send({ t: "dialog", accept: false });
+  assert.deepEqual(await view.next((m) => m.t === "popup", "the confirm gone"), {
+    t: "popup",
+    kind: "none",
+    tab,
+  });
+
+  // Pressing the select gets its list; choosing sets it in the page.
+  press(send, 50, 25);
+  const list = await view.next((m) => m.t === "popup", "the select's list");
+  assert.deepEqual(list, {
+    t: "popup",
+    kind: "select",
+    tab,
+    multiple: false,
+    rect: { x: 10, y: 10, w: 200, h: 30 },
+    options: [
+      { value: "a", label: "Apple", selected: true, disabled: false },
+      { value: "b", label: "Banana", selected: false, disabled: false },
+      { value: "c", label: "Cherry", selected: false, disabled: true },
+    ],
+  });
+  send({ t: "choose", value: "c" });
+  await view.next((m) => m.t === "error", "a disabled option refused");
+  send({ t: "choose", value: "b" });
+  assert.equal((await view.next((m) => m.t === "popup", "the list gone")).kind, "none");
+
+  // A press anywhere else closes a list left open, as it does in Chrome.
+  press(send, 50, 25);
+  const again = await view.next((m) => m.t === "popup", "the list again");
+  assert.equal(again.kind, "select");
+  assert.equal(again.options[1].selected, true, "the list shows the choice made");
+  press(send, 600, 600);
+  assert.equal((await view.next((m) => m.t === "popup", "the list closed")).kind, "none");
+
+  // An alert raised by a person's click comes to the panel, and OK closes it.
+  press(send, 50, 115);
+  const alerted = await view.next((m) => m.t === "popup", "the alert");
+  assert.equal(alerted.kind, "dialog");
+  assert.equal(alerted.type, "alert");
+  assert.equal(alerted.message, "Saved");
+  send({ t: "dialog", accept: true });
+  assert.equal((await view.next((m) => m.t === "popup", "the alert gone")).kind, "none");
+
+  // A prompt takes the person's text.
+  press(send, 50, 165);
+  const prompted = await view.next((m) => m.t === "popup", "the prompt");
+  assert.equal(prompted.type, "prompt");
+  assert.equal(prompted.defaultValue, "Ada");
+  send({ t: "dialog", accept: true, text: "Grace" });
+  assert.equal((await view.next((m) => m.t === "popup", "the prompt gone")).kind, "none");
+
+  // A file chooser is not supported: the panel is told, and it is cancelled.
+  press(send, 50, 215);
+  assert.deepEqual(await view.next((m) => m.t === "popup", "the file chooser"), {
+    t: "popup",
+    kind: "filechooser",
+    tab,
+  });
+
+  assert.equal(
+    ro.view.seen.some((m) => m.t === "popup"),
+    false,
+    "only the person in control is shown popups",
+  );
+
+  send({ t: "handBack" });
+  await view.next((m) => m.t === "control" && m.holder === null, "control handed back");
+
+  // Nothing the person answered is left blocking the agent.
+  const state = await callTool("browser_evaluate", {
+    function: "() => ({ value: document.querySelector('#s').value, log })",
+  });
+  assert.notEqual(state.isError, true, JSON.stringify(state));
+  const text = resultText(state);
+  assert.match(text, /"value": "b"/);
+  for (const entry of ["confirm:false", "input:b", "change:b", "alert", "prompt:Grace"])
+    assert.ok(text.includes(`"${entry}"`), `the page logged ${entry}: ${text}`);
+  assert.equal(
+    view.seen.some((m) => m.t === "popup"),
+    false,
+    "no popup came for the agent's own dialog",
+  );
 });

@@ -5,6 +5,13 @@
 
 import { existsSync } from "node:fs";
 import { chromium } from "playwright-core";
+import { clearMcpModal, mcpModalPending } from "./mcptab.mjs";
+import {
+  describeSelectInPage,
+  focusedSelectInPage,
+  MAX_LABEL,
+  MAX_OPTIONS,
+} from "./popups.mjs";
 import { childPids, treePids } from "./proctree.mjs";
 import { TabRegistry } from "./tabs.mjs";
 
@@ -13,6 +20,12 @@ import { TabRegistry } from "./tabs.mjs";
  * @typedef {import("playwright-core").BrowserContext} BrowserContext
  * @typedef {import("playwright-core").Page} Page
  * @typedef {import("playwright-core").CDPSession} CDPSession
+ * @typedef {import("playwright-core").Dialog} Dialog
+ * @typedef {import("playwright-core").FileChooser} FileChooser
+ * @typedef {import("playwright-core").ElementHandle<HTMLSelectElement>} SelectHandle
+ * @typedef {import("./protocol.mjs").SelectOption} SelectOption
+ * @typedef {import("./protocol.mjs").Rect} Rect
+ * @typedef {{ handle: SelectHandle, options: SelectOption[], multiple: boolean, rect: Rect }} FocusedSelect
  * @typedef {import("./protocol.mjs").ViewerMessage} ViewerMessage
  * @typedef {{ jpeg: string, w: number, h: number }} Frame
  */
@@ -21,6 +34,9 @@ export const VIEWPORT = { width: 1280, height: 800 };
 const JPEG_QUALITY = 60;
 const CLOSE_TIMEOUT_MS = 5000;
 const NAV_TIMEOUT_MS = 30_000;
+/** Reading the focused select is a quick look; a page that will not answer has none. */
+const SELECT_READ_MS = 2000;
+const SELECT_SET_MS = 5000;
 
 /**
  * @param {Record<string, string | undefined>} env
@@ -100,6 +116,8 @@ export class BrowserSession {
    * @param {{
    *   onTabs: () => void,
    *   onFrame: (tab: string, frame: Frame) => void,
+   *   onDialog: (tab: string, page: Page, dialog: Dialog) => void,
+   *   onFileChooser: (tab: string, page: Page, chooser: FileChooser) => void,
    *   onDisconnected: () => void,
    * }} opts
    */
@@ -195,12 +213,110 @@ export class BrowserSession {
    * @returns {Promise<string | undefined>}
    */
   act(id, msg) {
-    const run = async () => {
+    return this.#inOrder(async () => {
       const page = this.tabs.pageOf(id);
       if (!page) throw new Error("That tab has closed.");
       return this.#act(page, msg);
-    };
-    const result = this.#queue.then(run);
+    });
+  }
+
+  /**
+   * The select focused on a tab, when it is one whose list Chrome draws
+   * outside the page; null otherwise. Runs after the input before it, so it
+   * sees the focus that input moved.
+   * @param {string} id
+   * @returns {Promise<FocusedSelect | null>}
+   */
+  focusedSelect(id) {
+    return this.#inOrder(async () => {
+      const page = this.tabs.pageOf(id);
+      if (!page) return null;
+      const read = async () => {
+        const found = await page.evaluateHandle(focusedSelectInPage);
+        const handle = /** @type {SelectHandle | null} */ (found.asElement());
+        if (!handle) {
+          await found.dispose();
+          return null;
+        }
+        const desc = await handle.evaluate(describeSelectInPage, {
+          maxOptions: MAX_OPTIONS,
+          maxLabel: MAX_LABEL,
+        });
+        return { handle, ...desc };
+      };
+      const reading = read();
+      const found = await within(reading, SELECT_READ_MS).catch(() => null);
+      if (found === undefined) {
+        // Too slow: whatever it finds later is let go of, not leaked.
+        reading.then((late) => late?.handle.dispose()).catch(() => {});
+        return null;
+      }
+      return found;
+    });
+  }
+
+  /**
+   * Sets a select's choice the way a person picking from its list does, with
+   * the input and change events the page listens for.
+   * @param {SelectHandle} handle
+   * @param {string[]} values
+   */
+  async choose(handle, values) {
+    await this.#inOrder(() =>
+      handle.selectOption(
+        values.map((value) => ({ value })),
+        { timeout: SELECT_SET_MS },
+      ),
+    );
+  }
+
+  /**
+   * Answers a JavaScript dialog. Not queued with the input: the click that
+   * raised the dialog does not finish until the dialog is answered.
+   * @param {Page} page
+   * @param {Dialog} dialog
+   * @param {boolean} accept
+   * @param {string | undefined} text a prompt's answer
+   */
+  async answerDialog(page, dialog, accept, text) {
+    clearMcpModal(page, dialog);
+    if (accept) await dialog.accept(text);
+    else await dialog.dismiss();
+  }
+
+  /**
+   * Leaves a file chooser unanswered and tells playwright-mcp to forget it,
+   * so the agent is not stuck behind it. No native chooser opened: with a
+   * listener on the page, Chrome only reports it.
+   * @param {Page} page
+   * @param {FileChooser} chooser
+   */
+  cancelFileChooser(page, chooser) {
+    // playwright-mcp records it in its own listener for the same event, which
+    // may run after this one; clear it once every listener has run.
+    setImmediate(() => clearMcpModal(page, chooser));
+  }
+
+  /**
+   * Whether a dialog is still waiting for an answer; false once the agent
+   * answered it through playwright-mcp.
+   * @param {Page} page
+   * @param {Dialog} dialog
+   * @returns {boolean}
+   */
+  dialogPending(page, dialog) {
+    return !page.isClosed() && mcpModalPending(page, dialog);
+  }
+
+  /**
+   * Runs one step after the steps before it: a mouse down must land before its
+   * up, and a look at the focus after the press that moved it.
+   * @template T
+   * @param {() => Promise<T>} step
+   * @returns {Promise<T>}
+   */
+  #inOrder(step) {
+    const result = this.#queue.then(step);
     this.#queue = result.then(
       () => {},
       () => {},
@@ -309,6 +425,14 @@ export class BrowserSession {
       const info = this.tabs.update(page, { url: page.url() });
       if (agent || info) this.#tabsChanged();
       refreshTitle();
+    });
+    page.on("dialog", (dialog) => {
+      const id = this.tabs.idOf(page);
+      if (id !== null) this.#o.onDialog(id, page, dialog);
+    });
+    page.on("filechooser", (chooser) => {
+      const id = this.tabs.idOf(page);
+      if (id !== null) this.#o.onFileChooser(id, page, chooser);
     });
     page.on("domcontentloaded", refreshTitle);
     page.on("load", refreshTitle);

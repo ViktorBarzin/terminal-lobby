@@ -26,6 +26,7 @@ import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/bro
 import { Control } from "./lib/control.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
+import { checkChoice, PopupBoard, selectOpens } from "./lib/popups.mjs";
 import { LineSplitter, normalizeUrl, socketDir, socketName } from "./lib/protocol.mjs";
 import { TmuxRegistration } from "./lib/tmux.mjs";
 import { ViewerServer } from "./lib/viewers.mjs";
@@ -35,6 +36,11 @@ import { ViewerServer } from "./lib/viewers.mjs";
  * @typedef {import("./lib/viewers.mjs").Viewer} Viewer
  * @typedef {import("./lib/protocol.mjs").ViewerMessage} ViewerMessage
  * @typedef {import("./lib/protocol.mjs").HostMessage} HostMessage
+ * @typedef {import("./lib/protocol.mjs").PopupMessage} PopupMessage
+ * @typedef {import("playwright-core").Page} Page
+ * @typedef {import("playwright-core").Dialog} Dialog
+ * @typedef {{ kind: "select", msg: PopupMessage & { kind: "select" }, handle: import("./lib/browser.mjs").SelectHandle }
+ *   | { kind: "dialog", msg: PopupMessage & { kind: "dialog" }, page: Page, dialog: Dialog }} OpenPopup
  */
 
 const env = process.env;
@@ -139,6 +145,8 @@ async function serve() {
   let reportedLapseAt = 0;
   /** @type {HostMessage | null} the latest activity, replayed to a viewer that joins */
   let lastActivity = null;
+  /** @type {PopupBoard<OpenPopup>} the popups open now, one per tab */
+  const popups = new PopupBoard();
 
   const viewers = new ViewerServer({
     onHello: (v) => {
@@ -151,6 +159,7 @@ async function serve() {
         viewport: { w: VIEWPORT.width, h: VIEWPORT.height },
       });
       if (lastActivity) viewers.send(v, lastActivity);
+      if (isController(v)) for (const p of pendingPopups()) viewers.send(v, p.msg);
     },
     onMessage: (v, msg) => onViewer(v, msg),
     onGone: () => reconcile(),
@@ -226,12 +235,38 @@ async function serve() {
       {
         onTabs: () => {
           if (!session) return;
-          viewers.broadcast({
-            t: "tabs",
-            tabs: session.tabs.snapshot(),
-            agentTab: session.tabs.agentTab,
-          });
+          const tabs = session.tabs.snapshot();
+          viewers.broadcast({ t: "tabs", tabs, agentTab: session.tabs.agentTab });
+          for (const p of popups.prune(new Set(tabs.map((tab) => tab.id)))) letGo(p);
           reconcile();
+        },
+        onDialog: (tab, page, dialog) => {
+          const type = dialog.type();
+          /** @type {OpenPopup} */
+          const p = {
+            kind: "dialog",
+            msg: {
+              t: "popup",
+              kind: "dialog",
+              tab,
+              type:
+                type === "confirm" || type === "prompt" || type === "beforeunload" ? type : "alert",
+              message: dialog.message(),
+              defaultValue: dialog.defaultValue(),
+            },
+            page,
+            dialog,
+          };
+          // Kept with the agent in control too: if a person takes control
+          // before the agent answers it, it is theirs to answer.
+          openPopup(p, control.holder !== null);
+        },
+        onFileChooser: (tab, page, chooser) => {
+          // With the agent in control, playwright-mcp's browser_file_upload
+          // answers it, as before.
+          if (control.holder === null || !session) return;
+          session.cancelFileChooser(page, chooser);
+          toController({ t: "popup", kind: "filechooser", tab });
         },
         onFrame: (tab, frame) => {
           for (const v of viewers.viewers)
@@ -267,7 +302,10 @@ async function serve() {
 
   function tick() {
     if (closing) return;
-    if (control.lapse()) broadcastControl();
+    if (control.lapse()) {
+      broadcastControl();
+      controlChanged();
+    }
     if (!session) {
       // The launcher starts a host for a tool call, so one that has opened no
       // browser for a whole freeze window (a launch that failed, say) has
@@ -288,6 +326,126 @@ async function serve() {
       log("closing a browser left frozen");
       void shutdown(0);
     }
+  }
+
+  /**
+   * @param {Viewer} v
+   * @returns {boolean} whether this connection is the person in control's
+   */
+  function isController(v) {
+    return v.canControl && control.holder !== null && v.user === control.holder;
+  }
+
+  /** @param {PopupMessage} msg */
+  function toController(msg) {
+    for (const v of viewers.viewers) if (isController(v)) viewers.send(v, msg);
+  }
+
+  /**
+   * Shows a popup to the person in control, replacing any other on its tab.
+   * @param {OpenPopup} p
+   * @param {boolean} show
+   */
+  function openPopup(p, show) {
+    const prev = popups.set(p);
+    if (prev) letGo(prev);
+    if (show) toController(p.msg);
+  }
+
+  /**
+   * Takes a popup off the board and tells the person in control it is gone.
+   * @param {OpenPopup} p
+   * @returns {boolean} whether it was still open
+   */
+  function closePopup(p) {
+    if (!popups.take(p)) return false;
+    letGo(p);
+    toController({ t: "popup", kind: "none", tab: p.msg.tab });
+    return true;
+  }
+
+  /** @param {OpenPopup} p */
+  function letGo(p) {
+    if (p.kind === "select") p.handle.dispose().catch(() => {});
+  }
+
+  /**
+   * The popups still open, after forgetting dialogs the agent has answered.
+   * @returns {OpenPopup[]}
+   */
+  function pendingPopups() {
+    for (const p of popups.all())
+      if (p.kind === "dialog" && !session?.dialogPending(p.page, p.dialog)) popups.take(p);
+    return popups.all();
+  }
+
+  /**
+   * Control changed hands. A select's list belonged to the person who opened
+   * it. Dialogs wait for whoever drives next: a new holder is shown them, and
+   * the agent answers them through playwright-mcp.
+   */
+  function controlChanged() {
+    for (const p of popups.drop("select")) letGo(p);
+    if (control.holder !== null) for (const p of pendingPopups()) toController(p.msg);
+  }
+
+  /**
+   * After a person's press: show the list of a select it focused, or close
+   * the list of one it moved away from.
+   * @param {string} tab
+   */
+  async function lookForSelect(tab) {
+    if (!session) return;
+    const holder = control.holder;
+    const found = await session.focusedSelect(tab);
+    const open = popups.get(tab);
+    if (!found) {
+      if (open?.kind === "select") closePopup(open);
+      return;
+    }
+    if (control.holder === null || control.holder !== holder) {
+      found.handle.dispose().catch(() => {});
+      return;
+    }
+    const { handle, options, multiple, rect } = found;
+    openPopup(
+      { kind: "select", msg: { t: "popup", kind: "select", tab, options, multiple, rect }, handle },
+      true,
+    );
+  }
+
+  /**
+   * A person's answer to a popup.
+   * @param {Viewer} v
+   * @param {ViewerMessage & { t: "choose" | "dialog" }} msg
+   */
+  function answerPopup(v, msg) {
+    if (!session) return;
+    const s = session;
+    /** @param {string} message */
+    const complain = (message) => viewers.send(v, { t: "error", message });
+    const where = msg.tab ?? watchedTab(v);
+    if (msg.t === "choose") {
+      const p = popups.find("select", where);
+      if (p?.kind !== "select") return complain("That list is no longer open.");
+      const values = checkChoice(p.msg, msg);
+      if (!values) return complain("That option cannot be chosen.");
+      popups.take(p);
+      s.choose(p.handle, values)
+        .catch(() => complain("The list changed before the choice could be made."))
+        .finally(() => {
+          letGo(p);
+          toController({ t: "popup", kind: "none", tab: p.msg.tab });
+        });
+      return;
+    }
+    const p = popups.find("dialog", where);
+    if (p?.kind !== "dialog") return complain("That dialog is no longer open.");
+    closePopup(p);
+    s.answerDialog(p.page, p.dialog, msg.accept, msg.text).catch((err) => {
+      // Answered already (the page closed it, or it went away): nothing to do.
+      if (!/already handled|closed/i.test(String(err))) complain(String(err));
+    });
   }
 
   function broadcastControl() {
@@ -358,9 +516,13 @@ async function serve() {
         control.take(v.user);
         wake();
         broadcastControl();
+        controlChanged();
         return;
       case "handBack":
-        if (v.canControl && control.handBack(v.user)) broadcastControl();
+        if (v.canControl && control.handBack(v.user)) {
+          broadcastControl();
+          controlChanged();
+        }
         return;
     }
     // Everything else drives the page, so it needs control.
@@ -371,6 +533,10 @@ async function serve() {
     }
     wake();
     if ((control.snapshot().lapseAt ?? 0) - reportedLapseAt > LAPSE_REPORT_MS) broadcastControl();
+    if (msg.t === "choose" || msg.t === "dialog") {
+      answerPopup(v, msg);
+      return;
+    }
     const tab = watchedTab(v);
     if (tab === null) return;
     /** @type {ViewerMessage} */
@@ -383,9 +549,15 @@ async function serve() {
       }
       action = { t: "navigate", url };
     }
+    if (msg.t === "key" && msg.type !== "up" && (msg.key === "Escape" || msg.key === "Tab")) {
+      // Either key closes an open select's list in the page too.
+      const open = popups.get(tab);
+      if (open?.kind === "select") closePopup(open);
+    }
     session.act(tab, action).then(
       (text) => {
         if (msg.t === "copy") viewers.send(v, { t: "copied", text: text ?? "" });
+        if (selectOpens(msg)) void lookForSelect(tab);
       },
       (err) =>
         viewers.send(v, { t: "error", message: err instanceof Error ? err.message : String(err) }),
