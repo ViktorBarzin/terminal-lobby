@@ -1,0 +1,19 @@
+{
+  "name": "tl-browser-host",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Runs a session's browser: playwright-mcp over stdio, plus the viewer socket the lobby watches and drives it through.",
+  "license": "AGPL-3.0-or-later",
+  "type": "module",
+  "main": "host.mjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@playwright/mcp": "0.0.76",
+    "playwright-core": "1.61.0-alpha-1781023400000"
+  }
+}
