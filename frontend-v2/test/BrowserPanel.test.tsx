@@ -51,7 +51,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-function mount(canControl: boolean) {
+function mount(canControl: boolean, phone = false) {
   vi.stubGlobal("WebSocket", FakeSocket);
   const onStop = vi.fn();
   const onClose = vi.fn();
@@ -61,7 +61,7 @@ function mount(canControl: boolean) {
       state={() => "live"}
       active={() => true}
       canControl={() => canControl}
-      phone={() => false}
+      phone={() => phone}
       onStop={onStop}
       onClose={onClose}
     />
@@ -134,5 +134,91 @@ describe("<BrowserPanel>", () => {
     const { getByText, ws } = mount(true);
     ws.host({ t: "state", state: "closed" });
     expect(getByText("The browser closed.")).toBeInTheDocument();
+  });
+});
+
+/**
+ * A tap on a phone (review 2026-10-01). The tap clicks the page and focuses
+ * the hidden field the soft keyboard types into. Chrome then sends the tap's
+ * compat mousedown after touchend, and a mousedown on the focusable stage moved
+ * the focus off that field straight away: measured in Chrome's touch
+ * emulation, activeElement ended on .tl-browser-stage and typing went nowhere.
+ * jsdom has no focus-on-mousedown, so `press` plays the browser's part: a
+ * mousedown whose default is not cancelled focuses the stage, as Chrome does.
+ */
+describe("<BrowserPanel> on a phone", () => {
+  const drivePhone = () => {
+    const r = mount(true, true);
+    fireEvent.click(r.getByText("Take control"));
+    r.ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    const stage = r.container.querySelector<HTMLDivElement>(".tl-browser-stage")!;
+    const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
+    img.getBoundingClientRect = () => new DOMRect(0, 0, 1280, 800);
+    return {
+      ...r,
+      stage,
+      ime: () => r.container.querySelector<HTMLInputElement>(".tl-browser-ime")!,
+    };
+  };
+  const tap = (stage: Element) => {
+    const at = { pointerId: 7, pointerType: "touch", clientX: 200, clientY: 100 };
+    fireEvent.pointerDown(stage, at);
+    fireEvent.pointerUp(stage, at);
+  };
+  const press = (stage: HTMLElement, el: Element, type: "mousedown" | "click"): boolean => {
+    const through = el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true }));
+    if (type === "mousedown" && through) stage.focus();
+    return through;
+  };
+
+  it("clicks the page and keeps the keyboard's field focused through the tap's mousedown", () => {
+    const { stage, ime, ws } = drivePhone();
+    const canvas = stage.querySelector(".tl-browser-canvas")!;
+    tap(stage);
+    expect(ws.sent.at(-1)).toEqual({
+      t: "mouse",
+      type: "click",
+      x: 200,
+      y: 100,
+      button: "left",
+      clickCount: 1,
+    });
+    expect(document.activeElement).toBe(ime());
+    expect(press(stage, canvas, "mousedown")).toBe(false);
+    expect(document.activeElement).toBe(ime());
+    expect(press(stage, canvas, "click")).toBe(false);
+  });
+
+  it("sends what the soft keyboard types", () => {
+    const { stage, ws } = drivePhone();
+    tap(stage);
+    press(stage, stage.querySelector(".tl-browser-canvas")!, "mousedown");
+    // The keyboard types into whatever holds the focus.
+    const field = document.activeElement as HTMLInputElement;
+    field.value = "Sofia";
+    fireEvent.input(field);
+    expect(ws.sent.at(-1)).toEqual({ t: "insertText", text: "Sofia" });
+  });
+
+  it("holds only the tap's own mousedown", () => {
+    const { stage } = drivePhone();
+    const canvas = stage.querySelector(".tl-browser-canvas")!;
+    tap(stage);
+    press(stage, canvas, "mousedown");
+    press(stage, canvas, "click");
+    expect(press(stage, canvas, "mousedown")).toBe(true);
+  });
+
+  it("gives up the hold when no mousedown comes", () => {
+    vi.useFakeTimers();
+    try {
+      const { stage } = drivePhone();
+      tap(stage);
+      vi.advanceTimersByTime(1000);
+      expect(press(stage, stage.querySelector(".tl-browser-canvas")!, "mousedown")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

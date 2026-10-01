@@ -280,6 +280,7 @@ export const BrowserPanel: Component<{
       // A tap on a field should raise the keyboard, and only a focused input
       // of this page's own can: what is typed there is sent on as text.
       ime?.focus({ preventScroll: true });
+      holdTap();
       return;
     }
     if (!inControl()) return;
@@ -293,6 +294,48 @@ export const BrowserPanel: Component<{
       clickCount: Math.max(1, e.detail || 1),
     });
   };
+
+  /**
+   * The rest of the tap that focused the keyboard's field is the field's.
+   *
+   * The browser sends a tap's compat mousedown and click after touchend, and a
+   * mousedown on the stage, which is focusable, takes the focus off the field
+   * and the keyboard goes down as it comes up. Measured in Chrome's touch
+   * emulation on 2026-10-01: focus went to the field on pointerup and back to
+   * the stage on the mousedown that followed, so typing went nowhere. Same
+   * mechanism as the composer's (PromptField `holdTap`) and the terminal's
+   * (terminal/keepfocus.ts). So that mousedown has its default (moving the
+   * focus) cancelled, and its click is eaten: the tap already clicked the
+   * page, and with the keyboard moving the layout it could land on a button.
+   * One tap's worth, within the time a tap takes, and nothing after it.
+   */
+  let releaseTap: (() => void) | null = null;
+  const holdTap = (): void => {
+    releaseTap?.();
+    const offField = (ev: Event): boolean =>
+      !(ev.target instanceof Node && ime?.contains(ev.target));
+    const onDown = (ev: Event): void => {
+      if (offField(ev)) ev.preventDefault();
+    };
+    const onClick = (ev: Event): void => {
+      if (offField(ev)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      done();
+    };
+    const done = (): void => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", onDown, true);
+      document.removeEventListener("click", onClick, true);
+      releaseTap = null;
+    };
+    const timer = setTimeout(done, 700);
+    document.addEventListener("mousedown", onDown, true);
+    document.addEventListener("click", onClick, true);
+    releaseTap = done;
+  };
+  onCleanup(() => releaseTap?.());
 
   const onPointerCancel = (e: PointerEvent): void => {
     // The browser took the touch over to pan the zoomed page.
