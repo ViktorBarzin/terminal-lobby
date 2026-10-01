@@ -151,3 +151,62 @@ func TestTheBuildStagesEverythingTheHostImports(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The per-browser ceiling.
+
+const browserScopeCap = "/usr/lib/systemd/user/tl-browser-.scope.d/60-tl-browser-cap.conf"
+
+// tl-browser asks for MemoryMax=1536M on each host's scope, and on the devvm
+// that request is overridden. The box ships /etc/systemd/user/scope.d/
+// 50-devvm-pane-cap.conf, which sets MemoryMax=6G on EVERY user scope, and a
+// drop-in outranks the properties a transient unit was created with. Measured
+// 2026-10-01: a scope started with `-p MemoryMax=1536M` came up with
+// memory.max 6442450944.
+//
+// The package ships its own drop-in for the tl-browser- prefix. Drop-ins apply
+// in filename order across every directory that holds one, so this one has to
+// sort after the pane cap to win, and its values have to be the launcher's.
+func TestTheBrowserScopeCapOutranksThePaneCap(t *testing.T) {
+	f := shippedFile(t, browserScopeCap)
+	if !f.Unmanaged {
+		t.Error("the scope cap is not marked unmanaged; no system unit watches a user drop-in")
+	}
+	if base := filepath.Base(browserScopeCap); base <= "50-devvm-pane-cap.conf" {
+		t.Errorf("%s sorts before 50-devvm-pane-cap.conf, so the pane cap would win", base)
+	}
+	conf := repoFile(t, strings.Split(f.Src, "/")...)
+	if !strings.Contains(conf, "[Scope]") {
+		t.Errorf("%s has no [Scope] section, so systemd applies nothing from it", f.Src)
+	}
+	spawn := repoFile(t, "tl-browser", "spawn.go")
+	for _, key := range []string{"MemoryHigh", "MemoryMax"} {
+		m := regexp.MustCompile(`"` + key + `=([^"]+)"`).FindStringSubmatch(spawn)
+		if m == nil {
+			t.Fatalf("tl-browser/spawn.go sets no %s, so this test is reading the wrong file", key)
+		}
+		if !regexp.MustCompile(`(?m)^` + key + `=` + regexp.QuoteMeta(m[1]) + `$`).MatchString(conf) {
+			t.Errorf("tl-browser asks for %s=%s and %s does not set the same", key, m[1], f.Src)
+		}
+	}
+}
+
+// A running user manager reads its drop-ins when it loads, and a transient
+// scope created later does not look again: measured 2026-10-01, a new
+// tl-browser-.scope.d drop-in had no effect until `systemctl --user
+// daemon-reload`. On a box where users linger, that manager can run for weeks,
+// so postinst reloads each one that is running. Best effort, under set -e.
+func TestPostinstReloadsRunningUserManagers(t *testing.T) {
+	var line string
+	for _, l := range strings.Split(PostinstScript, "\n") {
+		if strings.Contains(l, "systemctl --user") && strings.Contains(l, "daemon-reload") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatal("postinst reloads no user manager, so the browser scope cap waits for each user's next login")
+	}
+	if !strings.Contains(line, "|| true") {
+		t.Errorf("under set -e a user manager that will not answer aborts the upgrade: %s", line)
+	}
+}

@@ -100,6 +100,10 @@ check "the browser host ships without its tests" \
   "$(printf '%s' "$contents" | grep -c 'usr/lib/terminal-lobby/tl-browser-host/test/' || true)" 0
 check "the browser slice ships as a user unit" \
   "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/systemd/user/tl-browser\.slice$' || true)" 1
+# Without the cap, a box-wide scope.d drop-in overrides the per-browser
+# MemoryMax tl-browser asks for (devvm/tl-browser-scope-cap.conf says why).
+check "the per-browser memory cap ships" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/systemd/user/tl-browser-\.scope\.d/60-tl-browser-cap\.conf$' || true)" 1
 check "the browser's runtime is recommended" \
   "$(dpkg-deb -f "$DEB" Recommends | grep -c 'nodejs' || true)" 1
 

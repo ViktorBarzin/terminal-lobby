@@ -459,6 +459,10 @@ var Package = Manifest{
 		// user's systemd instance loads it the first time tl-browser starts a
 		// scope with --slice=tl-browser.slice.
 		{Src: "devvm/tl-browser.slice", Dest: "/usr/lib/systemd/user/tl-browser.slice", Mode: 0o644, Unmanaged: true},
+		// The ceiling on one browser. tl-browser asks for it on the command
+		// line; this drop-in is what makes it hold where a box-wide scope.d
+		// drop-in sets a looser MemoryMax on every user scope.
+		{Src: "devvm/tl-browser-scope-cap.conf", Dest: "/usr/lib/systemd/user/tl-browser-.scope.d/60-tl-browser-cap.conf", Mode: 0o644, Unmanaged: true},
 
 		{Src: "devvm/ttyd.service", Dest: "/etc/systemd/system/ttyd.service", Mode: 0o644},
 		{Src: "devvm/tmux-api.service", Dest: "/etc/systemd/system/tmux-api.service", Mode: 0o644},
@@ -648,6 +652,18 @@ fi
 # scripts retried once and so does this. Without the retry, set -e aborts
 # postinst before anything is restarted and dpkg leaves the package half-configured.
 systemctl daemon-reload || { sleep 3; systemctl daemon-reload; }
+
+# Every running user manager, so it sees the user units this package ships:
+# the session browser's slice and its scope cap (ADR-0035). A user manager reads
+# drop-ins when it loads, and on a box where users linger it can run for weeks,
+# so without this the browser's memory ceiling would wait for each user's next
+# fresh login. Best effort: a manager that does not answer is not a reason to
+# fail the upgrade.
+for dir in /run/user/*/systemd; do
+  uid="${dir#/run/user/}"; uid="${uid%/systemd}"
+  [ -S "$dir/private" ] || continue
+  systemctl --user -M "$uid@" daemon-reload >/dev/null 2>&1 || true
+done
 
 # Enabling, not just restarting: a unit that was only ever restarted does not
 # come back after a reboot. Idempotent, and run every time so a unit that was
