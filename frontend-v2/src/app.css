@@ -7892,6 +7892,16 @@ body.tl-kb-up {
   outline: 2px solid var(--ring);
   outline-offset: -1px;
 }
+/* The box under the panel's bars that holds the page and the popups drawn
+   over it. The popups are laid over this box, not the panel, so a dialog the
+   page waits on leaves Stop, Hand back and close pressable. */
+.tl-browser-pagebox {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 /* The page. Scrolls only once a pinch has zoomed it past the stage; a single
    finger then pans, and two fingers are left to the panel's own pinch. */
 .tl-browser-stage {
@@ -7964,8 +7974,9 @@ body.tl-kb-up {
   font-size: 16px;
 }
 
-/* Popups the frame does not show (BrowserPopups.tsx). Laid over the panel,
-   outside the stage, so a press on one never becomes a click in the page. */
+/* Popups the frame does not show (BrowserPopups.tsx). Laid over the page's
+   box, beside the stage rather than in it, so a press on one never becomes a
+   click in the page. */
 .tl-browser-popup-backdrop {
   position: absolute;
   inset: 0;
@@ -7985,7 +7996,7 @@ body.tl-kb-up {
   box-shadow: var(--pop-shadow);
   overflow: hidden;
 }
-/* On a phone: a sheet across the bottom of the panel, thumb-sized rows. */
+/* On a phone: a sheet across the bottom of the page, thumb-sized rows. */
 .tl-browser-list[data-sheet] {
   left: 0;
   right: 0;
@@ -8041,8 +8052,8 @@ body.tl-kb-up {
   padding: 6px 8px;
   border-top: 1px solid var(--border);
 }
-/* alert, confirm, prompt: a small modal over the panel. The page is stopped
-   until it is answered, so the layer dims everything behind it. */
+/* alert, confirm, prompt: a small modal over the page. The page is stopped
+   until it is answered, so the layer dims it; the panel's bars stay usable. */
 .tl-browser-dialog-layer {
   position: absolute;
   inset: 0;

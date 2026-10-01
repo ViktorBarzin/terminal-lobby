@@ -12,14 +12,16 @@ type DialogPopup = Extract<BrowserPopup, { kind: "dialog" }>;
  * so the screencast never has them; the host reports each to the person in
  * control and this draws its own.
  *
- * Laid over the whole panel, outside the stage, so a press here never reaches
- * the stage's handlers and is never sent on to the page as a click.
+ * Laid over the page's box, beside the stage rather than in it, so a press
+ * here never reaches the stage's handlers and is never sent on to the page as
+ * a click, and the panel's header (Stop, Hand back, close) stays pressable
+ * while a dialog waits for an answer.
  */
 export const BrowserPopups: Component<{
   /** The popup to draw for the tab on screen, if any. */
   popup: BrowserPopup | null;
   phone: boolean;
-  /** Where a select's list goes, in the panel's own pixels; null to centre it. */
+  /** Where a select's list goes, in the page box's own pixels; null to centre it. */
   place: (rect: PageRect) => ListPlacement | null;
   onChoose: (p: SelectPopup, values: string[]) => void;
   onAnswer: (p: DialogPopup, accept: boolean, text?: string) => void;
@@ -182,7 +184,8 @@ const CANCEL_LABEL: Record<DialogType, string> = {
 
 /**
  * alert, confirm, prompt or the leave-page question, as a small modal over the
- * panel. The page waits on it, so it has no way out but an answer.
+ * page. The page waits on it, so it has no way out but an answer; Stop and
+ * Hand back in the header above it still work.
  */
 const PageDialog: Component<{
   popup: DialogPopup;

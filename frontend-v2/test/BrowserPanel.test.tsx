@@ -376,6 +376,39 @@ describe("<BrowserPanel> popups", () => {
     expect(queryByText("File upload is not supported in the browser panel.")).toBeNull();
   });
 
+  it("covers only the page with a dialog, so Stop, Hand back and close stay pressable", () => {
+    const { ws, getByRole, getByText, getByLabelText, container, onStop, onClose } = driving();
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "confirm",
+      message: "Leave?",
+      defaultValue: "",
+    });
+    const layer = getByRole("alertdialog").parentElement!;
+    const page = container.querySelector(".tl-browser-pagebox")!;
+    const stage = container.querySelector(".tl-browser-stage")!;
+    // Inside the box that holds the page, beside the stage rather than in it,
+    // so a press on the dialog never reaches the stage's handlers.
+    expect(layer.parentElement).toBe(page);
+    expect(stage.parentElement).toBe(page);
+    expect(stage.contains(layer)).toBe(false);
+    for (const el of [
+      getByText("Stop"),
+      getByText("Hand back"),
+      getByLabelText("Close the browser panel"),
+    ]) {
+      expect(page.contains(el)).toBe(false);
+    }
+    fireEvent.click(getByText("Stop"));
+    expect(onStop).toHaveBeenCalledTimes(1);
+    fireEvent.click(getByText("Hand back"));
+    expect(ws.sent.at(-1)).toEqual({ t: "handBack" });
+    fireEvent.click(getByLabelText("Close the browser panel"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("goes away when the host says the popup is gone", () => {
     const { ws, queryByRole } = driving();
     ws.host({

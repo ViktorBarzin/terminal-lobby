@@ -74,7 +74,8 @@ export const BrowserPanel: Component<{
   onClose: () => void;
 }> = (props) => {
   const [stage, setStage] = createSignal<HTMLDivElement>();
-  let panel: HTMLElement | undefined;
+  /** The box the page and its popups share; popups are placed in its pixels. */
+  let pagebox: HTMLDivElement | undefined;
   let img: HTMLImageElement | undefined;
   let ime: HTMLInputElement | undefined;
   const seen = createVisibility(stage);
@@ -192,11 +193,11 @@ export const BrowserPanel: Component<{
     );
   });
 
-  /** Where a select's list goes, in the panel's pixels, over the drawn picture. */
+  /** Where a select's list goes, in the page box's pixels, over the drawn picture. */
   const placeList = (rect: PageRect): ListPlacement | null => {
     const f = stream.frame();
     const st = stage();
-    if (!img || !f || !st || !panel) return null;
+    if (!img || !f || !st || !pagebox) return null;
     const r = img.getBoundingClientRect();
     const anchor = clientBox(
       rect,
@@ -212,7 +213,7 @@ export const BrowserPanel: Component<{
       width: s.width,
       height: s.height,
     });
-    const p = panel.getBoundingClientRect();
+    const p = pagebox.getBoundingClientRect();
     return { ...at, left: at.left - p.left, top: at.top - p.top };
   };
 
@@ -476,7 +477,6 @@ export const BrowserPanel: Component<{
 
   return (
     <aside
-      ref={panel}
       class="tl-browser-panel"
       data-phone={props.phone() ? "" : undefined}
       aria-label="Session browser"
@@ -580,79 +580,81 @@ export const BrowserPanel: Component<{
           onInput={(e) => setAddress(e.currentTarget.value)}
         />
       </form>
-      <div
-        ref={setStage}
-        class="tl-browser-stage"
-        // The page takes raw pointer and key input while in control, which is
-        // what the application role tells assistive tech to pass through.
-        role="application"
-        data-control={inControl() ? "" : undefined}
-        data-zoomed={zoom() > 1 ? "" : undefined}
-        tabIndex={0}
-        aria-label={inControl() ? "The page. You have control." : "The page"}
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={onPointerUp}
-        onPointerCancel={onPointerCancel}
-        onContextMenu={(e) => inControl() && e.preventDefault()}
-        onKeyDown={onKeyDown}
-        onKeyUp={onKeyUp}
-        onPaste={onPaste}
-      >
+      <div ref={pagebox} class="tl-browser-pagebox">
         <div
-          class="tl-browser-canvas"
-          style={{ width: `${zoom() * 100}%`, height: `${zoom() * 100}%` }}
+          ref={setStage}
+          class="tl-browser-stage"
+          // The page takes raw pointer and key input while in control, which is
+          // what the application role tells assistive tech to pass through.
+          role="application"
+          data-control={inControl() ? "" : undefined}
+          data-zoomed={zoom() > 1 ? "" : undefined}
+          tabIndex={0}
+          aria-label={inControl() ? "The page. You have control." : "The page"}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerCancel}
+          onContextMenu={(e) => inControl() && e.preventDefault()}
+          onKeyDown={onKeyDown}
+          onKeyUp={onKeyUp}
+          onPaste={onPaste}
         >
-          <Show when={stream.frame()}>
-            {(f) => (
-              <img
-                ref={img}
-                class="tl-browser-frame"
-                src={f().src}
-                alt={tab()?.title ? `The page: ${tab()?.title}` : "The page"}
-                draggable={false}
-              />
+          <div
+            class="tl-browser-canvas"
+            style={{ width: `${zoom() * 100}%`, height: `${zoom() * 100}%` }}
+          >
+            <Show when={stream.frame()}>
+              {(f) => (
+                <img
+                  ref={img}
+                  class="tl-browser-frame"
+                  src={f().src}
+                  alt={tab()?.title ? `The page: ${tab()?.title}` : "The page"}
+                  draggable={false}
+                />
+              )}
+            </Show>
+          </div>
+          <Show when={note()}>{(n) => <div class="tl-browser-empty">{n()}</div>}</Show>
+          <Show when={stream.error()}>
+            {(m) => (
+              <div class="tl-browser-error" role="alert">
+                {m()}
+              </div>
             )}
           </Show>
+          <Show when={props.phone() && inControl()}>
+            <input
+              ref={ime}
+              class="tl-browser-ime"
+              type="text"
+              autocomplete="off"
+              autocapitalize="off"
+              spellcheck={false}
+              aria-label="Type into the page"
+              onBeforeInput={onImeBeforeInput}
+              onInput={onImeInput}
+            />
+          </Show>
         </div>
-        <Show when={note()}>{(n) => <div class="tl-browser-empty">{n()}</div>}</Show>
-        <Show when={stream.error()}>
-          {(m) => (
-            <div class="tl-browser-error" role="alert">
-              {m()}
-            </div>
-          )}
-        </Show>
-        <Show when={props.phone() && inControl()}>
-          <input
-            ref={ime}
-            class="tl-browser-ime"
-            type="text"
-            autocomplete="off"
-            autocapitalize="off"
-            spellcheck={false}
-            aria-label="Type into the page"
-            onBeforeInput={onImeBeforeInput}
-            onInput={onImeInput}
-          />
-        </Show>
+        <BrowserPopups
+          popup={popup()}
+          phone={props.phone()}
+          place={placeList}
+          onChoose={(p, values) => {
+            const [first] = values;
+            if (p.multiple) drive({ t: "choose", values, tab: p.tab });
+            else if (first !== undefined) drive({ t: "choose", value: first, tab: p.tab });
+            popupDone(p);
+          }}
+          onAnswer={(p, accept, text) => {
+            drive({ t: "dialog", accept, ...(text === undefined ? {} : { text }), tab: p.tab });
+            popupDone(p);
+          }}
+          onDismiss={popupDone}
+        />
       </div>
-      <BrowserPopups
-        popup={popup()}
-        phone={props.phone()}
-        place={placeList}
-        onChoose={(p, values) => {
-          const [first] = values;
-          if (p.multiple) drive({ t: "choose", values, tab: p.tab });
-          else if (first !== undefined) drive({ t: "choose", value: first, tab: p.tab });
-          popupDone(p);
-        }}
-        onAnswer={(p, accept, text) => {
-          drive({ t: "dialog", accept, ...(text === undefined ? {} : { text }), tab: p.tab });
-          popupDone(p);
-        }}
-        onDismiss={popupDone}
-      />
     </aside>
   );
 };
