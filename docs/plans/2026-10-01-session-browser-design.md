@@ -201,9 +201,23 @@ a dropdown the frame never showed. The panel draws these itself:
 | Date and colour pickers, autofill | Not drawn. Typing into the field still works |
 | File chooser | Not supported. The panel says so when a page opens one |
 
-The protocol gains `{"t":"popup","kind":"select"|"dialog","options":[...],"message":"..."}`
-from the host and `{"t":"choose","value":"..."}` / `{"t":"dialog","accept":true|false,"text":"..."}`
-from a viewer in control.
+The host sends `popup` only to the person in control, one per tab:
+
+| `kind` | Fields | Sent when |
+|---|---|---|
+| `select` | `options` (`value`, `label`, `selected`, `disabled`), `multiple`, `rect` in page pixels | A press leaves a select focused whose list Chrome draws outside the page |
+| `dialog` | `type` (`alert`, `confirm`, `prompt`, `beforeunload`), `message`, `defaultValue` | The page opens a dialog, or a person takes control while one is open |
+| `filechooser` | none | The page opens a file chooser. The host cancels it |
+| `none` | none | The tab's popup was answered or went away |
+
+The person answers with `{"t":"choose","value":"..."}` (`"values":[...]` for a
+multiple select) or `{"t":"dialog","accept":true|false,"text":"..."}`, each with
+an optional `tab`. session-events passes both only on a connection that may
+control. With the agent in control, dialogs and file choosers stay with
+playwright-mcp's `browser_handle_dialog` and `browser_file_upload` as before.
+Whatever a person answers is also cleared from playwright-mcp's own record, so
+the agent's next call after the hand-back is not refused over a dialog that has
+already closed.
 
 ## Lifecycle
 
