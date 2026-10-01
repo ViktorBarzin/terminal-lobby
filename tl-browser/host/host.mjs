@@ -268,7 +268,16 @@ async function serve() {
   function tick() {
     if (closing) return;
     if (control.lapse()) broadcastControl();
-    if (!session) return;
+    if (!session) {
+      // The launcher starts a host for a tool call, so one that has opened no
+      // browser for a whole freeze window (a launch that failed, say) has
+      // nothing left to do and should not keep its memory.
+      if (idle.check(gate.inFlight > 0 || launching !== null) === "freeze") {
+        log("no browser was opened, exiting");
+        void shutdown(0);
+      }
+      return;
+    }
     const busy = gate.inFlight > 0 || control.holder !== null || viewers.anySubscribed();
     const due = idle.check(busy);
     if (due === "freeze") {
