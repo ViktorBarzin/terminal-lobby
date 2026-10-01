@@ -1,6 +1,6 @@
 # See the browser a session is driving
 
-Status: approved, being implemented. Viktor, 2026-10-01.
+Status: shipped in terminal-lobby 0.86.0 on 2026-10-01, with the infra side (ingress, provisioning, reaper). Viktor, 2026-10-01.
 Decision record: [ADR-0035, each session gets its own browser, started on first use](../adr/0035-each-session-gets-its-own-browser-started-on-first-use.md).
 Terms: **Session browser**, **Browsing run**, **Browser card**, **Browser panel**,
 **Control**, **Frozen** in `CONTEXT.md`.
@@ -390,7 +390,37 @@ lobby package installs.
 - Phone: the panel on the shared Android emulator and on the iPhone through
   `homelab ios`.
 
+## What the live test showed
+
+Run on the box on 2026-10-01 against 0.86.0, a real Claude 2.1.286 session,
+the live session-events and tmux-api, and the lobby's frontend from the same
+commit served by vite:
+
+| Check | Result |
+|---|---|
+| Idle session | Launcher only, 5.7 MB resident, no host, no Chrome |
+| First browser call | Host and Chrome in `tl.slice/tl-browser.slice/tl-browser-s<N>-<pid>.scope`, 248 MB together |
+| Limits in force | `MemoryHigh=1G`, `MemoryMax=1536M`, `CPUQuota=300%` per browser; 4 GB on the slice |
+| Card, indicator, panel | Shown; the panel streamed the page beside the chat |
+| Take control | Typing, the panel's own select list (change event fired), the page's alert as the panel's dialog with Stop and Hand back still clickable |
+| Agent while a person holds control | Refused, did not retry, asked to be told when done |
+| `browser_close` | Host, Chrome, scope, socket and `@tl_browser` all gone; about 320 MB back |
+| Freeze | After exactly 600 s idle, every Chrome process in state T except its two crash reporters (idle, 0% CPU) |
+| Thaw | Opening the panel on the phone woke it at once |
+| Android emulator (real Chrome) | Panel full screen, soft keyboard typed into the page, the select as a bottom sheet |
+| Session ends | Nothing left behind; about 520 MB back |
+| Ingress | `/browser/` routed to session-events behind Authentik |
+
+Not checked: the iPhone (the rig could not reach the London Mac that day), and
+the Authentik path in a real browser (no automated browser holds a lobby
+login). Known limits from the reviews: a select opened from the keyboard shows
+no list (arrow keys still work), a select inside an iframe is not detected,
+date pickers and autofill are not drawn, and a hardware keyboard on a phone
+doubled the first character in one test with adb key injection (soft keyboard
+typing was exact).
+
 ## Open questions
+
 
 - The "agent's current tab" approximation is unmeasured against real agent
   runs.
