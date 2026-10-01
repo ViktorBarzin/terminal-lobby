@@ -104,7 +104,9 @@ over stdio. The server keeps the name `playwright`, so tool names stay
   Claude sent, and from then on pipes bytes both ways.
 - It starts the host inside its own `systemd-run --user --scope`, in a
   per-user `tl-browser.slice`, so each browser has a memory and CPU ceiling
-  (see "Memory").
+  (see "Memory"). systemd nests a dashed slice name under its prefix, so the
+  scope's cgroup is `user@<uid>.service/tl.slice/tl-browser.slice/<scope>`,
+  with `tl.slice` created implicitly.
 - When the host exits, after `browser_close` or a hard stop, the launcher goes
   back to waiting and starts a fresh host on the next browser call.
 - It inherits `TMUX` and `TMUX_PANE` from Claude, which is how it knows its
@@ -264,7 +266,7 @@ do not depend on any single one:
 | An abandoned browser does not hold memory for long | Closed after 2 hours frozen | Node and Chrome |
 | One page cannot take the box | Per-browser scope: `MemoryHigh=1G`, `MemoryMax=1536M`, `CPUQuota=300%` | The kernel reclaims, then OOM-kills inside that scope only |
 | One user's browsers together are bounded | `tl-browser.slice` per user: `MemoryMax=4G`, `CPUQuota=800%`, `CPUWeight=50` | The same, across that user's browsers |
-| A wedged GPU process is cleared | `playwright-reaper` also watches `tl-browser.slice` | The spinning process |
+| A wedged GPU process is cleared | `playwright-reaper` also watches `user@<uid>.service/tl.slice/tl-browser.slice` | The spinning process |
 
 The 2-hour close extends the freeze-only answer given during the design
 interview. It follows from the memory request: with swap full, a frozen browser
@@ -308,7 +310,8 @@ lobby package installs.
    The `.deb` installs `/usr/local/bin/tl-browser`, the host under
    `/usr/lib/terminal-lobby/tl-browser-host/` with its `node_modules`, and
    `tl-browser.slice` as a user unit.
-2. infra: the `/browser/` ingress prefix, the reaper's slice list, and
+2. infra: the `/browser/` ingress prefix, the reaper's slice list
+   (`user@<uid>.service/tl.slice/tl-browser.slice`), and
    `t3-provision-users` wiring each user's `playwright` MCP as
    `tl-browser` over stdio in place of the HTTP entry.
 3. The per-user `playwright-mcp@` units stay up for running sessions, which
