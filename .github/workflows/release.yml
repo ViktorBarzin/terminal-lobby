@@ -149,6 +149,18 @@ jobs:
           # before it.
           npm run test
 
+      # The session browser's host (ADR-0035), a Node program outside the
+      # frontend's workspace, so its tests are a step of their own. The Go half,
+      # tl-browser, is in the module loop above. integration.test.mjs drives
+      # real headless Chrome and skips itself where there is none; the hosted
+      # runner image carries Google Chrome, so here it runs.
+      - name: test (browser host)
+        run: |
+          set -euo pipefail
+          cd tl-browser/host
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm test
+
       - name: test (python)
         run: |
           set -euo pipefail

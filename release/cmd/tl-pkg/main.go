@@ -36,6 +36,14 @@ func main() {
 	for _, f := range release.Package.Files {
 		check(copyFile(filepath.Join(*stage, f.Src), filepath.Join(*out, f.Dest), f.Mode))
 	}
+	// Trees go in whole. Their file lists come from a tool (npm ci), so the
+	// manifest names the directory and StageTree copies what is in it.
+	var trees int
+	for _, tr := range release.Package.Trees {
+		n, err := release.StageTree(filepath.Join(*stage, tr.Src), filepath.Join(*out, tr.Dest))
+		check(err)
+		trees += n
+	}
 	// tl-apply is the package's own tooling: the maintainer scripts call it.
 	check(copyFile(filepath.Join(*tools, "tl-apply"), filepath.Join(*out, "/usr/lib/terminal-lobby/tl-apply"), 0o755))
 
@@ -68,7 +76,8 @@ func main() {
 		check(os.WriteFile(filepath.Join(*out, "DEBIAN/conffiles"), []byte(c), 0o644))
 	}
 	check(os.WriteFile(filepath.Join(*out, "/etc/systemd/system/terminal-lobby-revert.service"), []byte(revertUnit), 0o644))
-	fmt.Printf("tl-pkg: staged %d files at version %s\n", len(release.Package.Files), *version)
+	fmt.Printf("tl-pkg: staged %d files and %d from %d tree(s) at version %s\n",
+		len(release.Package.Files), trees, len(release.Package.Trees), *version)
 }
 
 func control(version, commit string) string {
@@ -86,6 +95,12 @@ func control(version, commit string) string {
 		// claiming them here made terminal-lobby's dependency list a guess about
 		// somebody else's binary.
 		"Depends: ttyd-devvm, viu, tmux, acl, sudo",
+		// The session browser's host runs on Node 24 and drives Google Chrome
+		// (ADR-0035). Recommended rather than required: the lobby works without
+		// them, only the browser does not, and neither is in Ubuntu's own
+		// archive at a version that would do, so a hard dependency would make
+		// the package uninstallable on a box without those vendor sources.
+		"Recommends: nodejs (>= 24), google-chrome-stable",
 		"Description: Terminal Lobby - web tmux sessions for the devvm workstation",
 		" The lobby UI, its Go backends, the systemd units and the devvm helper",
 		" scripts, at one version. Built from commit " + commit + ".",

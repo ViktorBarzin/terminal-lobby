@@ -29,6 +29,22 @@ type File struct {
 	Conffile bool
 }
 
+// Tree is a directory the package installs whole. It is for content whose file
+// list is decided by a tool rather than written down: the browser host's
+// node_modules is whatever npm ci resolves from the committed lockfile, a few
+// hundred files that change with every dependency bump. tl-pkg copies it with
+// StageTree.
+//
+// Nothing watches a tree. A unit that depended on one would restart on no
+// change of its own, so a tree is for files a process reads when it starts.
+type Tree struct {
+	// Src is the directory within the built staging tree. The build assembles
+	// it; it does not exist in a checkout.
+	Src string
+	// Dest is the absolute directory on the box.
+	Dest string
+}
+
 // ConfigPath is the one file an operator edits. Every unit sources it as an
 // EnvironmentFile, and systemd expands environment variables in ExecStart, so
 // ttyd's -H reads the same value the Go services do.
@@ -208,6 +224,8 @@ type Check struct {
 // to restart.
 type Manifest struct {
 	Files []File
+	// Trees are directories installed whole, beside Files.
+	Trees []Tree
 	Units []Unit
 	// AssetPayload is where the content-hashed chunks travel inside the package.
 	// They are copied into ServedAssetDir by the maintainer script rather than
@@ -346,6 +364,10 @@ var Package = Manifest{
 		{Src: "bin/skills-api", Dest: "/usr/local/bin/skills-api", Mode: 0o755},
 		{Src: "bin/agent-api", Dest: "/usr/local/bin/agent-api", Mode: 0o755},
 		{Src: "bin/tl-session-watch", Dest: "/usr/local/bin/tl-session-watch", Mode: 0o755},
+		// Each session's playwright MCP server (ADR-0035). Claude Code starts
+		// it per session over stdio, so no unit runs it, and a new version
+		// reaches each session the next time it starts.
+		{Src: "bin/tl-browser", Dest: "/usr/local/bin/tl-browser", Mode: 0o755, Unmanaged: true},
 		// Invoked by ttyd per WebSocket, by sessions, and by tmux-api via sudo.
 		{Src: "devvm/tmux-attach.sh", Dest: "/usr/local/bin/tmux-attach.sh", Mode: 0o755, Unmanaged: true},
 		{Src: "devvm/tmux-user-attach", Dest: "/usr/local/bin/tmux-user-attach", Mode: 0o755, Unmanaged: true},
@@ -431,6 +453,12 @@ var Package = Manifest{
 		{Src: "devvm/tmux.conf.system", Dest: "/etc/tmux.conf", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-pool-warm@.service", Dest: "/etc/systemd/user/tl-pool-warm@.service", Mode: 0o644, Unmanaged: true},
 		{Src: "devvm/tl-prewarm@.service", Dest: "/etc/systemd/user/tl-prewarm@.service", Mode: 0o644, Unmanaged: true},
+		// The ceiling over one user's browsers together. A vendor user unit,
+		// so it goes under /usr/lib rather than /etc, where an operator's
+		// override in /etc/systemd/user/tl-browser.slice.d/ still wins. Each
+		// user's systemd instance loads it the first time tl-browser starts a
+		// scope with --slice=tl-browser.slice.
+		{Src: "devvm/tl-browser.slice", Dest: "/usr/lib/systemd/user/tl-browser.slice", Mode: 0o644, Unmanaged: true},
 
 		{Src: "devvm/ttyd.service", Dest: "/etc/systemd/system/ttyd.service", Mode: 0o644},
 		{Src: "devvm/tmux-api.service", Dest: "/etc/systemd/system/tmux-api.service", Mode: 0o644},
@@ -450,6 +478,13 @@ var Package = Manifest{
 		// every user that copy has forgotten. devvm/sudoers.d-ttyd-users.template
 		// is the reference; postinst still validates the live file before
 		// counting the install as done.
+	},
+	// The browser host tl-browser starts on a session's first browser call:
+	// host.mjs, its lib/, the package files and the production node_modules.
+	// The launcher's compiled-in default points here. The build assembles the
+	// directory (packaging/build-deb.sh), because node_modules is not in git.
+	Trees: []Tree{
+		{Src: "tl-browser-host", Dest: "/usr/lib/terminal-lobby/tl-browser-host"},
 	},
 	// ttyd watches the terminal server binary, which ttyd-devvm installs; that
 	// package restarts it when it upgrades. It is listed here so a change to the

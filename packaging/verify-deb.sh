@@ -86,6 +86,23 @@ for dep in ttyd-devvm viu tmux acl sudo; do
     "$(dpkg-deb -f "$DEB" Depends | grep -c "\\b$dep\\b" || true)" 1
 done
 
+# The session browser (ADR-0035). Claude Code execs the launcher, the launcher
+# runs node on host.mjs at a compiled-in path, and the host imports
+# @playwright/mcp from the node_modules beside it. Any one missing leaves a
+# package that installs clean and a browser that fails on its first call.
+check "the browser launcher ships, executable" \
+  "$(printf '%s' "$contents" | grep -c '^-rwxr-xr-x.*usr/local/bin/tl-browser$' || true)" 1
+check "the browser host ships" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-browser-host/host\.mjs$' || true)" 1
+check "the browser host carries playwright-mcp" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/terminal-lobby/tl-browser-host/node_modules/@playwright/mcp/package\.json$' || true)" 1
+check "the browser host ships without its tests" \
+  "$(printf '%s' "$contents" | grep -c 'usr/lib/terminal-lobby/tl-browser-host/test/' || true)" 0
+check "the browser slice ships as a user unit" \
+  "$(printf '%s' "$contents" | grep -c '^-.*usr/lib/systemd/user/tl-browser\.slice$' || true)" 1
+check "the browser's runtime is recommended" \
+  "$(dpkg-deb -f "$DEB" Recommends | grep -c 'nodejs' || true)" 1
+
 check "the package's own tooling ships" \
   "$(printf '%s' "$contents" | grep -c 'usr/lib/terminal-lobby/tl-apply' || true)" 1
 

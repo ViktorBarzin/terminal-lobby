@@ -1,0 +1,31 @@
+[Unit]
+# The ceiling over one user's session browsers together (ADR-0035).
+#
+# tl-browser starts each browser host in its own transient scope under this
+# slice, with a ceiling per browser of MemoryHigh=1G, MemoryMax=1536M and
+# CPUQuota=300%. That bounds one page. This bounds how many pages one person can
+# have open at once: a user with several sessions browsing gets 4G and eight
+# cores between all of them, so their browsers cannot take the box from everyone
+# else. When the slice reaches MemoryMax the kernel reclaims and then OOM-kills
+# inside this slice only, never a terminal or a Claude process.
+#
+# It is a user unit, so each user's systemd instance runs its own copy and the
+# limits are per user, not shared across the box. The memory and cpu
+# controllers have to be delegated to user@.service for them to apply; systemd
+# 255 on Ubuntu 24.04 delegates cpu, io, memory and pids by default.
+#
+# CPUWeight=50 puts browsers behind the user's interactive work when the CPU is
+# contended, without slowing them when it is not.
+#
+# The values are first estimates, not measured working sets. Override one per
+# box in /etc/systemd/user/tl-browser.slice.d/*.conf rather than editing this
+# file, which the package replaces.
+Description=terminal-lobby session browsers
+Documentation=https://forgejo.viktorbarzin.me/viktor/terminal-lobby
+
+[Slice]
+MemoryAccounting=yes
+MemoryMax=4G
+CPUAccounting=yes
+CPUQuota=800%
+CPUWeight=50

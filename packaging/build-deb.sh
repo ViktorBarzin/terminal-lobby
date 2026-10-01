@@ -30,7 +30,7 @@ COMMIT="$(git rev-parse --short HEAD)"
 # the path it happened to run in.
 echo "==> building Go services (commit $COMMIT)"
 LDFLAGS="-X main.buildID=$COMMIT"
-for svc in tmux-api clipboard-upload session-events file-api skills-api agent-api tl-session-watch; do
+for svc in tmux-api clipboard-upload session-events file-api skills-api agent-api tl-session-watch tl-browser; do
   (cd "$svc" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
     go build -trimpath -ldflags "$LDFLAGS" -o "$STAGE/bin/$svc" .)
 done
@@ -38,6 +38,33 @@ done
 # tl-apply and tl-pkg which the pipeline runs.
 (cd release && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
   go build -trimpath -o "$STAGE/bin/tl-users" ./cmd/tl-users)
+
+# --- the browser host ------------------------------------------------------
+# What tl-browser starts on a session's first browser call (ADR-0035). The
+# manifest installs this directory whole, so it holds exactly what runs and
+# nothing else: host.mjs, its lib/, the package files, and node_modules from
+# the committed lockfile. Tests stay behind. --omit=dev keeps tooling out, and
+# --ignore-scripts because no dependency here needs an install script (the one
+# lockfile entry with one is fsevents, macOS only) and the build has no reason
+# to run code a dependency ships.
+echo "==> staging the browser host"
+HOST="$STAGE/tl-browser-host"
+mkdir -p "$HOST"
+cp tl-browser/host/host.mjs tl-browser/host/package.json tl-browser/host/package-lock.json "$HOST/"
+cp -a tl-browser/host/lib "$HOST/lib"
+(cd "$HOST" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+
+# The staged tree has to start, not merely exist. --describe loads every module
+# the host imports and prints its MCP handshake without launching Chrome, which
+# is what tl-browser runs on a cache miss. A lib file the copy above missed, or
+# a dependency --omit=dev dropped, fails here instead of on every box's first
+# browser call.
+node "$HOST/host.mjs" --describe | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+assert d["initialize"]["serverInfo"], "no serverInfo"
+assert any(t["name"] == "browser_close" for t in d["tools"]["tools"]), "no browser_close tool"
+' || { echo "build: the staged browser host does not describe itself" >&2; exit 1; }
 
 # --- the package's own tooling ---------------------------------------------
 (cd release && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \

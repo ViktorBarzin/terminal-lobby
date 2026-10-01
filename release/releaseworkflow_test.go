@@ -39,7 +39,7 @@ var releaseModuleAssign = regexp.MustCompile(`(?m)^\s*(mods=\$\(.*\))\s*$`)
 
 // skipDirs are directories that hold no module of this repo's own. .worktrees
 // matters because the main checkout keeps other branches' trees there, each
-// with its own copy of all fourteen go.mod files.
+// with its own copy of every go.mod file.
 var skipDirs = map[string]bool{
 	".git":         true,
 	".worktrees":   true,
