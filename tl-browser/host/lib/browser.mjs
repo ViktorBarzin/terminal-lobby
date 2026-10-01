@@ -11,6 +11,7 @@ import {
   focusedSelectInPage,
   MAX_LABEL,
   MAX_OPTIONS,
+  MAX_VALUE,
 } from "./popups.mjs";
 import { childPids, treePids } from "./proctree.mjs";
 import { TabRegistry } from "./tabs.mjs";
@@ -241,6 +242,7 @@ export class BrowserSession {
         const desc = await handle.evaluate(describeSelectInPage, {
           maxOptions: MAX_OPTIONS,
           maxLabel: MAX_LABEL,
+          maxValue: MAX_VALUE,
         });
         return { handle, ...desc };
       };

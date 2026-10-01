@@ -15,10 +15,42 @@
  * @typedef {{ kind: "select" | "dialog", msg: PopupMessage & { tab: string } }} Popup
  */
 
+import { MAX_VALUE } from "./protocol.mjs";
+
+export { MAX_VALUE };
+
 /** A select longer than this shows its first options only. */
 export const MAX_OPTIONS = 2000;
 /** An option's label is cut to this many characters. */
 export const MAX_LABEL = 200;
+/** A dialog's message is cut to this many characters. */
+export const MAX_MESSAGE = 4096;
+
+/**
+ * Cuts a string to at most max UTF-16 units, without leaving the first half of
+ * a surrogate pair at the end.
+ * @param {string} s
+ * @param {number} max
+ * @returns {string}
+ */
+function cut(s, max) {
+  if (s.length <= max) return s;
+  const end = s.charCodeAt(max - 1);
+  return s.slice(0, end >= 0xd800 && end <= 0xdbff ? max - 1 : max);
+}
+
+/**
+ * A dialog's text as the panel is sent it: a page can raise an alert with
+ * megabytes of text, and the panel only needs enough to read. A cut default
+ * value is what the prompt's field starts with, so what the person sends back
+ * is what they saw.
+ * @param {string} message
+ * @param {string} defaultValue
+ * @returns {{ message: string, defaultValue: string }}
+ */
+export function dialogText(message, defaultValue) {
+  return { message: cut(message, MAX_MESSAGE), defaultValue: cut(defaultValue, MAX_VALUE) };
+}
 
 /**
  * The popups open now, one per tab: a newer one on the same tab replaces the
@@ -147,18 +179,23 @@ export function focusedSelectInPage() {
 }
 
 /**
- * Runs in the page: what the panel needs to draw a select's list.
+ * Runs in the page: what the panel needs to draw a select's list. A value
+ * longer than maxValue is cut and its option marked disabled: choosing by the
+ * cut value could pick a different option, or none, so it is not offered.
  * @param {HTMLSelectElement} el
- * @param {{ maxOptions: number, maxLabel: number }} limits
+ * @param {{ maxOptions: number, maxLabel: number, maxValue: number }} limits
  * @returns {{ options: SelectOption[], multiple: boolean, rect: { x: number, y: number, w: number, h: number } }}
  */
-export function describeSelectInPage(el, { maxOptions, maxLabel }) {
+export function describeSelectInPage(el, { maxOptions, maxLabel, maxValue }) {
   const r = el.getBoundingClientRect();
   const options = [...el.options].slice(0, maxOptions).map((o) => ({
-    value: o.value,
+    value: o.value.length > maxValue ? o.value.slice(0, maxValue) : o.value,
     label: (o.label || o.text).slice(0, maxLabel),
     selected: o.selected,
-    disabled: o.disabled || (o.parentElement instanceof HTMLOptGroupElement && o.parentElement.disabled),
+    disabled:
+      o.value.length > maxValue ||
+      o.disabled ||
+      (o.parentElement instanceof HTMLOptGroupElement && o.parentElement.disabled),
   }));
   return {
     options,

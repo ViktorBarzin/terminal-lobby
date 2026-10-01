@@ -57,6 +57,11 @@ const MAX_URL = 8192;
 const MAX_ID = 64;
 /** More options than any real select offers in one list. */
 const MAX_CHOICES = 10_000;
+/**
+ * Longest select option value the host offers (popups.mjs cuts longer ones and
+ * makes them unselectable), so a longer choice can match nothing.
+ */
+export const MAX_VALUE = 1024;
 
 const MOUSE_TYPES = new Set(["move", "down", "up", "click"]);
 const KEY_TYPES = new Set(["down", "up", "press"]);
@@ -98,7 +103,13 @@ const text = (v, max) => typeof v === "string" && v.length > 0 && v.length <= ma
  * @param {unknown} v
  * @returns {v is string}
  */
-const optionValue = (v) => typeof v === "string" && v.length <= MAX_TEXT;
+const optionValue = (v) => typeof v === "string" && v.length <= MAX_VALUE;
+
+/**
+ * @param {unknown} v
+ * @returns {v is string}
+ */
+const answerText = (v) => typeof v === "string" && v.length <= MAX_TEXT;
 
 /**
  * The optional tab a popup answer names: absent, or a tab id.
@@ -180,7 +191,7 @@ export function parseViewerMessage(line) {
       const tab = popupTab(m);
       if (!tab || typeof m.accept !== "boolean") return null;
       if (!("text" in m)) return { t, accept: m.accept, ...tab };
-      return optionValue(m.text) ? { t, accept: m.accept, text: m.text, ...tab } : null;
+      return answerText(m.text) ? { t, accept: m.accept, text: m.text, ...tab } : null;
     }
     default:
       return null;

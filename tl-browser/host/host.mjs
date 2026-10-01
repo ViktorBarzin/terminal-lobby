@@ -26,7 +26,7 @@ import { BrowserSession, sandboxed, storageStatePath, VIEWPORT } from "./lib/bro
 import { Control } from "./lib/control.mjs";
 import { GateTransport, McpGate } from "./lib/gate.mjs";
 import { IdleClock } from "./lib/idle.mjs";
-import { checkChoice, PopupBoard, selectOpens } from "./lib/popups.mjs";
+import { checkChoice, dialogText, PopupBoard, selectOpens } from "./lib/popups.mjs";
 import { LineSplitter, normalizeUrl, socketDir, socketName } from "./lib/protocol.mjs";
 import { TmuxRegistration } from "./lib/tmux.mjs";
 import { ViewerServer } from "./lib/viewers.mjs";
@@ -251,8 +251,7 @@ async function serve() {
               tab,
               type:
                 type === "confirm" || type === "prompt" || type === "beforeunload" ? type : "alert",
-              message: dialog.message(),
-              defaultValue: dialog.defaultValue(),
+              ...dialogText(dialog.message(), dialog.defaultValue()),
             },
             page,
             dialog,

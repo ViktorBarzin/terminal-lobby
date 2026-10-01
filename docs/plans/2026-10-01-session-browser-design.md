@@ -210,6 +210,11 @@ The host sends `popup` only to the person in control, one per tab:
 | `filechooser` | none | The page opens a file chooser. The host cancels it |
 | `none` | none | The tab's popup was answered or went away |
 
+A dialog's `message` is cut to 4096 characters and its `defaultValue` to 1024.
+A select option's `value` over 1024 characters is cut to 1024 and the option is
+sent with `disabled: true`, because choosing by a cut value could select a
+different option. A `choose` value over 1024 characters is dropped.
+
 The person answers with `{"t":"choose","value":"..."}` (`"values":[...]` for a
 multiple select) or `{"t":"dialog","accept":true|false,"text":"..."}`, each with
 an optional `tab`. session-events passes both only on a connection that may

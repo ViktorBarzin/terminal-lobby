@@ -141,8 +141,12 @@ test("a pasted text over the limit is refused", () => {
 });
 
 test("a choice over the limits is refused", () => {
-  const longValue = JSON.stringify({ t: "choose", value: "x".repeat(1_000_001) });
-  assert.equal(parseViewerMessage(longValue), null);
+  const longValue = JSON.stringify({ t: "choose", value: "x".repeat(1025) });
+  assert.equal(parseViewerMessage(longValue), null, "no option value the host sends is longer");
+  const atCap = JSON.stringify({ t: "choose", value: "x".repeat(1024) });
+  assert.notEqual(parseViewerMessage(atCap), null);
+  const longValues = JSON.stringify({ t: "choose", values: ["a", "x".repeat(1025)] });
+  assert.equal(parseViewerMessage(longValues), null);
   const many = JSON.stringify({ t: "choose", values: Array.from({ length: 10_001 }, (_, i) => `${i}`) });
   assert.equal(parseViewerMessage(many), null);
   const longText = JSON.stringify({ t: "dialog", accept: true, text: "x".repeat(1_000_001) });

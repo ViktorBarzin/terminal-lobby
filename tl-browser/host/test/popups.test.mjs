@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { PopupBoard, checkChoice, selectOpens } from "../lib/popups.mjs";
+import {
+  MAX_LABEL,
+  MAX_MESSAGE,
+  MAX_OPTIONS,
+  MAX_VALUE,
+  PopupBoard,
+  checkChoice,
+  describeSelectInPage,
+  dialogText,
+  selectOpens,
+} from "../lib/popups.mjs";
 
 /** @param {string} tab */
 const select = (tab) => ({
@@ -106,4 +116,76 @@ test("a select opens a list for a click or a press, never for a move or a releas
   assert.equal(selectOpens({ t: "mouse", type: "move", x: 1, y: 1, button: "left", clickCount: 0 }), false);
   assert.equal(selectOpens({ t: "mouse", type: "down", x: 1, y: 1, button: "right", clickCount: 1 }), false);
   assert.equal(selectOpens({ t: "insertText", text: "a" }), false);
+});
+
+test("a dialog's message and default value are cut to their caps", () => {
+  assert.equal(MAX_MESSAGE, 4096);
+  assert.equal(MAX_VALUE, 1024);
+  assert.deepEqual(dialogText("Leave?", "Ada"), { message: "Leave?", defaultValue: "Ada" });
+  const long = dialogText("m".repeat(10_000), "d".repeat(5000));
+  assert.equal(long.message, "m".repeat(4096));
+  assert.equal(long.defaultValue, "d".repeat(1024));
+  const exact = dialogText("m".repeat(4096), "d".repeat(1024));
+  assert.equal(exact.message.length, 4096);
+  assert.equal(exact.defaultValue.length, 1024);
+});
+
+test("a cut never leaves half of a surrogate pair at the end", () => {
+  const emoji = "\u{1F600}";
+  const { message, defaultValue } = dialogText(`${"m".repeat(4095)}${emoji}`, `${"d".repeat(1023)}${emoji}`);
+  assert.equal(message, "m".repeat(4095));
+  assert.equal(defaultValue, "d".repeat(1023));
+});
+
+/**
+ * A stand-in for a select element, enough for describeSelectInPage.
+ * @param {{ value: string, label?: string, disabled?: boolean, selected?: boolean }[]} opts
+ */
+function fakeSelect(opts) {
+  return /** @type {HTMLSelectElement} */ (
+    /** @type {unknown} */ ({
+      multiple: false,
+      getBoundingClientRect: () => ({ x: 1, y: 2, width: 3, height: 4 }),
+      options: opts.map((o) => ({
+        value: o.value,
+        label: o.label ?? o.value,
+        text: o.label ?? o.value,
+        selected: o.selected ?? false,
+        disabled: o.disabled ?? false,
+        parentElement: null,
+      })),
+    })
+  );
+}
+
+test("an option value over the cap is cut and cannot be chosen", (t) => {
+  // @ts-ignore a page global the function reads, absent in Node
+  globalThis.HTMLOptGroupElement = class {};
+  // @ts-ignore
+  t.after(() => delete globalThis.HTMLOptGroupElement);
+  const limits = { maxOptions: MAX_OPTIONS, maxLabel: MAX_LABEL, maxValue: MAX_VALUE };
+  const desc = describeSelectInPage(
+    fakeSelect([
+      { value: "short", selected: true },
+      { value: "v".repeat(1024), label: "exactly at the cap" },
+      { value: "v".repeat(1025), label: "one over" },
+    ]),
+    limits,
+  );
+  assert.deepEqual(desc.options, [
+    { value: "short", label: "short", selected: true, disabled: false },
+    { value: "v".repeat(1024), label: "exactly at the cap", selected: false, disabled: false },
+    { value: "v".repeat(1024), label: "one over", selected: false, disabled: true },
+  ]);
+  assert.deepEqual(
+    checkChoice(desc, { t: "choose", value: "v".repeat(1024) }),
+    ["v".repeat(1024)],
+    "the value that fits picks its own option",
+  );
+  const cutOnly = describeSelectInPage(fakeSelect([{ value: "w".repeat(2000) }]), limits);
+  assert.equal(
+    checkChoice(cutOnly, { t: "choose", value: "w".repeat(1024) }),
+    null,
+    "a cut value never stands in for the real one",
+  );
 });
