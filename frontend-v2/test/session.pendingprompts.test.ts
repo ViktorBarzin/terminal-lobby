@@ -103,6 +103,96 @@ describe("a prompt appears as soon as it is sent", () => {
   });
 });
 
+describe("a prompt shows while it is still on its way", () => {
+  /** A fetch the test settles by hand, so the in-flight moment can be looked at. */
+  function mountHeld() {
+    const m = mount();
+    let settle!: (ok: boolean) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((r) => {
+            settle = (ok) => r({ ok, status: ok ? 200 : 502 } as unknown as Response);
+          }),
+      ),
+    );
+    return { ...m, settle: (ok: boolean) => settle(ok) };
+  }
+
+  it("is shown as sending before the session answers", async () => {
+    const { store, dispose, settle } = mountHeld();
+    const done = store.send("deploy the api");
+    expect(store.pendingPrompts().map((p) => [p.text, p.sending])).toEqual([
+      ["deploy the api", true],
+    ]);
+    settle(true);
+    await done;
+    expect(store.pendingPrompts().map((p) => [p.text, p.sending])).toEqual([
+      ["deploy the api", false],
+    ]);
+    dispose();
+  });
+
+  it("is taken down when the session refuses it", async () => {
+    const { store, dispose, settle } = mountHeld();
+    const done = store.send("deploy the api");
+    expect(store.pendingPrompts()).toHaveLength(1);
+    settle(false);
+    expect(await done).toBe(false);
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("is taken down when the session cannot be reached", async () => {
+    const { store, dispose } = mount();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new TypeError("offline"))),
+    );
+    expect(await store.send("deploy the api")).toBe(false);
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("is not released by someone else's prompt landing meanwhile", async () => {
+    // A prompt typed in the terminal while this one is in flight is recorded
+    // first. It cannot be ours, which has not reached the pane yet.
+    const { store, dispose, deliver, settle } = mountHeld();
+    const done = store.send("deploy the api");
+    await deliver(userEvent(1, "typed in the terminal"));
+    expect(store.pendingPrompts().map((p) => p.text)).toEqual(["deploy the api"]);
+    settle(true);
+    await done;
+    expect(store.pendingPrompts().map((p) => [p.text, p.sending])).toEqual([
+      ["deploy the api", false],
+    ]);
+    dispose();
+  });
+
+  it("is released by its own record even before the answer comes back", async () => {
+    // The CLI can record it before the POST's response reaches this browser.
+    // Kept, it would show twice for good.
+    const { store, dispose, deliver, settle } = mountHeld();
+    const done = store.send("deploy the api");
+    await deliver(userEvent(1, "deploy the api"));
+    expect(store.pendingPrompts()).toEqual([]);
+    settle(true);
+    await done;
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+
+  it("is shown as sending while a suspended session wakes", () => {
+    const { store, dispose } = mount();
+    const release = store.hold("wake up");
+    expect(store.pendingPrompts().map((p) => p.sending)).toEqual([true]);
+    release();
+    expect(store.pendingPrompts()).toEqual([]);
+    dispose();
+  });
+});
+
 describe("letting go once the transcript has it", () => {
   it("drops prose when the record arrives", async () => {
     const { store, dispose, deliver } = mount();
@@ -138,7 +228,9 @@ describe("letting go once the transcript has it", () => {
     // bubble was never let go and held the status line on Working with Stop.
     const { store, dispose, deliver } = mount();
     await store.send("/context");
-    await deliver(JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }));
+    await deliver(
+      JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }),
+    );
     expect(store.pendingPrompts()).toEqual([]);
     dispose();
   });
@@ -148,7 +240,9 @@ describe("letting go once the transcript has it", () => {
     // about it, even one sent before.
     const { store, dispose, deliver } = mount();
     await store.send("deploy the api");
-    await deliver(JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }));
+    await deliver(
+      JSON.stringify({ id: 1, kind: "meta", meta: "command", session: "s", body: "/context" }),
+    );
     expect(store.pendingPrompts().map((p) => p.text)).toEqual(["deploy the api"]);
     dispose();
   });

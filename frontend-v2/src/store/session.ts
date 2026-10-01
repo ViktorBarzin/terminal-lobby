@@ -677,7 +677,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
                 // and made a newer plan read "Plan not answered" (measured
                 // 2026-09-27). A command is kept, for the reason below.
                 left = left.filter(
-                  (p, n) => n > said || (n < said && (p.command || p.afterId >= e.id)),
+                  (p, n) => n > said || (n < said && (p.command || p.sending || p.afterId >= e.id)),
                 );
                 continue;
               }
@@ -685,8 +685,10 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
               // one was sent is that one — whatever the CLI did to the text on
               // the way in (it trims trailing whitespace). A command is not
               // released this way: it may never be recorded at all, and a later
-              // prompt must not sweep away the only account of it.
-              const oldest = left.findIndex((p) => !p.command && p.afterId < e.id);
+              // prompt must not sweep away the only account of it. Nor is one
+              // still in flight: it has not reached the pane, so a record
+              // arriving now is somebody else's (typed in the terminal).
+              const oldest = left.findIndex((p) => !p.command && !p.sending && p.afterId < e.id);
               if (oldest >= 0) drop(oldest);
             }
             return left;
@@ -979,8 +981,33 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     return Promise.resolve(false);
   };
 
+  /** Put up a prompt as sent from here, dimmed while `sending`; returns its id. */
+  const showPending = (text: string): number => {
+    pendingSeq += 1;
+    const id = -pendingSeq;
+    setPendingPrompts((cur) => [
+      ...cur,
+      {
+        id,
+        text: text.trim(),
+        at: Date.now(),
+        command: isSlashCommand(text),
+        afterId: events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0,
+        sending: true,
+      },
+    ]);
+    return id;
+  };
+  const dropPending = (id: number): void => {
+    setPendingPrompts((cur) => cur.filter((p) => p.id !== id));
+  };
+
   const send = async (text: string, sendOpts?: { awaitReady?: boolean }): Promise<boolean> => {
     const awaitReady = sendOpts?.awaitReady === true;
+    // Shown before the POST rather than after it, so the message is on screen
+    // the moment Send is pressed. Its own record may land before the response
+    // does, which releases it as usual; the updates below then find nothing.
+    const pending = showPending(text);
     try {
       const body = JSON.stringify(awaitReady ? { text, awaitReady } : { text });
       // A reload during a send (5-6 s while a suspended session wakes) cut
@@ -1051,40 +1078,24 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         }
       }
       if (res.ok) {
-        pendingSeq += 1;
-        setPendingPrompts((cur) => [
-          ...cur,
-          {
-            id: -pendingSeq,
-            text: text.trim(),
-            at: Date.now(),
-            command: isSlashCommand(text),
-            afterId: events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0,
-          },
-        ]);
+        setPendingPrompts((cur) =>
+          cur.map((p) => (p.id === pending ? { ...p, sending: false } : p)),
+        );
+      } else {
+        dropPending(pending);
       }
       return res.ok;
     } catch {
       /* the prompt still shows once the transcript tails */
+      dropPending(pending);
       opts.notify?.("Couldn't reach the session", "error");
       return false;
     }
   };
 
   const hold = (text: string): (() => void) => {
-    pendingSeq += 1;
-    const id = -pendingSeq;
-    setPendingPrompts((cur) => [
-      ...cur,
-      {
-        id,
-        text: text.trim(),
-        at: Date.now(),
-        command: isSlashCommand(text),
-        afterId: events.length > 0 ? (events[events.length - 1]?.id ?? 0) : 0,
-      },
-    ]);
-    return () => setPendingPrompts((cur) => cur.filter((p) => p.id !== id));
+    const id = showPending(text);
+    return () => dropPending(id);
   };
 
   const interrupt = async (

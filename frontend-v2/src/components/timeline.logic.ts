@@ -66,6 +66,8 @@ export interface UserRow {
   images?: ImageRef[];
   /** The user record's uuid, which the prompt picture route is keyed by. */
   record?: string;
+  /** Sent from here, and the session has not said it took it yet. */
+  sending?: true;
 }
 export interface MessageRow {
   kind: "message";
@@ -830,6 +832,7 @@ function collectTurnRows(turn: Turn): {
           ...(e.at !== undefined ? { at: e.at } : {}),
           ...(e.images?.length ? { images: e.images } : {}),
           ...(e.images?.length && e.record ? { record: e.record } : {}),
+          ...(e.sending ? { sending: true as const } : {}),
         };
         // A subagent's prompt is its own first row, never the turn's.
         if (e.sidechain) add(row, e);
@@ -2667,6 +2670,7 @@ export function withPendingPrompts(events: Event[], sent: ReadonlyArray<PendingP
           turnId: `${PENDING_TURN}${c.id}`,
           body: c.text,
           at: c.at,
+          ...(c.sending ? { sending: true } : {}),
         }) as Event,
     ),
   ];

@@ -589,6 +589,14 @@ export interface PendingPrompt {
    * whitespace, and rewrites a slash command into markup entirely).
    */
   afterId: number;
+  /**
+   * True from the moment Send is pressed until the session says it took the
+   * prompt. The bubble shows dimmed with a spinner meanwhile, so the message
+   * is on screen at once rather than after the round trip, which is 4 s or
+   * more when the session is waking (store/wake-send.ts). A refusal takes it
+   * down again. Absent means sent.
+   */
+  sending?: boolean;
 }
 
 /** Whether a composed message is a slash command rather than prose. */

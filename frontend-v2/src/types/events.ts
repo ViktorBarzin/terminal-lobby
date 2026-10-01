@@ -98,6 +98,11 @@ export interface Event {
    * the server resolves them, because the browser never learns that directory.
    */
   files?: string[];
+  /**
+   * Never on the wire. Set by `withPendingPrompts` on a prompt sent from this
+   * browser that the session has not taken yet, which draws dimmed.
+   */
+  sending?: boolean;
 }
 
 /**

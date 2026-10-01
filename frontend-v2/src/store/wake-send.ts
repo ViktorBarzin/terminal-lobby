@@ -32,8 +32,8 @@ export interface WakeSendOptions {
   send: (text: string, opts?: { awaitReady?: boolean }) => Promise<boolean>;
   notify?: (msg: string, kind: "info") => void;
   /**
-   * Show the message as sent while the session wakes, and hand back what takes
-   * it down again. Before this the field emptied and nothing showed it for
+   * Show the message as sending while the session wakes, and hand back what
+   * takes it down again. Before this the field emptied and nothing showed it for
    * about 2 s (deployed review round 5, 2026-09-29).
    */
   hold?: (text: string) => () => void;
@@ -47,10 +47,11 @@ export function sendWaking(o: WakeSendOptions): (text: string) => Promise<boolea
     const release = o.hold?.(text);
     try {
       if (!(await o.resume())) return false;
-      return await o.send(text, { awaitReady: true });
     } finally {
-      // After the send, which shows the message itself once it lands.
+      // Before the send, which puts up its own before its first await, so no
+      // frame is drawn with neither or with both.
       release?.();
     }
+    return o.send(text, { awaitReady: true });
   };
 }

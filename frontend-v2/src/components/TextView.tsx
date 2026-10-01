@@ -514,6 +514,17 @@ export const TextView: Component<{
     const fromQueue = queuedGhosts(queued(), props.pendingPrompts?.() ?? []);
     return waiting.length === 0 ? fromQueue : [...fromQueue, ...waiting.map((p) => p.text)];
   });
+  /** Which of those ghosts the session has not taken yet. Only the held ones
+   *  can be: Claude's queue holds prompts it already has. */
+  const ghostsSending = createMemo(() => {
+    const out = new Set<number>();
+    const waiting = waitingHeld();
+    const offset = ghosts().length - waiting.length;
+    waiting.forEach((p, n) => {
+      if (p.sending) out.add(offset + n);
+    });
+    return out;
+  });
   const shown = createMemo(() => withPendingPrompts(props.events, sent()));
   /** What the timeline draws. `withPendingPrompts` returns `events` itself when
    *  nothing is in flight, so the common case reuses the fold above rather than
@@ -2136,6 +2147,7 @@ export const TextView: Component<{
           me={props.me}
           session={props.session}
           queued={ghosts()}
+          queuedSending={ghostsSending()}
           planDocked={planDocked()?.call ?? null}
           cardDocked={cardUp()}
           planAnswer={(() => {

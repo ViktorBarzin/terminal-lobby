@@ -72,6 +72,11 @@ const USER_COLLAPSE_CHARS = 600;
 const planToolId = (row: TimelineRow): string | undefined =>
   row.kind === "plan" ? row.toolId : undefined;
 
+/** Beside a message the session has not taken yet (PendingPrompt.sending). */
+const SendingSpinner: Component = () => (
+  <span class="tl-sending" role="status" aria-label="Sending" title="Sending" />
+);
+
 const UserRowView: Component<{
   row: UserRow;
   /** effective OS user — decides whether a store path is ours to fetch. */
@@ -90,7 +95,10 @@ const UserRowView: Component<{
   const [open, setOpen] = createSignal(false);
   const shown = () => (long() && !open() ? collapsed().segments : segments());
   return (
-    <div class="tl-row tl-row-user" data-eid={props.row.id}>
+    <div class="tl-row tl-row-user" data-eid={props.row.id} data-sending={props.row.sending}>
+      <Show when={props.row.sending}>
+        <SendingSpinner />
+      </Show>
       <div class="tl-bubble-user">
         {/* Still a <pre>: the message's own whitespace is significant, and an
             <img>/<button> is phrasing content, so substituting a path in place
@@ -140,16 +148,25 @@ const UserRowView: Component<{
  */
 const GhostRowsView: Component<{
   queued: string[];
+  /** Indexes into `queued` of prompts the session has not taken yet. */
+  sending?: ReadonlySet<number>;
   me?: string;
   onOpenPreview?: (path: string) => void;
 }> = (props) => (
   <>
     <For each={props.queued.slice(0, MAX_QUEUED_SHOWN)}>
-      {(text) => (
-        <div class="tl-row tl-row-user tl-row-ghost" data-queued="">
+      {(text, i) => (
+        <div
+          class="tl-row tl-row-user tl-row-ghost"
+          data-queued=""
+          data-sending={props.sending?.has(i()) || undefined}
+        >
+          <Show when={props.sending?.has(i())}>
+            <SendingSpinner />
+          </Show>
           <div class="tl-bubble-user tl-bubble-ghost" title={text}>
             <div class="tl-ghost-body">
-              <span class="tl-ghost-tag">Queued</span>
+              <span class="tl-ghost-tag">{props.sending?.has(i()) ? "Sending" : "Queued"}</span>
               <pre class="tl-user-text tl-ghost-text">
                 <MessageSegments
                   segments={segmentPrompt(text)}
@@ -394,6 +411,9 @@ export const MessagesTimeline: Component<{
   /** Prompts waiting in Claude's queue, oldest first, drawn as ghost bubbles
    *  after the last row. */
   queued?: string[];
+  /** Indexes into `queued` of prompts sent from here that the session has not
+   *  taken yet, drawn as "Sending" rather than "Queued". */
+  queuedSending?: ReadonlySet<number>;
   /** The ExitPlanMode call whose plan the docked plan card is showing
    *  (decidePlanDock). Its row shrinks to one line meanwhile. */
   planDocked?: string | null;
@@ -1365,6 +1385,7 @@ export const MessagesTimeline: Component<{
         <Show when={liveRowState()}>{(s) => <LiveRowView state={s()} now={now()} />}</Show>
         <GhostRowsView
           queued={props.queued ?? []}
+          sending={props.queuedSending}
           me={props.me}
           onOpenPreview={props.onOpenPreview}
         />

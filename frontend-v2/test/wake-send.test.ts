@@ -76,7 +76,21 @@ describe("sendWaking: the message while the session wakes", () => {
     expect(order).toEqual(["hold:Reply AWAKE"]);
     wake(true);
     expect(await sending).toBe(true);
-    expect(order).toEqual(["hold:Reply AWAKE", "send:Reply AWAKE", "release"]);
+    // Released just before the send, which puts up its own in the same tick:
+    // released after it, the message showed twice for the whole POST.
+    expect(order).toEqual(["hold:Reply AWAKE", "release", "send:Reply AWAKE"]);
+  });
+
+  it("takes the message back down when the wake throws", async () => {
+    const release = vi.fn();
+    const go = sendWaking({
+      suspended: () => true,
+      resume: () => Promise.reject(new Error("tmux-api down")),
+      send: async () => true,
+      hold: () => release,
+    });
+    await expect(go("hello")).rejects.toThrow("tmux-api down");
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   it("takes the message back down when the session would not wake", async () => {

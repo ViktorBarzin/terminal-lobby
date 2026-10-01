@@ -2004,6 +2004,36 @@ label.tl-set-row-label {
   display: flex;
   justify-content: flex-end;
 }
+/* A message the session has not taken yet: dimmed, with a spinner beside it,
+   until POST /prompt answers (PendingPrompt.sending). A refusal takes it down
+   and the composer gets the text back. */
+.tl-row-user[data-sending] {
+  align-items: flex-end;
+  gap: 8px;
+}
+.tl-row-user[data-sending] .tl-bubble-user {
+  opacity: 0.55;
+}
+.tl-sending {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-bottom: 10px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: tl-sending-spin 0.8s linear infinite;
+}
+@keyframes tl-sending-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tl-sending {
+    animation-duration: 2.4s;
+  }
+}
 .tl-bubble-user {
   min-width: 0;
   max-width: 84%;
