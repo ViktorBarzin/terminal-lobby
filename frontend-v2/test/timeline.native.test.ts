@@ -315,6 +315,43 @@ describe("questions", () => {
     );
     expect(pendingQuestion(answered)).toBeNull();
   });
+
+  // Claude asks several calls in one message when it grills, and Claude Code
+  // shows their menus one after another (measured 2026-10-01). None of them is
+  // "moved on" from while the others are still being asked.
+  describe("calls asked together", () => {
+    const second = () => ev({ ...askEvent(), toolId: "q2" });
+    const questionRows = (rows: ReturnType<typeof deriveRows>) =>
+      flat(rows).filter((r) => r.kind === "question") as QuestionRow[];
+
+    it("keeps every call live, and the oldest is the one being asked", () => {
+      const rows = rowsOf(prompt(), askEvent(), second());
+      expect(questionRows(rows).map((q) => [q.pending, q.superseded ?? false])).toEqual([
+        [true, false],
+        [true, false],
+      ]);
+      expect(pendingQuestion(rows)?.toolId).toBe("q1");
+    });
+
+    it("keeps the older call live when the newer is answered first", () => {
+      const rows = rowsOf(
+        prompt(),
+        askEvent(),
+        second(),
+        ev({ kind: "tool_result", toolId: "q2", body: "", result: { answers: { Route: "Left" } } }),
+      );
+      const [first] = questionRows(rows);
+      expect(first!.pending).toBe(true);
+      expect(first!.superseded).toBeUndefined();
+      expect(pendingQuestion(rows)?.toolId).toBe("q1");
+    });
+
+    it("moves on once Claude writes anything after them", () => {
+      const rows = rowsOf(prompt(), askEvent(), second(), ev({ kind: "text", body: "ok" }));
+      expect(questionRows(rows).every((q) => q.superseded === true)).toBe(true);
+      expect(pendingQuestion(rows)).toBeNull();
+    });
+  });
 });
 
 describe("subagents", () => {

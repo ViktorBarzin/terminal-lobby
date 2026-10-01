@@ -1777,13 +1777,14 @@ function withoutRewound(events: Event[]): Event[] {
  * session, and the answer card would dock over it.
  *
  * `superseded` is the honest state for those: asked, never answered, no longer
- * being asked.
+ * being asked. Questions asked together are the exception (`liveQuestions`).
  */
 function markSuperseded(out: TimelineRow[]): void {
   const newest = newestSubstantive(out);
+  const live = liveQuestions(out);
   for (const r of out) {
     for (const row of r.kind === "turn-fold" ? r.hidden : [r]) {
-      if (row.kind === "question" && row.pending && row !== newest) {
+      if (row.kind === "question" && row.pending && !live.includes(row)) {
         row.pending = false;
         row.superseded = true;
       }
@@ -2185,8 +2186,28 @@ function newestSubstantive(rows: TimelineRow[]): TimelineRow | null {
  * that happened.
  */
 export function pendingQuestion(rows: TimelineRow[]): QuestionRow | null {
-  const newest = newestSubstantive(rows);
-  return newest && newest.kind === "question" && newest.pending ? newest : null;
+  return liveQuestions(rows).find((q) => q.pending) ?? null;
+}
+
+/**
+ * The question rows at the end of the conversation, oldest first: the newest
+ * substantive row when it is a question, and the questions straight before it.
+ *
+ * More than one because Claude asks several calls in one message when it
+ * grills, and Claude Code shows their menus one after another (measured
+ * 2026-10-01). A call answered out of order does not move the session past the
+ * others: only something else written after them does, a reply or a prompt,
+ * which is the abandoned-dialog case above.
+ */
+function liveQuestions(rows: TimelineRow[]): QuestionRow[] {
+  const out: QuestionRow[] = [];
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const r = rows[i]!;
+    if (r.kind === "working") continue;
+    if (r.kind !== "question") break;
+    out.unshift(r);
+  }
+  return out;
 }
 
 /** `DialogView.kind` on a plan reading (sessionio DialogKindPlan). */

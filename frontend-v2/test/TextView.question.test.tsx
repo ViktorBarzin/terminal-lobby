@@ -638,6 +638,10 @@ describe("calls asked together", () => {
   it("moves to the next call when the terminal answers the one on show", async () => {
     const v = mount([heldCalls([colour], [size]), ask("t1", [colour]), ask("t2", [size])]);
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a colour"));
+    // Neither call draws a row while the card asks it, and neither reads as
+    // one the session moved on from.
+    expect(v.container.querySelector(".tl-row-question")).toBeNull();
+    expect(v.container.textContent).not.toContain("moved on");
     v.setEvents([...v.events(), result("t1")]);
     await waitFor(() => expect(v.text(".tl-qcard-question")).toBe("Pick a size"));
     expect(v.option("S")!.disabled).toBe(false);
