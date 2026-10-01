@@ -77,6 +77,14 @@ const (
 	// connection.
 	browserPingEvery = 25 * time.Second
 	browserWriteWait = 30 * time.Second
+
+	// browserRecheckEvery is how often an open stream re-reads the share that
+	// let it in, and browserRecheckMin the least gap between the re-reads a
+	// control message triggers. Together they bound how long a revoked or
+	// downgraded guest keeps driving: at most recheckMin while sending, and
+	// at most recheckEvery while holding control without sending.
+	browserRecheckEvery = 5 * time.Second
+	browserRecheckMin   = time.Second
 )
 
 // watchOnlyMessages are the viewer messages a watch-only connection may send:
@@ -437,6 +445,10 @@ type browserRelay struct {
 	dial func(owner, sock string) (io.ReadWriteCloser, error)
 	// helloTimeout bounds the state route's wait for the host's hello.
 	helloTimeout time.Duration
+	// recheckEvery and recheckMin pace an open stream's re-reading of the
+	// share that let it in (streamGuard).
+	recheckEvery time.Duration
+	recheckMin   time.Duration
 }
 
 func newBrowserRelay(opts stampReader, self string) *browserRelay {
@@ -454,6 +466,8 @@ func newBrowserRelay(opts stampReader, self string) *browserRelay {
 			return dialBridge(owner, sock)
 		},
 		helloTimeout: browserHelloTimeout,
+		recheckEvery: browserRecheckEvery,
+		recheckMin:   browserRecheckMin,
 	}
 }
 
@@ -661,16 +675,62 @@ func (b *browserRelay) handleStream() http.HandlerFunc {
 		}
 		events.Emit("browser.stream_opened", acc.viewer, attrs)
 		start := time.Now()
-		relayBrowser(conn, host, acc.canControl)
+		eff, real, ownerParam := osUserFrom(r.Context()), realOSUserFrom(r.Context()), r.URL.Query().Get("owner")
+		guard := &streamGuard{
+			canControl: acc.canControl,
+			resolve: func() (browserAccess, error) {
+				return resolveBrowserAccess(eff, real, ownerParam, session, b.shares)
+			},
+			every: b.recheckEvery,
+			min:   b.recheckMin,
+		}
+		relayBrowser(conn, host, guard)
 		events.Emit("browser.stream_closed", acc.viewer, telemetry.Attrs{
 			"tl.session": session, "tl.ms": time.Since(start).Milliseconds(),
 		})
 	}
 }
 
-// relayBrowser pipes one viewer connection until either end goes: host lines
-// out as WebSocket text messages, lobby messages in through the filter.
-func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, canControl bool) {
+// streamGuard keeps an open stream inside the authority it was opened with.
+//
+// The access check runs once, before the upgrade, but a stream lasts as long
+// as the tab. tmux-api revokes a share, or changes its mode, by rewriting the
+// store and detaching the guest's terminal; nothing tells this service. So the
+// stream re-reads the store itself: before a control message once recheckMin
+// has passed since the last read, and on a ticker of recheckEvery for a guest
+// who is not sending. A stream opened to drive ends the moment its caller may
+// no longer drive, and a watch-only stream when its caller may no longer watch.
+// A store that cannot be read counts as no share: the stream fails closed.
+type streamGuard struct {
+	// canControl is the authority the stream was opened with.
+	canControl bool
+	// resolve re-runs the access decision for the same caller and session.
+	resolve func() (browserAccess, error)
+	every   time.Duration
+	min     time.Duration
+}
+
+// holds reports whether the caller still has the authority the stream was
+// opened with.
+func (g *streamGuard) holds() bool {
+	acc, err := g.resolve()
+	if err != nil {
+		if !errors.Is(err, errNotShared) {
+			log.Printf("browser: share recheck: %v", err)
+		}
+		return false
+	}
+	return acc.canControl || !g.canControl
+}
+
+// handBackMessage releases control if this connection's user holds it. The
+// host ignores it from anyone else.
+var handBackMessage = []byte(`{"t":"handBack"}` + "\n")
+
+// relayBrowser pipes one viewer connection until either end goes, or the
+// guard stops holding: host lines out as WebSocket text messages, lobby
+// messages in through the filter.
+func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGuard) {
 	conn.SetReadLimit(maxViewerMessage)
 	done := make(chan struct{})
 	var once sync.Once
@@ -682,6 +742,39 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, canControl bool
 		})
 	}
 	defer stop()
+
+	// hostMu orders writes to the host, which come from the read loop and,
+	// when the guard stops holding, from the recheck ticker. Once revoked is
+	// set nothing more reaches the host.
+	var hostMu sync.Mutex
+	revoked := false
+	writeHost := func(b []byte) error {
+		hostMu.Lock()
+		defer hostMu.Unlock()
+		if revoked {
+			return errors.New("browser: the stream's access changed")
+		}
+		_, err := host.Write(b)
+		return err
+	}
+	// revoke ends a stream whose authority lapsed. Control the caller may hold
+	// is handed back first: the host keeps control across a dropped connection
+	// (a reload should not lose it), so without this the agent would stay
+	// locked out until the control lapse.
+	revoke := func() {
+		hostMu.Lock()
+		if !revoked {
+			revoked = true
+			if guard.canControl {
+				host.Write(handBackMessage)
+			}
+		}
+		hostMu.Unlock()
+		conn.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "access changed"),
+			time.Now().Add(time.Second))
+		stop()
+	}
 
 	go func() {
 		defer stop()
@@ -721,7 +814,23 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, canControl bool
 			}
 		}
 	}()
+	go func() {
+		t := time.NewTicker(guard.every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if !guard.holds() {
+					revoke()
+					return
+				}
+			}
+		}
+	}()
 
+	var checked time.Time
 	for {
 		typ, msg, err := conn.ReadMessage()
 		if err != nil {
@@ -730,12 +839,28 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, canControl bool
 		if typ != websocket.TextMessage {
 			continue
 		}
-		out, ok := filterViewerMessage(msg, canControl)
+		out, ok := filterViewerMessage(msg, guard.canControl)
 		if !ok {
 			continue
 		}
-		if _, err := host.Write(out); err != nil {
+		if guard.canControl && !isWatchMessage(out) && time.Since(checked) >= guard.min {
+			if !guard.holds() {
+				revoke()
+				return
+			}
+			checked = time.Now()
+		}
+		if err := writeHost(out); err != nil {
 			return
 		}
 	}
+}
+
+// isWatchMessage reports whether a message filterViewerMessage let through is
+// one a watcher could send too, which needs no recheck.
+func isWatchMessage(out []byte) bool {
+	var m struct {
+		T string `json:"t"`
+	}
+	return json.Unmarshal(out, &m) == nil && watchOnlyMessages[m.T]
 }

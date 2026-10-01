@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -734,6 +735,166 @@ func TestIsBrowserStream(t *testing.T) {
 	} {
 		if isBrowserStream(p) != want {
 			t.Errorf("%s: want %v", p, want)
+		}
+	}
+}
+
+// --- a share changing under an open stream ----------------------------------------------
+
+// shareTable is a share store a test can change while a stream is open.
+type shareTable struct {
+	mu   sync.Mutex
+	rows map[[3]string]string
+	err  error
+}
+
+func (s *shareTable) lookup(owner, name, guest string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rows[[3]string{owner, name, guest}], s.err
+}
+
+func (s *shareTable) set(owner, name, guest, mode string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.rows[[3]string{owner, name, guest}] = mode
+}
+
+// recheckFixture is bob's session shared with alice rw, on a relay that
+// re-reads the share before every control message (recheckMin 0) and on a
+// ticker of the given period.
+func recheckFixture(t *testing.T, every time.Duration) (*httptest.Server, *fakeHost, *shareTable) {
+	t.Helper()
+	_, dir := browserTestBases(t)
+	sock := filepath.Join(dir, "s6.sock")
+	host := startFakeHost(t, sock, fakeHostHello)
+	opts := fakeOptions{
+		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock},
+		"bob/sh0000000000":   {optBrowser: "live", optBrowserSock: sock},
+	}
+	shares := &shareTable{rows: map[[3]string]string{{"bob", "sh0000000000", "alice"}: "rw"}}
+	b := testRelay(opts, nil)
+	b.shares = shares.lookup
+	b.recheckEvery = every
+	b.recheckMin = 0
+	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+	t.Cleanup(srv.Close)
+	return srv, host, shares
+}
+
+// readClose reads until the stream ends and returns how it ended.
+func readClose(t *testing.T, ws *websocket.Conn) *websocket.CloseError {
+	t.Helper()
+	ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for {
+		if _, _, err := ws.ReadMessage(); err != nil {
+			var ce *websocket.CloseError
+			if !errors.As(err, &ce) {
+				t.Fatalf("the stream ended with %v, want a close frame", err)
+			}
+			return ce
+		}
+	}
+}
+
+// A guest whose rw share is revoked, or turned ro, mid-stream must not drive
+// the owner's browser one message further. The relay hands back any control
+// the guest holds, so the agent is not left locked out until the lapse, and
+// ends the stream; the lobby reconnects under whatever the share now says.
+func TestBrowserStreamEndsWhenTheShareNoLongerAllowsControl(t *testing.T) {
+	for _, c := range []struct{ name, mode string }{{"revoked", ""}, {"turned ro", "ro"}} {
+		t.Run(c.name, func(t *testing.T) {
+			srv, host, shares := recheckFixture(t, time.Hour)
+			ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+			if got := host.next(t); got != `{"t":"hello","user":"alice","canControl":true}` {
+				t.Fatalf("hello %s", got)
+			}
+			readWS(t, ws)
+			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"takeControl"}`))
+			if got := host.next(t); got != `{"t":"takeControl"}` {
+				t.Fatalf("got %s", got)
+			}
+
+			shares.set("bob", "sh0000000000", "alice", c.mode)
+			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"mouse","type":"click","x":5,"y":6}`))
+			ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"insertText","text":"secret"}`))
+
+			if got := host.next(t); got != `{"t":"handBack"}` {
+				t.Fatalf("the host received %s after the share changed, want only handBack", got)
+			}
+			if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
+				t.Fatalf("closed with %d, want %d", ce.Code, websocket.ClosePolicyViolation)
+			}
+			select {
+			case l := <-host.lines:
+				t.Fatalf("the host received %s after the stream lost its share", l)
+			case <-time.After(200 * time.Millisecond):
+			}
+		})
+	}
+}
+
+// A guest who has stopped sending is still cut off, by the ticker, so an idle
+// tab does not keep a revoked share's control alive.
+func TestBrowserStreamTickerEndsARevokedStream(t *testing.T) {
+	srv, host, shares := recheckFixture(t, 50*time.Millisecond)
+	ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+	host.next(t)
+	readWS(t, ws)
+	shares.set("bob", "sh0000000000", "alice", "")
+	if got := host.next(t); got != `{"t":"handBack"}` {
+		t.Fatalf("got %s, want handBack", got)
+	}
+	if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("closed with %d", ce.Code)
+	}
+}
+
+// A share store that cannot be read is treated as no share: the stream fails
+// closed rather than keeping authority nobody can confirm.
+func TestBrowserStreamEndsWhenTheShareCannotBeRead(t *testing.T) {
+	srv, host, shares := recheckFixture(t, 50*time.Millisecond)
+	ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+	host.next(t)
+	readWS(t, ws)
+	shares.mu.Lock()
+	shares.err = errors.New("corrupt share store")
+	shares.mu.Unlock()
+	if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("closed with %d", ce.Code)
+	}
+}
+
+// A watcher has no control to hand back; a revoked ro share just ends.
+func TestBrowserStreamEndsARevokedWatcherWithoutAHandBack(t *testing.T) {
+	srv, host, shares := recheckFixture(t, 50*time.Millisecond)
+	shares.set("bob", "sh0000000000", "alice", "ro")
+	ws := dialStream(t, srv, "/browser/sh0000000000/stream?owner=bob")
+	host.next(t)
+	readWS(t, ws)
+	shares.set("bob", "sh0000000000", "alice", "")
+	if ce := readClose(t, ws); ce.Code != websocket.ClosePolicyViolation {
+		t.Fatalf("closed with %d", ce.Code)
+	}
+	select {
+	case l := <-host.lines:
+		t.Fatalf("the host received %s from a watcher", l)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Rechecks change nothing for a stream whose authority still holds: the owner,
+// and a guest whose share is unchanged, keep driving.
+func TestBrowserStreamKeepsAStreamWhoseShareHolds(t *testing.T) {
+	srv, host, _ := recheckFixture(t, 20*time.Millisecond)
+	for _, path := range []string{"/browser/k7m2q9x4tpz3/stream", "/browser/sh0000000000/stream?owner=bob"} {
+		ws := dialStream(t, srv, path)
+		host.next(t)
+		readWS(t, ws)
+		time.Sleep(100 * time.Millisecond) // several ticks
+		ws.WriteMessage(websocket.TextMessage, []byte(`{"t":"key","type":"press","key":"Enter"}`))
+		if got := host.next(t); got != `{"key":"Enter","t":"key","type":"press"}` {
+			t.Fatalf("%s: got %s", path, got)
 		}
 	}
 }
