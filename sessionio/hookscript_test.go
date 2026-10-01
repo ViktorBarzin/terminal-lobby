@@ -1,6 +1,7 @@
 package sessionio
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1042,5 +1043,97 @@ func TestSessionEndClearsTheToolMarker(t *testing.T) {
 
 	if got := e.opt(t, OptionTool); got != "" {
 		t.Fatalf("%s after SessionEnd = %q, want unset", OptionTool, got)
+	}
+}
+
+// fireUnder runs the script inside the scratch session, as a child of `claudes`
+// nested processes named claude, so it sees the process tree a real hook does:
+// the pane's own claude is the only claude between a hook and the tmux server,
+// and a claude an agent started from a tool call has a second one above it.
+// Run from the scratch pane rather than from the test, because a test run from
+// a Claude session already has a real claude among its own ancestors.
+func (e hookEnv) fireUnder(t *testing.T, claudes int, mode, fixture string) {
+	t.Helper()
+	fx, err := filepath.Abs(filepath.Join("testdata", "hooks", fixture))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sh, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh not available")
+	}
+	// The kernel names a process after the file it was started from, so a
+	// link called claude gives a shell the name the script looks for.
+	claude := filepath.Join(t.TempDir(), "claude")
+	if err := os.Symlink(sh, claude); err != nil {
+		t.Fatal(err)
+	}
+	// The trailing `:` keeps each shell alive around its child, rather than
+	// letting it exec the command in its own place.
+	cmd := shellQuote(e.script) + " " + mode + " <" + shellQuote(fx) + "; :"
+	for range claudes {
+		cmd = shellQuote(claude) + " -c " + shellQuote(cmd) + "; :"
+	}
+	ch := fmt.Sprintf("fired-%d", time.Now().UnixNano())
+	if err := exec.Command("tmux", "-L", e.sock, "new-window", "-d", "-t", "demo",
+		cmd+"; tmux wait-for -S "+ch).Run(); err != nil {
+		t.Fatalf("new-window: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := exec.CommandContext(ctx, "tmux", "-L", e.sock, "wait-for", ch).Run(); err != nil {
+		t.Fatalf("waiting for the hook in the pane: %v", err)
+	}
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// The defect behind workflows vanishing from the text view, 2026-10-01: a
+// workflow member ran `claude mcp get` from its Bash tool. That claude
+// inherited TMUX_PANE and fired the org-wide hooks against the session it was
+// started in, and its SessionEnd unset the session's state and its outstanding
+// set while the workflow still ran. A nested `claude -p` does the same with
+// SessionStart, a prompt and a Stop that rebuilds the set from its own empty
+// registry.
+func TestANestedClaudeLeavesTheSessionAlone(t *testing.T) {
+	e := newHookEnv(t)
+	e.fireUnder(t, 1, "running", "userprompt_human.json")
+	e.fireUnder(t, 1, "running", "post_workflow_launch.json")
+	e.fireUnder(t, 1, "done", "stop_workflow_running.json")
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Fatalf("precondition: %s = %q, want the running workflow", OptionBackground, got)
+	}
+
+	for _, ev := range []struct{ mode, fixture string }{
+		{"done", "sessionstart.json"},
+		{"running", "userprompt_human.json"},
+		{"done", "stop_tasks_finished.json"},
+		{"clear", "stop.json"},
+	} {
+		e.fireUnder(t, 2, ev.mode, ev.fixture)
+		if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+			t.Errorf("after a nested claude's %s (%s): %s = %q, want the workflow kept",
+				ev.mode, ev.fixture, OptionBackground, got)
+		}
+		if st := e.opt(t, OptionState); st != StateRunning {
+			t.Errorf("after a nested claude's %s (%s): %s = %q, want %q",
+				ev.mode, ev.fixture, OptionState, st, StateRunning)
+		}
+	}
+}
+
+// The other side of the same check: the pane's own claude, with nothing but a
+// shell and the tmux server above it, still stamps and still clears.
+func TestThePanesOwnClaudeStillStamps(t *testing.T) {
+	e := newHookEnv(t)
+
+	e.fireUnder(t, 1, "running", "post_workflow_launch.json")
+	if got := e.opt(t, OptionBackground); got != "w:w7t7pnsug" {
+		t.Fatalf("%s = %q, want the launch recorded", OptionBackground, got)
+	}
+
+	e.fireUnder(t, 1, "clear", "stop.json")
+	if got := e.opt(t, OptionState) + e.opt(t, OptionBackground); got != "" {
+		t.Fatalf("after the pane's own SessionEnd: state+bg = %q, want both unset", got)
 	}
 }

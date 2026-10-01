@@ -54,6 +54,35 @@ command -v tmux >/dev/null 2>&1 || exit 0
 command -v jq   >/dev/null 2>&1 || exit 0
 command -v curl >/dev/null 2>&1 || exit 0
 
+# Only the pane's own claude registers. A claude started from inside the
+# session's own work (an agent's Bash running `claude -p`) inherits TMUX_PANE
+# and fires SessionStart and UserPromptSubmit here too, which bound the session
+# to the nested claude's transcript: the text view then showed that one-prompt
+# conversation and none of the session's own agents. The pane's own claude is
+# the only claude between this hook and the tmux server, so a second one above
+# it means a nested start. Same check as claude-tmux-state; anything /proc does
+# not answer counts as the pane's own.
+nested_claude() {
+    local p=$PPID owners=0 comm stat
+    while :; do
+        case "$p" in
+        "" | *[!0-9]* | 0 | 1) return 1 ;;
+        esac
+        read -r comm 2>/dev/null <"/proc/$p/comm" || return 1
+        case "$comm" in
+        "tmux: server") return 1 ;;
+        claude | pi) owners=$((owners + 1)) ;;
+        esac
+        [ "$owners" -ge 2 ] && return 0
+        read -r stat 2>/dev/null <"/proc/$p/stat" || return 1
+        # "pid (comm) state ppid ...", counted from the last ") ".
+        stat="${stat##*) }"
+        stat="${stat#* }"
+        p="${stat%% *}"
+    done
+}
+nested_claude && exit 0
+
 # The session is the one holding THIS pane, asked for by pane id. An untargeted
 # `tmux display -p '#S'` does not fail when the pane has gone: tmux answers with
 # the most recently active session instead. A speculative pool slot released
