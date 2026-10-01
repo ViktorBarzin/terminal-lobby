@@ -227,6 +227,13 @@ func TestBrowserSocketWithin(t *testing.T) {
 		{filepath.Join(run, "s12.sock"), true},
 		{filepath.Join(run, "pid-4242.sock"), true},
 		{filepath.Join(tmp, "s0.sock"), true},
+		// A second host in the same session listens on <name>-<pid>.sock
+		// (tl-browser/host/lib/viewers.mjs).
+		{filepath.Join(run, "s12-959431.sock"), true},
+		{filepath.Join(run, "pid-4242-4242.sock"), true},
+		{filepath.Join(run, "s12-.sock"), false},
+		{filepath.Join(run, "s12-x.sock"), false},
+		{filepath.Join(run, "s12-1-2.sock"), false},
 		{"s12.sock", false},
 		{filepath.Join(run, "x.sock"), false},
 		{filepath.Join(run, "s12.sock.bak"), false},

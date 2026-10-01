@@ -262,8 +262,10 @@ var (
 )
 
 // browserSockNameRe is the host's socket name: s<N> for tmux session $N, or
-// pid-<pid> outside tmux (protocol.mjs socketName).
-var browserSockNameRe = regexp.MustCompile(`^(s[0-9]{1,10}|pid-[0-9]{1,10})\.sock$`)
+// pid-<pid> outside tmux (protocol.mjs socketName), with -<pid> after it when
+// another live host already serves that name, a second Claude in the same
+// session (viewers.mjs listen).
+var browserSockNameRe = regexp.MustCompile(`^(s[0-9]{1,10}|pid-[0-9]{1,10})(-[0-9]{1,10})?\.sock$`)
 
 // browserSocketWithin is the boundary on a socket path read from a tmux
 // option, which anything running in the session can set. It must be a host
