@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"terminal-lobby/authuser"
@@ -177,5 +178,42 @@ func TestGateRefusalsAreNeverCached(t *testing.T) {
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	if cc != "" {
 		t.Fatalf("the route saw Cache-Control %q set by the gate; it must choose its own", cc)
+	}
+}
+
+// The name a person is known by in the lobby is the identity header's, not the
+// OS account it maps to: the browser panel says "vbarzin has control", where
+// the account is "wizard". It reaches the routes beside the OS users, which
+// stay what every access decision uses.
+func TestAuthMiddlewareCarriesTheIdentitysName(t *testing.T) {
+	mapPath, admin, _ := actAsEnv(t)
+	for _, header := range []string{"adminauth", "adminauth@example.com"} {
+		var name, real string
+		h := authMiddleware(mapPath, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			name, real = displayNameFrom(r.Context()), realOSUserFrom(r.Context())
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/browser/main", nil)
+		req.Header.Set(authHeader, header)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if name != "adminauth" || real != admin {
+			t.Fatalf("header %q: name %q real %q, want adminauth and %s", header, name, real, admin)
+		}
+	}
+}
+
+func TestDisplayNameOf(t *testing.T) {
+	for _, c := range []struct{ header, real, want string }{
+		{"vbarzin", "wizard", "vbarzin"},
+		{"vbarzin@viktorbarzin.me", "wizard", "vbarzin"},
+		{"  vbarzin ", "wizard", "vbarzin"},
+		{"", "wizard", "wizard"},
+		{"@example.com", "wizard", "@example.com"},
+		{"a\nb", "wizard", "wizard"},
+		{strings.Repeat("x", 65), "wizard", "wizard"},
+		{strings.Repeat("x", 64), "wizard", strings.Repeat("x", 64)},
+	} {
+		if got := displayNameOf(authuser.Identity{Header: c.header, RealOSUser: c.real}); got != c.want {
+			t.Errorf("header %q: got %q, want %q", c.header, got, c.want)
+		}
 	}
 }

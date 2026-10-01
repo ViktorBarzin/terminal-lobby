@@ -145,9 +145,14 @@ func shareModeFor(path, owner, name, guest string) (string, error) {
 type browserAccess struct {
 	// owner is the OS user the session and its host belong to.
 	owner string
-	// viewer is the caller's own OS user, never an act-as target. It is the
-	// name the host shows as the controller.
+	// viewer is the caller's own OS user, never an act-as target. Telemetry
+	// records the stream under it.
 	viewer string
+	// name is the name the host shows as the controller: the identity
+	// header's (displayNameOf), which reads "vbarzin" where viewer reads
+	// "wizard". It decides nothing here; canControl comes from the OS users
+	// alone. Empty means viewer.
+	name string
 	// canControl is the Attach mode ceiling: true for the owner and an rw
 	// share, false for an ro share and for a Lens.
 	canControl bool
@@ -200,7 +205,17 @@ const (
 	shareModeRW = "rw"
 )
 
-// viewerHello is the first line the host reads on every connection.
+// hostName is the name the viewer hello gives the host for this connection.
+func (acc browserAccess) hostName() string {
+	if acc.name != "" {
+		return acc.name
+	}
+	return acc.viewer
+}
+
+// viewerHello is the first line the host reads on every connection. User is
+// the name the host shows as control's holder; the host keys control on its
+// own per-connection id, which it sends the viewer in its hello as "you".
 type viewerHello struct {
 	T          string `json:"t"`
 	User       string `json:"user"`
@@ -208,7 +223,7 @@ type viewerHello struct {
 }
 
 func encodeViewerHello(acc browserAccess) []byte {
-	b, _ := json.Marshal(viewerHello{T: "hello", User: acc.viewer, CanControl: acc.canControl})
+	b, _ := json.Marshal(viewerHello{T: "hello", User: acc.hostName(), CanControl: acc.canControl})
 	return append(b, '\n')
 }
 
@@ -515,6 +530,7 @@ func (b *browserRelay) access(w http.ResponseWriter, r *http.Request) (browserAc
 		http.Error(w, "share lookup failed", http.StatusInternalServerError)
 		return browserAccess{}, false
 	}
+	acc.name = displayNameFrom(r.Context())
 	return acc, true
 }
 

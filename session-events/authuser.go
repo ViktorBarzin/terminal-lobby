@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"terminal-lobby/authuser"
 	"terminal-lobby/telemetry"
@@ -20,7 +21,36 @@ type ctxKey int
 const (
 	osUserKey ctxKey = iota
 	realOSUserKey
+	displayNameKey
 )
+
+// displayNameFrom retrieves the name the caller is shown under (displayNameOf),
+// stashed by authMiddleware. It names a person to other people and decides
+// nothing: every access check uses the OS users above.
+func displayNameFrom(ctx context.Context) string {
+	s, _ := ctx.Value(displayNameKey).(string)
+	return s
+}
+
+// maxDisplayName bounds the name. The browser host refuses a viewer hello
+// whose user is past 256 characters, and a name longer than this is no longer
+// one a person would read in "<name> has control".
+const maxDisplayName = 64
+
+// displayNameOf is the name a person is known by in the lobby: the identity
+// header's value, cut at "@" the way the user map reads it, so "vbarzin" and
+// "vbarzin@example.com" are both "vbarzin". The OS account it maps to
+// ("wizard") is the fallback, for a header that names nobody readable.
+func displayNameOf(id authuser.Identity) string {
+	name := strings.TrimSpace(id.Header)
+	if i := strings.IndexByte(name, '@'); i > 0 {
+		name = name[:i]
+	}
+	if name == "" || len(name) > maxDisplayName || strings.ContainsFunc(name, unicode.IsControl) {
+		return id.RealOSUser
+	}
+	return name
+}
 
 // osUserFrom retrieves the resolved OS user stashed by authMiddleware: the
 // target when an administrator used ?as=, the caller otherwise.
@@ -82,6 +112,7 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 		w.Header().Del("Cache-Control")
 		ctx := context.WithValue(r.Context(), osUserKey, eff)
 		ctx = context.WithValue(ctx, realOSUserKey, real)
+		ctx = context.WithValue(ctx, displayNameKey, displayNameOf(id))
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

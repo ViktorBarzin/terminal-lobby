@@ -461,8 +461,8 @@ func (f fakeOptions) Option(osUser, session, name string) (string, bool) {
 	return opts[name], true
 }
 
-const fakeHostHello = `{"t":"hello","state":"frozen","tabs":[{"id":"1","url":"https://example.com/","title":"Example"}],` +
-	`"agentTab":"1","control":{"holder":"bob","since":10,"lapseAt":20},"viewport":{"w":1280,"h":800}}`
+const fakeHostHello = `{"t":"hello","you":"c0ffee0000000001","state":"frozen","tabs":[{"id":"1","url":"https://example.com/","title":"Example"}],` +
+	`"agentTab":"1","control":{"holder":"bob","holderId":"beef000000000002","since":10,"lapseAt":20},"viewport":{"w":1280,"h":800}}`
 
 // testRelay is a relay for user "alice" whose own sockets are dialled for real,
 // with shares from the table.
@@ -482,6 +482,15 @@ func browserMux(b *browserRelay, eff, real string) http.Handler {
 		ctx := context.WithValue(r.Context(), osUserKey, eff)
 		ctx = context.WithValue(ctx, realOSUserKey, real)
 		mux.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// browserMuxNamed is browserMux for a caller whose identity header names them
+// differently from their OS account.
+func browserMuxNamed(b *browserRelay, eff, real, name string) http.Handler {
+	inner := browserMux(b, eff, real)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inner.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), displayNameKey, name)))
 	})
 }
 
@@ -635,6 +644,37 @@ func TestBrowserStreamLetsTheOwnerDrive(t *testing.T) {
 	}
 	if got := host.next(t); got != `{"accept":false,"t":"dialog"}` {
 		t.Fatalf("got %s, want the dialog answer", got)
+	}
+}
+
+// The host shows whoever holds control by the name the relay stamps. It is the
+// identity header's (vbarzin), not the OS account it maps to (alice here),
+// while the decision on what the connection may do stays with the OS users.
+func TestBrowserStreamStampsTheIdentitysName(t *testing.T) {
+	_, dir := browserTestBases(t)
+	sock := filepath.Join(dir, "s5.sock")
+	host := startFakeHost(t, sock, fakeHostHello)
+	opts := fakeOptions{
+		"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock, optSessionID: "$5"},
+		"bob/ro0000000000":   {optBrowser: "live", optBrowserSock: sock, optSessionID: "$5"},
+	}
+	b := testRelay(opts, map[[3]string]string{{"bob", "ro0000000000", "alice"}: "ro"})
+	srv := httptest.NewServer(browserMuxNamed(b, "alice", "alice", "vbarzin"))
+	t.Cleanup(srv.Close)
+
+	ws := dialStream(t, srv, "/browser/k7m2q9x4tpz3/stream")
+	if got := host.next(t); got != `{"t":"hello","user":"vbarzin","canControl":true}` {
+		t.Fatalf("hello %s", got)
+	}
+	// The host's own hello, with the "you" it mints, reaches the viewer as is.
+	if got := readWS(t, ws); got != fakeHostHello {
+		t.Fatalf("the lobby got %s", got)
+	}
+
+	// The name does not widen access: an ro share still only watches.
+	dialStream(t, srv, "/browser/ro0000000000/stream?owner=bob")
+	if got := host.next(t); got != `{"t":"hello","user":"vbarzin","canControl":false}` {
+		t.Fatalf("ro hello %s", got)
 	}
 }
 

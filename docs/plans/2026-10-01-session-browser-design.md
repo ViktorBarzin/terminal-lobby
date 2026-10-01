@@ -145,7 +145,10 @@ privileged operations as the session's owner. It gains:
 The relay enforces **Attach mode**. For a ro share or a Lens it drops every
 input and control message before it reaches the host, so watching cannot be
 turned into driving by a crafted message. It stamps each connection with the
-authenticated username, which is the name the host shows as the controller.
+authenticated username, which is the name the host shows as the controller:
+the identity header's name (`vbarzin`), not the OS account it maps to
+(`wizard`). What a connection may do is still decided from the OS users and
+the share store.
 Stop calls the existing `/cancel/<session>`.
 
 The ingress gains a `/browser/` prefix on the session-events IngressRoute
@@ -164,6 +167,7 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 
 | Direction | Message | Meaning |
 |---|---|---|
+| relay → host | `hello` | A connection's first line, written by session-events and never passed on from the lobby: `user`, the name the host shows as holder, and `canControl` |
 | host → viewer | `hello` | State, tabs, active tab, control holder, and `you`, this connection's id |
 | host → viewer | `frame` | A JPEG of one tab, with its size |
 | host → viewer | `tabs` | Tabs changed: id, url, title, which one the agent last acted on |
