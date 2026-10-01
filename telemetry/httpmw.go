@@ -1,6 +1,9 @@
 package telemetry
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -131,6 +134,22 @@ func (w *statusWriter) Flush() {
 		}
 		fl.Flush()
 	}
+}
+
+// Hijack forwards to the wrapped writer, for the reason Flush does: a
+// WebSocket upgrade (session-events' browser stream) asserts w.(http.Hijacker)
+// and answers 500 when it fails. The connection switches protocols, so it is
+// recorded as 101.
+func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("telemetry: the underlying ResponseWriter cannot be hijacked")
+	}
+	conn, brw, err := hj.Hijack()
+	if err == nil && w.status == 0 {
+		w.status = http.StatusSwitchingProtocols
+	}
+	return conn, brw, err
 }
 
 // Wrap returns next instrumented with request timing.

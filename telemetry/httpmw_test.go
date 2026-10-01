@@ -225,6 +225,46 @@ func TestTimingKeepsTheResponseWriterFlushable(t *testing.T) {
 	}
 }
 
+// The same trap for WebSocket: session-events' /browser/<session>/stream
+// upgrades the connection, and the upgrade asserts w.(http.Hijacker). A wrapper
+// that hides it answers 500 for every browser panel. A hijacked connection
+// switches protocols, so it is recorded as 101 rather than the 200 Write
+// would have assumed, which the metrics count as a success.
+func TestTimingKeepsTheResponseWriterHijackable(t *testing.T) {
+	now := time.Now()
+	tm, _ := timingHarness(t, &now, TimingOpts{})
+	m := NewMetrics()
+	tm.Metrics = m
+	srv := httptest.NewServer(tm.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hj, ok := w.(http.Hijacker)
+		if !ok {
+			http.Error(w, "not a hijacker", http.StatusInternalServerError)
+			return
+		}
+		conn, brw, err := hj.Hijack()
+		if err != nil {
+			return
+		}
+		brw.WriteString("HTTP/1.1 101 Switching Protocols\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n")
+		brw.Flush()
+		conn.Close()
+	})))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/browser/x/stream")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status %d, want 101: the wrapped ResponseWriter is not an http.Hijacker", resp.StatusCode)
+	}
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(rec.Body.String(), `endpoint="/browser/*",outcome="ok"} 1`) {
+		t.Fatalf("a hijacked request is not counted as a success:\n%s", rec.Body.String())
+	}
+}
+
 // Most handlers in this service answer in well under a millisecond, and
 // Duration.Milliseconds() truncates toward zero, so recording it made every
 // fast request a 0 and the latency histogram flat for exactly the fast path
