@@ -241,6 +241,28 @@ test("a session browser end to end", {
     "control resumed on the first device",
   );
 
+  // session-events frees a user's control with a release as the first line
+  // of a connection of its own. Inside a viewer's stream it does nothing.
+  send({ t: "release", user: "tester" });
+  /** @param {string} user */
+  const release = async (user) => {
+    const sock = net.connect(sockPath);
+    let got = "";
+    sock.on("data", (d) => {
+      got += d;
+    });
+    sock.write(`${JSON.stringify({ t: "release", user })}\n`);
+    await new Promise((resolve) => sock.once("close", resolve));
+    return JSON.parse(got);
+  };
+  const notTheirs = await release("someone-else");
+  assert.equal(notTheirs.holderId, hello.you, "another user's release leaves control alone");
+  assert.equal((await release("tester")).holder, null);
+  await view.next((m) => m.t === "control" && m.holder === null, "control released");
+  assert.notEqual((await callTool("browser_snapshot")).isError, true, "the agent drives again");
+  send({ t: "takeControl" });
+  await view.next((m) => m.t === "control" && m.holderId === hello.you, "control taken again");
+
   // Type into the page as the person in control, then copy it back out.
   send({ t: "mouse", type: "click", x: 100, y: 20, button: "left", clickCount: 1 });
   send({ t: "insertText", text: "typed by a person" });

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   LineSplitter,
   normalizeUrl,
+  parseRelease,
   parseViewerHello,
   parseViewerMessage,
   socketDir,
@@ -127,6 +128,7 @@ const invalid = [
   '{"t":"dialog","accept":"yes"}',
   '{"t":"dialog","accept":true,"text":5}',
   '{"t":"dialog","accept":true,"tab":null}',
+  '{"t":"release","user":"viktor"}',
 ];
 
 for (const line of invalid) {
@@ -198,4 +200,19 @@ test("a multi-byte character split across chunks survives", () => {
   const bytes = Buffer.from("é\n");
   assert.deepEqual(s.push(bytes.subarray(0, 1)), []);
   assert.deepEqual(s.push(bytes.subarray(1)), ["é"]);
+});
+
+test("a release line names the user whose control to free", () => {
+  assert.deepEqual(parseRelease('{"t":"release","user":"anca"}'), { user: "anca" });
+  for (const line of [
+    "",
+    "nope",
+    '{"t":"release"}',
+    '{"t":"release","user":""}',
+    '{"t":"release","user":7}',
+    `{"t":"release","user":"${"a".repeat(257)}"}`,
+    '{"t":"hello","user":"anca","canControl":true}',
+  ]) {
+    assert.equal(parseRelease(line), null, line);
+  }
 });

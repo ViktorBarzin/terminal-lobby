@@ -106,3 +106,14 @@ test("the lapse follows the connection that holds control", () => {
   c.t = 2100;
   assert.equal(ctl.lapse(), true);
 });
+
+test("releasing a user's control frees it whichever connection holds it", () => {
+  const c = clock();
+  const ctl = new Control({ lapseMs: 600, now: c.now });
+  ctl.take("c1", "anca");
+  assert.equal(ctl.release("viktor"), false, "someone else's release changes nothing");
+  assert.equal(ctl.holderId, "c1");
+  assert.equal(ctl.release("anca"), true);
+  assert.deepEqual(ctl.snapshot(), NOBODY);
+  assert.equal(ctl.release("anca"), false, "nothing left to release");
+});

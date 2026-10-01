@@ -164,6 +164,13 @@ async function serve() {
     },
     onMessage: (v, msg) => onViewer(v, msg),
     onGone: () => reconcile(),
+    onRelease: (user) => {
+      if (!closing && control.release(user)) {
+        broadcastControl();
+        controlChanged();
+      }
+      return { t: "control", ...control.snapshot() };
+    },
   });
 
   const transport = new GateTransport((msg) => gate.fromServer(msg));

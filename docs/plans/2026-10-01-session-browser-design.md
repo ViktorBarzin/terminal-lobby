@@ -175,6 +175,7 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
 | viewer → host | `selectTab` | Change which tab this viewer watches |
 | viewer → host | `takeControl`, `handBack` | Control changes |
+| relay → host | `release` | Frees control held by a user. Only as a connection's first line |
 
 Control is held by one connection, not by a username. The host gives each
 connection a random id and sends it back in its `hello` as `you`, and every
@@ -187,6 +188,14 @@ it was showing is withdrawn with `popup` `none`. Input, `handBack` and the
 the person changes. When the holding connection closes, control stays with it
 until it lapses, so a reload does not hand the browser back to the agent, and
 any connection allowed to control resumes it with `takeControl`.
+
+session-events frees a user's control, for example when their share is revoked
+after their holding connection has already closed, by opening a connection of
+its own and writing `{"t":"release","user":"<name>"}` as the first line, in
+place of the viewer hello. The host frees control if that user holds it, on
+whichever connection, answers with one `control` line and closes the
+connection. Only session-events writes a connection's first line, so the host
+honours `release` there and drops it anywhere later in a viewer's stream.
 
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs

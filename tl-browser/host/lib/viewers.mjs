@@ -1,12 +1,20 @@
 // The viewer socket: an owner-only unix socket session-events connects to on
 // behalf of a person watching the lobby. Each connection starts with the
-// viewer hello session-events writes; until then nothing else is read.
+// viewer hello session-events writes; until then nothing else is read. A
+// connection may instead start with a release line, which session-events
+// sends to free control a user holds; the host answers it and hangs up.
 
 import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, chmodSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { encode, LineSplitter, parseViewerHello, parseViewerMessage } from "./protocol.mjs";
+import {
+  encode,
+  LineSplitter,
+  parseRelease,
+  parseViewerHello,
+  parseViewerMessage,
+} from "./protocol.mjs";
 
 /**
  * @typedef {import("./protocol.mjs").ViewerMessage} ViewerMessage
@@ -73,7 +81,8 @@ export class ViewerServer {
    *   onHello: (v: Viewer) => void,
    *   onMessage: (v: Viewer, msg: ViewerMessage) => void,
    *   onGone: (v: Viewer) => void,
-   * }} opts
+   *   onRelease: (user: string) => HostMessage,
+   * }} opts onRelease frees that user's control and returns the reply
    */
   constructor(opts) {
     this.#o = opts;
@@ -169,8 +178,11 @@ export class ViewerServer {
     const lines = new LineSplitter(MAX_LINE);
     /** @type {Viewer | null} */
     let viewer = null;
+    /** A release connection: answered, and nothing more is read. */
+    let released = false;
     const helloTimer = setTimeout(() => socket.destroy(), HELLO_TIMEOUT_MS);
     socket.on("data", (chunk) => {
+      if (released) return;
       let got;
       try {
         got = lines.push(chunk);
@@ -180,6 +192,13 @@ export class ViewerServer {
       }
       for (const line of got) {
         if (!viewer) {
+          const release = parseRelease(line);
+          if (release) {
+            released = true;
+            clearTimeout(helloTimer);
+            socket.end(encode(this.#o.onRelease(release.user)));
+            return;
+          }
           const hello = parseViewerHello(line);
           if (!hello) {
             socket.destroy();

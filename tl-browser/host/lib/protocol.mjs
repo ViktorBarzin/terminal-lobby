@@ -125,6 +125,21 @@ function popupTab(m) {
 }
 
 /**
+ * The release line: `{"t":"release","user":"<name>"}`, asking the host to free
+ * control held by that user. session-events sends it as the FIRST line of a
+ * connection of its own, in place of the viewer hello. Only session-events
+ * writes a connection's first line, so the host honours it there and nowhere
+ * else; after a hello it is viewer traffic and is dropped.
+ * @param {string} line
+ * @returns {{ user: string } | null}
+ */
+export function parseRelease(line) {
+  const m = object(line);
+  if (!m || m.t !== "release" || !text(m.user, 256)) return null;
+  return { user: m.user };
+}
+
+/**
  * @param {string} line
  * @returns {ViewerHello | null}
  */

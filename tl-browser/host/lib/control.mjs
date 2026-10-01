@@ -76,6 +76,20 @@ export class Control {
     return true;
   }
 
+  /**
+   * Frees control a user holds, on whichever connection holds it, including
+   * one already closed. session-events asks for this when that user's access
+   * ends, so a revoked share does not leave the agent locked out until the
+   * lapse.
+   * @param {string} user
+   * @returns {boolean} whether control changed hands
+   */
+  release(user) {
+    if (this.#holderId === null || this.#holder !== user) return false;
+    this.#release();
+    return true;
+  }
+
   /** @returns {boolean} whether control lapsed just now */
   lapse() {
     if (this.#holderId === null) return false;

@@ -24,10 +24,16 @@ async function serve(t, hooks = {}) {
   const messages = [];
   /** @type {Viewer[]} */
   const gone = [];
+  /** @type {string[]} */
+  const released = [];
   const server = new ViewerServer({
     onHello: (v) => hellos.push(v),
     onMessage: (v, m) => messages.push([v, m]),
     onGone: (v) => gone.push(v),
+    onRelease: (user) => {
+      released.push(user);
+      return { t: "control", holder: null, holderId: null, since: null, lapseAt: null };
+    },
     ...hooks,
   });
   const file = await server.listen(path.join(dir, "sock"), "s1");
@@ -35,7 +41,7 @@ async function serve(t, hooks = {}) {
     await server.close();
     rmSync(dir, { recursive: true, force: true });
   });
-  return { server, file, hellos, messages, gone };
+  return { server, file, hellos, messages, gone, released };
 }
 
 /**
@@ -79,4 +85,71 @@ test("each connection gets an id of its own, even for the same person", async (t
   assert.match(a.id, /^[0-9a-f]{16}$/);
   assert.match(b.id, /^[0-9a-f]{16}$/);
   assert.notEqual(a.id, b.id);
+});
+
+/**
+ * Everything a socket receives until the host ends it.
+ * @param {net.Socket} sock
+ * @returns {Promise<string>}
+ */
+function readToEnd(sock) {
+  return new Promise((resolve) => {
+    let got = "";
+    sock.on("data", (d) => {
+      got += d;
+    });
+    sock.once("close", () => resolve(got));
+  });
+}
+
+test("a release as a connection's first line frees that user's control, answers, and ends", async (t) => {
+  const s = await serve(t);
+  const sock = await connect(s.file);
+  const reply = readToEnd(sock);
+  sock.write('{"t":"release","user":"anca"}\n');
+  assert.equal(
+    await reply,
+    '{"t":"control","holder":null,"holderId":null,"since":null,"lapseAt":null}\n',
+  );
+  assert.deepEqual(s.released, ["anca"]);
+  assert.equal(s.hellos.length, 0, "a release connection is not a viewer");
+  assert.equal(s.server.viewers.size, 0);
+});
+
+test("nothing after a release line is read, not even a hello", async (t) => {
+  const s = await serve(t);
+  const sock = await connect(s.file);
+  sock.write('{"t":"release","user":"anca"}\n');
+  // The hello goes in a write of its own, after the answer, so it reaches the
+  // host as a later chunk on the half-closed connection.
+  await new Promise((resolve) => sock.once("data", resolve));
+  sock.write('{"t":"hello","user":"anca","canControl":true}\n');
+  await new Promise((resolve) => sock.once("close", resolve));
+  assert.deepEqual(s.released, ["anca"]);
+  assert.equal(s.hellos.length, 0);
+});
+
+test("a release sent after the hello is viewer traffic, and is ignored", async (t) => {
+  const s = await serve(t);
+  const sock = await connect(s.file);
+  t.after(() => sock.destroy());
+  sock.write('{"t":"hello","user":"viktor","canControl":true}\n');
+  sock.write('{"t":"release","user":"anca"}\n{"t":"takeControl"}\n');
+  await until(() => s.messages.length === 1, "the message after it");
+  assert.deepEqual(s.released, []);
+  assert.deepEqual(
+    s.messages.map(([, m]) => m),
+    [{ t: "takeControl" }],
+    "the release reached nothing, the next message still did",
+  );
+});
+
+test("a first line that is neither a hello nor a release ends the connection", async (t) => {
+  const s = await serve(t);
+  const sock = await connect(s.file);
+  const reply = readToEnd(sock);
+  sock.write('{"t":"takeControl"}\n');
+  assert.equal(await reply, "");
+  assert.deepEqual(s.released, []);
+  assert.equal(s.hellos.length, 0);
 });
