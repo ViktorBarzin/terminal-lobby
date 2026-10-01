@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The session browser's host (ADR-0029). tl-browser starts it on a session's
+// The session browser's host (ADR-0035). tl-browser starts it on a session's
 // first browser tool call and talks MCP to it over stdio. It runs
 // playwright-mcp through createConnection with a Chrome it launches itself,
 // sits between Claude and playwright-mcp on the MCP stream (the gate), and

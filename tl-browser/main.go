@@ -11,7 +11,7 @@ package main
 // is Claude's child it inherits TMUX_PANE, which is how the lobby knows exactly
 // which session a browser belongs to.
 //
-// Decision: docs/adr/0029-each-session-gets-its-own-browser-started-on-first-use.md
+// Decision: docs/adr/0035-each-session-gets-its-own-browser-started-on-first-use.md
 // Design:   docs/plans/2026-10-01-session-browser-design.md
 
 import (

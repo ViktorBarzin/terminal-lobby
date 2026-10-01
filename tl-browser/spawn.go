@@ -12,7 +12,7 @@ import (
 //
 // On the devvm each browser runs in its own transient systemd scope inside the
 // user's tl-browser.slice, so one runaway page is reclaimed and, at worst,
-// OOM-killed inside its own scope rather than taking the box (ADR-0029). Where
+// OOM-killed inside its own scope rather than taking the box (ADR-0035). Where
 // there is no user systemd, in the container for one, the host runs as a plain
 // child.
 
