@@ -9,6 +9,8 @@ require (
 	terminal-lobby/telemetry v0.0.0
 )
 
+require github.com/gorilla/websocket v1.5.3
+
 replace terminal-lobby/telemetry => ../telemetry
 
 replace terminal-lobby/sessionio => ../sessionio

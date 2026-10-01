@@ -260,6 +260,13 @@ var knownEvents = map[string]bool{
 	"claude.state_set":     true,
 	"events.stream_opened": true, // SSE attach (tl.bytes, tl.count = the opening backfill)
 	"events.stream_closed": true,
+	// A Browser panel or card watching a session browser through
+	// session-events (docs/plans/2026-10-01-session-browser-design.md):
+	// tl.session, tl.mode = control|watch (the attach-mode ceiling, not
+	// whether the viewer took control), tl.to = the owner when it is not the
+	// caller. Closed carries tl.ms. Never a URL or page content.
+	"browser.stream_opened": true,
+	"browser.stream_closed": true,
 	// Text-view load, from the reverse-open design (2026-08-28).
 	"text.first_paint": true, // stream open -> first row on screen (tl.ms, tl.count)
 	"text.window_grew": true, // a step back through history (tl.bytes, tl.count, tl.reason)

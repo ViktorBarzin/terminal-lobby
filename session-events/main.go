@@ -39,8 +39,20 @@ func main() {
 	flag.Parse()
 
 	if *privop {
-		if err := runPrivop(); err != nil {
-			log.Fatalf("privop: %v", err)
+		// `-privop browser-bridge <socket>` relays one browser viewer
+		// connection as this user (browser.go); bare `-privop` is the read
+		// child. Anything else is refused rather than guessed at.
+		switch {
+		case flag.NArg() == 0:
+			if err := runPrivop(); err != nil {
+				log.Fatalf("privop: %v", err)
+			}
+		case flag.NArg() == 2 && flag.Arg(0) == browserBridgeOp:
+			if err := runBrowserBridge(flag.Arg(1), os.Stdin, os.Stdout); err != nil {
+				log.Fatalf("privop %s: %v", browserBridgeOp, err)
+			}
+		default:
+			log.Fatalf("privop: unknown arguments %q", flag.Args())
 		}
 		return
 	}
@@ -274,6 +286,14 @@ func main() {
 	// Which model the session answers on, and how hard it thinks, applied to a
 	// running session through the harness's own commands (turn_routes.go).
 	web.HandleFunc("POST /model/{session}", handleModel(injector))
+
+	// The browser a session's agent drives (browser.go, ADR-0035): its state,
+	// and a WebSocket relaying the viewer protocol to the host's socket. Attach
+	// mode is enforced here, before the host. A shared session names its owner
+	// with ?owner=.
+	browser := newBrowserRelay(injector, self.Username)
+	web.HandleFunc("GET /browser/{session}", browser.handleState())
+	web.HandleFunc("GET /browser/{session}/stream", browser.handleStream())
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
 	// The session-start hook runs as the OS user on THIS box, so it is hard-gated

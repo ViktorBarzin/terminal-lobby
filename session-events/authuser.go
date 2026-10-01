@@ -72,7 +72,8 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 			return
 		}
 		real, eff := id.RealOSUser, id.OSUser
-		if eff != real && (r.Method != http.MethodGet || strings.HasPrefix(r.URL.Path, "/events/")) {
+		if eff != real && (r.Method != http.MethodGet || strings.HasPrefix(r.URL.Path, "/events/") ||
+			isBrowserStream(r.URL.Path)) {
 			log.Printf("act-as: %s acting as %s — %s %s", real, eff, r.Method, r.URL.Path)
 			events.Emit("admin.actas", real, telemetry.Attrs{
 				"tl.to": eff, "tl.client": "text", "tl.session": sessionOf(r.URL.Path),
@@ -83,6 +84,13 @@ func authMiddleware(mapPath string, next http.Handler) http.Handler {
 		ctx = context.WithValue(ctx, realOSUserKey, real)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// isBrowserStream reports a session browser's viewer stream, which an act-as
+// tab opening is audited like a transcript stream: it is the Lens watching a
+// live page. The state route beside it is a read that follows from it.
+func isBrowserStream(path string) bool {
+	return strings.HasPrefix(path, "/browser/") && strings.HasSuffix(path, "/stream")
 }
 
 // sessionOf names the session a route path addresses: the segment after the

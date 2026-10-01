@@ -120,13 +120,13 @@ const proxy: Record<string, ProxyOptions> = {
   // identity header rides the upgrade through `proxyReqWs`, as it does for ttyd.
   "/browser": {
     target: SESSION_EVENTS,
-    changeOrigin: true,
+    // Host is left as the browser sent it: session-events refuses a stream
+    // whose Origin does not name the host it was asked on (a page elsewhere
+    // must not drive the browser), and changeOrigin would rewrite Host to the
+    // backend. xfwd does not help, because http-proxy sets no
+    // X-Forwarded-Host on a WebSocket upgrade.
+    changeOrigin: false,
     ws: true,
-    // session-events refuses a stream whose Origin does not name the host it
-    // was asked on (a page elsewhere must not drive the browser), and
-    // changeOrigin rewrites Host to the backend. X-Forwarded-Host carries the
-    // dev server's own host, which is what the Origin names.
-    xfwd: true,
     configure: injectAuth,
   },
   // tmux-api lobby data API: /api/sessions/* -> tmux-api root (strip the whole

@@ -85,6 +85,9 @@ server {
   # the JSON parse throws and the card looks dead rather than broken.
   location /answer/  { proxy_pass http://session_events; }
   location /model/   { proxy_pass http://session_events; }
+  # The session browser (ADR-0035): its state, and the viewer stream, a
+  # WebSocket carried by the Upgrade headers set above for the whole server.
+  location /browser/ { proxy_pass http://session_events; }
 
   location /files/ { proxy_pass http://file_api; }
   location /skills { proxy_pass http://skills_api; }

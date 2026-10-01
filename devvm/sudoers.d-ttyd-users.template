@@ -155,6 +155,22 @@
 #                                      home itself — so the grant, like
 #                                      file-api's, trusts no path from the
 #                                      caller.
+#                                      `-privop browser-bridge <socket>`
+#                                      (2026-10-01, ADR-0035) is the one form
+#                                      that takes arguments: a short-lived
+#                                      child per viewer of a shared session's
+#                                      browser, copying bytes between its
+#                                      stdin/stdout and that browser's 0600
+#                                      socket. It takes the socket path from
+#                                      the parent and trusts it no more than
+#                                      the read child trusts a transcript
+#                                      path: the name must be a browser
+#                                      socket's, in /run/user/<own uid>/
+#                                      tl-browser or /tmp/tl-browser-<own
+#                                      uid>, and the directory and socket on
+#                                      disk must be its own. The grant line
+#                                      already names the binary without
+#                                      arguments, so it needed no change.
 #
 # NOTE on what these lines are worth today: the service user (wizard) is an
 # administrator with (ALL) NOPASSWD: ALL, so every grant below is already implied
