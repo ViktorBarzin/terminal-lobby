@@ -37,6 +37,7 @@ export type TlEvent =
   | "session.create_opened"
   | "session.created"
   | "session.selected"
+  | "session.reopened"
   | "session.attached"
   // Opening a transcript in Text mode: did this device already hold it, how
   // many events did it seed from, and how many did the server still send.

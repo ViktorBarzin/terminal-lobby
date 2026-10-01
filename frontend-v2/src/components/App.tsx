@@ -108,6 +108,13 @@ import { installFocusReveal } from "../mobile/reveal";
 import { Dock } from "./Dock";
 import { SidebarGrip } from "./SidebarGrip";
 import { track, tracker } from "../telemetry/track";
+import {
+  isStandalone,
+  pickReopen,
+  readLastSession,
+  wantsReopen,
+  writeLastSession,
+} from "../pwa/last-session";
 import { isCoarsePointer } from "../mobile/pointer";
 import { actAsUrl, lensTarget } from "../lib/act-as";
 import { ACT_AS } from "../lib/config";
@@ -687,8 +694,14 @@ export const App: Component = () => {
    */
   const undoStack = createUndoStore({ enabled: ACT_AS === "" });
 
+  // Read before the store exists: the effect that keeps the marker current
+  // writes on the first selection, and boot has to see what the LAST launch
+  // left behind (pwa/last-session.ts).
+  const initialSelected = readInitialSelection();
+  const rememberedSession = readLastSession();
+
   const store = createLobbyStore({
-    initialSelected: readInitialSelection(),
+    initialSelected,
     notify,
     undo: undoStack,
     // A phone renders no dock, so it must not hide the docked shell from the
@@ -1203,6 +1216,50 @@ export const App: Component = () => {
   );
 
   const selectedName = createMemo(() => store.selected()?.name ?? null);
+
+  // ---- reopen on the last session (pwa/last-session.ts) -------------------
+  // The installed app opening with no session in its URL goes back to the one
+  // this device last showed, instead of the composer. Held until the first
+  // session list answers, because attaching to a name creates it, and the
+  // composer stays off screen meanwhile so it cannot flash or raise a phone's
+  // keyboard on its way out.
+  const [reopening, setReopening] = createSignal(
+    wantsReopen({
+      remembered: rememberedSession,
+      urlSelected: initialSelected !== null,
+      standalone: isStandalone(),
+      lens: ACT_AS !== "",
+    }),
+  );
+  createEffect(() => {
+    if (!reopening() || store.loading()) return;
+    untrack(() => {
+      setReopening(false);
+      // A notification tap that landed first wins: it is why the app opened.
+      if (store.selected() !== null) return;
+      const me = store.me();
+      const name = pickReopen({
+        remembered: rememberedSession,
+        urlSelected: false,
+        standalone: true,
+        lens: false,
+        live: store.sessions.filter((s) => !s.owner || s.owner === me).map((s) => s.name),
+      });
+      track("session.reopened", { "tl.reason": name ? "acted" : "gone" });
+      if (name) store.select(name);
+    });
+  });
+  // Keep the marker on the session on screen. Leaving one for the composer
+  // forgets it, so a deliberate "new session" is what the next launch shows.
+  // Another user's session is not this device's to reopen, so it is skipped.
+  let hadSelection = initialSelected !== null;
+  createEffect(() => {
+    const sel = store.selected();
+    if (ACT_AS !== "") return;
+    if (sel && (!sel.owner || sel.owner === store.me())) writeLastSession(sel.name);
+    else if (!sel && hadSelection) writeLastSession(null);
+    hadSelection = sel !== null;
+  });
   // Nothing selected — killed, the last session closed, or "new session" asked
   // for — shows the composer rather than an empty pane, on every device. The
   // phone used to be walked back to the list here, because the alternative was
@@ -2535,7 +2592,7 @@ export const App: Component = () => {
           {/* Nothing selected is not an empty state any more: it is where a
               session is started. On a phone it is also the LANDING view, so its
               header carries the one control that gets to the list. */}
-          <Show when={!selectedName()}>
+          <Show when={!selectedName() && !reopening()}>
             <NewSessionComposer
               store={store}
               prefs={prefs}

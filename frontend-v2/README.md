@@ -1065,6 +1065,8 @@ src/
     register.ts          Registers /sw.js + the notification-tap handoff
     tap.ts               PURE: which pending notification a launch belongs to,
                          and the reason the journal is told
+    last-session.ts      PURE: the session an installed-app launch reopens on,
+                         and the device-local marker that remembers it
     push.ts              Web Push subscribe/heal (best-effort)
     vapid.ts             VAPID base64url → Uint8Array
   dnd/

@@ -37,6 +37,7 @@ var knownEvents = map[string]bool{
 	"session.create_opened": true,
 	"session.created":       true,
 	"session.selected":      true, // a row was activated in the sidebar
+	"session.reopened":      true, // the installed app relaunched onto its last session; tl.reason acted | gone
 	"session.attached":      true, // the terminal actually mounted
 	// Opening a session's transcript in Text mode: whether this device already
 	// held it, how many events it seeded from, and how many the server still had
