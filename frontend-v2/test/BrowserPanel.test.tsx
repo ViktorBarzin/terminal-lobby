@@ -36,15 +36,18 @@ class FakeSocket {
 
 const hello = {
   t: "hello",
+  you: "c1",
   state: "live",
   tabs: [
     { id: "t1", url: "https://example.com/", title: "Example Domain" },
     { id: "t2", url: "https://other.example/", title: "Other" },
   ],
   agentTab: "t1",
-  control: { holder: null, since: null, lapseAt: null },
+  control: { holder: null, holderId: null, since: null, lapseAt: null },
   viewport: { w: 1280, h: 800 },
 };
+/** Control held by this panel's own connection ("you" in the hello). */
+const mine = { t: "control", holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
 
 afterEach(() => {
   FakeSocket.last = null;
@@ -90,7 +93,7 @@ describe("<BrowserPanel>", () => {
     const { getByText, ws } = mount(true);
     fireEvent.click(getByText("Take control"));
     expect(ws.sent.at(-1)).toEqual({ t: "takeControl" });
-    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    ws.host(mine);
     fireEvent.click(getByText("Hand back"));
     expect(ws.sent.at(-1)).toEqual({ t: "handBack" });
   });
@@ -100,7 +103,7 @@ describe("<BrowserPanel>", () => {
     fireEvent.click(getByLabelText("Reload"));
     expect(ws.sent.some((m) => m.t === "reload")).toBe(false);
     fireEvent.click(getByText("Take control"));
-    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    ws.host(mine);
     fireEvent.click(getByLabelText("Reload"));
     expect(ws.sent.at(-1)).toEqual({ t: "reload" });
     const address = getByLabelText("Address") as HTMLInputElement;
@@ -111,9 +114,33 @@ describe("<BrowserPanel>", () => {
 
   it("says who else has control, and offers to take it over", () => {
     const { getByText, ws } = mount(true);
-    ws.host({ t: "control", holder: "emo", since: 1, lapseAt: 600_001 });
+    ws.host({ t: "control", holder: "emo", holderId: "c9", since: 1, lapseAt: 600_001 });
     expect(getByText("emo has control")).toBeInTheDocument();
     expect(getByText("Take control")).toBeInTheDocument();
+  });
+
+  it("knows it holds control from the host's ids, without having asked on this connection", () => {
+    // A reload keeps control with the old connection until it lapses; a panel
+    // whose own connection holds it (the hello says so) drives at once.
+    const { getByText, queryByText, getByLabelText, ws } = mount(true);
+    ws.host(mine);
+    expect(getByText("Hand back")).toBeInTheDocument();
+    expect(queryByText(/has control/)).toBeNull();
+    fireEvent.click(getByLabelText("Reload"));
+    expect(ws.sent.at(-1)).toEqual({ t: "reload" });
+  });
+
+  it("treats the same person on another device as someone else, named as the lobby knows them", () => {
+    const { getByText, getByLabelText, ws } = mount(true);
+    fireEvent.click(getByText("Take control"));
+    ws.host(mine);
+    // The phone took over: the name is the same, the connection is not.
+    ws.host({ t: "control", holder: "viktor", holderId: "c2", since: 1, lapseAt: 600_001 });
+    expect(getByText("viktor has control")).toBeInTheDocument();
+    expect(getByText("Take control")).toBeInTheDocument();
+    const before = ws.sent.length;
+    fireEvent.click(getByLabelText("Reload"));
+    expect(ws.sent.length).toBe(before);
   });
 
   it("offers a watch-only viewer nothing to drive with", () => {
@@ -150,7 +177,7 @@ describe("<BrowserPanel> on a phone", () => {
   const drivePhone = () => {
     const r = mount(true, true);
     fireEvent.click(r.getByText("Take control"));
-    r.ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    r.ws.host(mine);
     r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
     const stage = r.container.querySelector<HTMLDivElement>(".tl-browser-stage")!;
     const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
@@ -232,7 +259,7 @@ describe("<BrowserPanel> popups", () => {
   const driving = (phone = false) => {
     const r = mount(true, phone);
     fireEvent.click(r.getByText("Take control"));
-    r.ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    r.ws.host(mine);
     r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
     const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
     img.getBoundingClientRect = () => new DOMRect(0, 0, 1280, 800);

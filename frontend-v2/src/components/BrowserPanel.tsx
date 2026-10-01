@@ -113,26 +113,21 @@ export const BrowserPanel: Component<{
 
   // ---- control ------------------------------------------------------------
   //
-  // The host names the holder by the name session-events stamped on the
-  // connection, which this page is never told directly. So the name is learnt
-  // from the first `control` message after this viewer asks for control.
-  const [me, setMe] = createSignal<string | null>(null);
-  let asked = false;
+  // Control is held by a connection, not a person (design, "The viewer
+  // protocol"). The host gives this connection an id in its hello (`you`) and
+  // names the holding connection in every `control` (`holderId`), so this
+  // panel holds control exactly when the two match. The same person's phone
+  // taking over is somebody else here. `holder` is only the name to show, the
+  // one session-events stamped from the lobby's identity.
   let takenAt = 0;
-  createEffect(
-    on(stream.control, (c) => {
-      if (asked && c.holder !== null) {
-        setMe(c.holder);
-        asked = false;
-      }
-    }),
-  );
-  const holder = () => stream.control().holder;
-  const inControl = () => me() !== null && holder() === me();
-  const someoneElse = () => holder() !== null && !inControl();
+  const inControl = () => {
+    const you = stream.you();
+    return you !== null && stream.control().holderId === you;
+  };
+  const someoneElse = () => stream.control().holderId !== null && !inControl();
+  const holderName = () => stream.control().holder ?? "Someone";
 
   const takeControl = (): void => {
-    asked = true;
     takenAt = Date.now();
     stream.send({ t: "takeControl" });
     track("browser.take_control");
@@ -518,7 +513,7 @@ export const BrowserPanel: Component<{
       </header>
       <Show when={someoneElse()}>
         <div class="tl-browser-note" role="status">
-          {holder()} has control
+          {holderName()} has control
         </div>
       </Show>
       <Show when={stream.tabs().length > 1}>

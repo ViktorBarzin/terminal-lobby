@@ -48,6 +48,7 @@ class FakeSocket implements WebSocketLike {
 
 const hello = (state: "live" | "frozen") => ({
   t: "hello",
+  you: "c0ffee0000000001",
   state,
   tabs: [{ id: "t1", url: "https://example.com/", title: "Example" }],
   agentTab: "t1",
@@ -201,8 +202,30 @@ describe("the browser stream", () => {
     ws.open();
     ws.onmessage?.({ data: "not json" });
     ws.host({ t: "nonsense" });
-    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 2 });
-    expect(stream.control()).toEqual({ holder: "viktor", since: 1, lapseAt: 2 });
+    ws.host({ t: "control", holder: "viktor", holderId: "c2", since: 1, lapseAt: 2 });
+    expect(stream.control()).toEqual({ holder: "viktor", holderId: "c2", since: 1, lapseAt: 2 });
+    dispose();
+  });
+
+  it("learns this connection's id from the host's hello, and who holds control by id", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    expect(stream.you()).toBeNull();
+    ws.host({
+      ...hello("live"),
+      control: { holder: "vbarzin", holderId: "beef000000000002", since: 10, lapseAt: 20 },
+    });
+    expect(stream.you()).toBe("c0ffee0000000001");
+    expect(stream.control()).toEqual({
+      holder: "vbarzin",
+      holderId: "beef000000000002",
+      since: 10,
+      lapseAt: 20,
+    });
+    // The id was that connection's: the next one gets its own in its hello.
+    ws.drop();
+    expect(stream.you()).toBeNull();
     dispose();
   });
 
@@ -257,11 +280,16 @@ describe("the browser stream", () => {
     const ws = FakeSocket.all[0]!;
     ws.open();
     ws.host(hello("live"));
-    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 2 });
+    ws.host({ t: "control", holder: "viktor", holderId: "c1", since: 1, lapseAt: 2 });
     ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
-    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 70_000 });
+    ws.host({ t: "control", holder: "viktor", holderId: "c1", since: 1, lapseAt: 70_000 });
     expect(stream.popups()).toHaveLength(1);
-    ws.host({ t: "control", holder: null, since: null, lapseAt: null });
+    // The same person taking control from another device is a change of hands:
+    // the popup was this connection's, and the host withdraws it.
+    ws.host({ t: "control", holder: "viktor", holderId: "c2", since: 1, lapseAt: 70_000 });
+    expect(stream.popups()).toEqual([]);
+    ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
+    ws.host({ t: "control", holder: null, holderId: null, since: null, lapseAt: null });
     expect(stream.popups()).toEqual([]);
     ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
     ws.host(hello("live"));

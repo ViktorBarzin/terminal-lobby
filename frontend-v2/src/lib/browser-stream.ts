@@ -30,8 +30,12 @@ export interface BrowserTab {
 }
 
 export interface BrowserControl {
-  /** Who drives the browser, or null while the agent does. */
+  /** Who drives the browser, by the name the lobby knows them by, or null
+   *  while the agent does. A name, for showing; never for deciding. */
   holder: string | null;
+  /** The connection that holds control. A viewer holds it exactly when this
+   *  is its own `you`, so one person's laptop and phone are told apart. */
+  holderId: string | null;
   since: number | null;
   /** When control lapses with no further input from the holder. */
   lapseAt: number | null;
@@ -168,6 +172,7 @@ function controlOf(v: unknown): BrowserControl {
   const o = isObj(v) ? v : {};
   return {
     holder: strOrNull(o.holder),
+    holderId: strOrNull(o.holderId),
     since: numOrNull(o.since),
     lapseAt: numOrNull(o.lapseAt),
   };
@@ -236,7 +241,7 @@ function popupOf(
   }
 }
 
-const NOBODY: BrowserControl = { holder: null, since: null, lapseAt: null };
+const NOBODY: BrowserControl = { holder: null, holderId: null, since: null, lapseAt: null };
 const DEFAULT_VIEWPORT: Size = { w: 1280, h: 800 };
 
 export interface BrowserStreamOptions {
@@ -266,6 +271,8 @@ export interface BrowserStream {
   state: Accessor<BrowserState | "closed" | null>;
   tabs: Accessor<BrowserTab[]>;
   agentTab: Accessor<string | null>;
+  /** This connection's id, from the host's hello; null between connections. */
+  you: Accessor<string | null>;
   control: Accessor<BrowserControl>;
   viewport: Accessor<Size>;
   frame: Accessor<BrowserFrame | null>;
@@ -319,6 +326,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   const [state, setState] = createSignal<BrowserState | "closed" | null>(null);
   const [tabs, setTabs] = createSignal<BrowserTab[]>([]);
   const [agentTab, setAgentTab] = createSignal<string | null>(null);
+  const [you, setYou] = createSignal<string | null>(null);
   const [control, setControl] = createSignal<BrowserControl>(NOBODY);
   const [viewport, setViewport] = createSignal<Size>(DEFAULT_VIEWPORT);
   const [frame, setFrame] = createSignal<BrowserFrame | null>(null);
@@ -376,6 +384,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     ws = null;
     greeted = false;
     subscribed = false;
+    setYou(null);
   };
 
   const scheduleRetry = (): void => {
@@ -401,6 +410,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         setState(msg.state === "frozen" ? "frozen" : "live");
         setTabs(tabsOf(msg.tabs));
         setAgentTab(strOrNull(msg.agentTab));
+        setYou(strOrNull(msg.you));
         setControl(controlOf(msg.control));
         // The host sends a new connection the popups it should draw.
         setPopups([]);
@@ -431,9 +441,10 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         return;
       case "control": {
         const next = controlOf(msg);
-        // A popup is the holder's: when control changes hands the host
-        // sends the new holder what is still open.
-        if (next.holder !== untrack(control).holder) setPopups([]);
+        // A popup is the holding connection's: when control changes hands,
+        // even between one person's two devices, the host sends the new
+        // holder what is still open.
+        if (next.holderId !== untrack(control).holderId) setPopups([]);
         setControl(next);
         return;
       }
@@ -495,6 +506,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
       ws = null;
       greeted = false;
       subscribed = false;
+      setYou(null);
       setStatus(opened ? "idle" : "unavailable");
       scheduleRetry();
     };
@@ -548,6 +560,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     state,
     tabs,
     agentTab,
+    you,
     control,
     viewport,
     frame,
