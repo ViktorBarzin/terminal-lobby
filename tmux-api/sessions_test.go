@@ -124,17 +124,19 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 }
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
-// activityColumn and the pane's working directory at cwdColumn, the last two
-// columns before pane_title, spliced for the reason rowCreated gives. EMPTY is
-// what every session reports until its Claude next sees a prompt or finishes a
-// turn, and the directory is left empty, as a dead pane reports it.
+// activityColumn, the pane's working directory at cwdColumn and @tl_browser at
+// browserColumn, the last three columns before pane_title, spliced for the
+// reason rowCreated gives. EMPTY is what every session reports until its
+// Claude next sees a prompt or finishes a turn, the directory is left empty,
+// as a dead pane reports it, and so is the browser, which most sessions never
+// open.
 func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+2)
+	out := make([]string, 0, len(cols)+3)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity, "")
+	out = append(out, activity, "", "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
 }
@@ -152,6 +154,53 @@ func TestParseSessionsReadsTheWorkingDirectory(t *testing.T) {
 	}
 	if got[0].Cwd != "/home/wizard/qa/rd1" || got[0].PaneTitle != "t" {
 		t.Fatalf("Cwd %q, PaneTitle %q", got[0].Cwd, got[0].PaneTitle)
+	}
+}
+
+// A session whose agent has a browser open says so, live or frozen, so the
+// session bar can offer it without a request per session (ADR-0035). The host
+// stamps @tl_browser, which any process in the pane could also set, so only
+// the two values the host writes pass.
+func TestParseSessionsReadsTheBrowserOption(t *testing.T) {
+	for stamp, want := range map[string]string{
+		"live": "live", "frozen": "frozen", "": "", "closed": "", "LIVE": "", " live": "",
+	} {
+		line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
+		cols := strings.Split(line, listSep)
+		cols[browserColumn] = stamp
+		got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
+		if len(got) != 1 {
+			t.Fatalf("%q: parsed %d rows, want 1", stamp, len(got))
+		}
+		if got[0].Browser != want || got[0].PaneTitle != "t" {
+			t.Errorf("%q: Browser %q PaneTitle %q, want Browser %q", stamp, got[0].Browser, got[0].PaneTitle, want)
+		}
+	}
+}
+
+// Unset is every session without a browser, and the field is left off the
+// wire rather than sent empty.
+func TestSessionBrowserIsOmittedWhenUnset(t *testing.T) {
+	b, err := json.Marshal(Session{Name: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(b), "browser") {
+		t.Fatalf("an unset browser reached the wire: %s", b)
+	}
+	b, _ = json.Marshal(Session{Name: "x", Browser: "frozen"})
+	if !strings.Contains(string(b), `"browser":"frozen"`) {
+		t.Fatalf("got %s", b)
+	}
+}
+
+func TestBrowserColumnSitsBeforePaneTitle(t *testing.T) {
+	cols := strings.Split(tmuxListFmt, listSep)
+	if cols[browserColumn] != "#{@tl_browser}" {
+		t.Fatalf("column %d is %q, want #{@tl_browser}", browserColumn, cols[browserColumn])
+	}
+	if browserColumn != listFields-2 {
+		t.Fatalf("browserColumn %d, want the last column before pane_title (%d)", browserColumn, listFields-2)
 	}
 }
 

@@ -79,11 +79,12 @@ const (
 		"#{" + sessionio.OptionPiThinking + "}" + listSep +
 		"#{" + sessionio.OptionPiLevels + "}" + listSep +
 		"#{" + sessionio.OptionLastActivity + "}" + listSep +
-		"#{pane_current_path}" + listSep + "#{pane_title}"
+		"#{pane_current_path}" + listSep +
+		"#{" + browserOption + "}" + listSep + "#{pane_title}"
 
 	// listSep separates tmuxListFmt's fields; listFields is how many there are.
 	listSep    = "\t"
-	listFields = 23
+	listFields = 24
 
 	// bgColumn is where the outstanding-work option sits in tmuxListFmt. It
 	// goes immediately after @claude_state and BEFORE pane_title, because
@@ -164,6 +165,18 @@ const (
 	// pane reports it empty. Last before pane_title for the reason every
 	// column before it is.
 	cwdColumn = 21
+
+	// browserColumn is @tl_browser, which a session browser's host stamps
+	// live or frozen while the session's agent has a browser open, and unsets
+	// when it closes (ADR-0035). It rides this list so the session bar's
+	// browser indicator costs no request of its own. Last before pane_title
+	// for the reason every column before it is.
+	browserColumn = 22
+
+	// browserOption is the host's stamp (tl-browser/host/lib/tmux.mjs).
+	// Spelled here as a literal, the way @tl_created is: nothing in Go writes
+	// it.
+	browserOption = "@tl_browser"
 
 	// sessionTitleOption is where a display title lives, alongside
 	// @claude_state. Named in sessionio so this service and anything else

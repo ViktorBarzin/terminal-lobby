@@ -54,6 +54,9 @@ type Session struct {
 	// Cwd is the active pane's #{pane_current_path}: the directory the Text
 	// view's @ completion lists relative paths from. Empty for a dead pane.
 	Cwd string `json:"cwd,omitempty"`
+	// Browser is "live" or "frozen" while the session's agent has a session
+	// browser open (@tl_browser, ADR-0035), and absent otherwise.
+	Browser string `json:"browser,omitempty"`
 	// Title is the DISPLAY TITLE a person chose — arbitrary text, up to 64
 	// runes, read from the session's @title option. Distinct from PaneTitle,
 	// which whatever is running in the pane sets for itself. Empty means the

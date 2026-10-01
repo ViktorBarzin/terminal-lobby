@@ -305,6 +305,7 @@ func parseSessions(out []byte) []Session {
 			PiThinking: piThinkingOf(parts[piThinkingColumn]),
 			PiLevels:   piLevelsOf(parts[piLevelsColumn]),
 			Cwd:        parts[cwdColumn],
+			Browser:    browserStateOf(parts[browserColumn]),
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.
@@ -312,6 +313,15 @@ func parseSessions(out []byte) []Session {
 		})
 	}
 	return sessions
+}
+
+// browserStateOf holds @tl_browser to the two values the host writes. Anything
+// in the pane can set a session option, so anything else reads as no browser.
+func browserStateOf(v string) string {
+	if v == "live" || v == "frozen" {
+		return v
+	}
+	return ""
 }
 
 // piModelOf, piThinkingOf and piLevelsOf hold the pi extension's pane options
