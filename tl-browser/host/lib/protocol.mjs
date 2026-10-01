@@ -28,7 +28,7 @@ import path from "node:path";
  * @typedef {import("./tabs.mjs").TabInfo} TabInfo
  * @typedef {import("./control.mjs").ControlSnapshot} ControlSnapshot
  * @typedef {"live" | "frozen"} BrowserState
- * @typedef {{ t: "hello", state: BrowserState, tabs: TabInfo[], agentTab: string | null, control: ControlSnapshot, viewport: { w: number, h: number } }
+ * @typedef {{ t: "hello", you: string, state: BrowserState, tabs: TabInfo[], agentTab: string | null, control: ControlSnapshot, viewport: { w: number, h: number } }
  *   | { t: "frame", tab: string, jpeg: string, w: number, h: number }
  *   | { t: "tabs", tabs: TabInfo[], agentTab: string | null }
  *   | ({ t: "control" } & ControlSnapshot)
@@ -36,7 +36,10 @@ import path from "node:path";
  *   | { t: "activity", tool: string, summary: string }
  *   | { t: "copied", text: string }
  *   | { t: "error", message: string }
- *   | PopupMessage} HostMessage what the host sends a viewer
+ *   | PopupMessage} HostMessage what the host sends a viewer. The hello's
+ *   "you" is the id the host gave this connection; a control message's
+ *   holderId names the connection in control, so a viewer holds control
+ *   exactly when holderId equals its own "you"
  *
  * @typedef {{ value: string, label: string, selected: boolean, disabled: boolean }} SelectOption
  * @typedef {{ x: number, y: number, w: number, h: number }} Rect in the page's CSS pixels

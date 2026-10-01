@@ -2,6 +2,7 @@
 // behalf of a person watching the lobby. Each connection starts with the
 // viewer hello session-events writes; until then nothing else is read.
 
+import { randomBytes } from "node:crypto";
 import { lstatSync, mkdirSync, chmodSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -15,6 +16,9 @@ import { encode, LineSplitter, parseViewerHello, parseViewerMessage } from "./pr
 /**
  * @typedef {object} Viewer
  * @property {net.Socket} socket
+ * @property {string} id this connection's own id, sent back in the host's
+ *   hello as "you"; control is held by it, so two devices of one person are
+ *   told apart
  * @property {string} user
  * @property {boolean} canControl
  * @property {boolean} subscribed
@@ -182,7 +186,14 @@ export class ViewerServer {
             return;
           }
           clearTimeout(helloTimer);
-          viewer = { socket, ...hello, subscribed: false, tab: null, shown: null };
+          viewer = {
+            socket,
+            id: randomBytes(8).toString("hex"),
+            ...hello,
+            subscribed: false,
+            tab: null,
+            shown: null,
+          };
           this.viewers.add(viewer);
           this.#o.onHello(viewer);
           continue;

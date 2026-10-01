@@ -172,7 +172,8 @@ test("a session browser end to end", {
   assert.equal(hello.tabs.length, 1);
   assert.equal(hello.agentTab, hello.tabs[0].id);
   assert.equal(hello.tabs[0].title, "Hello page");
-  assert.deepEqual(hello.control, { holder: null, since: null, lapseAt: null });
+  assert.deepEqual(hello.control, { holder: null, holderId: null, since: null, lapseAt: null });
+  assert.match(hello.you, /^[0-9a-f]{16}$/, "the host names this connection");
   assert.deepEqual(hello.viewport, { w: 1280, h: 800 });
   const replayed = await view.next((m) => m.t === "activity", "the latest activity");
   assert.equal(replayed.summary, "Loading a page");
@@ -210,10 +211,35 @@ test("a session browser end to end", {
   send({ t: "takeControl" });
   const taken = await view.next((m) => m.t === "control", "control taken");
   assert.equal(taken.holder, "tester");
+  assert.equal(taken.holderId, hello.you);
 
   const refused = await callTool("browser_snapshot");
   assert.equal(refused.isError, true);
   assert.equal(refused.content[0].text, REFUSAL_TEXT);
+
+  // The same person on a second device takes control over from the first.
+  const phone = await connectViewer(sockPath, "tester", true);
+  assert.notEqual(phone.hello.you, hello.you, "each connection has its own id");
+  assert.equal(phone.hello.control.holderId, hello.you);
+  phone.send({ t: "takeControl" });
+  const moved = await view.next(
+    (m) => m.t === "control" && m.holderId === phone.hello.you,
+    "control moved to the second device",
+  );
+  assert.equal(moved.holder, "tester");
+  send({ t: "insertText", text: "from the laptop" });
+  await view.next((m) => m.t === "error", "the first device's input refused once control moved");
+
+  // The holding device goes away: control stays, so the agent is still held
+  // off, and the person resumes it from the first device.
+  phone.sock.destroy();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal((await callTool("browser_snapshot")).isError, true, "control outlives its connection");
+  send({ t: "takeControl" });
+  await view.next(
+    (m) => m.t === "control" && m.holderId === hello.you,
+    "control resumed on the first device",
+  );
 
   // Type into the page as the person in control, then copy it back out.
   send({ t: "mouse", type: "click", x: 100, y: 20, button: "left", clickCount: 1 });
@@ -359,6 +385,23 @@ test("a person in control answers the popups a frame does not show", {
     message: "Leave?",
     defaultValue: "",
   });
+
+  // The same person's second device takes control: the dialog moves to it,
+  // and the first device is told it is gone. Taking it back moves it again.
+  const phone = await connectViewer(sockPath, "tester", true);
+  assert.equal(phone.view.seen.some((m) => m.t === "popup"), false, "not yet in control");
+  phone.send({ t: "takeControl" });
+  assert.deepEqual(await view.next((m) => m.t === "popup", "the confirm leaving the laptop"), {
+    t: "popup",
+    kind: "none",
+    tab,
+  });
+  assert.deepEqual(await phone.view.next((m) => m.t === "popup", "the confirm on the phone"), confirmed);
+  send({ t: "takeControl" });
+  assert.deepEqual(await view.next((m) => m.t === "popup", "the confirm back on the laptop"), confirmed);
+  assert.equal((await phone.view.next((m) => m.t === "popup", "the confirm leaving the phone")).kind, "none");
+  phone.sock.destroy();
+
   send({ t: "dialog", accept: false });
   assert.deepEqual(await view.next((m) => m.t === "popup", "the confirm gone"), {
     t: "popup",

@@ -152,6 +152,7 @@ async function serve() {
     onHello: (v) => {
       viewers.send(v, {
         t: "hello",
+        you: v.id,
         state: idle.state,
         tabs: session?.tabs.snapshot() ?? [],
         agentTab: session?.tabs.agentTab ?? null,
@@ -332,7 +333,7 @@ async function serve() {
    * @returns {boolean} whether this connection is the person in control's
    */
   function isController(v) {
-    return v.canControl && control.holder !== null && v.user === control.holder;
+    return v.canControl && control.holderId !== null && v.id === control.holderId;
   }
 
   /** @param {PopupMessage} msg */
@@ -395,14 +396,14 @@ async function serve() {
    */
   async function lookForSelect(tab) {
     if (!session) return;
-    const holder = control.holder;
+    const holder = control.holderId;
     const found = await session.focusedSelect(tab);
     const open = popups.get(tab);
     if (!found) {
       if (open?.kind === "select") closePopup(open);
       return;
     }
-    if (control.holder === null || control.holder !== holder) {
+    if (control.holderId === null || control.holderId !== holder) {
       found.handle.dispose().catch(() => {});
       return;
     }
@@ -510,15 +511,25 @@ async function serve() {
           reconcile();
         }
         return;
-      case "takeControl":
+      case "takeControl": {
         if (!v.canControl) return;
-        control.take(v.user);
+        const before = control.holderId;
+        control.take(v.id, v.user);
+        // Control left another connection, perhaps the same person's other
+        // device: the popups it was drawing are not its to answer any more.
+        if (before !== null && before !== v.id) {
+          for (const other of viewers.viewers)
+            if (other.id === before)
+              for (const p of popups.all())
+                viewers.send(other, { t: "popup", kind: "none", tab: p.msg.tab });
+        }
         wake();
         broadcastControl();
         controlChanged();
         return;
+      }
       case "handBack":
-        if (v.canControl && control.handBack(v.user)) {
+        if (v.canControl && control.handBack(v.id)) {
           broadcastControl();
           controlChanged();
         }
@@ -526,7 +537,7 @@ async function serve() {
     }
     // Everything else drives the page, so it needs control.
     if (!v.canControl || !session) return;
-    if (!control.input(v.user)) {
+    if (!control.input(v.id)) {
       viewers.send(v, { t: "error", message: "Take control of the browser first." });
       return;
     }

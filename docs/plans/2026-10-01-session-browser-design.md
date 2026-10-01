@@ -164,10 +164,10 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 
 | Direction | Message | Meaning |
 |---|---|---|
-| host → viewer | `hello` | State, tabs, active tab, control holder |
+| host → viewer | `hello` | State, tabs, active tab, control holder, and `you`, this connection's id |
 | host → viewer | `frame` | A JPEG of one tab, with its size |
 | host → viewer | `tabs` | Tabs changed: id, url, title, which one the agent last acted on |
-| host → viewer | `control` | Who holds control, since when, when it lapses |
+| host → viewer | `control` | Who holds control (`holder`, a name, and `holderId`, a connection), since when, when it lapses |
 | host → viewer | `state` | `live`, `frozen`, `closed` |
 | host → viewer | `copied` | Text selected in the page, answering `copy` |
 | viewer → host | `subscribe` / `unsubscribe` | Start or stop frames for a tab |
@@ -175,6 +175,18 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
 | viewer → host | `selectTab` | Change which tab this viewer watches |
 | viewer → host | `takeControl`, `handBack` | Control changes |
+
+Control is held by one connection, not by a username. The host gives each
+connection a random id and sends it back in its `hello` as `you`, and every
+`control` message carries `holderId` beside the display name `holder`. A viewer
+holds control exactly when `holderId` equals its own `you`. So the same person
+on a laptop and a phone has two connections, and `takeControl` from the phone
+moves control off the laptop: the laptop's input is then refused, and any popup
+it was showing is withdrawn with `popup` `none`. Input, `handBack` and the
+10-minute lapse all follow the holding connection. `since` restarts only when
+the person changes. When the holding connection closes, control stays with it
+until it lapses, so a reload does not hand the browser back to the agent, and
+any connection allowed to control resumes it with `takeControl`.
 
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs

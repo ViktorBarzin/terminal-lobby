@@ -2,11 +2,20 @@
 // While a person holds it the host refuses the agent's tool calls. It lapses
 // after a stretch with no input from the holder, so a forgotten takeover does
 // not lock the agent out for good.
+//
+// Control is held by one viewer connection, not by a username: the same
+// person on a laptop and a phone has two connections, and only the one that
+// took control drives. The name is kept beside it for display ("Viktor has
+// control"). A holder whose connection closes keeps control until it lapses
+// or someone takes it, so a reload does not drop it; any connection allowed
+// to control can take it, which is how that person resumes.
 
-/** @typedef {{ holder: string | null, since: number | null, lapseAt: number | null }} ControlSnapshot */
+/** @typedef {{ holder: string | null, holderId: string | null, since: number | null, lapseAt: number | null }} ControlSnapshot */
 
 export class Control {
-  /** @type {string | null} */
+  /** @type {string | null} the holding connection's id */
+  #holderId = null;
+  /** @type {string | null} the holder's display name */
   #holder = null;
   /** @type {number | null} */
   #since = null;
@@ -20,49 +29,56 @@ export class Control {
     this.#now = now;
   }
 
-  /** @returns {string | null} */
+  /** @returns {string | null} the holder's display name */
   get holder() {
     return this.#holder;
   }
 
+  /** @returns {string | null} the holding connection's id */
+  get holderId() {
+    return this.#holderId;
+  }
+
   /**
    * Always succeeds: anyone allowed to control may take over from whoever
-   * holds it. The relay has already checked that this person is allowed.
-   * @param {string} user
+   * holds it, the same person's other connection included. The relay has
+   * already checked that this connection is allowed. `since` restarts only
+   * when the person changes.
+   * @param {string} id the connection taking control
+   * @param {string} user its display name
    */
-  take(user) {
+  take(id, user) {
     const now = this.#now();
-    if (this.#holder !== user) {
-      this.#holder = user;
-      this.#since = now;
-    }
+    if (this.#holder !== user) this.#since = now;
+    this.#holderId = id;
+    this.#holder = user;
     this.#lastInput = now;
   }
 
   /**
-   * @param {string} user
+   * @param {string} id
    * @returns {boolean} whether control changed hands
    */
-  handBack(user) {
-    if (this.#holder === null || this.#holder !== user) return false;
+  handBack(id) {
+    if (this.#holderId === null || this.#holderId !== id) return false;
     this.#release();
     return true;
   }
 
   /**
-   * Records input from a person and says whether it may act on the page.
-   * @param {string} user
+   * Records input from a connection and says whether it may act on the page.
+   * @param {string} id
    * @returns {boolean}
    */
-  input(user) {
-    if (this.#holder === null || this.#holder !== user) return false;
+  input(id) {
+    if (this.#holderId === null || this.#holderId !== id) return false;
     this.#lastInput = this.#now();
     return true;
   }
 
   /** @returns {boolean} whether control lapsed just now */
   lapse() {
-    if (this.#holder === null) return false;
+    if (this.#holderId === null) return false;
     if (this.#now() < this.#lastInput + this.#lapseMs) return false;
     this.#release();
     return true;
@@ -70,11 +86,17 @@ export class Control {
 
   /** @returns {ControlSnapshot} */
   snapshot() {
-    if (this.#holder === null) return { holder: null, since: null, lapseAt: null };
-    return { holder: this.#holder, since: this.#since, lapseAt: this.#lastInput + this.#lapseMs };
+    if (this.#holderId === null) return { holder: null, holderId: null, since: null, lapseAt: null };
+    return {
+      holder: this.#holder,
+      holderId: this.#holderId,
+      since: this.#since,
+      lapseAt: this.#lastInput + this.#lapseMs,
+    };
   }
 
   #release() {
+    this.#holderId = null;
     this.#holder = null;
     this.#since = null;
   }
