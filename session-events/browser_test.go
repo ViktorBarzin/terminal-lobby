@@ -568,6 +568,45 @@ func TestBrowserStreamRWShareDrives(t *testing.T) {
 	}
 }
 
+// ?owner= is how the lobby names whose session it means (frontend-v2
+// browserStreamUrl, sent only when the owner is not the effective user). A
+// guest with a session of the same name as the one shared with them reaches
+// the owner's browser with it, through the owner's dial, and their own without.
+func TestBrowserStreamOwnerParamPicksWhoseSession(t *testing.T) {
+	_, dir := browserTestBases(t)
+	aliceSock, bobSock := filepath.Join(dir, "s1.sock"), filepath.Join(dir, "s2.sock")
+	aliceHost := startFakeHost(t, aliceSock, fakeHostHello)
+	bobHost := startFakeHost(t, bobSock, fakeHostHello)
+	opts := fakeOptions{
+		"alice/same00000000": {optBrowser: "live", optBrowserSock: aliceSock},
+		"bob/same00000000":   {optBrowser: "live", optBrowserSock: bobSock},
+	}
+	b := testRelay(opts, map[[3]string]string{{"bob", "same00000000", "alice"}: "ro"})
+	dialled := make(chan string, 4)
+	b.dial = func(owner, sock string) (io.ReadWriteCloser, error) {
+		dialled <- owner
+		return dialOwnSocket(sock)
+	}
+	srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+	t.Cleanup(srv.Close)
+
+	dialStream(t, srv, "/browser/same00000000/stream?owner=bob")
+	if got := <-dialled; got != "bob" {
+		t.Fatalf("dialled as %q, want bob", got)
+	}
+	if got := bobHost.next(t); got != `{"t":"hello","user":"alice","canControl":false}` {
+		t.Fatalf("bob's host got %s", got)
+	}
+
+	dialStream(t, srv, "/browser/same00000000/stream")
+	if got := <-dialled; got != "alice" {
+		t.Fatalf("dialled as %q, want alice", got)
+	}
+	if got := aliceHost.next(t); got != `{"t":"hello","user":"alice","canControl":true}` {
+		t.Fatalf("alice's host got %s", got)
+	}
+}
+
 // The two watch-only cases: an ro share, and a Lens on the target's own
 // session. Input and control must never reach the host; watching must.
 func TestBrowserStreamWatchersCannotDrive(t *testing.T) {
