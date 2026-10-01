@@ -1,7 +1,7 @@
 import { createEffect, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js";
 import { browserStreamUrl } from "./config";
 import { wsScheme } from "../terminal/wire";
-import type { Size } from "../components/browser.logic";
+import type { PageRect, Size } from "../components/browser.logic";
 
 /**
  * The lobby's end of a Session browser's viewer stream
@@ -47,6 +47,25 @@ export interface BrowserFrame {
 
 type MouseButton = "left" | "middle" | "right";
 
+export interface SelectOption {
+  value: string;
+  label: string;
+  selected: boolean;
+  disabled: boolean;
+}
+
+export type DialogType = "alert" | "confirm" | "prompt" | "beforeunload";
+
+/**
+ * A native widget the screencast cannot show, which the host reports to the
+ * person in control so the panel can draw its own (design, "What a headless
+ * frame does not show"). One per tab.
+ */
+export type BrowserPopup =
+  | { kind: "select"; tab: string; options: SelectOption[]; multiple: boolean; rect: PageRect }
+  | { kind: "dialog"; tab: string; type: DialogType; message: string; defaultValue: string }
+  | { kind: "filechooser"; tab: string };
+
 /** What a viewer may send (tl-browser/host/lib/protocol.mjs ViewerMessage). */
 export type ViewerMessage =
   | { t: "subscribe"; tab: string | null }
@@ -69,7 +88,10 @@ export type ViewerMessage =
   | { t: "reload" }
   | { t: "copy" }
   | { t: "takeControl" }
-  | { t: "handBack" };
+  | { t: "handBack" }
+  | { t: "choose"; value: string; tab: string }
+  | { t: "choose"; values: string[]; tab: string }
+  | { t: "dialog"; accept: boolean; text?: string; tab: string };
 
 /** The part of WebSocket this module uses, so a test can stand in for it. */
 export interface WebSocketLike {
@@ -151,6 +173,69 @@ function controlOf(v: unknown): BrowserControl {
   };
 }
 
+const DIALOG_TYPES = new Set<string>(["alert", "confirm", "prompt", "beforeunload"]);
+const isDialogType = (v: unknown): v is DialogType => typeof v === "string" && DIALOG_TYPES.has(v);
+
+function optionsOf(v: unknown): SelectOption[] {
+  if (!Array.isArray(v)) return [];
+  const out: SelectOption[] = [];
+  for (const o of v) {
+    if (!isObj(o) || typeof o.value !== "string") continue;
+    out.push({
+      value: o.value,
+      label: typeof o.label === "string" ? o.label : o.value,
+      selected: o.selected === true,
+      disabled: o.disabled === true,
+    });
+  }
+  return out;
+}
+
+function rectOf(v: unknown): PageRect | null {
+  if (!isObj(v)) return null;
+  const x = numOrNull(v.x);
+  const y = numOrNull(v.y);
+  const w = numOrNull(v.w);
+  const h = numOrNull(v.h);
+  return x === null || y === null || w === null || h === null ? null : { x, y, w, h };
+}
+
+/** A popup message from the host: a popup, "none" for its tab, or unreadable. */
+function popupOf(
+  msg: Record<string, unknown>,
+): BrowserPopup | { kind: "none"; tab: string } | null {
+  const tab = msg.tab;
+  if (typeof tab !== "string") return null;
+  switch (msg.kind) {
+    case "select": {
+      const rect = rectOf(msg.rect);
+      if (!rect) return null;
+      return {
+        kind: "select",
+        tab,
+        options: optionsOf(msg.options),
+        multiple: msg.multiple === true,
+        rect,
+      };
+    }
+    case "dialog":
+      if (!isDialogType(msg.type)) return null;
+      return {
+        kind: "dialog",
+        tab,
+        type: msg.type,
+        message: typeof msg.message === "string" ? msg.message : "",
+        defaultValue: typeof msg.defaultValue === "string" ? msg.defaultValue : "",
+      };
+    case "filechooser":
+      return { kind: "filechooser", tab };
+    case "none":
+      return { kind: "none", tab };
+    default:
+      return null;
+  }
+}
+
 const NOBODY: BrowserControl = { holder: null, since: null, lapseAt: null };
 const DEFAULT_VIEWPORT: Size = { w: 1280, h: 800 };
 
@@ -188,6 +273,11 @@ export interface BrowserStream {
   activity: Accessor<string | null>;
   /** The host's latest complaint, for a few seconds. */
   error: Accessor<string | null>;
+  /** The popups open in the page, which the host sends only to the person in
+   *  control. One per tab, newest last. */
+  popups: Accessor<BrowserPopup[]>;
+  /** Stop drawing a tab's popup here: the person closed it in the panel. */
+  dismissPopup: (tab: string) => void;
   /** Send one message; dropped unless the socket is open. */
   send: (msg: ViewerMessage) => void;
   /** Try again now: the session list says a browser is there again. */
@@ -234,6 +324,10 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   const [frame, setFrame] = createSignal<BrowserFrame | null>(null);
   const [activity, setActivity] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
+  const [popups, setPopups] = createSignal<BrowserPopup[]>([]);
+  const dismissPopup = (tab: string): void => {
+    setPopups((all) => (all.some((p) => p.tab === tab) ? all.filter((p) => p.tab !== tab) : all));
+  };
 
   let ws: WebSocketLike | null = null;
   /** The host has said hello on the current socket. */
@@ -308,6 +402,8 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         setTabs(tabsOf(msg.tabs));
         setAgentTab(strOrNull(msg.agentTab));
         setControl(controlOf(msg.control));
+        // The host sends a new connection the popups it should draw.
+        setPopups([]);
         if (isObj(msg.viewport)) {
           const w = numOrNull(msg.viewport.w);
           const h = numOrNull(msg.viewport.h);
@@ -333,12 +429,25 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         setTabs(tabsOf(msg.tabs));
         setAgentTab(strOrNull(msg.agentTab));
         return;
-      case "control":
-        setControl(controlOf(msg));
+      case "control": {
+        const next = controlOf(msg);
+        // A popup is the holder's: when control changes hands the host
+        // sends the new holder what is still open.
+        if (next.holder !== untrack(control).holder) setPopups([]);
+        setControl(next);
         return;
+      }
+      case "popup": {
+        const p = popupOf(msg);
+        if (!p) return;
+        dismissPopup(p.tab);
+        if (p.kind !== "none") setPopups((all) => [...all, p]);
+        return;
+      }
       case "state":
         if (msg.state === "live" || msg.state === "frozen" || msg.state === "closed") {
           setState(msg.state);
+          if (msg.state === "closed") setPopups([]);
           if (msg.state === "live") maybeSubscribe();
         }
         return;
@@ -444,6 +553,8 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     frame,
     activity,
     error,
+    popups,
+    dismissPopup,
     send,
     retry: () => {
       retryMs = RETRY_FIRST_MS;

@@ -222,3 +222,160 @@ describe("<BrowserPanel> on a phone", () => {
     }
   });
 });
+
+/**
+ * Popups a headless frame does not show (design, "What a headless frame does
+ * not show"): the host tells the person in control about a select's list, a
+ * JavaScript dialog or a file chooser, and the panel draws its own.
+ */
+describe("<BrowserPanel> popups", () => {
+  const driving = (phone = false) => {
+    const r = mount(true, phone);
+    fireEvent.click(r.getByText("Take control"));
+    r.ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 600_001 });
+    r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
+    img.getBoundingClientRect = () => new DOMRect(0, 0, 1280, 800);
+    const stage = r.container.querySelector<HTMLDivElement>(".tl-browser-stage")!;
+    stage.getBoundingClientRect = () => new DOMRect(0, 0, 1280, 800);
+    return r;
+  };
+  const list = (multiple: boolean) => ({
+    t: "popup",
+    kind: "select",
+    tab: "t1",
+    multiple,
+    rect: { x: 10, y: 10, w: 200, h: 30 },
+    options: [
+      { value: "a", label: "Apple", selected: true, disabled: false },
+      { value: "b", label: "Banana", selected: false, disabled: false },
+      { value: "c", label: "Cherry", selected: false, disabled: true },
+    ],
+  });
+
+  it("lists a select's options over the page, and picking one chooses it", () => {
+    const { ws, getByRole, queryByRole } = driving();
+    ws.host(list(false));
+    const box = getByRole("listbox", { name: "Choose an option" }).parentElement!;
+    expect(getByRole("option", { name: "Apple" })).toHaveAttribute("aria-selected", "true");
+    expect(getByRole("option", { name: "Cherry" })).toBeDisabled();
+    expect(box.style.left).toBe("10px");
+    expect(box.style.top).toBe("42px");
+    fireEvent.click(getByRole("option", { name: "Banana" }));
+    expect(ws.sent.at(-1)).toEqual({ t: "choose", value: "b", tab: "t1" });
+    expect(queryByRole("listbox")).toBeNull();
+  });
+
+  it("chooses several in a multiple select with Done", () => {
+    const { ws, getByRole } = driving();
+    ws.host(list(true));
+    fireEvent.click(getByRole("option", { name: "Banana" }));
+    fireEvent.click(getByRole("option", { name: "Apple" }));
+    expect(ws.sent.some((m) => m.t === "choose")).toBe(false);
+    fireEvent.click(getByRole("button", { name: "Done" }));
+    expect(ws.sent.at(-1)).toEqual({ t: "choose", values: ["b"], tab: "t1" });
+  });
+
+  it("closes a list without choosing on Escape or a press beside it", () => {
+    const { ws, getByRole, queryByRole, container } = driving();
+    ws.host(list(false));
+    fireEvent.keyDown(getByRole("listbox"), { key: "Escape" });
+    expect(queryByRole("listbox")).toBeNull();
+    ws.host(list(false));
+    fireEvent.pointerDown(container.querySelector(".tl-browser-popup-backdrop")!);
+    expect(queryByRole("listbox")).toBeNull();
+    expect(ws.sent.some((m) => m.t === "choose" || m.t === "mouse")).toBe(false);
+  });
+
+  it("shows a select's list as a sheet across a phone", () => {
+    const { ws, getByRole } = driving(true);
+    ws.host(list(false));
+    const box = getByRole("listbox").parentElement!;
+    expect(box).toHaveAttribute("data-sheet");
+    expect(box.style.left).toBe("");
+  });
+
+  it("shows a prompt and sends what was typed with OK", () => {
+    const { ws, getByRole, queryByRole } = driving();
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "prompt",
+      message: "Your name?",
+      defaultValue: "Ada",
+    });
+    const dialog = getByRole("alertdialog", { name: "The page asks" });
+    expect(dialog).toHaveTextContent("Your name?");
+    const field = getByRole("textbox", { name: "Answer" }) as HTMLInputElement;
+    expect(field.value).toBe("Ada");
+    fireEvent.input(field, { target: { value: "Grace" } });
+    fireEvent.click(getByRole("button", { name: "OK" }));
+    expect(ws.sent.at(-1)).toEqual({ t: "dialog", accept: true, text: "Grace", tab: "t1" });
+    expect(queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("answers a confirm with Cancel, and an alert has only OK", () => {
+    const { ws, getByRole, queryByRole } = driving();
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "confirm",
+      message: "Leave?",
+      defaultValue: "",
+    });
+    expect(queryByRole("textbox", { name: "Answer" })).toBeNull();
+    fireEvent.click(getByRole("button", { name: "Cancel" }));
+    expect(ws.sent.at(-1)).toEqual({ t: "dialog", accept: false, tab: "t1" });
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "alert",
+      message: "Saved",
+      defaultValue: "",
+    });
+    expect(queryByRole("button", { name: "Cancel" })).toBeNull();
+    fireEvent.click(getByRole("button", { name: "OK" }));
+    expect(ws.sent.at(-1)).toEqual({ t: "dialog", accept: true, tab: "t1" });
+  });
+
+  it("says a file chooser is not supported", () => {
+    const { ws, getByText, getByRole, queryByText } = driving();
+    ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
+    expect(getByText("File upload is not supported in the browser panel.")).toBeInTheDocument();
+    fireEvent.click(getByRole("button", { name: "Dismiss" }));
+    expect(queryByText("File upload is not supported in the browser panel.")).toBeNull();
+  });
+
+  it("goes away when the host says the popup is gone", () => {
+    const { ws, queryByRole } = driving();
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "alert",
+      message: "Saved",
+      defaultValue: "",
+    });
+    ws.host({ t: "popup", kind: "none", tab: "t1" });
+    expect(queryByRole("alertdialog")).toBeNull();
+  });
+
+  it("draws nothing for a viewer who does not hold control", () => {
+    const { ws, queryByRole } = mount(true);
+    ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    ws.host(list(false));
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "alert",
+      message: "Saved",
+      defaultValue: "",
+    });
+    expect(queryByRole("listbox")).toBeNull();
+    expect(queryByRole("alertdialog")).toBeNull();
+  });
+});

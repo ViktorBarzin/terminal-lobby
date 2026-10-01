@@ -273,6 +273,78 @@ export function pagePoint(
   return { x: round(fx * viewport.w), y: round(fy * viewport.h) };
 }
 
+// ---- popups over the scaled page ------------------------------------------
+
+/** A box in the page's CSS pixels, as the host reports a select's. */
+export interface PageRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+/**
+ * Where a box in the page is drawn on screen: the reverse of `pagePoint`, over
+ * the same `object-fit: contain` picture. Null when there is no picture.
+ */
+export function clientBox(rect: PageRect, box: Box, frame: Size, viewport: Size): Box | null {
+  if (box.width <= 0 || box.height <= 0 || frame.w <= 0 || frame.h <= 0) return null;
+  if (viewport.w <= 0 || viewport.h <= 0) return null;
+  const scale = Math.min(box.width / frame.w, box.height / frame.h);
+  const drawnW = frame.w * scale;
+  const drawnH = frame.h * scale;
+  const left0 = box.left + (box.width - drawnW) / 2;
+  const top0 = box.top + (box.height - drawnH) / 2;
+  const sx = drawnW / viewport.w;
+  const sy = drawnH / viewport.h;
+  return {
+    left: left0 + rect.x * sx,
+    top: top0 + rect.y * sy,
+    width: rect.w * sx,
+    height: rect.h * sy,
+  };
+}
+
+export interface ListPlacement {
+  left: number;
+  /** The list's top edge, or its bottom edge when it opens `above`. */
+  top: number;
+  width: number;
+  maxHeight: number;
+  above: boolean;
+}
+
+const LIST_GAP = 2;
+/** Below this much room under the select, a list with more room above opens upwards. */
+const LIST_MIN_ROOM = 160;
+const LIST_MIN_WIDTH = 160;
+
+const clamp = (n: number, lo: number, hi: number): number => Math.min(Math.max(n, lo), hi);
+
+/**
+ * Where a select's list goes: under the select and at least as wide as it,
+ * the way Chrome hangs one, opening upwards when the select sits too low, and
+ * kept inside `bounds` (the stage, in the same client pixels as `anchor`).
+ */
+export function listPlacement(anchor: Box, bounds: Box): ListPlacement {
+  const right = bounds.left + bounds.width;
+  const bottom = bounds.top + bounds.height;
+  const width = Math.min(Math.max(anchor.width, LIST_MIN_WIDTH), bounds.width);
+  const left = clamp(anchor.left, bounds.left, right - width);
+  const below = clamp(anchor.top + anchor.height + LIST_GAP, bounds.top, bottom);
+  const above = clamp(anchor.top - LIST_GAP, bounds.top, bottom);
+  const roomBelow = bottom - below - LIST_GAP;
+  const roomAbove = above - bounds.top - LIST_GAP;
+  const up = roomBelow < LIST_MIN_ROOM && roomAbove > roomBelow;
+  return {
+    left,
+    top: up ? above : below,
+    width,
+    maxHeight: Math.max(0, up ? roomAbove : roomBelow),
+    above: up,
+  };
+}
+
 // ---- when to stream -------------------------------------------------------
 
 /**

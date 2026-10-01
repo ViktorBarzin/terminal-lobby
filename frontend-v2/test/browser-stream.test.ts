@@ -205,4 +205,92 @@ describe("the browser stream", () => {
     expect(stream.control()).toEqual({ holder: "viktor", since: 1, lapseAt: 2 });
     dispose();
   });
+
+  it("holds the popups the host shows the person in control, one per tab", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    ws.host(hello("live"));
+    const list = {
+      t: "popup",
+      kind: "select",
+      tab: "t1",
+      multiple: false,
+      rect: { x: 10, y: 10, w: 200, h: 30 },
+      options: [
+        { value: "a", label: "Apple", selected: true, disabled: false },
+        { value: "b", label: "Banana", selected: false, disabled: false },
+      ],
+    };
+    ws.host(list);
+    expect(stream.popups()).toEqual([
+      {
+        kind: "select",
+        tab: "t1",
+        multiple: false,
+        rect: { x: 10, y: 10, w: 200, h: 30 },
+        options: list.options,
+      },
+    ]);
+    ws.host({
+      t: "popup",
+      kind: "dialog",
+      tab: "t1",
+      type: "confirm",
+      message: "Leave?",
+      defaultValue: "",
+    });
+    expect(stream.popups()).toEqual([
+      { kind: "dialog", tab: "t1", type: "confirm", message: "Leave?", defaultValue: "" },
+    ]);
+    ws.host({ t: "popup", kind: "filechooser", tab: "t2" });
+    expect(stream.popups().map((p) => p.kind)).toEqual(["dialog", "filechooser"]);
+    ws.host({ t: "popup", kind: "none", tab: "t1" });
+    expect(stream.popups()).toEqual([{ kind: "filechooser", tab: "t2" }]);
+    stream.dismissPopup("t2");
+    expect(stream.popups()).toEqual([]);
+    dispose();
+  });
+
+  it("forgets its popups when control changes hands, and on a new hello", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    ws.host(hello("live"));
+    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 2 });
+    ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
+    ws.host({ t: "control", holder: "viktor", since: 1, lapseAt: 70_000 });
+    expect(stream.popups()).toHaveLength(1);
+    ws.host({ t: "control", holder: null, since: null, lapseAt: null });
+    expect(stream.popups()).toEqual([]);
+    ws.host({ t: "popup", kind: "filechooser", tab: "t1" });
+    ws.host(hello("live"));
+    expect(stream.popups()).toEqual([]);
+    dispose();
+  });
+
+  it("drops a popup it cannot read, and options that are not options", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    ws.host(hello("live"));
+    ws.host({ t: "popup", kind: "select", tab: "t1", options: [], multiple: false });
+    ws.host({ t: "popup", kind: "dialog", tab: "t1", type: "shout", message: "hi" });
+    ws.host({ t: "popup", kind: "mystery", tab: "t1" });
+    ws.host({ t: "popup", kind: "filechooser" });
+    expect(stream.popups()).toEqual([]);
+    ws.host({
+      t: "popup",
+      kind: "select",
+      tab: "t1",
+      multiple: false,
+      rect: { x: 0, y: 0, w: 1, h: 1 },
+      options: [{ value: "a", label: "A", selected: false, disabled: false }, { value: 5 }, null],
+    });
+    const p = stream.popups()[0];
+    expect(p?.kind === "select" && p.options).toEqual([
+      { value: "a", label: "A", selected: false, disabled: false },
+    ]);
+    dispose();
+  });
 });

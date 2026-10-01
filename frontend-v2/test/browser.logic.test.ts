@@ -12,6 +12,8 @@ import {
   browsingRuns,
   callSummary,
   cardAnchors,
+  clientBox,
+  listPlacement,
   pagePoint,
   streamWanted,
 } from "../src/components/browser.logic";
@@ -274,5 +276,84 @@ describe("when frames are asked for", () => {
     expect(streamWanted({ ...on, intersecting: false })).toBe(false);
     expect(streamWanted({ ...on, documentVisible: false })).toBe(false);
     expect(streamWanted({ ...on, parked: true })).toBe(false);
+  });
+});
+
+describe("where a popup sits over the scaled page", () => {
+  const frame = { w: 1280, h: 800 };
+  const viewport = { w: 1280, h: 800 };
+
+  it("maps a box in the page onto the drawn picture", () => {
+    // 640x600 box at (10, 20): the picture is 640x400 with 100px bars, half scale.
+    const box = { left: 10, top: 20, width: 640, height: 600 };
+    expect(clientBox({ x: 10, y: 10, w: 200, h: 30 }, box, frame, viewport)).toEqual({
+      left: 15,
+      top: 125,
+      width: 100,
+      height: 15,
+    });
+  });
+
+  it("undoes pagePoint: a box's corners press back onto the page where they came from", () => {
+    const boxes = [
+      { left: 0, top: 0, width: 1280, height: 800 },
+      { left: 30, top: 40, width: 640, height: 600 },
+      { left: 0, top: 0, width: 1000, height: 400 },
+    ];
+    for (const box of boxes)
+      for (const rect of [
+        { x: 0, y: 0, w: 1280, h: 800 },
+        { x: 100, y: 250, w: 300, h: 40 },
+      ]) {
+        const c = clientBox(rect, box, frame, viewport)!;
+        expect(pagePoint(c.left, c.top, box, frame, viewport)).toEqual({ x: rect.x, y: rect.y });
+        expect(pagePoint(c.left + c.width, c.top + c.height, box, frame, viewport)).toEqual({
+          x: rect.x + rect.w,
+          y: rect.y + rect.h,
+        });
+      }
+  });
+
+  it("has no box without a picture to draw on", () => {
+    expect(
+      clientBox(
+        { x: 0, y: 0, w: 1, h: 1 },
+        { left: 0, top: 0, width: 0, height: 0 },
+        frame,
+        viewport,
+      ),
+    ).toBeNull();
+  });
+
+  const stage = { left: 0, top: 0, width: 640, height: 600 };
+
+  it("hangs a list below its select, at least as wide as it", () => {
+    expect(listPlacement({ left: 15, top: 125, width: 100, height: 15 }, stage)).toEqual({
+      left: 15,
+      top: 142,
+      width: 160,
+      maxHeight: 456,
+      above: false,
+    });
+    expect(listPlacement({ left: 15, top: 125, width: 300, height: 15 }, stage).width).toBe(300);
+  });
+
+  it("opens the list upwards when a select sits low on the stage", () => {
+    expect(listPlacement({ left: 15, top: 500, width: 200, height: 30 }, stage)).toEqual({
+      left: 15,
+      top: 498,
+      width: 200,
+      maxHeight: 496,
+      above: true,
+    });
+  });
+
+  it("keeps the list on the stage", () => {
+    const p = listPlacement({ left: 600, top: 100, width: 100, height: 20 }, stage);
+    expect(p.left).toBe(480);
+    expect(listPlacement({ left: 10, top: 10, width: 900, height: 20 }, stage).width).toBe(640);
+    const off = listPlacement({ left: -50, top: -40, width: 100, height: 20 }, stage);
+    expect(off.left).toBe(0);
+    expect(off.top).toBeGreaterThanOrEqual(0);
   });
 });

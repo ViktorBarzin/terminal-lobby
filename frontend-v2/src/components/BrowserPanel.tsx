@@ -9,10 +9,19 @@ import {
   onMount,
   type Component,
 } from "solid-js";
-import { pagePoint, streamWanted } from "./browser.logic";
+import {
+  clientBox,
+  listPlacement,
+  pagePoint,
+  streamWanted,
+  type ListPlacement,
+  type PageRect,
+} from "./browser.logic";
+import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
   createVisibility,
+  type BrowserPopup,
   type BrowserState,
   type ViewerMessage,
 } from "../lib/browser-stream";
@@ -65,6 +74,7 @@ export const BrowserPanel: Component<{
   onClose: () => void;
 }> = (props) => {
   const [stage, setStage] = createSignal<HTMLDivElement>();
+  let panel: HTMLElement | undefined;
   let img: HTMLImageElement | undefined;
   let ime: HTMLInputElement | undefined;
   const seen = createVisibility(stage);
@@ -160,6 +170,60 @@ export const BrowserPanel: Component<{
     if (stream.status() === "unavailable")
       return props.state() ? "Connecting to the browser…" : "This session has no browser open.";
     return "Connecting to the browser…";
+  };
+
+  // ---- popups the frame does not show ---------------------------------------
+  //
+  // The host sends them only to the person in control, and a change of hands
+  // clears them, so `inControl` here only covers the moment before the
+  // stream hears about it.
+
+  const popup = createMemo((): BrowserPopup | null => {
+    if (!inControl()) return null;
+    const all = stream.popups();
+    const here = shownTab();
+    const ofKind = (kind: BrowserPopup["kind"]) => all.filter((p) => p.kind === kind);
+    // A dialog stops the page whichever tab raised it, so it shows from any
+    // tab; a select's list belongs over its own tab's picture.
+    const dialogs = ofKind("dialog");
+    const notices = ofKind("filechooser");
+    return (
+      dialogs.find((p) => p.tab === here) ??
+      dialogs[0] ??
+      ofKind("select").find((p) => p.tab === here) ??
+      notices.find((p) => p.tab === here) ??
+      notices[0] ??
+      null
+    );
+  });
+
+  /** Where a select's list goes, in the panel's pixels, over the drawn picture. */
+  const placeList = (rect: PageRect): ListPlacement | null => {
+    const f = stream.frame();
+    const st = stage();
+    if (!img || !f || !st || !panel) return null;
+    const r = img.getBoundingClientRect();
+    const anchor = clientBox(
+      rect,
+      { left: r.left, top: r.top, width: r.width, height: r.height },
+      f,
+      stream.viewport(),
+    );
+    if (!anchor) return null;
+    const s = st.getBoundingClientRect();
+    const at = listPlacement(anchor, {
+      left: s.left,
+      top: s.top,
+      width: s.width,
+      height: s.height,
+    });
+    const p = panel.getBoundingClientRect();
+    return { ...at, left: at.left - p.left, top: at.top - p.top };
+  };
+
+  const popupDone = (p: BrowserPopup): void => {
+    stream.dismissPopup(p.tab);
+    stage()?.focus({ preventScroll: true });
   };
 
   // ---- input --------------------------------------------------------------
@@ -417,6 +481,7 @@ export const BrowserPanel: Component<{
 
   return (
     <aside
+      ref={panel}
       class="tl-browser-panel"
       data-phone={props.phone() ? "" : undefined}
       aria-label="Session browser"
@@ -577,6 +642,22 @@ export const BrowserPanel: Component<{
           />
         </Show>
       </div>
+      <BrowserPopups
+        popup={popup()}
+        phone={props.phone()}
+        place={placeList}
+        onChoose={(p, values) => {
+          const [first] = values;
+          if (p.multiple) drive({ t: "choose", values, tab: p.tab });
+          else if (first !== undefined) drive({ t: "choose", value: first, tab: p.tab });
+          popupDone(p);
+        }}
+        onAnswer={(p, accept, text) => {
+          drive({ t: "dialog", accept, ...(text === undefined ? {} : { text }), tab: p.tab });
+          popupDone(p);
+        }}
+        onDismiss={popupDone}
+      />
     </aside>
   );
 };
