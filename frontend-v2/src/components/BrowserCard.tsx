@@ -7,7 +7,7 @@ import {
   type Accessor,
   type Component,
 } from "solid-js";
-import { runSummary, streamWanted, type BrowsingRun } from "./browser.logic";
+import { runStatus, streamWanted, type BrowsingRun, type RunStatus } from "./browser.logic";
 import {
   createBrowserStream,
   createVisibility,
@@ -15,6 +15,17 @@ import {
   type BrowserState,
 } from "../lib/browser-stream";
 import { BrowserGlyph } from "./Icons";
+
+/** The work group's dot colours (app.css `.tl-group-dot`) for each run status.
+ *  A refusal waits on the person holding control, so it takes the awaiting
+ *  colour. */
+const DOT: Record<RunStatus, string> = {
+  live: "live",
+  ok: "ok",
+  refused: "waiting",
+  failed: "error",
+  stopped: "stopped",
+};
 
 /** What a Browser card needs from the session it belongs to. */
 export interface BrowserCardHost {
@@ -77,11 +88,17 @@ export const BrowserCard: Component<{
   );
 
   const frame = () => stream.frame() ?? earlier;
-  const summary = createMemo(() => {
-    const live = current() ? stream.activity() : null;
+  // The run's last result decides; the host's activity only fills in the
+  // words while the run is going and nothing came back refused, failed or
+  // stopped (it names the call that was started, not what came of it).
+  const status = createMemo(() => {
     const run = props.run();
-    return live ?? (run ? runSummary(run) : "");
+    return run ? runStatus(run) : { status: "ok" as const, summary: "" };
   });
+  const summary = () => {
+    const s = status();
+    return (s.status === "live" ? stream.activity() : null) ?? s.summary;
+  };
   const streaming = () => current() && stream.frame() !== null && stream.state() === "live";
   const canOpen = () => current() || props.host.state() !== undefined;
 
@@ -91,7 +108,7 @@ export const BrowserCard: Component<{
         <div class="tl-browser-card-head">
           <span
             class="tl-group-dot tl-browser-card-dot"
-            data-status={current() ? "live" : "ok"}
+            data-status={DOT[status().status]}
             aria-hidden="true"
           />
           <BrowserGlyph size={16} />

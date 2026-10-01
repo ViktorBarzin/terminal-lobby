@@ -16,6 +16,7 @@ import {
   listPlacement,
   pagePoint,
   panelLayout,
+  runStatus,
   streamWanted,
 } from "../src/components/browser.logic";
 
@@ -24,7 +25,11 @@ const ev = (e: Partial<Event> & Pick<Event, "id" | "kind">): Event => ({ session
 const PW = "mcp__playwright__";
 let ids = 100;
 /** A call and its result, in one go. */
-const call = (tool: string, input: object, opts: { done?: boolean; at?: number } = {}): Event[] => {
+const call = (
+  tool: string,
+  input: object,
+  opts: { done?: boolean; at?: number; result?: string; isError?: boolean } = {},
+): Event[] => {
   const toolId = `t${++ids}`;
   const use = ev({
     id: ++ids,
@@ -35,7 +40,17 @@ const call = (tool: string, input: object, opts: { done?: boolean; at?: number }
     at: opts.at,
   });
   if (opts.done === false) return [use];
-  return [use, ev({ id: ++ids, kind: "tool_result", toolId, body: "ok", at: opts.at })];
+  return [
+    use,
+    ev({
+      id: ++ids,
+      kind: "tool_result",
+      toolId,
+      body: opts.result ?? "ok",
+      at: opts.at,
+      ...(opts.isError ? { isError: true } : {}),
+    }),
+  ];
 };
 const user = (body: string): Event => ev({ id: ++ids, kind: "user", body });
 const text = (body: string): Event => ev({ id: ++ids, kind: "text", body });
@@ -386,5 +401,102 @@ describe("panelLayout", () => {
     expect(panelLayout({ phone: false, paneWidth: null })).toBe("side");
     // A pane laid out at zero is not on screen; nothing to decide yet.
     expect(panelLayout({ phone: false, paneWidth: 0 })).toBe("side");
+  });
+});
+
+/**
+ * What a Browser card's header says and which colour its dot is, read off the
+ * run's last call (review 2026-10-01). The card used to show the last call's
+ * words whatever came back, so a call the host refused while the user had
+ * control still read "Reading the page" with a live dot, and a wait the user
+ * stopped read "Waiting".
+ */
+describe("runStatus", () => {
+  /** What the host answers a call with while a person holds control
+   *  (tl-browser/host/lib/gate.mjs REFUSAL_TEXT). */
+  const REFUSED =
+    "The user has taken control of the browser. Don't retry; end your turn and wait for them to tell you they are done.";
+  /** What the CLI writes for a call a Stop interrupted (CLI 2.1.283). */
+  const STOPPED =
+    "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed.";
+  const interrupt = (): Event =>
+    ev({ id: ++ids, kind: "state", body: "[Request interrupted by user for tool use]" });
+  const runOf = (events: Event[]) => browsingRuns(deriveRows(events)).at(-1)!;
+
+  it("says a call refused while the user holds control was refused, live turn or not", () => {
+    const open = [
+      user("look it up"),
+      ...call(`${PW}browser_navigate`, { url: "https://example.com" }),
+      ...call(`${PW}browser_snapshot`, {}, { result: REFUSED, isError: true }),
+    ];
+    expect(runStatus(runOf(open))).toEqual({
+      status: "refused",
+      summary: "Refused: the user has control",
+    });
+    expect(runStatus(runOf([...open, text("I'll wait."), end()]))).toEqual({
+      status: "refused",
+      summary: "Refused: the user has control",
+    });
+  });
+
+  it("says a call that failed failed", () => {
+    const run = runOf([
+      user("look it up"),
+      ...call(
+        `${PW}browser_navigate`,
+        { url: "https://nope.invalid" },
+        {
+          result: "net::ERR_NAME_NOT_RESOLVED",
+          isError: true,
+        },
+      ),
+      text("It did not load."),
+      end(),
+    ]);
+    expect(runStatus(run)).toEqual({ status: "failed", summary: "Failed" });
+  });
+
+  it("says a call a Stop interrupted was stopped", () => {
+    const run = runOf([
+      user("wait for it"),
+      ...call(`${PW}browser_wait_for`, { time: 30 }, { result: STOPPED, isError: true }),
+      interrupt(),
+      end(),
+    ]);
+    expect(runStatus(run)).toEqual({ status: "stopped", summary: "Stopped" });
+  });
+
+  it("says a call that never came back before the turn ended was stopped", () => {
+    const run = runOf([
+      user("wait for it"),
+      ...call(`${PW}browser_wait_for`, { text: "Done" }, { done: false }),
+      end(),
+    ]);
+    expect(runStatus(run)).toEqual({ status: "stopped", summary: "Stopped" });
+  });
+
+  it("says what the browser is doing while the run goes on", () => {
+    const run = runOf([
+      user("look it up"),
+      ...call(`${PW}browser_navigate`, { url: "https://example.com" }),
+      ...call(`${PW}browser_click`, { element: "More info" }, { done: false }),
+    ]);
+    expect(runStatus(run)).toEqual({ status: "live", summary: "Clicking More info" });
+  });
+
+  it("says what the browser last did once the run ended well", () => {
+    const run = runOf([
+      user("look it up"),
+      ...call(`${PW}browser_navigate`, { url: "https://example.com" }),
+      ...call(`${PW}browser_close`, {}),
+    ]);
+    expect(runStatus(run)).toEqual({ status: "ok", summary: "Closed the browser" });
+    const settled = runOf([
+      user("look it up"),
+      ...call(`${PW}browser_snapshot`, {}),
+      text("Found it."),
+      end(),
+    ]);
+    expect(runStatus(settled)).toEqual({ status: "ok", summary: "Reading the page" });
   });
 });

@@ -1,4 +1,10 @@
-import { liveRow, type TimelineRow, type ToolRow } from "./timeline.logic";
+import {
+  declinedCall,
+  liveRow,
+  stoppedCall,
+  type TimelineRow,
+  type ToolRow,
+} from "./timeline.logic";
 
 /**
  * PURE helpers for the session browser in the lobby
@@ -224,11 +230,40 @@ export function callSummary(tool: string, input: string): string {
 }
 
 /** What a run's card header says: its latest call. */
-export function runSummary(run: BrowsingRun): string {
+function runSummary(run: BrowsingRun): string {
   const last = run.calls.at(-1);
   if (!last) return "";
   if (last.tool === CLOSE_TOOL && last.done) return "Closed the browser";
   return callSummary(last.tool, last.input);
+}
+
+/** What the host answers a call with while a person holds control
+ *  (tl-browser/host/lib/gate.mjs REFUSAL_TEXT); matched on its first part. */
+const REFUSAL_MARK = "The user has taken control of the browser";
+
+/**
+ * Where a run stands, read off its last call's result:
+ * - "refused": the host turned the call away because a person holds control;
+ * - "failed": the call came back with an error;
+ * - "stopped": a Stop interrupted it, or its turn ended before it came back;
+ * - "live": the run goes on, and the card may show the host's own activity;
+ * - "ok": the run ended well.
+ * The card's dot and header follow it, so a refused or stopped call never
+ * reads as the activity it was started for.
+ */
+export type RunStatus = "live" | "ok" | "refused" | "failed" | "stopped";
+
+export function runStatus(run: BrowsingRun): { status: RunStatus; summary: string } {
+  const last = run.calls.at(-1);
+  if (last?.done && last.isError) {
+    if (stoppedCall(last)) return { status: "stopped", summary: "Stopped" };
+    if (declinedCall(last)) return { status: "stopped", summary: "Declined" };
+    if ((last.result ?? "").includes(REFUSAL_MARK))
+      return { status: "refused", summary: "Refused: the user has control" };
+    return { status: "failed", summary: "Failed" };
+  }
+  if (last && !last.done && !run.current) return { status: "stopped", summary: "Stopped" };
+  return { status: run.current ? "live" : "ok", summary: runSummary(run) };
 }
 
 // ---- the scaled page ------------------------------------------------------
