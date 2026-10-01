@@ -49,3 +49,12 @@ describe("the panel over a narrow pane", () => {
     expect(full).toMatch(/width:\s*auto/);
   });
 });
+
+describe("the page's focus ring", () => {
+  // A watcher's keys are dropped, so a ring on its stage would promise typing
+  // that cannot happen (review 2026-10-01).
+  it("is drawn only for the viewer in control", () => {
+    expect(rule(".tl-browser-stage[data-control]:focus-visible")).toMatch(/box-shadow/);
+    expect(() => rule(".tl-browser-stage:focus-visible")).toThrow();
+  });
+});

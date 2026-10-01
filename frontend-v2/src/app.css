@@ -7925,7 +7925,9 @@ body.tl-kb-up {
 .tl-browser-stage[data-control] {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
-.tl-browser-stage:focus-visible {
+/* Only a viewer in control is told the page has its keys: a watcher's keys
+   are dropped, so a focus ring there would promise typing that cannot happen. */
+.tl-browser-stage[data-control]:focus-visible {
   box-shadow: inset 0 0 0 2px var(--ring);
 }
 .tl-browser-canvas {
