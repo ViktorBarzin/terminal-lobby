@@ -197,6 +197,26 @@ func TestCreateConversationDuplicateName(t *testing.T) {
 	h.decodeJSON(w, http.StatusConflict, nil)
 }
 
+// A conversation keeps its id after tmux-api renames its session, so that id
+// stays taken. Measured live on 2026-10-02: a second create under the id of a
+// renamed conversation answered 201, both then listed the same
+// conversation_id, and messages to it went to the older one.
+func TestCreateConversationRefusesTheIdOfARenamedConversation(t *testing.T) {
+	h := newHarness(t)
+	code := filepath.Join(h.homeBase, testOSUser, "code")
+	h.sessions.start(testOSUser, LiveSession{Name: "rv-fg-4242", BornAs: "rv-r1x-19582", Owner: testActor, State: "running"})
+
+	w := h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(code)+`,"name":"rv-r1x-19582"}`)
+	var got map[string]string
+	h.decodeJSON(w, http.StatusConflict, &got)
+	if !strings.Contains(got["error"], "rv-r1x-19582") {
+		t.Fatalf("error %q does not name the id", got["error"])
+	}
+	if calls := h.sessions.createCalls(); len(calls) != 0 {
+		t.Fatalf("a session was created under a taken id: %+v", calls)
+	}
+}
+
 // Ownership is read from the tmux session, so it survives this process. The
 // test restarts the server around the same fake tmux and sends a message.
 func TestOwnershipSurvivesARestart(t *testing.T) {

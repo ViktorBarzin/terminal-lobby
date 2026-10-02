@@ -215,14 +215,14 @@
             "$ref": "#/components/responses/Unauthorized"
           },
           "409": {
-            "description": "The name is already taken by a live conversation. Choose another, or omit `name` and let the service mint one.",
+            "description": "The name is already taken by a live conversation, either as its id or as its current session name. A conversation keeps the id it was created with after the workstation renames its session, so that id stays taken until the conversation is deleted. Choose another, or omit `name` and let the service mint one.",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Error"
                 },
                 "example": {
-                  "error": "creating the conversation: new-session muse-lobby-work: exit status 1: duplicate session: muse-lobby-work"
+                  "error": "conversation \"muse-lobby-work\" already exists; pick another name"
                 }
               }
             }

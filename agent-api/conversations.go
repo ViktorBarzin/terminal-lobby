@@ -222,6 +222,23 @@ func (s *Server) createConversation(c *call) (any, error) {
 	}
 	c.conversationID = name
 
+	// A conversation keeps its id after tmux-api renames its session, which
+	// frees the id as a tmux NAME while it still addresses that conversation
+	// (find prefers @tl_born). tmux only refuses a live name, so the ids are
+	// checked here, and under a lock so two creates cannot both pass the
+	// check before either session exists.
+	s.createMu.Lock()
+	defer s.createMu.Unlock()
+	live, err := s.Sessions.List(c.id.OSUser)
+	if err != nil {
+		return nil, serverError("listing sessions: %v", err)
+	}
+	for _, l := range live {
+		if l.ID() == name || l.Name == name {
+			return nil, conflict("conversation %q already exists; pick another name", name)
+		}
+	}
+
 	if err := s.Sessions.Create(CreateSpec{
 		OSUser:  c.id.OSUser,
 		Name:    name,

@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"terminal-lobby/authuser"
@@ -112,6 +113,9 @@ type Server struct {
 	// DelegationCaps overrides defaultDelegationCaps field by field; a test
 	// shrinks it so a cap is reached in three requests rather than twenty.
 	DelegationCaps delegationCaps
+
+	// createMu holds a create's id check and the session it creates together.
+	createMu sync.Mutex
 }
 
 func (s *Server) now() time.Time {
