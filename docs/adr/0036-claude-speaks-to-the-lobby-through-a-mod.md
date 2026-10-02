@@ -121,6 +121,13 @@ later call for this sid. `history: true` asks the mod to send what the session
 already holds, because session-events has no log for it (it restarted, or this
 is a resumed conversation).
 
+After every hello the mod also sends the `ask`, `plan` and `permission` events
+of the dialogs still on screen, behind the history and ahead of anything else
+queued. A dialog is reported once when it opens, and a session-events that
+restarted since has forgotten it: until this resend (2026-10-02), every deb
+install left the web unable to answer any question asked before it, and the
+Text view's card said it could only be answered in the Terminal.
+
 ### `POST /mod/v1/events`
 
 `{"token": "…", "events": [ … ]}`. One request in flight per session, so events

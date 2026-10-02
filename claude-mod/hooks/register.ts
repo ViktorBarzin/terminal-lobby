@@ -9,6 +9,7 @@ import { Pending } from './lib/pending.ts';
 import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
 import { Decided } from './lib/decided.ts';
+import { OpenDialogs } from './lib/open.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
@@ -39,6 +40,8 @@ const webAnswers = new Pending<Command>();
 const ownDialogs = new Map<string, Promise<string>>();
 // Commands already run here, so one sent again after a re-hello is only re-acked.
 const seenCommands = new SeenCommands();
+// Dialogs on screen, sent again after every hello (lib/open.ts).
+const openDialogs = new OpenDialogs();
 
 const now = () => Date.now();
 
@@ -48,6 +51,23 @@ function send(ev: Omit<ModEvent, 't'> & { t?: number }): void {
   } catch {
     // Reporting never gets in Claude's way.
   }
+}
+
+// A dialog opening: reported, and kept until it settles so a later hello
+// can report it again.
+function announce(ev: Omit<ModEvent, 't'>): void {
+  const full = { t: now(), ...ev } as ModEvent;
+  openDialogs.add(full);
+  try {
+    link?.send(full);
+  } catch {
+    // Reporting never gets in Claude's way.
+  }
+}
+
+function settled(toolId: string, by: string): void {
+  openDialogs.settle(toolId);
+  send({ type: 'settled', toolId, by });
 }
 
 function ack(id: unknown, ok: boolean, error?: string): void {
@@ -141,6 +161,7 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
       return hello;
     },
     history: () => historyFields($),
+    open: () => openDialogs.list(),
     onCommand: (c) => { void runCommand($, c as Command); },
   });
   $.clock.after(1, () => link?.start());
@@ -228,22 +249,26 @@ async function raceQuestion(
   next: () => Promise<ToolResult>,
 ): Promise<ToolResult> {
   const toolId = e.tool_use_id;
-  send({ type: 'ask', toolId, questions: e.questions });
-  const web = webAnswers.wait(toolId);
-  const local = next();
-  const winner = await Promise.race([
-    local.then((r) => ({ by: 'terminal' as const, r }), (err: unknown) => ({ by: 'gone' as const, err })),
-    web.promise.then((c) => ({ by: 'web' as const, c })),
-  ]);
-  web.cancel();
-  if (winner.by === 'web') {
-    local.catch(() => {});
-    send({ type: 'settled', toolId, by: 'web' });
-    return webAnswer(e.questions, winner.c);
+  announce({ type: 'ask', toolId, questions: e.questions });
+  try {
+    const web = webAnswers.wait(toolId);
+    const local = next();
+    const winner = await Promise.race([
+      local.then((r) => ({ by: 'terminal' as const, r }), (err: unknown) => ({ by: 'gone' as const, err })),
+      web.promise.then((c) => ({ by: 'web' as const, c })),
+    ]);
+    web.cancel();
+    if (winner.by === 'web') {
+      local.catch(() => {});
+      settled(toolId, 'web');
+      return webAnswer(e.questions, winner.c);
+    }
+    settled(toolId, winner.by);
+    if (winner.by === 'gone') throw winner.err;
+    return winner.r;
+  } finally {
+    openDialogs.settle(toolId);
   }
-  send({ type: 'settled', toolId, by: winner.by });
-  if (winner.by === 'gone') throw winner.err;
-  return winner.r;
 }
 
 // The mod's own $.ui.ask dialog reaching tool.call: race it against a
@@ -273,11 +298,11 @@ async function holdDecision($: EngineInterface, e: { tool: string; input: unknow
   if (e.tool === 'ExitPlanMode') {
     const ev: Omit<ModEvent, 't'> = { type: 'plan', toolId, plan: String(input.plan ?? '') };
     if (typeof input.planFilePath === 'string') ev.planFilePath = input.planFilePath;
-    send(ev);
+    announce(ev);
   } else {
     const ev: Omit<ModEvent, 't'> = { type: 'permission', toolId, tool: e.tool, input: e.input };
     if (r.reason) ev.reason = r.reason;
-    send(ev);
+    announce(ev);
   }
 
   const dialog = dialogFor(e.tool, e.input);
@@ -297,22 +322,23 @@ async function holdDecision($: EngineInterface, e: { tool: string; input: unknow
       local.catch(() => {});
       const decision = decisionFromWeb(e.tool, winner.c.decision, winner.c.reason);
       takedown(decision.decision === 'allow' ? dialog.options[0] : dialog.options[1]);
-      send({ type: 'settled', toolId, by: 'web' });
+      settled(toolId, 'web');
       decided.remember(e.tool_use_id ?? '', decision);
       return decision;
     }
     if (winner.by === 'terminal') {
-      send({ type: 'settled', toolId, by: 'terminal' });
+      settled(toolId, 'terminal');
       const decision = decisionFromLabel(e.tool, winner.label);
       decided.remember(e.tool_use_id ?? '', decision);
       return decision;
     }
     // No dialog could be drawn (or it was dismissed): Claude draws its own.
-    send({ type: 'settled', toolId, by: 'gone' });
+    settled(toolId, 'gone');
     return r;
   } finally {
     web.cancel();
     ownDialogs.delete(question);
+    openDialogs.settle(toolId);
   }
 }
 

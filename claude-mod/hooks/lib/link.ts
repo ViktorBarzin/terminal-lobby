@@ -18,6 +18,10 @@ export type LinkDeps = {
   hello: () => Promise<Record<string, unknown>>;
   // The `history` event's fields: `messages`, and `running` (a main-thread turn in flight).
   history: () => Promise<{ messages: unknown; running: boolean }>;
+  // The dialogs still on screen. Each went out once, when it opened; a
+  // server that restarted since has forgotten it, so every hello sends them
+  // again, behind the history.
+  open?: () => ModEvent[];
   onCommand: (command: unknown) => void;
 };
 
@@ -132,14 +136,22 @@ export class Link {
     }
     this.#helloFails = 0;
     this.#retryAt = 0;
+    const resent: ModEvent[] = [];
     if (body.history === true) {
       try {
         const h = await this.#deps.history();
-        this.#queue.prepend(...historyEvents(this.#deps.now(), h.messages, h.running));
+        resent.push(...historyEvents(this.#deps.now(), h.messages, h.running));
       } catch {
         // No history to offer; the server keeps what it has.
       }
     }
+    // Read after the history, so a dialog answered meanwhile is not resent.
+    try {
+      resent.push(...(this.#deps.open?.() ?? []));
+    } catch {
+      // Nothing to resend; the dialogs stay with Claude's own menus.
+    }
+    if (resent.length > 0) this.#queue.prepend(...resent);
     this.#token = body.token;
     this.#wakeToken();
   }

@@ -336,3 +336,47 @@ test('Pending resolves a waiter by id exactly once and reports gone ids', async 
   assert.equal(p.resolve('t2', 'late'), false);
   assert.equal(p.has('t2'), false);
 });
+
+// A session-events restart forgets the dialogs it held. The mod sent each
+// one once, when it opened, so without a resend the web could never answer
+// a question asked before the restart (2026-10-02, after the 0.94.2 install).
+test('after a hello, open dialogs go out again behind the history', async () => {
+  const ask = { type: 'ask', t: 5, toolId: 'toolu_1', questions: [{ question: 'Which?' }] };
+  const { clock, server, link } = setup({ open: () => [ask] });
+  server.replies.hello = [{ status: 200, body: { token: 'tok1', history: true } }];
+  link.send(row('a'));
+  link.start();
+  await clock.advance(100);
+  const events = (server.of('events')[0].body as { events: { type: string }[] }).events;
+  assert.deepEqual(events.map((e) => e.type), ['history', 'ask', 'row']);
+  assert.deepEqual(events[1], ask);
+});
+
+test('a re-hello without history still resends the open dialogs', async () => {
+  const ask = { type: 'permission', t: 5, toolId: 'toolu_2', tool: 'Bash' };
+  let open: { type: string; t: number; toolId: string; tool: string }[] = [];
+  const { clock, server, link } = setup({ open: () => open });
+  server.replies.hello = [
+    { status: 200, body: { token: 'tok1', history: false } },
+    { status: 200, body: { token: 'tok2', history: false } },
+  ];
+  link.start();
+  await clock.advance(100);
+  assert.equal(server.of('events').length, 0, 'nothing open, nothing sent');
+  open = [ask];
+  link.rehello();
+  await clock.advance(100);
+  const events = (server.of('events')[0].body as { token: string; events: unknown[] });
+  assert.equal(events.token, 'tok2');
+  assert.deepEqual(events.events, [ask]);
+});
+
+test('a dialog closed before the hello is not resent', async () => {
+  const { clock, server, link } = setup({ open: () => [] });
+  server.replies.hello = [{ status: 200, body: { token: 'tok1', history: false } }];
+  link.send(row('a'));
+  link.start();
+  await clock.advance(100);
+  const events = (server.of('events')[0].body as { events: { type: string }[] }).events;
+  assert.deepEqual(events.map((e) => e.type), ['row']);
+});

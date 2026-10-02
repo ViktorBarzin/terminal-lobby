@@ -29,6 +29,7 @@ What it does, in short:
 | `hooks/lib/pending.ts` | dialogs waiting on a web answer |
 | `hooks/lib/stamp.ts` | whether session-events has been told where the transcript is |
 | `hooks/lib/decided.ts` | answers already given, for a tool call checked twice |
+| `hooks/lib/open.ts` | dialogs on screen, sent again after every hello |
 | `test/*.test.ts` | unit tests for `hooks/lib` |
 
 ## Loading it for a dev session
