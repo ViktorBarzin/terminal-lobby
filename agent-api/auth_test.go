@@ -20,6 +20,7 @@ var everyV1Route = []request{
 	{method: "POST", path: "/v1/conversations/c1/messages", body: `{"text":"hello"}`},
 	{method: "GET", path: "/v1/tasks/t1"},
 	{method: "POST", path: "/v1/tasks/t1/cancel"},
+	{method: "POST", path: "/v1/tasks/t1/answer", body: `{"option":1}`},
 }
 
 // No credential reaches nothing.

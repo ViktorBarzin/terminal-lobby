@@ -77,7 +77,11 @@ type Server struct {
 	StartGrace   time.Duration
 	ReadyTimeout time.Duration
 	TurnTimeout  time.Duration
-	Now          func() time.Time
+	// WaitUnit is how long one second of a caller's ?wait= lasts. A second in
+	// production; a test shrinks it so a wait that cannot finish still ends
+	// in milliseconds.
+	WaitUnit time.Duration
+	Now      func() time.Time
 }
 
 func (s *Server) now() time.Time {
@@ -106,6 +110,13 @@ func (s *Server) readyTimeout() time.Duration {
 		return s.ReadyTimeout
 	}
 	return defaultReadyTimeout
+}
+
+func (s *Server) waitUnit() time.Duration {
+	if s.WaitUnit > 0 {
+		return s.WaitUnit
+	}
+	return time.Second
 }
 
 func (s *Server) turnTimeout() time.Duration {
@@ -139,6 +150,14 @@ func forbidden(format string, args ...any) error {
 
 func conflict(format string, args ...any) error {
 	return &apiError{http.StatusConflict, fmt.Sprintf(format, args...)}
+}
+
+// unprocessable is a well-formed request this service will not carry out
+// because of what the thing it names is: a question kind it has no safe way to
+// answer. Kept apart from 409, which says the state is wrong NOW and may be
+// right later, because a caller retrying this one would be retrying forever.
+func unprocessable(format string, args ...any) error {
+	return &apiError{http.StatusUnprocessableEntity, fmt.Sprintf(format, args...)}
 }
 
 func serverError(format string, args ...any) error {
@@ -205,6 +224,7 @@ func (s *Server) Routes() http.Handler {
 	v1.Handle("POST /v1/conversations/{id}/messages", s.handle("POST /v1/conversations/{id}/messages", s.postMessage))
 	v1.Handle("GET /v1/tasks/{id}", s.handle("GET /v1/tasks/{id}", s.getTask))
 	v1.Handle("POST /v1/tasks/{id}/cancel", s.handle("POST /v1/tasks/{id}/cancel", s.cancelTask))
+	v1.Handle("POST /v1/tasks/{id}/answer", s.handle("POST /v1/tasks/{id}/answer", s.answerTask))
 
 	root := http.NewServeMux()
 	root.Handle("/v1/", s.requireAuth(v1))

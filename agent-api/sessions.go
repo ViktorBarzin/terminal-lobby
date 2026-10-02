@@ -160,6 +160,13 @@ type Sessions interface {
 	// Enter that should submit it does not, so the turn never runs and the
 	// conversation shows a message the agent never saw.
 	WaitReady(osUser, session string, wait, poll time.Duration) error
+	// Answer applies one answer to the plan approval or the tool permission
+	// prompt the pane is drawing, through the same sessionio driver the
+	// lobby's question card uses: it reads the dialog before any key, refuses
+	// with nothing typed when the dialog does not offer what was asked, and
+	// replies with a reading taken afterwards. The error is a pane that could
+	// not be read at all.
+	Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error)
 }
 
 // errNoTranscript — the session has no transcript to read yet.
@@ -327,6 +334,10 @@ func (t *tmuxSessions) WaitReady(osUser, session string, wait, poll time.Duratio
 	ctx, cancel := context.WithTimeout(context.Background(), wait+poll)
 	defer cancel()
 	return t.in.AwaitInputReady(ctx, osUser, session, wait, poll)
+}
+
+func (t *tmuxSessions) Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
+	return t.in.Answer(ctx, osUser, session, req)
 }
 
 // TranscriptLines reads the session's transcript through sessionio.SessionMap,

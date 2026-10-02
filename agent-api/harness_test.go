@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -108,6 +109,9 @@ func newHarness(t *testing.T) *harness {
 		StartGrace:   150 * time.Millisecond,
 		ReadyTimeout: 100 * time.Millisecond,
 		TurnTimeout:  5 * time.Second,
+		// A wait of N "seconds" lasts N*10ms here, so a test can ask for a
+		// wait that cannot finish and still be done in a blink.
+		WaitUnit: 10 * time.Millisecond,
 	}
 	h.srv.Runner = NewRunner(h.srv.runTurn)
 	h.handler = h.srv.Routes()
@@ -135,6 +139,9 @@ type request struct {
 	// route cannot be reached with a browser's credentials.
 	header string
 	secret string
+	// ctx, when set, is the request's context, so a test can hang up on a
+	// request that is still waiting.
+	ctx context.Context
 }
 
 func (h *harness) do(req request) *httptest.ResponseRecorder {
@@ -144,6 +151,9 @@ func (h *harness) do(req request) *httptest.ResponseRecorder {
 		body = strings.NewReader(req.body)
 	}
 	r := httptest.NewRequest(req.method, req.path, body)
+	if req.ctx != nil {
+		r = r.WithContext(req.ctx)
+	}
 	if req.token != "" {
 		r.Header.Set("Authorization", "Bearer "+req.token)
 	}

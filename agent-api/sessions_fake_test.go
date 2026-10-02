@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"time"
+
+	"terminal-lobby/sessionio"
 )
 
 // fakeSessions stands in for tmux.
@@ -48,6 +51,21 @@ type fakeSessions struct {
 	// onPrompt runs (holding the lock) right after a prompt is recorded, so a
 	// test can make the fake behave like a session that starts working.
 	onPrompt func(f *fakeSessions, key string)
+
+	// answers records every Answer call. answerResp is what Answer replies,
+	// nil meaning the answer landed and the dialog went away; answerErr is a
+	// pane that could not be read at all.
+	answers    []answerCall
+	answerResp *sessionio.AnswerResponse
+	answerErr  error
+	// onAnswer runs (holding the lock) after an answer is recorded, so a test
+	// can take the dialog off the pane the way a real answer does.
+	onAnswer func(f *fakeSessions, key string)
+}
+
+type answerCall struct {
+	OSUser, Session string
+	Req             sessionio.AnswerRequest
 }
 
 type promptCall struct{ OSUser, Session, Text string }
@@ -153,6 +171,12 @@ func (f *fakeSessions) cancelCalls() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string(nil), f.cancels...)
+}
+
+func (f *fakeSessions) answerCalls() []answerCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]answerCall(nil), f.answers...)
 }
 
 func (f *fakeSessions) createCalls() []CreateSpec {
@@ -314,4 +338,20 @@ func (f *fakeSessions) Pane(osUser, session string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.panes[key(osUser, session)], nil
+}
+
+func (f *fakeSessions) Answer(_ context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.answers = append(f.answers, answerCall{osUser, session, req})
+	if f.answerErr != nil {
+		return sessionio.AnswerResponse{}, f.answerErr
+	}
+	if f.onAnswer != nil {
+		f.onAnswer(f, key(osUser, session))
+	}
+	if f.answerResp != nil {
+		return *f.answerResp, nil
+	}
+	return sessionio.AnswerResponse{Applied: true, Done: true}, nil
 }

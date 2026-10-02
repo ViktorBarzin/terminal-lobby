@@ -14,6 +14,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -351,12 +352,27 @@ type messageRequest struct {
 
 // postMessage serves POST /v1/conversations/{id}/messages.
 //
-// It answers before the turn runs. The caller polls the task id, which is what
-// the design doc settled on: Muse runs cron jobs and persists while closed, so
-// polling is native to it and no inbound path into Meta's VM is needed.
+// By default it answers before the turn runs. The caller polls the task id,
+// which is what the design doc settled on: Muse runs cron jobs and persists
+// while closed, so polling is native to it and no inbound path into Meta's VM
+// is needed.
+//
+// ?wait=N holds the request for up to N seconds instead, and answers 200 with
+// the task itself if the turn settles in that time: done, failed, cancelled,
+// or blocked on a question. Each poll costs the caller a full model turn, and
+// a short turn is over in seconds, so this is most short turns answered in
+// one request. A turn still going when the wait runs out gets the 202 receipt
+// unchanged, so a caller that handles today's answer handles this one.
 func (s *Server) postMessage(c *call) (any, error) {
 	id := c.r.PathValue("id")
 	c.conversationID = id
+
+	// Read before anything else, so a bad value costs the caller a 400 and
+	// never a turn it did not mean to start.
+	wait, err := waitSeconds(c.r.URL.Query())
+	if err != nil {
+		return nil, err
+	}
 
 	var req messageRequest
 	if err := c.decode(&req); err != nil {
@@ -388,6 +404,15 @@ func (s *Server) postMessage(c *call) (any, error) {
 	// waits for rather than a count that includes itself.
 	ahead := s.Runner.Ahead(task.ConversationID)
 	s.Runner.Submit(task)
+
+	if wait > 0 {
+		// The request's own context, so a caller that hangs up stops the
+		// wait rather than leaving it parked for the rest of N.
+		v, ok := s.Tasks.Wait(c.r.Context(), task.ID, time.Duration(wait)*s.waitUnit(), settledOrBlocked)
+		if ok && settledOrBlocked(v.Status) {
+			return v, nil
+		}
+	}
 
 	c.status = 202
 	return map[string]any{
@@ -431,9 +456,26 @@ func (s *Server) mayWrite(live LiveSession, actor string) error {
 }
 
 // getTranscript serves GET /v1/conversations/{id}/transcript.
+//
+// The whole history by default. ?after=i and ?last=n narrow it for a caller
+// that has read it before: without them a transcript is re-read whole on
+// every look, and a caller pays for every byte it reads in its own context.
+// after keeps the messages whose index is past i; last keeps at most the
+// final n of what is left. Both are applied to the decoded message list, so
+// an index names the same message on every call.
 func (s *Server) getTranscript(c *call) (any, error) {
 	id := c.r.PathValue("id")
 	c.conversationID = id
+	q := c.r.URL.Query()
+	after, hasAfter, err := queryInt(q, "after")
+	if err != nil {
+		return nil, err
+	}
+	last, hasLast, err := queryInt(q, "last")
+	if err != nil {
+		return nil, err
+	}
+
 	live, err := s.find(c.id.OSUser, id)
 	if err != nil {
 		return nil, err
@@ -447,9 +489,33 @@ func (s *Server) getTranscript(c *call) (any, error) {
 		return nil, serverError("reading the transcript: %v", err)
 	}
 	msgs := decodeTranscript(lines)
+	total := len(msgs)
+	msgs = transcriptWindow(msgs, after, hasAfter, last, hasLast)
 	// The full history can be megabytes. The trace records that it was asked
 	// for and how much came back, never the content — which is on disk in the
 	// transcript anyway, addressable from this same line.
-	c.traceResponse = map[string]int{"messages": len(msgs)}
-	return map[string]any{"conversation_id": id, "messages": msgs}, nil
+	c.traceResponse = map[string]int{"messages": len(msgs), "total": total}
+	return map[string]any{"conversation_id": id, "total": total, "messages": msgs}, nil
+}
+
+// transcriptWindow applies after, then last. It never returns nil: an empty
+// window is an empty list on the wire, not a null a client has to
+// special-case.
+func transcriptWindow(msgs []TranscriptMessage, after int, hasAfter bool, last int, hasLast bool) []TranscriptMessage {
+	if hasAfter {
+		// Indexes are positions, so the cut is arithmetic rather than a scan.
+		// Compared before adding one: after may be as large as an int goes.
+		if after >= len(msgs) {
+			msgs = msgs[len(msgs):]
+		} else {
+			msgs = msgs[after+1:]
+		}
+	}
+	if hasLast && last < len(msgs) {
+		msgs = msgs[len(msgs)-last:]
+	}
+	if msgs == nil {
+		return []TranscriptMessage{}
+	}
+	return msgs
 }

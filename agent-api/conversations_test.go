@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -243,7 +244,7 @@ func TestGetTranscript(t *testing.T) {
 
 	want := []TranscriptMessage{
 		{Role: "user", Text: "what runs in stacks/proxy?", At: "2026-09-16T11:02:31.442Z"},
-		{Role: "assistant", Text: "Two products on one tunnel.", At: "2026-09-16T11:02:48.119Z"},
+		{Index: 1, Role: "assistant", Text: "Two products on one tunnel.", At: "2026-09-16T11:02:48.119Z"},
 	}
 	if len(got.Messages) != len(want) {
 		t.Fatalf("got %d messages, want %d: %+v", len(got.Messages), len(want), got.Messages)
@@ -252,6 +253,81 @@ func TestGetTranscript(t *testing.T) {
 		if got.Messages[i] != want[i] {
 			t.Errorf("message %d:\n got %+v\nwant %+v", i, got.Messages[i], want[i])
 		}
+	}
+}
+
+// The incremental read: a caller that has seen up to index i asks for what
+// came after, or for the last few, and gets the same indexes every time, with
+// the full count beside them so it knows how much it skipped.
+func TestTranscriptWindow(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{Name: "c1", Owner: testActor})
+	h.sessions.setTranscript(testOSUser, "c1",
+		userLine("m0", "2026-09-16T11:00:00Z"),
+		`{"type":"system","subtype":"hook"}`,
+		assistantLine("m1", "2026-09-16T11:00:01Z"),
+		userLine("m2", "2026-09-16T11:00:02Z"),
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"ok"}]}}`,
+		assistantLine("m3", "2026-09-16T11:00:03Z"),
+		userLine("m4", "2026-09-16T11:00:04Z"),
+	)
+
+	for _, c := range []struct {
+		query string
+		want  []int
+	}{
+		{"", []int{0, 1, 2, 3, 4}},
+		{"?after=1", []int{2, 3, 4}},
+		{"?after=0", []int{1, 2, 3, 4}},
+		{"?after=4", []int{}},
+		{"?after=99", []int{}},
+		{"?after=9223372036854775807", []int{}},
+		{"?last=2", []int{3, 4}},
+		{"?last=0", []int{}},
+		{"?last=99", []int{0, 1, 2, 3, 4}},
+		// after is applied first, then last.
+		{"?after=1&last=2", []int{3, 4}},
+		{"?after=2&last=5", []int{3, 4}},
+		{"?last=1&after=0", []int{4}},
+	} {
+		t.Run(c.query, func(t *testing.T) {
+			var got struct {
+				ConversationID string              `json:"conversation_id"`
+				Total          int                 `json:"total"`
+				Messages       []TranscriptMessage `json:"messages"`
+			}
+			w := h.call("GET", "/v1/conversations/c1/transcript"+c.query, "")
+			h.decodeJSON(w, http.StatusOK, &got)
+			if got.Total != 5 {
+				t.Fatalf("total %d, want 5 whatever the window", got.Total)
+			}
+			// An empty window is an empty list, never a null a client has to
+			// special-case.
+			if got.Messages == nil {
+				t.Fatalf("messages is null: %s", w.Body.String())
+			}
+			var idx []int
+			for _, m := range got.Messages {
+				idx = append(idx, m.Index)
+				if m.Text != fmt.Sprintf("m%d", m.Index) {
+					t.Errorf("index %d carries %q: the index is not stable", m.Index, m.Text)
+				}
+			}
+			if fmt.Sprint(idx) != fmt.Sprint(c.want) && !(len(idx) == 0 && len(c.want) == 0) {
+				t.Fatalf("indexes %v, want %v", idx, c.want)
+			}
+		})
+	}
+}
+
+func TestTranscriptWindowRefusesBadParams(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{Name: "c1", Owner: testActor})
+	h.sessions.setTranscript(testOSUser, "c1", userLine("m0", "2026-09-16T11:00:00Z"))
+	for _, q := range []string{"after=-1", "after=x", "last=1.5", "last=-2", "after=", "last=+1", "after=99999999999999999999"} {
+		t.Run(q, func(t *testing.T) {
+			h.decodeJSON(h.call("GET", "/v1/conversations/c1/transcript?"+q, ""), http.StatusBadRequest, nil)
+		})
 	}
 }
 

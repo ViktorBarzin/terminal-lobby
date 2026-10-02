@@ -219,8 +219,20 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 				// capture is a fork, and the question does not change while
 				// the dialog stands.
 				asked = true
-				q := s.question(t, live.Name)
-				s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.Question = q })
+				q := s.readQuestion(t.OSUser, live.Name)
+				s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
+			} else if v, _ := s.Tasks.Get(t.ID); v.Status == StatusRunning {
+				// Answered through POST /v1/tasks/{id}/answer, which put the
+				// task back to running while @claude_state still says
+				// awaiting. It goes on saying so for as long as an approved
+				// tool runs, because nothing stamps running until the next
+				// tool call or prompt (devvm/claude-tmux-state). So the pane
+				// is read on every poll in this window, and only a dialog a
+				// parser recognises counts as the next question: the bottom
+				// of a pane that is busy working is not one.
+				if q := s.readQuestion(t.OSUser, live.Name); q.Kind != KindUnknown {
+					s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
+				}
 			}
 
 		case sessionio.StateDone:
@@ -299,26 +311,6 @@ func (s *Server) finish(t *Task, session string, mark int) {
 		return
 	}
 	s.Tasks.Update(t.ID, StatusDone, func(tk *Task) { tk.Result = result })
-}
-
-// question is what a blocked session is asking.
-//
-// The dialog parser first, because it returns the question as the tool posed
-// it. When it cannot — a permission prompt, a dialog drawn in a shape the
-// parser does not know — the visible pane is the honest fallback, and saying
-// nothing at all would leave the caller holding a needs_input it cannot act
-// on.
-func (s *Server) question(t *Task, session string) string {
-	pane, err := s.Sessions.Pane(t.OSUser, session)
-	if err != nil {
-		return ""
-	}
-	if d := sessionio.ParseDialog(pane); d != nil && len(d.Questions) > 0 {
-		if q := strings.TrimSpace(d.Questions[0].Question); q != "" {
-			return q
-		}
-	}
-	return paneTail(pane, paneQuestionLimit)
 }
 
 // paneTail is the last of a pane's visible text, trimmed of the blank lines a

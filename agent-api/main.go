@@ -135,12 +135,15 @@ func main() {
 
 	server := &http.Server{
 		Handler: timing.Wrap(srv.Routes()),
-		// A turn is watched by a background goroutine, never by a request, so
-		// no handler here has any business taking minutes. These bound a
-		// stuck tmux call rather than a slow agent.
+		// A turn is watched by a background goroutine, never by a request.
+		// The one thing a handler may do for minutes is WAIT on that
+		// goroutine, when a caller asks with ?wait= (wait.go), so the write
+		// side is sized to the longest wait; serverWriteTimeout has the
+		// arithmetic. The read side stays short: every body here is a small
+		// JSON object.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      serverWriteTimeout,
 		IdleTimeout:       120 * time.Second,
 	}
 	// One server, one listener per address. Every listener is opened BEFORE
@@ -176,6 +179,14 @@ func hasBearerCredentials(g *authuser.Gate) bool {
 	_, err = g.Resolve(probe)
 	return err == authuser.ErrBadBearer
 }
+
+// serverWriteTimeout is the longest a request may take, from the end of its
+// headers to the end of the response. Go's WriteTimeout covers the whole
+// handler, so at the old 60 s a ?wait=300 request would have had its
+// connection cut a minute in and the caller handed a reset instead of an
+// answer. It is the longest wait plus the 60 s every other handler already
+// had, which still bounds a tmux call that never returns.
+const serverWriteTimeout = maxWaitSeconds*time.Second + 60*time.Second
 
 // resolveTimeout bounds the one name lookup startup makes. Long enough for a
 // resolver on a loaded box, short enough that a broken one is a failed start

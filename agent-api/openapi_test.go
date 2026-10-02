@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // The OpenAPI document is the contract a caller GENERATES a client from, so
@@ -62,6 +64,7 @@ func TestOpenAPIDescribesExactlyTheRealRoutes(t *testing.T) {
 		"POST /v1/conversations/{id}/messages":  true,
 		"GET /v1/tasks/{id}":                    true,
 		"POST /v1/tasks/{id}/cancel":            true,
+		"POST /v1/tasks/{id}/answer":            true,
 	}
 	// The v1 half of that list must match the auth test's list exactly, so
 	// the two cannot drift apart.
@@ -162,8 +165,8 @@ func TestOpenAPIEveryRequestBodyHasAnExample(t *testing.T) {
 			}
 		}
 	}
-	if bodies != 2 {
-		t.Fatalf("%d request bodies found, want 2 (create and send) — the check may be looking in the wrong place", bodies)
+	if bodies != 3 {
+		t.Fatalf("%d request bodies found, want 3 (create, send and answer) — the check may be looking in the wrong place", bodies)
 	}
 }
 
@@ -457,4 +460,60 @@ func TestOpenAPIServerNamesTheRealPort(t *testing.T) {
 func (r request) path2() string {
 	p := strings.ReplaceAll(r.path, "/conversations/c1", "/conversations/{id}")
 	return strings.ReplaceAll(p, "/tasks/t1", "/tasks/{id}")
+}
+
+// The limits and vocabularies the new parameters document are the ones the
+// code enforces. A generated client validates against these before sending,
+// so a drift here refuses a request the service would take, or sends one it
+// refuses.
+func TestOpenAPIWaitAnswerAndKindMatchTheCode(t *testing.T) {
+	doc := loadOpenAPI(t)
+	components, _ := doc["components"].(map[string]any)
+	params, _ := components["parameters"].(map[string]any)
+	wait, _ := params["Wait"].(map[string]any)
+	ws, _ := wait["schema"].(map[string]any)
+	if ws["maximum"] != float64(maxWaitSeconds) || ws["minimum"] != float64(0) {
+		t.Errorf("the documented wait range %v..%v is not 0..%d", ws["minimum"], ws["maximum"], maxWaitSeconds)
+	}
+
+	schemas, _ := components["schemas"].(map[string]any)
+	req, _ := schemas["AnswerRequest"].(map[string]any)
+	props, _ := req["properties"].(map[string]any)
+	text, _ := props["text"].(map[string]any)
+	if text["maxLength"] != float64(sessionio.MaxAnswerText) {
+		t.Errorf("the documented text limit %v is not sessionio's %d", text["maxLength"], sessionio.MaxAnswerText)
+	}
+
+	task, _ := schemas["Task"].(map[string]any)
+	tprops, _ := task["properties"].(map[string]any)
+	kind, _ := tprops["kind"].(map[string]any)
+	var documented []string
+	for _, v := range kind["enum"].([]any) {
+		documented = append(documented, v.(string))
+	}
+	sort.Strings(documented)
+	code := []string{KindPermission, KindPlan, KindChoice, KindUnknown}
+	sort.Strings(code)
+	if strings.Join(documented, ",") != strings.Join(code, ",") {
+		t.Errorf("the documented kinds %v do not match the code's %v", documented, code)
+	}
+
+	// Every send and poll route takes the wait it documents, and nothing else
+	// claims to.
+	paths, _ := doc["paths"].(map[string]any)
+	for _, c := range []struct{ path, method string }{
+		{"/v1/conversations/{id}/messages", "post"},
+		{"/v1/tasks/{id}", "get"},
+	} {
+		item, _ := paths[c.path].(map[string]any)
+		op, _ := item[c.method].(map[string]any)
+		found := false
+		for _, p := range op["parameters"].([]any) {
+			pm, _ := p.(map[string]any)
+			found = found || pm["$ref"] == "#/components/parameters/Wait"
+		}
+		if !found {
+			t.Errorf("%s %s does not document ?wait", c.method, c.path)
+		}
+	}
 }
