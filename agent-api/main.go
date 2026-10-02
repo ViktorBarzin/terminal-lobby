@@ -41,9 +41,10 @@ import (
 	"terminal-lobby/telemetry"
 )
 
-// listenAddr — :8710, the port the Headscale ACL opens to the caller's tag and
-// nothing else, on loopback until an operator names another address in
-// TL_AGENT_BIND. listenAddress has the reason that key exists.
+// listenAddr — :8710, on loopback until an operator names another address in
+// TL_AGENT_BIND. On the devvm that is the LAN address the cluster ingress
+// reaches it on (terminal-api.viktorbarzin.me); listenAddress has the reason
+// that key exists.
 const listenAddr = "127.0.0.1:8710"
 
 // buildID is stamped at deploy time (-ldflags -X main.buildID=<rev>).
@@ -255,10 +256,11 @@ func resolveHost(host string) error {
 // The five browser-facing services share TL_BIND because they sit behind the
 // cluster ingress, which runs on another host — so it is 0.0.0.0 on this
 // devvm, and 7683 to 7688 all listen on `*` (measured 2026-09-16). This
-// service is reached over the Headscale tailnet instead, where the ACL opens
-// :8710 to tag:muse and to nothing else, and it has no proxy in front of it
-// at all. Inheriting a box-wide 0.0.0.0 would have put a port that creates
-// and drives Claude sessions on the LAN the moment the package installed.
+// service binds only the addresses an operator names: it was designed for the
+// Headscale tailnet, and since 2026-10-02 its callers come through the
+// terminal-api ingress to one named LAN address. Inheriting a box-wide 0.0.0.0
+// would have put a port that creates and drives Claude sessions on every
+// network the moment the package installed.
 //
 // Three values are refused rather than narrowed or widened:
 //

@@ -11,14 +11,12 @@
   },
   "servers": [
     {
-      "url": "http://{host}:8710",
-      "description": "The devvm, on its private tailnet address.",
-      "variables": {
-        "host": {
-          "default": "localhost",
-          "description": "The devvm's tailnet address. Nothing else routes to this port."
-        }
-      }
+      "url": "https://terminal-api.viktorbarzin.me",
+      "description": "The public endpoint, for a caller off the devvm. Of this service it routes /v1/ and /openapi.json only (/health stays on the devvm), and every /v1 request needs a bearer token. The proxy waits up to 330 seconds for a response, which covers the 300-second ?wait= cap; give your client a read timeout at least as long as the longest wait it sends."
+    },
+    {
+      "url": "http://127.0.0.1:8710",
+      "description": "Loopback on the devvm itself, for a program running there."
     }
   ],
   "tags": [

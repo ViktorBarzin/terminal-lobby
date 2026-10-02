@@ -453,18 +453,41 @@ func TestOpenAPICreateExamplesWouldBeAccepted(t *testing.T) {
 	}
 }
 
-// The document names the port the service actually listens on.
-func TestOpenAPIServerNamesTheRealPort(t *testing.T) {
+// publicEndpoint is where a caller off the devvm reaches this service:
+// Traefik on terminal-api routes /v1/ and /openapi.json here (infra
+// stacks/terminal/terminal_api.tf). It is a constant of the deployment, not of
+// this binary, so only the document and this test name it.
+const publicEndpoint = "https://terminal-api.viktorbarzin.me"
+
+// A generated client takes the first server as its base URL, so the first one
+// is the address a caller can actually reach. The second is loopback for a
+// program on the devvm itself, and it names the port the service listens on,
+// so a port change cannot leave the document pointing at a closed one.
+func TestOpenAPIServersNameTheReachableEndpoints(t *testing.T) {
 	doc := loadOpenAPI(t)
 	servers, _ := doc["servers"].([]any)
-	if len(servers) == 0 {
-		t.Fatal("no servers declared")
+	if len(servers) != 2 {
+		t.Fatalf("%d servers declared, want the public endpoint and loopback", len(servers))
 	}
-	s, _ := servers[0].(map[string]any)
-	url, _ := s["url"].(string)
-	_, port, _ := strings.Cut(listenAddr, ":")
-	if !strings.HasSuffix(url, ":"+port) {
-		t.Fatalf("the document's server URL %q does not name the listen port %q", url, port)
+	url := func(i int) string {
+		s, _ := servers[i].(map[string]any)
+		if _, ok := s["variables"]; ok {
+			t.Errorf("server %d has variables; a generated client should not have to fill in a host", i)
+		}
+		u, _ := s["url"].(string)
+		return u
+	}
+	if got := url(0); got != publicEndpoint {
+		t.Errorf("servers[0] is %q, want the public endpoint %q", got, publicEndpoint)
+	}
+	if got, want := url(1), "http://"+listenAddr; got != want {
+		t.Errorf("servers[1] is %q, want loopback on the listen address %q", got, want)
+	}
+	for i, s := range servers {
+		d, _ := s.(map[string]any)["description"].(string)
+		if strings.Contains(strings.ToLower(d), "tailnet") {
+			t.Errorf("server %d still describes the retired tailnet path: %q", i, d)
+		}
 	}
 }
 
