@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -262,6 +263,39 @@ func TestTimingKeepsTheResponseWriterHijackable(t *testing.T) {
 	m.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(rec.Body.String(), `endpoint="/browser/*",outcome="ok"} 1`) {
 		t.Fatalf("a hijacked request is not counted as a success:\n%s", rec.Body.String())
+	}
+}
+
+// http.ResponseController reaches the connection through Unwrap, and a wrapper
+// without it answers ErrNotSupported. agent-api relies on it: an upload route
+// lifts the server's short read deadline for its own request only, so a 200 MB
+// message over a slow link is not cut at 30 s while every other request keeps
+// that bound.
+func TestTimingKeepsTheResponseWriterDeadlinesReachable(t *testing.T) {
+	now := time.Now()
+	tm, _ := timingHarness(t, &now, TimingOpts{})
+	srv := httptest.NewServer(tm.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		rc := http.NewResponseController(w)
+		if err := rc.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+			http.Error(w, "read deadline: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := rc.SetWriteDeadline(time.Now().Add(time.Minute)); err != nil {
+			http.Error(w, "write deadline: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	defer srv.Close()
+	resp, err := http.Get(srv.URL + "/v1/x")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		b := new(strings.Builder)
+		io.Copy(b, resp.Body)
+		t.Fatalf("status %d: %s", resp.StatusCode, b.String())
 	}
 }
 
