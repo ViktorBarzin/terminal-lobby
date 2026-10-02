@@ -324,6 +324,23 @@ func TestResumeArgv(t *testing.T) {
 			ok:   true,
 		},
 		{
+			// agent-api pins --session-id at create, and Claude refuses it
+			// beside --resume ("--session-id can only be used with --continue
+			// or --resume if --fork-session is also specified", 2.1.287).
+			why: "an agent-api conversation pins --session-id",
+			argv: []string{"/usr/local/bin/claude", "--session-id", "6c8ea2b7-21f4-47f5-a3e1-c6d1beb3d211",
+				"--append-system-prompt-file", "/tmp/agent-api/agent-rules.md", "--permission-mode", "bypassPermissions"},
+			want: []string{"/usr/local/bin/claude", "--resume", testUUID,
+				"--append-system-prompt-file", "/tmp/agent-api/agent-rules.md", "--permission-mode", "bypassPermissions"},
+			ok: true,
+		},
+		{
+			why:  "the same, with the id joined by =",
+			argv: []string{"/usr/local/bin/claude", "--session-id=6c8ea2b7-21f4-47f5-a3e1-c6d1beb3d211", "--effort", "max"},
+			want: []string{"/usr/local/bin/claude", "--resume", testUUID, "--effort", "max"},
+			ok:   true,
+		},
+		{
 			why:  "a plain shell — nothing to resume",
 			argv: []string{"/bin/zsh", "-l"},
 			ok:   false,

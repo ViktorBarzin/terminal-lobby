@@ -363,7 +363,12 @@ func isClaudeWord(w string) bool {
 
 // insertResumeArgs handles the shape where argv[at] IS claude, so the flag is
 // two argv elements of its own rather than text inside one.
+//
+// A --session-id goes, because --resume names the conversation now and Claude
+// refuses the two together unless told to fork (measured on 2.1.287). agent-api
+// pins one on every conversation it starts.
 func insertResumeArgs(argv []string, at int, uuid string) []string {
+	argv = dropSessionID(argv, at+1)
 	for i := at + 1; i+1 < len(argv); i++ {
 		if argv[i] == "--resume" {
 			argv[i+1] = uuid
@@ -374,6 +379,22 @@ func insertResumeArgs(argv []string, at int, uuid string) []string {
 	out = append(out, argv[:at+1]...)
 	out = append(out, "--resume", uuid)
 	out = append(out, argv[at+1:]...)
+	return out
+}
+
+// dropSessionID removes `--session-id <id>` and `--session-id=<id>` from
+// argv[from:].
+func dropSessionID(argv []string, from int) []string {
+	out := append([]string(nil), argv[:from]...)
+	for i := from; i < len(argv); i++ {
+		switch {
+		case argv[i] == "--session-id" && i+1 < len(argv):
+			i++ // and its value
+		case strings.HasPrefix(argv[i], "--session-id="):
+		default:
+			out = append(out, argv[i])
+		}
+	}
 	return out
 }
 
