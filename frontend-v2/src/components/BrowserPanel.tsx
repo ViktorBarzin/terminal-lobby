@@ -15,17 +15,19 @@ import {
   clientPoint,
   cursorGlides,
   cursorRipples,
+  drawnCursor,
+  echoesOwnPress,
   listPlacement,
   pagePoint,
   panelStreamWanted,
   type ListPlacement,
+  type OwnPointer,
   type PageRect,
 } from "./browser.logic";
 import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
   createDocumentVisible,
-  type BrowserCursor,
   type BrowserFrame,
   type BrowserPopup,
   type BrowserState,
@@ -269,6 +271,32 @@ export const BrowserPanel: Component<{
     stage()?.focus({ preventScroll: true });
   };
 
+  // ---- the person in control's own cursor ----------------------------------
+  //
+  // One cursor (Viktor, 2026-10-02). The host's echo of this viewer's input
+  // trails it by a round trip, so while this viewer holds control the drawn
+  // cursor follows its own pointer at once (browser.logic `drawnCursor`), and
+  // the real pointer is hidden over the page.
+
+  /** This viewer's mouse or pen over the stage, while it holds control. */
+  const [own, setOwn] = createSignal<OwnPointer>(null);
+  /** This viewer's last press, already rung, so its echo does not ring again. */
+  let ownPress: { x: number; y: number; at: number } | null = null;
+  createEffect(
+    on(inControl, (held) => {
+      if (held) return;
+      setOwn(null);
+    }),
+  );
+  /** A pointer that hovers and points precisely, unlike a finger. */
+  const fine = (e: PointerEvent): boolean => e.pointerType === "mouse" || e.pointerType === "pen";
+  /** Ring a press of this viewer's own at once. */
+  const ringOwn = (p: { x: number; y: number }): void => {
+    ownPress = { ...p, at: performance.now() };
+    const here = shownTab();
+    if (here) ringAt(p, here);
+  };
+
   // ---- input --------------------------------------------------------------
 
   const point = (clientX: number, clientY: number): { x: number; y: number } | null => {
@@ -310,10 +338,12 @@ export const BrowserPanel: Component<{
     }
     if (!inControl()) return;
     const p = point(e.clientX, e.clientY);
+    if (fine(e)) setOwn(p ?? "off");
     if (!p) return;
     e.preventDefault();
     stage()?.focus();
     stage()?.setPointerCapture?.(e.pointerId);
+    if (fine(e)) ringOwn(p);
     drive({
       t: "mouse",
       type: "down",
@@ -345,6 +375,8 @@ export const BrowserPanel: Component<{
       return;
     }
     if (!inControl()) return;
+    // The drawn cursor follows at once; the host hears once per frame.
+    if (fine(e)) setOwn(point(e.clientX, e.clientY) ?? "off");
     // One move per frame is plenty for the host, which acts on each one.
     if (moveQueued) {
       moveQueued = e;
@@ -392,6 +424,7 @@ export const BrowserPanel: Component<{
     }
     if (!inControl()) return;
     const p = point(e.clientX, e.clientY);
+    if (fine(e)) setOwn(p ?? "off");
     if (!p) return;
     drive({
       t: "mouse",
@@ -443,6 +476,11 @@ export const BrowserPanel: Component<{
     releaseTap = done;
   };
   onCleanup(() => releaseTap?.());
+
+  /** The mouse left the page: the host drives the drawn cursor again. */
+  const onPointerLeave = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") setOwn(null);
+  };
 
   const onPointerCancel = (e: PointerEvent): void => {
     // The browser took the touch over to pan the zoomed page.
@@ -542,7 +580,7 @@ export const BrowserPanel: Component<{
 
   /** Where a report lands on the picture, in the picture's own pixels. */
   const spotOf = (
-    c: BrowserCursor,
+    c: { x: number; y: number },
     el: HTMLImageElement,
     f: BrowserFrame,
   ): { left: number; top: number } | null => {
@@ -563,16 +601,21 @@ export const BrowserPanel: Component<{
     glide: boolean;
   }
   const cursorSpot = createMemo<CursorSpot | null>((prev) => {
-    const c = stream.cursor();
+    const c = drawnCursor(stream.cursor(), own(), shownTab());
     const f = stream.frame();
     const el = imgEl();
     zoom();
     layout();
-    if (!c || !f || !el || c.tab !== shownTab()) return null;
+    if (!c || !f || !el) return null;
     const at = spotOf(c, el, f);
     if (!at) return null;
-    return { tab: c.tab, seq: c.seq, ...at, glide: cursorGlides(prev, c) };
+    return { tab: c.tab, seq: c.seq, ...at, glide: !c.own && cursorGlides(prev, c) };
   }, null);
+  /** The drawn cursor is this viewer's mouse, so the real one is hidden. */
+  const ownCursor = (): boolean => {
+    const o = own();
+    return o !== null && o !== "off" && cursorSpot() !== null;
+  };
 
   const [ripples, setRipples] = createSignal<{ id: number; left: number; top: number }[]>([]);
   let rippleSeq = 0;
@@ -581,26 +624,35 @@ export const BrowserPanel: Component<{
   onCleanup(() => {
     for (const t of rippleTimers) clearTimeout(t);
   });
+  /** A ring where a press lands on `tab`, if that tab is the one shown. */
+  function ringAt(p: { x: number; y: number }, tab: string): void {
+    const el = untrack(imgEl);
+    const f = untrack(stream.frame);
+    if (!el || !f || tab !== untrack(shownTab)) return;
+    const at = spotOf(p, el, f);
+    if (!at) return;
+    const id = ++rippleSeq;
+    setRipples((all) => [...all, { id, ...at }]);
+    const timer = setTimeout(() => {
+      rippleTimers.delete(timer);
+      setRipples((all) => all.filter((r) => r.id !== id));
+    }, RIPPLE_MS);
+    rippleTimers.add(timer);
+  }
   createEffect(
     on(
       stream.cursor,
       (c) => {
         if (!c) return;
         const now = performance.now();
-        const ring = cursorRipples(lastPress, c, now);
+        // This viewer's own presses rang when they happened: the host's echo
+        // of them, while its pointer is over the page or soon after, does not.
+        const ring =
+          cursorRipples(lastPress, c, now) &&
+          untrack(own) === null &&
+          !echoesOwnPress(ownPress, c, now);
         if (c.kind === "down") lastPress = { x: c.x, y: c.y, at: now };
-        const el = untrack(imgEl);
-        const f = untrack(stream.frame);
-        if (!ring || !el || !f || c.tab !== untrack(shownTab)) return;
-        const at = spotOf(c, el, f);
-        if (!at) return;
-        const id = ++rippleSeq;
-        setRipples((all) => [...all, { id, ...at }]);
-        const timer = setTimeout(() => {
-          rippleTimers.delete(timer);
-          setRipples((all) => all.filter((r) => r.id !== id));
-        }, RIPPLE_MS);
-        rippleTimers.add(timer);
+        if (ring) ringAt(c, c.tab);
       },
       { defer: true },
     ),
@@ -721,12 +773,14 @@ export const BrowserPanel: Component<{
           // what the application role tells assistive tech to pass through.
           role="application"
           data-control={inControl() ? "" : undefined}
+          data-own-cursor={ownCursor() ? "" : undefined}
           data-zoomed={zoom() > 1 ? "" : undefined}
           tabIndex={0}
           aria-label={inControl() ? "The page. You have control." : "The page"}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerLeave={onPointerLeave}
           onPointerCancel={onPointerCancel}
           onContextMenu={(e) => inControl() && e.preventDefault()}
           onKeyDown={onKeyDown}

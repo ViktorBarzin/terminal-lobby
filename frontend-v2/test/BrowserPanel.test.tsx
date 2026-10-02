@@ -736,3 +736,102 @@ describe("<BrowserPanel> cursor", () => {
     expect(container.querySelector(".tl-browser-canvas")!.contains(layer)).toBe(true);
   });
 });
+
+/**
+ * One cursor for the person in control (Viktor, 2026-10-02). On a desktop
+ * they saw their own pointer and the drawn cursor trailing it a round trip
+ * later.
+ */
+describe("<BrowserPanel> the cursor of the person in control", () => {
+  const driving = (phone = false) => {
+    const r = mount(true, phone);
+    r.ws.host(mine);
+    r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    const stage = r.container.querySelector<HTMLDivElement>(".tl-browser-stage")!;
+    const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
+    // A 640x600 box: the picture is drawn at half scale with 100px bars, so
+    // client (350, 340) is the page's (640, 400), drawn at (320, 300).
+    img.getBoundingClientRect = () => new DOMRect(30, 40, 640, 600);
+    const cursor = () => r.container.querySelector<HTMLElement>(".tl-browser-cursor");
+    const ripples = () => r.container.querySelectorAll(".tl-browser-ripple");
+    const echo = (x: number, y: number, kind = "move") =>
+      r.ws.host({ t: "cursor", tab: "t1", x, y, kind });
+    const mouse = { pointerId: 1, pointerType: "mouse" };
+    return { ...r, stage, cursor, ripples, echo, mouse };
+  };
+
+  it("draws the cursor at the mouse at once, hides the real pointer, and ignores the echo", () => {
+    const { stage, cursor, echo, mouse } = driving();
+    echo(0, 0);
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 350, clientY: 340 });
+    expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+    expect(cursor()).not.toHaveAttribute("data-glide");
+    expect(stage).toHaveAttribute("data-own-cursor");
+    // The host's echo of an earlier move arrives a round trip later.
+    echo(100, 100);
+    expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 360, clientY: 340 });
+    expect(cursor()!.style.transform).toBe("translate(330px, 300px)");
+    expect(cursor()).not.toHaveAttribute("data-glide");
+  });
+
+  it("goes back to the host's cursor when the mouse leaves the page", () => {
+    const { stage, cursor, echo, mouse } = driving();
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 350, clientY: 340 });
+    echo(100, 100);
+    fireEvent.pointerLeave(stage, mouse);
+    expect(stage).not.toHaveAttribute("data-own-cursor");
+    expect(cursor()!.style.transform).toBe("translate(50px, 150px)");
+  });
+
+  it("goes back to the host's cursor when control ends", () => {
+    const { stage, cursor, echo, mouse, ws } = driving();
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 350, clientY: 340 });
+    echo(100, 100);
+    ws.host({ t: "control", holder: null, holderId: null, since: null, lapseAt: null });
+    expect(stage).not.toHaveAttribute("data-own-cursor");
+    expect(cursor()!.style.transform).toBe("translate(50px, 150px)");
+  });
+
+  it("shows the real pointer, and no drawn one, beside the picture", () => {
+    const { stage, cursor, echo, mouse } = driving();
+    echo(100, 100);
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 350, clientY: 100 });
+    expect(stage).not.toHaveAttribute("data-own-cursor");
+    expect(cursor()).toBeNull();
+  });
+
+  it("rings a press at once, and once, whatever the host echoes after", () => {
+    const { stage, ripples, echo, mouse } = driving();
+    fireEvent.pointerMove(stage, { ...mouse, clientX: 350, clientY: 340 });
+    fireEvent.pointerDown(stage, { ...mouse, button: 0, clientX: 350, clientY: 340 });
+    expect(ripples()).toHaveLength(1);
+    expect((ripples()[0] as HTMLElement).style.left).toBe("320px");
+    fireEvent.pointerUp(stage, { ...mouse, button: 0, clientX: 350, clientY: 340 });
+    // The mouse may have left before the echo comes; it is still this press.
+    fireEvent.pointerLeave(stage, mouse);
+    echo(640, 400, "down");
+    echo(640, 400, "up");
+    echo(640, 400, "click");
+    expect(ripples()).toHaveLength(1);
+  });
+
+  it("leaves a watcher's real pointer alone and draws the host's cursor", () => {
+    const r = mount(true);
+    r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    const stage = r.container.querySelector<HTMLDivElement>(".tl-browser-stage")!;
+    const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
+    img.getBoundingClientRect = () => new DOMRect(30, 40, 640, 600);
+    r.ws.host({ t: "cursor", tab: "t1", x: 100, y: 100, kind: "move" });
+    fireEvent.pointerMove(stage, {
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 350,
+      clientY: 340,
+    });
+    expect(stage).not.toHaveAttribute("data-own-cursor");
+    expect(r.container.querySelector<HTMLElement>(".tl-browser-cursor")!.style.transform).toBe(
+      "translate(50px, 150px)",
+    );
+  });
+});

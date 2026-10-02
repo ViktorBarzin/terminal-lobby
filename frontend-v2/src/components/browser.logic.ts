@@ -394,6 +394,64 @@ export function cursorRipples(
   );
 }
 
+/** A host cursor report, as far as drawing it goes. */
+export interface CursorReport {
+  tab: string;
+  x: number;
+  y: number;
+  seq: number;
+}
+
+/**
+ * This viewer's own pointer while it holds control with a fine pointer: where
+ * it is over the picture in page pixels, "off" while it is over the stage but
+ * beside the picture, or null while the host drives the drawn cursor.
+ */
+export type OwnPointer = { x: number; y: number } | "off" | null;
+
+/**
+ * Where the panel draws the one Browser cursor, in page pixels, or null for
+ * no cursor. The host's report on the shown tab, except while this viewer
+ * holds control and its own pointer is over the stage: then its pointer, at
+ * once and with the host's echo of it ignored, since the echo trails a round
+ * trip behind. Beside the picture no input is sent and the real pointer
+ * shows, so nothing is drawn.
+ *
+ * `own` marks a position this viewer put there, which never glides (`seq`
+ * -1, so the move back to the host's report does).
+ */
+export function drawnCursor(
+  host: CursorReport | null,
+  own: OwnPointer,
+  tab: string | null,
+): (CursorReport & { own: boolean }) | null {
+  if (tab === null || own === "off") return null;
+  if (own) return { tab, x: own.x, y: own.y, seq: -1, own: true };
+  return host && host.tab === tab ? { ...host, own: false } : null;
+}
+
+/** How long, and how near, a host report can be the echo of this viewer's press. */
+const OWN_ECHO_MS = 2_000;
+const OWN_ECHO_PX = 4;
+
+/**
+ * Whether a host report is the echo of a press this viewer already rang for
+ * (a desktop press): its down, up or click near the same
+ * spot soon after. The panel rings for its own press at once, so the echo
+ * does not ring again. While a person holds control the agent's input is
+ * refused, so a press there in that time is theirs.
+ */
+export function echoesOwnPress(
+  own: { x: number; y: number; at: number } | null,
+  report: { kind: "move" | "down" | "up" | "click"; x: number; y: number },
+  now: number,
+): boolean {
+  if (own === null || report.kind === "move") return false;
+  return (
+    now - own.at <= OWN_ECHO_MS && Math.hypot(report.x - own.x, report.y - own.y) <= OWN_ECHO_PX
+  );
+}
+
 export interface ListPlacement {
   left: number;
   /** The list's top edge, or its bottom edge when it opens `above`. */

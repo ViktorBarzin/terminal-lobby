@@ -16,6 +16,8 @@ import {
   clientPoint,
   cursorGlides,
   cursorRipples,
+  drawnCursor,
+  echoesOwnPress,
   listPlacement,
   pagePoint,
   panelLayout,
@@ -606,5 +608,55 @@ describe("where a press ripples", () => {
     expect(cursorRipples(down, { kind: "click", x: 300, y: 50 }, 1_080)).toBe(true);
     expect(cursorRipples(down, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
     expect(cursorRipples(null, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
+  });
+});
+
+/**
+ * One cursor (Viktor, 2026-10-02). The person in control on a desktop saw
+ * their own pointer and the drawn one trailing it a round trip later.
+ */
+describe("which position the panel draws the cursor at", () => {
+  const host = { tab: "t1", x: 10, y: 20, seq: 4 };
+
+  it("follows the host's report on the shown tab", () => {
+    expect(drawnCursor(host, null, "t1")).toEqual({ ...host, own: false });
+    expect(drawnCursor(host, null, "t2")).toBeNull();
+    expect(drawnCursor(null, null, "t1")).toBeNull();
+    expect(drawnCursor(host, null, null)).toBeNull();
+  });
+
+  it("follows this viewer's own pointer while it is over the page, ignoring the host", () => {
+    const own = { x: 300, y: 200 };
+    expect(drawnCursor(host, own, "t1")).toEqual({
+      tab: "t1",
+      x: 300,
+      y: 200,
+      seq: -1,
+      own: true,
+    });
+    expect(drawnCursor(null, own, "t1")).toMatchObject({ x: 300, y: 200, own: true });
+  });
+
+  it("draws nothing while its own pointer is beside the picture, where the real one shows", () => {
+    expect(drawnCursor(host, "off", "t1")).toBeNull();
+  });
+});
+
+describe("a host report that echoes this viewer's own press", () => {
+  const own = { x: 100, y: 50, at: 1_000 };
+
+  it.each([
+    ["down", true],
+    ["up", true],
+    ["click", true],
+    ["move", false],
+  ] as const)("is a %s at the same spot soon after: %s", (kind, echoes) => {
+    expect(echoesOwnPress(own, { kind, x: 101, y: 51 }, 1_300)).toBe(echoes);
+  });
+
+  it("is not one from elsewhere, from much later, or with no press of its own", () => {
+    expect(echoesOwnPress(own, { kind: "down", x: 200, y: 50 }, 1_300)).toBe(false);
+    expect(echoesOwnPress(own, { kind: "down", x: 100, y: 50 }, 4_000)).toBe(false);
+    expect(echoesOwnPress(null, { kind: "down", x: 100, y: 50 }, 1_300)).toBe(false);
   });
 });

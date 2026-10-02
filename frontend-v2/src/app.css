@@ -7955,6 +7955,11 @@ body.tl-kb-up {
 .tl-browser-stage[data-control] {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
+/* The drawn cursor follows the controlling viewer's mouse at once, so the real
+   pointer over the page would be a second cursor (BrowserPanel `ownCursor`). */
+.tl-browser-stage[data-own-cursor] {
+  cursor: none;
+}
 /* Only a viewer in control is told the page has its keys: a watcher's keys
    are dropped, so a focus ring there would promise typing that cannot happen. */
 .tl-browser-stage[data-control]:focus-visible {

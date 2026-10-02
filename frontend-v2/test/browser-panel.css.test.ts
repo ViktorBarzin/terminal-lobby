@@ -101,3 +101,11 @@ describe("the cursor", () => {
     expect(rawCss).toMatch(/@keyframes tl-browser-ripple-still\s*\{/);
   });
 });
+
+describe("the real pointer of the person in control", () => {
+  // The drawn cursor follows their mouse at once, so the real pointer over the
+  // page would be a second cursor (Viktor, 2026-10-02).
+  it("is hidden over the page while the drawn cursor follows it", () => {
+    expect(rule(".tl-browser-stage[data-own-cursor]")).toMatch(/cursor:\s*none/);
+  });
+});

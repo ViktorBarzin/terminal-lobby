@@ -417,7 +417,14 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   mapping the popups use. It glides to each new position, with no glide when
   it first appears or the tab changes, and a ring pulses where a press lands.
   With reduced motion it jumps, and the ring is a brief fade. A card draws no
-  cursor.
+  cursor. For the viewer in control with a mouse or pen, the host's echo of
+  their own pointer trails it by a round trip, which showed two cursors. So
+  while their pointer is over the page the drawn cursor follows it at once,
+  with no glide, the host's echo is ignored, the real pointer is hidden
+  (`cursor: none`), and a press rings when it happens. Over the letterbox
+  beside the picture the real pointer shows and nothing is drawn. When the
+  pointer leaves the page or control ends, the host drives the cursor again.
+  Other viewers always see the host's cursor.
 
 ## Rollout
 
