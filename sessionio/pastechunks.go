@@ -134,11 +134,7 @@ func (in *Injector) paste(osUser, session, text string) error {
 
 // pasteOne puts one piece into the pane as a single bracketed paste.
 func (in *Injector) pasteOne(osUser, session, chunk string) error {
-	if err := in.loadBuffer(osUser, chunk); err != nil {
-		return err
-	}
-	// -p = bracketed paste, -d = delete the buffer afterwards.
-	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+	return in.pasteBuffer(osUser, session, chunk)
 }
 
 // endingPicture is the picture's path a piece ends with, if it ends with one.

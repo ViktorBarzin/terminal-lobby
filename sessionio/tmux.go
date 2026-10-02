@@ -1,6 +1,8 @@
 package sessionio
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -259,19 +261,48 @@ func (in *Injector) Command(osUser string, args ...string) *exec.Cmd {
 	return exec.Command(in.sudo(), append([]string{"-n", "-u", osUser, in.binary()}, full...)...)
 }
 
-// loadBuffer puts text in tmux's paste buffer by feeding it on stdin, so no
-// length limit applies to what one prompt can carry.
+// pasteBuffer bracketed-pastes text into the session's pane through a tmux
+// buffer of its own, and deletes the buffer afterwards. No Enter.
 //
-// It replaced `set-buffer -- <text>`, which passes the text as a command
-// argument. tmux 3.4 refuses a client command over ~16 KB with "command too
-// long" (measured 2026-09-27: 16,000 bytes passed, 17,000 failed), and the
-// kernel refuses one argument over 128 KB before tmux even starts. A long
-// paste in the composer came back as "inject failed". `load-buffer -` took
-// 2 MB on the same box, and stdin passes through `sudo -u` unchanged.
-func (in *Injector) loadBuffer(osUser, text string) error {
-	cmd := in.Command(osUser, "load-buffer", "-")
-	cmd.Stdin = strings.NewReader(text)
-	return cmd.Run()
+// The text goes in on stdin (`load-buffer -`), so no length limit applies to
+// what one prompt can carry. It replaced `set-buffer -- <text>`, which passes
+// the text as a command argument. tmux 3.4 refuses a client command over
+// ~16 KB with "command too long" (measured 2026-09-27: 16,000 bytes passed,
+// 17,000 failed), and the kernel refuses one argument over 128 KB before tmux
+// even starts. `load-buffer -` took 2 MB on the same box, and stdin passes
+// through `sudo -u` unchanged.
+//
+// The buffer is NAMED, never the server's unnamed stack. All of a user's
+// sessions share one tmux server, and without -b, paste-buffer pastes
+// whichever buffer was loaded last: two sends to two sessions at once each
+// pasted the other's text. Measured live on 2026-10-02, six agent-api
+// conversations sent a message at the same moment and four answered about
+// another conversation's files.
+func (in *Injector) pasteBuffer(osUser, session, text string) error {
+	name := "tl-paste-" + randomHex(8)
+	load := in.Command(osUser, "load-buffer", "-b", name, "-")
+	load.Stdin = strings.NewReader(text)
+	if err := load.Run(); err != nil {
+		return err
+	}
+	// -p = bracketed paste, -d = delete the buffer afterwards.
+	if err := in.Command(osUser, "paste-buffer", "-p", "-d", "-b", name, "-t", exactPane(session)).Run(); err != nil {
+		// A paste that failed (the pane exited) leaves the buffer behind.
+		in.Command(osUser, "delete-buffer", "-b", name).Run()
+		return err
+	}
+	return nil
+}
+
+// randomHex is n random bytes as hex, for a name nothing else will pick.
+func randomHex(n int) string {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand does not fail on Linux; a clock-based name still
+		// differs between two concurrent sends in practice.
+		return strconv.FormatInt(time.Now().UnixNano(), 16)
+	}
+	return hex.EncodeToString(b)
 }
 
 // exactPane targets the named session and NOTHING ELSE, for the verbs whose
@@ -621,11 +652,7 @@ func (in *Injector) AnswerText(osUser, session, text string) error {
 	if err := checkAnswerText(text); err != nil {
 		return err
 	}
-	if err := in.loadBuffer(osUser, text); err != nil {
-		return err
-	}
-	// -p = bracketed paste, -d = delete the buffer afterwards. No Enter.
-	return in.Command(osUser, "paste-buffer", "-p", "-d", "-t", exactPane(session)).Run()
+	return in.pasteBuffer(osUser, session, text)
 }
 
 // checkAnswerText is AnswerText's refusal, on its own so a caller can ask it
