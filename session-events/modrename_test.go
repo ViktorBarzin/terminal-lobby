@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,5 +176,71 @@ func TestOpeningASessionWithNoModPaneDoesNotWait(t *testing.T) {
 	}
 	if rg.mods.byTokenOf(token) == nil {
 		t.Fatal("an unrelated mod's token was revoked")
+	}
+}
+
+// Measured live on 2026-10-02 (rv-mf2-perm, rv-mf4-perm): a permission prompt
+// opened in a conversation's first turn, autotitle renamed the session five
+// seconds later, and the agent API asked the dialog routes under the new name.
+// They answered 404 "no mod for that session" while the old name answered
+// 200, so the prompt could be neither read nor answered, and the mod, blocked
+// in the dialog, would not say hello again until its next turn. The routes
+// follow the pane, as the event streams do.
+func TestTheDialogRoutesFollowARenamedSession(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	opts := siotest.NewFakeOptions("wizard/rv-perm")
+	rg := newRegistry(ctx, time.Millisecond, t.TempDir(), opts, "wizard")
+	tbl := &panes{in: map[string]string{"%3": "rv-perm"}}
+	rg.mods.paneSession = tbl.session
+	rg.mods.sessionPanes = tbl.sessionPanes
+
+	token, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "rv-perm", Pane: "%3"})
+	c := rg.mods.conn("wizard", "rv-perm")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModPermissionEvent, ToolID: "toolu_b", Tool: "Bash",
+		Input: json.RawMessage(`{"command":"touch /tmp/probe"}`)}})
+
+	// The mod as it runs: long-poll, ack what it is handed, and say hello
+	// again under the pane's current name when the poll is refused.
+	go func() {
+		for ctx.Err() == nil {
+			req := httptest.NewRequest("GET", "/mod/v1/poll?token="+token, nil).WithContext(ctx)
+			rec := httptest.NewRecorder()
+			rg.mods.handlePoll()(rec, req)
+			switch rec.Code {
+			case http.StatusConflict:
+				token, _ = rg.mods.hello("wizard", modHello{SID: "sid1", Session: tbl.session("wizard", "%3"), Pane: "%3"})
+			case http.StatusOK:
+				var body struct{ Commands []modCommand }
+				_ = json.Unmarshal(rec.Body.Bytes(), &body)
+				for _, cmd := range body.Commands {
+					c.deliver(cmd.ID, modAck{OK: true})
+				}
+			}
+		}
+	}()
+
+	opts.Rename("wizard", "rv-perm", "create-probe-file")
+	tbl.set("%3", "create-probe-file")
+
+	g := internalGate{users: func() []string { return []string{"wizard"} },
+		self: func(*http.Request) (bool, error) { return true, nil }}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /internal/v1/dialog/{user}/{session}", g.wrap(rg.handleInternalDialog()))
+	mux.HandleFunc("POST /internal/v1/answer/{user}/{session}", g.wrap(rg.handleInternalAnswer()))
+
+	rec := serve(mux, internalReq("GET", "/internal/v1/dialog/wizard/create-probe-file", ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "toolu_b") {
+		t.Fatalf("dialog under the new name: %d %s, want the open permission prompt", rec.Code, rec.Body)
+	}
+	rec = serve(mux, internalReq("POST", "/internal/v1/answer/wizard/create-probe-file",
+		`{"toolId":"toolu_b","permission":{"option":2}}`))
+	var resp sessionio.AnswerResponse
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if rec.Code != http.StatusOK || !resp.Applied {
+		t.Fatalf("answer under the new name: %d %s, want applied", rec.Code, rec.Body)
+	}
+	if rg.mods.conn("wizard", "create-probe-file") != c {
+		t.Fatal("the new name does not resolve to the session's connection")
 	}
 }

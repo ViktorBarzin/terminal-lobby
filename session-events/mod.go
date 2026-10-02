@@ -268,6 +268,20 @@ func (h *modHub) follow(ctx context.Context, osUser, session string, wait time.D
 	return h.live(osUser, session)
 }
 
+// connFollow is conn for a session renamed under its mod, by way of follow:
+// the mod in the session's pane is asked to say hello under the new name, and
+// the connection is returned once it has. Measured live on 2026-10-02: a
+// permission prompt opened in a conversation's first turn, autotitle renamed
+// the session, and the dialog routes answered 404 under the new name, so the
+// agent API could neither read nor answer the prompt. A session no mod's pane
+// is in returns nil at once.
+func (h *modHub) connFollow(ctx context.Context, osUser, session string) *modConn {
+	if _, ok := h.follow(ctx, osUser, session, modFollowWait); !ok {
+		return nil
+	}
+	return h.conn(osUser, session)
+}
+
 // awaitHello returns a channel closed once a mod says hello for the session,
 // and a func that stops waiting.
 func (h *modHub) awaitHello(osUser, session string) (<-chan struct{}, func()) {

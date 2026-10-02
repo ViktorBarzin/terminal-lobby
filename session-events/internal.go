@@ -121,9 +121,13 @@ func (d *modDialog) internal() internalDialog {
 
 // handleInternalDialog serves GET /internal/v1/dialog/{user}/{session}: 200
 // with the oldest open dialog, 204 when nothing is open, 404 with no mod.
+//
+// Both routes find the mod through connFollow, because the agent API asks by
+// the name the session has now and autotitle renames a session a few seconds
+// into its first turn, often while a dialog that turn opened is waiting.
 func (rg *registry) handleInternalDialog() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c := rg.mods.conn(r.PathValue("user"), r.PathValue("session"))
+		c := rg.mods.connFollow(r.Context(), r.PathValue("user"), r.PathValue("session"))
 		if c == nil {
 			http.Error(w, "no mod for that session", http.StatusNotFound)
 			return
@@ -147,7 +151,7 @@ func (rg *registry) handleInternalAnswer() http.HandlerFunc {
 			http.Error(w, "bad body (an AnswerRequest naming its toolId)", http.StatusBadRequest)
 			return
 		}
-		c := rg.mods.conn(osUser, session)
+		c := rg.mods.connFollow(r.Context(), osUser, session)
 		if c == nil {
 			http.Error(w, "no mod for that session", http.StatusNotFound)
 			return
