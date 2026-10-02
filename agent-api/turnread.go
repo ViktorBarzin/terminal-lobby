@@ -68,6 +68,11 @@ var (
 	noticeRe       = regexp.MustCompile(`(?s)<task-notification>.*?</task-notification>`)
 	noticeTaskRe   = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)
 	noticeStatusRe = regexp.MustCompile(`<status>([a-z_]+)</status>`)
+	// noticeInterimRe is the note a subagent's notice carries when the agent
+	// stopped with background work of its own still running (measured live
+	// on 2026-10-02): its status reads "completed", but the agent resumes
+	// when that work ends and the same task-id notifies again.
+	noticeInterimRe = regexp.MustCompile(`(?s)<note>[^<]*may be interim[^<]*</note>`)
 )
 
 // noticeEnds are the <task-notification> statuses that end a task; a monitor
@@ -78,10 +83,11 @@ var noticeEnds = map[string]bool{"completed": true, "failed": true, "killed": tr
 // did not see end, in the order they started.
 //
 // Started: a Bash call with run_in_background (its result carries
-// backgroundTaskId) or a Monitor (taskId, unless persistent, which runs for
-// the life of the session and never re-enters on its own). Ended: a
-// <task-notification> with a final status, or a TaskStop/KillShell result
-// naming the task.
+// backgroundTaskId), an Agent with run_in_background (status async_launched,
+// agentId), or a Monitor (taskId, unless persistent, which runs for the life
+// of the session and never re-enters on its own). Ended: a
+// <task-notification> with a final status, unless its note says the result
+// may be interim, or a TaskStop/KillShell result naming the task.
 func backgroundOutstanding(lines [][]byte) []string {
 	var order []string
 	open := map[string]bool{}
@@ -111,6 +117,8 @@ func backgroundOutstanding(lines [][]byte) []string {
 			BackgroundTaskID string `json:"backgroundTaskId"`
 			TaskID           string `json:"taskId"`
 			Persistent       bool   `json:"persistent"`
+			Status           string `json:"status"`
+			AgentID          string `json:"agentId"`
 			StoppedID        string `json:"task_id"`
 			ShellID          string `json:"shell_id"`
 		}
@@ -118,6 +126,11 @@ func backgroundOutstanding(lines [][]byte) []string {
 			started := []string{tur.BackgroundTaskID}
 			if !tur.Persistent {
 				started = append(started, tur.TaskID)
+			}
+			// A foreground Agent answers with an agentId too, once it has
+			// finished; only a launch is outstanding.
+			if tur.Status == "async_launched" {
+				started = append(started, tur.AgentID)
 			}
 			for _, id := range started {
 				if id != "" && !open[id] {
@@ -150,7 +163,7 @@ func backgroundOutstanding(lines [][]byte) []string {
 func closeNoticed(open map[string]bool, text string) {
 	for _, n := range noticeRe.FindAllString(text, -1) {
 		id, status := noticeTaskRe.FindStringSubmatch(n), noticeStatusRe.FindStringSubmatch(n)
-		if id != nil && status != nil && noticeEnds[status[1]] {
+		if id != nil && status != nil && noticeEnds[status[1]] && !noticeInterimRe.MatchString(n) {
 			delete(open, strings.TrimSpace(id[1]))
 		}
 	}
