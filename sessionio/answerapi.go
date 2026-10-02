@@ -8,6 +8,11 @@ package sessionio
 // it. Claude Code's plan approval is still answered by keys (ADR-0010), one
 // request per reader action, read off the pane before and after.
 type AnswerRequest struct {
+	// ToolID names the dialog the answer is for. Empty means the oldest open
+	// dialog of the answer's kind, which is what the web sends. A program that
+	// read the dialog first names it, so an answer never lands on a dialog that
+	// opened in its place meanwhile.
+	ToolID string `json:"toolId,omitempty"`
 	// Answers is a whole AskUserQuestion call answered at once, keyed by each
 	// question's text, for a call the lobby's hook is holding. A single-select
 	// question carries one label, a multi-select the labels picked, and a

@@ -326,6 +326,11 @@ func main() {
 	root.HandleFunc("POST /mod/v1/hello", localhostOnly(rg.mods.handleHello()))
 	root.HandleFunc("POST /mod/v1/events", localhostOnly(rg.mods.handleEvents()))
 	root.HandleFunc("GET /mod/v1/poll", localhostOnly(rg.mods.handlePoll()))
+	// agent-api reads and answers a session's dialogs here, through its mod
+	// (internal.go, ADR-0037). Gated to this service's own account on loopback.
+	internal := internalGate{users: mapUsers(*mapPath), self: peerIsSelf}
+	root.HandleFunc("GET /internal/v1/dialog/{user}/{session}", internal.wrap(rg.handleInternalDialog()))
+	root.HandleFunc("POST /internal/v1/answer/{user}/{session}", internal.wrap(rg.handleInternalAnswer()))
 	// What a Claude Code session has spent, posted by devvm/tl-usage-record from
 	// the statusLine slot (usage.go). Same two gates as its neighbour, for the
 	// same reason. The readings land in /var/lib/tmux-api/spend/<user>.json,
@@ -439,7 +444,7 @@ func handleAnswer(rg *registry) http.HandlerFunc {
 			// RECORDED, not merely refused: a card still on a reader's screen
 			// with nothing behind it, which the client shows nothing for.
 			emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerNoSession},
-				sessionio.AnswerAction(req))
+				sessionio.AnswerAction(req), "api-answer")
 			return
 		}
 		var held []sessionio.DialogQuestion
@@ -450,7 +455,7 @@ func handleAnswer(rg *registry) http.HandlerFunc {
 		}
 		resp := c.answer(r.Context(), req)
 		resp.Action = sessionio.AnswerAction(req)
-		emitAnswer(osUser, session, held, resp, resp.Action)
+		emitAnswer(osUser, session, held, resp, resp.Action, "api-answer")
 		if resp.Applied {
 			emitAnswered(osUser, session, req)
 		}
@@ -529,7 +534,7 @@ func emitAnswered(osUser, session string, req sessionio.AnswerRequest) {
 // The two NAMES are the ones the browser walk emitted before 2026-09-10, so
 // tl.client has to be read in every query over them: api-answer is this route,
 // and the mode dial records into the same names as api-mode (emitMode).
-func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp sessionio.AnswerResponse, action string) {
+func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp sessionio.AnswerResponse, action, client string) {
 	// `event` rather than `name`: frontend-v2/test/docs.truth.test.ts checks
 	// every event name a Go service emits against the catalog in
 	// telemetry/events.go, which is a gate that drops an uncatalogued name
@@ -542,7 +547,7 @@ func emitAnswer(osUser, session string, known []sessionio.DialogQuestion, resp s
 	if !resp.Applied {
 		event = "text.answer_failed"
 	}
-	attrs := telemetry.Attrs{"tl.session": session, "tl.client": "api-answer"}
+	attrs := telemetry.Attrs{"tl.session": session, "tl.client": client}
 	// A plan answer carries no question shape; a held call's is the call's.
 	if len(known) > 0 {
 		multi := false

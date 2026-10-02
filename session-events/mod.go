@@ -88,12 +88,18 @@ type modAck struct {
 	Error string
 }
 
-// modDialog is the dialog a session is waiting on a person for.
+// modDialog is a dialog a session is waiting on a person for, with what it
+// shows: enough for a program to read it without the pane.
 type modDialog struct {
 	kind      string // "ask", "plan" or "permission"
 	toolID    string
 	questions []heldQuestion
 	raw       json.RawMessage // the questions exactly as asked
+
+	plan, planFilePath string // a plan's text and file
+
+	tool, title, reason string   // a permission prompt's tool, heading and why it asks
+	detail              []string // what the tool will do
 }
 
 // modConn is one Claude session's link to its mod.
@@ -115,7 +121,9 @@ type modConn struct {
 	inflight map[string]modCommand
 	wake     chan struct{}
 	acks     map[string]chan modAck
-	dialog   *modDialog
+	// dialogs open, oldest first. Claude asks several questions at once more
+	// often than not, and a subagent's prompt can open beside the main one.
+	dialogs  []*modDialog
 	st       stampState
 	lastSeen time.Time
 	nextID   int
@@ -699,48 +707,89 @@ func (c *modConn) openDialog(fs *sessionio.FileSource, ev sessionio.ModEvent) {
 	case sessionio.ModAskEvent:
 		d.kind, d.raw = "ask", ev.Questions
 		_ = json.Unmarshal(ev.Questions, &d.questions)
-		body, _ := json.Marshal(map[string]any{
-			"questions": ev.Questions, "calls": []map[string]json.RawMessage{{"questions": ev.Questions}},
-		})
-		fs.SetHeld(string(body))
 	case sessionio.ModPlanEvent:
-		d.kind = "plan"
+		d.kind, d.plan, d.planFilePath = "plan", ev.Plan, ev.PlanFilePath
+	case sessionio.ModPermissionEvent:
+		d.kind, d.tool, d.reason = "permission", ev.Tool, ev.Reason
+		d.title, d.detail = permissionTitle(ev.Tool), permissionDetail(ev.Input)
+	default:
+		return
+	}
+	c.mu.Lock()
+	c.dialogs = append(withoutDialog(c.dialogs, d.toolID), d)
+	c.mu.Unlock()
+	c.showDialogs(fs)
+}
+
+// closeDialog takes a dialog off the wire, and the next one of its kind takes
+// its place. An empty toolID closes every open dialog.
+func (c *modConn) closeDialog(fs *sessionio.FileSource, toolID string) {
+	c.mu.Lock()
+	if toolID == "" {
+		c.dialogs = nil
+	} else {
+		c.dialogs = withoutDialog(c.dialogs, toolID)
+	}
+	c.mu.Unlock()
+	c.showDialogs(fs)
+}
+
+func withoutDialog(ds []*modDialog, toolID string) []*modDialog {
+	kept := ds[:0:0]
+	for _, d := range ds {
+		if d.toolID != toolID {
+			kept = append(kept, d)
+		}
+	}
+	return kept
+}
+
+// showDialogs puts the open dialogs on the wire in the shapes the Text view's
+// cards already read: the held calls for questions (ADR-0034's `held`, oldest
+// first, the card answers the first), and a reading for the oldest plan or
+// permission prompt (`asking`). The source skips a body it already sent.
+func (c *modConn) showDialogs(fs *sessionio.FileSource) {
+	c.mu.Lock()
+	var calls []map[string]json.RawMessage
+	var first json.RawMessage
+	var asking *modDialog
+	for _, d := range c.dialogs {
+		switch {
+		case d.kind == "ask":
+			if first == nil {
+				first = d.raw
+			}
+			calls = append(calls, map[string]json.RawMessage{"questions": d.raw})
+		case asking == nil:
+			asking = d
+		}
+	}
+	c.mu.Unlock()
+	held := ""
+	if first != nil {
+		body, _ := json.Marshal(map[string]any{"questions": first, "calls": calls})
+		held = string(body)
+	}
+	fs.SetHeld(held)
+	reading := ""
+	switch {
+	case asking == nil:
+	case asking.kind == "plan":
 		body, _ := json.Marshal(sessionio.Dialog{
 			Kind:        sessionio.DialogKindPlan,
 			Options:     []sessionio.PlanOption{{Number: 1, Label: "Yes, approve the plan"}},
-			FeedbackRow: 2, PlanPath: ev.PlanFilePath,
+			FeedbackRow: 2, PlanPath: asking.planFilePath,
 		})
-		fs.SetAsking(string(body))
-	case sessionio.ModPermissionEvent:
-		d.kind = "permission"
+		reading = string(body)
+	default:
 		body, _ := json.Marshal(sessionio.Dialog{
-			Kind: sessionio.DialogKindPermission, Title: permissionTitle(ev.Tool),
-			Detail: permissionDetail(ev.Input), Prompt: "Do you want to proceed?",
+			Kind: sessionio.DialogKindPermission, Title: asking.title,
+			Detail: asking.detail, Prompt: "Do you want to proceed?",
 			Options: []sessionio.PlanOption{{Number: 1, Label: "Yes"}, {Number: 2, Label: "No"}},
 		})
-		fs.SetAsking(string(body))
+		reading = string(body)
 	}
-	c.mu.Lock()
-	c.dialog = d
-	c.mu.Unlock()
-}
-
-// closeDialog takes the dialog off the wire. An empty toolID closes whatever is
-// open.
-func (c *modConn) closeDialog(fs *sessionio.FileSource, toolID string) {
-	c.mu.Lock()
-	d := c.dialog
-	if d == nil || (toolID != "" && d.toolID != toolID) {
-		c.mu.Unlock()
-		return
-	}
-	c.dialog = nil
-	c.mu.Unlock()
-	if d.kind == "ask" {
-		fs.SetHeld("")
-	} else {
-		fs.SetAsking("")
-	}
+	fs.SetAsking(reading)
 }
 
 // permissionTitle is the card's heading for a tool, in the words Claude's own
@@ -910,16 +959,38 @@ func (c *modConn) deliver(id string, a modAck) {
 func (c *modConn) dialogNow() *modDialog {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.dialog
+	if len(c.dialogs) == 0 {
+		return nil
+	}
+	return c.dialogs[0]
+}
+
+// dialogFor finds the dialog an answer is for: the one it names, or else the
+// oldest open dialog of its kind. A named dialog of another kind is nil.
+func (c *modConn) dialogFor(kind, toolID string) *modDialog {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, d := range c.dialogs {
+		if toolID != "" && d.toolID == toolID {
+			if d.kind != kind {
+				return nil
+			}
+			return d
+		}
+		if toolID == "" && d.kind == kind {
+			return d
+		}
+	}
+	return nil
 }
 
 // answer turns a card's answer into the command that settles the dialog.
 func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessionio.AnswerResponse {
-	d := c.dialogNow()
 	var cmds []modCommand
 	switch {
 	case req.Answers != nil || req.Chat != nil:
-		if d == nil || d.kind != "ask" {
+		d := c.dialogFor("ask", req.ToolID)
+		if d == nil {
 			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}
 		}
 		cmd := modCommand{Op: "answer", ToolID: d.toolID}
@@ -935,13 +1006,17 @@ func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessi
 		}
 		cmds = append(cmds, cmd)
 	case req.Plan != nil:
-		if d == nil || d.kind != "plan" {
+		d := c.dialogFor("plan", req.ToolID)
+		if d == nil {
 			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
 		}
 		p := req.Plan
 		switch {
 		case p.Option == 1:
 			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"})
+		case p.Option == 2 && strings.TrimSpace(p.Feedback) == "":
+			// Keep planning, with no words: the mod sends its own message.
+			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "deny"})
 		case strings.TrimSpace(p.Feedback) != "" && p.Approve:
 			cmds = append(cmds, modCommand{Op: "decide", ToolID: d.toolID, Decision: "allow"},
 				modCommand{Op: "prompt", Text: p.Feedback})
@@ -951,7 +1026,8 @@ func (c *modConn) answer(ctx context.Context, req sessionio.AnswerRequest) sessi
 			return sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}
 		}
 	case req.Permission != nil:
-		if d == nil || d.kind != "permission" {
+		d := c.dialogFor("permission", req.ToolID)
+		if d == nil {
 			return sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}
 		}
 		p := req.Permission
