@@ -234,6 +234,16 @@ func OpenStoreDir(root, osUser, session string) (*Dir, error) {
 		return nil, fmt.Errorf("%w: user %q, session %q", errUnsafeElement, osUser, session)
 	}
 	dir := filepath.Join(root, osUser, session)
+	// A link here is one tmux-api's rename cascade left under a session's
+	// old name, so paths handed out before the rename still open. The
+	// session asking now has taken that name and owns nothing behind it, so
+	// it gets a directory of its own rather than writing into the other
+	// session's.
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if err := os.Remove(dir); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	// 0755 (and 0644 files, via the services' UMask=0022) is a decision, not a
 	// default: docs/adr/0005-session-image-store.md argues it from the org's
 	// shared-workstation read policy, and show-image has to keep working for a

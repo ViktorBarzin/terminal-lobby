@@ -71,6 +71,36 @@ func TestSweepSkipsASymlinkedSessionDir(t *testing.T) {
 	}
 }
 
+// tmux-api's rename cascade leaves a link under a session's old name, pointing
+// at the sibling it was renamed to, so paths handed out before the rename still
+// open. The sweep never follows one; once the directory behind it has been
+// swept, the link points at nothing and goes too, rather than piling up.
+func TestSweepRemovesARenameLinkOnceItsDirectoryIsGone(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "store", "qauser")
+	if err := os.MkdirAll(filepath.Join(user, "kept-name"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("kept-name", filepath.Join(user, "first-name")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("swept-name", filepath.Join(user, "older-name")); err != nil {
+		t.Fatal(err)
+	}
+
+	runStoreClean(t, filepath.Join(root, "store"))
+
+	if _, err := os.Lstat(filepath.Join(user, "first-name")); err != nil {
+		t.Errorf("a link whose directory is still there was removed: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(user, "kept-name", ".deleted-at")); err != nil {
+		t.Errorf("the directory behind the link was not judged on its own name: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(user, "older-name")); !os.IsNotExist(err) {
+		t.Errorf("a link to a swept directory was left behind: %v", err)
+	}
+}
+
 // The same hole one level up: a symlinked USER directory hands the inner loop
 // somebody else's tree.
 func TestSweepSkipsASymlinkedUserDir(t *testing.T) {

@@ -11,6 +11,10 @@
 #                            grace before the directory is removed — a
 #                            session recreated within the grace window
 #                            gets its images back (marker dropped).
+#   store/<user>/<old-name>  a link tmux-api's rename cascade leaves to
+#                            the sibling the session was renamed to; kept
+#                            while that directory exists, removed once it
+#                            has been swept.
 #   store/<user>/_unsorted/  no session to tie a lifetime to: files age
 #                            out after 90 days.
 #   /run/clipboard-files     dropped-file transfer conveniences: 7 days,
@@ -126,6 +130,18 @@ if [ -d "$STORE" ]; then
                 date +%s > "$marker"
             elif [ -n "$(find "$marker" -mtime +"$GRACE_DAYS" -print 2>/dev/null)" ]; then
                 rm -rf "$sessdir"
+            fi
+        done
+
+        # A link under a session's old name is tmux-api's rename cascade
+        # keeping paths handed out before the rename readable. The loop above
+        # never follows one (the [ -L ] guards); once the directory it names
+        # has been swept, the link points at nothing and is removed. rm -f on
+        # a link removes the link, never its target, and [ -e ] is false only
+        # when the target is missing.
+        for entry in "$userdir"*; do
+            if [ -L "$entry" ] && [ ! -e "$entry" ]; then
+                rm -f "$entry"
             fi
         done
 

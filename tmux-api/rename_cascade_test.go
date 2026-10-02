@@ -136,11 +136,103 @@ func TestRenameCarriesTheImageDirectory(t *testing.T) {
 	carryRenameAcrossStores("wizard", "deploy-the-thing", "fix-the-parser")
 
 	moved := filepath.Join(root, "wizard", "fix-the-parser", "shot.png")
+	if fi, err := os.Lstat(filepath.Dir(moved)); err != nil || !fi.IsDir() {
+		t.Fatalf("the image directory did not follow the rename: %v", err)
+	}
 	if _, err := os.Stat(moved); err != nil {
 		t.Fatalf("the image did not follow the rename: %v", err)
 	}
-	if _, err := os.Stat(old); !os.IsNotExist(err) {
-		t.Errorf("the old image directory is still there: %v", err)
+	if fi, err := os.Lstat(old); err == nil && fi.IsDir() {
+		t.Errorf("the old name is still a directory of its own")
+	}
+}
+
+// A path handed out under the old name has to keep working. Measured live on
+// 2026-10-02: agent-api wrote a conversation's first-message attachments to
+// <store>/wizard/rv-r4-files/ and put those paths in the prompt; the session
+// was renamed from its title during that same turn, and Claude's Read of the
+// path it had been given failed with "File does not exist".
+func TestRenameLeavesTheOldImagePathsWorking(t *testing.T) {
+	root := swapImageStore(t)
+	first := filepath.Join(root, "wizard", "rv-r4-files")
+	if err := os.MkdirAll(first, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	given := filepath.Join(first, "file-20261002-091019-e0f8063d-doc.pdf")
+	if err := os.WriteFile(given, []byte("pdf"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	carryRenameAcrossStores("wizard", "rv-r4-files", "image-and-pdf-file-analysis")
+	// A second rename (a person renaming it later) keeps the chain whole.
+	carryRenameAcrossStores("wizard", "image-and-pdf-file-analysis", "pdf-review")
+
+	for _, p := range []string{
+		given,
+		filepath.Join(root, "wizard", "image-and-pdf-file-analysis", filepath.Base(given)),
+		filepath.Join(root, "wizard", "pdf-review", filepath.Base(given)),
+	} {
+		if b, err := os.ReadFile(p); err != nil || string(b) != "pdf" {
+			t.Errorf("read %s after the renames: %q, %v", p, b, err)
+		}
+	}
+	// Relative, so the link names a sibling and never leaves the store.
+	if target, err := os.Readlink(first); err != nil || target != "image-and-pdf-file-analysis" {
+		t.Errorf("old name links to %q (%v), want the sibling image-and-pdf-file-analysis", target, err)
+	}
+}
+
+// A session that later takes a name another session was renamed away from
+// owns no images there: the link is the other session's. Renaming the new
+// session must leave that link where it is.
+func TestRenameDoesNotCarryAnotherSessionsLink(t *testing.T) {
+	root := swapImageStore(t)
+	if err := os.MkdirAll(filepath.Join(root, "wizard", "x-now"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("x-now", filepath.Join(root, "wizard", "reused")); err != nil {
+		t.Fatal(err)
+	}
+
+	carryRenameAcrossStores("wizard", "reused", "y-now")
+
+	if target, err := os.Readlink(filepath.Join(root, "wizard", "reused")); err != nil || target != "x-now" {
+		t.Errorf("the other session's link became %q (%v)", target, err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "wizard", "y-now")); !os.IsNotExist(err) {
+		t.Errorf("the link was carried to the new name: %v", err)
+	}
+}
+
+// A destination name that is only a link left by an earlier rename is free:
+// no live session holds it. The images move there, replacing the link.
+func TestRenameTakesOverANameThatIsOnlyALink(t *testing.T) {
+	root := swapImageStore(t)
+	from := filepath.Join(root, "wizard", "deploy-the-thing")
+	if err := os.MkdirAll(from, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "shot.png"), []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "wizard", "elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere", filepath.Join(root, "wizard", "fix-the-parser")); err != nil {
+		t.Fatal(err)
+	}
+
+	carryRenameAcrossStores("wizard", "deploy-the-thing", "fix-the-parser")
+
+	to := filepath.Join(root, "wizard", "fix-the-parser")
+	if fi, err := os.Lstat(to); err != nil || !fi.IsDir() {
+		t.Fatalf("the destination is not the session's own directory: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(to, "shot.png")); err != nil {
+		t.Fatalf("the image did not follow the rename: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "wizard", "elsewhere")); err != nil {
+		t.Errorf("the old link's target was touched: %v", err)
 	}
 }
 

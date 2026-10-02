@@ -312,3 +312,39 @@ func TestOpenStoreDirRefusesUnsafeElements(t *testing.T) {
 		}
 	}
 }
+
+// tmux-api's rename cascade leaves a link under a session's old name so paths
+// handed out before the rename still open. A NEW session that later takes that
+// name owns nothing behind the link: its uploads get a directory of its own,
+// and the other session's files are left where they are.
+func TestStoreDirReplacesALinkLeftByARename(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "wizard")
+	if err := os.MkdirAll(filepath.Join(user, "renamed-away"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(user, "renamed-away", "theirs.png"), []byte("theirs"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("renamed-away", filepath.Join(user, "s1")); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := SaveToStore(root, "wizard", "s1", "mine.png", strings.NewReader("mine"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if fi, err := os.Lstat(filepath.Join(user, "s1")); err != nil || !fi.IsDir() {
+		t.Fatalf("s1 is not a directory of its own: %v", err)
+	}
+	if path != filepath.Join(user, "s1", "mine.png") {
+		t.Errorf("saved to %s", path)
+	}
+	if _, err := os.Stat(filepath.Join(user, "renamed-away", "mine.png")); !os.IsNotExist(err) {
+		t.Errorf("the new session's file landed behind the link: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(user, "renamed-away", "theirs.png")); err != nil {
+		t.Errorf("the other session's file was touched: %v", err)
+	}
+}

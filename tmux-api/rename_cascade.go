@@ -192,24 +192,49 @@ func renameShares(osUser, oldName, newName string) {
 // never shared, so there is nothing to rewrite.
 var errNoShareChange = errors.New("no share change")
 
-// renameImageDir moves the session's images.
+// renameImageDir moves the session's images, and leaves a link under the old
+// name so a path handed out before the rename still opens.
 //
-// A destination that already exists is left ALONE rather than merged: another
-// session held that name and its pictures are its own. That leaves the images
-// under the old name, which is the same outcome as before this function
+// The link is what keeps a conversation's first attachments readable. A path
+// in a prompt points at this directory, and the rename from a session's title
+// lands during its first turn, so without the link Claude's Read of the path
+// it was just given failed (measured live on 2026-10-02 through agent-api).
+// It is relative, naming the sibling, so it never leaves the store; a later
+// rename moves the directory again and leaves another, so the chain resolves.
+//
+// A name that is only a link belongs to a session that has moved on. Renaming
+// AWAY from one carries nothing, since the images behind it are that other
+// session's; renaming ONTO one replaces it, since no live session holds the
+// name. clipstore.OpenStoreDir replaces one the same way when a new session's
+// first upload lands under that name.
+//
+// A destination that is a real directory is left ALONE rather than merged:
+// another session held that name and its pictures are its own. That leaves the
+// images under the old name, which is the same outcome as before this function
 // existed — recoverable, where a merge would not be.
 func renameImageDir(osUser, oldName, newName string) {
 	from := filepath.Join(sessionImageRoot, osUser, oldName)
 	to := filepath.Join(sessionImageRoot, osUser, newName)
-	if _, err := os.Stat(from); err != nil {
-		return // no images for this session, which is the common case
+	fi, err := os.Lstat(from)
+	if err != nil || !fi.IsDir() {
+		return // no images of this session's own, which is the common case
 	}
-	if _, err := os.Stat(to); err == nil {
-		log.Printf("image store: %s already exists for %s; leaving %s's images where they are",
-			newName, osUser, oldName)
-		return
+	if ti, err := os.Lstat(to); err == nil {
+		if ti.Mode()&os.ModeSymlink == 0 {
+			log.Printf("image store: %s already exists for %s; leaving %s's images where they are",
+				newName, osUser, oldName)
+			return
+		}
+		if err := os.Remove(to); err != nil {
+			log.Printf("image store: replacing the link %s for %s failed: %v", newName, osUser, err)
+			return
+		}
 	}
 	if err := os.Rename(from, to); err != nil {
 		log.Printf("image store rename %s→%s for %s failed: %v", oldName, newName, osUser, err)
+		return
+	}
+	if err := os.Symlink(newName, from); err != nil {
+		log.Printf("image store: linking %s→%s for %s failed: %v", oldName, newName, osUser, err)
 	}
 }
