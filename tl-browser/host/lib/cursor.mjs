@@ -16,7 +16,7 @@
 /**
  * @typedef {"move" | "down" | "up" | "click"} CursorKind
  * @typedef {{ t: "cursor", tab: string, x: number, y: number, kind: CursorKind }} CursorMessage
- * @typedef {{ isTrusted: boolean, clientX: number, clientY: number }} PointerLike
+ * @typedef {{ isTrusted: boolean, clientX: number, clientY: number, detail?: number }} PointerLike
  * @typedef {{ getBoundingClientRect: () => { left: number, top: number }, clientLeft: number, clientTop: number }} FrameElement
  * @typedef {object} FrameWindow the parts of a frame's window the page script uses
  * @property {(fn: () => void, ms: number) => unknown} setTimeout
@@ -59,6 +59,10 @@ const KINDS = new Set(["move", "down", "up", "click"]);
  * @param {FrameWindow} [win] the frame's window; a test passes a stand-in
  */
 export function cursorInPage(opts, win = window) {
+  // How far, in CSS pixels, a click may be from the release before it and
+  // still count as its click; Chrome puts them at the same point. Declared in
+  // here because the function is sent as source text.
+  const slop = 2;
   try {
     const setTimer = win.setTimeout.bind(win);
     const perf = win.performance;
@@ -67,6 +71,13 @@ export function cursorInPage(opts, win = window) {
     /** @type {{ x: number, y: number } | null} */
     let pending = null;
     let timerSet = false;
+    // A click is reported only as the end of a press and release in this
+    // frame, at the release's spot. Chrome also fires a trusted click when
+    // Enter or Space activates a focused control, at clientX/clientY 0, and
+    // a label forwards a second one to its control; neither is a pointer.
+    let pressed = false;
+    /** @type {{ x: number, y: number } | null} */
+    let released = null;
 
     /**
      * @param {string} kind
@@ -125,6 +136,19 @@ export function cursorInPage(opts, win = window) {
     const on = (kind) => (e) => {
       try {
         if (!e.isTrusted) return;
+        if (kind === "down") {
+          pressed = true;
+          released = null;
+        } else if (kind === "up") {
+          released = pressed ? { x: e.clientX, y: e.clientY } : null;
+          pressed = false;
+        } else if (kind === "click") {
+          const r = released;
+          released = null;
+          // detail is the click count, 0 for a keyboard activation.
+          if (!r || !((e.detail ?? 0) >= 1)) return;
+          if (Math.abs(e.clientX - r.x) > slop || Math.abs(e.clientY - r.y) > slop) return;
+        }
         const p = inTop(e.clientX, e.clientY);
         if (!p) return;
         if (kind !== "move") {

@@ -32,13 +32,26 @@ function fakeWindow(shape = {}) {
   if (!("top" in shape)) win.top = win;
   if (!("parent" in shape)) win.parent = win;
   /**
+   * A click's detail is its click count: 1 or more from a pointer, 0 when
+   * the keyboard activated the control.
    * @param {string} type
    * @param {number} x
    * @param {number} y
    * @param {boolean} [trusted]
+   * @param {number} [detail]
    */
-  const fire = (type, x, y, trusted = true) =>
-    listeners.get(type)?.({ isTrusted: trusted, clientX: x, clientY: y });
+  const fire = (type, x, y, trusted = true, detail = type === "click" ? 1 : 0) =>
+    listeners.get(type)?.({ isTrusted: trusted, clientX: x, clientY: y, detail });
+  /**
+   * A real click: press, release, click, all at one spot.
+   * @param {number} x
+   * @param {number} y
+   */
+  const tap = (x, y) => {
+    fire("pointerdown", x, y);
+    fire("pointerup", x, y);
+    fire("click", x, y);
+  };
   /** @param {number} ms */
   const advance = (ms) => {
     clock.t += ms;
@@ -47,7 +60,7 @@ function fakeWindow(shape = {}) {
       else timers.push(timer);
     }
   };
-  return { win, calls, fire, advance, listeners };
+  return { win, calls, fire, tap, advance, listeners };
 }
 
 const OPTS = { binding: "__cursor", intervalMs: 33 };
@@ -105,6 +118,53 @@ test("events a script made up do not move the cursor", () => {
   assert.deepEqual(calls, []);
 });
 
+test("a click the keyboard made (Enter or Space on a focused control) is not reported", () => {
+  const { win, calls, fire } = fakeWindow();
+  cursorInPage(OPTS, win);
+  // Chrome's keyboard-activated click is trusted, at clientX/clientY 0.
+  fire("click", 0, 0, true, 0);
+  // Even with a press and release just before, detail 0 is the keyboard.
+  fire("pointerdown", 0, 0);
+  fire("pointerup", 0, 0);
+  fire("click", 0, 0, true, 0);
+  assert.deepEqual(
+    calls.filter((c) => c.kind === "click"),
+    [],
+  );
+});
+
+test("a click no press and release preceded at that spot is not reported", () => {
+  const { win, calls, fire, tap } = fakeWindow();
+  cursorInPage(OPTS, win);
+  fire("click", 40, 40);
+  assert.deepEqual(calls, [], "no press at all");
+  fire("pointerdown", 10, 10);
+  fire("pointerup", 10, 10);
+  fire("click", 300, 200);
+  assert.deepEqual(
+    calls.filter((c) => c.kind === "click"),
+    [],
+    "a press and release elsewhere",
+  );
+  calls.length = 0;
+  tap(10, 10);
+  // A label forwards a second trusted click to its control: one press, one ring.
+  fire("click", 10, 10);
+  assert.deepEqual(
+    calls.filter((c) => c.kind === "click"),
+    [{ kind: "click", x: 10, y: 10 }],
+  );
+});
+
+test("a drag that ends in a click rings where it was released", () => {
+  const { win, calls, fire } = fakeWindow();
+  cursorInPage(OPTS, win);
+  fire("pointerdown", 10, 10);
+  fire("pointerup", 60, 10);
+  fire("click", 60, 10);
+  assert.deepEqual(calls.at(-1), { kind: "click", x: 60, y: 10 });
+});
+
 test("a same-origin iframe adds its frame's offsets, walking up to the top", () => {
   const top = fakeWindow().win;
   const middle = fakeWindow({
@@ -118,8 +178,12 @@ test("a same-origin iframe adds its frame's offsets, walking up to the top", () 
     frameElement: { getBoundingClientRect: () => ({ left: 10, top: 20 }), clientLeft: 1, clientTop: 1 },
   });
   cursorInPage(OPTS, inner.win);
-  inner.fire("click", 5, 5);
-  assert.deepEqual(inner.calls, [{ kind: "click", x: 118, y: 229 }]);
+  inner.tap(5, 5);
+  assert.deepEqual(inner.calls, [
+    { kind: "down", x: 118, y: 229 },
+    { kind: "up", x: 118, y: 229 },
+    { kind: "click", x: 118, y: 229 },
+  ]);
 });
 
 test("a cross-origin iframe is skipped: its position in the page cannot be read", () => {
@@ -127,7 +191,7 @@ test("a cross-origin iframe is skipped: its position in the page cannot be read"
   // A cross-origin frame's frameElement is null.
   const frame = fakeWindow({ top, parent: top, frameElement: null });
   cursorInPage(OPTS, frame.win);
-  frame.fire("click", 5, 5);
+  frame.tap(5, 5);
   assert.deepEqual(frame.calls, []);
   // A same-origin frame inside a cross-origin one: reading the parent throws.
   const blocked = {
@@ -141,7 +205,7 @@ test("a cross-origin iframe is skipped: its position in the page cannot be read"
     frameElement: { getBoundingClientRect: () => ({ left: 0, top: 0 }), clientLeft: 0, clientTop: 0 },
   });
   cursorInPage(OPTS, nested.win);
-  nested.fire("click", 5, 5);
+  nested.tap(5, 5);
   assert.deepEqual(nested.calls, []);
 });
 

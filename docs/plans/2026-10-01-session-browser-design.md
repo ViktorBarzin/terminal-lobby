@@ -234,7 +234,11 @@ that cancels `pointerdown` suppresses `mousedown` and `mouseup`. The top frame
 reports positions as they are; a same-origin iframe adds each frame element's
 offset on its way up. A cross-origin iframe cannot read where its frame sits,
 so input inside one is not reported and the cursor stays where it last was.
-Moves leave a frame at most about 30 times a second, the latest one in a burst
+A click is reported only as the end of a press and release in that frame, at
+the release's spot, with a click count (`detail`) of 1 or more. Chrome also
+fires a trusted click when Enter or Space activates a focused control, at
+`clientX`/`clientY` 0 with `detail` 0, and a label forwards a second click to
+its control; neither moves the cursor or rings. Moves leave a frame at most about 30 times a second, the latest one in a burst
 always arriving; presses and clicks are never held back. The script patches
 no prototype and catches its own errors. The host checks each report like any
 other outside input, since a page can call the binding itself: it passes on

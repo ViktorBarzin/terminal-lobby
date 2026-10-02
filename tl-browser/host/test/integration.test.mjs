@@ -596,7 +596,7 @@ test("a person in control keeps it across a reconnect", {
 const CURSOR_PAGE = `data:text/html,${encodeURIComponent(
   "<title>Cursor</title><body style=margin:0>" +
     '<button id="go" style="position:absolute;left:100px;top:200px;width:120px;height:40px"' +
-    " onclick=\"this.textContent='clicked'\">Go</button>" +
+    " onclick=\"this.textContent='clicked';this.dataset.n=(+this.dataset.n||0)+1\">Go</button>" +
     '<iframe srcdoc="<body style=margin:0><button>In frame</button></body>"' +
     ' style="position:absolute;left:400px;top:300px;width:300px;height:150px;border:5px solid"></iframe>',
 )}`;
@@ -670,4 +670,27 @@ test("the agent's clicks and a person's land on one cursor the viewers see", {
   send({ t: "mouse", type: "click", x: 420, y: 320, button: "left", clickCount: 1 });
   const inFrame = await untilClick("a click inside the iframe");
   assert.deepEqual(inFrame.click, { t: "cursor", tab, x: 420, y: 320, kind: "click" });
+
+  // Enter or Space on a focused button is a trusted click at clientX/clientY
+  // 0: it activates the button, and the cursor stays where it was.
+  send({ t: "mouse", type: "click", x: 160, y: 220, button: "left", clickCount: 1 });
+  await untilClick("the click that focuses the button");
+  send({ t: "key", type: "press", key: "Enter" });
+  send({ t: "key", type: "press", key: " " });
+  send({ t: "copy" });
+  await view.next((m) => m.t === "copied", "the keys handled");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(
+    view.seen.filter((m) => m.t === "cursor"),
+    [],
+    "no cursor message for a keyboard activation",
+  );
+  send({ t: "handBack" });
+  await view.next((m) => m.t === "control" && m.holder === null, "control handed back");
+  const clicks = await callTool("browser_evaluate", {
+    function: "() => document.querySelector('#go').dataset.n",
+  });
+  assert.notEqual(clicks.isError, true, JSON.stringify(clicks));
+  // The agent's click, the person's, Enter and Space.
+  assert.match(resultText(clicks), /"4"/, "the keys did activate the button");
 });
