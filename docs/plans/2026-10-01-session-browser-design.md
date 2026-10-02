@@ -54,7 +54,7 @@ browser and hand playwright-mcp the context to drive.
 | Whose browser | One per session, started on the first browser action by a small launcher that answers Claude's startup handshake itself (ADR-0035) |
 | Where it shows | Text view: a **Browser card** per **Browsing run**. Both views: a **Browser panel** inside that session's own pane |
 | Opening | Only when someone opens it. The card stays in the conversation as a record |
-| Live | Streams whenever a live card or an open panel is on screen. Pauses when scrolled away, in a background tab, or when the session is parked |
+| Live | Streams whenever a live card or an open panel is on screen. A card pauses when scrolled away, in a background tab, or when the session is parked; the panel pauses in a background tab or when its session leaves the screen, and for the person in control only in a background tab |
 | Last frame | Kept in the page's memory only. A reload loses the picture, the card keeps its text |
 | Tabs | The panel follows the tab the agent last acted on, with a tab strip to look at others |
 | Taking control | The agent's browser calls are refused with "the user has control, don't retry, end your turn and wait" |
@@ -174,11 +174,13 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | host → viewer | `control` | Who holds control (`holder`, a name, and `holderId`, a connection), since when, when it lapses |
 | host → viewer | `state` | `live`, `frozen`, `closed` |
 | host → viewer | `copied` | Text selected in the page, answering `copy` |
+| host → viewer | `cursor` | Where the mouse is on a tab: `tab`, `x` and `y` in the page's CSS pixels, `kind` (`move`, `down`, `up`, `click`). Sent to viewers watching that tab; a viewer that starts watching gets the last position as a `move` |
 | viewer → host | `subscribe` / `unsubscribe` | Start or stop frames for a tab |
 | viewer → host | `mouse`, `wheel`, `key`, `insertText` | Input, ignored unless this connection holds control |
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
 | viewer → host | `selectTab` | Change which tab this viewer watches |
 | viewer → host | `takeControl`, `handBack` | Control changes |
+| viewer → host | `resume` | Sent right after the host's `hello` on a reconnect: `prev`, the `you` of this viewer's previous connection. Control held there moves to this one |
 | relay → host | `release` | Frees control held by a user. Only as a connection's first line |
 
 Control is held by one connection, not by a username. The host gives each
@@ -192,6 +194,25 @@ it was showing is withdrawn with `popup` `none`. Input, `handBack` and the
 the person changes. When the holding connection closes, control stays with it
 until it lapses, so a reload does not hand the browser back to the agent, and
 any connection allowed to control resumes it with `takeControl`.
+
+A reconnect gets a new `you`, so a viewer that held control would otherwise
+see someone else in control after any dropped connection. Right after the
+host's `hello`, a reconnecting viewer sends `{"t":"resume","prev":"<its
+previous you>"}`. The host moves control to the new connection when the
+holder is that previous connection, it has closed, and the user matches, then
+broadcasts `control`. `since` and the lapse stay as they were, so reconnecting
+does not extend control. A watch-only connection's `resume` is dropped by the
+relay's filter and ignored by the host. While the previous connection is
+still open, `resume` changes nothing: that is a second device, which takes
+control with `takeControl`. The panel keeps its last `you` in the tab's
+sessionStorage, per owner and session, so the same holds when the panel is
+closed and opened again or the page reloads, as iOS does to a backgrounded
+lobby on the home screen. A card keeps none: it never holds control, and a
+card naming the panel's connection would move control off the panel. A
+phone that drops off the network without closing its socket would leave the
+previous connection looking open, so the relay pings each stream every 25
+seconds and ends one that has sent nothing, a pong included, for 60 seconds,
+closing its host connection with it.
 
 session-events frees a user's control, for example when their share is revoked
 after their holding connection has already closed, by opening a connection of
@@ -210,6 +231,29 @@ and is released the moment the share is revoked or turned ro. The relay's own
 filter drops `release` and `hello` from anything a viewer sends, before the
 host's rule does.
 
+The screencast carries no mouse pointer, so the host reports one, and there is
+one cursor per browser: the agent and a person in control move the same one.
+The agent's clicks and a person's input both reach Chrome as CDP mouse input,
+which pages receive as trusted pointer and click events. A context init
+script in every frame listens for `pointermove`, `pointerdown`, `pointerup`
+and `click` in the capture phase and calls a binding (`__tlBrowserCursor`)
+with the position. Pointer events rather than mouse events, because a page
+that cancels `pointerdown` suppresses `mousedown` and `mouseup`. The top frame
+reports positions as they are; a same-origin iframe adds each frame element's
+offset on its way up. A cross-origin iframe cannot read where its frame sits,
+so input inside one is not reported and the cursor stays where it last was.
+A click is reported only as the end of a press and release in that frame, at
+the release's spot, with a click count (`detail`) of 1 or more. Chrome also
+fires a trusted click when Enter or Space activates a focused control, at
+`clientX`/`clientY` 0 with `detail` 0, and a label forwards a second click to
+its control; neither moves the cursor or rings. Moves leave a frame at most about 30 times a second, the latest one in a burst
+always arriving; presses and clicks are never held back. The script patches
+no prototype and catches its own errors. The host checks each report like any
+other outside input, since a page can call the binding itself: it passes on
+moves from a tab at most every 15 ms, and presses, releases and clicks at
+most 20 a second after a burst of 10 (a double click is 6), dropping the rest.
+Any cursor message may be dropped for a viewer that has not caught up.
+
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs
 only while at least one viewer is subscribed. Input goes through Playwright's
@@ -219,6 +263,12 @@ page's selection.
 "The tab the agent last acted on" is the page whose main frame last navigated
 or that was last created. playwright-mcp does not expose its current tab, so
 this is an approximation, and the tab strip covers the cases it misses.
+
+The host opens one page in the context before handing it to playwright-mcp,
+and playwright-mcp adopts it as its current tab. Without it, playwright-mcp
+opens a page for each tool call that finds none, so two calls in flight at the
+start (sent together, or the first one slow on a loaded box) each opened one,
+and an empty `about:blank` tab sat beside the agent's page as the current tab.
 
 ### What a headless frame does not show
 
@@ -350,9 +400,35 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   browser, in both views. It opens the panel.
 - **Phone**. The panel takes the full screen. Taps become clicks, the soft
   keyboard types into the focused field, pinch zooms the scaled page.
-- **Pausing**. Frames are requested only while the card or panel is
-  intersecting the viewport, the document is visible, and the session is not
-  parked (`docs/plans/2026-09-11-client-cpu-parking-design.md`).
+- **Pausing**. A card requests frames only while it is intersecting the
+  viewport, the document is visible, and the session is not parked
+  (`docs/plans/2026-09-11-client-cpu-parking-design.md`). An open panel is
+  what is on screen, so it asks only that the document is visible and its
+  session is on screen, and while its connection holds control only that the
+  document is visible. On the lobby added to an iPhone's home screen, the
+  card's rule turned the panel's stream off about 3s after it opened
+  (telemetry, 2026-10-02). Take control and Hand back wait, reading
+  "Connecting…", until the host has greeted the panel's stream. After every
+  hello on a new connection, including the first of a panel opened again or a
+  reloaded page, the panel sends `resume` with the `you` it last had, kept in
+  sessionStorage, so a person in control keeps it.
+- **Cursor**. The panel draws the **Browser cursor** over the page at the
+  position the host's `cursor` messages give, through the same page-to-screen
+  mapping the popups use. It glides to each new position, with no glide when
+  it first appears or the tab changes, and a ring pulses where a press lands.
+  With reduced motion it jumps, and the ring is a brief fade. A card draws no
+  cursor. For the viewer in control with a mouse or pen, the host's echo of
+  their own pointer trails it by a round trip, which showed two cursors. So
+  while their pointer is over the page the drawn cursor follows it at once,
+  with no glide, the host's echo is ignored, the real pointer is hidden
+  (`cursor: none`), and a press rings when it happens. Over the letterbox
+  beside the picture the real pointer shows and nothing is drawn. When the
+  pointer leaves the page or control ends, the host drives the cursor again.
+  On a phone, a tap by the viewer in control moves the cursor to the tap and
+  rings at once, since the host's echo arrives a round trip later and never
+  comes for a tap inside a cross-origin iframe. The cursor stays there until
+  the host reports anything newer, and an echo of the tap does not ring
+  again. Other viewers always see the host's cursor.
 
 ## Rollout
 

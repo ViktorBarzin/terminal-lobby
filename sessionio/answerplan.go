@@ -94,3 +94,29 @@ func reviewFoot(lines []string) int {
 // submitRow is the label of the review screen's commit row. The tab bar draws
 // "✔ Submit" for the same step; this is the numbered row underneath.
 const submitRow = "Submit answers"
+
+// minPrefixMatch is how much of a typed answer has to be on screen before a
+// prefix of it counts as evidence of the rest.
+const minPrefixMatch = 12
+
+// typedMatches reports whether the text a free-text row shows is the text a
+// request asked for.
+//
+// The capture trims and collapses whitespace, and a field narrower than its
+// text may wrap it or cut it short. Whitespace is compared collapsed; a word
+// the terminal broke across two lines comes back with a space in it, so a
+// match with every space removed also counts; and a row ending in the CLI's
+// ellipsis matches on a prefix long enough to be evidence. None of the wrapping
+// is measured yet. Case is compared exactly: "mango" is not what was typed.
+func typedMatches(shown, want string) bool {
+	s, w := strings.Join(strings.Fields(shown), " "), strings.Join(strings.Fields(want), " ")
+	if s == "" || w == "" {
+		return false
+	}
+	if s == w || strings.ReplaceAll(s, " ", "") == strings.ReplaceAll(w, " ", "") {
+		return true
+	}
+	head, cut := strings.CutSuffix(s, "…")
+	head = strings.TrimSpace(head)
+	return cut && len([]rune(head)) >= minPrefixMatch && strings.HasPrefix(w, head)
+}

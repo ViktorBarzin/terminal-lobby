@@ -5,6 +5,7 @@
 
 import { existsSync } from "node:fs";
 import { chromium } from "playwright-core";
+import { CURSOR_BINDING, cursorInPage, MOVE_INTERVAL_MS } from "./cursor.mjs";
 import { clearMcpModal, mcpModalPending } from "./mcptab.mjs";
 import {
   describeSelectInPage,
@@ -119,8 +120,9 @@ export class BrowserSession {
    *   onFrame: (tab: string, frame: Frame) => void,
    *   onDialog: (tab: string, page: Page, dialog: Dialog) => void,
    *   onFileChooser: (tab: string, page: Page, chooser: FileChooser) => void,
+   *   onCursor: (tab: string, report: unknown) => void,
    *   onDisconnected: () => void,
-   * }} opts
+   * }} opts onCursor gets what a page's cursor script reported, unchecked
    */
   constructor(browser, context, roots, opts) {
     this.#browser = browser;
@@ -144,7 +146,17 @@ export class BrowserSession {
     try {
       const context = await browser.newContext({ viewport: VIEWPORT, storageState });
       const roots = childPids(process.pid).filter((pid) => !before.has(pid));
-      return new BrowserSession(browser, context, roots, hooks);
+      const session = new BrowserSession(browser, context, roots, hooks);
+      // Before any page exists, so every page and frame has the script.
+      await session.#trackCursor();
+      // The agent's first page, opened before playwright-mcp sees the context.
+      // playwright-mcp opens a page for any tool call that finds none, so two
+      // calls in flight at the start (Claude sends them together, or the
+      // first is slow on a loaded box) would each open one, leaving an empty
+      // about:blank tab beside the agent's page and current in its place.
+      // With a page already there, it adopts this one and opens none.
+      await context.newPage();
+      return session;
     } catch (err) {
       await browser.close().catch(() => {});
       throw err;
@@ -406,6 +418,21 @@ export class BrowserSession {
       if (!/Unknown key/.test(String(err))) throw err;
       if (type !== "up" && [...key].length === 1) await page.keyboard.insertText(key);
     }
+  }
+
+  /**
+   * Puts the cursor script in every frame of every page, reporting through
+   * a binding (cursor.mjs).
+   */
+  async #trackCursor() {
+    await this.#context.exposeBinding(CURSOR_BINDING, (source, report) => {
+      const id = this.tabs.idOf(source.page);
+      if (id !== null) this.#o.onCursor(id, report);
+    });
+    await this.#context.addInitScript(cursorInPage, {
+      binding: CURSOR_BINDING,
+      intervalMs: MOVE_INTERVAL_MS,
+    });
   }
 
   /** @param {Page} page */

@@ -12,6 +12,7 @@ import {
   type BrowserStream,
   type WebSocketLike,
 } from "../src/lib/browser-stream";
+import type { MinStorage } from "../src/lib/storage";
 
 class FakeSocket implements WebSocketLike {
   static all: FakeSocket[] = [];
@@ -67,14 +68,17 @@ function mount(opts: {
   tab?: () => string | null;
   keep?: string;
   owner?: string;
+  session?: string;
+  remember?: MinStorage | null;
 }): { stream: BrowserStream; dispose: () => void } {
   let stream!: BrowserStream;
   let dispose!: () => void;
   createRoot((d) => {
     dispose = d;
     stream = createBrowserStream({
-      session: "work",
+      session: opts.session ?? "work",
       owner: opts.owner,
+      remember: opts.remember,
       active: opts.active,
       tab: opts.tab,
       wake: opts.wake,
@@ -226,6 +230,231 @@ describe("the browser stream", () => {
     // The id was that connection's: the next one gets its own in its hello.
     ws.drop();
     expect(stream.you()).toBeNull();
+    dispose();
+  });
+
+  it("says it is greeted only between the host's hello and the socket closing", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    expect(stream.greeted()).toBe(false);
+    ws.open();
+    expect(stream.greeted()).toBe(false);
+    ws.host(hello("live"));
+    expect(stream.greeted()).toBe(true);
+    ws.drop();
+    expect(stream.greeted()).toBe(false);
+    dispose();
+  });
+
+  /**
+   * Control is held by a connection (design, "The viewer protocol"), so a
+   * reconnect used to drop it: the new socket has a new `you`, and the panel
+   * showed someone else in control. Since tl-browser acc9709f the host moves
+   * it when the new connection names the old one.
+   */
+  it("names its previous connection right after every reconnect's hello", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    expect(first.sent.some((m) => m.t === "resume")).toBe(false);
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    second.host({ ...hello("live"), you: "c2" });
+    expect(second.sent[0]).toEqual({ t: "resume", prev: "c1" });
+    expect(second.sent[1]).toEqual({ t: "subscribe", tab: null });
+    second.drop();
+    vi.advanceTimersByTime(2_000);
+    const third = FakeSocket.all[2]!;
+    third.open();
+    third.host({ ...hello("live"), you: "c3" });
+    expect(third.sent[0]).toEqual({ t: "resume", prev: "c2" });
+    dispose();
+  });
+
+  it("names it again while the host still holds control for the old connection", () => {
+    // The host refuses a resume while it still has the old connection open,
+    // which a phone that changed networks can leave behind for a while.
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    const held = { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
+    second.host({ ...hello("live"), you: "c2", control: held });
+    const resumes = () => second.sent.filter((m) => m.t === "resume").length;
+    expect(resumes()).toBe(1);
+    vi.advanceTimersByTime(5_000);
+    expect(resumes()).toBe(2);
+    second.host({ t: "control", ...held, holderId: "c2" });
+    vi.advanceTimersByTime(60_000);
+    expect(resumes()).toBe(2);
+    dispose();
+  });
+
+  // The relay only closes a phone socket that died without a FIN after its
+  // 60s read deadline, up to 85s after the last pong, so the resume has to
+  // still be going by then (review 2026-10-02: it stopped at 30s).
+  it("keeps naming it for as long as the relay may hold a dead socket open", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    const held = { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
+    second.host({ ...hello("live"), you: "c2", control: held });
+    const resumes = () => second.sent.filter((m) => m.t === "resume").length;
+    vi.advanceTimersByTime(85_000);
+    const by85 = resumes();
+    vi.advanceTimersByTime(5_000);
+    expect(resumes()).toBeGreaterThan(by85);
+    vi.advanceTimersByTime(120_000);
+    const after = resumes();
+    vi.advanceTimersByTime(60_000);
+    expect(resumes()).toBe(after);
+    dispose();
+  });
+
+  it("gives up naming it once control has gone elsewhere", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    second.host({
+      ...hello("live"),
+      you: "c2",
+      control: { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 },
+    });
+    second.host({ t: "control", holder: "emo", holderId: "c9", since: 2, lapseAt: 600_002 });
+    vi.advanceTimersByTime(60_000);
+    expect(second.sent.filter((m) => m.t === "resume")).toHaveLength(1);
+    dispose();
+  });
+
+  /**
+   * A fresh stream remembered no "you": closing and reopening the panel, or
+   * iOS reloading a backgrounded home-screen lobby, lost control and showed
+   * the person their own name as the one in control. A stream given a store
+   * keeps its last "you" there, per owner and session.
+   */
+  describe("remembering its connection across stream instances", () => {
+    const memoryStore = (): MinStorage & { map: Map<string, string> } => {
+      const map = new Map<string, string>();
+      return {
+        map,
+        getItem: (k) => map.get(k) ?? null,
+        setItem: (k, v) => void map.set(k, v),
+        removeItem: (k) => void map.delete(k),
+      };
+    };
+    const greet = (you: string) => {
+      const ws = FakeSocket.all.at(-1)!;
+      ws.open();
+      ws.host({ ...hello("live"), you });
+      return ws;
+    };
+
+    it("names the last instance's connection right after its first hello", () => {
+      const store = memoryStore();
+      const a = mount({ active: () => true, wake: true, remember: store });
+      greet("c1");
+      a.dispose();
+      const b = mount({ active: () => true, wake: true, remember: store });
+      const ws = greet("c2");
+      expect(ws.sent[0]).toEqual({ t: "resume", prev: "c1" });
+      expect(ws.sent[1]).toEqual({ t: "subscribe", tab: null });
+      b.dispose();
+      const c = mount({ active: () => true, wake: true, remember: store });
+      expect(greet("c3").sent[0]).toEqual({ t: "resume", prev: "c2" });
+      c.dispose();
+    });
+
+    it("keeps one per owner and session", () => {
+      const store = memoryStore();
+      const once = (you: string, more: { owner?: string; session?: string } = {}) => {
+        const m = mount({ active: () => true, wake: true, remember: store, ...more });
+        const ws = greet(you);
+        m.dispose();
+        return ws;
+      };
+      once("mine");
+      once("emos", { owner: "emo" });
+      once("play", { session: "play" });
+      expect(once("next", { owner: "emo" }).sent[0]).toEqual({ t: "resume", prev: "emos" });
+      expect(store.map.size).toBe(3);
+    });
+
+    it("sends no resume on a first-ever hello, nor without a store", () => {
+      const store = memoryStore();
+      const a = mount({ active: () => true, wake: true, remember: store });
+      expect(greet("c1").sent.some((m) => m.t === "resume")).toBe(false);
+      a.dispose();
+      // A card is given no store: it never held control, and a card that
+      // named the panel's connection would take control away from it.
+      const b = mount({ active: () => true, wake: false });
+      expect(greet("c2").sent.some((m) => m.t === "resume")).toBe(false);
+      b.dispose();
+    });
+
+    it("works the same in memory when every store access throws", () => {
+      vi.useFakeTimers();
+      const refusing: MinStorage = {
+        getItem: () => {
+          throw new Error("SecurityError");
+        },
+        setItem: () => {
+          throw new Error("QuotaExceededError");
+        },
+        removeItem: () => {
+          throw new Error("SecurityError");
+        },
+      };
+      const { stream, dispose } = mount({ active: () => true, wake: true, remember: refusing });
+      const first = greet("c1");
+      expect(stream.you()).toBe("c1");
+      first.drop();
+      vi.advanceTimersByTime(2_000);
+      expect(greet("c2").sent[0]).toEqual({ t: "resume", prev: "c1" });
+      dispose();
+    });
+  });
+
+  it("holds where the host says the cursor is, numbering each report", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    ws.host(hello("live"));
+    expect(stream.cursor()).toBeNull();
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "move" });
+    const first = stream.cursor();
+    expect(first).toMatchObject({ tab: "t1", x: 10, y: 20, kind: "move" });
+    // The same place twice is two reports: a second click there ripples again.
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "down" });
+    expect(stream.cursor()).toMatchObject({ kind: "down" });
+    expect(stream.cursor()!.seq).toBeGreaterThan(first!.seq);
+    ws.host({ t: "cursor", tab: "t1", x: "10", y: 20, kind: "move" });
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "wiggle" });
+    ws.host({ t: "cursor", x: 10, y: 20, kind: "move" });
+    expect(stream.cursor()).toMatchObject({ kind: "down" });
+    // A new connection is told the cursor again when it subscribes.
+    ws.host(hello("live"));
+    expect(stream.cursor()).toBeNull();
     dispose();
   });
 

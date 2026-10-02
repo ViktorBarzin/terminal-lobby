@@ -17,6 +17,11 @@ import { treePids } from "../lib/proctree.mjs";
 const host = fileURLToPath(new URL("../host.mjs", import.meta.url));
 const haveChrome = existsSync("/opt/google/chrome/chrome") || existsSync("/usr/bin/google-chrome");
 
+/** The first call starts Chrome, which takes over a minute on a loaded box. */
+const CALL_TIMEOUT_MS = 180_000;
+/** Room for one Chrome start and the calls after it. */
+const TEST_TIMEOUT_MS = 300_000;
+
 const PAGE = `data:text/html,${encodeURIComponent(
   "<title>Hello page</title>" +
     '<input id="q" style="position:absolute;left:0;top:0;width:300px;height:40px">' +
@@ -114,7 +119,7 @@ async function startHost(t, env) {
   const request = async (method, params) => {
     const id = nextId++;
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    return mcp.next((m) => m.id === id, `${method} #${id}`, 60_000);
+    return mcp.next((m) => m.id === id, `${method} #${id}`, CALL_TIMEOUT_MS);
   };
   /**
    * @param {string} name
@@ -507,4 +512,185 @@ test("a person in control answers the popups a frame does not show", {
     false,
     "no popup came for the agent's own dialog",
   );
+});
+
+test("the agent's first calls share one tab, with no empty tab beside it", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  // Two calls in flight before the browser has a page: playwright-mcp opens a
+  // page for each one that finds none, so the second used to leave an empty
+  // about:blank tab beside the agent's page and make it the current one.
+  const [nav, snap] = await Promise.all([
+    callTool("browser_navigate", { url: PAGE }),
+    callTool("browser_snapshot"),
+  ]);
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+  assert.notEqual(snap.isError, true, JSON.stringify(snap));
+  const listed = resultText(await callTool("browser_tabs", { action: "list" }));
+  assert.doesNotMatch(listed, /about:blank/, listed);
+
+  const { hello } = await connectViewer(sockPath, "tester", true);
+  assert.deepEqual(
+    hello.tabs.map((tab) => tab.title),
+    ["Hello page"],
+    "the viewer's tab list shows only the agent's page",
+  );
+});
+
+test("a person in control keeps it across a reconnect", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const first = await connectViewer(sockPath, "tester", true);
+  first.send({ t: "takeControl" });
+  const taken = await first.view.next(
+    (m) => m.t === "control" && m.holderId === first.hello.you,
+    "control taken",
+  );
+
+  // While the first connection is open, a resume naming it is a second
+  // device's, and changes nothing: that takes control explicitly.
+  const phone = await connectViewer(sockPath, "tester", true);
+  phone.send({ t: "resume", prev: first.hello.you });
+
+  // The connection drops. Another user, and a watch-only viewer, cannot
+  // claim it by naming the closed connection.
+  first.sock.destroy();
+  const other = await connectViewer(sockPath, "someone-else", true);
+  other.send({ t: "resume", prev: first.hello.you });
+  const watcher = await connectViewer(sockPath, "tester", false);
+  watcher.send({ t: "resume", prev: first.hello.you });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(
+    [...phone.view.seen, ...other.view.seen, ...watcher.view.seen].some((m) => m.t === "control"),
+    false,
+    "control stays with the closed connection",
+  );
+
+  // The same person's tab reconnects and names its previous connection.
+  const back = await connectViewer(sockPath, "tester", true);
+  assert.equal(back.hello.control.holderId, first.hello.you);
+  back.send({ t: "resume", prev: first.hello.you });
+  const resumed = await back.view.next(
+    (m) => m.t === "control" && m.holderId === back.hello.you,
+    "control resumed on the new connection",
+  );
+  assert.equal(resumed.holder, "tester");
+  assert.equal(resumed.since, taken.since, "the same person's control, not a new takeover");
+  await phone.view.next((m) => m.t === "control" && m.holderId === back.hello.you, "others told");
+
+  const refused = await callTool("browser_snapshot");
+  assert.equal(refused.content[0].text, REFUSAL_TEXT, "the agent is still held off");
+  back.send({ t: "insertText", text: "still mine" });
+  back.send({ t: "copy" });
+  await back.view.next((m) => m.t === "copied", "input accepted on the new connection");
+  assert.equal(back.view.seen.some((m) => m.t === "error"), false, JSON.stringify(back.view.seen));
+});
+
+const CURSOR_PAGE = `data:text/html,${encodeURIComponent(
+  "<title>Cursor</title><body style=margin:0>" +
+    '<button id="go" style="position:absolute;left:100px;top:200px;width:120px;height:40px"' +
+    " onclick=\"this.textContent='clicked';this.dataset.n=(+this.dataset.n||0)+1\">Go</button>" +
+    '<iframe srcdoc="<body style=margin:0><button>In frame</button></body>"' +
+    ' style="position:absolute;left:400px;top:300px;width:300px;height:150px;border:5px solid"></iframe>',
+)}`;
+
+test("the agent's clicks and a person's land on one cursor the viewers see", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: CURSOR_PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const { view, send, hello } = await connectViewer(sockPath, "tester", true);
+  const tab = hello.agentTab;
+  send({ t: "subscribe", tab: null });
+  await view.next((m) => m.t === "frame", "a frame");
+
+  /**
+   * Waits for the cursor's click and returns it with the cursor messages
+   * that came before it.
+   * @param {string} what
+   */
+  const untilClick = async (what) => {
+    const click = await view.next((m) => m.t === "cursor" && m.kind === "click", what);
+    const before = view.seen.filter((m) => m.t === "cursor");
+    view.seen = view.seen.filter((m) => m.t !== "cursor");
+    return { click, before };
+  };
+
+  // The agent clicks the button: the cursor moves to its centre and clicks.
+  const clicked = await callTool("browser_click", { element: "Go button", target: "#go" });
+  assert.notEqual(clicked.isError, true, JSON.stringify(clicked));
+  const agent = await untilClick("the agent's click on the cursor");
+  assert.deepEqual(agent.click, { t: "cursor", tab, x: 160, y: 220, kind: "click" });
+  const moves = agent.before.filter((m) => m.kind === "move");
+  assert.ok(moves.length > 0, "the cursor moved to the button first");
+  assert.deepEqual([moves.at(-1)?.x, moves.at(-1)?.y], [160, 220], "the last move ends at its centre");
+  assert.deepEqual(
+    agent.before.filter((m) => m.kind !== "move").map((m) => m.kind),
+    ["down", "up"],
+  );
+
+  // A viewer that starts watching is shown where the cursor is.
+  const late = await connectViewer(sockPath, "watcher", false);
+  late.send({ t: "subscribe", tab: null });
+  assert.deepEqual(await late.view.next((m) => m.t === "cursor", "the last cursor on joining"), {
+    t: "cursor",
+    tab,
+    x: 160,
+    y: 220,
+    kind: "move",
+  });
+
+  // A person in control clicks: the same cursor, the same messages.
+  send({ t: "takeControl" });
+  await view.next((m) => m.t === "control" && m.holderId === hello.you, "control taken");
+  send({ t: "mouse", type: "click", x: 300, y: 100, button: "left", clickCount: 1 });
+  const person = await untilClick("the person's click on the cursor");
+  assert.deepEqual(person.click, { t: "cursor", tab, x: 300, y: 100, kind: "click" });
+  assert.deepEqual(
+    person.before.map((m) => [m.kind, m.x, m.y]),
+    [
+      ["move", 300, 100],
+      ["down", 300, 100],
+      ["up", 300, 100],
+    ],
+  );
+  await late.view.next((m) => m.t === "cursor" && m.kind === "click" && m.x === 300, "the watcher sees it too");
+
+  // Inside a same-origin iframe the position is still in the page's pixels.
+  send({ t: "mouse", type: "click", x: 420, y: 320, button: "left", clickCount: 1 });
+  const inFrame = await untilClick("a click inside the iframe");
+  assert.deepEqual(inFrame.click, { t: "cursor", tab, x: 420, y: 320, kind: "click" });
+
+  // Enter or Space on a focused button is a trusted click at clientX/clientY
+  // 0: it activates the button, and the cursor stays where it was.
+  send({ t: "mouse", type: "click", x: 160, y: 220, button: "left", clickCount: 1 });
+  await untilClick("the click that focuses the button");
+  send({ t: "key", type: "press", key: "Enter" });
+  send({ t: "key", type: "press", key: " " });
+  send({ t: "copy" });
+  await view.next((m) => m.t === "copied", "the keys handled");
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(
+    view.seen.filter((m) => m.t === "cursor"),
+    [],
+    "no cursor message for a keyboard activation",
+  );
+  send({ t: "handBack" });
+  await view.next((m) => m.t === "control" && m.holder === null, "control handed back");
+  const clicks = await callTool("browser_evaluate", {
+    function: "() => document.querySelector('#go').dataset.n",
+  });
+  assert.notEqual(clicks.isError, true, JSON.stringify(clicks));
+  // The agent's click, the person's, Enter and Space.
+  assert.match(resultText(clicks), /"4"/, "the keys did activate the button");
 });

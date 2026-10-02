@@ -9,6 +9,7 @@ package main
 // expressible as one of six words.
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -101,8 +102,13 @@ type Task struct {
 
 	Status   TaskStatus
 	Question string
-	Result   string
-	Error    string
+	// Kind, Options and AnswerWith describe the question, read off the pane
+	// with it (question.go). Set on needs_input only, like Question.
+	Kind       string
+	Options    []TaskOption
+	AnswerWith []string
+	Result     string
+	Error      string
 
 	Created time.Time
 	Updated time.Time
@@ -111,6 +117,13 @@ type Task struct {
 	// watching a turn that nobody is waiting for any more.
 	cancel     chan struct{}
 	cancelOnce sync.Once
+
+	// changed is closed and replaced every time Status moves, under the
+	// store's lock. It is how a long-poll learns of a change without polling:
+	// a waiter takes the current channel with its snapshot and blocks on it,
+	// so nothing has to register, nothing has to unregister, and a waiter that
+	// gives up leaves nothing behind.
+	changed chan struct{}
 }
 
 // TaskView is the immutable answer GET /v1/tasks/{id} serves. A copy rather
@@ -123,6 +136,16 @@ type TaskView struct {
 	Status         TaskStatus `json:"status"`
 	// Question is set on needs_input only.
 	Question string `json:"question,omitempty"`
+	// Kind says what sort of question it is: permission, plan, choice or
+	// unknown. Set on needs_input only.
+	Kind string `json:"kind,omitempty"`
+	// Options are the rows the question offers, numbered as drawn. Set on
+	// needs_input when the pane could be read.
+	Options []TaskOption `json:"options,omitempty"`
+	// AnswerWith names the answer bodies POST /v1/tasks/{id}/answer accepts
+	// for this question: "option", "text", both, or absent when it cannot be
+	// answered through this API.
+	AnswerWith []string `json:"answer_with,omitempty"`
 	// Result is set on done only: the agent's final message.
 	Result string `json:"result,omitempty"`
 	// Error is set on failed only.
@@ -176,6 +199,7 @@ func (s *TaskStore) Add(t *Task) {
 	t.Status = StatusAccepted
 	t.Created, t.Updated = now, now
 	t.cancel = make(chan struct{})
+	t.changed = make(chan struct{})
 	s.byID[t.ID] = t
 	s.order = append(s.order, t.ID)
 	s.prune()
@@ -224,6 +248,9 @@ func (t *Task) view() TaskView {
 	switch t.Status {
 	case StatusNeedsInput:
 		v.Question = t.Question
+		v.Kind = t.Kind
+		v.Options = append([]TaskOption(nil), t.Options...)
+		v.AnswerWith = append([]string(nil), t.AnswerWith...)
 	case StatusDone:
 		v.Result = t.Result
 	case StatusFailed:
@@ -263,6 +290,73 @@ func (s *TaskStore) Update(id string, next TaskStatus, apply func(*Task)) bool {
 	if apply != nil {
 		apply(t)
 	}
+	t.signal()
+	return true
+}
+
+// signal wakes everyone waiting on this task's status. Called with the
+// store's lock held, which is what makes the close-and-replace safe.
+func (t *Task) signal() {
+	close(t.changed)
+	t.changed = make(chan struct{})
+}
+
+// Wait blocks until settled(status) holds, d runs out, or ctx is done, and
+// returns the task as it is at that moment. ok=false means there is no such
+// task.
+//
+// It never spawns anything. Each pass takes a snapshot and the task's current
+// change channel under one lock, so a change landing between the check and
+// the block cannot be missed: it closes the very channel the waiter is about
+// to block on. The one timer is stopped on the way out, so a wait that ends
+// early leaves no timer running for the rest of d.
+func (s *TaskStore) Wait(ctx context.Context, id string, d time.Duration, settled func(TaskStatus) bool) (TaskView, bool) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	for {
+		s.mu.Lock()
+		t, ok := s.byID[id]
+		if !ok {
+			s.mu.Unlock()
+			return TaskView{}, false
+		}
+		v, changed := t.view(), t.changed
+		s.mu.Unlock()
+
+		if settled(v.Status) {
+			return v, true
+		}
+		select {
+		case <-changed:
+		case <-timer.C:
+			return s.current(id, v), true
+		case <-ctx.Done():
+			return s.current(id, v), true
+		}
+	}
+}
+
+// current is a fresh snapshot, or the last one when the task has been pruned
+// in the moment since: a caller that waited is owed the task, not a 404.
+func (s *TaskStore) current(id string, last TaskView) TaskView {
+	if v, ok := s.Get(id); ok {
+		return v
+	}
+	return last
+}
+
+// SetQuestion replaces what a needs_input task says it is asking, without a
+// status change: the session is still waiting, on something that has been
+// re-read. updated_at stays put, because it is the age of the status. It
+// reports false when the task is not waiting on anything.
+func (s *TaskStore) SetQuestion(id string, q questionReading) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.byID[id]
+	if !ok || t.Status != StatusNeedsInput {
+		return false
+	}
+	t.setQuestion(q)
 	return true
 }
 
@@ -280,6 +374,7 @@ func (s *TaskStore) Cancel(id string) (cancelled, wasLive bool) {
 	wasLive = t.Status == StatusRunning || t.Status == StatusNeedsInput
 	t.Status = StatusCancelled
 	t.Updated = s.Now()
+	t.signal()
 	ch := t.cancel
 	once := &t.cancelOnce
 	s.mu.Unlock()

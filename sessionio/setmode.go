@@ -358,7 +358,7 @@ var errUnknownMode = errors.New("set mode: not a permission mode")
 func (in *Injector) awaitModeChange(ctx context.Context, osUser, session, was string) (string, error) {
 	deadline := time.Now().Add(modeVerify)
 	for {
-		if err := settleWait(ctx, keySettle); err != nil {
+		if err := answerWait(ctx, keySettle); err != nil {
 			return "", err
 		}
 		pane, err := in.CapturePane(osUser, session)
@@ -420,7 +420,7 @@ func (in *Injector) dialogPending(ctx context.Context, osUser, session string) (
 		if !time.Now().Before(deadline) {
 			return ask, false, nil
 		}
-		if err := settleWait(ctx, keySettle); err != nil {
+		if err := answerWait(ctx, keySettle); err != nil {
 			return "", false, err
 		}
 		if now, _ := in.Option(osUser, session, OptionAsk); now != ask {
@@ -458,7 +458,7 @@ func (in *Injector) awaitToolPrompt(ctx context.Context, osUser, session string,
 			quiet[id] = true
 			return false, nil
 		}
-		if err := settleWait(ctx, keySettle); err != nil {
+		if err := answerWait(ctx, keySettle); err != nil {
 			return false, err
 		}
 		now, _ := in.Option(osUser, session, OptionTool)
@@ -486,14 +486,4 @@ func (in *Injector) paneBlocksPress(osUser, session, cur string) (bool, error) {
 func (in *Injector) dialogMarked(osUser, session, stale string) bool {
 	ask, _ := in.Option(osUser, session, OptionAsk)
 	return ask != "" && ask != stale
-}
-
-// settleWait is a settle that a cancelled request does not sit through.
-func settleWait(ctx context.Context, d time.Duration) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(d):
-		return nil
-	}
 }

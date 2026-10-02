@@ -118,7 +118,11 @@ session. A foreign session (owner ≠ the viewer) is attach-only.
 What made a **Session**, which is a different question from **Owner**. Owner is
 whose uid it runs as; origin is what asked for it to exist. A session the
 lobby's own create path made is a user session. One a test harness made, and one
-nothing accounted for at all, is a **system session**. System sessions collect
+nothing accounted for at all, is a **system session**. One a **Caller** made
+carries that Caller's name as its origin and collects in a group named after the
+Caller, collapsed by default, rather than in System; unlike System sessions,
+Caller sessions are recorded in telemetry, tagged with the Caller, and still
+raise no push. System sessions collect
 in a single group at the foot of the sidebar, **System**, collapsed by default,
 where they stay fully addressable: attach, prompt, kill and open by URL all work
 as they always did. What they lose is the attention a person's session gets,
@@ -129,6 +133,25 @@ sticks. Absence of an origin counts as system, which only means anything because
 the lobby marks what it makes itself.
 _Avoid_: creator, source, author (each reads as who is working inside the
 session rather than what brought it into being), bot session
+
+**Caller**:
+A program that drives the lobby with its own bearer credential instead of a
+person at a browser, known by a name (Meta Muse is the Caller `muse`). A Caller
+maps to exactly one terminal account and acts as it; it cannot act as anyone
+else. What a Caller starts is attributed to it twice over: as the **Origin** of
+the session, and as the owner of the conversation, which is what decides
+whether the Caller may keep writing to it.
+_Avoid_: bot, client, integration, agent (agent means the Claude Code process
+inside a session)
+
+**Delegation**:
+Work this machine hands to a **Caller** rather than doing itself — reaching a
+person on a channel only the Caller has, acting through the Caller's own
+connectors, browsing from its network, or an errand that runs for days. A
+Delegation has an id, the session that sent it, an expiry, and ends with a
+result the Caller sends back, or as expired or undelivered. It is the mirror of
+a Caller sending a message to a session.
+_Avoid_: job, request, outbound task
 
 **Share**:
 A grant letting a named non-owner attach a specific session, read-only
@@ -1383,6 +1406,13 @@ Who is allowed follows the session's **Attach mode**: rw may take control, ro
 and a **Lens** only watch. Handing back tells the agent nothing.
 _Avoid_: takeover, remote control, drive (that word belongs to the terminal's
 **Watch mode**)
+
+**Browser cursor**:
+The one pointer a **Browser panel** draws over a **Session browser**'s page:
+where the mouse is in the tab it shows, with a ripple where a click lands. The
+agent and a person in **Control** move the same cursor; there is never one per
+person.
+_Avoid_: pointer (the viewer's own), agent cursor, mouse
 
 **Frozen** (session browser):
 A **Session browser** the agent left open but has not used for ten minutes,

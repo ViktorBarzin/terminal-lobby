@@ -13,9 +13,11 @@ const ADVANCE_MS = 200;
  * question, `connecting` for the moment between the call appearing and the hold
  * reaching the page, and `terminal` when nothing holds it (a session started
  * before the hook existed, say), which leaves the terminal as the only place to
- * answer.
+ * answer. `sent` once this page's answer went in: the hold is withdrawn at that
+ * moment and the transcript's result lands later, so through that gap nothing
+ * holds the call and only this page knows it was answered.
  */
-export type QuestionCardState = "open" | "connecting" | "terminal";
+export type QuestionCardState = "open" | "connecting" | "terminal" | "sent";
 
 /**
  * The card that answers a blocking AskUserQuestion, in the composer's place
@@ -85,7 +87,8 @@ export const QuestionCard: Component<{
   };
   const collapsed = () => collapsedAt() !== null && collapsedAt() === question()?.question;
   const last = () => index() >= count() - 1;
-  const answerable = () => props.state === "open" && !props.busy && !props.inert && !sent();
+  const answered = () => sent() || props.state === "sent";
+  const answerable = () => props.state === "open" && !props.busy && !props.inert && !answered();
   const hasCustom = () => (draft()?.custom.trim() ?? "") !== "";
   const chosen = (o: QuestionOption) => !hasCustom() && (draft()?.selected ?? []).includes(o.label);
   const current = () => {
@@ -318,7 +321,7 @@ export const QuestionCard: Component<{
             <Show when={props.state === "connecting"}>
               <div class="tl-qcard-hint">Connecting to the question…</div>
             </Show>
-            <Show when={sent()}>
+            <Show when={answered()}>
               <div class="tl-qcard-hint" role="status">
                 Answer sent.
               </div>

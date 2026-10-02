@@ -176,6 +176,10 @@ Every command is answered with an `ack` event.
   mod ignores a command id it has already run.
 - Pressing Esc on the mod's own dialog lets Claude draw its native prompt, which
   the web cannot answer; the card goes away and the terminal answers it.
+- agent-api still reads and answers dialogs through the pane, so sessionio keeps
+  the pane parsers and key drivers for it. On a session with the mod it meets
+  the mod's Allow / Deny or plan dialog, which is drawn as a question, and can
+  answer it as one. Moving agent-api onto the mod is a separate change.
 
 ## What the live test settled
 

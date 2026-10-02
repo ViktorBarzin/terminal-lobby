@@ -13,9 +13,15 @@ import {
   callSummary,
   cardAnchors,
   clientBox,
+  clientPoint,
+  cursorGlides,
+  cursorRipples,
+  drawnCursor,
+  echoesOwnPress,
   listPlacement,
   pagePoint,
   panelLayout,
+  panelStreamWanted,
   runStatus,
   streamWanted,
 } from "../src/components/browser.logic";
@@ -295,6 +301,30 @@ describe("when frames are asked for", () => {
   });
 });
 
+/**
+ * The panel's own rule (Viktor's iPhone, 2026-10-02). On the lobby added to
+ * the home screen, the panel's stream went quiet about 3s after it opened and
+ * closed 15s later, and every Take control after that went nowhere. Its gate
+ * had the card's IntersectionObserver and the text stream's parking in it, and
+ * neither is a reason to stop an open panel: it is the thing on screen.
+ */
+describe("when the open panel asks for frames", () => {
+  const on = { documentVisible: true, onScreen: true, inControl: false };
+
+  it("streams while the page is visible and the session is on screen", () => {
+    expect(panelStreamWanted(on)).toBe(true);
+    expect(panelStreamWanted({ ...on, onScreen: false })).toBe(false);
+    expect(panelStreamWanted({ ...on, documentVisible: false })).toBe(false);
+  });
+
+  it("keeps streaming for the person in control until the page itself is hidden", () => {
+    expect(panelStreamWanted({ ...on, inControl: true, onScreen: false })).toBe(true);
+    expect(panelStreamWanted({ documentVisible: false, onScreen: true, inControl: true })).toBe(
+      false,
+    );
+  });
+});
+
 describe("where a popup sits over the scaled page", () => {
   const frame = { w: 1280, h: 800 };
   const viewport = { w: 1280, h: 800 };
@@ -498,5 +528,155 @@ describe("runStatus", () => {
       end(),
     ]);
     expect(runStatus(settled)).toEqual({ status: "ok", summary: "Reading the page" });
+  });
+});
+
+/**
+ * The Browser cursor (Viktor, 2026-10-02): one arrow over the page where the
+ * host says the mouse is, gliding between positions, with a ring where a
+ * press lands. It goes through the popups' page-to-screen mapping.
+ */
+describe("where the cursor is drawn over the scaled page", () => {
+  const viewport = { w: 1280, h: 800 };
+  const at = (width: number, height: number) => ({ left: 0, top: 0, width, height });
+
+  it("lands on the picture inside the letterbox bars", () => {
+    // 640x600 box: the picture is 640x400 at half scale, with 100px bars.
+    const frame = { w: 1280, h: 800 };
+    expect(clientPoint({ x: 0, y: 0 }, at(640, 600), frame, viewport)).toEqual({
+      left: 0,
+      top: 100,
+    });
+    expect(clientPoint({ x: 640, y: 400 }, at(640, 600), frame, viewport)).toEqual({
+      left: 320,
+      top: 300,
+    });
+    // A wide box puts the bars at the sides instead.
+    expect(clientPoint({ x: 1280, y: 0 }, at(1000, 400), frame, viewport)).toEqual({
+      left: 820,
+      top: 0,
+    });
+  });
+
+  it("follows a pinch zoom, which grows the picture's box", () => {
+    const frame = { w: 1280, h: 800 };
+    expect(clientPoint({ x: 640, y: 400 }, at(2560, 1600), frame, viewport)).toEqual({
+      left: 1280,
+      top: 800,
+    });
+  });
+
+  it("maps page pixels, not frame pixels, when the screencast is scaled down", () => {
+    // A phone: a 640x400 frame of the 1280x800 page, in a 390x300 box.
+    const p = clientPoint({ x: 1280, y: 800 }, at(390, 300), { w: 640, h: 400 }, viewport);
+    expect(p?.left).toBeCloseTo(390);
+    expect(p?.top).toBeCloseTo(271.875);
+  });
+
+  it("has no place without a picture", () => {
+    expect(clientPoint({ x: 1, y: 1 }, at(0, 0), { w: 1280, h: 800 }, viewport)).toBeNull();
+    expect(clientPoint({ x: 1, y: 1 }, at(640, 400), { w: 0, h: 0 }, viewport)).toBeNull();
+  });
+});
+
+describe("when the cursor glides", () => {
+  it("glides from one report to the next on the same tab", () => {
+    expect(cursorGlides({ tab: "t1", seq: 1 }, { tab: "t1", seq: 2 })).toBe(true);
+  });
+
+  it("appears in place the first time, and on a tab switch", () => {
+    expect(cursorGlides(null, { tab: "t1", seq: 1 })).toBe(false);
+    expect(cursorGlides({ tab: "t1", seq: 1 }, { tab: "t2", seq: 2 })).toBe(false);
+  });
+
+  it("moves with the picture, not after it, when only the layout changed", () => {
+    // A resize or a pinch moves where the same report is drawn.
+    expect(cursorGlides({ tab: "t1", seq: 3 }, { tab: "t1", seq: 3 })).toBe(false);
+  });
+});
+
+describe("where a press ripples", () => {
+  it("ripples on a press and not on a move or a release", () => {
+    expect(cursorRipples(null, { kind: "down", x: 5, y: 5 }, 0)).toBe(true);
+    expect(cursorRipples(null, { kind: "move", x: 5, y: 5 }, 0)).toBe(false);
+    expect(cursorRipples(null, { kind: "up", x: 5, y: 5 }, 0)).toBe(false);
+  });
+
+  it("gives a click its own ring only when no press just rippled there", () => {
+    const down = { x: 100, y: 50, at: 1_000 };
+    expect(cursorRipples(down, { kind: "click", x: 100, y: 50 }, 1_080)).toBe(false);
+    expect(cursorRipples(down, { kind: "click", x: 300, y: 50 }, 1_080)).toBe(true);
+    expect(cursorRipples(down, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
+    expect(cursorRipples(null, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
+  });
+});
+
+/**
+ * One cursor (Viktor, 2026-10-02). The person in control on a desktop saw
+ * their own pointer and the drawn one trailing it a round trip later, and a
+ * phone's tap got its mark only from the host's echo, which never comes for a
+ * tap inside a cross-origin iframe.
+ */
+describe("which position the panel draws the cursor at", () => {
+  const host = { tab: "t1", x: 10, y: 20, seq: 4 };
+
+  it("follows the host's report on the shown tab", () => {
+    expect(drawnCursor(host, null, null, "t1")).toEqual({ ...host, own: false });
+    expect(drawnCursor(host, null, null, "t2")).toBeNull();
+    expect(drawnCursor(null, null, null, "t1")).toBeNull();
+    expect(drawnCursor(host, null, null, null)).toBeNull();
+  });
+
+  it("follows this viewer's own pointer while it is over the page, ignoring the host", () => {
+    const own = { x: 300, y: 200 };
+    expect(drawnCursor(host, own, null, "t1")).toEqual({
+      tab: "t1",
+      x: 300,
+      y: 200,
+      seq: -1,
+      own: true,
+    });
+    expect(drawnCursor(null, own, null, "t1")).toMatchObject({ x: 300, y: 200, own: true });
+  });
+
+  it("draws nothing while its own pointer is beside the picture, where the real one shows", () => {
+    expect(drawnCursor(host, "off", null, "t1")).toBeNull();
+  });
+
+  it.each([
+    ["no report since the tap", null, true],
+    ["only the report from before the tap", { tab: "t1", x: 10, y: 20, seq: 4 }, true],
+    ["a later report", { tab: "t1", x: 51, y: 61, seq: 5 }, false],
+    ["a later report on another tab", { tab: "t2", x: 51, y: 61, seq: 5 }, false],
+  ])("puts a tap's mark first while the host has sent %s", (_, report, marked) => {
+    const mark = { tab: "t1", x: 50, y: 60, after: 4 };
+    const drawn = drawnCursor(report, null, mark, "t1");
+    if (marked) expect(drawn).toEqual({ tab: "t1", x: 50, y: 60, seq: -1, own: true });
+    else if (report?.tab === "t1") expect(drawn).toEqual({ ...report, own: false });
+    else expect(drawn).toBeNull();
+  });
+
+  it("leaves a tap's mark on its own tab", () => {
+    const mark = { tab: "t1", x: 50, y: 60, after: 4 };
+    expect(drawnCursor(null, null, mark, "t2")).toBeNull();
+  });
+});
+
+describe("a host report that echoes this viewer's own press", () => {
+  const own = { x: 100, y: 50, at: 1_000 };
+
+  it.each([
+    ["down", true],
+    ["up", true],
+    ["click", true],
+    ["move", false],
+  ] as const)("is a %s at the same spot soon after: %s", (kind, echoes) => {
+    expect(echoesOwnPress(own, { kind, x: 101, y: 51 }, 1_300)).toBe(echoes);
+  });
+
+  it("is not one from elsewhere, from much later, or with no press of its own", () => {
+    expect(echoesOwnPress(own, { kind: "down", x: 200, y: 50 }, 1_300)).toBe(false);
+    expect(echoesOwnPress(own, { kind: "down", x: 100, y: 50 }, 4_000)).toBe(false);
+    expect(echoesOwnPress(null, { kind: "down", x: 100, y: 50 }, 1_300)).toBe(false);
   });
 });

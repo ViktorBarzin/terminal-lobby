@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -237,4 +238,94 @@ func TestTaskStoreGetUnknown(t *testing.T) {
 	if store.Update("nope", StatusRunning, nil) {
 		t.Fatal("an unknown task id was updated")
 	}
+}
+
+// Wait is what both long-polls stand on, so each way it can end is pinned
+// here: already there, woken by a change, out of time, and hung up on.
+func TestTaskStoreWait(t *testing.T) {
+	t.Run("already settled answers at once", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		store.Add(&Task{ID: "t", ConversationID: "c"})
+		store.Update("t", StatusDone, func(tk *Task) { tk.Result = "r" })
+		start := time.Now()
+		v, ok := store.Wait(context.Background(), "t", time.Hour, settledOrBlocked)
+		if !ok || v.Status != StatusDone || v.Result != "r" {
+			t.Fatalf("got %+v ok=%v", v, ok)
+		}
+		if time.Since(start) > time.Second {
+			t.Fatal("a settled task was waited on")
+		}
+	})
+
+	t.Run("a status change wakes the waiter", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		store.Add(&Task{ID: "t", ConversationID: "c"})
+		store.Update("t", StatusRunning, nil)
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			// A change the waiter is not waiting for must not end the wait...
+			store.Update("t", StatusNeedsInput, nil)
+			time.Sleep(20 * time.Millisecond)
+			// ...and the one it is waiting for must.
+			store.Update("t", StatusDone, func(tk *Task) { tk.Result = "r" })
+		}()
+		start := time.Now()
+		v, ok := store.Wait(context.Background(), "t", time.Hour, func(s TaskStatus) bool { return s.terminal() })
+		if !ok || v.Status != StatusDone {
+			t.Fatalf("got %+v ok=%v", v, ok)
+		}
+		// The hour-long timeout is what proves the store signalled rather
+		// than the waiter running out of time.
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("the waiter was not woken")
+		}
+	})
+
+	t.Run("wakes on a cancel too", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		store.Add(&Task{ID: "t", ConversationID: "c"})
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			store.Cancel("t")
+		}()
+		v, ok := store.Wait(context.Background(), "t", time.Hour, settledOrBlocked)
+		if !ok || v.Status != StatusCancelled {
+			t.Fatalf("got %+v ok=%v", v, ok)
+		}
+	})
+
+	t.Run("runs out of time with the current status", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		store.Add(&Task{ID: "t", ConversationID: "c"})
+		store.Update("t", StatusRunning, nil)
+		v, ok := store.Wait(context.Background(), "t", 20*time.Millisecond, settledOrBlocked)
+		if !ok || v.Status != StatusRunning {
+			t.Fatalf("got %+v ok=%v", v, ok)
+		}
+	})
+
+	t.Run("a hang-up ends it early", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		store.Add(&Task{ID: "t", ConversationID: "c"})
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			time.Sleep(20 * time.Millisecond)
+			cancel()
+		}()
+		start := time.Now()
+		v, ok := store.Wait(ctx, "t", time.Hour, settledOrBlocked)
+		if !ok || v.Status != StatusAccepted {
+			t.Fatalf("got %+v ok=%v", v, ok)
+		}
+		if time.Since(start) > 5*time.Second {
+			t.Fatal("a cancelled context did not end the wait")
+		}
+	})
+
+	t.Run("an unknown task", func(t *testing.T) {
+		store := NewTaskStore(nil)
+		if _, ok := store.Wait(context.Background(), "nope", time.Hour, settledOrBlocked); ok {
+			t.Fatal("an unknown task was found")
+		}
+	})
 }

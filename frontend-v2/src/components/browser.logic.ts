@@ -340,6 +340,134 @@ export function clientBox(rect: PageRect, box: Box, frame: Size, viewport: Size)
   };
 }
 
+/**
+ * Where a point in the page is drawn on screen, by `clientBox` with no size:
+ * the Browser cursor's spot over the `object-fit: contain` picture. Pass the
+ * picture's box with `left` and `top` at 0 for a spot in its own pixels.
+ */
+export function clientPoint(
+  point: { x: number; y: number },
+  box: Box,
+  frame: Size,
+  viewport: Size,
+): { left: number; top: number } | null {
+  const b = clientBox({ x: point.x, y: point.y, w: 0, h: 0 }, box, frame, viewport);
+  return b && { left: b.left, top: b.top };
+}
+
+// ---- the cursor -------------------------------------------------------------
+
+/**
+ * Whether the Browser cursor glides to a new spot rather than appearing
+ * there: only from one host report to the next on the same tab. It appears in
+ * place the first time it is drawn and when the panel shows another tab, and
+ * moves with the picture, not after it, when only the layout changed (the
+ * same report, `seq`, drawn somewhere else).
+ */
+export function cursorGlides(
+  prev: { tab: string; seq: number } | null,
+  next: { tab: string; seq: number },
+): boolean {
+  return prev !== null && prev.tab === next.tab && prev.seq !== next.seq;
+}
+
+/** A click this soon after a press, this close to it, is that press's. */
+const CLICK_OF_PRESS_MS = 1_000;
+const CLICK_OF_PRESS_PX = 4;
+
+/**
+ * Whether a cursor report rings where it lands: every press, and a click
+ * that is not the end of the press that just rang there. The host reports a
+ * click as down, up and click, and one click gets one ring.
+ */
+export function cursorRipples(
+  lastPress: { x: number; y: number; at: number } | null,
+  report: { kind: "move" | "down" | "up" | "click"; x: number; y: number },
+  now: number,
+): boolean {
+  if (report.kind === "down") return true;
+  if (report.kind !== "click") return false;
+  return (
+    lastPress === null ||
+    now - lastPress.at > CLICK_OF_PRESS_MS ||
+    Math.hypot(report.x - lastPress.x, report.y - lastPress.y) > CLICK_OF_PRESS_PX
+  );
+}
+
+/** A host cursor report, as far as drawing it goes. */
+export interface CursorReport {
+  tab: string;
+  x: number;
+  y: number;
+  seq: number;
+}
+
+/**
+ * This viewer's own pointer while it holds control with a fine pointer: where
+ * it is over the picture in page pixels, "off" while it is over the stage but
+ * beside the picture, or null while the host drives the drawn cursor.
+ */
+export type OwnPointer = { x: number; y: number } | "off" | null;
+
+/** Where a phone's tap put the cursor, until the host reports past `after`. */
+export interface TapMark {
+  tab: string;
+  x: number;
+  y: number;
+  /** The `seq` of the host's latest report when the tap landed. */
+  after: number;
+}
+
+/**
+ * Where the panel draws the one Browser cursor, in page pixels, or null for
+ * no cursor. The host's report on the shown tab, except:
+ *
+ * - While this viewer holds control and its own pointer is over the stage,
+ *   its pointer, at once and with the host's echo of it ignored: the echo
+ *   trails a round trip behind. Beside the picture no input is sent and the
+ *   real pointer shows, so nothing is drawn.
+ * - After a tap, the tap's spot, until the host reports anything newer. A tap
+ *   inside a cross-origin iframe is never echoed, and one that is arrives a
+ *   round trip late.
+ *
+ * `own` marks a position this viewer put there, which never glides (`seq`
+ * -1, so the move back to the host's report does).
+ */
+export function drawnCursor(
+  host: CursorReport | null,
+  own: OwnPointer,
+  mark: TapMark | null,
+  tab: string | null,
+): (CursorReport & { own: boolean }) | null {
+  if (tab === null || own === "off") return null;
+  if (own) return { tab, x: own.x, y: own.y, seq: -1, own: true };
+  if (mark && mark.tab === tab && (host === null || host.seq <= mark.after))
+    return { tab, x: mark.x, y: mark.y, seq: -1, own: true };
+  return host && host.tab === tab ? { ...host, own: false } : null;
+}
+
+/** How long, and how near, a host report can be the echo of this viewer's press. */
+const OWN_ECHO_MS = 2_000;
+const OWN_ECHO_PX = 4;
+
+/**
+ * Whether a host report is the echo of a press this viewer already rang for
+ * (a desktop press, or a phone's tap): its down, up or click near the same
+ * spot soon after. The panel rings for its own press at once, so the echo
+ * does not ring again. While a person holds control the agent's input is
+ * refused, so a press there in that time is theirs.
+ */
+export function echoesOwnPress(
+  own: { x: number; y: number; at: number } | null,
+  report: { kind: "move" | "down" | "up" | "click"; x: number; y: number },
+  now: number,
+): boolean {
+  if (own === null || report.kind === "move") return false;
+  return (
+    now - own.at <= OWN_ECHO_MS && Math.hypot(report.x - own.x, report.y - own.y) <= OWN_ECHO_PX
+  );
+}
+
 export interface ListPlacement {
   left: number;
   /** The list's top edge, or its bottom edge when it opens `above`. */
@@ -383,11 +511,11 @@ export function listPlacement(anchor: Box, bounds: Box): ListPlacement {
 // ---- when to stream -------------------------------------------------------
 
 /**
- * Whether a card or the panel may ask for frames now. Frames cost the host a
+ * Whether a Browser card may ask for frames now. Frames cost the host a
  * screencast and the page a decode each, so they flow only while somebody can
- * see them: the surface wants them (a current card, an open panel), it is
- * intersecting the viewport, the tab is visible, and the session's stream is
- * not parked (docs/plans/2026-09-11-client-cpu-parking-design.md).
+ * see them: the card wants them (it is current), it is intersecting the
+ * viewport, the tab is visible, and the session's stream is not parked
+ * (docs/plans/2026-09-11-client-cpu-parking-design.md).
  */
 export function streamWanted(o: {
   wanted: boolean;
@@ -396,6 +524,26 @@ export function streamWanted(o: {
   parked: boolean;
 }): boolean {
   return o.wanted && o.intersecting && o.documentVisible && !o.parked;
+}
+
+/**
+ * Whether the open Browser panel may ask for frames now: while the lobby's
+ * page is visible and its session is on screen, and for the person in control
+ * whenever the page is visible at all.
+ *
+ * Not the card's rule. An open panel is what is on screen, so the card's
+ * IntersectionObserver and the text stream's parking are left out: on the
+ * lobby added to an iPhone's home screen, that gate turned the panel's stream
+ * off about 3s after it opened, and the taps that followed went nowhere
+ * (telemetry, 2026-10-02). Holding control keeps it on through anything but a
+ * hidden page, so the stream under a person's hands never lingers out.
+ */
+export function panelStreamWanted(o: {
+  documentVisible: boolean;
+  onScreen: boolean;
+  inControl: boolean;
+}): boolean {
+  return o.documentVisible && (o.onScreen || o.inControl);
 }
 
 // ---- where the panel goes ---------------------------------------------------

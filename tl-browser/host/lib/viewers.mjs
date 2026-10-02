@@ -136,6 +136,19 @@ export class ViewerServer {
     this.send(v, msg);
   }
 
+  /**
+   * A cursor message, of any kind: dropped for a viewer that has not caught
+   * up. A move the next one supersedes; a press or click a viewer that far
+   * behind would draw late anyway, and page code can make them, so they must
+   * not grow a slow viewer's backlog without limit.
+   * @param {Viewer} v
+   * @param {HostMessage & { t: "cursor" }} msg
+   */
+  sendCursor(v, msg) {
+    if (v.socket.writableLength > FRAME_BACKLOG) return;
+    this.send(v, msg);
+  }
+
   /** @param {HostMessage} msg */
   broadcast(msg) {
     for (const v of this.viewers) this.send(v, msg);

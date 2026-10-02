@@ -7,25 +7,35 @@ import {
   on,
   onCleanup,
   onMount,
+  untrack,
   type Component,
 } from "solid-js";
 import {
   clientBox,
+  clientPoint,
+  cursorGlides,
+  cursorRipples,
+  drawnCursor,
+  echoesOwnPress,
   listPlacement,
   pagePoint,
-  streamWanted,
+  panelStreamWanted,
   type ListPlacement,
+  type OwnPointer,
   type PageRect,
+  type TapMark,
 } from "./browser.logic";
 import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
-  createVisibility,
+  createDocumentVisible,
+  type BrowserFrame,
   type BrowserPopup,
   type BrowserState,
   type ViewerMessage,
 } from "../lib/browser-stream";
 import { closeOnBack } from "../lib/back-closes";
+import { sessionStorageOrNull } from "../lib/storage";
 import { track } from "../telemetry/track";
 import { ArrowLeftGlyph, ArrowRightGlyph, BrowserGlyph, ReloadGlyph } from "./Icons";
 
@@ -36,6 +46,11 @@ const TAP_SLOP_PX = 10;
 const TAP_MS = 600;
 /** A wheel in lines or pages, in pixels, for a host that scrolls in pixels. */
 const LINE_PX = 16;
+/** How long a Take control press waits for the host before another press
+ *  counts: the host answers with `control` in well under a second. */
+const TAKE_WAIT_MS = 4_000;
+/** How long a press's ring stays in the page: its animation, and a little. */
+const RIPPLE_MS = 700;
 /** Keys a keyboard reports that are not keys the page can be sent. */
 const NOT_KEYS = new Set(["Unidentified", "Dead", "Process"]);
 
@@ -63,8 +78,10 @@ export const BrowserPanel: Component<{
   owner?: string;
   /** The session list's word on the session's browser. */
   state: () => BrowserState | undefined;
-  /** The session is on screen and its stream is not parked. */
-  active: () => boolean;
+  /** The session is on screen. Not the text stream's parking, and not an
+   *  IntersectionObserver: an open panel is what is on screen
+   *  (browser.logic `panelStreamWanted`). */
+  onScreen: () => boolean;
   /** This viewer may take control: rw, not a ro share and not a Lens. */
   canControl: () => boolean;
   /** Full screen, with taps for clicks and the soft keyboard for typing. */
@@ -80,8 +97,10 @@ export const BrowserPanel: Component<{
   /** The box the page and its popups share; popups are placed in its pixels. */
   let pagebox: HTMLDivElement | undefined;
   let img: HTMLImageElement | undefined;
+  /** The same picture, for what is drawn over it to follow. */
+  const [imgEl, setImgEl] = createSignal<HTMLImageElement>();
   let ime: HTMLInputElement | undefined;
-  const seen = createVisibility(stage);
+  const documentVisible = createDocumentVisible();
   /** The tab the viewer picked, or null to follow the agent's. */
   const [picked, setPicked] = createSignal<string | null>(null);
 
@@ -90,12 +109,15 @@ export const BrowserPanel: Component<{
     owner: props.owner,
     wake: true,
     tab: picked,
+    // The panel may hold control, so its next stream instance (the panel
+    // opened again, or the page reloaded) resumes what this one held.
+    remember: sessionStorageOrNull(),
+    // Read by the stream's own effects, which run once `stream` is set.
     active: () =>
-      streamWanted({
-        wanted: true,
-        intersecting: seen.intersecting(),
-        documentVisible: seen.documentVisible(),
-        parked: !props.active(),
+      panelStreamWanted({
+        documentVisible: documentVisible(),
+        onScreen: props.onScreen(),
+        inControl: inControl(),
       }),
     onCopied: (text) => {
       void navigator.clipboard?.writeText(text).catch(() => undefined);
@@ -131,15 +153,40 @@ export const BrowserPanel: Component<{
   const someoneElse = () => stream.control().holderId !== null && !inControl();
   const holderName = () => stream.control().holder ?? "Someone";
 
+  // A press goes only on a stream the host has greeted, so it cannot vanish
+  // into a socket that is still connecting or lingering out (the iPhone's
+  // four presses, 2026-10-02). From the press until the host answers with
+  // `control`, further presses are the same press: one takeControl, one
+  // take_control event.
+  const [taking, setTaking] = createSignal(false);
+  let takeTimer: ReturnType<typeof setTimeout> | undefined;
+  const doneTaking = (): void => {
+    clearTimeout(takeTimer);
+    setTaking(false);
+  };
+  createEffect(on(() => stream.control().holderId, doneTaking, { defer: true }));
+  createEffect(on(stream.greeted, doneTaking, { defer: true }));
+  onCleanup(() => clearTimeout(takeTimer));
+
   const takeControl = (): void => {
+    if (!stream.greeted() || taking()) return;
     takenAt = Date.now();
     stream.send({ t: "takeControl" });
     track("browser.take_control");
+    setTaking(true);
+    clearTimeout(takeTimer);
+    takeTimer = setTimeout(() => setTaking(false), TAKE_WAIT_MS);
     stage()?.focus();
   };
   const handBack = (): void => {
+    if (!stream.greeted()) return;
     stream.send({ t: "handBack" });
     track("browser.hand_back", { "tl.ms": takenAt ? Date.now() - takenAt : null });
+  };
+  const controlLabel = (): string => {
+    if (!stream.greeted()) return "Connecting…";
+    if (inControl()) return "Hand back";
+    return taking() ? "Taking control…" : "Take control";
   };
   /** Send a message that drives the page, only while this viewer holds control. */
   const drive = (msg: ViewerMessage): void => {
@@ -225,6 +272,36 @@ export const BrowserPanel: Component<{
     stage()?.focus({ preventScroll: true });
   };
 
+  // ---- the person in control's own cursor ----------------------------------
+  //
+  // One cursor (Viktor, 2026-10-02). The host's echo of this viewer's input
+  // trails it by a round trip, so while this viewer holds control the drawn
+  // cursor follows its own pointer at once (browser.logic `drawnCursor`), and
+  // the real pointer is hidden over the page. A phone's tap puts the cursor
+  // where it landed until the host reports something newer.
+
+  /** This viewer's mouse or pen over the stage, while it holds control. */
+  const [own, setOwn] = createSignal<OwnPointer>(null);
+  /** Where this viewer's last tap put the cursor. */
+  const [mark, setMark] = createSignal<TapMark | null>(null);
+  /** This viewer's last press, already rung, so its echo does not ring again. */
+  let ownPress: { x: number; y: number; at: number } | null = null;
+  createEffect(
+    on(inControl, (held) => {
+      if (held) return;
+      setOwn(null);
+      setMark(null);
+    }),
+  );
+  /** A pointer that hovers and points precisely, unlike a finger. */
+  const fine = (e: PointerEvent): boolean => e.pointerType === "mouse" || e.pointerType === "pen";
+  /** Ring a press of this viewer's own at once. */
+  const ringOwn = (p: { x: number; y: number }): void => {
+    ownPress = { ...p, at: performance.now() };
+    const here = shownTab();
+    if (here) ringAt(p, here);
+  };
+
   // ---- input --------------------------------------------------------------
 
   const point = (clientX: number, clientY: number): { x: number; y: number } | null => {
@@ -266,10 +343,12 @@ export const BrowserPanel: Component<{
     }
     if (!inControl()) return;
     const p = point(e.clientX, e.clientY);
+    if (fine(e)) setOwn(p ?? "off");
     if (!p) return;
     e.preventDefault();
     stage()?.focus();
     stage()?.setPointerCapture?.(e.pointerId);
+    if (fine(e)) ringOwn(p);
     drive({
       t: "mouse",
       type: "down",
@@ -301,6 +380,8 @@ export const BrowserPanel: Component<{
       return;
     }
     if (!inControl()) return;
+    // The drawn cursor follows at once; the host hears once per frame.
+    if (fine(e)) setOwn(point(e.clientX, e.clientY) ?? "off");
     // One move per frame is plenty for the host, which acts on each one.
     if (moveQueued) {
       moveQueued = e;
@@ -340,6 +421,11 @@ export const BrowserPanel: Component<{
       const p = point(e.clientX, e.clientY);
       if (!p) return;
       drive({ t: "mouse", type: "click", ...p, button: "left", clickCount: 1 });
+      // The cursor goes to the tap and rings now, not a round trip later,
+      // and still when the tap is inside a frame the host cannot see into.
+      const here = shownTab();
+      if (here) setMark({ tab: here, ...p, after: stream.cursor()?.seq ?? 0 });
+      ringOwn(p);
       // A tap on a field should raise the keyboard, and only a focused input
       // of this page's own can: what is typed there is sent on as text.
       ime?.focus({ preventScroll: true });
@@ -348,6 +434,7 @@ export const BrowserPanel: Component<{
     }
     if (!inControl()) return;
     const p = point(e.clientX, e.clientY);
+    if (fine(e)) setOwn(p ?? "off");
     if (!p) return;
     drive({
       t: "mouse",
@@ -399,6 +486,11 @@ export const BrowserPanel: Component<{
     releaseTap = done;
   };
   onCleanup(() => releaseTap?.());
+
+  /** The mouse left the page: the host drives the drawn cursor again. */
+  const onPointerLeave = (e: PointerEvent): void => {
+    if (e.pointerType !== "touch") setOwn(null);
+  };
 
   const onPointerCancel = (e: PointerEvent): void => {
     // The browser took the touch over to pan the zoomed page.
@@ -478,6 +570,105 @@ export const BrowserPanel: Component<{
     stage()?.focus();
   };
 
+  // ---- the cursor ---------------------------------------------------------
+  //
+  // One cursor (CONTEXT.md "Browser cursor"): the host reports where the
+  // mouse is in the tab, whether the agent or the person in control moved it,
+  // so a phone's tap comes back here as the same cursor. The tap's own mark
+  // is that cursor moved early, not a second one. It is drawn in the
+  // picture's own pixels, inside the canvas, so a zoomed page scrolls it with
+  // the picture.
+
+  /** Bumped when the stage changes size, which moves the drawn picture. */
+  const [layout, setLayout] = createSignal(0);
+  onMount(() => {
+    const el = stage();
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setLayout((n) => n + 1));
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
+  });
+
+  /** Where a report lands on the picture, in the picture's own pixels. */
+  const spotOf = (
+    c: { x: number; y: number },
+    el: HTMLImageElement,
+    f: BrowserFrame,
+  ): { left: number; top: number } | null => {
+    const r = el.getBoundingClientRect();
+    return clientPoint(
+      c,
+      { left: 0, top: 0, width: r.width, height: r.height },
+      f,
+      stream.viewport(),
+    );
+  };
+
+  interface CursorSpot {
+    tab: string;
+    seq: number;
+    left: number;
+    top: number;
+    glide: boolean;
+  }
+  const cursorSpot = createMemo<CursorSpot | null>((prev) => {
+    const c = drawnCursor(stream.cursor(), own(), mark(), shownTab());
+    const f = stream.frame();
+    const el = imgEl();
+    zoom();
+    layout();
+    if (!c || !f || !el) return null;
+    const at = spotOf(c, el, f);
+    if (!at) return null;
+    return { tab: c.tab, seq: c.seq, ...at, glide: !c.own && cursorGlides(prev, c) };
+  }, null);
+  /** The drawn cursor is this viewer's mouse, so the real one is hidden. */
+  const ownCursor = (): boolean => {
+    const o = own();
+    return o !== null && o !== "off" && cursorSpot() !== null;
+  };
+
+  const [ripples, setRipples] = createSignal<{ id: number; left: number; top: number }[]>([]);
+  let rippleSeq = 0;
+  let lastPress: { x: number; y: number; at: number } | null = null;
+  const rippleTimers = new Set<ReturnType<typeof setTimeout>>();
+  onCleanup(() => {
+    for (const t of rippleTimers) clearTimeout(t);
+  });
+  /** A ring where a press lands on `tab`, if that tab is the one shown. */
+  function ringAt(p: { x: number; y: number }, tab: string): void {
+    const el = untrack(imgEl);
+    const f = untrack(stream.frame);
+    if (!el || !f || tab !== untrack(shownTab)) return;
+    const at = spotOf(p, el, f);
+    if (!at) return;
+    const id = ++rippleSeq;
+    setRipples((all) => [...all, { id, ...at }]);
+    const timer = setTimeout(() => {
+      rippleTimers.delete(timer);
+      setRipples((all) => all.filter((r) => r.id !== id));
+    }, RIPPLE_MS);
+    rippleTimers.add(timer);
+  }
+  createEffect(
+    on(
+      stream.cursor,
+      (c) => {
+        if (!c) return;
+        const now = performance.now();
+        // This viewer's own presses rang when they happened: the host's echo
+        // of them, while its pointer is over the page or soon after, does not.
+        const ring =
+          cursorRipples(lastPress, c, now) &&
+          untrack(own) === null &&
+          !echoesOwnPress(ownPress, c, now);
+        if (c.kind === "down") lastPress = { x: c.x, y: c.y, at: now };
+        if (ring) ringAt(c, c.tab);
+      },
+      { defer: true },
+    ),
+  );
+
   return (
     <aside
       class="tl-browser-panel"
@@ -499,10 +690,11 @@ export const BrowserPanel: Component<{
             type="button"
             class="tl-btn tl-browser-take"
             classList={{ "tl-btn-approve": inControl() }}
-            disabled={stream.status() !== "open"}
+            disabled={!stream.greeted() || (taking() && !inControl())}
+            aria-busy={!stream.greeted() || (taking() && !inControl())}
             onClick={() => (inControl() ? handBack() : takeControl())}
           >
-            {inControl() ? "Hand back" : "Take control"}
+            {controlLabel()}
           </button>
         </Show>
         <button
@@ -592,12 +784,14 @@ export const BrowserPanel: Component<{
           // what the application role tells assistive tech to pass through.
           role="application"
           data-control={inControl() ? "" : undefined}
+          data-own-cursor={ownCursor() ? "" : undefined}
           data-zoomed={zoom() > 1 ? "" : undefined}
           tabIndex={0}
           aria-label={inControl() ? "The page. You have control." : "The page"}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onPointerLeave={onPointerLeave}
           onPointerCancel={onPointerCancel}
           onContextMenu={(e) => inControl() && e.preventDefault()}
           onKeyDown={onKeyDown}
@@ -611,7 +805,10 @@ export const BrowserPanel: Component<{
             <Show when={stream.frame()}>
               {(f) => (
                 <img
-                  ref={img}
+                  ref={(el) => {
+                    img = el;
+                    setImgEl(el);
+                  }}
                   class="tl-browser-frame"
                   src={f().src}
                   alt={tab()?.title ? `The page: ${tab()?.title}` : "The page"}
@@ -619,6 +816,29 @@ export const BrowserPanel: Component<{
                 />
               )}
             </Show>
+            <div class="tl-browser-cursor-layer" aria-hidden="true">
+              <For each={ripples()}>
+                {(r) => (
+                  <span
+                    class="tl-browser-ripple"
+                    style={{ left: `${r.left}px`, top: `${r.top}px` }}
+                  />
+                )}
+              </For>
+              <Show when={cursorSpot()}>
+                {(c) => (
+                  <div
+                    class="tl-browser-cursor"
+                    data-glide={c().glide ? "" : undefined}
+                    style={{ transform: `translate(${c().left}px, ${c().top}px)` }}
+                  >
+                    <svg viewBox="0 0 16 24" width="16" height="24" aria-hidden="true">
+                      <path d="M1 1 L1 19 L5.5 14.5 L8.5 21.5 L11.5 20.2 L8.6 13.4 L14.6 13.4 Z" />
+                    </svg>
+                  </div>
+                )}
+              </Show>
+            </div>
           </div>
           <Show when={note()}>{(n) => <div class="tl-browser-empty">{n()}</div>}</Show>
           <Show when={stream.error()}>

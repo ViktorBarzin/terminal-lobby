@@ -138,6 +138,10 @@ func TestFilterViewerMessage(t *testing.T) {
 		{"an unknown type is not a watch message", `{"t":"somethingNew"}`, false, ""},
 		{"controller clicks", `{"t":"mouse","type":"click","x":1,"y":2}`, true, `{"t":"mouse","type":"click","x":1,"y":2}`},
 		{"controller takes control", `{"t":"takeControl"}`, true, `{"t":"takeControl"}`},
+		// resume moves control to a reconnected tab, so it is a control message.
+		{"controller resumes control after a reconnect", `{"t":"resume","prev":"0123456789abcdef"}`, true, `{"prev":"0123456789abcdef","t":"resume"}`},
+		{"watcher cannot resume control", `{"t":"resume","prev":"0123456789abcdef"}`, false, ""},
+		{"a resume hidden behind a duplicate key", `{"t":"subscribe","t":"resume","prev":"x"}`, false, ""},
 		{"controller picks from a list", `{"t":"choose","value":"b","tab":"t1"}`, true, `{"t":"choose","tab":"t1","value":"b"}`},
 		{"controller picks several", `{"t":"choose","values":["a","b"]}`, true, `{"t":"choose","values":["a","b"]}`},
 		{"controller answers a prompt", `{"t":"dialog","accept":true,"text":"Grace"}`, true, `{"accept":true,"t":"dialog","text":"Grace"}`},
@@ -393,6 +397,9 @@ type fakeHost struct {
 	ln    net.Listener
 	lines chan string
 	conns chan net.Conn
+	// ends is sent each connection the relay closed (or that otherwise
+	// stopped reading).
+	ends chan net.Conn
 }
 
 func startFakeHost(t *testing.T, sock, hello string) *fakeHost {
@@ -401,7 +408,7 @@ func startFakeHost(t *testing.T, sock, hello string) *fakeHost {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &fakeHost{ln: ln, lines: make(chan string, 64), conns: make(chan net.Conn, 8)}
+	h := &fakeHost{ln: ln, lines: make(chan string, 64), conns: make(chan net.Conn, 8), ends: make(chan net.Conn, 8)}
 	t.Cleanup(func() { ln.Close() })
 	go func() {
 		for {
@@ -416,6 +423,10 @@ func startFakeHost(t *testing.T, sock, hello string) *fakeHost {
 				for {
 					line, err := br.ReadString('\n')
 					if err != nil {
+						select {
+						case h.ends <- c:
+						default:
+						}
 						return
 					}
 					h.lines <- strings.TrimSuffix(line, "\n")
@@ -790,6 +801,60 @@ func TestBrowserStreamRelaysHostLinesAsMessages(t *testing.T) {
 	var ce *websocket.CloseError
 	if !errors.As(err, &ce) || ce.Code != websocket.CloseNormalClosure {
 		t.Fatalf("the stream ended with %v, want a normal close", err)
+	}
+}
+
+// A phone that vanished without a FIN leaves its socket looking open. The
+// relay pings it, and a client that has stopped answering is dropped within
+// the read wait, closing the host connection with it: the host refuses a
+// resume while the old connection is open, so a stale one would hold the
+// person's control away from their reconnected tab.
+func TestBrowserStreamDropsAClientThatStopsAnsweringPings(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		answers bool
+	}{{"silent", false}, {"answering", true}} {
+		t.Run(c.name, func(t *testing.T) {
+			_, dir := browserTestBases(t)
+			sock := filepath.Join(dir, "s7.sock")
+			host := startFakeHost(t, sock, fakeHostHello)
+			b := testRelay(fakeOptions{
+				"alice/k7m2q9x4tpz3": {optBrowser: "live", optBrowserSock: sock, optSessionID: "$7"},
+			}, nil)
+			b.pingEvery = 30 * time.Millisecond
+			b.readWait = 200 * time.Millisecond
+			srv := httptest.NewServer(browserMux(b, "alice", "alice"))
+			t.Cleanup(srv.Close)
+
+			ws := dialStream(t, srv, "/browser/k7m2q9x4tpz3/stream")
+			if !c.answers {
+				// Reading still runs, so pings arrive; none is answered.
+				ws.SetPingHandler(func(string) error { return nil })
+			}
+			go func() {
+				for {
+					if _, _, err := ws.ReadMessage(); err != nil {
+						return
+					}
+				}
+			}()
+			host.next(t)
+			conn := host.conn(t)
+
+			select {
+			case ended := <-host.ends:
+				if ended != conn {
+					t.Fatal("a different host connection ended")
+				}
+				if c.answers {
+					t.Fatal("the relay dropped a client that answers its pings")
+				}
+			case <-time.After(time.Second):
+				if !c.answers {
+					t.Fatal("the host connection stayed open after the client stopped answering pings")
+				}
+			}
+		})
 	}
 }
 

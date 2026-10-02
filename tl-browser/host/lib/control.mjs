@@ -8,7 +8,8 @@
 // took control drives. The name is kept beside it for display ("Viktor has
 // control"). A holder whose connection closes keeps control until it lapses
 // or someone takes it, so a reload does not drop it; any connection allowed
-// to control can take it, which is how that person resumes.
+// to control can take it. The same tab reconnecting resumes it without a
+// takeover: it names its previous connection in a resume message.
 
 /** @typedef {{ holder: string | null, holderId: string | null, since: number | null, lapseAt: number | null }} ControlSnapshot */
 
@@ -53,6 +54,23 @@ export class Control {
     this.#holderId = id;
     this.#holder = user;
     this.#lastInput = now;
+  }
+
+  /**
+   * Moves control from a holder's closed connection to its new one, when the
+   * same person's tab reconnects. The person did not change and gave no
+   * input, so `since` and the lapse stay as they were: a page left open on a
+   * flaky network does not keep control past the lapse by reconnecting. The
+   * caller checks that `prev` has closed.
+   * @param {string} prev the connection the viewer had before
+   * @param {string} id its new connection
+   * @param {string} user the new connection's display name
+   * @returns {boolean} whether control moved
+   */
+  resume(prev, id, user) {
+    if (this.#holderId === null || this.#holderId !== prev || this.#holder !== user) return false;
+    this.#holderId = id;
+    return true;
   }
 
   /**

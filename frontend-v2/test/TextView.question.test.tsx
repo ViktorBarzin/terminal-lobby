@@ -564,6 +564,62 @@ describe("a held call", () => {
     await waitFor(() => expect(v.card()).toBeNull());
   });
 
+  // Reported 2026-10-02: submitting the last question flashed "Open Terminal".
+  // The hold is withdrawn the moment the answer goes in, and the transcript's
+  // result lands later, so for that gap the card had the record and no hold.
+  describe("between the answer and the transcript's result", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      return () => vi.useRealTimers();
+    });
+
+    it("says the answer was sent, not that the Terminal is the way", async () => {
+      const v = mount([ask("t1", [colour]), held([colour])]);
+      await waitFor(() => expect(v.option("Red")!.disabled).toBe(false));
+      vi.advanceTimersByTime(5_000);
+      v.option("Red")!.click();
+      await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
+      v.setEvents([...v.events(), held(null)]);
+      vi.advanceTimersByTime(5_000);
+      await Promise.resolve();
+      expect(v.button("Open Terminal")).toBeUndefined();
+      expect(v.container.textContent).not.toContain("can only be answered in the Terminal");
+      expect(v.container.textContent).toContain("Answer sent.");
+      v.setEvents([...v.events(), result("t1")]);
+      await waitFor(() => expect(v.card()).toBeNull());
+    });
+
+    it("holds the card while the request is out and the withdrawal arrives first", async () => {
+      let resolve!: (r: AnswerResponse) => void;
+      const onAnswer = vi.fn(
+        (_req: AnswerRequest) => new Promise<AnswerResponse>((r) => (resolve = r)),
+      );
+      const v = mount([ask("t1", [colour]), held([colour])], onAnswer);
+      await waitFor(() => expect(v.option("Red")!.disabled).toBe(false));
+      vi.advanceTimersByTime(5_000);
+      v.option("Red")!.click();
+      await waitFor(() => expect(onAnswer).toHaveBeenCalledTimes(1));
+      v.setEvents([...v.events(), held(null)]);
+      await Promise.resolve();
+      expect(v.button("Open Terminal")).toBeUndefined();
+      resolve(applied);
+      await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
+      expect(v.button("Open Terminal")).toBeUndefined();
+    });
+
+    it("does not carry the sent state into the same question asked again", async () => {
+      const v = mount([ask("t1", [colour]), held([colour])]);
+      await waitFor(() => expect(v.option("Red")!.disabled).toBe(false));
+      v.option("Red")!.click();
+      await waitFor(() => expect(v.container.textContent).toContain("Answer sent."));
+      v.setEvents([...v.events(), held(null), result("t1")]);
+      await waitFor(() => expect(v.card()).toBeNull());
+      v.setEvents([...v.events(), ask("t2", [colour]), held([colour])]);
+      await waitFor(() => expect(v.option("Red")!.disabled).toBe(false));
+      expect(v.container.textContent).not.toContain("Answer sent.");
+    });
+  });
+
   it("sends the reader to the Terminal when the server says nothing holds it", async () => {
     const onAnswer = vi.fn(
       async (_req: AnswerRequest) => ({ applied: false, reason: "not-held" }) as AnswerResponse,

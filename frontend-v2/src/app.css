@@ -2487,6 +2487,13 @@ label.tl-set-row-label {
   font-weight: 400;
   font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
+/* The call in flight's second line, after its target: a command's
+   description, where a search looks. Muted, and the first thing the
+   ellipsis takes when the row runs out of room. */
+.tl-live-detail {
+  font-weight: 400;
+  color: var(--text-muted);
+}
 .tl-group-meta {
   flex: none;
   margin-left: auto;
@@ -8004,12 +8011,18 @@ body.tl-kb-up {
 .tl-browser-stage[data-control] {
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--accent) 60%, transparent);
 }
+/* The drawn cursor follows the controlling viewer's mouse at once, so the real
+   pointer over the page would be a second cursor (BrowserPanel `ownCursor`). */
+.tl-browser-stage[data-own-cursor] {
+  cursor: none;
+}
 /* Only a viewer in control is told the page has its keys: a watcher's keys
    are dropped, so a focus ring there would promise typing that cannot happen. */
 .tl-browser-stage[data-control]:focus-visible {
   box-shadow: inset 0 0 0 2px var(--ring);
 }
 .tl-browser-canvas {
+  position: relative;
   min-width: 100%;
   min-height: 100%;
 }
@@ -8023,6 +8036,78 @@ body.tl-kb-up {
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
+}
+/* The Browser cursor and the ring where a press lands, drawn over the picture
+   in its own pixels (BrowserPanel `cursorSpot`). Inside the canvas, so a
+   zoomed page scrolls them with it, and never in the way of a press. */
+.tl-browser-cursor-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Placed by a transform at the arrow's tip; glides only from one report to the
+   next on the same tab (browser.logic `cursorGlides`). */
+.tl-browser-cursor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  margin: -1px 0 0 -1px;
+  will-change: transform;
+}
+.tl-browser-cursor[data-glide] {
+  transition: transform 150ms ease-out;
+}
+.tl-browser-cursor svg {
+  display: block;
+  fill: #fff;
+  stroke: #111;
+  stroke-width: 1.3;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.45));
+}
+.tl-browser-ripple {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  margin: -14px 0 0 -14px;
+  /* Dark on a white halo, like the arrow: it is drawn over any page, so no
+     theme colour. */
+  border: 2.5px solid rgb(17 17 17 / 0.85);
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1.5px #fff,
+    inset 0 0 0 1.5px #fff;
+  opacity: 0;
+  animation: tl-browser-ripple 600ms ease-out forwards;
+}
+@keyframes tl-browser-ripple {
+  from {
+    transform: scale(0.3);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+@keyframes tl-browser-ripple-still {
+  from {
+    opacity: 0.9;
+  }
+  to {
+    opacity: 0;
+  }
+}
+/* Reduced motion: the cursor jumps, and a press still shows, as a brief ring
+   that fades where it is. */
+@media (prefers-reduced-motion: reduce) {
+  .tl-browser-cursor[data-glide] {
+    transition: none;
+  }
+  .tl-browser-ripple {
+    animation: tl-browser-ripple-still 300ms ease-out forwards;
+  }
 }
 .tl-browser-empty {
   position: absolute;
