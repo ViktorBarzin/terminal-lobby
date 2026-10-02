@@ -58,7 +58,9 @@ RestartSec=5
 # tmux through sessionio in-process, over the same `sudo -u <user> tmux` grant
 # they use (devvm/sudoers.d-ttyd-users), and calls none of their ports — so it
 # needs no grant of its own, and no sandboxing directive that would take sudo
-# away. NoNewPrivileges here would break every session it touches.
+# away. NoNewPrivileges here would break every session it touches. Deleting a
+# conversation also runs /usr/local/bin/tmux-persist-forget through the grant
+# tmux-api's own kill uses, which names wizard rather than a service.
 
 # /var/log/agent-api, created by systemd and owned by User= before ExecStart
 # runs. The service account cannot create a directory under /var/log itself,

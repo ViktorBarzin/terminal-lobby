@@ -45,22 +45,29 @@ import (
 // has decided to.
 const OptionOwner = "@agent_owner"
 
-// OptionSuspended is tmux-api's mark, and the one option here this service
-// only READS. Its presence means the idle sweep killed the Claude in that
-// session and froze the pane, keeping everything needed to bring it back
+// OptionLastTurn is the unix second this service last ran a turn in a
+// conversation: stamped when a message is accepted, before anything reaches
+// the pane, and again when the turn ends. It is the clock tmux-api's suspend
+// sweep times a Caller's conversation by (tmux-api/suspend.go,
+// agentLastTurnOption), because the lobby's own clocks do not describe a
+// session driven over HTTP: @last_drive moves only while a tmux client is
+// attached, which this service never does.
+//
+// A tmux session option for the reason OptionOwner is one: it lives and dies
+// with the session, and survives a restart of this service.
+const OptionLastTurn = "@agent_last_turn"
+
+// OptionSuspended is tmux-api's mark, which this service reads and never
+// writes. Its presence means the idle sweep killed the Claude in that session
+// and froze the pane, keeping everything needed to bring it back
 // (tmux-api/suspend.go).
 //
-// It matters to this API because a suspended conversation has no Claude to
-// take a message: `paste-buffer` into a dead pane answers "target pane has
-// exited", and into a pane whose wrapper shell survived it types the message
-// at a bash prompt. Either way the turn does not happen, so a conversation
-// wearing this mark reports its own state rather than the `done` its last
-// Claude left behind, and refuses writes.
-//
-// tmux-api does not suspend a session carrying OptionOwner, so in the ordinary
-// run of things no conversation of this API's ever wears it. This is what
-// answers honestly if one does — a mark set by hand, or by a tmux-api older
-// than that exclusion.
+// A suspended conversation has no Claude to take a message: `paste-buffer`
+// into a dead pane answers "target pane has exited", and into a pane whose
+// wrapper shell survived it types the message at a bash prompt. So a turn in a
+// conversation wearing this mark RESUMES it first (Sessions.Resume, the same
+// sequence the lobby's click runs), and the conversation reports `suspended`
+// as its state until then rather than the `done` its last Claude left behind.
 const OptionSuspended = sessionio.OptionSuspended
 
 // LiveSession is one tmux session as agent-api needs to see it: the name, and
@@ -160,6 +167,14 @@ type Sessions interface {
 	// Enter that should submit it does not, so the turn never runs and the
 	// conversation shows a message the agent never saw.
 	WaitReady(osUser, session string, wait, poll time.Duration) error
+	// Resume brings a suspended session back through sessionio.Resume, the
+	// sequence the lobby's own resume click runs: every check that can refuse
+	// refuses before `respawn-pane -k`, and the marks are cleared only after
+	// it lands. sessionio.ErrNotSuspended means it was awake already.
+	Resume(osUser, session string) error
+	// Kill destroys the session and everything running in it, and leaves the
+	// transcript on disk. sessionio.ErrSessionGone means it was already gone.
+	Kill(osUser, session string) error
 	// Answer applies one answer to the plan approval or the tool permission
 	// prompt the pane is drawing, through the same sessionio driver the
 	// lobby's question card uses: it reads the dialog before any key, refuses
@@ -205,6 +220,26 @@ type tmuxSessions struct {
 	// its own so the containment rule can be exercised against real files
 	// without a tmux server anywhere.
 	options sessionio.Options
+	// procDir is where a resume looks for a claude under a live pane; /proc
+	// when empty.
+	procDir string
+	// forget records a deliberate kill with tmux-persist, so a restore does
+	// not bring the session back; persistForget when nil.
+	forget func(osUser, session string) error
+}
+
+// persistForgetWrapper is the root helper tmux-api's own kill calls
+// (devvm/tmux-persist-forget). It appends a tombstone, which a blanket restore
+// honours and the restore picker shows unticked. This service runs as wizard,
+// whom the sudoers grant beside that helper already names.
+const persistForgetWrapper = "/usr/local/bin/tmux-persist-forget"
+
+func persistForget(osUser, session string) error {
+	out, err := exec.Command("/usr/bin/sudo", "-n", persistForgetWrapper, osUser, session).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // optionStore is the seam above, resolved.
@@ -334,6 +369,51 @@ func (t *tmuxSessions) WaitReady(osUser, session string, wait, poll time.Duratio
 	ctx, cancel := context.WithTimeout(context.Background(), wait+poll)
 	defer cancel()
 	return t.in.AwaitInputReady(ctx, osUser, session, wait, poll)
+}
+
+func (t *tmuxSessions) Resume(osUser, session string) error {
+	dir := t.procDir
+	if dir == "" {
+		dir = "/proc"
+	}
+	ops := t.in.LiveResumeOps(dir, func(format string, args ...any) { logf(format, args...) })
+	_, err := sessionio.Resume(ops, osUser, session)
+	return err
+}
+
+// Kill is the tmux half of the lobby's own kill (tmux-api session_mutate.go
+// killSession): kill-session, then a tombstone so a restore does not bring
+// the conversation back. The rest of that handler is tmux-api's bookkeeping
+// about its own sidebar — the undo snapshot, the project assignment, the
+// layout entry — none of which a conversation opened over HTTP was given.
+//
+// The tombstone covers the name the session was born with as well as the one
+// it has now, because a snapshot taken before tmux-api renamed it recorded the
+// first. Best-effort: tmux has already destroyed the session, so a failed
+// forget is a log line rather than a refusal of a delete that happened.
+func (t *tmuxSessions) Kill(osUser, session string) error {
+	born, _ := t.in.Option(osUser, session, sessionio.OptionBornAs)
+	if err := t.in.KillSession(osUser, session); err != nil {
+		if sessionio.TargetMissing(err.Error()) {
+			return sessionio.ErrSessionGone
+		}
+		return err
+	}
+	forget := t.forget
+	if forget == nil {
+		forget = persistForget
+	}
+	names := []string{session}
+	if born != "" && born != session {
+		names = append(names, born)
+	}
+	for _, n := range names {
+		if err := forget(osUser, n); err != nil {
+			logf("agent-api: recording the kill of %s/%s with tmux-persist failed (%v); "+
+				"a restore may bring it back", osUser, n, err)
+		}
+	}
+	return nil
 }
 
 func (t *tmuxSessions) Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {

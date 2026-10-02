@@ -60,6 +60,7 @@ func TestOpenAPIDescribesExactlyTheRealRoutes(t *testing.T) {
 		"GET /v1/conversations":                 true,
 		"POST /v1/conversations":                true,
 		"GET /v1/conversations/{id}":            true,
+		"DELETE /v1/conversations/{id}":         true,
 		"GET /v1/conversations/{id}/transcript": true,
 		"POST /v1/conversations/{id}/messages":  true,
 		"GET /v1/tasks/{id}":                    true,

@@ -243,6 +243,7 @@ func (s *Server) Routes() http.Handler {
 	v1.Handle("GET /v1/conversations", s.handle("GET /v1/conversations", s.listConversations))
 	v1.Handle("POST /v1/conversations", s.handle("POST /v1/conversations", s.createConversation))
 	v1.Handle("GET /v1/conversations/{id}", s.handle("GET /v1/conversations/{id}", s.getConversation))
+	v1.Handle("DELETE /v1/conversations/{id}", s.handle("DELETE /v1/conversations/{id}", s.deleteConversation))
 	v1.Handle("GET /v1/conversations/{id}/transcript", s.handle("GET /v1/conversations/{id}/transcript", s.getTranscript))
 	v1.Handle("POST /v1/conversations/{id}/messages", s.handleUploads("POST /v1/conversations/{id}/messages", s.postMessage))
 	v1.Handle("GET /v1/tasks/{id}", s.handle("GET /v1/tasks/{id}", s.getTask))

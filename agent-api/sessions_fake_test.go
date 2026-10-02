@@ -61,6 +61,19 @@ type fakeSessions struct {
 	// onAnswer runs (holding the lock) after an answer is recorded, so a test
 	// can take the dialog off the pane the way a real answer does.
 	onAnswer func(f *fakeSessions, key string)
+
+	// resumes and kills record the lifecycle verbs by "<osUser>/<session>".
+	// resumeErr and killErr are faults a test can arm.
+	resumes   []string
+	kills     []string
+	resumeErr error
+	killErr   error
+	// lastTurns records every write of OptionLastTurn, in order, so a test can
+	// count the stamps a turn made as well as read the latest.
+	lastTurns []string
+	// events is one ordered log of the verbs a turn makes, so a test can
+	// assert that a resume came before the prompt.
+	events []string
 }
 
 type answerCall struct {
@@ -179,6 +192,47 @@ func (f *fakeSessions) answerCalls() []answerCall {
 	return append([]answerCall(nil), f.answers...)
 }
 
+func (f *fakeSessions) resumeCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.resumes...)
+}
+
+func (f *fakeSessions) killCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.kills...)
+}
+
+func (f *fakeSessions) lastTurnStamps() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.lastTurns...)
+}
+
+func (f *fakeSessions) eventLog() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.events...)
+}
+
+// isLive reports whether a session is still on the fake server.
+func (f *fakeSessions) isLive(osUser, session string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.live[key(osUser, session)]
+	return ok
+}
+
+// hasTranscript reports whether the transcript is still on the fake disk,
+// whether or not its session is.
+func (f *fakeSessions) hasTranscript(osUser, session string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	_, ok := f.transcripts[key(osUser, session)]
+	return ok
+}
+
 func (f *fakeSessions) createCalls() []CreateSpec {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -237,6 +291,7 @@ func (f *fakeSessions) Prompt(osUser, session, text string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.prompts = append(f.prompts, promptCall{osUser, session, text})
+	f.events = append(f.events, "prompt "+session)
 	if f.promptErr != nil {
 		return f.promptErr
 	}
@@ -276,6 +331,11 @@ func (f *fakeSessions) Option(osUser, session, name string) (string, bool) {
 		return s.Title, true
 	case "@tl_born":
 		return s.BornAs, true
+	case OptionLastTurn:
+		if n := len(f.lastTurns); n > 0 {
+			return f.lastTurns[n-1], true
+		}
+		return "", true
 	}
 	return "", true
 }
@@ -296,7 +356,48 @@ func (f *fakeSessions) SetOption(osUser, session, name, value string) error {
 		s.Title = value
 	case "@tl_born":
 		s.BornAs = value
+	case OptionLastTurn:
+		f.lastTurns = append(f.lastTurns, value)
+		f.events = append(f.events, "stamp "+session)
 	}
+	return nil
+}
+
+// Resume models sessionio.Resume's answers: gone, not suspended, or the mark
+// lifted with the conversation back.
+func (f *fakeSessions) Resume(osUser, session string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumes = append(f.resumes, key(osUser, session))
+	f.events = append(f.events, "resume "+session)
+	if f.resumeErr != nil {
+		return f.resumeErr
+	}
+	s, ok := f.live[key(osUser, session)]
+	if !ok {
+		return sessionio.ErrSessionGone
+	}
+	if !s.Suspended {
+		return sessionio.ErrNotSuspended
+	}
+	s.Suspended = false
+	return nil
+}
+
+// Kill takes the session off the server and leaves its transcript where it
+// was, which is what killing a tmux session does to the .jsonl beside it.
+func (f *fakeSessions) Kill(osUser, session string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.kills = append(f.kills, key(osUser, session))
+	if f.killErr != nil {
+		return f.killErr
+	}
+	k := key(osUser, session)
+	if _, ok := f.live[k]; !ok {
+		return sessionio.ErrSessionGone
+	}
+	delete(f.live, k)
 	return nil
 }
 

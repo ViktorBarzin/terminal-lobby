@@ -134,8 +134,9 @@ const (
 	//
 	// It is named here rather than in the service that writes it because three
 	// programs READ it and none of them can import the others: tmux-api serves
-	// it to the sidebar, agent-api refuses to write a conversation wearing it,
-	// and session-events refuses to inject a prompt into one. A suspended
+	// it to the sidebar, agent-api resumes a conversation wearing it (Resume)
+	// before it pastes a turn, and session-events refuses to inject a prompt
+	// into one. A suspended
 	// session has no Claude, and neither `send-keys` nor `paste-buffer` says
 	// so: measured on tmux 3.4, 2026-09-19, send-keys into a dead pane exits 0
 	// and the bytes vanish, paste-buffer answers "target pane has exited", and

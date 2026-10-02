@@ -40,6 +40,14 @@ func (s *Server) runTurn(t *Task) {
 	default:
 	}
 
+	// Whatever happens below, the turn happened as far as the suspend sweep
+	// is concerned: the Caller was using this conversation.
+	defer s.stampTurnOf(t)
+
+	if !s.wake(t) {
+		return
+	}
+
 	// How much history there is BEFORE this turn, once the session is ready
 	// to take one.
 	mark, ok := s.awaitReady(t, cancelled)
@@ -72,6 +80,40 @@ func (s *Server) runTurn(t *Task) {
 	s.Tasks.Update(t.ID, StatusRunning, nil)
 
 	s.watchTurn(t, mark, cancelled)
+}
+
+// wake resumes the conversation when tmux-api's idle sweep suspended it, and
+// reports whether the turn may go on.
+//
+// Here rather than in the request, for two reasons. The runner holds one turn
+// per conversation at a time, so two messages to a sleeping conversation
+// resume it once: the second finds it awake. And the wait that follows,
+// awaitReady, is exactly the wait a cold `claude --resume` needs (1.7-3.1 s
+// measured), so the paste lands on a drawn prompt rather than into the boot.
+//
+// A session that is no longer there is left for runTurn to report, and one
+// that turns out to be awake already — a person clicked it in the lobby in
+// the meantime — is what the turn wanted anyway.
+func (s *Server) wake(t *Task) bool {
+	live, err := s.find(t.OSUser, t.ConversationID)
+	if err != nil || !live.Suspended {
+		return true
+	}
+	err = s.Sessions.Resume(t.OSUser, live.Name)
+	if err == nil || errors.Is(err, sessionio.ErrNotSuspended) {
+		return true
+	}
+	s.fail(t, "conversation %s was suspended after sitting idle and could not be resumed (%v), "+
+		"so the message was not sent; its transcript is still on disk", t.ConversationID, err)
+	return false
+}
+
+// stampTurnOf stamps the turn clock under the name the session has now. A
+// session that has gone (deleted while the turn ran) has nothing to stamp.
+func (s *Server) stampTurnOf(t *Task) {
+	if live, err := s.find(t.OSUser, t.ConversationID); err == nil {
+		s.stampTurn(t.OSUser, live.Name)
+	}
 }
 
 // unknownMark means the transcript could not be read, which is a different

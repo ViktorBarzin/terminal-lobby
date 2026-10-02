@@ -16,6 +16,7 @@ var everyV1Route = []request{
 	{method: "GET", path: "/v1/conversations"},
 	{method: "POST", path: "/v1/conversations", body: `{"cwd":"/tmp"}`},
 	{method: "GET", path: "/v1/conversations/c1"},
+	{method: "DELETE", path: "/v1/conversations/c1"},
 	{method: "GET", path: "/v1/conversations/c1/transcript"},
 	{method: "POST", path: "/v1/conversations/c1/messages", body: `{"text":"hello"}`},
 	{method: "GET", path: "/v1/tasks/t1"},

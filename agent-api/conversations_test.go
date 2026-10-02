@@ -610,11 +610,12 @@ func suspendedConversation(h *harness, name string) {
 	})
 }
 
-// The state on the session describes a Claude that no longer exists. Reporting
-// its `done` would tell a caller the conversation is idle and ready when it
-// cannot take a message at all, which is how a Muse cron job would keep
-// posting into nothing.
-func TestSuspendedConversationSaysSoRatherThanDone(t *testing.T) {
+// The state on the session describes a Claude that no longer exists, so the
+// conversation says it is suspended rather than reporting the `done` its last
+// Claude left behind. It is still writable by the Caller that owns it: a
+// message resumes it (turn.go), so answering false here would send a Caller
+// that reads the flag away from a conversation it can use.
+func TestSuspendedConversationSaysSoAndStaysWritableByItsOwner(t *testing.T) {
 	h := newHarness(t)
 	suspendedConversation(h, "napping")
 
@@ -624,40 +625,29 @@ func TestSuspendedConversationSaysSoRatherThanDone(t *testing.T) {
 	if got.State != stateSuspendedName {
 		t.Fatalf("state = %q, want %q", got.State, stateSuspendedName)
 	}
-	if got.Writable {
-		t.Fatal("a suspended conversation reported itself writable, which sends the caller into a 409")
+	if !got.Writable {
+		t.Fatal("a suspended conversation reported itself unwritable to the Caller that owns it, which a message would resume")
 	}
 	if got.CreatedBy != testActor {
 		t.Fatalf("created_by = %q — suspension does not change who owns it", got.CreatedBy)
 	}
 }
 
-// Accepting the message would answer 202 and then fail inside the runner,
-// where the caller sees a turn that never started. Measured on tmux 3.4:
-// `paste-buffer` into a dead pane answers "target pane has exited", and into a
-// restored session whose wrapper shell outlived its Claude the text is typed
-// at a bash prompt instead.
-func TestMessageToASuspendedConversationIsRefused(t *testing.T) {
+// Another Caller's suspended conversation is as unwritable as its live one:
+// suspension changes nothing about ownership.
+func TestSuspendedConversationOfAnotherCallerIsNotWritable(t *testing.T) {
 	h := newHarness(t)
-	suspendedConversation(h, "napping")
+	h.sessions.start(testOSUser, LiveSession{Name: "theirs", State: "done", Owner: "scratch", Suspended: true})
 
-	w := h.call("POST", "/v1/conversations/napping/messages", `{"text":"are you there"}`)
-	h.decodeJSON(w, http.StatusConflict, nil)
-
-	if calls := h.sessions.promptCalls(); len(calls) != 0 {
-		t.Fatalf("the message was delivered into a session with no Claude in it: %+v", calls)
+	var got Conversation
+	h.decodeJSON(h.call("GET", "/v1/conversations/theirs", ""), http.StatusOK, &got)
+	if got.Writable {
+		t.Fatal("another Caller's suspended conversation reported itself writable")
 	}
-	if !strings.Contains(w.Body.String(), "resumed") {
-		t.Fatalf("the error does not say what to do about it: %s", w.Body)
+	h.decodeJSON(h.call("POST", "/v1/conversations/theirs/messages", `{"text":"hi"}`), http.StatusForbidden, nil)
+	if r := h.sessions.resumeCalls(); len(r) != 0 {
+		t.Fatalf("a message this Caller may not send resumed the conversation anyway: %v", r)
 	}
-}
-
-// Cancelling one is refused the same way and for the same reason: there is no
-// turn in flight and nothing to interrupt.
-func TestSuspendedConversationRefusesEveryWrite(t *testing.T) {
-	h := newHarness(t)
-	suspendedConversation(h, "napping")
-	h.decodeJSON(h.call("POST", "/v1/conversations/napping/messages", `{"text":"hi"}`), http.StatusConflict, nil)
 }
 
 // Reading is unaffected. The transcript is on disk — that is the whole reason
