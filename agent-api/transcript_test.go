@@ -24,7 +24,7 @@ func TestDecodeTranscript(t *testing.T) {
 			),
 			want: []TranscriptMessage{
 				{Role: "user", Text: "what runs here?", At: "2026-09-16T11:00:00Z"},
-				{Role: "assistant", Text: "two services", At: "2026-09-16T11:00:04Z"},
+				{Index: 1, Role: "assistant", Text: "two services", At: "2026-09-16T11:00:04Z"},
 			},
 		},
 		{
@@ -75,6 +75,19 @@ func TestDecodeTranscript(t *testing.T) {
 				`{"type":"attachment"}`,
 			),
 			want: nil,
+		},
+		{
+			name: "the index counts messages, not lines, so a dropped record leaves no gap",
+			in: lines(
+				userLine("first", "2026-09-16T11:00:00Z"),
+				`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"ok"}]}}`,
+				`{"type":"system","subtype":"hook"}`,
+				assistantLine("second", "2026-09-16T11:00:04Z"),
+			),
+			want: []TranscriptMessage{
+				{Index: 0, Role: "user", Text: "first", At: "2026-09-16T11:00:00Z"},
+				{Index: 1, Role: "assistant", Text: "second", At: "2026-09-16T11:00:04Z"},
+			},
 		},
 		{
 			name: "a partial write at the end of the file",

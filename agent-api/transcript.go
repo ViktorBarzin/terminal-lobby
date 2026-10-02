@@ -21,6 +21,12 @@ import (
 
 // TranscriptMessage is one thing that was said.
 type TranscriptMessage struct {
+	// Index is the message's 0-based position in the whole decoded history.
+	// It is what ?after= is compared against, and it stays put across calls
+	// because Claude Code only appends to a transcript. Lines that are not
+	// messages take no index, so there are no gaps. A /clear starts a new
+	// transcript file, and the indexes start again from 0 with it.
+	Index int `json:"index"`
 	// Role is "user" or "assistant".
 	Role string `json:"role"`
 	Text string `json:"text"`
@@ -55,9 +61,10 @@ func decodeTranscript(lines [][]byte) []TranscriptMessage {
 			continue
 		}
 		out = append(out, TranscriptMessage{
-			Role: rec.Role(),
-			Text: text,
-			At:   rec.Timestamp,
+			Index: len(out),
+			Role:  rec.Role(),
+			Text:  text,
+			At:    rec.Timestamp,
 		})
 	}
 	return out

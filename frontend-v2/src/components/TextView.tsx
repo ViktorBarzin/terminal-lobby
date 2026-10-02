@@ -776,8 +776,21 @@ export const TextView: Component<{
       },
     ),
   );
-  const cardState = (): QuestionCardState =>
-    held() && !notHeld() ? "open" : graceOver() || notHeld() ? "terminal" : "connecting";
+  /**
+   * The call this page answered (`callSerial`), or 0. The server withdraws the
+   * hold as the answer goes in, but the transcript's result can land a moment
+   * later, and through that gap the record alone read as a call nothing holds:
+   * the card flashed "Open Terminal" after the last question was submitted
+   * (reported 2026-10-02). A request still out counts too, since the
+   * withdrawal can reach the page before the reply does.
+   */
+  const [answeredCall, setAnsweredCall] = createSignal(0);
+  const cardState = (): QuestionCardState => {
+    if (answeredCall() === callSerial().n) return "sent";
+    if (held() && !notHeld()) return "open";
+    if (answering()) return "open";
+    return graceOver() || notHeld() ? "terminal" : "connecting";
+  };
   /** The tool permission prompt on the pane, answered by its own card. */
   const permission = createMemo(() => permissionFromPane(props.events));
   /**
@@ -1210,6 +1223,7 @@ export const TextView: Component<{
    */
   const answerHeld = async (req: AnswerRequest): Promise<boolean> => {
     if (!props.onAnswer || answering() || refuseWatching()) return false;
+    const call = callSerial().n;
     setAnswering(true);
     let resp: AnswerResponse | null;
     try {
@@ -1221,7 +1235,10 @@ export const TextView: Component<{
       props.notify?.("Couldn't reach the session to answer that.", "error");
       return false;
     }
-    if (resp.applied) return followed(true);
+    if (resp.applied) {
+      setAnsweredCall(call);
+      return followed(true);
+    }
     if (resp.reason === "not-held") {
       setNotHeld(true);
       props.notify?.(

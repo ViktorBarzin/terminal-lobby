@@ -2,9 +2,9 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Terminal Lobby agent-api",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "summary": "Start and drive Claude Code conversations on the devvm over HTTP.",
-    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. It returns immediately with a task id, because a turn takes minutes and sometimes hours.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. On `needs_input` the agent is blocked on a question, which the task carries; relay it to a person.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable \u2014 `POST .../messages` against one is refused with 403.",
+    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. It returns immediately with a task id, because a turn takes minutes and sometimes hours. Add `?wait=N` (up to 300 seconds) to hold the request until the turn settles: a short turn then comes back as the finished task in one request.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. Add `?wait=N` to make it a long-poll that returns as soon as the status moves, so each poll you pay for reports a change. On `needs_input` the agent is blocked on a question, which the task carries with its kind and options; answer a permission prompt or a plan approval with `POST /v1/tasks/{id}/answer`, and relay anything else to a person.\n5. `GET /v1/conversations/{id}/transcript?after=<index>` reads only what was said since you last looked.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable \u2014 `POST .../messages` against one is refused with 403.",
     "license": {
       "name": "AGPL-3.0-or-later"
     }
@@ -282,11 +282,17 @@
           "conversations"
         ],
         "operationId": "getTranscript",
-        "summary": "Read a conversation's whole history.",
-        "description": "Every message in the conversation, oldest first, from the transcript Claude Code writes to disk. Readable for any conversation on the account, including ones you did not create.\n\nThis is the conversation, not the machinery: tool calls, tool results and the harness's own bookkeeping records are left out. It can be large \u2014 a long conversation runs to megabytes \u2014 so prefer a task's `result` when all you need is the answer to one message.",
+        "summary": "Read a conversation's history, whole or from where you left off.",
+        "description": "The conversation's messages, oldest first, from the transcript Claude Code writes to disk. Readable for any conversation on the account, including ones you did not create.\n\nThis is the conversation, not the machinery: tool calls, tool results and the harness's own bookkeeping records are left out. It can be large, and a long conversation runs to megabytes, so prefer a task's `result` when all you need is the answer to one message.\n\nEvery message carries an `index`, its position in the whole history, which names the same message on every call. Read incrementally by remembering the highest index you have seen and passing it as `after`; use `last` to see only the most recent few. `total` is always the size of the whole history, so you know how much a window left out. A `/clear` in the conversation starts a new transcript, and the indexes start again from 0; a `total` lower than the last one you saw means that happened.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ConversationID"
+          },
+          {
+            "$ref": "#/components/parameters/TranscriptAfter"
+          },
+          {
+            "$ref": "#/components/parameters/TranscriptLast"
           }
         ],
         "responses": {
@@ -299,6 +305,7 @@
                   "description": "A conversation's messages.",
                   "required": [
                     "conversation_id",
+                    "total",
                     "messages"
                   ],
                   "properties": {
@@ -306,9 +313,14 @@
                       "type": "string",
                       "description": "The conversation these messages belong to."
                     },
+                    "total": {
+                      "type": "integer",
+                      "description": "How many messages the whole history holds, whatever `after` and `last` selected. The next message to be written will have this as its index.",
+                      "minimum": 0
+                    },
                     "messages": {
                       "type": "array",
-                      "description": "Every message, oldest first.",
+                      "description": "The selected messages, oldest first: every message when neither `after` nor `last` is given.",
                       "items": {
                         "$ref": "#/components/schemas/TranscriptMessage"
                       }
@@ -317,18 +329,34 @@
                 },
                 "example": {
                   "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "total": 2,
                   "messages": [
                     {
+                      "index": 0,
                       "role": "user",
                       "text": "What does stacks/proxy actually run?",
                       "at": "2026-09-16T11:02:31.442Z"
                     },
                     {
+                      "index": 1,
                       "role": "assistant",
                       "text": "Two products on one NordVPN tunnel: the per-user remote browsers, and cluster VPN egress.",
                       "at": "2026-09-16T11:02:48.119Z"
                     }
                   ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`after` or `last` is not a non-negative whole number.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "after must be a non-negative whole number, not \"-1\""
                 }
               }
             }
@@ -362,10 +390,13 @@
         ],
         "operationId": "sendMessage",
         "summary": "Send a message to a conversation.",
-        "description": "Accepts the message and returns a task id. It does NOT wait for the answer: a turn takes minutes and sometimes hours, so poll `GET /v1/tasks/{task_id}` instead.\n\nA conversation runs one turn at a time. If it is busy, `queued_behind` says how many turns are ahead of yours and your message waits its turn rather than interrupting. Different conversations run at the same time.\n\nOnly a conversation you created is writable. One a person started at the keyboard is refused with 403, whatever the list says you can read.",
+        "description": "Accepts the message and returns a task id. By default it does not wait for the answer: a turn takes minutes and sometimes hours, so poll `GET /v1/tasks/{task_id}`.\n\nWith `?wait=N` the request is held for up to N seconds. If the turn settles in that time, as `done`, `failed`, `cancelled` or `needs_input`, the answer is 200 with the task itself, the same JSON `GET /v1/tasks/{task_id}` serves, and no poll is needed. If it is still going, the answer is the usual 202 receipt and you poll as before. A bad `wait` is refused with 400 before the message is sent. Hanging up ends the wait; the message is still sent and the turn still runs.\n\nA conversation runs one turn at a time. If it is busy, `queued_behind` says how many turns are ahead of yours and your message waits its turn rather than interrupting. Different conversations run at the same time.\n\nOnly a conversation you created is writable. One a person started at the keyboard is refused with 403, whatever the list says you can read.",
         "parameters": [
           {
             "$ref": "#/components/parameters/ConversationID"
+          },
+          {
+            "$ref": "#/components/parameters/Wait"
           }
         ],
         "requestBody": {
@@ -393,8 +424,27 @@
           }
         },
         "responses": {
+          "200": {
+            "description": "Only with `wait`: the turn settled within the wait, and this is its task.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                },
+                "example": {
+                  "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                  "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "status": "done",
+                  "result": "Three stacks still reference it, all in comments. Nothing pulls from it.",
+                  "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
+                  "created_at": "2026-09-16T11:02:31.442Z",
+                  "updated_at": "2026-09-16T11:02:58.870Z"
+                }
+              }
+            }
+          },
           "202": {
-            "description": "The message was accepted and a task created for it.",
+            "description": "The message was accepted and a task created for it. Without `wait` this is always the answer; with it, the turn was still going when the wait ran out.",
             "content": {
               "application/json": {
                 "schema": {
@@ -443,10 +493,13 @@
         ],
         "operationId": "getTask",
         "summary": "Poll one message's progress.",
-        "description": "Returns the task's status and, depending on it, the field that matters:\n\n- `accepted` \u2014 queued behind another turn. Nothing has reached the agent yet.\n- `running` \u2014 the agent is working.\n- `needs_input` \u2014 the agent is blocked on a question, in `question`. Relay it to a person; answering is not something this API can do for you yet, and the conversation stays blocked until someone answers it in the terminal.\n- `done` \u2014 finished. `result` is the agent's final message.\n- `failed` \u2014 the turn could not be run or followed. `error` says why.\n- `cancelled` \u2014 you cancelled it.\n\nThe first three can change; the last three never do. `detail_url` points at the conversation's full transcript, which carries the whole turn.\n\nTasks live in memory, so a restart of this service loses the ids while the conversations survive. A 404 for an id you were polling means restart, not lost work: list the conversations and read the transcript.",
+        "description": "Returns the task's status and, depending on it, the field that matters:\n\n- `accepted`: queued behind another turn. Nothing has reached the agent yet.\n- `running`: the agent is working.\n- `needs_input`: the agent is blocked on a question, in `question`, with `kind` saying what sort and `options` listing the rows it offers. `answer_with` names the bodies `POST /v1/tasks/{id}/answer` takes for it. A `permission` prompt and a `plan` approval can be answered through this API; a `choice` (an AskUserQuestion menu) or an `unknown` question has to be answered by a person in the lobby or the terminal, so relay it. The conversation stays blocked until one of the two happens.\n- `done`: finished. `result` is the agent's final message.\n- `failed`: the turn could not be run or followed. `error` says why.\n- `cancelled`: you cancelled it.\n\nThe first three can change; the last three never do. `detail_url` points at the conversation's full transcript, which carries the whole turn.\n\nWith `?wait=N` this is a long-poll: the request is held until the status differs from the one it had when the request arrived, or N seconds pass, and returns the task either way. A task that is `done`, `failed`, `cancelled` or `needs_input` is returned at once, because it will not move by itself. Hanging up ends the wait.\n\nTasks live in memory, so a restart of this service loses the ids while the conversations survive. A 404 for an id you were polling means restart, not lost work: list the conversations and read the transcript.",
         "parameters": [
           {
             "$ref": "#/components/parameters/TaskID"
+          },
+          {
+            "$ref": "#/components/parameters/Wait"
           }
         ],
         "responses": {
@@ -470,12 +523,31 @@
                     }
                   },
                   "needs_input": {
-                    "summary": "Blocked on a question for a person.",
+                    "summary": "Blocked on a permission prompt this API can answer.",
                     "value": {
                       "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
                       "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
                       "status": "needs_input",
-                      "question": "Land this on master, or open a pull request?",
+                      "question": "Bash command\nrm -rf build\nRemove the build directory\nDo you want to proceed?",
+                      "kind": "permission",
+                      "options": [
+                        {
+                          "index": 1,
+                          "label": "Yes"
+                        },
+                        {
+                          "index": 2,
+                          "label": "Yes, and always allow access to build/ from this project"
+                        },
+                        {
+                          "index": 3,
+                          "label": "No"
+                        }
+                      ],
+                      "answer_with": [
+                        "option",
+                        "text"
+                      ],
                       "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
                       "created_at": "2026-09-16T11:02:31.442Z",
                       "updated_at": "2026-09-16T11:06:02.004Z"
@@ -496,6 +568,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -569,6 +644,126 @@
           }
         }
       }
+    },
+    "/v1/tasks/{id}/answer": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "operationId": "answerTask",
+        "summary": "Answer the question a blocked task is waiting on.",
+        "description": "For a task in `needs_input`. Send `{\"option\": <index>}` to pick one of the task's `options`, or `{\"text\": \"...\"}` to answer in words, whichever the task's `answer_with` lists.\n\n- `permission` (Claude Code asking before it runs a tool): an option picks that row, as pressing its number in the terminal would. Text declines the tool call and tells the agent what to do instead, through the prompt's No row; a prompt without a No row takes options only.\n- `plan` (the plan approval): an option approves the plan with that row. Text sends the words back as feedback, and the agent keeps planning, usually returning to `needs_input` with a revised plan.\n- `choice` (an AskUserQuestion menu) and `unknown`: refused with 422. Terminal Lobby answers an AskUserQuestion through its own question card, which this API does not reach, and an unknown question gives nothing to check an answer against. Relay those to a person.\n\nThe question on screen is read again before anything is typed. If it is no longer the one the task reported, for example the next tool call's prompt with the same rows over a different command, nothing is typed, the task is updated to show the current question, and the answer is 409: read the task and answer again.\n\nOn success the task goes back to `running` and is returned. If the answer was typed but the dialog had not cleared by the time the request returned, the response carries a `warning`; if the dialog is still up, the task returns to `needs_input` within a few seconds. Only the caller that sent the message may answer it.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/TaskID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerRequest"
+              },
+              "examples": {
+                "option": {
+                  "summary": "Pick a row: allow the tool call once.",
+                  "value": {
+                    "option": 1
+                  }
+                },
+                "text": {
+                  "summary": "Decline a tool call and say what to do instead.",
+                  "value": {
+                    "text": "Do not delete build/; run make clean instead."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The answer was sent and the task is back to running, or carries a warning saying the dialog had not visibly cleared.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerResult"
+                },
+                "example": {
+                  "task_id": "01M2KR7X4QC3N8ZB0H5WFTJ2AK",
+                  "conversation_id": "agent-01M2KR6R0079D934XTRGMJVSF3",
+                  "status": "running",
+                  "detail_url": "/v1/conversations/agent-01M2KR6R0079D934XTRGMJVSF3/transcript",
+                  "created_at": "2026-09-16T11:02:31.442Z",
+                  "updated_at": "2026-09-16T11:06:40.215Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not exactly one of `option` and `text`, the option is not one of the task's rows, or the text is blank, longer than 2000 bytes, or more than one line.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "option 4 is not one of the rows on offer: 1 (Yes), 2 (Yes, and always allow access to build/ from this project), 3 (No)"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Another caller sent this message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "task \"01M2KR7X4QC3N8ZB0H5WFTJ2AK\" was sent by \"muse\", so it cannot be answered by \"scratch\""
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "The task is not in `needs_input`, or the question on screen is not the one the task reported. Nothing was typed. Read the task and decide again.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "the question on screen is not the one this task reported, so nothing was typed. The task now shows what is on screen (a permission question); read it and answer again"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The question is of a kind this API cannot answer safely: an AskUserQuestion menu, a question the lobby cannot read, or words for a permission prompt that has no No row. Retrying will not help; relay it to a person.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "this question is an AskUserQuestion menu, which this API cannot answer. Terminal Lobby answers those as data through the question card in the lobby, where session-events holds the call, rather than by typing into the menu, and this service does not reach session-events. Answer it in the lobby or the terminal, then poll the task again"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -602,6 +797,44 @@
           "description": "A 26-character sortable identifier."
         },
         "example": "01M2KR7X4QC3N8ZB0H5WFTJ2AK"
+      },
+      "Wait": {
+        "name": "wait",
+        "in": "query",
+        "required": false,
+        "description": "How many seconds to hold the request for, from 0 to 300. Omitted or 0 means do not wait, which is how the route behaved before the parameter existed. Anything else that is not a whole number in that range is refused with 400 before anything happens.",
+        "schema": {
+          "type": "integer",
+          "description": "Seconds, 0 to 300.",
+          "minimum": 0,
+          "maximum": 300,
+          "default": 0
+        },
+        "example": 120
+      },
+      "TranscriptAfter": {
+        "name": "after",
+        "in": "query",
+        "required": false,
+        "description": "Return only messages whose `index` is greater than this. Pass the highest index you have already read to get what was said since. An index past the end returns an empty list, not an error.",
+        "schema": {
+          "type": "integer",
+          "description": "A message index, 0 or more.",
+          "minimum": 0
+        },
+        "example": 41
+      },
+      "TranscriptLast": {
+        "name": "last",
+        "in": "query",
+        "required": false,
+        "description": "Return at most this many messages, the most recent ones. Applied after `after` when both are given. `last=0` returns no messages and still reports `total`.",
+        "schema": {
+          "type": "integer",
+          "description": "A count, 0 or more.",
+          "minimum": 0
+        },
+        "example": 5
       }
     },
     "responses": {
@@ -845,7 +1078,36 @@
           },
           "question": {
             "type": "string",
-            "description": "Present on `needs_input` only: what the agent is asking a person. It cannot be answered through this API \u2014 someone has to answer it in the terminal interface \u2014 so relay it."
+            "description": "Present on `needs_input` only: what the agent is asking. For a permission prompt, the tool, what it will do and the prompt's own question; for a plan approval, the last lines of the plan; for an AskUserQuestion, the question as the agent posed it; otherwise the bottom of the terminal."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Present on `needs_input` only: what sort of question it is. `permission` and `plan` can be answered with `POST /v1/tasks/{id}/answer`; `choice` and `unknown` need a person.",
+            "enum": [
+              "permission",
+              "plan",
+              "choice",
+              "unknown"
+            ]
+          },
+          "options": {
+            "type": "array",
+            "description": "Present on `needs_input` when the question offers rows: each one's number and label exactly as drawn. Answer with the number. Labels can change while a question stands, such as a context percentage climbing, so read them fresh.",
+            "items": {
+              "$ref": "#/components/schemas/TaskOption"
+            }
+          },
+          "answer_with": {
+            "type": "array",
+            "description": "Present on `needs_input` when this API can answer the question: the answer bodies it takes, `option`, `text` or both. Absent means a person has to answer it.",
+            "items": {
+              "type": "string",
+              "description": "A field of AnswerRequest.",
+              "enum": [
+                "option",
+                "text"
+              ]
+            }
           },
           "result": {
             "type": "string",
@@ -906,10 +1168,16 @@
         "type": "object",
         "description": "One thing that was said in a conversation.",
         "required": [
+          "index",
           "role",
           "text"
         ],
         "properties": {
+          "index": {
+            "type": "integer",
+            "description": "This message's position in the whole history, counted from 0. It names the same message on every call; pass the highest one you have read as `after` to get only what came since.",
+            "minimum": 0
+          },
           "role": {
             "type": "string",
             "description": "Who said it.",
@@ -928,6 +1196,75 @@
             "description": "When, as recorded by the harness. Absent on the few records that carry no timestamp."
           }
         }
+      },
+      "TaskOption": {
+        "type": "object",
+        "description": "One row a blocked task's question offers.",
+        "required": [
+          "index",
+          "label"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "description": "The row's number as the question draws it, counted from 1. Send it as `option` to pick the row.",
+            "minimum": 1
+          },
+          "label": {
+            "type": "string",
+            "description": "The row's text exactly as drawn."
+          }
+        }
+      },
+      "AnswerRequest": {
+        "type": "object",
+        "description": "An answer to a blocked task's question: exactly one of `option` and `text`, from the kinds the task's `answer_with` lists.",
+        "additionalProperties": false,
+        "oneOf": [
+          {
+            "required": [
+              "option"
+            ]
+          },
+          {
+            "required": [
+              "text"
+            ]
+          }
+        ],
+        "properties": {
+          "option": {
+            "type": "integer",
+            "description": "The `index` of one of the task's `options`.",
+            "minimum": 1,
+            "example": 1
+          },
+          "text": {
+            "type": "string",
+            "description": "Words, on one line. For a permission prompt they decline the tool call and tell the agent what to do instead; for a plan approval they go back as feedback. Leading and trailing spaces are dropped.",
+            "minLength": 1,
+            "maxLength": 2000,
+            "example": "Do not delete build/; run make clean instead."
+          }
+        }
+      },
+      "AnswerResult": {
+        "description": "The task after an answer, with a warning when the answer was typed but the dialog had not visibly cleared.",
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Task"
+          },
+          {
+            "type": "object",
+            "description": "What an answer adds to the task.",
+            "properties": {
+              "warning": {
+                "type": "string",
+                "description": "Present only when the answer was typed but the dialog was still on screen when the request returned. If it is still up, the task returns to `needs_input` within a few seconds; read the task before answering again."
+              }
+            }
+          }
+        ]
       }
     }
   }

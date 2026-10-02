@@ -2438,6 +2438,13 @@ label.tl-set-row-label {
   font-weight: 400;
   font-size: calc(12.5px * var(--tl-text-scale, 1));
 }
+/* The call in flight's second line, after its target: a command's
+   description, where a search looks. Muted, and the first thing the
+   ellipsis takes when the row runs out of room. */
+.tl-live-detail {
+  font-weight: 400;
+  color: var(--text-muted);
+}
 .tl-group-meta {
   flex: none;
   margin-left: auto;

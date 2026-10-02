@@ -13,7 +13,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { isSlashCommand, sameCommand } from "../src/logic/compose.logic";
-import { withPendingPrompts } from "../src/components/timeline.logic";
+import { deriveRows, withPendingPrompts, type TimelineRow } from "../src/components/timeline.logic";
 import type { Event } from "../src/types/events";
 
 const ev = (id: number, body: string): Event =>
@@ -93,5 +93,45 @@ describe("showing a prompt before the transcript has it", () => {
     const events = [ev(1, "hello"), ev(2, "/wrap-up")];
     const got = withPendingPrompts(events, [prompt("/help")]);
     expect(got.slice(0, 2)).toEqual(events);
+  });
+});
+
+/**
+ * "Working…" says the session has the message, so a prompt still in flight
+ * must not raise it. Send puts the bubble up dimmed at once, and POST /prompt
+ * can take 4 s or more to answer when the session is waking; the row used to
+ * appear over that whole window, before the message had reached the session at
+ * all (Viktor, 2026-10-02). It appears when the server answers.
+ */
+describe("the working row waits for the server to take the prompt", () => {
+  const turn = (id: number, kind: Event["kind"], turnId: string, body = ""): Event =>
+    ({ id, kind, session: "s", turnId, body, at: id }) as Event;
+  const kinds = (rows: TimelineRow[]) => rows.map((r) => r.kind);
+  const idle = [
+    turn(1, "user", "t1", "hello"),
+    turn(2, "text", "t1", "hi"),
+    turn(3, "turn_end", "t1"),
+  ];
+  const running = [turn(1, "user", "t1", "hello"), turn(2, "text", "t1", "on it")];
+
+  it("draws no working row while the prompt is still sending", () => {
+    const rows = deriveRows(
+      withPendingPrompts(idle, [prompt("deploy the api", { sending: true })]),
+    );
+    expect(kinds(rows)).not.toContain("working");
+    expect(rows.at(-1)).toMatchObject({ kind: "user", body: "deploy the api", sending: true });
+  });
+
+  it("draws it once the server has taken the prompt", () => {
+    const rows = deriveRows(withPendingPrompts(idle, [prompt("deploy the api")]));
+    expect(rows.at(-1)!.kind).toBe("working");
+  });
+
+  it("leaves the running turn's row alone while a mid-turn prompt is sending", () => {
+    const rows = deriveRows(withPendingPrompts(running, [prompt("also this", { sending: true })]));
+    const working = rows.filter((r) => r.kind === "working");
+    expect(working).toHaveLength(1);
+    expect(working[0]!.turnKey).toBe("t1");
+    expect(rows.at(-1)).toMatchObject({ kind: "user", body: "also this" });
   });
 });
