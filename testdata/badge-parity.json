@@ -10,7 +10,8 @@
     "`visits[name]` is when the user last looked at that session; `states[name].at`",
     "is when it reached its current state. Read AFTER it finished means seen.",
     "Both sides derive the seen set that way rather than being handed it.",
-    "Every session carries owner:'wizard' because /sessions stamps owner on your own sessions too. An earlier fixture left it out, which let a counter that excluded any session with an owner pass while drawing zero in production."
+    "Every session carries owner:'wizard' because /sessions stamps owner on your own sessions too. An earlier fixture left it out, which let a counter that excluded any session with an owner pass while drawing zero in production.",
+    "A session with quiet:true is a Caller's or System's. The push sender drops it before counting (forgetSystemSessions) and the page must too; the Go side feeds them to forgetSystemSessions as its system set."
   ],
   "cases": [
     {
@@ -326,6 +327,55 @@
         }
       },
       "want": 1
+    },
+    {
+      "case": "Muse's sessions waiting and unread do not count, the live shape that read 27 against 7",
+      "sessions": [
+        {
+          "name": "mine",
+          "state": "awaiting",
+          "owner": "wizard"
+        },
+        {
+          "name": "mine-done",
+          "state": "done",
+          "owner": "wizard"
+        },
+        {
+          "name": "muse-asks",
+          "state": "awaiting",
+          "owner": "wizard",
+          "quiet": true
+        },
+        {
+          "name": "muse-a",
+          "state": "done",
+          "owner": "wizard",
+          "quiet": true
+        },
+        {
+          "name": "muse-b",
+          "state": "done",
+          "owner": "wizard",
+          "quiet": true
+        }
+      ],
+      "visits": {},
+      "states": {
+        "mine-done": {
+          "state": "done",
+          "at": 1000
+        },
+        "muse-a": {
+          "state": "done",
+          "at": 1000
+        },
+        "muse-b": {
+          "state": "done",
+          "at": 1000
+        }
+      },
+      "want": 2
     }
   ]
 }

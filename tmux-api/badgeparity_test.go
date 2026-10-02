@@ -26,6 +26,7 @@ type parityFixture struct {
 		Sessions []struct {
 			Name  string `json:"name"`
 			State string `json:"state"`
+			Quiet bool   `json:"quiet"`
 		} `json:"sessions"`
 		Visits map[string]int64 `json:"visits"`
 		States map[string]struct {
@@ -51,11 +52,17 @@ func TestBadgeParityWithTheBrowser(t *testing.T) {
 
 	for _, c := range fx.Cases {
 		t.Run(c.Case, func(t *testing.T) {
-			// What the poll would hand the sender.
+			// What the poll would hand the sender, with a Caller's or System's
+			// session dropped the way the tick drops it before counting.
 			states := map[string]string{}
+			system := map[string]bool{}
 			for _, s := range c.Sessions {
 				states[s.Name] = s.State
+				if s.Quiet {
+					system[s.Name] = true
+				}
 			}
+			(&pushSender{}).forgetSystemSessions("wizard", system, states, map[string]string{}, map[string]int64{})
 
 			// The device's seen set, derived the way store/visits.ts derives it:
 			// a finished session is SEEN when it was looked at after it reached

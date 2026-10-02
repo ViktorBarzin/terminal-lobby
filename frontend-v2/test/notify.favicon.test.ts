@@ -15,9 +15,7 @@ describe("faviconKind — badge precedence", () => {
   });
 
   it("is 'awaiting' when any session awaits input", () => {
-    expect(faviconKind([S("running"), S("awaiting"), S("done")], false)).toBe(
-      "awaiting",
-    );
+    expect(faviconKind([S("running"), S("awaiting"), S("done")], false)).toBe("awaiting");
   });
 
   it("is 'done' when a bell latched and nothing awaits", () => {
@@ -31,6 +29,13 @@ describe("faviconKind — badge precedence", () => {
 
   it("is '' when nothing awaits, no bell, and every finished session was seen", () => {
     expect(faviconKind([S("done"), S("running")], false, allSeen)).toBe("");
+  });
+
+  it("ignores a quiet (Caller or System) session", () => {
+    const quiet = (state: string): BadgeSession => ({ ...S(state), quiet: true });
+    expect(faviconKind([quiet("awaiting"), S("running")], false)).toBe("");
+    expect(faviconKind([quiet("done")], false)).toBe("");
+    expect(faviconKind([quiet("awaiting"), S("done")], false)).toBe("done");
   });
 });
 
@@ -51,9 +56,7 @@ describe("faviconKind — unseen-done tracks the SAME predicate as the title", (
   });
 
   it("still lets awaiting outrank an unseen done", () => {
-    expect(faviconKind([S("awaiting", "a"), S("done", "b")], false)).toBe(
-      "awaiting",
-    );
+    expect(faviconKind([S("awaiting", "a"), S("done", "b")], false)).toBe("awaiting");
   });
 
   it("defaults to 'every done is unseen' when no predicate is injected", () => {

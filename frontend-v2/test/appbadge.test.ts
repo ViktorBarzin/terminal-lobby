@@ -68,6 +68,19 @@ describe("waitingCount", () => {
     ];
     expect(waitingCount(list, doneIsUnseen)).toBe(2);
   });
+
+  // A Caller's (Muse's) or System's session raises no notification, so the push
+  // sender drops it before it counts (tmux-api forgetSystemSessions). Counting it
+  // here put an open tab at 27 against a closed app's 7, measured 2026-10-02.
+  it("leaves out a quiet (Caller or System) session, awaiting or unseen-done", () => {
+    const list = [
+      { name: "mine", state: "awaiting" },
+      { name: "muse-asks", state: "awaiting", quiet: true },
+      { name: "muse-done", state: "done", quiet: true },
+      { name: "mine-done", state: "done", quiet: false },
+    ];
+    expect(waitingCount(list, doneIsUnseen, "wizard")).toBe(2);
+  });
 });
 
 describe("applyAppBadge", () => {

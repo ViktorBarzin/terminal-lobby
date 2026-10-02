@@ -22,7 +22,7 @@ const FIXTURE = JSON.parse(
 ) as {
   cases: {
     case: string;
-    sessions: { name: string; state: string; owner?: string }[];
+    sessions: { name: string; state: string; owner?: string; quiet?: boolean }[];
     visits: Record<string, number>;
     states: Record<string, { state: string; at: number }>;
     want: number;
@@ -43,6 +43,7 @@ describe("badge parity — the page's arithmetic", () => {
         name: s.name,
         state: s.state || undefined,
         owner: s.owner,
+        quiet: s.quiet,
       }));
       expect(waitingCount(list, (s) => store.isUnseen(s), "wizard")).toBe(c.want);
     });

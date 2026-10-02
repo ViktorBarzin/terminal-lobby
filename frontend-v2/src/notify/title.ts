@@ -75,10 +75,14 @@ export interface TitleParts {
 /** Compose the full document.title string (attention prefix + badge + body). */
 export function composeTitle(p: TitleParts): string {
   const isUnseen = p.isUnseen ?? ((s: TitleSession) => s.state === "done");
+  // A Caller's or System's session raises no notification, so it is left out of
+  // the badge the same way the push sender and the app icon leave it out. It
+  // still names the body when it is the one on screen.
+  const loud = p.sessions.filter((s) => !s.quiet);
   const counts: TitleCounts = {
-    awaiting: p.sessions.filter((s) => s.state === "awaiting").length,
-    running: p.sessions.filter((s) => s.state === "running").length,
-    unseenDone: p.sessions.filter(isUnseen).length,
+    awaiting: loud.filter((s) => s.state === "awaiting").length,
+    running: loud.filter((s) => s.state === "running").length,
+    unseenDone: loud.filter(isUnseen).length,
   };
   const badge = titleBadge(counts);
   // The tab speaks in titles like every other surface, through the one function

@@ -23,7 +23,12 @@
 export type FaviconKind = "" | "awaiting" | "done";
 
 /** The only session fields the badge needs. */
-export type BadgeSession = { name: string; state?: string };
+export type BadgeSession = {
+  name: string;
+  state?: string;
+  /** A Caller's or System's session: it never badges, like the title and icon. */
+  quiet?: boolean;
+};
 
 /** The base tab icon; swapped for a badged data: URL, restored to this on clear. */
 export const FAVICON_HREF = "/icon-192.png";
@@ -41,8 +46,9 @@ export function faviconKind(
   attentionBell: boolean,
   isUnseen: (s: BadgeSession) => boolean = (s) => s.state === "done",
 ): FaviconKind {
-  if (sessions.some((s) => s.state === "awaiting")) return "awaiting";
-  if (attentionBell || sessions.some(isUnseen)) return "done";
+  const loud = sessions.filter((s) => !s.quiet);
+  if (loud.some((s) => s.state === "awaiting")) return "awaiting";
+  if (attentionBell || loud.some(isUnseen)) return "done";
   return "";
 }
 
@@ -84,8 +90,7 @@ export function renderBadgedFavicon(
       ctx.lineTo(cx + r * 0.5, cy - r * 0.35);
       ctx.stroke();
     } else {
-      ctx.fillStyle =
-        css.getPropertyValue("--state-awaiting").trim() || "#8b5cf6";
+      ctx.fillStyle = css.getPropertyValue("--state-awaiting").trim() || "#8b5cf6";
       ctx.fill();
     }
     done(canvas.toDataURL("image/png"));

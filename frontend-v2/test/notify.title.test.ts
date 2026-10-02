@@ -29,7 +29,10 @@ describe("composeTitle", () => {
   });
 
   it("prefixes the max-state count badge", () => {
-    const sessions: TitleSession[] = [{ name: "a", state: "awaiting" }, { name: "b", state: "running" }];
+    const sessions: TitleSession[] = [
+      { name: "a", state: "awaiting" },
+      { name: "b", state: "running" },
+    ];
     expect(composeTitle({ ...base, sessions })).toBe("(1●) terminal-lobby");
   });
 
@@ -37,23 +40,23 @@ describe("composeTitle", () => {
     const sessions: TitleSession[] = [
       { name: "worktree", state: "running", pane_current_command: "claude" },
     ];
-    expect(
-      composeTitle({ ...base, sessions, activeSession: "worktree" }),
-    ).toBe("(1⋯) claude — worktree");
+    expect(composeTitle({ ...base, sessions, activeSession: "worktree" })).toBe(
+      "(1⋯) claude — worktree",
+    );
   });
 
   it("falls back to tmux: <user>/<session> when no command is known", () => {
     const sessions: TitleSession[] = [{ name: "worktree", state: "running" }];
-    expect(
-      composeTitle({ ...base, sessions, activeSession: "worktree" }),
-    ).toBe("(1⋯) tmux: wizard/worktree");
+    expect(composeTitle({ ...base, sessions, activeSession: "worktree" })).toBe(
+      "(1⋯) tmux: wizard/worktree",
+    );
   });
 
   it("leads with the '● <session>' attention prefix while latched", () => {
     const sessions: TitleSession[] = [{ name: "a", state: "awaiting" }];
-    expect(
-      composeTitle({ ...base, sessions, attentionSession: "a" }),
-    ).toBe("● a (1●) terminal-lobby");
+    expect(composeTitle({ ...base, sessions, attentionSession: "a" })).toBe(
+      "● a (1●) terminal-lobby",
+    );
   });
 
   it("honors a custom isUnseen predicate for the done count", () => {
@@ -62,9 +65,9 @@ describe("composeTitle", () => {
       { name: "b", state: "done" },
     ];
     // only 'a' counts as unseen → badge shows 1, not 2.
-    expect(
-      composeTitle({ ...base, sessions, isUnseen: (s) => s.name === "a" }),
-    ).toBe("(1✓) terminal-lobby");
+    expect(composeTitle({ ...base, sessions, isUnseen: (s) => s.name === "a" })).toBe(
+      "(1✓) terminal-lobby",
+    );
   });
 
   it("drops the (N✓) badge once every finished session has been seen", () => {
@@ -72,8 +75,24 @@ describe("composeTitle", () => {
       { name: "a", state: "done" },
       { name: "b", state: "done" },
     ];
-    expect(composeTitle({ ...base, sessions, isUnseen: () => false })).toBe(
-      "terminal-lobby",
-    );
+    expect(composeTitle({ ...base, sessions, isUnseen: () => false })).toBe("terminal-lobby");
+  });
+
+  it("leaves quiet (Caller or System) sessions out of every count", () => {
+    const sessions: TitleSession[] = [
+      { name: "mine", state: "awaiting" },
+      { name: "muse", state: "awaiting", quiet: true },
+      { name: "muse-run", state: "running", quiet: true },
+      { name: "muse-done", state: "done", quiet: true },
+    ];
+    expect(composeTitle({ ...base, sessions })).toBe("(1●) terminal-lobby");
+    expect(composeTitle({ ...base, sessions: sessions.slice(1) })).toBe("terminal-lobby");
+  });
+
+  it("still names an active quiet session in the body", () => {
+    const sessions: TitleSession[] = [
+      { name: "muse", state: "done", quiet: true, pane_current_command: "claude" },
+    ];
+    expect(composeTitle({ ...base, sessions, activeSession: "muse" })).toBe("claude — muse");
   });
 });

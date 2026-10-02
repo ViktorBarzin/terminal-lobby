@@ -40,6 +40,11 @@ export interface BadgeSession {
    * flag, which is why `waitingCount` needs to know who you are to use it.
    */
   owner?: string;
+  /**
+   * A Caller's or System's session (lobby.logic notifySnapshotOf). It raises no
+   * notification, and the push sender drops it before it counts.
+   */
+  quiet?: boolean;
 }
 
 /** The subset of Navigator the Badging API adds (absent on most browsers). */
@@ -57,7 +62,10 @@ export type BadgingNavigator = Navigator & {
  * false for anything whose state is not `done`.
  *
  * A session someone else owns is skipped entirely. It is their work, and the
- * server's copy of this count never sees it.
+ * server's copy of this count never sees it. So is a quiet one (a Caller's or
+ * System's): the push sender drops those before it counts (tmux-api
+ * forgetSystemSessions), and counting them here put an open tab at 27 against
+ * a closed app's 7 while Muse was busy (measured 2026-10-02).
  */
 export function waitingCount<S extends BadgeSession>(
   sessions: readonly S[],
@@ -80,6 +88,7 @@ export function waitingCount<S extends BadgeSession>(
     // With no `me` supplied nothing is excluded, which keeps the pure function
     // usable from a caller that has no identity to offer.
     if (me && s.owner && s.owner !== me) continue;
+    if (s.quiet) continue;
     if (s.state === "awaiting" || isUnseen(s)) n++;
   }
   return n;
