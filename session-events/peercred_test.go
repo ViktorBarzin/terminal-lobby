@@ -31,7 +31,7 @@ func procFixture(t *testing.T, uid int) {
 	t.Cleanup(func() { procNetTCP = old })
 }
 
-// hookReq is a request shaped like the one claude-se-hook sends: loopback, with
+// hookReq is a request shaped like the one a hook script sends: loopback, with
 // the connection's own local address on the context the way net/http sets it.
 func hookReq(body string) *http.Request {
 	r := httptest.NewRequest("POST", "/hooks/session-start", strings.NewReader(body))

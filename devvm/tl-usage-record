@@ -18,7 +18,7 @@
 # a gateway with a spend limit, absent on enterprise seats.
 #
 # Wired org-wide via /etc/claude-code/managed-settings.json (infra repo),
-# alongside claude-se-hook and claude-tmux-state. Managed settings win over the
+# alongside claude-tmux-state. Managed settings win over the
 # user's own, which is what leaves ~/.claude/settings.json still holding THEIR
 # statusLine for us to read back and run.
 #
@@ -179,7 +179,7 @@ record() {
 
     # Asked for by pane id: untargeted, tmux answers a pane that has gone with
     # the most recently active session, and the reading would be filed under
-    # somebody else's (claude-se-hook says more).
+    # somebody else's.
     [ -n "${TMUX_PANE:-}" ] || return 0
     session="$(tmux display -p -t "$TMUX_PANE" '#{session_name}' 2>/dev/null || true)"
     [ -n "$session" ] || return 0
