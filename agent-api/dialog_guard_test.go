@@ -175,3 +175,31 @@ func TestAModlessTurnAtADialogReportsNeedsInput(t *testing.T) {
 			v.Status, v.Kind, v.Question, v.Error)
 	}
 }
+
+// Measured live on 2026-10-02 (rv-fx4-nomod): with the mod disconnected,
+// Ctrl-C left its dialog drawn. Escape took it down, Claude Code's own
+// permission prompt came up beneath it, and a second Escape interrupted the
+// turn. A cancel presses Escape while a menu stays, a few times at most.
+func TestCancelEscapesAMenuThatCtrlCLeaves(t *testing.T) {
+	h := newHarness(t)
+	h.readyConversation("c1")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.setStateLocked(k, "running")
+		f.panes[k] = menuPane
+	}
+	escapes := 0
+	h.sessions.onEscape = func(f *fakeSessions, k string) {
+		escapes++
+		if escapes == 2 {
+			f.panes[k] = "\n────────\n❯ \n────────\n"
+		}
+	}
+	task := h.sendMessage("c1", "touch it")
+	h.waitStatus(task, StatusRunning)
+
+	var got cancelReply
+	h.decodeJSON(h.call("POST", "/v1/tasks/"+task+"/cancel", ""), http.StatusOK, &got)
+	if !got.Interrupted || got.Warning != "" || escapes != 2 {
+		t.Fatalf("got %+v after %d escapes, want interrupted after two", got, escapes)
+	}
+}

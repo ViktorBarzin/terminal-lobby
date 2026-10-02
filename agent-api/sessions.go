@@ -159,6 +159,9 @@ type Sessions interface {
 	PromptUncleared(osUser, session, text string) error
 	// Cancel interrupts the turn in flight.
 	Cancel(osUser, session string) error
+	// Escape presses Escape once, which takes down the menu a dialog draws
+	// (dialogguard.go). Never sent unless a menu is on the pane.
+	Escape(osUser, session string) error
 	// Option reads one tmux session option; ok=false means the read did not
 	// land on the session asked for.
 	Option(osUser, session, name string) (string, bool)
@@ -369,6 +372,10 @@ func (t *tmuxSessions) PromptUncleared(osUser, session, text string) error {
 
 func (t *tmuxSessions) Cancel(osUser, session string) error {
 	return t.in.Cancel(osUser, session)
+}
+
+func (t *tmuxSessions) Escape(osUser, session string) error {
+	return t.in.Keys(osUser, session, []string{"Escape"})
 }
 
 func (t *tmuxSessions) Option(osUser, session, name string) (string, bool) {

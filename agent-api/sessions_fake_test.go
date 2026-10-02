@@ -65,6 +65,9 @@ type fakeSessions struct {
 	answerResp *sessionio.AnswerResponse
 	answerErr  error
 	onAnswer   func(f *fakeSessions, key string)
+	// onEscape runs (holding the lock) on every Escape, so a test can take a
+	// menu off the pane.
+	onEscape func(f *fakeSessions, key string)
 
 	// resumes and kills record the lifecycle verbs by "<osUser>/<session>".
 	// resumeErr and killErr are faults a test can arm.
@@ -316,6 +319,16 @@ func (f *fakeSessions) Cancel(osUser, session string) error {
 	defer f.mu.Unlock()
 	f.cancels = append(f.cancels, key(osUser, session))
 	return f.cancelErr
+}
+
+func (f *fakeSessions) Escape(osUser, session string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.events = append(f.events, "escape "+session)
+	if f.onEscape != nil {
+		f.onEscape(f, key(osUser, session))
+	}
+	return nil
 }
 
 func (f *fakeSessions) Option(osUser, session, name string) (string, bool) {

@@ -25,6 +25,11 @@ import (
 // pane redraws within a frame, so this only runs out when something is wrong.
 const dialogSettle = 3 * time.Second
 
+// menuEscapes caps the Escapes a cancel presses at a menu Ctrl-C left drawn:
+// one for the mod's dialog, one for Claude Code's prompt beneath it, one
+// spare.
+const menuEscapes = 3
+
 // cancelWords is what Claude is told when a Caller cancels a turn that was
 // waiting on a person.
 const cancelWords = "The caller cancelled this turn. Do not run this and do not continue; stop here."
@@ -73,7 +78,8 @@ func declineFor(q questionReading) sessionio.AnswerRequest {
 // could not, or "". A dialog the mod holds is declined first and must be
 // seen to go, because Ctrl-C does not take the mod's dialog down and its
 // stamp of "done" would make the session look ready for the next message.
-// Whatever Ctrl-C leaves drawn as a menu on the pane is reported too.
+// A menu Ctrl-C leaves drawn on the pane is escaped, and reported if it
+// stays.
 func (s *Server) interrupt(ctx context.Context, osUser, session, state string) string {
 	if q := s.readQuestion(osUser, session); q.Kind != KindUnknown && q.ToolID != "" {
 		resp, err := s.Sessions.AnswerDialog(ctx, osUser, session, declineFor(q))
@@ -89,7 +95,19 @@ func (s *Server) interrupt(ctx context.Context, osUser, session, state string) s
 	if err := s.Sessions.Cancel(osUser, session); err != nil {
 		return err.Error()
 	}
-	if s.menuStays(osUser, session) {
+	// Ctrl-C does not take every menu down. Measured live on 2026-10-02
+	// (rv-fx4-nomod): the dialog of a mod that had lost its connection stayed
+	// drawn, Escape took it down, Claude Code's own prompt came up beneath
+	// it, and a second Escape interrupted the turn. So Escape is pressed
+	// while a menu stays, a few times at most, and only then.
+	stays := s.menuStays(osUser, session)
+	for i := 0; stays && i < menuEscapes; i++ {
+		if err := s.Sessions.Escape(osUser, session); err != nil {
+			break
+		}
+		stays = s.menuStays(osUser, session)
+	}
+	if stays {
 		if state == sessionio.StateAwaiting {
 			// Cancel stamped done over a dialog that is still up; put the
 			// state back, so nothing reads the session as ready.
