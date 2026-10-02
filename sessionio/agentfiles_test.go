@@ -231,3 +231,41 @@ func TestSessionDir(t *testing.T) {
 		}
 	}
 }
+
+// AgentTranscript is how agent-api finds one subagent's transcript from an id
+// it read out of the session's own transcript, which the session's OS user
+// writes. The id is untrusted, so it names a file directly under subagents/
+// or nothing, and a link anywhere on the way is not followed.
+func TestAgentTranscript(t *testing.T) {
+	base := t.TempDir()
+	outside := filepath.Join(base, "outside")
+	layDown(t, outside, map[string]string{"agent-leak.jsonl": "{}\n"}, time.Now())
+	dir := filepath.Join(base, "sess")
+	layDown(t, dir, map[string]string{"subagents/agent-a7181c2c2fcd90994.jsonl": "{}\n"}, time.Now())
+	if err := os.Symlink(filepath.Join(outside, "agent-leak.jsonl"), filepath.Join(dir, "subagents", "agent-linked.jsonl")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	linked := filepath.Join(base, "linked-sess")
+	if err := os.MkdirAll(linked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(linked, "subagents")); err != nil {
+		t.Fatal(err)
+	}
+
+	if p, err := AgentTranscript(dir, "a7181c2c2fcd90994"); err != nil || p != filepath.Join(dir, "subagents", "agent-a7181c2c2fcd90994.jsonl") {
+		t.Fatalf("AgentTranscript = %q, %v", p, err)
+	}
+	for _, c := range []struct{ dir, id string }{
+		{dir, "missing"},
+		{dir, "linked"},
+		{dir, "../../outside/agent-leak"},
+		{dir, "a/b"},
+		{dir, ""},
+		{linked, "leak"},
+	} {
+		if p, err := AgentTranscript(c.dir, c.id); err == nil {
+			t.Errorf("AgentTranscript(%q, %q) = %q, want an error", c.dir, c.id, p)
+		}
+	}
+}

@@ -172,6 +172,9 @@ type Sessions interface {
 	// projects root, is an error rather than an empty history — the two mean
 	// different things to a caller deciding whether a turn produced anything.
 	TranscriptLines(osUser, session string) ([][]byte, error)
+	// AgentTranscriptLines returns what one of the session's subagents wrote
+	// in its own transcript, subagents/agent-<id>.jsonl beside the session's.
+	AgentTranscriptLines(osUser, session, agentID string) ([][]byte, error)
 	// Pane returns the visible text of the session's active pane, which is
 	// where a pending permission dialog lives. The transcript does not carry
 	// one while it is still on screen.
@@ -455,15 +458,41 @@ func (t *tmuxSessions) AnswerDialog(ctx context.Context, osUser, session string,
 // session's own OS user, so it is untrusted input, and only a .jsonl inside
 // that user's own projects root is opened.
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {
+	path, err := t.transcriptPath(osUser, session)
+	if err != nil {
+		return nil, err
+	}
+	return readTranscript(path)
+}
+
+// AgentTranscriptLines finds the subagent's transcript beside the session's,
+// which is what keeps it inside the user's projects root too, and holds the
+// id (read out of that user's transcript) to sessionio.AgentTranscript's
+// rules.
+func (t *tmuxSessions) AgentTranscriptLines(osUser, session, agentID string) ([][]byte, error) {
+	path, err := t.transcriptPath(osUser, session)
+	if err != nil {
+		return nil, err
+	}
+	agentPath, err := sessionio.AgentTranscript(sessionio.SessionDir(path), agentID)
+	if err != nil {
+		return nil, err
+	}
+	return readTranscript(agentPath)
+}
+
+// transcriptPath is the session's transcript, as sessionio.SessionMap resolves
+// and contains it.
+func (t *tmuxSessions) transcriptPath(osUser, session string) (string, error) {
 	root := sessionio.ProjectsRoot(t.homeBase, osUser)
-	path := ""
 	// Get falls back to OptionTranscriptHint itself, under the same rule.
-	if info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session); ok {
-		path = info.Transcript
+	if info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session); ok && info.Transcript != "" {
+		return info.Transcript, nil
 	}
-	if path == "" {
-		return nil, errNoTranscript
-	}
+	return "", errNoTranscript
+}
+
+func readTranscript(path string) ([][]byte, error) {
 	lines, _, err := sessionio.ReadFrom(path, 0)
 	if err != nil {
 		return nil, transcriptReadError(path, err)

@@ -120,6 +120,44 @@ func ListAgentFiles(sessionDir string) ([]AgentFile, error) {
 	return out, nil
 }
 
+// AgentTranscript is the transcript of the subagent agentID under a session
+// directory: subagents/agent-<id>.jsonl, a regular file reached through real
+// directories. The id comes out of a transcript its session's OS user writes,
+// so it is held to the id charset (no separators, no dots) and a link is not
+// followed anywhere on the way.
+func AgentTranscript(sessionDir, agentID string) (string, error) {
+	if !agentIDOK(agentID) {
+		return "", fmt.Errorf("agent id %q: not an agent id", agentID)
+	}
+	if ok, err := realDirs(sessionDir, "subagents"); err != nil {
+		return "", err
+	} else if !ok {
+		return "", fmt.Errorf("%s: no subagents directory", sessionDir)
+	}
+	p := filepath.Join(sessionDir, "subagents", agentFilePrefix+agentID+agentFileSuffix)
+	info, err := os.Lstat(p)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s: not a regular file", p)
+	}
+	return p, nil
+}
+
+// agentIDOK is the charset Claude Code's agent ids are drawn from.
+func agentIDOK(id string) bool {
+	if id == "" || len(id) > 128 {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // realDirs reports whether each of the nested directories elems, below
 // sessionDir, is really there: a directory, and not a link to one.
 func realDirs(sessionDir string, elems ...string) (bool, error) {

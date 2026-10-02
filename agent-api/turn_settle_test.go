@@ -207,7 +207,7 @@ func TestBackgroundTasksOutstanding(t *testing.T) {
 			for _, l := range c.lines {
 				lines = append(lines, []byte(l))
 			}
-			if got := backgroundOutstanding(lines); len(got) != c.want {
+			if got := backgroundOutstanding(lines, agentView{}); len(got) != c.want {
 				t.Fatalf("outstanding %v, want %d", got, c.want)
 			}
 		})
@@ -307,7 +307,7 @@ func TestBackgroundSubagentsOutstanding(t *testing.T) {
 			for _, l := range c.lines {
 				lines = append(lines, []byte(l))
 			}
-			if got := backgroundOutstanding(lines); len(got) != c.want {
+			if got := backgroundOutstanding(lines, agentView{}); len(got) != c.want {
 				t.Fatalf("outstanding %v, want %d", got, c.want)
 			}
 		})
@@ -354,7 +354,7 @@ func TestScheduledWakeupIsOutstanding(t *testing.T) {
 			for _, l := range c.lines {
 				lines = append(lines, []byte(l))
 			}
-			if got := backgroundOutstanding(lines); len(got) != c.want {
+			if got := backgroundOutstanding(lines, agentView{}); len(got) != c.want {
 				t.Fatalf("outstanding %v, want %d", got, c.want)
 			}
 		})

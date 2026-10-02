@@ -286,3 +286,37 @@ func TestTmuxSessionsKillTombstonesBothNames(t *testing.T) {
 		t.Fatalf("a second kill answered %v, want ErrSessionGone", err)
 	}
 }
+
+// A subagent's transcript is found beside the session's own, through the same
+// stamp and containment rule, and an id from the transcript cannot point the
+// read anywhere else.
+func TestTmuxSessionsAgentTranscriptLines(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, testOSUser, ".claude", "projects", "-home-wizard-code")
+	sub := filepath.Join(root, "abc", "subagents")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	transcript := filepath.Join(root, "abc.jsonl")
+	if err := os.WriteFile(transcript, []byte(assistantLine("main", "2026-10-02T18:54:36Z")+"\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	body := assistantLine("Waiting.", "2026-10-02T18:54:44Z") + "\n" + assistantLine("SUBAGENT-DONE-42", "2026-10-02T18:55:39Z") + "\n"
+	if err := os.WriteFile(filepath.Join(sub, "agent-a7181c2c2fcd90994.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	ts := &tmuxSessions{in: nil, homeBase: base, options: newStampStore(testOSUser, "c1", transcript)}
+	if lines, err := ts.AgentTranscriptLines(testOSUser, "c1", "a7181c2c2fcd90994"); err != nil || len(lines) != 2 {
+		t.Fatalf("got %d lines, err %v; want 2", len(lines), err)
+	}
+	for _, id := range []string{"missing", "../../abc", ""} {
+		if lines, err := ts.AgentTranscriptLines(testOSUser, "c1", id); err == nil {
+			t.Errorf("id %q: got %d lines, want an error", id, len(lines))
+		}
+	}
+	unstamped := &tmuxSessions{in: nil, homeBase: base, options: newStampStore(testOSUser, "c1", "")}
+	if _, err := unstamped.AgentTranscriptLines(testOSUser, "c1", "a7181c2c2fcd90994"); !errors.Is(err, errNoTranscript) {
+		t.Fatalf("unstamped: err %v, want errNoTranscript", err)
+	}
+}

@@ -400,7 +400,14 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			// carries the real answer. Measured live on 2026-10-02: settling
 			// here handed a Caller "I'm waiting for the background command"
 			// as the result.
-			if bg := backgroundOutstanding(turn); len(bg) > 0 {
+			//
+			// A subagent's interim notice is read against the subagent's own
+			// transcript, which says whether anything can still wake it.
+			subagents := agentView{now: s.now(), read: func(id string) ([][]byte, bool) {
+				l, err := s.Sessions.AgentTranscriptLines(t.OSUser, live.Name, id)
+				return l, err == nil
+			}}
+			if bg := backgroundOutstanding(turn, subagents); len(bg) > 0 {
 				if bgSince.IsZero() {
 					bgSince = s.now()
 				}

@@ -26,6 +26,8 @@ type fakeSessions struct {
 	live map[string]*LiveSession
 	// transcripts are the .jsonl lines each session's Claude has written.
 	transcripts map[string][][]byte
+	// agentTranscripts are its subagents' own, keyed "<key>/<agentID>".
+	agentTranscripts map[string][][]byte
 	// panes are what capture-pane would return.
 	panes map[string]string
 	// hints are the OptionTranscriptHint stamps, keyed like live.
@@ -92,12 +94,13 @@ type promptCall struct{ OSUser, Session, Text string }
 
 func newFakeSessions() *fakeSessions {
 	return &fakeSessions{
-		live:         map[string]*LiveSession{},
-		transcripts:  map[string][][]byte{},
-		panes:        map[string]string{},
-		dialogs:      map[string]*modDialog{},
-		hints:        map[string]string{},
-		noTranscript: map[string]bool{},
+		live:             map[string]*LiveSession{},
+		transcripts:      map[string][][]byte{},
+		agentTranscripts: map[string][][]byte{},
+		panes:            map[string]string{},
+		dialogs:          map[string]*modDialog{},
+		hints:            map[string]string{},
+		noTranscript:     map[string]bool{},
 	}
 }
 
@@ -449,6 +452,27 @@ func (f *fakeSessions) TranscriptLines(osUser, session string) ([][]byte, error)
 		return nil, errNoTranscript
 	}
 	return append([][]byte(nil), f.transcripts[k]...), nil
+}
+
+// setAgentTranscript replaces what one of the session's subagents has written.
+func (f *fakeSessions) setAgentTranscript(osUser, session, agentID string, lines ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out [][]byte
+	for _, l := range lines {
+		out = append(out, []byte(l))
+	}
+	f.agentTranscripts[key(osUser, session)+"/"+agentID] = out
+}
+
+func (f *fakeSessions) AgentTranscriptLines(osUser, session, agentID string) ([][]byte, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	lines, ok := f.agentTranscripts[key(osUser, session)+"/"+agentID]
+	if !ok {
+		return nil, errNoTranscript
+	}
+	return append([][]byte(nil), lines...), nil
 }
 
 // readyCalls counts WaitReady, so a test can prove the wait happened.
