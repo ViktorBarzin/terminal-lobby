@@ -46,6 +46,14 @@ type TraceEntry struct {
 	TraceID        string `json:"trace_id"`
 	TaskID         string `json:"task_id,omitempty"`
 	ConversationID string `json:"conversation_id,omitempty"`
+	DelegationID   string `json:"delegation_id,omitempty"`
+	// Event names what a successful write did — delegation.created, .sent,
+	// .undelivered, .done, .failed — so a Loki query can match one field
+	// rather than a verb and a status. Absent on reads and refusals.
+	Event string `json:"event,omitempty"`
+	// Reason is the creator's own words on a delegation.undelivered event,
+	// lifted out of the request so an alert can quote it.
+	Reason string `json:"reason,omitempty"`
 	// Actor is the credential's NAME. On a bearer request authuser puts that
 	// in Identity.Header, never the token itself.
 	Actor string `json:"actor"`

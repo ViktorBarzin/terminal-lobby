@@ -31,6 +31,8 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -128,6 +130,31 @@ func main() {
 		Models:    modelList,
 	}
 	srv.Runner = NewRunner(srv.runTurn)
+
+	// Delegations are kept on disk, under the unit's StateDirectory=. A store
+	// that could not be loaded still serves reads of nothing and refuses
+	// writes with the reason, so one bad file costs this feature and not the
+	// service.
+	delegationsPath := filepath.Join(stateDir(os.Getenv), delegationsFile)
+	store, err := OpenDelegationStore(delegationsPath, nil)
+	if err != nil {
+		log.Printf("agent-api: delegation store: %v", err)
+	}
+	srv.Delegations = store
+	srv.DelegationCreators = delegationCreators(os.Getenv)
+	srv.PublicURL = publicURL(os.Getenv)
+	go store.SweepEvery(delegationSweepInterval)
+	if len(srv.DelegationCreators) == 0 {
+		log.Printf("agent-api: delegations are off: TL_DELEGATION_CREATORS names no Caller (store %s)", delegationsPath)
+	} else {
+		names := make([]string, 0, len(srv.DelegationCreators))
+		for n := range srv.DelegationCreators {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		log.Printf("agent-api: delegations may be created by %s; stored in %s; callbacks name %s",
+			strings.Join(names, ", "), delegationsPath, srv.PublicURL)
+	}
 
 	log.Printf("agent-api: listening on %s (selfUser=%s, claude=%s, trace=%v)",
 		strings.Join(addrs, ", "), self.Username, srv.ClaudeBin, trace.Enabled())

@@ -22,6 +22,12 @@ var everyV1Route = []request{
 	{method: "GET", path: "/v1/tasks/t1"},
 	{method: "POST", path: "/v1/tasks/t1/cancel"},
 	{method: "POST", path: "/v1/tasks/t1/answer", body: `{"option":1}`},
+	{method: "GET", path: "/v1/delegations"},
+	{method: "POST", path: "/v1/delegations", body: `{"caller":"muse","task":"x"}`},
+	{method: "GET", path: "/v1/delegations/d1"},
+	{method: "POST", path: "/v1/delegations/d1/sent"},
+	{method: "POST", path: "/v1/delegations/d1/undelivered", body: `{"reason":"x"}`},
+	{method: "POST", path: "/v1/delegations/d1/result", body: `{"status":"done","result":"x"}`},
 }
 
 // No credential reaches nothing.

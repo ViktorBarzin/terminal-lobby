@@ -2,9 +2,9 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Terminal Lobby agent-api",
-    "version": "1.3.0",
+    "version": "1.4.0",
     "summary": "Start and drive Claude Code conversations on the devvm over HTTP.",
-    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. To send images or files with it, post `multipart/form-data` with a `text` field and one `file` part per file; each file is stored on the workstation and its path is added to the message. It returns immediately with a task id, because a turn takes minutes and sometimes hours. Add `?wait=N` (up to 300 seconds) to hold the request until the turn settles: a short turn then comes back as the finished task in one request.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. Add `?wait=N` to make it a long-poll that returns as soon as the status moves, so each poll you pay for reports a change. On `needs_input` the agent is blocked on a question, which the task carries with its kind and options; answer a permission prompt or a plan approval with `POST /v1/tasks/{id}/answer`, and relay anything else to a person.\n5. `GET /v1/conversations/{id}/transcript?after=<index>` reads only what was said since you last looked.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable \u2014 `POST .../messages` against one is refused with 403. A conversation you created stays yours until you delete it with `DELETE /v1/conversations/{id}`; if it goes 24 hours without a turn the workstation suspends it to free the memory, and your next message resumes it before the turn runs, which adds a few seconds.",
+    "description": "agent-api is Terminal Lobby's machine-facing interface. Terminal Lobby keeps Claude Code conversations alive in tmux on a developer workstation and serves them to a browser; this API serves the same conversations to a program.\n\nHow to use it, in the order a client needs to learn it:\n\n1. Authenticate every request with `Authorization: Bearer <token>`. The token names one caller and resolves to one operating-system account; every conversation you see and create belongs to that account.\n2. `POST /v1/conversations` starts a conversation. You choose the working directory, the model, the reasoning effort and the permission mode. The working directory must be inside that account's `code` directory.\n3. `POST /v1/conversations/{id}/messages` sends a message. To send images or files with it, post `multipart/form-data` with a `text` field and one `file` part per file; each file is stored on the workstation and its path is added to the message. It returns immediately with a task id, because a turn takes minutes and sometimes hours. Add `?wait=N` (up to 300 seconds) to hold the request until the turn settles: a short turn then comes back as the finished task in one request.\n4. `GET /v1/tasks/{id}` polls that task until its status is `done`, `failed` or `cancelled`. Add `?wait=N` to make it a long-poll that returns as soon as the status moves, so each poll you pay for reports a change. On `needs_input` the agent is blocked on a question, which the task carries with its kind and options; answer a permission prompt or a plan approval with `POST /v1/tasks/{id}/answer`, and relay anything else to a person.\n5. `GET /v1/conversations/{id}/transcript?after=<index>` reads only what was said since you last looked.\n\nTwo rules worth knowing before you write the client. A conversation processes one turn at a time: a second message to a busy conversation is queued, not interleaved, and different conversations run concurrently. And a conversation someone started at the keyboard is listable and readable but not writable \u2014 `POST .../messages` against one is refused with 403. A conversation you created stays yours until you delete it with `DELETE /v1/conversations/{id}`; if it goes 24 hours without a turn the workstation suspends it to free the memory, and your next message resumes it before the turn runs, which adds a few seconds.\n\nDelegations run the other way. A session on the workstation can hand a Caller work only that Caller can do, such as reaching a person on a channel it holds. The workstation sends the Caller a message carrying the task and a callback; the Caller does the work and answers with `POST /v1/delegations/{id}/result`, using the same bearer token as every other request. `GET /v1/delegations?status=sent` lists what is waiting on you. A result posted after the delegation's expiry is refused with 410: drop the work, nobody is waiting for it.",
     "license": {
       "name": "AGPL-3.0-or-later"
     }
@@ -29,6 +29,10 @@
     {
       "name": "tasks",
       "description": "Following one message from acceptance to an answer."
+    },
+    {
+      "name": "delegations",
+      "description": "Work the workstation hands to a Caller, and the result the Caller sends back."
     },
     {
       "name": "service",
@@ -857,6 +861,556 @@
           }
         }
       }
+    },
+    "/v1/delegations": {
+      "get": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "listDelegations",
+        "summary": "List the delegations you created or that are handed to you.",
+        "description": "Returns delegations you created or that name you as the Caller, newest first. A Caller checking for work it still owes asks for `?status=sent`. A delegation past its expiry reads as `expired` here as it does everywhere. Finished delegations are kept for 14 days after they finish.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DelegationStatusFilter"
+          },
+          {
+            "$ref": "#/components/parameters/DelegationLimit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The delegations.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DelegationList"
+                },
+                "example": {
+                  "delegations": [
+                    {
+                      "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                      "caller": "muse",
+                      "created_by": "homelab",
+                      "from_session": "infra-7",
+                      "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                      "status": "sent",
+                      "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                      "created_at": "2026-10-02T09:00:00Z",
+                      "updated_at": "2026-10-02T09:00:02Z",
+                      "expires_at": "2026-10-03T09:00:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "createDelegation",
+        "summary": "Hand a piece of work to a Caller and get back the message to send it.",
+        "description": "Records a `pending` delegation and returns it with `message`, the exact text to send to the Caller. Sending is the creator's job: after the send, record the outcome with `POST /v1/delegations/{id}/sent` or `POST /v1/delegations/{id}/undelivered`. Then wait for the result with `GET /v1/delegations/{id}?wait=N`.\n\nOnly Callers named in the workstation's `TL_DELEGATION_CREATORS` may create one; with that setting empty, nobody can. Each target Caller takes at most 20 delegations in any rolling hour and 100 in any rolling day; past either, the request is refused with 429 and a `Retry-After` header in seconds.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDelegationRequest"
+              },
+              "examples": {
+                "default": {
+                  "summary": "Ask Muse to reach a person, with the default day to answer.",
+                  "value": {
+                    "caller": "muse",
+                    "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                    "from_session": "infra-7"
+                  }
+                },
+                "long": {
+                  "summary": "An errand that may take a week.",
+                  "value": {
+                    "caller": "muse",
+                    "task": "Watch for the Octopus bill this week and send me the total when it arrives.",
+                    "expires_in_s": 604800
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The delegation, `pending`, with the message to send.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                },
+                "example": {
+                  "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                  "caller": "muse",
+                  "created_by": "homelab",
+                  "from_session": "infra-7",
+                  "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                  "status": "pending",
+                  "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                  "created_at": "2026-10-02T09:00:00Z",
+                  "updated_at": "2026-10-02T09:00:00Z",
+                  "expires_at": "2026-10-03T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "You are not a creator, or the target Caller holds no credential here or acts for a different account.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "\"muse\" may not create delegations; the Callers that may are named in TL_DELEGATION_CREATORS on the workstation"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "The target Caller has reached its hourly or daily cap. Nothing was recorded. Retry after the number of seconds in `Retry-After`.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds until the oldest delegation in the full window leaves it.",
+                "schema": {
+                  "type": "integer",
+                  "description": "Seconds, 1 or more."
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "muse has been handed 20 delegations in the last hour, the most it takes; try again in 17m4s"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/v1/delegations/{id}": {
+      "get": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "getDelegation",
+        "summary": "Read one delegation, optionally waiting for it to change.",
+        "description": "Returns the delegation. The creator and the target Caller may read it; anyone else gets 404.\n\nWith `?wait=N` this is a long-poll: the request is held until the status differs from the one it had when the request arrived, the delegation expires, or N seconds pass, and returns the delegation either way. A finished delegation (`done`, `failed`, `expired`, `undelivered`) is returned at once. Hanging up ends the wait.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DelegationID"
+          },
+          {
+            "$ref": "#/components/parameters/Wait"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The delegation.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                },
+                "examples": {
+                  "pending": {
+                    "summary": "Recorded; the send is not confirmed yet.",
+                    "value": {
+                      "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                      "caller": "muse",
+                      "created_by": "homelab",
+                      "from_session": "infra-7",
+                      "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                      "status": "pending",
+                      "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                      "created_at": "2026-10-02T09:00:00Z",
+                      "updated_at": "2026-10-02T09:00:00Z",
+                      "expires_at": "2026-10-03T09:00:00Z"
+                    }
+                  },
+                  "done": {
+                    "summary": "The Caller posted its result.",
+                    "value": {
+                      "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                      "caller": "muse",
+                      "created_by": "homelab",
+                      "from_session": "infra-7",
+                      "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                      "status": "done",
+                      "result": "Saturday works. She suggests 19:30 and asks whether to book the usual place.",
+                      "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                      "created_at": "2026-10-02T09:00:00Z",
+                      "updated_at": "2026-10-02T10:41:07Z",
+                      "expires_at": "2026-10-03T09:00:00Z"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "description": "No such delegation, or one you neither created nor are named in. The two answer the same.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\""
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/delegations/{id}/sent": {
+      "post": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "markDelegationSent",
+        "summary": "Record that a delegation's message reached the Caller.",
+        "description": "Moves a `pending` delegation to `sent`. Only the creator may. Takes no body.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DelegationID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The delegation, now `sent`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                },
+                "example": {
+                  "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                  "caller": "muse",
+                  "created_by": "homelab",
+                  "from_session": "infra-7",
+                  "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                  "status": "sent",
+                  "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                  "created_at": "2026-10-02T09:00:00Z",
+                  "updated_at": "2026-10-02T09:00:02Z",
+                  "expires_at": "2026-10-03T09:00:00Z"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "You can see this delegation but did not create it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "only \"homelab\", which created delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\", records whether it was sent"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such delegation, or one you neither created nor are named in. The two answer the same.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\""
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The delegation is no longer `pending`: already sent, answered, expired or undelivered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\" is already sent"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/v1/delegations/{id}/undelivered": {
+      "post": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "markDelegationUndelivered",
+        "summary": "Record that a delegation's message could not be sent, and why.",
+        "description": "Moves a `pending` delegation to `undelivered` with the reason. Only the creator may. The trace line for this request carries `event: delegation.undelivered` and the reason, which the workstation alerts on.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DelegationID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UndeliveredRequest"
+              },
+              "example": {
+                "reason": "WhatsApp Web is logged out on the browser host"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The delegation, now `undelivered`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                },
+                "example": {
+                  "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                  "caller": "muse",
+                  "created_by": "homelab",
+                  "from_session": "infra-7",
+                  "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                  "status": "undelivered",
+                  "reason": "WhatsApp Web is logged out on the browser host",
+                  "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                  "created_at": "2026-10-02T09:00:00Z",
+                  "updated_at": "2026-10-02T09:00:04Z",
+                  "expires_at": "2026-10-03T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "You can see this delegation but did not create it.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "only \"homelab\", which created delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\", records whether it was sent"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such delegation, or one you neither created nor are named in. The two answer the same.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\""
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The delegation is no longer `pending`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\" is already sent"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
+    },
+    "/v1/delegations/{id}/result": {
+      "post": {
+        "tags": [
+          "delegations"
+        ],
+        "operationId": "postDelegationResult",
+        "summary": "Post the result of a delegation handed to you.",
+        "description": "Records the target Caller's answer and moves the delegation to `done` or `failed`. Only the Caller the delegation names may post it, once. A result is accepted while the delegation is `pending` or `sent`, so it does not matter whether the creator has recorded the send yet.\n\nAfter `expires_at` the result is refused with 410. Nobody is waiting for it any more: drop the work and do not retry.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/DelegationID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegationResultRequest"
+              },
+              "examples": {
+                "done": {
+                  "summary": "The work was done.",
+                  "value": {
+                    "status": "done",
+                    "result": "Saturday works. She suggests 19:30 and asks whether to book the usual place."
+                  }
+                },
+                "failed": {
+                  "summary": "The work could not be done, and why.",
+                  "value": {
+                    "status": "failed",
+                    "result": "Anca has not replied after two reminders; she may be travelling."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The delegation, now `done` or `failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Delegation"
+                },
+                "example": {
+                  "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+                  "caller": "muse",
+                  "created_by": "homelab",
+                  "from_session": "infra-7",
+                  "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+                  "status": "done",
+                  "result": "Saturday works. She suggests 19:30 and asks whether to book the usual place.",
+                  "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+                  "created_at": "2026-10-02T09:00:00Z",
+                  "updated_at": "2026-10-02T10:41:07Z",
+                  "expires_at": "2026-10-03T09:00:00Z"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "You can see this delegation but it was handed to another Caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\" was handed to \"muse\", so only \"muse\" may post its result"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such delegation, or one you neither created nor are named in. The two answer the same.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "no delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\""
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The delegation already has a result, or its message was never delivered.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\" is already done"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "The delegation expired before the result arrived. Drop the work; do not retry.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "example": {
+                  "error": "delegation \"d_01M3XCGTYZCBAYPYFT1T8C3CCF\" expired at 2026-10-03T09:00:00Z and nobody is waiting for its result any more; drop the work and do not retry"
+                }
+              }
+            }
+          },
+          "500": {
+            "$ref": "#/components/responses/ServerError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -928,6 +1482,49 @@
           "minimum": 0
         },
         "example": 5
+      },
+      "DelegationID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "The delegation id, as returned by POST /v1/delegations and quoted in the delegation's message.",
+        "schema": {
+          "type": "string",
+          "description": "`d_` followed by a 26-character sortable identifier."
+        },
+        "example": "d_01M3XCGTYZCBAYPYFT1T8C3CCF"
+      },
+      "DelegationStatusFilter": {
+        "name": "status",
+        "in": "query",
+        "required": false,
+        "description": "Return only delegations in this status. A Caller looking for work still owed asks for `sent`.",
+        "schema": {
+          "type": "string",
+          "description": "One delegation status.",
+          "enum": [
+            "pending",
+            "sent",
+            "done",
+            "failed",
+            "expired",
+            "undelivered"
+          ]
+        },
+        "example": "sent"
+      },
+      "DelegationLimit": {
+        "name": "limit",
+        "in": "query",
+        "required": false,
+        "description": "Return at most this many delegations, the newest. Omitted or 0 means 50; anything above 500 is read as 500.",
+        "schema": {
+          "type": "integer",
+          "description": "A count.",
+          "minimum": 0,
+          "default": 50
+        },
+        "example": 20
       }
     },
     "responses": {
@@ -1408,6 +2005,184 @@
             }
           }
         ]
+      },
+      "Delegation": {
+        "type": "object",
+        "description": "One piece of work handed to a Caller, and what became of it. Visible to the Caller that created it and to the Caller it names, and to nobody else.",
+        "required": [
+          "delegation_id",
+          "caller",
+          "created_by",
+          "task",
+          "status",
+          "message",
+          "created_at",
+          "updated_at",
+          "expires_at"
+        ],
+        "properties": {
+          "delegation_id": {
+            "type": "string",
+            "description": "`d_` followed by a 26-character sortable identifier. Quote it back on every call about this delegation."
+          },
+          "caller": {
+            "type": "string",
+            "description": "The Caller the work is handed to, the only one that may post its result."
+          },
+          "created_by": {
+            "type": "string",
+            "description": "The Caller that created the delegation and sends its message, typically `homelab`."
+          },
+          "from_session": {
+            "type": "string",
+            "description": "The name of the workstation session that asked for the work, when it said. Absent otherwise."
+          },
+          "task": {
+            "type": "string",
+            "description": "The work, in the delegating session's own words."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "sent",
+              "done",
+              "failed",
+              "expired",
+              "undelivered"
+            ],
+            "description": "`pending`: recorded, and the message has not been confirmed sent. `sent`: the message reached the Caller's channel. `done` and `failed`: the Caller posted a result, in `result`. `expired`: `expires_at` passed without a result. `undelivered`: the message could not be sent, and `reason` says why. The last four never change."
+          },
+          "result": {
+            "type": "string",
+            "description": "The Caller's answer. Present on `done` and `failed` only."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why the message could not be sent. Present on `undelivered` only."
+          },
+          "message": {
+            "type": "string",
+            "description": "The exact text sent to the Caller: a header line naming the delegation, the session and the expiry, the task, and where to post the result. Rendered once, when the delegation is created."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the delegation was created, RFC 3339 in UTC to the second."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the status last changed."
+          },
+          "expires_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the delegation stops accepting a result. After it, the status reads `expired` and a result is refused with 410."
+          }
+        },
+        "example": {
+          "delegation_id": "d_01M3XCGTYZCBAYPYFT1T8C3CCF",
+          "caller": "muse",
+          "created_by": "homelab",
+          "from_session": "infra-7",
+          "task": "Ask Anca whether Saturday 4 October works for dinner, and tell me what she says.",
+          "status": "pending",
+          "message": "[homelab delegation d_01M3XCGTYZCBAYPYFT1T8C3CCF]\nfrom: session infra-7\nexpires: 2026-10-03T09:00:00Z\n\nAsk Anca whether Saturday 4 October works for dinner, and tell me what she says.\n\nWhen done, POST the result to\nhttps://terminal-api.viktorbarzin.me/v1/delegations/d_01M3XCGTYZCBAYPYFT1T8C3CCF/result\nwith your agent-api bearer token and body {\"status\":\"done\",\"result\":\"...\"} (or \"failed\").",
+          "created_at": "2026-10-02T09:00:00Z",
+          "updated_at": "2026-10-02T09:00:00Z",
+          "expires_at": "2026-10-03T09:00:00Z"
+        }
+      },
+      "CreateDelegationRequest": {
+        "type": "object",
+        "description": "A delegation to create. Only Callers the workstation names in `TL_DELEGATION_CREATORS` may send one.",
+        "required": [
+          "caller",
+          "task"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "caller": {
+            "type": "string",
+            "description": "The Caller to hand the work to. It must hold a credential on this workstation and act for the same account as you, or the request is refused with 403."
+          },
+          "task": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 8000,
+            "description": "The work, as the Caller should read it: what to do and what to send back. 1 to 8000 characters, not blank."
+          },
+          "from_session": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "The name of the session asking, shown in the message so the Caller and the person reading can tell where it came from. At most 200 characters, with no line breaks or other control characters."
+          },
+          "expires_in_s": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1209600,
+            "default": 86400,
+            "description": "Seconds until the delegation stops accepting a result. Default a day; at most 14 days."
+          }
+        }
+      },
+      "UndeliveredRequest": {
+        "type": "object",
+        "description": "Why a delegation's message could not be sent.",
+        "required": [
+          "reason"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000,
+            "description": "What failed, in words an operator can act on. Recorded on the delegation and in the trace, where it raises an alert. Not blank; at most 2000 characters."
+          }
+        }
+      },
+      "DelegationResultRequest": {
+        "type": "object",
+        "description": "The Caller's answer to a delegation.",
+        "required": [
+          "status",
+          "result"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "failed"
+            ],
+            "description": "`done` when the work was done, `failed` when it could not be. Either way, say what happened in `result`."
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 32000,
+            "description": "What happened, in words the delegating session can use without asking again. Not blank; at most 32000 characters."
+          }
+        }
+      },
+      "DelegationList": {
+        "type": "object",
+        "description": "Delegations you created or that name you, newest first.",
+        "required": [
+          "delegations"
+        ],
+        "properties": {
+          "delegations": {
+            "type": "array",
+            "description": "The delegations, newest first. Empty, never null, when there are none.",
+            "items": {
+              "$ref": "#/components/schemas/Delegation"
+            }
+          }
+        }
       }
     }
   }

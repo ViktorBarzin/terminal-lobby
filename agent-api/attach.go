@@ -100,7 +100,7 @@ func (s *Server) storeRoot() string {
 }
 
 func tooLarge(format string, args ...any) error {
-	return &apiError{http.StatusRequestEntityTooLarge, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusRequestEntityTooLarge, Msg: fmt.Sprintf(format, args...)}
 }
 
 // isMultipart reports whether a request carries multipart/form-data.

@@ -92,6 +92,18 @@ type Server struct {
 	// UploadTimeout is how long an authenticated upload may take to arrive;
 	// defaultUploadTimeout when zero. See attach.go.
 	UploadTimeout time.Duration
+
+	// Delegations is the store behind /v1/delegations (delegation.go).
+	Delegations *DelegationStore
+	// DelegationCreators names the Callers that may create a delegation, from
+	// TL_DELEGATION_CREATORS. Empty, nobody can, and the feature is off.
+	DelegationCreators map[string]bool
+	// PublicURL is the base the callback in a delegation's message names,
+	// from TL_AGENT_PUBLIC_URL; defaultPublicURL when empty.
+	PublicURL string
+	// DelegationCaps overrides defaultDelegationCaps field by field; a test
+	// shrinks it so a cap is reached in three requests rather than twenty.
+	DelegationCaps delegationCaps
 }
 
 func (s *Server) now() time.Time {
@@ -142,24 +154,27 @@ func (s *Server) turnTimeout() time.Duration {
 type apiError struct {
 	Status int
 	Msg    string
+	// RetryAfter, when set, is sent as a Retry-After header: the one refusal
+	// that comes with a time it stops applying.
+	RetryAfter time.Duration
 }
 
 func (e *apiError) Error() string { return e.Msg }
 
 func badRequest(format string, args ...any) error {
-	return &apiError{http.StatusBadRequest, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusBadRequest, Msg: fmt.Sprintf(format, args...)}
 }
 
 func notFound(format string, args ...any) error {
-	return &apiError{http.StatusNotFound, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusNotFound, Msg: fmt.Sprintf(format, args...)}
 }
 
 func forbidden(format string, args ...any) error {
-	return &apiError{http.StatusForbidden, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusForbidden, Msg: fmt.Sprintf(format, args...)}
 }
 
 func conflict(format string, args ...any) error {
-	return &apiError{http.StatusConflict, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusConflict, Msg: fmt.Sprintf(format, args...)}
 }
 
 // unprocessable is a well-formed request this service will not carry out
@@ -167,11 +182,23 @@ func conflict(format string, args ...any) error {
 // answer. Kept apart from 409, which says the state is wrong NOW and may be
 // right later, because a caller retrying this one would be retrying forever.
 func unprocessable(format string, args ...any) error {
-	return &apiError{http.StatusUnprocessableEntity, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusUnprocessableEntity, Msg: fmt.Sprintf(format, args...)}
+}
+
+// gone is a request about something that has ended for good: a delegation
+// result posted after its expiry. Kept apart from 409 because the caller's
+// right move differs: a conflict may be retried after a read, this may not.
+func gone(format string, args ...any) error {
+	return &apiError{Status: http.StatusGone, Msg: fmt.Sprintf(format, args...)}
+}
+
+// tooManyRequests is a refusal by a rate cap, with when it lifts.
+func tooManyRequests(retryAfter time.Duration, format string, args ...any) error {
+	return &apiError{Status: http.StatusTooManyRequests, Msg: fmt.Sprintf(format, args...), RetryAfter: retryAfter}
 }
 
 func serverError(format string, args ...any) error {
-	return &apiError{http.StatusInternalServerError, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusInternalServerError, Msg: fmt.Sprintf(format, args...)}
 }
 
 // call is one authenticated request, plus the half-built trace line it will
@@ -192,9 +219,15 @@ type call struct {
 	// stream, and body is nil.
 	multipart bool
 
-	// The three fields a handler contributes to the trace.
+	// The fields a handler contributes to the trace.
 	conversationID string
 	taskID         string
+	delegationID   string
+	// event names what a write did, for a log query to match without parsing
+	// verbs and statuses: "delegation.undelivered" is the one infra alerts on.
+	event string
+	// reason travels with an undelivered event, so the alert can say why.
+	reason string
 	// traceResponse overrides what the trace records as the response. Set it
 	// where the response body is unbounded — a transcript, a session list —
 	// so one request cannot write a megabyte into trace.jsonl. Left nil, the
@@ -249,6 +282,12 @@ func (s *Server) Routes() http.Handler {
 	v1.Handle("GET /v1/tasks/{id}", s.handle("GET /v1/tasks/{id}", s.getTask))
 	v1.Handle("POST /v1/tasks/{id}/cancel", s.handle("POST /v1/tasks/{id}/cancel", s.cancelTask))
 	v1.Handle("POST /v1/tasks/{id}/answer", s.handle("POST /v1/tasks/{id}/answer", s.answerTask))
+	v1.Handle("GET /v1/delegations", s.handle("GET /v1/delegations", s.listDelegations))
+	v1.Handle("POST /v1/delegations", s.handle("POST /v1/delegations", s.createDelegation))
+	v1.Handle("GET /v1/delegations/{id}", s.handle("GET /v1/delegations/{id}", s.getDelegation))
+	v1.Handle("POST /v1/delegations/{id}/sent", s.handle("POST /v1/delegations/{id}/sent", s.markDelegationSent))
+	v1.Handle("POST /v1/delegations/{id}/undelivered", s.handle("POST /v1/delegations/{id}/undelivered", s.markDelegationUndelivered))
+	v1.Handle("POST /v1/delegations/{id}/result", s.handle("POST /v1/delegations/{id}/result", s.postDelegationResult))
 
 	root := http.NewServeMux()
 	root.Handle("/v1/", s.requireAuth(v1))
@@ -381,6 +420,9 @@ func (s *Server) reply(w http.ResponseWriter, c *call, entry TraceEntry, start t
 		var ae *apiError
 		if errors.As(herr, &ae) {
 			status = ae.Status
+			if ae.RetryAfter > 0 {
+				w.Header().Set("Retry-After", retryAfterSeconds(ae.RetryAfter))
+			}
 		} else {
 			status = http.StatusInternalServerError
 		}
@@ -392,6 +434,12 @@ func (s *Server) reply(w http.ResponseWriter, c *call, entry TraceEntry, start t
 	entry.TS = traceTime(start)
 	entry.TaskID = c.taskID
 	entry.ConversationID = c.conversationID
+	entry.DelegationID = c.delegationID
+	// An event names a change that happened, so a refused write has none.
+	if herr == nil {
+		entry.Event = c.event
+		entry.Reason = c.reason
+	}
 	entry.Status = status
 	entry.Duration = float64(s.now().Sub(start)) / float64(time.Millisecond)
 	recorded := payload

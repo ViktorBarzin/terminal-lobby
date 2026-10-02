@@ -26,6 +26,12 @@ StartLimitIntervalSec=0
 # without a line in it, so a box that has never been given one runs this
 # service and serves nobody, which is the right default for a port whose
 # callers are programs.
+#
+# Two more keys turn on Delegations (work handed to a Caller such as Muse):
+# TL_DELEGATION_CREATORS, comma-separated Caller names that may create one,
+# empty by default so the feature ships off; and TL_AGENT_PUBLIC_URL, the base
+# the callback in a delegation's message names, by default
+# https://terminal-api.viktorbarzin.me.
 EnvironmentFile=-/etc/terminal-lobby.conf
 EnvironmentFile=-/etc/terminal-lobby.local.conf
 # Binds 127.0.0.1:8710 always, and TL_AGENT_BIND names any further address to
@@ -80,6 +86,16 @@ RestartSec=5
 # Loki, runs as root and needs no group bit.
 LogsDirectory=agent-api
 LogsDirectoryMode=0700
+
+# /var/lib/agent-api, for the one thing this service keeps across a restart:
+# Delegations, in delegations.json. Tasks stay in memory because the
+# conversation behind each survives without them; a Delegation has nothing
+# behind it but its record and may run for two weeks. systemd creates the
+# directory as User= and passes it as $STATE_DIRECTORY, which the service
+# reads. 0700 for the trace directory's reason: a delegation's task and result
+# are a person's words, and other people have shells on this box.
+StateDirectory=agent-api
+StateDirectoryMode=0700
 
 [Install]
 WantedBy=multi-user.target
