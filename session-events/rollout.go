@@ -68,6 +68,12 @@ func rolloutSafe(s sessionio.RolloutSession) (sid string, ok bool) {
 // once checks every session of every user and restarts the safe ones.
 func (ro *rollout) once(ctx context.Context) {
 	for _, user := range ro.users() {
+		// Only once a Claude of theirs has loaded the mod. Until then a restart
+		// would bring back a Claude without one (mods not enabled yet, or an
+		// install older than 2.1.287), and it is never tried twice.
+		if !ro.hub.hasGreeted(user) {
+			continue
+		}
 		list, err := ro.drv.RolloutSessions(user)
 		if err != nil {
 			continue

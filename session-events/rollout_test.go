@@ -37,7 +37,7 @@ func TestRolloutRestartsOnlySafeSessions(t *testing.T) {
 		{Name: "suspended", State: "done", Suspended: "123", Transcript: tr, Start: start},
 		{Name: "shell", State: "", Start: "zsh"},
 	}}
-	ro := newRollout(newModHub(&registry{}, nil), drv, func() []string { return []string{"u"} })
+	ro := newRollout(greetedHub("u"), drv, func() []string { return []string{"u"} })
 	ro.once(context.Background())
 	if len(drv.respawns) != 1 || drv.respawns[0] != `idle: /bin/zsh -lic "claude --dangerously-skip-permissions --resume `+sid+`"` {
 		t.Fatalf("respawns = %v", drv.respawns)
@@ -54,7 +54,7 @@ func TestRolloutLeavesADraftAlone(t *testing.T) {
 	drv := &fakeRollout{styled: "──────────\n\x1b[39m❯ half a thought\n──────────\n",
 		list: []sessionio.RolloutSession{{Name: "s", State: "done",
 			Transcript: "/p/eefe8a5b-fa7b-4679-8a64-f3fcb919002e.jsonl", Start: `/bin/zsh -lic "claude"`}}}
-	ro := newRollout(newModHub(&registry{}, nil), drv, func() []string { return []string{"u"} })
+	ro := newRollout(greetedHub("u"), drv, func() []string { return []string{"u"} })
 	ro.once(context.Background())
 	if len(drv.respawns) != 0 {
 		t.Fatalf("restarted over a draft: %v", drv.respawns)
@@ -65,11 +65,29 @@ func TestRolloutSkipsSessionsWithAMod(t *testing.T) {
 	sid := "eefe8a5b-fa7b-4679-8a64-f3fcb919002e"
 	drv := &fakeRollout{styled: idleBox, list: []sessionio.RolloutSession{{Name: "s", State: "done",
 		Transcript: "/p/" + sid + ".jsonl", Start: `/bin/zsh -lic "claude"`}}}
-	hub := newModHub(&registry{}, nil)
+	hub := greetedHub("u")
 	hub.bySession[hubKey("u", "s")] = &modConn{}
 	newRollout(hub, drv, func() []string { return []string{"u"} }).once(context.Background())
 	if len(drv.respawns) != 0 {
 		t.Fatalf("restarted a session whose mod is connected: %v", drv.respawns)
+	}
+}
+
+// greetedHub is a hub that has seen a mod say hello for each of users.
+func greetedHub(users ...string) *modHub {
+	h := newModHub(&registry{}, nil)
+	for _, u := range users {
+		h.greeted[u] = true
+	}
+	return h
+}
+
+func TestRolloutWaitsUntilTheUserHasAMod(t *testing.T) {
+	drv := &fakeRollout{styled: idleBox, list: []sessionio.RolloutSession{{Name: "s", State: "done",
+		Transcript: "/p/eefe8a5b-fa7b-4679-8a64-f3fcb919002e.jsonl", Start: `/bin/zsh -lic "claude"`}}}
+	newRollout(newModHub(&registry{}, nil), drv, func() []string { return []string{"u"} }).once(context.Background())
+	if len(drv.respawns) != 0 {
+		t.Fatalf("restarted a session of a user no mod has said hello for: %v", drv.respawns)
 	}
 }
 

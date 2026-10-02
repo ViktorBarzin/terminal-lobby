@@ -127,6 +127,9 @@ type modHub struct {
 	// waiting are streams opened on a session before its mod said hello
 	// (the "nomod" frame), closed when one does.
 	waiting map[string][]chan struct{}
+	// greeted are the OS users some mod has said hello for, which is the
+	// evidence that a restarted Claude of theirs will load one.
+	greeted map[string]bool
 }
 
 func newModHub(rg *registry, stamp sessionio.Options) *modHub {
@@ -134,7 +137,16 @@ func newModHub(rg *registry, stamp sessionio.Options) *modHub {
 		rg: rg, stamp: stamp, now: time.Now,
 		byToken: map[string]*modConn{}, bySID: map[string]*modConn{},
 		bySession: map[string]*modConn{}, waiting: map[string][]chan struct{}{},
+		greeted: map[string]bool{},
 	}
+}
+
+// hasGreeted reports whether any mod has said hello for the user since this
+// process started.
+func (h *modHub) hasGreeted(osUser string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.greeted[osUser]
 }
 
 func hubKey(a, b string) string { return a + "\x00" + b }
@@ -226,6 +238,7 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	}
 
 	h.mu.Lock()
+	h.greeted[osUser] = true
 	c := h.bySID[hubKey(osUser, b.SID)]
 	history := false
 	var retired *liveSource
