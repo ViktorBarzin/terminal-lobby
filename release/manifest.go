@@ -489,6 +489,14 @@ var Package = Manifest{
 	// directory (packaging/build-deb.sh), because node_modules is not in git.
 	Trees: []Tree{
 		{Src: "tl-browser-host", Dest: "/usr/lib/terminal-lobby/tl-browser-host"},
+		// The lobby's Claude mod (ADR-0036), laid out as the directory
+		// marketplace Claude Code's managed settings name: its manifest under
+		// .claude-plugin/ and the plugin under plugins/terminal-lobby/. Claude
+		// treats a mod as the organisation's only when it loads in place from
+		// a directory only an administrator can write, which a package-owned
+		// path under /usr/share is. Each Claude loads it at start, so a new
+		// version reaches a session the next time it starts.
+		{Src: "claude-plugins", Dest: "/usr/share/terminal-lobby/claude-plugins"},
 	},
 	// ttyd watches the terminal server binary, which ttyd-devvm installs; that
 	// package restarts it when it upgrades. It is listed here so a change to the

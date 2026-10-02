@@ -161,6 +161,14 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm test
 
+      # The lobby's Claude mod (ADR-0036). Its logic is plain TypeScript that
+      # Node runs by stripping the types, so it needs no install step.
+      - name: test (claude mod)
+        run: |
+          set -euo pipefail
+          cd claude-mod
+          npm test
+
       - name: test (python)
         run: |
           set -euo pipefail
