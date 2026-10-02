@@ -220,6 +220,12 @@ page's selection.
 or that was last created. playwright-mcp does not expose its current tab, so
 this is an approximation, and the tab strip covers the cases it misses.
 
+The host opens one page in the context before handing it to playwright-mcp,
+and playwright-mcp adopts it as its current tab. Without it, playwright-mcp
+opens a page for each tool call that finds none, so two calls in flight at the
+start (sent together, or the first one slow on a loaded box) each opened one,
+and an empty `about:blank` tab sat beside the agent's page as the current tab.
+
 ### What a headless frame does not show
 
 Measured on 2026-10-01 against headless Chrome 148: the screencast and CDP input

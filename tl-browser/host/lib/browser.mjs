@@ -143,6 +143,13 @@ export class BrowserSession {
     const browser = await chromium.launch(chromeLaunchOptions({ channel, sandbox }));
     try {
       const context = await browser.newContext({ viewport: VIEWPORT, storageState });
+      // The agent's first page, opened before playwright-mcp sees the context.
+      // playwright-mcp opens a page for any tool call that finds none, so two
+      // calls in flight at the start (Claude sends them together, or the
+      // first is slow on a loaded box) would each open one, leaving an empty
+      // about:blank tab beside the agent's page and current in its place.
+      // With a page already there, it adopts this one and opens none.
+      await context.newPage();
       const roots = childPids(process.pid).filter((pid) => !before.has(pid));
       return new BrowserSession(browser, context, roots, hooks);
     } catch (err) {

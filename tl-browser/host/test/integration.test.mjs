@@ -17,6 +17,11 @@ import { treePids } from "../lib/proctree.mjs";
 const host = fileURLToPath(new URL("../host.mjs", import.meta.url));
 const haveChrome = existsSync("/opt/google/chrome/chrome") || existsSync("/usr/bin/google-chrome");
 
+/** The first call starts Chrome, which takes over a minute on a loaded box. */
+const CALL_TIMEOUT_MS = 180_000;
+/** Room for one Chrome start and the calls after it. */
+const TEST_TIMEOUT_MS = 300_000;
+
 const PAGE = `data:text/html,${encodeURIComponent(
   "<title>Hello page</title>" +
     '<input id="q" style="position:absolute;left:0;top:0;width:300px;height:40px">' +
@@ -114,7 +119,7 @@ async function startHost(t, env) {
   const request = async (method, params) => {
     const id = nextId++;
     child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
-    return mcp.next((m) => m.id === id, `${method} #${id}`, 60_000);
+    return mcp.next((m) => m.id === id, `${method} #${id}`, CALL_TIMEOUT_MS);
   };
   /**
    * @param {string} name
@@ -506,5 +511,30 @@ test("a person in control answers the popups a frame does not show", {
     view.seen.some((m) => m.t === "popup"),
     false,
     "no popup came for the agent's own dialog",
+  );
+});
+
+test("the agent's first calls share one tab, with no empty tab beside it", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  // Two calls in flight before the browser has a page: playwright-mcp opens a
+  // page for each one that finds none, so the second used to leave an empty
+  // about:blank tab beside the agent's page and make it the current one.
+  const [nav, snap] = await Promise.all([
+    callTool("browser_navigate", { url: PAGE }),
+    callTool("browser_snapshot"),
+  ]);
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+  assert.notEqual(snap.isError, true, JSON.stringify(snap));
+  const listed = resultText(await callTool("browser_tabs", { action: "list" }));
+  assert.doesNotMatch(listed, /about:blank/, listed);
+
+  const { hello } = await connectViewer(sockPath, "tester", true);
+  assert.deepEqual(
+    hello.tabs.map((tab) => tab.title),
+    ["Hello page"],
+    "the viewer's tab list shows only the agent's page",
   );
 });
