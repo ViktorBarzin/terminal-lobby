@@ -297,3 +297,29 @@ records one `text.answer_sent` or `text.answer_failed` with a new `tl.action`
 value, `permission-pick`, and one `claude.answered` when it lands, `tl.client`
 = `api` and `tl.count` = 1, as a plan approval counts. The label is not
 recorded. No new event name is involved.
+
+## Amendment, 2026-10-02: a Caller's sessions are recorded and tagged
+
+A session a Caller made through agent-api (CONTEXT.md: Caller, Origin) used to
+count as a system session, so tmux-api's drop rule kept its events out of the
+usage record along with the QA fleet's. It is recorded now, and every event that
+names one carries `tl.caller` with the Caller's name, for example
+`tl.caller=muse`. A query extracts it the way it extracts `tl.kind`
+(`| json caller="attrs[\"tl.caller\"]"`), then `| caller=""` leaves a
+program's turns out of a person's usage and `| caller="muse"` selects Muse's. No
+event name changed.
+
+The tag is added by the emitter rather than at each call site
+(`telemetry.Emitter.SetCallerRule`), so it needs no change to any call site.
+Two services install the rule. tmux-api answers it from the session list it
+already caches, beside the drop rule. session-events reads the session's
+`@tl_origin` option once a minute per session (`session-events/callertag.go`),
+which is what tags `claude.state_changed` for a Caller's turns. agent-api
+itself emits no usage events, so a Caller's prompts appear only through the
+state changes they cause. Both read the origin through `sessionio.CallerOf`, so they agree
+on which sessions are a Caller's. file-api, clipboard-upload and skills-api do
+not install it yet; their session-keyed events about a Caller's session are
+recorded untagged.
+
+System sessions (`test`, unstamped, reserved names) are still dropped by
+tmux-api, and a Caller's sessions still raise no push.
