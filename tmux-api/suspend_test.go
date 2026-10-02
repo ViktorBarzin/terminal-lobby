@@ -37,6 +37,48 @@ func suspendable(name string) Session {
 	}
 }
 
+// callerSession is a conversation a Caller opened through agent-api: origin
+// and @agent_owner both name the Caller, and lastTurn is @agent_last_turn.
+// LastDrive is the attach clock, seeded from creation long ago and never moved
+// by HTTP driving.
+func callerSession(name string, lastTurn int64) Session {
+	s := suspendable(name)
+	s.Origin = "muse"
+	s.AgentOwner = "muse"
+	s.AgentLastTurn = lastTurn
+	return s
+}
+
+// A person's session and a tool's session keep the clocks and thresholds they
+// had before Caller sessions became suspendable: the same rows, with and
+// without a Caller conversation beside them in the list, give the same answer.
+func TestSessionsToSuspendLeavesUserSessionsUnchanged(t *testing.T) {
+	people := []Session{
+		suspendable("person-100h"),
+		func() Session {
+			s := suspendable("person-25h")
+			s.LastDrive = testNow - int64(25*time.Hour/time.Second)
+			return s
+		}(),
+		func() Session {
+			s := suspendable("tool-5h")
+			s.Origin = originTest
+			s.LastDrive = fiveHoursAgo
+			return s
+		}(),
+		func() Session { s := suspendable("tool-1h"); s.Origin = originTest; s.LastDrive = oneHourAgo; return s }(),
+	}
+	alone := sessionsToSuspend(people, testNow)
+	if want := []string{"person-100h", "tool-5h"}; !reflect.DeepEqual(alone, want) {
+		t.Fatalf("sessionsToSuspend = %v, want %v", alone, want)
+	}
+	withCaller := sessionsToSuspend(append(append([]Session{}, people...),
+		callerSession("caller-25h", testNow-int64(25*time.Hour/time.Second))), testNow)
+	if want := []string{"person-100h", "tool-5h", "caller-25h"}; !reflect.DeepEqual(withCaller, want) {
+		t.Fatalf("with a Caller session in the list: %v, want %v", withCaller, want)
+	}
+}
+
 func TestSessionsToSuspend(t *testing.T) {
 	cases := []struct {
 		why  string
@@ -147,6 +189,43 @@ func TestSessionsToSuspend(t *testing.T) {
 			s.LastDrive = fiveHoursAgo
 			return s
 		}(), true},
+
+		// Caller sessions: agent-api stamps @agent_last_turn at each turn, and
+		// the Caller threshold (24h by default) replaces both human clocks.
+		{"a Caller session whose last turn was 25h ago", callerSession("caller-25h", testNow-int64(25*time.Hour/time.Second)), true},
+		{"a Caller session whose last turn was 5h ago — not the 4h system fuse", callerSession("caller-5h", fiveHoursAgo), false},
+		{"a Caller session at exactly the threshold", callerSession("caller-at", testNow-int64(callerIdleAfter/time.Second)), true},
+		{"a Caller session one second under the threshold", callerSession("caller-under", testNow-int64(callerIdleAfter/time.Second)+1), false},
+		{"a Caller session idle by its turn clock but driven by a person an hour ago", func() Session {
+			s := callerSession("caller-driven", longAgo)
+			s.LastDrive = oneHourAgo
+			return s
+		}(), false},
+		{"a Caller session with no turn stamp yet falls back to the drive clock", func() Session {
+			s := callerSession("caller-unstamped", 0)
+			s.LastDrive = testNow - int64(25*time.Hour/time.Second)
+			return s
+		}(), true},
+		{"a Caller session with no clock at all", func() Session {
+			s := callerSession("caller-noclock", 0)
+			s.LastDrive = 0
+			return s
+		}(), false},
+		{"a Caller session that is running", func() Session {
+			s := callerSession("caller-running", longAgo)
+			s.State = stateRunning
+			return s
+		}(), false},
+		{"a Caller session awaiting an answer", func() Session {
+			s := callerSession("caller-awaiting", longAgo)
+			s.State = stateAwaiting
+			return s
+		}(), false},
+		{"a Caller session somebody has open", func() Session {
+			s := callerSession("caller-attached", longAgo)
+			s.Attached = 1
+			return s
+		}(), false},
 	}
 
 	for _, c := range cases {
@@ -817,7 +896,7 @@ func TestSuspendSessionDeclinesWhatTheSessionSaysNow(t *testing.T) {
 		{"a turn started in it", paneFacts{state: stateRunning}},
 		{"it is waiting on an answer", paneFacts{state: stateAwaiting}},
 		{"an overlapping pass already marked it", paneFacts{suspendedAt: testNow - 60}},
-		{"it is an agent-api conversation, which has no resume verb", paneFacts{agentOwner: "muse"}},
+		{"a Caller sent its conversation a turn while the pass was running", paneFacts{agentOwner: "muse", agentLastTurn: testNow - 60}},
 	} {
 		r := newRecordingOps()
 		r.facts = c.facts
@@ -830,6 +909,101 @@ func TestSuspendSessionDeclinesWhatTheSessionSaysNow(t *testing.T) {
 		if slices.Contains(r.log, "remain-on-exit") {
 			t.Fatalf("%s: it left remain-on-exit on a session it did not suspend: %v", c.why, r.log)
 		}
+	}
+}
+
+// A Caller's conversation idle past its own threshold is suspended like any
+// other: agent-api resumes it on the Caller's next message, so the reason the
+// sweep used to leave these alone (no way back) is gone.
+func TestSuspendSessionTakesAnIdleCallerConversation(t *testing.T) {
+	r := newRecordingOps()
+	r.facts = paneFacts{agentOwner: "muse", agentLastTurn: testNow - int64(callerIdleAfter/time.Second) - 60}
+	s := callerSession("idle-caller", testNow-int64(callerIdleAfter/time.Second)-60)
+	if !suspendSession(r.ops, "wizard", s, time.Unix(testNow, 0)) {
+		t.Fatalf("an idle Caller conversation was not suspended: %v", r.log)
+	}
+}
+
+// The event's idle time for a Caller session is the Caller's own clock, not
+// the attach clock, which never moves for a session driven over HTTP.
+func TestSuspendSessionReportsACallersIdleSecondsFromItsTurnClock(t *testing.T) {
+	var got telemetry.Attrs
+	r := newRecordingOps()
+	r.ops.emit = func(event, osUser string, attrs telemetry.Attrs) { got = attrs }
+	lastTurn := testNow - int64(30*time.Hour/time.Second)
+	r.facts = paneFacts{agentOwner: "muse", agentLastTurn: lastTurn}
+	s := callerSession("c", lastTurn)
+	s.LastDrive = longAgo
+	if !suspendSession(r.ops, "wizard", s, time.Unix(testNow, 0)) {
+		t.Fatal("suspendSession refused")
+	}
+	if got["tl.idleSeconds"] != testNow-lastTurn {
+		t.Fatalf("tl.idleSeconds = %v, want %d", got["tl.idleSeconds"], testNow-lastTurn)
+	}
+	if got["tl.caller"] != "muse" {
+		t.Fatalf("tl.caller = %v, want muse", got["tl.caller"])
+	}
+}
+
+// @agent_last_turn is agent-api's to write and this sweep's to read; pinned
+// the same way @agent_owner is.
+func TestAgentLastTurnOptionMatchesAgentAPI(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "agent-api", "sessions.go"))
+	if err != nil {
+		t.Skipf("agent-api is not beside this module: %v", err)
+	}
+	want := `OptionLastTurn = "` + agentLastTurnOption + `"`
+	if !strings.Contains(string(src), want) {
+		t.Fatalf("agent-api/sessions.go does not declare %s; this sweep reads an option nobody writes", want)
+	}
+}
+
+func TestCallerIdleAfterFromEnv(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  time.Duration
+	}{
+		{"", 24 * time.Hour},
+		{"2m", 2 * time.Minute},
+		{"36h", 36 * time.Hour},
+		{"nonsense", 24 * time.Hour},
+		{"-5m", 24 * time.Hour},
+		{"0", 24 * time.Hour},
+	} {
+		got := callerIdleAfterFrom(func(k string) string {
+			if k == "TL_CALLER_SUSPEND_AFTER" {
+				return c.value
+			}
+			return ""
+		})
+		if got != c.want {
+			t.Errorf("TL_CALLER_SUSPEND_AFTER=%q gives %s, want %s", c.value, got, c.want)
+		}
+	}
+}
+
+func TestParseCallerClocks(t *testing.T) {
+	out := "mine" + listSep + "" + listSep + "\n" +
+		"theirs" + listSep + "1799999000" + listSep + "muse\n" +
+		"odd" + listSep + "x" + listSep + "muse" + listSep + "extra\n"
+	got := parseCallerClocks([]byte(out))
+	want := map[string]callerClock{
+		"theirs": {owner: "muse", lastTurn: 1799999000},
+		"odd":    {owner: "muse" + listSep + "extra"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseCallerClocks = %#v, want %#v", got, want)
+	}
+}
+
+func TestAnnotateCallersFillsOnlyCallerSessions(t *testing.T) {
+	sessions := []Session{suspendable("person"), suspendable("theirs")}
+	annotateCallers(sessions, map[string]callerClock{"theirs": {owner: "muse", lastTurn: 42}})
+	if sessions[0].AgentOwner != "" || sessions[0].AgentLastTurn != 0 {
+		t.Fatalf("a person's session was marked as a Caller's: %+v", sessions[0])
+	}
+	if sessions[1].AgentOwner != "muse" || sessions[1].AgentLastTurn != 42 {
+		t.Fatalf("the Caller session was not annotated: %+v", sessions[1])
 	}
 }
 

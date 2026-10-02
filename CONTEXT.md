@@ -258,7 +258,8 @@ a read-only one included — and which nothing displays)
 
 **Idle age**:
 How long since a human last had hands on a Session, which is now minus **Last
-driven** and nothing else. What the suspend sweep reads to decide whether a
+driven** and nothing else; for a **Caller**'s conversation, now minus the later
+of its last turn (`@agent_last_turn`, stamped by agent-api) and **Last driven**. What the suspend sweep reads to decide whether a
 session is past its **Suspend threshold**, and what `tl.idleSeconds` records when
 one is suspended. Deliberately not the transcript file's mtime, which moves for
 reasons other than a new conversation record: measured on 2026-09-19, a
@@ -271,19 +272,24 @@ _Avoid_: inactivity, staleness, and plain age (that is how long since
 **Created**, which is a different question)
 
 **Suspend threshold**:
-The **Idle age** at which a Session becomes eligible to be suspended. Two
-clocks, for two kinds of session. The human clock is 72 hours and covers a
+The **Idle age** at which a Session becomes eligible to be suspended. Three
+clocks, for three kinds of session. The human clock is 72 hours and covers a
 person's session, chosen because 14 days of prompt events put the chance of a
 return within a day at 26% after 4 hours quiet, 8% after 24 and 2% after 48. The
 system clock is 4 hours and covers a system session, on the same `isSystemSession`
 predicate the sidebar's **System** group uses, since a harness's leftovers are
-not a conversation anyone is coming back to. Eligibility is not enough on its
-own: a Session that is running, that is awaiting an answer, that has a client
-attached, that is a pool slot, that runs something other than Claude, that
-agent-api opened (it carries `@agent_owner`, is driven over HTTP so its **Last
-driven** never moves, and has no resume verb its caller could reach), or whose
-transcript cannot be resolved is never suspended whatever its age. Eligibility
-is also re-read at the moment of the kill, not only when the list was built.
+not a conversation anyone is coming back to. The **Caller** clock is 24 hours
+(`TL_CALLER_SUSPEND_AFTER` overrides it) and covers a conversation agent-api
+opened, the ones carrying `@agent_owner`, timed by the Caller's own turns
+because a session driven over HTTP never moves **Last driven**; it wins over the
+system clock that the Caller's **Origin** would otherwise put it on. Such a
+conversation is safe to suspend because agent-api resumes it on the Caller's
+next message. Eligibility is not enough on its own: a Session that is running,
+that is awaiting an answer, that has a client attached, that is a pool slot,
+that runs something other than Claude, or whose transcript cannot be resolved
+is never suspended whatever its age. Eligibility is also re-read at the moment
+of the kill, not only when the list was built, and that re-read includes a
+Caller's last turn, which agent-api stamps when it accepts a message.
 _Avoid_: timeout, TTL, expiry (nothing expires, and the Session stays either way)
 
 **Suspended session**:
@@ -314,10 +320,12 @@ on, nor with the connection ladder's `suspended` phase, which is that socket
 
 **Resume** (a Session):
 Bringing a **Suspended session** back, by `tmux respawn-pane -k` running the
-`claude --resume <uuid>` stored at suspend time in `@tl_resume_cmd`. The click on
-the card is the only trigger there is. No hover starts one, because ADR-0026
-settled that a hover may attach and may not act, and nothing resumes on a
-schedule. Cold by choice, at 1.7 s for an empty transcript to 3.1 s for 24.4 MB,
+`claude --resume <uuid>` stored at suspend time in `@tl_resume_cmd`. Two
+triggers, running one shared sequence (`sessionio.Resume`): the click on the
+card, and a message or answer a **Caller** sends through agent-api to its own
+suspended conversation, which resumes it before the turn runs. No hover starts
+one, because ADR-0026 settled that a hover may attach and may not act, and
+nothing resumes on a schedule. Cold by choice, at 1.7 s for an empty transcript to 3.1 s for 24.4 MB,
 with the pre-warmed pool deliberately not used (**Pre-warm slot**). Free: the
 readout stays at $0.00 and a transcript carrying a total of 398.25 USD showed
 that figure restored from the file rather than charged again. The uuid comes from

@@ -33,7 +33,14 @@ type Session struct {
 	// session's Claude has done either. Folded into LastDrive before anything
 	// reads the list, so it is not on the wire itself.
 	ActivityAt int64 `json:"-"`
-	Created    int64 `json:"created"`
+	// AgentOwner and AgentLastTurn are agent-api's @agent_owner and
+	// @agent_last_turn: the Caller that opened this conversation over HTTP and
+	// the unix second agent-api last ran a turn in it. Only the suspend sweep
+	// reads them, and it fills them itself (annotateCallers), so they are
+	// empty on every other list and never on the wire.
+	AgentOwner    string `json:"-"`
+	AgentLastTurn int64  `json:"-"`
+	Created       int64  `json:"created"`
 	// State of the Claude conversation inside the session: "running",
 	// "awaiting", "done", or "" when no live Claude. omitempty keeps the
 	// old wire shape for stateless sessions (external /sessions pollers).
