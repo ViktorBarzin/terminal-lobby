@@ -316,6 +316,29 @@ describe("the browser stream", () => {
     dispose();
   });
 
+  it("holds where the host says the cursor is, numbering each report", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    ws.open();
+    ws.host(hello("live"));
+    expect(stream.cursor()).toBeNull();
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "move" });
+    const first = stream.cursor();
+    expect(first).toMatchObject({ tab: "t1", x: 10, y: 20, kind: "move" });
+    // The same place twice is two reports: a second click there ripples again.
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "down" });
+    expect(stream.cursor()).toMatchObject({ kind: "down" });
+    expect(stream.cursor()!.seq).toBeGreaterThan(first!.seq);
+    ws.host({ t: "cursor", tab: "t1", x: "10", y: 20, kind: "move" });
+    ws.host({ t: "cursor", tab: "t1", x: 10, y: 20, kind: "wiggle" });
+    ws.host({ t: "cursor", x: 10, y: 20, kind: "move" });
+    expect(stream.cursor()).toMatchObject({ kind: "down" });
+    // A new connection is told the cursor again when it subscribes.
+    ws.host(hello("live"));
+    expect(stream.cursor()).toBeNull();
+    dispose();
+  });
+
   it("holds the popups the host shows the person in control, one per tab", () => {
     const { stream, dispose } = mount({ active: () => true, wake: true });
     const ws = FakeSocket.all[0]!;

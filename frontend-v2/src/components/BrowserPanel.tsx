@@ -7,10 +7,14 @@ import {
   on,
   onCleanup,
   onMount,
+  untrack,
   type Component,
 } from "solid-js";
 import {
   clientBox,
+  clientPoint,
+  cursorGlides,
+  cursorRipples,
   listPlacement,
   pagePoint,
   panelStreamWanted,
@@ -21,6 +25,8 @@ import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
   createDocumentVisible,
+  type BrowserCursor,
+  type BrowserFrame,
   type BrowserPopup,
   type BrowserState,
   type ViewerMessage,
@@ -39,6 +45,8 @@ const LINE_PX = 16;
 /** How long a Take control press waits for the host before another press
  *  counts: the host answers with `control` in well under a second. */
 const TAKE_WAIT_MS = 4_000;
+/** How long a press's ring stays in the page: its animation, and a little. */
+const RIPPLE_MS = 700;
 /** Keys a keyboard reports that are not keys the page can be sent. */
 const NOT_KEYS = new Set(["Unidentified", "Dead", "Process"]);
 
@@ -85,6 +93,8 @@ export const BrowserPanel: Component<{
   /** The box the page and its popups share; popups are placed in its pixels. */
   let pagebox: HTMLDivElement | undefined;
   let img: HTMLImageElement | undefined;
+  /** The same picture, for what is drawn over it to follow. */
+  const [imgEl, setImgEl] = createSignal<HTMLImageElement>();
   let ime: HTMLInputElement | undefined;
   const documentVisible = createDocumentVisible();
   /** The tab the viewer picked, or null to follow the agent's. */
@@ -508,6 +518,90 @@ export const BrowserPanel: Component<{
     stage()?.focus();
   };
 
+  // ---- the cursor ---------------------------------------------------------
+  //
+  // One cursor (CONTEXT.md "Browser cursor"): the host reports where the
+  // mouse is in the tab, whether the agent or the person in control moved it,
+  // so a phone's tap comes back here as the same cursor and needs no touch
+  // mark of its own. It is drawn in the picture's own pixels, inside the
+  // canvas, so a zoomed page scrolls it with the picture.
+
+  /** Bumped when the stage changes size, which moves the drawn picture. */
+  const [layout, setLayout] = createSignal(0);
+  onMount(() => {
+    const el = stage();
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setLayout((n) => n + 1));
+    ro.observe(el);
+    onCleanup(() => ro.disconnect());
+  });
+
+  /** Where a report lands on the picture, in the picture's own pixels. */
+  const spotOf = (
+    c: BrowserCursor,
+    el: HTMLImageElement,
+    f: BrowserFrame,
+  ): { left: number; top: number } | null => {
+    const r = el.getBoundingClientRect();
+    return clientPoint(
+      c,
+      { left: 0, top: 0, width: r.width, height: r.height },
+      f,
+      stream.viewport(),
+    );
+  };
+
+  interface CursorSpot {
+    tab: string;
+    seq: number;
+    left: number;
+    top: number;
+    glide: boolean;
+  }
+  const cursorSpot = createMemo<CursorSpot | null>((prev) => {
+    const c = stream.cursor();
+    const f = stream.frame();
+    const el = imgEl();
+    zoom();
+    layout();
+    if (!c || !f || !el || c.tab !== shownTab()) return null;
+    const at = spotOf(c, el, f);
+    if (!at) return null;
+    return { tab: c.tab, seq: c.seq, ...at, glide: cursorGlides(prev, c) };
+  }, null);
+
+  const [ripples, setRipples] = createSignal<{ id: number; left: number; top: number }[]>([]);
+  let rippleSeq = 0;
+  let lastPress: { x: number; y: number; at: number } | null = null;
+  const rippleTimers = new Set<ReturnType<typeof setTimeout>>();
+  onCleanup(() => {
+    for (const t of rippleTimers) clearTimeout(t);
+  });
+  createEffect(
+    on(
+      stream.cursor,
+      (c) => {
+        if (!c) return;
+        const now = performance.now();
+        const ring = cursorRipples(lastPress, c, now);
+        if (c.kind === "down") lastPress = { x: c.x, y: c.y, at: now };
+        const el = untrack(imgEl);
+        const f = untrack(stream.frame);
+        if (!ring || !el || !f || c.tab !== untrack(shownTab)) return;
+        const at = spotOf(c, el, f);
+        if (!at) return;
+        const id = ++rippleSeq;
+        setRipples((all) => [...all, { id, ...at }]);
+        const timer = setTimeout(() => {
+          rippleTimers.delete(timer);
+          setRipples((all) => all.filter((r) => r.id !== id));
+        }, RIPPLE_MS);
+        rippleTimers.add(timer);
+      },
+      { defer: true },
+    ),
+  );
+
   return (
     <aside
       class="tl-browser-panel"
@@ -642,7 +736,10 @@ export const BrowserPanel: Component<{
             <Show when={stream.frame()}>
               {(f) => (
                 <img
-                  ref={img}
+                  ref={(el) => {
+                    img = el;
+                    setImgEl(el);
+                  }}
                   class="tl-browser-frame"
                   src={f().src}
                   alt={tab()?.title ? `The page: ${tab()?.title}` : "The page"}
@@ -650,6 +747,29 @@ export const BrowserPanel: Component<{
                 />
               )}
             </Show>
+            <div class="tl-browser-cursor-layer" aria-hidden="true">
+              <For each={ripples()}>
+                {(r) => (
+                  <span
+                    class="tl-browser-ripple"
+                    style={{ left: `${r.left}px`, top: `${r.top}px` }}
+                  />
+                )}
+              </For>
+              <Show when={cursorSpot()}>
+                {(c) => (
+                  <div
+                    class="tl-browser-cursor"
+                    data-glide={c().glide ? "" : undefined}
+                    style={{ transform: `translate(${c().left}px, ${c().top}px)` }}
+                  >
+                    <svg viewBox="0 0 16 24" width="16" height="24" aria-hidden="true">
+                      <path d="M1 1 L1 19 L5.5 14.5 L8.5 21.5 L11.5 20.2 L8.6 13.4 L14.6 13.4 Z" />
+                    </svg>
+                  </div>
+                )}
+              </Show>
+            </div>
           </div>
           <Show when={note()}>{(n) => <div class="tl-browser-empty">{n()}</div>}</Show>
           <Show when={stream.error()}>

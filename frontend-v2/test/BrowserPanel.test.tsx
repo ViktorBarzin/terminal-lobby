@@ -566,3 +566,91 @@ describe("<BrowserPanel> popups", () => {
     expect(queryByRole("alertdialog")).toBeNull();
   });
 });
+
+/**
+ * The Browser cursor (Viktor, 2026-10-02): one arrow over the page, where the
+ * host says the mouse is, whoever drives it. It glides from one report to the
+ * next and a ring pulses where a press lands.
+ */
+describe("<BrowserPanel> cursor", () => {
+  const watching = () => {
+    const r = mount(true);
+    r.ws.host({ t: "frame", tab: "t1", jpeg: "AAAA", w: 1280, h: 800 });
+    const img = r.container.querySelector<HTMLImageElement>(".tl-browser-frame")!;
+    // A 640x600 box: the picture is drawn at half scale with 100px bars.
+    img.getBoundingClientRect = () => new DOMRect(30, 40, 640, 600);
+    const cursor = () => r.container.querySelector<HTMLElement>(".tl-browser-cursor");
+    const ripples = () => r.container.querySelectorAll(".tl-browser-ripple");
+    const at = (x: number, y: number, kind = "move", tab = "t1") =>
+      r.ws.host({ t: "cursor", tab, x, y, kind });
+    return { ...r, cursor, ripples, at };
+  };
+
+  it("is hidden until the host says where the mouse is on the shown tab", () => {
+    const { cursor, at } = watching();
+    expect(cursor()).toBeNull();
+    at(10, 10, "move", "t2");
+    expect(cursor()).toBeNull();
+    at(640, 400);
+    expect(cursor()).not.toBeNull();
+  });
+
+  it("sits on the picture, past the letterbox bar, in the picture's own pixels", () => {
+    const { cursor, at } = watching();
+    at(640, 400);
+    expect(cursor()!.style.transform).toBe("translate(320px, 300px)");
+    at(0, 0);
+    expect(cursor()!.style.transform).toBe("translate(0px, 100px)");
+  });
+
+  it("appears in place, then glides to each new position", () => {
+    const { cursor, at } = watching();
+    at(640, 400);
+    expect(cursor()).not.toHaveAttribute("data-glide");
+    at(700, 400);
+    expect(cursor()).toHaveAttribute("data-glide");
+  });
+
+  it("appears in place on another tab rather than gliding across from the last one", () => {
+    const { cursor, at, getAllByRole } = watching();
+    at(640, 400);
+    at(700, 400);
+    fireEvent.click(getAllByRole("tab")[1]!);
+    expect(cursor()).toBeNull();
+    at(100, 100, "move", "t2");
+    expect(cursor()).not.toHaveAttribute("data-glide");
+  });
+
+  it("rings where a press lands, once for a press and its click", () => {
+    const { ripples, at } = watching();
+    at(640, 400);
+    expect(ripples()).toHaveLength(0);
+    at(640, 400, "down");
+    at(640, 400, "up");
+    at(640, 400, "click");
+    expect(ripples()).toHaveLength(1);
+    expect((ripples()[0] as HTMLElement).style.left).toBe("320px");
+    expect((ripples()[0] as HTMLElement).style.top).toBe("300px");
+  });
+
+  it("lets the ring go once it has played", () => {
+    vi.useFakeTimers();
+    try {
+      const { ripples, at } = watching();
+      at(640, 400, "down");
+      vi.advanceTimersByTime(1_000);
+      expect(ripples()).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("is drawn for a watcher too, and stays out of the way of presses", () => {
+    const { cursor, at, container } = watching();
+    at(640, 400);
+    const layer = container.querySelector(".tl-browser-cursor-layer")!;
+    expect(layer).toHaveAttribute("aria-hidden", "true");
+    expect(layer.contains(cursor())).toBe(true);
+    expect(container.querySelector(".tl-browser-canvas")!.contains(layer)).toBe(true);
+  });
+});

@@ -397,6 +397,12 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   (telemetry, 2026-10-02). Take control and Hand back wait, reading
   "Connecting…", until the host has greeted the panel's stream, and after a
   reconnect the panel sends `resume` with its previous `you`.
+- **Cursor**. The panel draws the **Browser cursor** over the page at the
+  position the host's `cursor` messages give, through the same page-to-screen
+  mapping the popups use. It glides to each new position, with no glide when
+  it first appears or the tab changes, and a ring pulses where a press lands.
+  With reduced motion it jumps, and the ring is a brief fade. A card draws no
+  cursor.
 
 ## Rollout
 

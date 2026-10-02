@@ -13,6 +13,9 @@ import {
   callSummary,
   cardAnchors,
   clientBox,
+  clientPoint,
+  cursorGlides,
+  cursorRipples,
   listPlacement,
   pagePoint,
   panelLayout,
@@ -523,5 +526,85 @@ describe("runStatus", () => {
       end(),
     ]);
     expect(runStatus(settled)).toEqual({ status: "ok", summary: "Reading the page" });
+  });
+});
+
+/**
+ * The Browser cursor (Viktor, 2026-10-02): one arrow over the page where the
+ * host says the mouse is, gliding between positions, with a ring where a
+ * press lands. It goes through the popups' page-to-screen mapping.
+ */
+describe("where the cursor is drawn over the scaled page", () => {
+  const viewport = { w: 1280, h: 800 };
+  const at = (width: number, height: number) => ({ left: 0, top: 0, width, height });
+
+  it("lands on the picture inside the letterbox bars", () => {
+    // 640x600 box: the picture is 640x400 at half scale, with 100px bars.
+    const frame = { w: 1280, h: 800 };
+    expect(clientPoint({ x: 0, y: 0 }, at(640, 600), frame, viewport)).toEqual({
+      left: 0,
+      top: 100,
+    });
+    expect(clientPoint({ x: 640, y: 400 }, at(640, 600), frame, viewport)).toEqual({
+      left: 320,
+      top: 300,
+    });
+    // A wide box puts the bars at the sides instead.
+    expect(clientPoint({ x: 1280, y: 0 }, at(1000, 400), frame, viewport)).toEqual({
+      left: 820,
+      top: 0,
+    });
+  });
+
+  it("follows a pinch zoom, which grows the picture's box", () => {
+    const frame = { w: 1280, h: 800 };
+    expect(clientPoint({ x: 640, y: 400 }, at(2560, 1600), frame, viewport)).toEqual({
+      left: 1280,
+      top: 800,
+    });
+  });
+
+  it("maps page pixels, not frame pixels, when the screencast is scaled down", () => {
+    // A phone: a 640x400 frame of the 1280x800 page, in a 390x300 box.
+    const p = clientPoint({ x: 1280, y: 800 }, at(390, 300), { w: 640, h: 400 }, viewport);
+    expect(p?.left).toBeCloseTo(390);
+    expect(p?.top).toBeCloseTo(271.875);
+  });
+
+  it("has no place without a picture", () => {
+    expect(clientPoint({ x: 1, y: 1 }, at(0, 0), { w: 1280, h: 800 }, viewport)).toBeNull();
+    expect(clientPoint({ x: 1, y: 1 }, at(640, 400), { w: 0, h: 0 }, viewport)).toBeNull();
+  });
+});
+
+describe("when the cursor glides", () => {
+  it("glides from one report to the next on the same tab", () => {
+    expect(cursorGlides({ tab: "t1", seq: 1 }, { tab: "t1", seq: 2 })).toBe(true);
+  });
+
+  it("appears in place the first time, and on a tab switch", () => {
+    expect(cursorGlides(null, { tab: "t1", seq: 1 })).toBe(false);
+    expect(cursorGlides({ tab: "t1", seq: 1 }, { tab: "t2", seq: 2 })).toBe(false);
+  });
+
+  it("moves with the picture, not after it, when only the layout changed", () => {
+    // A resize or a pinch moves where the same report is drawn.
+    expect(cursorGlides({ tab: "t1", seq: 3 }, { tab: "t1", seq: 3 })).toBe(false);
+  });
+});
+
+describe("where a press ripples", () => {
+  it("ripples on a press and not on a move or a release", () => {
+    expect(cursorRipples(null, { kind: "down", x: 5, y: 5 }, 0)).toBe(true);
+    expect(cursorRipples(null, { kind: "move", x: 5, y: 5 }, 0)).toBe(false);
+    expect(cursorRipples(null, { kind: "up", x: 5, y: 5 }, 0)).toBe(false);
+  });
+
+  it("gives a click its own ring only when no press just rippled there", () => {
+    const down = { x: 100, y: 50, at: 1_000 };
+    expect(cursorRipples(down, { kind: "click", x: 100, y: 50 }, 1_080)).toBe(false);
+    expect(cursorRipples(down, { kind: "click", x: 300, y: 50 }, 1_080)).toBe(true);
+    expect(cursorRipples(down, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
+    expect(cursorRipples(null, { kind: "click", x: 100, y: 50 }, 3_000)).toBe(true);
   });
 });

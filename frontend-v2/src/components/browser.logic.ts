@@ -340,6 +340,60 @@ export function clientBox(rect: PageRect, box: Box, frame: Size, viewport: Size)
   };
 }
 
+/**
+ * Where a point in the page is drawn on screen, by `clientBox` with no size:
+ * the Browser cursor's spot over the `object-fit: contain` picture. Pass the
+ * picture's box with `left` and `top` at 0 for a spot in its own pixels.
+ */
+export function clientPoint(
+  point: { x: number; y: number },
+  box: Box,
+  frame: Size,
+  viewport: Size,
+): { left: number; top: number } | null {
+  const b = clientBox({ x: point.x, y: point.y, w: 0, h: 0 }, box, frame, viewport);
+  return b && { left: b.left, top: b.top };
+}
+
+// ---- the cursor -------------------------------------------------------------
+
+/**
+ * Whether the Browser cursor glides to a new spot rather than appearing
+ * there: only from one host report to the next on the same tab. It appears in
+ * place the first time it is drawn and when the panel shows another tab, and
+ * moves with the picture, not after it, when only the layout changed (the
+ * same report, `seq`, drawn somewhere else).
+ */
+export function cursorGlides(
+  prev: { tab: string; seq: number } | null,
+  next: { tab: string; seq: number },
+): boolean {
+  return prev !== null && prev.tab === next.tab && prev.seq !== next.seq;
+}
+
+/** A click this soon after a press, this close to it, is that press's. */
+const CLICK_OF_PRESS_MS = 1_000;
+const CLICK_OF_PRESS_PX = 4;
+
+/**
+ * Whether a cursor report rings where it lands: every press, and a click
+ * that is not the end of the press that just rang there. The host reports a
+ * click as down, up and click, and one click gets one ring.
+ */
+export function cursorRipples(
+  lastPress: { x: number; y: number; at: number } | null,
+  report: { kind: "move" | "down" | "up" | "click"; x: number; y: number },
+  now: number,
+): boolean {
+  if (report.kind === "down") return true;
+  if (report.kind !== "click") return false;
+  return (
+    lastPress === null ||
+    now - lastPress.at > CLICK_OF_PRESS_MS ||
+    Math.hypot(report.x - lastPress.x, report.y - lastPress.y) > CLICK_OF_PRESS_PX
+  );
+}
+
 export interface ListPlacement {
   left: number;
   /** The list's top edge, or its bottom edge when it opens `above`. */

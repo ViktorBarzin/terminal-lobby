@@ -58,3 +58,46 @@ describe("the page's focus ring", () => {
     expect(() => rule(".tl-browser-stage:focus-visible")).toThrow();
   });
 });
+
+/**
+ * The Browser cursor (Viktor, 2026-10-02). jsdom runs no transitions, so these
+ * pin the declarations the glide, the ring and the reduced-motion fallback
+ * rest on.
+ */
+describe("the cursor", () => {
+  const rawCss = readFileSync(resolve(process.cwd(), "src/app.css"), "utf8");
+  const reduced = (): string => {
+    const blocks = rawCss.split("@media (prefers-reduced-motion: reduce)").slice(1);
+    const mine = blocks.find((b) => b.slice(0, b.indexOf("\n}")).includes(".tl-browser-cursor"));
+    if (!mine) throw new Error("no reduced-motion block for the cursor");
+    return mine.slice(0, mine.indexOf("\n}"));
+  };
+
+  it("is laid over the picture and never takes a press", () => {
+    expect(rule(".tl-browser-canvas")).toMatch(/position:\s*relative/);
+    const layer = rule(".tl-browser-cursor-layer");
+    expect(layer).toMatch(/position:\s*absolute/);
+    expect(layer).toMatch(/inset:\s*0/);
+    expect(layer).toMatch(/pointer-events:\s*none/);
+  });
+
+  it("glides with a short ease-out, only when told to", () => {
+    expect(rule(".tl-browser-cursor")).not.toMatch(/transition/);
+    const glide = rule(".tl-browser-cursor[data-glide]");
+    const ms = Number(/transition:\s*transform\s+(\d+)ms\s+ease-out/.exec(glide)?.[1]);
+    expect(ms).toBeGreaterThanOrEqual(120);
+    expect(ms).toBeLessThanOrEqual(180);
+  });
+
+  it("rings where a press lands", () => {
+    expect(rule(".tl-browser-ripple")).toMatch(/animation:\s*tl-browser-ripple\s/);
+    expect(rawCss).toMatch(/@keyframes tl-browser-ripple\s*\{/);
+  });
+
+  it("jumps instead of gliding with reduced motion, and still rings briefly", () => {
+    const block = reduced();
+    expect(block).toMatch(/\.tl-browser-cursor\[data-glide\]\s*\{[^}]*transition:\s*none/);
+    expect(block).toMatch(/\.tl-browser-ripple\s*\{[^}]*animation:\s*tl-browser-ripple-still\s/);
+    expect(rawCss).toMatch(/@keyframes tl-browser-ripple-still\s*\{/);
+  });
+});

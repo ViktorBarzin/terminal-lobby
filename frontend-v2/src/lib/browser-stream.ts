@@ -51,6 +51,22 @@ export interface BrowserFrame {
 
 type MouseButton = "left" | "middle" | "right";
 
+export type CursorKind = "move" | "down" | "up" | "click";
+
+/**
+ * Where the mouse is on a tab, from the host's `cursor` message: the one
+ * Browser cursor, whoever moves it. `x` and `y` are the page's CSS pixels.
+ * `seq` numbers the reports on this stream, so two at the same place are
+ * still two (a second click there rings again).
+ */
+export interface BrowserCursor {
+  tab: string;
+  x: number;
+  y: number;
+  kind: CursorKind;
+  seq: number;
+}
+
 export interface SelectOption {
   value: string;
   label: string;
@@ -188,6 +204,9 @@ function controlOf(v: unknown): BrowserControl {
   };
 }
 
+const CURSOR_KINDS = new Set<string>(["move", "down", "up", "click"]);
+const isCursorKind = (v: unknown): v is CursorKind => typeof v === "string" && CURSOR_KINDS.has(v);
+
 const DIALOG_TYPES = new Set<string>(["alert", "confirm", "prompt", "beforeunload"]);
 const isDialogType = (v: unknown): v is DialogType => typeof v === "string" && DIALOG_TYPES.has(v);
 
@@ -293,6 +312,10 @@ export interface BrowserStream {
   activity: Accessor<string | null>;
   /** The host's latest complaint, for a few seconds. */
   error: Accessor<string | null>;
+  /** The host's latest cursor report, for any tab; null until the first on
+   *  this connection. The host sends it for the tab this stream watches, and
+   *  the last position again when it starts watching another. */
+  cursor: Accessor<BrowserCursor | null>;
   /** The popups open in the page, which the host sends only to the person in
    *  control. One per tab, newest last. */
   popups: Accessor<BrowserPopup[]>;
@@ -347,6 +370,8 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   const [activity, setActivity] = createSignal<string | null>(null);
   const [error, setError] = createSignal<string | null>(null);
   const [popups, setPopups] = createSignal<BrowserPopup[]>([]);
+  const [cursor, setCursor] = createSignal<BrowserCursor | null>(null);
+  let cursorSeq = 0;
   const dismissPopup = (tab: string): void => {
     setPopups((all) => (all.some((p) => p.tab === tab) ? all.filter((p) => p.tab !== tab) : all));
   };
@@ -472,8 +497,10 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         stopResuming();
         if (lastYou !== null && me !== null && lastYou !== me) resume(lastYou, ctl.holderId);
         if (me !== null) lastYou = me;
-        // The host sends a new connection the popups it should draw.
+        // The host sends a new connection the popups it should draw, and the
+        // cursor of the tab it subscribes to.
         setPopups([]);
+        setCursor(null);
         if (isObj(msg.viewport)) {
           const w = numOrNull(msg.viewport.w);
           const h = numOrNull(msg.viewport.h);
@@ -507,6 +534,14 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         if (next.holderId !== untrack(control).holderId) setPopups([]);
         setControl(next);
         if (resuming !== null && next.holderId !== resuming) stopResuming();
+        return;
+      }
+      case "cursor": {
+        const x = numOrNull(msg.x);
+        const y = numOrNull(msg.y);
+        if (typeof msg.tab !== "string" || x === null || y === null || !isCursorKind(msg.kind))
+          return;
+        setCursor({ tab: msg.tab, x, y, kind: msg.kind, seq: ++cursorSeq });
         return;
       }
       case "popup": {
@@ -626,6 +661,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     frame,
     activity,
     error,
+    cursor,
     popups,
     dismissPopup,
     send,
