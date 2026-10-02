@@ -430,9 +430,17 @@ function groupTurns(events: Event[]): Turn[] {
     }
   }
 
-  // A turn is implicitly settled once a later turn has started.
+  // A turn is implicitly settled once a later turn has started. A prompt still
+  // `sending` has not started one: POST /prompt has not answered, which takes
+  // 4 s or more when the session is waking. So it neither reads as working
+  // itself nor settles the turn running before it, and "Working…" appears when
+  // the server takes the prompt (Viktor, 2026-10-02).
+  let live = -1;
   turns.forEach((t, i) => {
-    if (i < turns.length - 1) t.ended = true;
+    if (t.events.some((e) => !e.sending)) live = i;
+  });
+  turns.forEach((t, i) => {
+    if (i !== live) t.ended = true;
   });
   return turns;
 }
@@ -1718,9 +1726,9 @@ export function deriveRows(
   const fold = opts.fold !== false;
   const group = opts.group !== false;
 
-  turns.forEach((turn, ti) => {
-    const isLast = ti === turns.length - 1;
-    const settled = turn.ended || !isLast;
+  for (const turn of turns) {
+    // groupTurns settles every turn but the live one.
+    const settled = turn.ended;
     const { userRow, work } = collectTurnRows(turn);
     // A plan left without a result in a turn that has settled was never
     // answered: the session moved on without it.
@@ -1733,7 +1741,7 @@ export function deriveRows(
     if (userRow) out.push(userRow);
     for (const r of foldSettledTurn(turn, shaped, settled && fold)) out.push(r);
     if (working) out.push(working);
-  });
+  }
 
   markSuperseded(out);
   return out;
