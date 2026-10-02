@@ -119,12 +119,20 @@ var noticeEnds = map[string]bool{"completed": true, "failed": true, "killed": tr
 // of the session and never re-enters on its own). Ended: a
 // <task-notification> with a final status, unless its note says the result
 // may be interim, or a TaskStop/KillShell result naming the task.
+//
+// A pending ScheduleWakeup is outstanding too, as wakeupTask: the turn that
+// armed it ends by saying it will wait, and the answer comes in the turn the
+// wakeup starts. It stays outstanding from the moment it fires until that
+// turn says something, because the fire is recorded before the turn's state
+// turns to running and settling in between would hand back the old words.
 func backgroundOutstanding(lines [][]byte) []string {
 	var order []string
 	open := map[string]bool{}
+	wakeup := wakeupNone
 	for _, l := range lines {
 		var r struct {
 			Type          string          `json:"type"`
+			Subtype       string          `json:"subtype"`
 			ToolUseResult json.RawMessage `json:"toolUseResult"`
 			Attachment    struct {
 				Type   string `json:"type"`
@@ -132,6 +140,16 @@ func backgroundOutstanding(lines [][]byte) []string {
 			} `json:"attachment"`
 		}
 		if json.Unmarshal(l, &r) != nil {
+			continue
+		}
+		if r.Type == "system" && r.Subtype == "scheduled_task_fire" && wakeup == wakeupPending {
+			wakeup = wakeupFired
+			continue
+		}
+		if r.Type == "assistant" && wakeup == wakeupFired {
+			if rec, ok := sessionio.DecodeRecord(l); ok && !rec.IsSidechain && strings.TrimSpace(rec.Text()) != "" {
+				wakeup = wakeupNone
+			}
 			continue
 		}
 		// A notice that arrives while a turn runs is absorbed into it as a
@@ -152,8 +170,20 @@ func backgroundOutstanding(lines [][]byte) []string {
 			AgentID          string `json:"agentId"`
 			StoppedID        string `json:"task_id"`
 			ShellID          string `json:"shell_id"`
+			// ScheduleWakeup answers with scheduledFor (0 once stopped),
+			// and only ScheduleWakeup does.
+			ScheduledFor *int64 `json:"scheduledFor"`
+			Stopped      bool   `json:"stopped"`
 		}
 		if len(r.ToolUseResult) > 0 && r.ToolUseResult[0] == '{' && json.Unmarshal(r.ToolUseResult, &tur) == nil {
+			if tur.ScheduledFor != nil {
+				// One wakeup slot: arming again replaces it, a stop cancels it.
+				wakeup = wakeupNone
+				if *tur.ScheduledFor > 0 && !tur.Stopped {
+					wakeup = wakeupPending
+				}
+				continue
+			}
 			started := []string{tur.BackgroundTaskID}
 			if !tur.Persistent {
 				started = append(started, tur.TaskID)
@@ -186,8 +216,21 @@ func backgroundOutstanding(lines [][]byte) []string {
 			out = append(out, id)
 		}
 	}
+	if wakeup != wakeupNone {
+		out = append(out, wakeupTask)
+	}
 	return out
 }
+
+// wakeupTask names a pending ScheduleWakeup among the outstanding tasks.
+const wakeupTask = "ScheduleWakeup"
+
+// A turn's ScheduleWakeup, as backgroundOutstanding follows it.
+const (
+	wakeupNone    = iota // none armed, or stopped, or fired and answered
+	wakeupPending        // armed and not yet fired
+	wakeupFired          // fired, and the turn it started has said nothing yet
+)
 
 // closeNoticed retires every task a text's <task-notification> blocks say has
 // ended.

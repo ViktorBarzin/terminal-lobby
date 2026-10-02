@@ -313,3 +313,81 @@ func TestBackgroundSubagentsOutstanding(t *testing.T) {
 		})
 	}
 }
+
+// ScheduleWakeup records in the shapes Claude Code 2.1.287 wrote them live
+// on 2026-10-02 (rv-r2b-bg): the result of arming one, of stopping the loop,
+// and the system record a fired wakeup leaves before the turn it starts.
+func wakeupArmedLine(at string) string {
+	return `{"type":"user","timestamp":"` + at + `","message":{"role":"user","content":[{"tool_use_id":"toolu_w1","type":"tool_result","content":"Next wakeup scheduled for 11:50:00 (in 120s)."}]},"toolUseResult":{"scheduledFor":1790941800000,"clampedDelaySeconds":60,"wasClamped":false}}`
+}
+
+func wakeupStoppedLine(at string) string {
+	return `{"type":"user","timestamp":"` + at + `","message":{"role":"user","content":[{"tool_use_id":"toolu_w2","type":"tool_result","content":"Loop stopped - cancelled 1 pending wakeup(s)."}]},"toolUseResult":{"scheduledFor":0,"clampedDelaySeconds":0,"wasClamped":false,"stopped":true,"cancelledWakeups":1}}`
+}
+
+func wakeupFiredLines(at string) []string {
+	return []string{
+		`{"type":"system","subtype":"scheduled_task_fire","timestamp":"` + at + `","isMeta":false}`,
+		`{"type":"user","timestamp":"` + at + `","isMeta":true,"message":{"role":"user","content":"# Autonomous loop check\n\nYou're being invoked on a timer."}}`,
+	}
+}
+
+// A pending wakeup is a turn still to come: the turn that ended said only
+// that it would wait, and the answer comes after the wakeup fires.
+func TestScheduledWakeupIsOutstanding(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		lines []string
+		want  int
+	}{
+		{"armed", []string{wakeupArmedLine("2026-10-02T11:48:00Z")}, 1},
+		{"armed then stopped", []string{wakeupArmedLine("2026-10-02T11:48:00Z"), wakeupStoppedLine("2026-10-02T11:48:01Z")}, 0},
+		{"re-armed after a stop", []string{wakeupArmedLine("2026-10-02T11:48:00Z"), wakeupStoppedLine("2026-10-02T11:48:01Z"), wakeupArmedLine("2026-10-02T11:48:02Z")}, 1},
+		// Fired, and the turn it started has not said anything yet: settling
+		// now would hand back the previous turn's words.
+		{"fired, no reply yet", append([]string{wakeupArmedLine("2026-10-02T11:48:00Z")}, wakeupFiredLines("2026-10-02T11:50:00Z")...), 1},
+		{"fired and answered", append(append([]string{wakeupArmedLine("2026-10-02T11:48:00Z")}, wakeupFiredLines("2026-10-02T11:50:00Z")...),
+			assistantLine("MANGO-58", "2026-10-02T11:50:26Z")), 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var lines [][]byte
+			for _, l := range c.lines {
+				lines = append(lines, []byte(l))
+			}
+			if got := backgroundOutstanding(lines); len(got) != c.want {
+				t.Fatalf("outstanding %v, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// Measured live on 2026-10-02 (rv-r2b-bg): the turn armed a wakeup to wait
+// for the agent it started and ended on "Agent is running; ending this turn
+// to wait for its completion notification." The task settled done on that
+// line after 39 s; MANGO-58 came two turns and two minutes later.
+func TestTurnWaitsOutAScheduledWakeup(t *testing.T) {
+	h := newHarness(t)
+	h.readyConversation("c1")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.setStateLocked(k, "running")
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.appendTranscript(testOSUser, "c1", userLine("launch it and wait", "2026-10-02T11:47:33Z"))
+			f.appendTranscript(testOSUser, "c1", wakeupArmedLine("2026-10-02T11:48:00Z"))
+			f.appendTranscript(testOSUser, "c1", assistantLine("Agent is running; ending this turn to wait for its completion notification.", "2026-10-02T11:48:02Z"))
+			f.setState(testOSUser, "c1", "done")
+			time.Sleep(60 * time.Millisecond)
+			f.appendTranscript(testOSUser, "c1", wakeupFiredLines("2026-10-02T11:50:00Z")...)
+			time.Sleep(30 * time.Millisecond)
+			f.setState(testOSUser, "c1", "running")
+			f.appendTranscript(testOSUser, "c1", wakeupStoppedLine("2026-10-02T11:50:24Z"))
+			f.appendTranscript(testOSUser, "c1", assistantLine("MANGO-58", "2026-10-02T11:50:26Z"))
+			f.setState(testOSUser, "c1", "done")
+		}()
+	}
+	task := h.sendMessage("c1", "launch it and wait")
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone || v.Result != "MANGO-58" || v.BackgroundRunning {
+		t.Fatalf("status %q result %q background %v error %q, want done MANGO-58", v.Status, v.Result, v.BackgroundRunning, v.Error)
+	}
+}
