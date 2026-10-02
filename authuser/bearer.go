@@ -328,3 +328,32 @@ func (g *Gate) resolveBearer(r *http.Request, token string, creds []bearerCred) 
 		Admin: false,
 	}, nil
 }
+
+// BearerCaller reports the OS user the Caller called name acts as, from the
+// credentials file as a request would read it: same path, same owner and mode
+// checks. agent-api asks before it records a Delegation for that Caller, so a
+// misspelt target is refused when the work is handed over rather than left for
+// a Caller that does not exist.
+//
+// ok=false for a name with no credential, and for a name whose lines disagree
+// about the account. Two lines on one account are a token rotation and answer
+// normally; two accounts under one name have no single answer, and picking the
+// first line would make the file's order decide who receives the work.
+//
+// It reads the file per call, like Resolve, and for the same reason: revoking
+// a Caller is deleting its line, and that has to take effect without a restart.
+func (g *Gate) BearerCaller(name string) (osUser string, ok bool) {
+	if name == "" {
+		return "", false
+	}
+	for _, c := range g.bearerCreds() {
+		if c.Name != name {
+			continue
+		}
+		if osUser != "" && osUser != c.OSUser {
+			return "", false
+		}
+		osUser = c.OSUser
+	}
+	return osUser, osUser != ""
+}

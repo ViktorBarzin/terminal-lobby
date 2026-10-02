@@ -744,3 +744,51 @@ func TestConfigureWiresTheBearerPathFromTheEnvironment(t *testing.T) {
 		t.Fatalf("resolved to %q, want bob", got.OSUser)
 	}
 }
+
+// BearerCaller answers "is there a Caller of this name, and which account is
+// it" from the same file, under the same rules, as a request would be resolved.
+// agent-api asks it before recording a Delegation, so a typo in a target name
+// is refused at creation rather than leaving work no credential can collect.
+func TestBearerCallerLooksUpANameInTheCredentialsFile(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		tokens string
+		ask    string
+		want   string
+		wantOK bool
+	}{
+		{"a known caller", fixtureTokens, "muse", "bob", true},
+		{"the other known caller", fixtureTokens, "ops", "alice", true},
+		{"a name nobody issued", fixtureTokens, "ghost", "", false},
+		{"an empty name", fixtureTokens, "", "", false},
+		{"no credentials file at all", "", "muse", "", false},
+		// Two lines for one name on one account is a rotation in progress:
+		// the old and the new token both still answer as the same Caller.
+		{"one name, two tokens, one account",
+			fixtureTokens + "muse  " + BearerDigest("muse-rotated-000000000000000000000000003") + "  bob\n",
+			"muse", "bob", true},
+		// One name on two accounts cannot be answered with one account, and
+		// guessing would hand work to whichever line came first.
+		{"one name on two accounts",
+			fixtureTokens + "muse  " + BearerDigest("muse-elsewhere-0000000000000000000000004") + "  alice\n",
+			"muse", "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := bearerGate(t, c.tokens)
+			got, ok := g.BearerCaller(c.ask)
+			if got != c.want || ok != c.wantOK {
+				t.Fatalf("BearerCaller(%q) = %q, %v; want %q, %v", c.ask, got, ok, c.want, c.wantOK)
+			}
+		})
+	}
+}
+
+// A file the gate would refuse for a request is refused for a lookup too: a
+// Caller that cannot authenticate cannot collect a Delegation either.
+func TestBearerCallerHonoursTheFileRules(t *testing.T) {
+	g := bearerGate(t, fixtureTokens)
+	g.TokensOwnerUID = os.Getuid() + 1
+	if got, ok := g.BearerCaller("muse"); ok {
+		t.Fatalf("a file owned by the wrong uid still answered %q", got)
+	}
+}
