@@ -143,6 +143,30 @@ func TestModFeedDeltasAreLiveOnly(t *testing.T) {
 	}
 }
 
+// Claude stores nothing for a block a Stop cut short, while the pane keeps the
+// words, so the log keeps them too.
+func TestModFeedAStoppedReplyKeepsWhatStreamed(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "count"}}))
+	fs.Feed(ModEvent{Type: ModDeltaEvent, Kind: "text", Text: "1 one\n2 tw"})
+	fs.Feed(ModEvent{Type: ModTurnEndEvent, Aborted: true})
+	got := fs.Replay(0)
+	if k := strings.Join(modKinds(got), ","); k != "user,text,turn_end" || got[1].Body != "1 one\n2 tw" {
+		t.Fatalf("kinds = %s, text = %q", k, got[1].Body)
+	}
+}
+
+func TestModFeedAFinishedReplyIsNotDoubled(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "hi"}}))
+	fs.Feed(ModEvent{Type: ModDeltaEvent, Kind: "text", Text: "hello"})
+	fs.Feed(modRow(t, "assistant", "assistant", "response", []map[string]any{{"type": "text", "text": "hello"}}))
+	fs.Feed(ModEvent{Type: ModTurnEndEvent, Aborted: true})
+	if k := strings.Join(modKinds(fs.Replay(0)), ","); k != "user,text,turn_end" {
+		t.Fatalf("kinds = %s", k)
+	}
+}
+
 func TestModFeedDeltaWithNoTextIsDropped(t *testing.T) {
 	fs := NewModSource("s", "", nil)
 	ch, cancel := fs.Subscribe()

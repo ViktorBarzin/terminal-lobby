@@ -165,6 +165,10 @@ type modState struct {
 	// failed request and history after a fresh hello, so a row can arrive
 	// twice.
 	rows map[string]bool
+	// streamed is the main thread's reply text streamed since Claude last
+	// stored a block. Claude stores nothing for a block a Stop cut short, so
+	// this is what keeps the words the pane still shows.
+	streamed strings.Builder
 	// opened is the text of the prompt row that opened the current turn. A
 	// prompt the mod submitted itself is reported when its turn starts, after
 	// its row, and must not then read as one waiting behind that same turn.
@@ -213,9 +217,22 @@ func (f *FileSource) Feed(ev ModEvent) {
 		if ev.AgentID != "" {
 			return // a subagent's loop ending says nothing about the main turn
 		}
+		f.mu.Lock()
+		cut := f.mod.streamed.String()
+		f.mod.streamed.Reset()
+		f.mu.Unlock()
 		f.normMu.Lock()
+		var partial Event
+		keep := ev.Aborted && strings.TrimSpace(cut) != "" && f.norm.turnID != "" && !f.norm.turnDone
+		if keep {
+			partial = f.norm.emit(KindText, ev.T)
+			partial.Body = cut
+		}
 		e, ok := f.norm.EndTurn(ev.T, ev.Usage)
 		f.normMu.Unlock()
+		if keep {
+			f.appendLive(partial)
+		}
 		if ok {
 			f.appendLive(e)
 		}
@@ -250,6 +267,12 @@ func (f *FileSource) feedRow(ev ModEvent) {
 		Message:     Message{Role: ev.Message.Role, Content: ev.Message.Content},
 	}
 	blocks := rec.Blocks()
+	// A stored block of the reply supersedes what streamed for it.
+	if ev.AgentID == "" && rec.Role() == "assistant" {
+		f.mu.Lock()
+		f.mod.streamed.Reset()
+		f.mu.Unlock()
+	}
 	// A tool result row: attach the structured result the mod sent ahead of it.
 	for _, bl := range blocks {
 		if bl.Type == "tool_result" && bl.ToolUseID != "" {
@@ -322,6 +345,11 @@ func (f *FileSource) feedResult(ev ModEvent) {
 func (f *FileSource) feedDelta(ev ModEvent) {
 	if ev.Text == "" || (ev.Kind != "text" && ev.Kind != "thinking") {
 		return
+	}
+	if ev.Kind == "text" && ev.AgentID == "" {
+		f.mu.Lock()
+		f.mod.streamed.WriteString(ev.Text)
+		f.mu.Unlock()
 	}
 	turn := f.TurnID()
 	f.broadcast(Event{
