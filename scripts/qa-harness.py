@@ -344,6 +344,7 @@ MINTED_NAME = re.compile(r"^[0-9a-hjkmnp-tv-z]{12}$")
 RE_SESSION = re.compile(r"^sessions/([^/]+)$")
 RE_RENAME = re.compile(r"^sessions/([^/]+)/rename$")
 RE_TITLE = re.compile(r"^sessions/([^/]+)/title$")
+RE_RESTART = re.compile(r"^sessions/([^/]+)/restart$")
 RE_PROJECT_ID = re.compile(r"^projects/([^/]+)")
 
 
@@ -562,6 +563,14 @@ class Guard:
             if not self.may_drive(name):
                 return (f"refusing to kill {name!r} — only qa-* sessions and the ones "
                         f"this run created may be killed")
+
+        m = RE_RESTART.match(tail)
+        if m and method == "POST":
+            name = unquote(m.group(1))
+            if not self.may_drive(name):
+                return (f"refusing to restart {name!r} — a restart stops the turn it is "
+                        f"running, and only qa-* sessions and the ones this run created "
+                        f"may be restarted")
 
         m = RE_TITLE.match(tail)
         if m and method == "POST":

@@ -73,6 +73,23 @@ def test_get_session_never_blocked(guard):
     assert guard.check_tmux_api("GET", "sessions/main", b"") is None
 
 
+# --- restart --------------------------------------------------------------
+
+def test_restart_qa_session_allowed(guard):
+    assert guard.check_tmux_api("POST", "sessions/qa-timeline/restart", b"") is None
+
+
+def test_restart_real_session_blocked(guard):
+    # A restart stops whatever turn the session is running: somebody's real
+    # work, unless this run owns it.
+    reason = guard.check_tmux_api("POST", "sessions/main/restart", b"")
+    assert reason and "refusing to restart" in reason
+
+
+def test_restart_url_encoded_real_session_blocked(guard):
+    assert guard.check_tmux_api("POST", "sessions/%6D%61%69%6E/restart", b"") is not None
+
+
 # --- rename ---------------------------------------------------------------
 
 def test_rename_qa_to_qa_allowed(guard):
