@@ -137,12 +137,14 @@ export class ViewerServer {
   }
 
   /**
-   * For a message the next of its kind supersedes (a cursor move): dropped
-   * for a viewer that has not caught up.
+   * A cursor message, of any kind: dropped for a viewer that has not caught
+   * up. A move the next one supersedes; a press or click a viewer that far
+   * behind would draw late anyway, and page code can make them, so they must
+   * not grow a slow viewer's backlog without limit.
    * @param {Viewer} v
-   * @param {HostMessage} msg
+   * @param {HostMessage & { t: "cursor" }} msg
    */
-  sendLatest(v, msg) {
+  sendCursor(v, msg) {
     if (v.socket.writableLength > FRAME_BACKLOG) return;
     this.send(v, msg);
   }

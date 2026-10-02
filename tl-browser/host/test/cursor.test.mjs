@@ -200,7 +200,7 @@ test("a closed tab's cursor is forgotten", () => {
   assert.notEqual(board.last("t2"), null);
 });
 
-test("a page flooding moves is cut down; presses always pass", () => {
+test("a page flooding moves is cut down; the move pacing never holds a press", () => {
   let now = 0;
   const board = new CursorBoard({ now: () => now });
   assert.notEqual(board.report("t1", { kind: "move", x: 1, y: 1 }), null);
@@ -210,4 +210,36 @@ test("a page flooding moves is cut down; presses always pass", () => {
   assert.notEqual(board.report("t1", { kind: "down", x: 2, y: 2 }), null);
   now += 50;
   assert.notEqual(board.report("t1", { kind: "move", x: 3, y: 3 }), null);
+});
+
+test("a page flooding presses and clicks is cut to a burst, then about 20 a second, per tab", () => {
+  let now = 0;
+  const board = new CursorBoard({ now: () => now });
+  const kinds = /** @type {const} */ (["down", "up", "click"]);
+  let passed = 0;
+  for (let i = 0; i < 1000; i++)
+    if (board.report("t1", { kind: kinds[i % 3], x: i % 50, y: 1 })) passed++;
+  assert.ok(passed >= 6, `a real double click (6 messages) fits the burst, got ${passed}`);
+  assert.ok(passed <= 12, `a loop of 1000 is cut to a small burst, got ${passed}`);
+
+  // Another tab has its own allowance.
+  assert.notEqual(board.report("t2", { kind: "click", x: 1, y: 1 }), null);
+
+  // A second later, about 20 more go through, however many are tried.
+  now += 1000;
+  passed = 0;
+  for (let i = 0; i < 1000; i++) if (board.report("t1", { kind: "click", x: 1, y: 1 })) passed++;
+  assert.ok(passed >= 10 && passed <= 22, `about a second's worth after a second, got ${passed}`);
+
+  // The flood does not starve moves, which have their own pacing.
+  now += 20;
+  assert.notEqual(board.report("t1", { kind: "move", x: 9, y: 9 }), null);
+});
+
+test("a closed tab's click allowance is forgotten with it", () => {
+  const board = new CursorBoard({ now: () => 0 });
+  for (let i = 0; i < 100; i++) board.report("t1", { kind: "click", x: 1, y: 1 });
+  assert.equal(board.report("t1", { kind: "click", x: 1, y: 1 }), null, "spent");
+  board.prune(new Set());
+  assert.notEqual(board.report("t1", { kind: "click", x: 1, y: 1 }), null, "a fresh tab with the same id starts full");
 });

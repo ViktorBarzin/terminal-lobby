@@ -237,9 +237,10 @@ so input inside one is not reported and the cursor stays where it last was.
 Moves leave a frame at most about 30 times a second, the latest one in a burst
 always arriving; presses and clicks are never held back. The script patches
 no prototype and catches its own errors. The host checks each report like any
-other outside input and passes on moves from a tab at most every 15 ms, since
-a page can call the binding itself. A move may be dropped for a viewer that
-has not caught up; a click never is.
+other outside input, since a page can call the binding itself: it passes on
+moves from a tab at most every 15 ms, and presses, releases and clicks at
+most 20 a second after a burst of 10 (a double click is 6), dropping the rest.
+Any cursor message may be dropped for a viewer that has not caught up.
 
 Frames come from the CDP screencast (`Page.startScreencast`), which only paints
 on change, so a `subscribe` first sends a fresh screenshot. The screencast runs

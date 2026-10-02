@@ -285,9 +285,7 @@ async function serve() {
           if (!msg) return;
           for (const v of viewers.viewers) {
             if (!v.subscribed || v.shown !== tab) continue;
-            // A move the next one replaces may be dropped; a click never is.
-            if (msg.kind === "move") viewers.sendLatest(v, msg);
-            else viewers.send(v, msg);
+            viewers.sendCursor(v, msg);
           }
         },
         onFrame: (tab, frame) => {

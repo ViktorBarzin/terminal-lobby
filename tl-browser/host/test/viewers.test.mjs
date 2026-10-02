@@ -153,3 +153,23 @@ test("a first line that is neither a hello nor a release ends the connection", a
   assert.deepEqual(s.released, []);
   assert.equal(s.hellos.length, 0);
 });
+
+test("cursor messages of every kind are dropped for a viewer that has not caught up", () => {
+  const server = new ViewerServer({
+    onHello: () => {},
+    onMessage: () => {},
+    onGone: () => {},
+    onRelease: () => ({ t: "control", holder: null, holderId: null, since: null, lapseAt: null }),
+  });
+  /** @type {string[]} */
+  const written = [];
+  const socket = { destroyed: false, writableLength: 0, write: (/** @type {string} */ s) => written.push(s) };
+  const v = /** @type {Viewer} */ (/** @type {unknown} */ ({ socket }));
+  for (const kind of /** @type {const} */ (["move", "down", "up", "click"])) {
+    socket.writableLength = 0;
+    server.sendCursor(v, { t: "cursor", tab: "1", x: 1, y: 1, kind });
+    socket.writableLength = 5_000_000;
+    server.sendCursor(v, { t: "cursor", tab: "1", x: 2, y: 2, kind });
+  }
+  assert.equal(written.length, 4, "one of each kind while caught up, none while behind");
+});

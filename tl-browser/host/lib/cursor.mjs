@@ -36,6 +36,14 @@ export const MOVE_INTERVAL_MS = 33;
  * calling the binding itself in a loop; the page script stays well under it.
  */
 const MIN_MOVE_MS = 15;
+/**
+ * Presses, releases and clicks from a tab pass at most this many a second,
+ * after a burst of PRESS_BURST. A page script calling the binding in a loop
+ * would otherwise send every viewer a ring per call. A person's double click
+ * is 6 messages and fits the burst; the rest of a flood is dropped.
+ */
+const PRESS_PER_SEC = 20;
+const PRESS_BURST = 10;
 /** Far beyond any page, near enough to refuse nonsense. */
 const MAX_COORD = 100_000;
 
@@ -166,6 +174,9 @@ export class CursorBoard {
   #last = new Map();
   /** @type {Map<string, number>} */
   #movedAt = new Map();
+  /** each tab's press allowance: tokens left, and when it was last topped up */
+  /** @type {Map<string, { tokens: number, at: number }>} */
+  #presses = new Map();
   #now;
 
   /** @param {{ now?: () => number }} [opts] */
@@ -189,8 +200,26 @@ export class CursorBoard {
       const t = this.#now();
       if (t - (this.#movedAt.get(tab) ?? -Infinity) < MIN_MOVE_MS) return null;
       this.#movedAt.set(tab, t);
+    } else if (!this.#takePress(tab)) {
+      return null;
     }
     return { t: "cursor", tab, ...pos, kind: /** @type {CursorKind} */ (kind) };
+  }
+
+  /**
+   * A token bucket per tab for presses, releases and clicks.
+   * @param {string} tab
+   * @returns {boolean} whether this one may go
+   */
+  #takePress(tab) {
+    const t = this.#now();
+    const b = this.#presses.get(tab) ?? { tokens: PRESS_BURST, at: t };
+    b.tokens = Math.min(PRESS_BURST, b.tokens + ((t - b.at) * PRESS_PER_SEC) / 1000);
+    b.at = t;
+    this.#presses.set(tab, b);
+    if (b.tokens < 1) return false;
+    b.tokens -= 1;
+    return true;
   }
 
   /**
@@ -210,6 +239,7 @@ export class CursorBoard {
       if (tabs.has(tab)) continue;
       this.#last.delete(tab);
       this.#movedAt.delete(tab);
+      this.#presses.delete(tab);
     }
   }
 }
