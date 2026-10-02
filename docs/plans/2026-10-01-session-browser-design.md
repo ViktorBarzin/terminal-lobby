@@ -179,6 +179,7 @@ Frames are base64 JPEG, about 60 to 120 KB at quality 60.
 | viewer → host | `navigate`, `back`, `forward`, `reload`, `copy` | Same rule |
 | viewer → host | `selectTab` | Change which tab this viewer watches |
 | viewer → host | `takeControl`, `handBack` | Control changes |
+| viewer → host | `resume` | Sent right after the host's `hello` on a reconnect: `prev`, the `you` of this viewer's previous connection. Control held there moves to this one |
 | relay → host | `release` | Frees control held by a user. Only as a connection's first line |
 
 Control is held by one connection, not by a username. The host gives each
@@ -192,6 +193,17 @@ it was showing is withdrawn with `popup` `none`. Input, `handBack` and the
 the person changes. When the holding connection closes, control stays with it
 until it lapses, so a reload does not hand the browser back to the agent, and
 any connection allowed to control resumes it with `takeControl`.
+
+A reconnect gets a new `you`, so a viewer that held control would otherwise
+see someone else in control after any dropped connection. Right after the
+host's `hello`, a reconnecting viewer sends `{"t":"resume","prev":"<its
+previous you>"}`. The host moves control to the new connection when the
+holder is that previous connection, it has closed, and the user matches, then
+broadcasts `control`. `since` and the lapse stay as they were, so reconnecting
+does not extend control. A watch-only connection's `resume` is dropped by the
+relay's filter and ignored by the host. While the previous connection is
+still open, `resume` changes nothing: that is a second device, which takes
+control with `takeControl`.
 
 session-events frees a user's control, for example when their share is revoked
 after their holding connection has already closed, by opening a connection of

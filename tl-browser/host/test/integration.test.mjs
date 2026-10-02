@@ -538,3 +538,57 @@ test("the agent's first calls share one tab, with no empty tab beside it", {
     "the viewer's tab list shows only the agent's page",
   );
 });
+
+test("a person in control keeps it across a reconnect", {
+  skip: !haveChrome && "Google Chrome is not installed",
+  timeout: TEST_TIMEOUT_MS,
+}, async (t) => {
+  const { callTool, sockPath } = await startHost(t, {});
+  const nav = await callTool("browser_navigate", { url: PAGE });
+  assert.notEqual(nav.isError, true, JSON.stringify(nav));
+
+  const first = await connectViewer(sockPath, "tester", true);
+  first.send({ t: "takeControl" });
+  const taken = await first.view.next(
+    (m) => m.t === "control" && m.holderId === first.hello.you,
+    "control taken",
+  );
+
+  // While the first connection is open, a resume naming it is a second
+  // device's, and changes nothing: that takes control explicitly.
+  const phone = await connectViewer(sockPath, "tester", true);
+  phone.send({ t: "resume", prev: first.hello.you });
+
+  // The connection drops. Another user, and a watch-only viewer, cannot
+  // claim it by naming the closed connection.
+  first.sock.destroy();
+  const other = await connectViewer(sockPath, "someone-else", true);
+  other.send({ t: "resume", prev: first.hello.you });
+  const watcher = await connectViewer(sockPath, "tester", false);
+  watcher.send({ t: "resume", prev: first.hello.you });
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(
+    [...phone.view.seen, ...other.view.seen, ...watcher.view.seen].some((m) => m.t === "control"),
+    false,
+    "control stays with the closed connection",
+  );
+
+  // The same person's tab reconnects and names its previous connection.
+  const back = await connectViewer(sockPath, "tester", true);
+  assert.equal(back.hello.control.holderId, first.hello.you);
+  back.send({ t: "resume", prev: first.hello.you });
+  const resumed = await back.view.next(
+    (m) => m.t === "control" && m.holderId === back.hello.you,
+    "control resumed on the new connection",
+  );
+  assert.equal(resumed.holder, "tester");
+  assert.equal(resumed.since, taken.since, "the same person's control, not a new takeover");
+  await phone.view.next((m) => m.t === "control" && m.holderId === back.hello.you, "others told");
+
+  const refused = await callTool("browser_snapshot");
+  assert.equal(refused.content[0].text, REFUSAL_TEXT, "the agent is still held off");
+  back.send({ t: "insertText", text: "still mine" });
+  back.send({ t: "copy" });
+  await back.view.next((m) => m.t === "copied", "input accepted on the new connection");
+  assert.equal(back.view.seen.some((m) => m.t === "error"), false, JSON.stringify(back.view.seen));
+});

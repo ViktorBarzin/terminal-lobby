@@ -117,3 +117,25 @@ test("releasing a user's control frees it whichever connection holds it", () => 
   assert.deepEqual(ctl.snapshot(), NOBODY);
   assert.equal(ctl.release("anca"), false, "nothing left to release");
 });
+
+test("a reconnecting holder resumes control on its new connection", () => {
+  const c = clock();
+  const ctl = new Control({ lapseMs: 600, now: c.now });
+  ctl.take("old", "viktor");
+  c.t = 1200;
+  assert.equal(ctl.resume("old", "new", "viktor"), true);
+  // The person did not change and gave no input: since and the lapse stay.
+  assert.deepEqual(ctl.snapshot(), { holder: "viktor", holderId: "new", since: 1000, lapseAt: 1600 });
+  assert.equal(ctl.input("old"), false, "the old connection no longer drives");
+  assert.equal(ctl.input("new"), true);
+});
+
+test("resume moves control only from the named connection, and only for its own user", () => {
+  const c = clock();
+  const ctl = new Control({ lapseMs: 600, now: c.now });
+  assert.equal(ctl.resume("old", "new", "viktor"), false, "nobody holds control");
+  ctl.take("old", "viktor");
+  assert.equal(ctl.resume("other", "new", "viktor"), false, "not the holding connection");
+  assert.equal(ctl.resume("old", "new", "anca"), false, "another user");
+  assert.equal(ctl.holderId, "old");
+});

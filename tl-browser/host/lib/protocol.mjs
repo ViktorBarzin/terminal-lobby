@@ -19,11 +19,14 @@ import path from "node:path";
  *   | { t: "navigate", url: string }
  *   | { t: "back" } | { t: "forward" } | { t: "reload" } | { t: "copy" }
  *   | { t: "takeControl" } | { t: "handBack" }
+ *   | { t: "resume", prev: string }
  *   | { t: "choose", value: string, tab?: string }
  *   | { t: "choose", values: string[], tab?: string }
  *   | { t: "dialog", accept: boolean, text?: string, tab?: string }} ViewerMessage
  *   choose answers a select popup, dialog a JavaScript dialog; both name the
- *   popup's tab, or mean the viewer's own tab when they do not
+ *   popup's tab, or mean the viewer's own tab when they do not. resume names
+ *   the "you" this viewer had on its previous connection, sent right after
+ *   the host's hello, so control held there moves to this one
  *
  * @typedef {import("./tabs.mjs").TabInfo} TabInfo
  * @typedef {import("./control.mjs").ControlSnapshot} ControlSnapshot
@@ -196,6 +199,8 @@ export function parseViewerMessage(line) {
       return text(m.text, MAX_TEXT) ? { t, text: m.text } : null;
     case "navigate":
       return text(m.url, MAX_URL) ? { t, url: m.url } : null;
+    case "resume":
+      return text(m.prev, MAX_ID) ? { t, prev: m.prev } : null;
     case "choose": {
       const tab = popupTab(m);
       if (!tab || ("value" in m) === ("values" in m)) return null;

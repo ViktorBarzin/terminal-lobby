@@ -535,6 +535,15 @@ async function serve() {
         controlChanged();
         return;
       }
+      case "resume": {
+        // Only from the holder's own closed connection, for the same user:
+        // an open one is a second device, which takes control explicitly.
+        if (!v.canControl || [...viewers.viewers].some((other) => other.id === msg.prev)) return;
+        if (!control.resume(msg.prev, v.id, v.user)) return;
+        broadcastControl();
+        controlChanged();
+        return;
+      }
       case "handBack":
         if (v.canControl && control.handBack(v.id)) {
           broadcastControl();

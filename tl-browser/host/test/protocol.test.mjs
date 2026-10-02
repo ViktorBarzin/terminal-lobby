@@ -66,6 +66,7 @@ const valid = [
   { t: "dialog", accept: true, text: "an answer" },
   { t: "dialog", accept: true, text: "" },
   { t: "dialog", accept: false, tab: "t1" },
+  { t: "resume", prev: "0123456789abcdef" },
 ];
 
 for (const msg of valid) {
@@ -129,6 +130,10 @@ const invalid = [
   '{"t":"dialog","accept":true,"text":5}',
   '{"t":"dialog","accept":true,"tab":null}',
   '{"t":"release","user":"viktor"}',
+  '{"t":"resume"}',
+  '{"t":"resume","prev":""}',
+  '{"t":"resume","prev":7}',
+  `{"t":"resume","prev":"${"a".repeat(65)}"}`,
 ];
 
 for (const line of invalid) {

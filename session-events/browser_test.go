@@ -138,6 +138,10 @@ func TestFilterViewerMessage(t *testing.T) {
 		{"an unknown type is not a watch message", `{"t":"somethingNew"}`, false, ""},
 		{"controller clicks", `{"t":"mouse","type":"click","x":1,"y":2}`, true, `{"t":"mouse","type":"click","x":1,"y":2}`},
 		{"controller takes control", `{"t":"takeControl"}`, true, `{"t":"takeControl"}`},
+		// resume moves control to a reconnected tab, so it is a control message.
+		{"controller resumes control after a reconnect", `{"t":"resume","prev":"0123456789abcdef"}`, true, `{"prev":"0123456789abcdef","t":"resume"}`},
+		{"watcher cannot resume control", `{"t":"resume","prev":"0123456789abcdef"}`, false, ""},
+		{"a resume hidden behind a duplicate key", `{"t":"subscribe","t":"resume","prev":"x"}`, false, ""},
 		{"controller picks from a list", `{"t":"choose","value":"b","tab":"t1"}`, true, `{"t":"choose","tab":"t1","value":"b"}`},
 		{"controller picks several", `{"t":"choose","values":["a","b"]}`, true, `{"t":"choose","values":["a","b"]}`},
 		{"controller answers a prompt", `{"t":"dialog","accept":true,"text":"Grace"}`, true, `{"accept":true,"t":"dialog","text":"Grace"}`},
