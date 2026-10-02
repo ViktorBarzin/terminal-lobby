@@ -218,3 +218,97 @@ func TestSaveRefusesUnsafeNames(t *testing.T) {
 type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+// renameOnRead moves a directory the first time it is read from, the way
+// tmux-api's rename cascade moves a session's store directory when autotitle
+// renames the session, and then fails the copy.
+type renameOnRead struct {
+	from, to string
+	err      error
+	moved    bool
+}
+
+func (r *renameOnRead) Read(p []byte) (int, error) {
+	if !r.moved {
+		r.moved = true
+		if err := os.Rename(r.from, r.to); err != nil {
+			return 0, err
+		}
+		return copy(p, "half a file"), nil
+	}
+	return 0, r.err
+}
+
+// A refused copy leaves nothing behind even when the session's directory is
+// renamed while the bytes arrive. Measured live on 2026-10-02: a 26 MB image
+// was refused with 413 while autotitle renamed its session, and the file
+// stayed in the renamed directory because the cleanup unlinked the old path.
+func TestSaveToStoreRemovesAPartialFileAfterItsDirectoryMoved(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "wizard", "s1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("part over its size limit")
+	src := &renameOnRead{from: filepath.Join(root, "wizard", "s1"), to: filepath.Join(root, "wizard", "s2"), err: boom}
+	if _, err := SaveToStore(root, "wizard", "s1", "pasted-x.png", src); !errors.Is(err, boom) {
+		t.Fatalf("err %v, want the reader's error", err)
+	}
+	left, err := os.ReadDir(filepath.Join(root, "wizard", "s2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Fatalf("a refused file was left in the renamed directory: %v", left[0].Name())
+	}
+}
+
+// A Dir removes a file it wrote by name relative to the directory it opened,
+// so a file saved before the directory moved can still be taken back.
+func TestDirRemovesAfterItsDirectoryMoved(t *testing.T) {
+	root := t.TempDir()
+	d, err := OpenStoreDir(root, "wizard", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	path, err := d.Save("file-a.txt", strings.NewReader("first part"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(root, "wizard", "s1", "file-a.txt"); path != want {
+		t.Fatalf("path %q, want %q", path, want)
+	}
+	if err := os.Rename(filepath.Join(root, "wizard", "s1"), filepath.Join(root, "wizard", "s2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Remove("file-a.txt"); err != nil {
+		t.Fatalf("Remove after the move: %v", err)
+	}
+	if left, _ := os.ReadDir(filepath.Join(root, "wizard", "s2")); len(left) != 0 {
+		t.Fatalf("the file survived its removal: %v", left[0].Name())
+	}
+}
+
+// A Dir refuses what SaveToStore refuses, before anything touches disk.
+func TestOpenStoreDirRefusesUnsafeElements(t *testing.T) {
+	root := t.TempDir()
+	for _, c := range [][2]string{{"..", "s1"}, {"a/b", "s1"}, {"wizard", "../x"}, {"wizard", ""}} {
+		if d, err := OpenStoreDir(root, c[0], c[1]); err == nil {
+			d.Close()
+			t.Errorf("user %q session %q was accepted", c[0], c[1])
+		}
+	}
+	d, err := OpenStoreDir(root, "wizard", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for _, name := range []string{"", ".", "..", "../escape", "a/b", ".hidden"} {
+		if _, err := d.Save(name, strings.NewReader("x")); err == nil {
+			t.Errorf("name %q was accepted", name)
+		}
+		if err := d.Remove(name); err == nil {
+			t.Errorf("remove of %q was accepted", name)
+		}
+	}
+}

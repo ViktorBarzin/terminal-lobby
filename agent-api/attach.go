@@ -28,7 +28,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -200,13 +200,22 @@ func (s *Server) readMultipartMessage(c *call, osUser, session string) (msg mult
 	liftDeadlines(c.w, s.uploadTimeout())
 	c.r.Body = http.MaxBytesReader(c.w, c.r.Body, l.Request)
 
+	// The store directory is opened once, at the first file, and every file
+	// is written and taken back relative to it. tmux-api renames a session
+	// from its first turn and moves this directory with it, which can land in
+	// the middle of an upload; removing by path would then miss.
+	var dir *clipstore.Dir
 	defer func() {
+		if dir == nil {
+			return
+		}
 		if err != nil {
 			for _, f := range msg.Files {
-				os.Remove(f.Path)
+				dir.Remove(filepath.Base(f.Path))
 			}
 			msg.Files = nil
 		}
+		dir.Close()
 	}()
 
 	mr, err := c.r.MultipartReader()
@@ -237,7 +246,13 @@ func (s *Server) readMultipartMessage(c *call, osUser, session string) (msg mult
 			}
 			msg.Text = string(b)
 		case "file":
-			a, err := s.storePart(p, osUser, session, l)
+			if dir == nil {
+				if dir, err = clipstore.OpenStoreDir(s.storeRoot(), osUser, session); err != nil {
+					dir = nil
+					return msg, serverError("opening the attachment store: %v", err)
+				}
+			}
+			a, err := s.storePart(p, dir, l)
 			if err != nil {
 				return msg, err
 			}
@@ -254,7 +269,7 @@ func (s *Server) readMultipartMessage(c *call, osUser, session string) (msg mult
 // Whether the part is an image is decided by its first bytes. The part's own
 // Content-Type is whatever the client chose to send, so trusting it would let
 // a large document in under the image label or name a text file .png.
-func (s *Server) storePart(p *multipart.Part, osUser, session string, l UploadLimits) (attachment, error) {
+func (s *Server) storePart(p *multipart.Part, dir *clipstore.Dir, l UploadLimits) (attachment, error) {
 	filename := p.FileName()
 
 	head := make([]byte, clipstore.SniffLen)
@@ -274,7 +289,7 @@ func (s *Server) storePart(p *multipart.Part, osUser, session string, l UploadLi
 	}
 
 	src := &cappedReader{r: io.MultiReader(bytes.NewReader(head), p), limit: limit}
-	path, err := clipstore.SaveToStore(s.storeRoot(), osUser, session, name, src)
+	path, err := dir.Save(name, src)
 	if err != nil {
 		switch {
 		case errors.Is(src.readErr, errPartTooLarge):

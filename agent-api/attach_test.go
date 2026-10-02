@@ -286,6 +286,62 @@ func TestUploadLimits(t *testing.T) {
 	}
 }
 
+// A refused message takes back every file it wrote even when the session's
+// store directory is renamed while the message arrives. tmux-api renames a
+// session from its first turn and moves the store directory with it
+// (rename_cascade.go), which can land in the middle of an upload: measured
+// live on 2026-10-02, a 26 MB image was refused with 413 and the file stayed
+// in the renamed directory, because the cleanup unlinked the old path.
+func TestRefusedUploadIsRemovedWhenTheSessionDirectoryMoves(t *testing.T) {
+	h := uploadHarness(t)
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	moved := filepath.Join(h.srv.StoreRoot, testOSUser, "c1-renamed")
+	go func() {
+		defer pw.Close()
+		w, _ := mw.CreateFormField("text")
+		w.Write([]byte("hi"))
+		hdr := textproto.MIMEHeader{}
+		hdr.Set("Content-Disposition", `form-data; name="file"; filename="a.pdf"`)
+		w, _ = mw.CreatePart(hdr)
+		w.Write(pdfBytes(100))
+		hdr = textproto.MIMEHeader{}
+		hdr.Set("Content-Disposition", `form-data; name="file"; filename="big.png"`)
+		w, _ = mw.CreatePart(hdr)
+		// The first file is on disk by now. Move its directory, as the
+		// rename cascade does, and then send an image over the limit.
+		for deadline := time.Now().Add(5 * time.Second); len(h.stored("c1")) == 0; {
+			if time.Now().After(deadline) {
+				t.Error("the first file never reached the store")
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		if err := os.Rename(h.storeDir("c1"), moved); err != nil {
+			t.Error(err)
+			return
+		}
+		w.Write(pngBytes(1<<10 + 1))
+		mw.Close()
+	}()
+	r := httptest.NewRequest("POST", "/v1/conversations/c1/messages", pr)
+	r.Header.Set("Content-Type", mw.FormDataContentType())
+	r.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	h.handler.ServeHTTP(w, r)
+	h.decodeJSON(w, http.StatusRequestEntityTooLarge, nil)
+	left, err := os.ReadDir(moved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range left {
+		t.Errorf("a refused message left %s in the renamed directory", e.Name())
+	}
+	if names := h.stored("c1"); len(names) != 0 {
+		t.Errorf("a refused message left %v under the old name", names)
+	}
+}
+
 // The real limits, as Viktor set them on 2026-10-02.
 func TestUploadLimitsAreViktorsNumbers(t *testing.T) {
 	want := UploadLimits{Image: 25 << 20, File: 100 << 20, Request: 200 << 20}

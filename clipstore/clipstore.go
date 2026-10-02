@@ -215,8 +215,23 @@ func safeElement(s string) bool {
 // PastedName or AttachName, so a refusal here means a bug upstream rather than
 // a hostile client, and it fails before anything touches disk.
 func SaveToStore(root, osUser, session, name string, src io.Reader) (string, error) {
-	if !safeElement(osUser) || !SessionNameRe.MatchString(session) || !safeElement(name) {
-		return "", fmt.Errorf("%w: user %q, session %q, name %q", errUnsafeElement, osUser, session, name)
+	if !safeElement(name) {
+		return "", fmt.Errorf("%w: name %q", errUnsafeElement, name)
+	}
+	d, err := OpenStoreDir(root, osUser, session)
+	if err != nil {
+		return "", err
+	}
+	defer d.Close()
+	return d.Save(name, src)
+}
+
+// OpenStoreDir opens <root>/<osUser>/<session>/, creating it as needed, for a
+// caller that writes several files and may have to take all of them back.
+// The same checks as SaveToStore apply. The caller closes it.
+func OpenStoreDir(root, osUser, session string) (*Dir, error) {
+	if !safeElement(osUser) || !SessionNameRe.MatchString(session) {
+		return nil, fmt.Errorf("%w: user %q, session %q", errUnsafeElement, osUser, session)
 	}
 	dir := filepath.Join(root, osUser, session)
 	// 0755 (and 0644 files, via the services' UMask=0022) is a decision, not a
@@ -225,12 +240,26 @@ func SaveToStore(root, osUser, session, name string, src io.Reader) (string, err
 	// user who is not the account the services run as. Tightening it is an ADR
 	// change first.
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
+		return nil, err
 	}
-	return Save(dir, name, src)
+	return openDir(dir)
 }
 
 // Save copies src into dir/name and returns the path.
+func Save(dir, name string, src io.Reader) (string, error) {
+	if !safeElement(name) {
+		return "", fmt.Errorf("%w: name %q", errUnsafeElement, name)
+	}
+	d, err := openDir(dir)
+	if err != nil {
+		return "", err
+	}
+	defer d.Close()
+	return d.Save(name, src)
+}
+
+// Save copies src into the directory as name and returns the path the file
+// had when it was created.
 //
 // The create is exclusive: a name that already exists is refused with an
 // error wrapping fs.ErrExist rather than overwritten, because a file in the
@@ -240,24 +269,35 @@ func SaveToStore(root, osUser, session, name string, src io.Reader) (string, err
 //
 // A copy that fails part way, including one cut short by a size limit the
 // caller wrapped around src, removes what it wrote, so a refused upload never
-// leaves half a file for the next reader to trip on.
-func Save(dir, name string, src io.Reader) (string, error) {
+// leaves half a file for the next reader to trip on. The removal is relative
+// to the open directory, so it still lands when the directory was renamed
+// during the copy.
+func (d *Dir) Save(name string, src io.Reader) (string, error) {
 	if !safeElement(name) {
 		return "", fmt.Errorf("%w: name %q", errUnsafeElement, name)
 	}
-	dest := filepath.Join(dir, name)
-	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := d.create(name)
 	if err != nil {
 		return "", err
 	}
+	dest := f.Name()
 	if _, err := io.Copy(f, src); err != nil {
 		f.Close()
-		os.Remove(dest)
+		d.unlink(name)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
-		os.Remove(dest)
+		d.unlink(name)
 		return "", err
 	}
 	return dest, nil
+}
+
+// Remove deletes a file this directory holds, wherever the directory has
+// moved to since it was opened.
+func (d *Dir) Remove(name string) error {
+	if !safeElement(name) {
+		return fmt.Errorf("%w: name %q", errUnsafeElement, name)
+	}
+	return d.unlink(name)
 }
