@@ -190,20 +190,13 @@ type Sessions interface {
 	// Kill destroys the session and everything running in it, and leaves the
 	// transcript on disk. sessionio.ErrSessionGone means it was already gone.
 	Kill(osUser, session string) error
-	// Answer applies one answer to the plan approval or the tool permission
-	// prompt the pane is drawing, through the same sessionio driver the
-	// lobby's question card uses: it reads the dialog before any key, refuses
-	// with nothing typed when the dialog does not offer what was asked, and
-	// replies with a reading taken afterwards. The error is a pane that could
-	// not be read at all.
-	Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error)
-	// Keys presses answer keys in the session's pane (sessionio.Injector.Keys),
-	// which refuses anything that is not an answer key before sending any.
-	Keys(osUser, session string, keys []string) error
-	// AnswerText pastes words into the field the pane's cursor is in, without
-	// pressing Enter (sessionio.Injector.AnswerText), which refuses blank
-	// words and line breaks before sending any.
-	AnswerText(osUser, session, text string) error
+	// Dialog reads the dialog the session's Claude is waiting on, from
+	// session-events through the session's mod (dialog.go). errNoMod: no mod
+	// is connected for the session; errNoDialog: nothing is open.
+	Dialog(osUser, session string) (modDialog, error)
+	// AnswerDialog answers the dialog req.ToolID names, through the mod.
+	// errDialogGone: that dialog is no longer open; errNoMod as for Dialog.
+	AnswerDialog(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error)
 }
 
 // errNoTranscript — the session has no transcript to read yet.
@@ -234,6 +227,8 @@ func transcriptReadError(path string, err error) error {
 // tmuxSessions is the production Sessions: sessionio over the real tmux server.
 type tmuxSessions struct {
 	in *sessionio.Injector
+	// dialogs reads and answers a session's dialogs through session-events.
+	dialogs *dialogClient
 	// homeBase is the parent of every user's home, "/home" in production and a
 	// temp dir in the tests that exercise path containment.
 	homeBase string
@@ -439,22 +434,19 @@ func (t *tmuxSessions) Kill(osUser, session string) error {
 	return nil
 }
 
-func (t *tmuxSessions) Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
-	return t.in.Answer(ctx, osUser, session, req)
+// Dialog and AnswerDialog go to session-events (dialog.go).
+func (t *tmuxSessions) Dialog(osUser, session string) (modDialog, error) {
+	return t.dialogs.Dialog(osUser, session)
+}
+
+func (t *tmuxSessions) AnswerDialog(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
+	return t.dialogs.AnswerDialog(ctx, osUser, session, req)
 }
 
 // TranscriptLines reads the session's transcript through sessionio.SessionMap,
 // which is what applies the containment rule: the stamp is written by the
 // session's own OS user, so it is untrusted input, and only a .jsonl inside
 // that user's own projects root is opened.
-func (t *tmuxSessions) Keys(osUser, session string, keys []string) error {
-	return t.in.Keys(osUser, session, keys)
-}
-
-func (t *tmuxSessions) AnswerText(osUser, session, text string) error {
-	return t.in.AnswerText(osUser, session, text)
-}
-
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {
 	root := sessionio.ProjectsRoot(t.homeBase, osUser)
 	path := ""

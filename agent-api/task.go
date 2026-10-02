@@ -107,7 +107,10 @@ type Task struct {
 	Kind       string
 	Options    []TaskOption
 	AnswerWith []string
-	Result     string
+	// toolID names the dialog the question was read from, so an answer goes
+	// to that dialog and no other. Not part of the wire representation.
+	toolID string
+	Result string
 	// BackgroundRunning is set on done when the turn settled with background
 	// work it started still running, after the hold (turn.go).
 	BackgroundRunning bool
@@ -370,6 +373,17 @@ func (s *TaskStore) SetQuestion(id string, q questionReading) bool {
 	}
 	t.setQuestion(q)
 	return true
+}
+
+// QuestionTool names the dialog a needs_input task's question was read from,
+// "" when there is none.
+func (s *TaskStore) QuestionTool(id string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if t, ok := s.byID[id]; ok && t.Status == StatusNeedsInput {
+		return t.toolID
+	}
+	return ""
 }
 
 // Cancel moves a task to cancelled and closes its cancel channel. It reports

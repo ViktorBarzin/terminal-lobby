@@ -14,151 +14,51 @@ import (
 	"terminal-lobby/sessionio"
 )
 
-// Panes as Claude Code draws them, trimmed from the captures under
-// sessionio/testdata. The parsers anchor on the last line, so each one ends on
-// its dialog's footer exactly as a real capture does.
+// Dialogs as the lobby's mod reports them through session-events.
 
-// permissionPane is the tool permission prompt (permission-bash.txt).
-var permissionPane = strings.Join([]string{
-	"● Writing hi to a.txt",
-	"",
-	"────────────────────────────────────────────────────────────────────────",
-	" Bash command",
-	"",
-	"   printf 'hi\\n' > a.txt",
-	"   Write \"hi\" to a.txt",
-	"",
-	" Do you want to proceed?",
-	" ❯ 1. Yes",
-	"   2. Yes, and always allow access to /tmp/proj from this project",
-	"   3. No",
-	"",
-	" Esc to cancel · Tab to amend",
-}, "\n")
+func permissionDialog(toolID, command string) *modDialog {
+	return &modDialog{Kind: "permission", ToolID: toolID, Tool: "Bash", Title: "Bash command",
+		Detail: []string{command, "Print the date"}}
+}
 
-// permissionPaneOther is a second prompt with the same rows over a different
-// command: what Claude draws for the next tool call of the same turn.
-var permissionPaneOther = strings.Replace(permissionPane,
-	"   printf 'hi\\n' > a.txt\n   Write \"hi\" to a.txt",
-	"   rm -rf build\n   Remove the build directory", 1)
+var planDialog = &modDialog{Kind: "plan", ToolID: "toolu_plan", Plan: "1. Build the thing\n2. Ship it",
+	PlanFilePath: "/home/wizard/.claude/plans/p.md"}
 
-// permissionPaneNoNo is a prompt with no No row, which has nowhere to put
-// words.
-var permissionPaneNoNo = strings.Join([]string{
-	"────────────────────────────────────────────────────────────────────────",
-	" Bash command",
-	"",
-	"   date",
-	"",
-	" Do you want to proceed?",
-	" ❯ 1. Yes",
-	"   2. Yes, and always allow access to /tmp/proj from this project",
-	"",
-	" Esc to cancel",
-}, "\n")
+func choiceDialog(questions ...string) *modDialog {
+	d := &modDialog{Kind: "ask", ToolID: "toolu_ask"}
+	for _, q := range questions {
+		d.Questions = append(d.Questions, modQuestion{Question: q,
+			Options: []modOption{{Label: "Postgres"}, {Label: "SQLite", Description: "one file"}}})
+	}
+	return d
+}
 
-// planPane is the plan approval (plan-no-auto.txt).
-var planPane = strings.Join([]string{
-	"   Steps",
-	"",
-	"   1. Write hello.txt in that directory.",
-	"  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
-	"",
-	"  ────────────────────────────────────────────────────────────────────────",
-	"   Claude has written up a plan and is ready to execute. Would you like to proceed?",
-	"",
-	"   ❯ 1. Yes, auto-accept edits",
-	"     2. Yes, manually approve edits",
-	"     3. Tell Claude what to change",
-	"        shift+tab to approve with this feedback",
-	"",
-	"   ctrl+g to edit in Vim · ~/.claude/plans/hello.md",
-}, "\n")
-
-// choicePane is an AskUserQuestion menu (dialog-single.txt).
-var choicePane = strings.Join([]string{
-	"❯ Call AskUserQuestion with ONE question.",
-	"────────────────────────────────────────────────────────────────────────",
-	" ☐ Font",
-	"",
-	"Which font should the badge use?",
-	"",
-	"❯ 1. Sans",
-	"     A sans-serif typeface.",
-	"  2. Serif",
-	"     A serif typeface.",
-	"  3. Type something.",
-	"────────────────────────────────────────────────────────────────────────",
-	"  4. Chat about this",
-	"",
-	"Enter to select · ↑/↓ to navigate · Esc to cancel",
-}, "\n")
-
-// What each kind of pane reads as. The kind and the options are what a caller
-// decides from, so they are pinned exactly.
-func TestParseQuestion(t *testing.T) {
+func TestReadingFromDialog(t *testing.T) {
 	for _, c := range []struct {
 		name       string
-		pane       string
+		d          modDialog
 		kind       string
 		options    []TaskOption
 		answerWith []string
 		mentions   []string
 	}{
-		{
-			name: "a tool permission prompt",
-			pane: permissionPane,
-			kind: KindPermission,
-			options: []TaskOption{
-				{1, "Yes"},
-				{2, "Yes, and always allow access to /tmp/proj from this project"},
-				{3, "No"},
-			},
-			answerWith: []string{"option", "text"},
-			mentions:   []string{"Bash command", "printf", "Do you want to proceed?"},
-		},
-		{
-			name:       "a permission prompt with no No row takes no words",
-			pane:       permissionPaneNoNo,
-			kind:       KindPermission,
-			options:    []TaskOption{{1, "Yes"}, {2, "Yes, and always allow access to /tmp/proj from this project"}},
-			answerWith: []string{"option"},
-			mentions:   []string{"date"},
-		},
-		{
-			name:       "the plan approval",
-			pane:       planPane,
-			kind:       KindPlan,
-			options:    []TaskOption{{1, "Yes, auto-accept edits"}, {2, "Yes, manually approve edits"}},
-			answerWith: []string{"option", "text"},
-			mentions:   []string{"Would you like to proceed?"},
-		},
-		{
-			name:       "an AskUserQuestion menu is shown but not answerable here",
-			pane:       choicePane,
-			kind:       KindChoice,
-			options:    []TaskOption{{1, "Sans"}, {2, "Serif"}},
-			answerWith: nil,
-			mentions:   []string{"Which font should the badge use?"},
-		},
-		{
-			name:       "a pane with no dialog the lobby can read",
-			pane:       "  Some earlier output\n\n  Approve the deploy? [y/N]",
-			kind:       KindUnknown,
-			answerWith: nil,
-			mentions:   []string{"Approve the deploy?"},
-		},
+		{"a permission prompt", *permissionDialog("toolu_1", "date"), KindPermission,
+			[]TaskOption{{1, "Allow"}, {2, "Deny"}}, []string{"option", "text"}, []string{"Bash command", "date"}},
+		{"a plan approval", *planDialog, KindPlan,
+			[]TaskOption{{1, "Approve plan"}, {2, "Keep planning"}}, []string{"option", "text"}, []string{"Ship it"}},
+		{"one question", *choiceDialog("Which database?"), KindChoice,
+			[]TaskOption{{1, "Postgres"}, {2, "SQLite"}}, []string{"option", "text"}, []string{"Which database?"}},
+		{"several questions", *choiceDialog("Which database?", "Which cache?"), KindChoice,
+			[]TaskOption{{1, "Postgres"}, {2, "SQLite"}}, nil, []string{"Which database?", "2 questions"}},
+		{"a kind the lobby does not know", modDialog{Kind: "survey", ToolID: "toolu_x"}, KindUnknown, nil, nil, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := parseQuestion(c.pane)
-			if got.Kind != c.kind {
-				t.Fatalf("kind %q, want %q", got.Kind, c.kind)
+			got := readingFromDialog(c.d)
+			if got.Kind != c.kind || !reflect.DeepEqual(got.Options, c.options) || !reflect.DeepEqual(got.AnswerWith, c.answerWith) {
+				t.Fatalf("got %+v", got)
 			}
-			if !reflect.DeepEqual(got.Options, c.options) {
-				t.Fatalf("options %+v, want %+v", got.Options, c.options)
-			}
-			if !reflect.DeepEqual(got.AnswerWith, c.answerWith) {
-				t.Fatalf("answer_with %v, want %v", got.AnswerWith, c.answerWith)
+			if c.kind != KindUnknown && got.ToolID != c.d.ToolID {
+				t.Fatalf("tool id %q, want %q", got.ToolID, c.d.ToolID)
 			}
 			for _, m := range c.mentions {
 				if !strings.Contains(got.Text, m) {
@@ -169,12 +69,12 @@ func TestParseQuestion(t *testing.T) {
 	}
 }
 
-// needsInput runs one message into a question drawn on the pane, and returns
-// the task id once the task reports it.
-func (h *harness) needsInput(pane string) string {
+// needsInput runs one message into a dialog the mod reports, and returns the
+// task id once the task reports it.
+func (h *harness) needsInput(d *modDialog) string {
 	h.t.Helper()
 	h.readyConversation("c1")
-	h.sessions.setPane(testOSUser, "c1", pane)
+	h.sessions.setDialog(testOSUser, "c1", d)
 	h.sessions.onPrompt = func(f *fakeSessions, k string) {
 		f.setStateLocked(k, "running")
 		go func() {
@@ -200,78 +100,70 @@ func (h *harness) stop(task string) {
 }
 
 // A blocked task says what kind of question it is and what can be picked, so
-// a caller can answer it without reading the pane itself.
+// a caller can answer it without reading the pane.
 func TestNeedsInputCarriesTheChoices(t *testing.T) {
 	h := newHarness(t)
-	task := h.needsInput(permissionPane)
+	task := h.needsInput(permissionDialog("toolu_1", "date"))
 	defer h.stop(task)
 
-	var got TaskView
-	h.decodeJSON(h.call("GET", "/v1/tasks/"+task, ""), http.StatusOK, &got)
-	if got.Kind != KindPermission || len(got.Options) != 3 || got.Options[2] != (TaskOption{3, "No"}) {
-		t.Fatalf("got %+v", got)
-	}
-	if !reflect.DeepEqual(got.AnswerWith, []string{"option", "text"}) {
-		t.Fatalf("answer_with %v", got.AnswerWith)
-	}
-	// The wire names, which a generated client is built from.
 	raw := h.call("GET", "/v1/tasks/"+task, "").Body.String()
-	for _, f := range []string{`"kind":"permission"`, `"options":[{"index":1,"label":"Yes"}`, `"answer_with":["option","text"]`} {
+	for _, f := range []string{`"kind":"permission"`, `"options":[{"index":1,"label":"Allow"},{"index":2,"label":"Deny"}]`,
+		`"answer_with":["option","text"]`} {
 		if !strings.Contains(raw, f) {
 			t.Errorf("the task JSON lacks %s: %s", f, raw)
 		}
 	}
+	if strings.Contains(raw, "toolu_1") {
+		t.Errorf("the dialog's tool id is internal, but the task JSON carries it: %s", raw)
+	}
 }
 
-// Each answer the lobby can give, through the route, reaching sessionio as
-// the request its own card would send: a row by number with the label the
-// caller was shown, or words.
-func TestAnswerReachesSessionio(t *testing.T) {
+// Each answer, through the route, reaching session-events as the request the
+// Text view's card would send, naming the dialog.
+func TestAnswerReachesTheMod(t *testing.T) {
 	for _, c := range []struct {
 		name string
-		pane string
+		d    *modDialog
 		body string
 		want sessionio.AnswerRequest
 	}{
-		{"a permission row", permissionPane, `{"option":1}`,
-			sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Option: 1, Label: "Yes"}}},
-		{"a permission prompt declined with words", permissionPane, `{"text":"print the date instead"}`,
-			sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Decline: "print the date instead"}}},
-		{"a plan approved", planPane, `{"option":2}`,
-			sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Option: 2, Label: "Yes, manually approve edits"}}},
-		{"a plan sent back with feedback", planPane, `{"text":"keep the old file too"}`,
-			sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Feedback: "keep the old file too"}}},
+		{"a permission allowed", permissionDialog("toolu_1", "date"), `{"option":1}`,
+			sessionio.AnswerRequest{ToolID: "toolu_1", Permission: &sessionio.PermissionAnswer{Option: 1, Label: "Allow"}}},
+		{"a permission denied", permissionDialog("toolu_1", "date"), `{"option":2}`,
+			sessionio.AnswerRequest{ToolID: "toolu_1", Permission: &sessionio.PermissionAnswer{Option: 2, Label: "Deny"}}},
+		{"a permission declined with words", permissionDialog("toolu_1", "date"), `{"text":"print the time instead"}`,
+			sessionio.AnswerRequest{ToolID: "toolu_1", Permission: &sessionio.PermissionAnswer{Decline: "print the time instead"}}},
+		{"a plan approved", planDialog, `{"option":1}`,
+			sessionio.AnswerRequest{ToolID: "toolu_plan", Plan: &sessionio.PlanAnswer{Option: 1, Label: "Approve plan"}}},
+		{"a plan kept in planning", planDialog, `{"option":2}`,
+			sessionio.AnswerRequest{ToolID: "toolu_plan", Plan: &sessionio.PlanAnswer{Option: 2, Label: "Keep planning"}}},
+		{"a plan sent back with feedback", planDialog, `{"text":"keep the old file too"}`,
+			sessionio.AnswerRequest{ToolID: "toolu_plan", Plan: &sessionio.PlanAnswer{Feedback: "keep the old file too"}}},
+		{"a question answered by a row", choiceDialog("Which database?"), `{"option":2}`,
+			sessionio.AnswerRequest{ToolID: "toolu_ask", Answers: map[string][]string{"Which database?": {"SQLite"}}}},
+		{"a question answered in words", choiceDialog("Which database?"), `{"text":"DuckDB"}`,
+			sessionio.AnswerRequest{ToolID: "toolu_ask", Answers: map[string][]string{"Which database?": {"DuckDB"}}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t)
-			task := h.needsInput(c.pane)
+			task := h.needsInput(c.d)
 			defer h.stop(task)
-			h.sessions.onAnswer = func(f *fakeSessions, k string) { f.panes[k] = "● Working…" }
 
-			w := h.answer(task, c.body)
-			var got struct {
-				TaskView
-				Warning string `json:"warning"`
-			}
-			h.decodeJSON(w, http.StatusOK, &got)
-			if got.Status != StatusRunning || got.ID != task {
+			var got answerResult
+			h.decodeJSON(h.answer(task, c.body), http.StatusOK, &got)
+			if got.Status != StatusRunning || got.Warning != "" || got.Question != "" {
 				t.Fatalf("got %+v, want the task back at running", got)
 			}
-			if got.Warning != "" || got.Question != "" || got.Options != nil {
-				t.Fatalf("a clean answer carried %+v", got)
-			}
 			calls := h.sessions.answerCalls()
-			if len(calls) != 1 {
-				t.Fatalf("%d answer calls, want 1", len(calls))
-			}
-			if calls[0].OSUser != testOSUser || calls[0].Session != "c1" {
-				t.Fatalf("answered %s/%s", calls[0].OSUser, calls[0].Session)
+			if len(calls) != 1 || calls[0].OSUser != testOSUser || calls[0].Session != "c1" {
+				t.Fatalf("answer calls %+v", calls)
 			}
 			if !reflect.DeepEqual(calls[0].Req, c.want) {
-				t.Fatalf("sessionio was asked %+v, want %+v", calls[0].Req, c.want)
+				t.Fatalf("session-events was asked %+v, want %+v", calls[0].Req, c.want)
 			}
 
-			// Traced like every other route, with the caller's own body.
+			// Traced like every other route, with the caller's own body and
+			// what was sent for it.
 			var line *TraceEntry
 			for _, e := range h.traceLines() {
 				if e.Verb == "POST /v1/tasks/{id}/answer" {
@@ -279,44 +171,55 @@ func TestAnswerReachesSessionio(t *testing.T) {
 					line = &e
 				}
 			}
-			if line == nil {
-				t.Fatal("the answer was not traced")
-			}
-			if line.TaskID != task || line.ConversationID != "c1" || line.Status != http.StatusOK ||
-				line.Actor != testActor || string(line.Request) != c.body {
+			if line == nil || line.TaskID != task || line.Status != http.StatusOK || string(line.Request) != c.body ||
+				!strings.Contains(line.Event, c.want.ToolID) {
 				t.Fatalf("trace line %+v", line)
 			}
 		})
 	}
 }
 
-// The lobby answers an AskUserQuestion as DATA, through the hook
-// session-events holds (ADR-0034), and this service calls no other service's
-// port. Nothing in sessionio types an answer into that menu any more, so the
-// route refuses rather than guessing at keys.
-func TestAnswerRefusesWhatItCannotAnswerSafely(t *testing.T) {
+// What cannot be answered through this API is refused with nothing sent.
+func TestAnswerRefusesWhatItCannotAnswer(t *testing.T) {
 	for _, c := range []struct {
-		name, pane, body, mentions string
+		name     string
+		d        *modDialog
+		pane     string
+		body     string
+		mentions string
 	}{
-		{"an AskUserQuestion menu", choicePane, `{"option":1}`, "AskUserQuestion"},
-		{"a pane with no dialog the lobby can read", "Approve the deploy? [y/N]", `{"text":"y"}`, "terminal"},
-		{"words for a prompt with nowhere to put them", permissionPaneNoNo, `{"text":"no thanks"}`, "option"},
+		{"several questions at once", choiceDialog("Which database?", "Which cache?"), "", `{"option":1}`, "several questions"},
+		{"a session with no mod", nil, "Approve the deploy? [y/N]", `{"text":"y"}`, "terminal"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t)
-			task := h.needsInput(c.pane)
+			var task string
+			if c.d != nil {
+				task = h.needsInput(c.d)
+			} else {
+				h.readyConversation("c1")
+				h.sessions.setPane(testOSUser, "c1", c.pane)
+				h.sessions.onPrompt = func(f *fakeSessions, k string) {
+					f.setStateLocked(k, "running")
+					go func() {
+						time.Sleep(5 * time.Millisecond)
+						f.setState(testOSUser, "c1", "awaiting")
+					}()
+				}
+				task = h.sendMessage("c1", "go")
+				h.waitStatus(task, StatusNeedsInput)
+			}
 			defer h.stop(task)
 
-			w := h.answer(task, c.body)
 			var e struct {
 				Error string `json:"error"`
 			}
-			h.decodeJSON(w, http.StatusUnprocessableEntity, &e)
+			h.decodeJSON(h.answer(task, c.body), http.StatusUnprocessableEntity, &e)
 			if !strings.Contains(e.Error, c.mentions) {
 				t.Fatalf("error %q does not mention %q", e.Error, c.mentions)
 			}
 			if n := len(h.sessions.answerCalls()); n != 0 {
-				t.Fatalf("a refused answer still reached sessionio %d times", n)
+				t.Fatalf("a refused answer still reached session-events %d times", n)
 			}
 			if v, _ := h.srv.Tasks.Get(task); v.Status != StatusNeedsInput {
 				t.Fatalf("a refused answer moved the task to %q", v.Status)
@@ -327,7 +230,7 @@ func TestAnswerRefusesWhatItCannotAnswerSafely(t *testing.T) {
 
 func TestAnswerRefusals(t *testing.T) {
 	h := newHarness(t)
-	task := h.needsInput(permissionPane)
+	task := h.needsInput(permissionDialog("toolu_1", "date"))
 	defer h.stop(task)
 
 	t.Run("an unknown task", func(t *testing.T) {
@@ -348,7 +251,6 @@ func TestAnswerRefusals(t *testing.T) {
 		`{"option":0}`,
 		`{"option":-1}`,
 		`{"option":"1"}`,
-		`{"option":9}`,
 		`{"text":"   "}`,
 		`{"text":"two\nlines"}`,
 		`{"text":"` + strings.Repeat("x", sessionio.MaxAnswerText+1) + `"}`,
@@ -364,8 +266,11 @@ func TestAnswerRefusals(t *testing.T) {
 			h.decodeJSON(h.answer(task, body), http.StatusBadRequest, nil)
 		})
 	}
+	t.Run("a row that is not on offer", func(t *testing.T) {
+		h.decodeJSON(h.answer(task, `{"option":9}`), http.StatusUnprocessableEntity, nil)
+	})
 	if n := len(h.sessions.answerCalls()); n != 0 {
-		t.Fatalf("refused answers reached sessionio %d times", n)
+		t.Fatalf("refused answers reached session-events %d times", n)
 	}
 
 	t.Run("a task that is not waiting on anything", func(t *testing.T) {
@@ -380,19 +285,19 @@ func TestAnswerRefusals(t *testing.T) {
 	})
 }
 
-// The question on screen is read again before anything is typed. If it is
-// not the one the task reported — the next tool call's prompt, say, with the
-// same rows over a different command — the caller is answering something it
-// has not seen, so nothing is typed and the task is updated to what is there.
+// The dialog is read again before anything is sent. If it is not the one the
+// task reported (the next tool call's prompt, with the same rows over a
+// different command), the caller is answering something it has not seen, so
+// nothing is sent and the task is updated to what is there.
 func TestAnswerRefusesWhenTheQuestionChanged(t *testing.T) {
 	h := newHarness(t)
-	task := h.needsInput(permissionPane)
+	task := h.needsInput(permissionDialog("toolu_1", "date"))
 	defer h.stop(task)
-	h.sessions.setPane(testOSUser, "c1", permissionPaneOther)
+	h.sessions.setDialog(testOSUser, "c1", permissionDialog("toolu_2", "rm -rf build"))
 
 	h.decodeJSON(h.answer(task, `{"option":1}`), http.StatusConflict, nil)
 	if n := len(h.sessions.answerCalls()); n != 0 {
-		t.Fatalf("an answer to a question the caller never saw reached sessionio %d times", n)
+		t.Fatalf("an answer to a question the caller never saw reached session-events %d times", n)
 	}
 	var got TaskView
 	h.decodeJSON(h.call("GET", "/v1/tasks/"+task, ""), http.StatusOK, &got)
@@ -400,10 +305,13 @@ func TestAnswerRefusesWhenTheQuestionChanged(t *testing.T) {
 		t.Fatalf("the task still reports the old question: %+v", got)
 	}
 	// Answering again, now that the caller has seen it, goes through.
-	h.decodeJSON(h.answer(task, `{"option":3}`), http.StatusOK, nil)
+	h.decodeJSON(h.answer(task, `{"option":2}`), http.StatusOK, nil)
+	if calls := h.sessions.answerCalls(); len(calls) != 1 || calls[0].Req.ToolID != "toolu_2" {
+		t.Fatalf("answer calls %+v, want one for the dialog now open", calls)
+	}
 }
 
-// What sessionio reports back, mapped onto what the caller is told.
+// What session-events reports back, mapped onto what the caller is told.
 func TestAnswerOutcomes(t *testing.T) {
 	for _, c := range []struct {
 		name       string
@@ -414,21 +322,22 @@ func TestAnswerOutcomes(t *testing.T) {
 		warns      bool
 	}{
 		{"landed", &sessionio.AnswerResponse{Applied: true, Done: true}, nil, http.StatusOK, StatusRunning, false},
-		{"typed but the dialog did not clear", &sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}, nil,
+		{"sent but not confirmed", &sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}, nil,
 			http.StatusOK, StatusRunning, true},
-		{"the dialog was gone already", &sessionio.AnswerResponse{Reason: sessionio.AnswerNoDialog}, nil,
+		{"answered in the terminal a moment ago", &sessionio.AnswerResponse{Reason: sessionio.AnswerNotHeld}, nil,
 			http.StatusConflict, StatusNeedsInput, false},
-		{"a different dialog by the time the keys went", &sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}, nil,
+		{"a different dialog by then", &sessionio.AnswerResponse{Reason: sessionio.AnswerNotDrawn}, nil,
 			http.StatusConflict, StatusNeedsInput, false},
-		{"the row changed under the answer", &sessionio.AnswerResponse{Reason: sessionio.AnswerUnknownOption}, nil,
-			http.StatusConflict, StatusNeedsInput, false},
-		{"tmux would not take the keys", &sessionio.AnswerResponse{Reason: sessionio.AnswerRefused}, nil,
+		{"a question left unanswered", &sessionio.AnswerResponse{Reason: sessionio.AnswerIncomplete}, nil,
+			http.StatusUnprocessableEntity, StatusNeedsInput, false},
+		{"the dialog went before session-events got it", nil, errDialogGone, http.StatusConflict, StatusNeedsInput, false},
+		{"the mod disconnected", nil, errNoMod, http.StatusConflict, StatusNeedsInput, false},
+		{"session-events could not be reached", nil, errors.New("connect: connection refused"),
 			http.StatusInternalServerError, StatusNeedsInput, false},
-		{"the pane could not be read", nil, errors.New("capture-pane: exit status 1"), http.StatusInternalServerError, StatusNeedsInput, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			h := newHarness(t)
-			task := h.needsInput(permissionPane)
+			task := h.needsInput(permissionDialog("toolu_1", "date"))
 			defer h.stop(task)
 			h.sessions.answerResp, h.sessions.answerErr = c.resp, c.err
 
@@ -441,10 +350,10 @@ func TestAnswerOutcomes(t *testing.T) {
 			if _, has := body["warning"]; has != c.warns {
 				t.Fatalf("warning present=%v, want %v: %v", has, c.warns, body)
 			}
-			// What the caller was told. Read from the response rather than the
-			// store for the answers that went in: with the dialog left on this
-			// fake pane, the watcher puts the task back to needs_input on its
-			// next poll, which is the recovery the warning promises.
+			// Read from the response for the answers that went in: with the
+			// dialog still open in the fake, the watcher puts the task back
+			// to needs_input on its next poll, the recovery the warning
+			// promises.
 			got := TaskStatus(fmt.Sprint(body["status"]))
 			if w.Code != http.StatusOK {
 				v, _ := h.srv.Tasks.Get(task)
@@ -457,60 +366,37 @@ func TestAnswerOutcomes(t *testing.T) {
 	}
 }
 
-// After an answer @claude_state can go on reading "awaiting" for as long as
-// the approved tool runs: nothing stamps "running" until the next tool call or
-// prompt. The task must not bounce back to needs_input over a pane with no
-// question on it, and must go back the moment a new question is drawn.
+// After an answer, @claude_state can read "awaiting" for a moment longer.
+// The task must not bounce back to needs_input for the dialog it just
+// answered, and must go back as soon as a new one opens.
 func TestAfterAnAnswerTheNextQuestionIsFound(t *testing.T) {
 	h := newHarness(t)
-	task := h.needsInput(permissionPane)
+	task := h.needsInput(permissionDialog("toolu_1", "date"))
 	defer h.stop(task)
-	h.sessions.onAnswer = func(f *fakeSessions, k string) { f.panes[k] = "● Running printf…" }
+	h.sessions.answerResp = &sessionio.AnswerResponse{Applied: true, Done: true}
+	h.sessions.onAnswer = func(f *fakeSessions, k string) { f.dialogs[k] = permissionDialog("toolu_1", "date") }
 
 	h.decodeJSON(h.answer(task, `{"option":1}`), http.StatusOK, nil)
-	// Thirty polls with the state still awaiting and no dialog drawn.
 	time.Sleep(30 * time.Millisecond)
 	if v, _ := h.srv.Tasks.Get(task); v.Status != StatusRunning {
-		t.Fatalf("the task went back to %q over a pane with no question", v.Status)
+		t.Fatalf("the task went back to %q for the dialog it just answered", v.Status)
 	}
 
-	h.sessions.setPane(testOSUser, "c1", permissionPaneOther)
+	h.sessions.setDialog(testOSUser, "c1", permissionDialog("toolu_2", "rm -rf build"))
 	v := h.waitStatus(task, StatusNeedsInput)
 	if !strings.Contains(v.Question, "rm -rf build") || v.Kind != KindPermission {
 		t.Fatalf("the next question was not read: %+v", v)
 	}
 }
 
-// An answer typed into a dialog that stays up is reported as running with a
-// warning, and the watcher puts the task back to needs_input on its next
-// poll, which is what the warning tells the caller to expect.
-func TestAnUnclearedDialogComesBack(t *testing.T) {
-	h := newHarness(t)
-	task := h.needsInput(permissionPane)
-	defer h.stop(task)
-	h.sessions.answerResp = &sessionio.AnswerResponse{Reason: sessionio.AnswerUnverified}
-
-	var got answerResult
-	h.decodeJSON(h.answer(task, `{"option":1}`), http.StatusOK, &got)
-	if got.Status != StatusRunning || got.Warning == "" {
-		t.Fatalf("got %+v", got)
-	}
-	v := h.waitStatus(task, StatusNeedsInput)
-	if v.Kind != KindPermission || len(v.Options) != 3 {
-		t.Fatalf("the dialog still up was not read back: %+v", v)
-	}
-}
-
-// The mod stamps awaiting when Claude asks, and its dialog is drawn a moment
-// later. A pane read in that moment shows the spinner, not a question.
-// Measured live on 2026-10-02 (rv-r3reg-b): ?wait returned needs_input with
-// kind unknown, no options and "✢ Calculating…" as the question, and the
-// task never read the pane again. An unrecognised pane is read again on the
-// next poll while the start grace runs, and the task stays running meanwhile.
-func TestAnAwaitingPaneWithNoDialogYetIsReadAgain(t *testing.T) {
+// The state can be stamped a moment before the dialog event lands. The task
+// stays running through the start grace, and the dialog read after it is the
+// question, not the spinner on the pane.
+func TestAnAwaitingSessionWithNoDialogYetIsReadAgain(t *testing.T) {
 	h := newHarness(t)
 	h.readyConversation("c1")
 	h.sessions.setPane(testOSUser, "c1", "✢ Calculating… (12s · ↓ 300 tokens)\n\n❯ \n")
+	h.sessions.setDialog(testOSUser, "c1", nil)
 	h.sessions.onPrompt = func(f *fakeSessions, k string) {
 		f.setStateLocked(k, "running")
 		go func() {
@@ -518,25 +404,29 @@ func TestAnAwaitingPaneWithNoDialogYetIsReadAgain(t *testing.T) {
 			f.setState(testOSUser, "c1", "awaiting")
 		}()
 	}
+	h.srv.StartGrace = 100 * time.Millisecond
 	task := h.sendMessage("c1", "start a background agent")
 	defer h.stop(task)
 	time.Sleep(40 * time.Millisecond)
 	if v, _ := h.srv.Tasks.Get(task); v.Status != StatusRunning {
-		t.Fatalf("status %q kind %q question %q over a pane with no dialog yet", v.Status, v.Kind, v.Question)
+		t.Fatalf("status %q kind %q question %q with no dialog yet", v.Status, v.Kind, v.Question)
 	}
-	h.sessions.setPane(testOSUser, "c1", permissionPane)
+	h.sessions.setDialog(testOSUser, "c1", permissionDialog("toolu_1", "date"))
 	v := h.waitStatus(task, StatusNeedsInput)
 	if v.Kind != KindPermission || len(v.Options) == 0 {
-		t.Fatalf("the dialog drawn after the spinner was not read: %+v", v)
+		t.Fatalf("the dialog that landed after the state was not read: %+v", v)
 	}
 }
 
-// A dialog no parser knows is still reported once the grace has run, so a
-// caller is not left holding a running task over a session that waits.
-func TestAnUnknownDialogIsReportedAfterTheGrace(t *testing.T) {
+// With no dialog to read (no mod), the task is reported as unknown once the
+// grace has run, with the pane's tail as the question, so a caller is not
+// left holding a running task over a session that waits. A dialog that comes
+// back afterwards (the mod reconnected after a session-events restart)
+// replaces the unknown question.
+func TestAnUnknownQuestionIsReportedAndThenReplaced(t *testing.T) {
 	h := newHarness(t)
 	h.readyConversation("c1")
-	h.sessions.setPane(testOSUser, "c1", "Some dialog in a shape nobody parses\n")
+	h.sessions.setPane(testOSUser, "c1", "Some dialog the lobby cannot read\n")
 	h.sessions.onPrompt = func(f *fakeSessions, k string) {
 		f.setStateLocked(k, "running")
 		go func() {
@@ -547,7 +437,22 @@ func TestAnUnknownDialogIsReportedAfterTheGrace(t *testing.T) {
 	task := h.sendMessage("c1", "go")
 	defer h.stop(task)
 	v := h.waitStatus(task, StatusNeedsInput)
-	if v.Kind != KindUnknown || !strings.Contains(v.Question, "nobody parses") {
+	if v.Kind != KindUnknown || !strings.Contains(v.Question, "cannot read") {
 		t.Fatalf("got %+v", v)
+	}
+	h.sessions.setDialog(testOSUser, "c1", planDialog)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		v, _ = h.srv.Tasks.Get(task)
+		if v.Kind == KindPlan {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the dialog that came back did not replace the unknown question: %+v", v)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(v.Question, "Ship it") {
+		t.Fatalf("plan question %q", v.Question)
 	}
 }

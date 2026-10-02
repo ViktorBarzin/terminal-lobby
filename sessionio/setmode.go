@@ -487,3 +487,13 @@ func (in *Injector) dialogMarked(osUser, session, stale string) bool {
 	ask, _ := in.Option(osUser, session, OptionAsk)
 	return ask != "" && ask != stale
 }
+
+// answerWait is a settle that a cancelled request does not sit through.
+func answerWait(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
+}

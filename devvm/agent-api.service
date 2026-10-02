@@ -62,9 +62,11 @@ RestartSec=5
 # Runs as wizard, sibling to clipboard-upload (:7683), tmux-api (:7684),
 # session-events (:7685), file-api (:7686) and skills-api (:7688). It reaches
 # tmux through sessionio in-process, over the same `sudo -u <user> tmux` grant
-# they use (devvm/sudoers.d-ttyd-users), and calls none of their ports — so it
-# needs no grant of its own, and no sandboxing directive that would take sudo
-# away. NoNewPrivileges here would break every session it touches. Deleting a
+# they use (devvm/sudoers.d-ttyd-users), so it needs no grant of its own, and
+# no sandboxing directive that would take sudo away. The one sibling port it
+# calls is session-events' internal routes, to read and answer a session's
+# dialogs through the lobby's mod (ADR-0037); those admit this account on
+# loopback and take no proxy secret. NoNewPrivileges here would break every session it touches. Deleting a
 # conversation also runs /usr/local/bin/tmux-persist-forget through the grant
 # tmux-api's own kill uses, which names wizard rather than a service.
 

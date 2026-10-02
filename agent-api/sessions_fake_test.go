@@ -54,21 +54,17 @@ type fakeSessions struct {
 	// test can make the fake behave like a session that starts working.
 	onPrompt func(f *fakeSessions, key string)
 
-	// answers records every Answer call. answerResp is what Answer replies,
-	// nil meaning the answer landed and the dialog went away; answerErr is a
-	// pane that could not be read at all.
+	// dialogs are what Dialog reads, keyed like live: a key that is absent
+	// means no mod is connected, a nil entry a mod with nothing open.
+	dialogs map[string]*modDialog
+	// answers records every AnswerDialog call. answerResp is what it
+	// replies, nil meaning the answer landed; answerErr is an error from
+	// session-events. A landed answer takes the dialog away, as the mod's
+	// settled event does, then onAnswer runs (holding the lock).
 	answers    []answerCall
 	answerResp *sessionio.AnswerResponse
 	answerErr  error
-	// onAnswer runs (holding the lock) after an answer is recorded, so a test
-	// can take the dialog off the pane the way a real answer does.
-	onAnswer func(f *fakeSessions, key string)
-	// keys records Keys calls; onKeys runs (holding the lock) after one.
-	keys   [][]string
-	onKeys func(f *fakeSessions, key string)
-	// texts records AnswerText calls; onText runs (holding the lock) after one.
-	texts  []string
-	onText func(f *fakeSessions, key, text string)
+	onAnswer   func(f *fakeSessions, key string)
 
 	// resumes and kills record the lifecycle verbs by "<osUser>/<session>".
 	// resumeErr and killErr are faults a test can arm.
@@ -96,6 +92,7 @@ func newFakeSessions() *fakeSessions {
 		live:         map[string]*LiveSession{},
 		transcripts:  map[string][][]byte{},
 		panes:        map[string]string{},
+		dialogs:      map[string]*modDialog{},
 		hints:        map[string]string{},
 		noTranscript: map[string]bool{},
 	}
@@ -168,6 +165,10 @@ func (f *fakeSessions) rename(osUser, from, to string) {
 	if t, ok := f.transcripts[k]; ok {
 		f.transcripts[key(osUser, to)] = t
 		delete(f.transcripts, k)
+	}
+	if d, ok := f.dialogs[k]; ok {
+		f.dialogs[key(osUser, to)] = d
+		delete(f.dialogs, k)
 	}
 	if p, ok := f.panes[k]; ok {
 		f.panes[key(osUser, to)] = p
@@ -454,50 +455,46 @@ func (f *fakeSessions) Pane(osUser, session string) (string, error) {
 	return f.panes[key(osUser, session)], nil
 }
 
-func (f *fakeSessions) Answer(_ context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
+// setDialog opens a dialog in a session, as the mod reports one.
+func (f *fakeSessions) setDialog(osUser, session string, d *modDialog) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.dialogs[key(osUser, session)] = d
+}
+
+func (f *fakeSessions) Dialog(osUser, session string) (modDialog, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dialogs[key(osUser, session)]
+	switch {
+	case !ok:
+		return modDialog{}, errNoMod
+	case d == nil:
+		return modDialog{}, errNoDialog
+	}
+	return *d, nil
+}
+
+func (f *fakeSessions) AnswerDialog(_ context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k := key(osUser, session)
 	f.answers = append(f.answers, answerCall{osUser, session, req})
 	if f.answerErr != nil {
 		return sessionio.AnswerResponse{}, f.answerErr
 	}
-	if f.onAnswer != nil {
-		f.onAnswer(f, key(osUser, session))
+	if d := f.dialogs[k]; d == nil || d.ToolID != req.ToolID {
+		return sessionio.AnswerResponse{}, errDialogGone
 	}
+	resp := sessionio.AnswerResponse{Applied: true, Done: true}
 	if f.answerResp != nil {
-		return *f.answerResp, nil
+		resp = *f.answerResp
 	}
-	return sessionio.AnswerResponse{Applied: true, Done: true}, nil
-}
-
-func (f *fakeSessions) Keys(osUser, session string, keys []string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.keys = append(f.keys, append([]string(nil), keys...))
-	if f.onKeys != nil {
-		f.onKeys(f, key(osUser, session))
+	if resp.Applied {
+		f.dialogs[k] = nil
 	}
-	return nil
-}
-
-func (f *fakeSessions) AnswerText(osUser, session, text string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.texts = append(f.texts, text)
-	if f.onText != nil {
-		f.onText(f, key(osUser, session), text)
+	if f.onAnswer != nil {
+		f.onAnswer(f, k)
 	}
-	return nil
-}
-
-func (f *fakeSessions) textCalls() []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.texts...)
-}
-
-func (f *fakeSessions) keyCalls() [][]string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([][]string(nil), f.keys...)
+	return resp, nil
 }

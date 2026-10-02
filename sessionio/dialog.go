@@ -68,8 +68,8 @@ type Dialog struct {
 	PlanPath string `json:"planPath,omitempty"`
 
 	// The tool permission prompt's own reading, set only when Kind is
-	// DialogKindPermission (permdialog.go). Its rows are in Options, numbered
-	// as drawn, since a digit is what picks one.
+	// DialogKindPermission, which session-events draws from the lobby's mod
+	// (session-events/mod.go). Its rows are in Options, numbered as drawn.
 	//
 	// Title is the prompt's first line ("Bash command", "Read file"), Detail
 	// what the tool will do as drawn under it, and Prompt the question over

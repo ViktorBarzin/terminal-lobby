@@ -28,12 +28,13 @@ type AnswerRequest struct {
 	Call []string `json:"call,omitempty"`
 	// Plan answers Claude Code's plan approval (plandialog.go).
 	Plan *PlanAnswer `json:"plan,omitempty"`
-	// Permission answers Claude Code's tool permission prompt (permdialog.go):
+	// Permission answers Claude Code's tool permission prompt, through the
+	// lobby's mod (session-events/mod.go):
 	// a row picked by its number, or a decline with words.
 	Permission *PermissionAnswer `json:"permission,omitempty"`
 }
 
-// PermissionAnswer answers the tool permission prompt (permdrive.go): a row
+// PermissionAnswer answers the tool permission prompt: a row
 // picked by its number, or the card's "Type your own answer", which declines
 // and tells Claude what to do instead. Exactly one of Option and Decline.
 //

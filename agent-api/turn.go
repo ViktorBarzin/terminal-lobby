@@ -237,7 +237,10 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 	defer tick.Stop()
 
 	sawRunning := false
-	asked := false // the pane has been read for this needs_input episode
+	asked := false // a dialog has been reported for this needs_input episode
+	// lastTool names the dialog last reported, so the dialog an answer has
+	// just settled is not reported again while the state catches up.
+	lastTool := ""
 	// doneSince is when the state last turned "done" without the transcript
 	// holding this turn's answer yet; bgSince is when the turn first came to
 	// rest with background work outstanding.
@@ -281,37 +284,44 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			sawRunning = true
 			doneSince = time.Time{}
 			if !asked {
-				// Read the pane once per episode, not once per poll: a
-				// capture is a fork, and the question does not change while
-				// the dialog stands.
+				// Read from the lobby's mod, a loopback request to
+				// session-events, so it is cheap to repeat.
 				q := s.readQuestion(t.OSUser, live.Name)
 				if q.Kind == KindUnknown {
-					// The state is stamped when Claude asks, and the dialog
-					// is drawn a moment after: read in between, the pane
-					// shows the spinner. Measured live on 2026-10-02
-					// (rv-r3reg-b): that read went out as needs_input with
-					// kind unknown and no options. So an unrecognised pane is
-					// read again on each poll, the task left as it was, and
-					// reported as unknown only once the start grace has run.
+					// No dialog to read. Briefly normal: the state can be
+					// stamped a moment before the dialog event lands, and a
+					// session-events restart or a rename mid-turn leaves the
+					// mod reconnecting for a second or two. So the task is
+					// left as it was through the start grace, then reported
+					// as unknown with the pane's tail, and the dialog is read
+					// again on every poll after that, so a dialog that comes
+					// back replaces the unknown question.
 					if unknownSince.IsZero() {
 						unknownSince = s.now()
 					}
 					if s.now().Sub(unknownSince) < s.startGrace() {
 						break
 					}
+					if v, _ := s.Tasks.Get(t.ID); v.Status != StatusNeedsInput || v.Kind != KindUnknown {
+						q = s.withPaneText(t.OSUser, live.Name, q)
+						s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
+					}
+					break
 				}
-				asked = true
-				s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
+				asked, lastTool = true, q.ToolID
+				// SetQuestion when the task already reports an unknown
+				// question: Update does not apply a change to the status it
+				// already has.
+				if !s.Tasks.SetQuestion(t.ID, q) {
+					s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
+				}
 			} else if v, _ := s.Tasks.Get(t.ID); v.Status == StatusRunning {
 				// Answered through POST /v1/tasks/{id}/answer, which put the
-				// task back to running while @claude_state still says
-				// awaiting. It goes on saying so for as long as an approved
-				// tool runs, because nothing stamps running until the next
-				// tool call or prompt (devvm/claude-tmux-state). So the pane
-				// is read on every poll in this window, and only a dialog a
-				// parser recognises counts as the next question: the bottom
-				// of a pane that is busy working is not one.
-				if q := s.readQuestion(t.OSUser, live.Name); q.Kind != KindUnknown {
+				// task back to running while @claude_state can still say
+				// awaiting for a moment. A dialog read now is the next
+				// question only if it is a different one.
+				if q := s.readQuestion(t.OSUser, live.Name); q.Kind != KindUnknown && q.ToolID != lastTool {
+					lastTool = q.ToolID
 					s.Tasks.Update(t.ID, StatusNeedsInput, func(tk *Task) { tk.setQuestion(q) })
 				}
 			}

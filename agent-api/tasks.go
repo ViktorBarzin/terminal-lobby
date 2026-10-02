@@ -5,7 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
-	"strconv"
+	"slices"
 	"strings"
 	"time"
 
@@ -158,21 +158,16 @@ type answerResult struct {
 
 // answerTask serves POST /v1/tasks/{id}/answer.
 //
-// It answers the question that put a task in needs_input, through the same
-// sessionio driver the lobby's question card drives (Injector.Answer): the
-// plan approval by an approve row or feedback words, and the tool permission
-// prompt by a row or words that decline the call. That driver reads the
-// dialog before any key and refuses, with nothing typed, whatever the dialog
-// on screen does not offer; nothing here sends a key of its own.
+// It answers the question that put a task in needs_input, through the lobby's
+// mod, the way the Text view's cards do (question.go, dialog.go): an
+// AskUserQuestion menu by a row or words, the plan approval by Approve plan,
+// Keep planning or feedback words, and the tool permission prompt by Allow,
+// Deny or words that deny the call and say why.
 //
-// An AskUserQuestion is refused (question.go has why), as is a pane no parser
-// recognises: there is no reading to check an answer against, and a guessed
-// key on somebody's live session is the failure the driver was built to stop.
-//
-// The question is read again before anything is typed, and compared with the
-// one the task reported. A caller answers what it was shown; if the screen now
-// shows something else, such as the next tool call's prompt with the same
-// rows, the task is updated and the caller told to look again.
+// The dialog is read again first, and the answer names it by its tool call
+// id, so it settles that dialog or nothing: if the dialog was answered in the
+// terminal meanwhile, or another opened in its place, nothing is sent and the
+// caller is told to look again.
 func (s *Server) answerTask(c *call) (any, error) {
 	id := c.r.PathValue("id")
 	c.taskID = id
@@ -212,7 +207,7 @@ func (s *Server) answerTask(c *call) (any, error) {
 	if live.Suspended && live.Owner == c.id.Header {
 		// The sweep never suspends a session waiting on an answer, so this is
 		// a mark that arrived some other way. Resumed for the reason a message
-		// resumes one; the fresh Claude draws no dialog, so the comparison
+		// resumes one; the fresh Claude has no dialog open, so the comparison
 		// below then reports, truthfully, that the question has gone.
 		if err := s.Sessions.Resume(osUser, live.Name); err != nil && !errors.Is(err, sessionio.ErrNotSuspended) {
 			return nil, serverError("conversation %s was suspended and could not be resumed: %v", v.ConversationID, err)
@@ -223,69 +218,60 @@ func (s *Server) answerTask(c *call) (any, error) {
 	}
 	s.stampTurn(osUser, live.Name)
 	now := s.readQuestion(osUser, live.Name)
-	asked := questionReading{Kind: v.Kind, Text: v.Question, Options: v.Options, AnswerWith: v.AnswerWith}
-	if now.Kind == asked.Kind {
-		switch now.Kind {
-		case KindChoice:
-			return nil, unprocessable("this question is an AskUserQuestion menu, which this API cannot answer. " +
-				"Terminal Lobby answers those as data through the question card in the lobby, where session-events " +
-				"holds the call, rather than by typing into the menu, and this service does not reach session-events. " +
-				"Answer it in the lobby or the terminal, then poll the task again")
-		case KindUnknown:
-			return nil, unprocessable("the session is waiting on something the lobby cannot read as a permission " +
-				"prompt or a plan approval, so there is nothing to check an answer against. Answer it in the terminal, " +
-				"then poll the task again")
-		}
+	asked := s.Tasks.QuestionTool(id)
+	if now.Kind == KindUnknown && v.Kind == KindUnknown {
+		return nil, unprocessable("%v", errNotAnswerable(now))
 	}
-	if !sameQuestion(now, asked) {
-		s.Tasks.SetQuestion(id, now)
-		return nil, conflict("the question on screen is not the one this task reported, so nothing was typed. "+
-			"The task now shows what is on screen (a %s question); read it and answer again", now.Kind)
+	if now.Kind != v.Kind || now.ToolID != asked {
+		s.Tasks.SetQuestion(id, s.withPaneText(osUser, live.Name, now))
+		return nil, conflict("the session is not waiting on the question this task reported, so nothing was sent. "+
+			"The task now shows what it is waiting on (a %s question); read it and answer again", now.Kind)
 	}
-
-	if now.Mod {
-		return s.answerModDialog(c, id, osUser, live.Name, now, req, text)
+	if len(now.AnswerWith) == 0 {
+		return nil, unprocessable("%v", errNotAnswerable(now))
 	}
 
 	areq, err := answerFor(now, req, text)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := s.Sessions.Answer(c.r.Context(), osUser, live.Name, areq)
-	if err != nil {
-		return nil, serverError("the pane of %s could not be read, so nothing was typed: %v", v.ConversationID, err)
+	c.event = "answer " + now.Kind + " " + now.ToolID
+	resp, err := s.Sessions.AnswerDialog(c.r.Context(), osUser, live.Name, areq)
+	switch {
+	case errors.Is(err, errDialogGone), errors.Is(err, errNoMod):
+		s.Tasks.SetQuestion(id, s.withPaneText(osUser, live.Name, s.readQuestion(osUser, live.Name)))
+		return nil, conflict("the question went while the answer was being sent, so nothing was sent (%v). "+
+			"Read the task again", err)
+	case err != nil:
+		return nil, serverError("session-events could not be reached to answer %s: %v", v.ConversationID, err)
 	}
+	c.reason = resp.Reason
 
 	var warning string
 	switch {
-	case resp.Applied && resp.Done:
-	case resp.Applied, resp.Reason == sessionio.AnswerUnverified:
-		// The keys went in and the dialog had not gone when the driver
-		// stopped looking. Reported as running anyway: if the dialog is
-		// still up the watcher finds it on its next poll and puts the task
-		// back to needs_input with a fresh reading, and if it went a moment
-		// later the task is already right.
-		warning = "the answer was typed but the dialog had not cleared when this request returned. " +
-			"If it is still up, the task goes back to needs_input within a few seconds; " +
-			"read the task again before answering again, so a second answer does not land on whatever the first left on screen"
-	case resp.Reason == sessionio.AnswerNoDialog, resp.Reason == sessionio.AnswerNotDrawn,
+	case resp.Applied:
+	case resp.Reason == sessionio.AnswerUnverified:
+		// Sent to the mod, which did not confirm in time. Reported as
+		// running anyway: if the dialog is still open the watcher finds it on
+		// its next poll and puts the task back to needs_input.
+		warning = "the answer was sent but the session did not confirm it in time. " +
+			"If the question is still open, the task goes back to needs_input within a few seconds; " +
+			"read the task again before answering again"
+	case resp.Reason == sessionio.AnswerNotHeld, resp.Reason == sessionio.AnswerNotDrawn,
 		resp.Reason == sessionio.AnswerUnknownOption:
-		// Between the read above and the driver's own read, under its
-		// session lock, the dialog went or changed: answered in the
-		// terminal, or the next one drawn. Nothing was typed.
-		s.Tasks.SetQuestion(id, s.readQuestion(osUser, live.Name))
-		return nil, conflict("the question changed while the answer was being sent, so nothing was typed (%s). "+
+		// Answered in the terminal a moment ago, or replaced.
+		s.Tasks.SetQuestion(id, s.withPaneText(osUser, live.Name, s.readQuestion(osUser, live.Name)))
+		return nil, conflict("the question changed while the answer was being sent, so it did not land (%s). "+
 			"Read the task again", resp.Reason)
+	case resp.Reason == sessionio.AnswerIncomplete:
+		return nil, unprocessable("the answer leaves a question of this menu unanswered")
 	default:
-		// AnswerRefused: tmux would not take the keys. Some of a multi-key
-		// answer may have landed, which is why the task is left as it was
-		// for the watcher to read rather than moved on.
-		return nil, serverError("tmux did not take the answer for %s (%s); read the task again before retrying",
+		return nil, serverError("the answer for %s did not land (%s); read the task again before retrying",
 			v.ConversationID, resp.Reason)
 	}
 
 	// A refused transition is fine here: a cancel that landed while the
-	// answer was being typed wins, and the task says so.
+	// answer was being sent wins, and the task says so.
 	s.Tasks.Update(id, StatusRunning, nil)
 	out, _ := s.Tasks.Get(id)
 	return answerResult{TaskView: out, Warning: warning}, nil
@@ -316,170 +302,46 @@ func checkAnswer(req answerRequest) (string, error) {
 	return text, nil
 }
 
-// answerFor builds the sessionio request for a reading. A row is sent with
-// the label the caller was shown, which the driver checks against the label
-// drawn when it presses the key, so a row renumbered in between is refused
-// rather than pressed.
+// answerFor builds the request for a reading, naming its dialog.
 func answerFor(q questionReading, req answerRequest, text string) (sessionio.AnswerRequest, error) {
+	out := sessionio.AnswerRequest{ToolID: q.ToolID}
 	if req.Option != nil {
-		label, ok := "", false
-		var rows []string
-		for _, o := range q.Options {
-			rows = append(rows, fmt.Sprintf("%d (%s)", o.Index, o.Label))
-			if o.Index == *req.Option {
-				label, ok = o.Label, true
-			}
+		n := *req.Option
+		if !slices.Contains(q.AnswerWith, answerOption) {
+			return out, unprocessable("this %s question takes words, not a row", q.Kind)
 		}
-		if !ok {
-			return sessionio.AnswerRequest{}, badRequest("option %d is not one of the rows on offer: %s",
-				*req.Option, strings.Join(rows, ", "))
+		if n > len(q.Options) {
+			return out, unprocessable("option %d is not one of the rows on offer: %s", n, rowList(q.Options))
 		}
-		if q.Kind == KindPlan {
-			return sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Option: *req.Option, Label: label}}, nil
+		switch q.Kind {
+		case KindChoice:
+			out.Answers = map[string][]string{q.question: {q.Options[n-1].Label}}
+		case KindPlan:
+			out.Plan = &sessionio.PlanAnswer{Option: n, Label: q.Options[n-1].Label}
+		case KindPermission:
+			out.Permission = &sessionio.PermissionAnswer{Option: n, Label: q.Options[n-1].Label}
 		}
-		return sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Option: *req.Option, Label: label}}, nil
+		return out, nil
 	}
-	accepts := false
-	for _, a := range q.AnswerWith {
-		accepts = accepts || a == answerText
+	if !slices.Contains(q.AnswerWith, answerText) {
+		return out, unprocessable("this %s question takes a row, not words", q.Kind)
 	}
-	if !accepts {
-		return sessionio.AnswerRequest{}, unprocessable("this permission prompt has no No row to type words into; " +
-			"answer it with an option")
+	switch q.Kind {
+	case KindChoice:
+		out.Answers = map[string][]string{q.question: {text}}
+	case KindPlan:
+		out.Plan = &sessionio.PlanAnswer{Feedback: text}
+	case KindPermission:
+		out.Permission = &sessionio.PermissionAnswer{Decline: text}
 	}
-	if q.Kind == KindPlan {
-		// Enter, not Shift+Tab: the words go back and Claude keeps planning.
-		// Approving with feedback is a reader's judgement about a plan, and
-		// nothing in this request says the caller made it.
-		return sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Feedback: text}}, nil
-	}
-	return sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Decline: text}}, nil
+	return out, nil
 }
 
-// modAnswerVerify is how long the mod's dialog gets to leave the screen after
-// its row is pressed. The live press on 2026-10-02 took it down within a
-// second; the bound only decides whether the reply carries a warning.
-const modAnswerVerify = 1500 * time.Millisecond
-
-// answerModDialog answers the mod's own permission or plan dialog by pressing
-// its row's digit, which the mod reads as the decision made in the terminal.
-// Words go to a plan through the dialog's free-text row (answerModFeedback);
-// a permission is answered with an option, as the task's answer_with says.
-func (s *Server) answerModDialog(c *call, id, osUser, session string, q questionReading, req answerRequest, text string) (any, error) {
-	if req.Option == nil && (q.Kind != KindPlan || q.Free.Number == 0) {
-		return nil, unprocessable("this %s question is answered with an option: %s", q.Kind, rowList(q.Options))
-	}
-	if q.Free.Cursor {
-		// A digit would be typed into the field, and Enter would send
-		// whatever it holds.
-		return nil, conflict("the cursor is in the dialog's free-text row, so a key sent now would be typed " +
-			"into it; nothing was typed. Answer it in the terminal, or read the task again once the cursor has moved")
-	}
-	if req.Option == nil {
-		return s.answerModFeedback(c, id, osUser, session, q, text)
-	}
-	found := false
-	for _, o := range q.Options {
-		found = found || o.Index == *req.Option
-	}
-	if !found {
-		return nil, badRequest("option %d is not one of the rows on offer: %s", *req.Option, rowList(q.Options))
-	}
-	if err := s.Sessions.Keys(osUser, session, []string{strconv.Itoa(*req.Option)}); err != nil {
-		return nil, serverError("tmux did not take the answer for %s (%v); read the task again before retrying",
-			c.conversationID, err)
-	}
-	return s.awaitModDialogGone(id, osUser, session, q)
-}
-
-// answerModFeedback sends words to the mod's plan approval through its
-// free-text row: the row's digit puts the cursor in the field, the words are
-// pasted and read back off the row, and only then does Enter send them. The
-// mod denies ExitPlanMode with the words as the reason and Claude keeps
-// planning (claude-mod/hooks/lib/shape.ts, decisionFromLabel).
-//
-// Checked live on 2026-10-02 (CLI 2.1.287), and so are the two refusals: a
-// row already holding words sends them the moment its digit is pressed, so a
-// filled row is refused before any key, and words that do not show on the
-// row are never sent. The cursor is walked back off the field then, because a
-// digit sent while it is there is typed into the field.
-func (s *Server) answerModFeedback(c *call, id, osUser, session string, q questionReading, text string) (any, error) {
-	row := q.Free.Number
-	if !q.Free.empty() {
-		return nil, conflict("the dialog's free-text row already holds %q, and pressing its number would send "+
-			"those words; nothing was typed. Answer it in the terminal", strings.TrimSpace(q.Free.Shows))
-	}
-	if err := s.Sessions.Keys(osUser, session, []string{strconv.Itoa(row)}); err != nil {
-		return nil, serverError("tmux did not take the answer for %s (%v); read the task again before retrying",
-			c.conversationID, err)
-	}
-	if !s.awaitFree(osUser, session, row, func(f freeRow) bool { return f.Cursor && f.empty() }) {
-		return nil, serverError("row %d of the plan dialog did not take the cursor, so the words were not typed; "+
-			"read the task again", row)
-	}
-	if err := s.Sessions.AnswerText(osUser, session, text); err != nil {
-		return nil, serverError("tmux did not take the words for %s (%v); nothing was sent", c.conversationID, err)
-	}
-	if !s.awaitFree(osUser, session, row, func(f freeRow) bool { return f.Cursor && sameWords(f.Shows, text) }) {
-		// Off the field, so a later digit picks a row instead of being typed.
-		_ = s.Sessions.Keys(osUser, session, []string{"Up"})
-		return nil, serverError("the words were typed into row %d of the plan dialog but could not be read back "+
-			"off it, so they were not sent. They may still be in that row: answer in the terminal", row)
-	}
-	if err := s.Sessions.Keys(osUser, session, []string{"Enter"}); err != nil {
-		return nil, serverError("tmux did not take the Enter for %s (%v); the words are in the dialog's "+
-			"free-text row, unsent", c.conversationID, err)
-	}
-	return s.awaitModDialogGone(id, osUser, session, q)
-}
-
-// awaitFree polls the free-text row until ok holds for it or modAnswerVerify
-// runs out. The row is read wrapped: words longer than the field carry on
-// under it, indented, until the rule below it.
-func (s *Server) awaitFree(osUser, session string, row int, ok func(freeRow) bool) bool {
-	for deadline := time.Now().Add(modAnswerVerify); ; {
-		if pane, err := s.Sessions.Pane(osUser, session); err == nil && ok(readFreeRow(pane, row)) {
-			return true
-		}
-		if time.Now().After(deadline) {
-			return false
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-// sameWords compares what a row shows with the words sent, ignoring the
-// whitespace a wrap adds or moves.
-func sameWords(shown, sent string) bool {
-	return strings.Join(strings.Fields(shown), " ") == strings.Join(strings.Fields(sent), " ")
-}
-
-// awaitModDialogGone waits for the dialog a key answered to leave the screen,
-// then moves the task on.
-func (s *Server) awaitModDialogGone(id, osUser, session string, q questionReading) (any, error) {
-	var warning string
-	for deadline := time.Now().Add(modAnswerVerify); ; {
-		if !sameQuestion(s.readQuestion(osUser, session), q) {
-			break
-		}
-		if time.Now().After(deadline) {
-			warning = "the answer was typed but the dialog had not cleared when this request returned. " +
-				"If it is still up, the task goes back to needs_input within a few seconds; " +
-				"read the task again before answering again"
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	s.Tasks.Update(id, StatusRunning, nil)
-	out, _ := s.Tasks.Get(id)
-	return answerResult{TaskView: out, Warning: warning}, nil
-}
-
-// rowList names a question's rows for a refusal.
+// rowList is the rows on offer, for an error message.
 func rowList(opts []TaskOption) string {
-	var rows []string
+	parts := make([]string, 0, len(opts))
 	for _, o := range opts {
-		rows = append(rows, fmt.Sprintf("%d (%s)", o.Index, o.Label))
+		parts = append(parts, fmt.Sprintf("%d %s", o.Index, o.Label))
 	}
-	return strings.Join(rows, ", ")
+	return strings.Join(parts, ", ")
 }

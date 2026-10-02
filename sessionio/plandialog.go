@@ -76,6 +76,10 @@ import (
 // DialogKindPlan is Dialog.Kind for the plan approval.
 const DialogKindPlan = "plan"
 
+// DialogKindPermission is Dialog.Kind for the tool permission prompt, as the
+// lobby's mod reports it (session-events/mod.go draws the card from it).
+const DialogKindPermission = "permission"
+
 // PlanOption is one approve row of the plan approval: its number, which is the
 // digit that selects it, and its label exactly as drawn.
 type PlanOption struct {

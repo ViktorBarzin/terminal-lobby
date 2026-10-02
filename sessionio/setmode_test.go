@@ -515,3 +515,19 @@ func TestSetModeReadsThePaneBeforeEveryPress(t *testing.T) {
 		t.Fatalf("paneBlocksPress = %v, %v; want the drawn dialog to block", blocked, err)
 	}
 }
+
+// paneOf reads the stand-in's pane.
+func paneOf(t *testing.T, in *Injector, osUser string) string {
+	t.Helper()
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	return pane
+}
+
+// planSession starts the stand-in on its plan approval.
+func planSession(t *testing.T, env string) (*Injector, string) {
+	t.Helper()
+	return standIn(t, "FAKEDIALOG_CALL=plan "+env, "Would you like to proceed?")
+}

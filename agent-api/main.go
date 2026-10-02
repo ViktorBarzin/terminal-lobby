@@ -4,9 +4,12 @@
 //
 // A devvm systemd sibling of tmux-api (:7684), session-events (:7685),
 // file-api (:7686) and skills-api (:7688), on :8710. It shares their identity
-// module (authuser) and their session module (sessionio), and it calls neither
-// of their ports: everything it does, it does in-process, so the shared
-// TL_PROXY_SECRET is never handed to anything on a caller's behalf.
+// module (authuser) and their session module (sessionio), and does its work
+// in-process, with one exception: a session's dialogs are read and answered
+// through session-events' internal routes (dialog.go, ADR-0037), which admit
+// this service's own OS account on loopback and take no proxy secret. The
+// shared TL_PROXY_SECRET is still never handed to anything on a caller's
+// behalf.
 //
 // What is different about this one, and why it exists rather than being four
 // more routes on tmux-api:
@@ -123,7 +126,7 @@ func main() {
 
 	srv := &Server{
 		Gate:      gate,
-		Sessions:  &tmuxSessions{in: sessionio.NewInjector(self.Username), homeBase: "/home"},
+		Sessions:  &tmuxSessions{in: sessionio.NewInjector(self.Username), dialogs: newDialogClient(), homeBase: "/home"},
 		Tasks:     NewTaskStore(nil),
 		Trace:     trace,
 		IDs:       newIDGen(nil),
