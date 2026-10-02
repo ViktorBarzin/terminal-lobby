@@ -76,7 +76,9 @@ func (s *Server) getTask(c *call) (any, error) {
 // the session gets an interrupt, which is Ctrl-C through sessionio.Cancel —
 // the same path the lobby's Stop button takes, including its re-derivation of
 // @claude_state, without which the session would latch at "running" and every
-// later turn gate would stay shut.
+// later turn gate would stay shut. A dialog the session is waiting on is
+// declined through the mod first, and interrupted is true only once it went
+// (interrupt, dialogguard.go).
 func (s *Server) cancelTask(c *call) (any, error) {
 	id := c.r.PathValue("id")
 	c.taskID = id
@@ -117,12 +119,13 @@ func (s *Server) cancelTask(c *call) (any, error) {
 		live, ferr := s.find(osUser, v.ConversationID)
 		if ferr != nil {
 			interruptErr = ferr.Error()
-		} else if err := s.Sessions.Cancel(osUser, live.Name); err != nil {
+		} else if why := s.interrupt(c.r.Context(), osUser, live.Name, live.State); why != "" {
 			// The task is cancelled either way — this service has stopped
-			// following it. The session may still be working, which the
-			// caller needs told rather than discovering from the transcript.
-			interruptErr = err.Error()
-			logf("agent-api: cancel %s: interrupting %s failed: %v", id, v.ConversationID, err)
+			// following it. The session may still be working, or still
+			// waiting on a dialog, which the caller needs told rather than
+			// discovering from the transcript (dialogguard.go).
+			interruptErr = why
+			logf("agent-api: cancel %s: interrupting %s failed: %s", id, v.ConversationID, why)
 		}
 	}
 

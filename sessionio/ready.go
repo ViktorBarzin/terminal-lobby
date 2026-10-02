@@ -168,6 +168,28 @@ func CodexMenuOpen(pane string) bool {
 	return false
 }
 
+// ClaudeMenuOpen reports whether a Claude pane has a menu up: Claude's input
+// box is not drawn (a dialog takes its place), and a line shows Claude's ❯
+// marking a numbered row. The permission prompt, the plan approval,
+// AskUserQuestion and the lobby mod's dialogs all draw their highlighted row
+// this way. An Enter typed while one is up picks that row: measured live on
+// 2026-10-02, a message typed over the mod's permission dialog approved a
+// tool call nobody had approved. Requiring the input box to be gone is what
+// keeps an echo of an earlier prompt that began "1." from reading as a menu.
+func ClaudeMenuOpen(pane string) bool {
+	if ClaudeInputReady(pane) {
+		return false
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		t := strings.TrimSpace(stripDialogBorder(line))
+		rest, ok := strings.CutPrefix(t, promptMark)
+		if ok && reCodexMenuRow.MatchString(strings.TrimSpace(rest)) {
+			return true
+		}
+	}
+	return false
+}
+
 // reCodexMenuRow is a numbered menu row, the text after codex's cursor in a
 // dialog ("2. Cancel", "1. Yes, continue").
 var reCodexMenuRow = regexp.MustCompile(`^[0-9]+\.\s`)

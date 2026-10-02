@@ -52,7 +52,7 @@ func (s *Server) runTurn(t *Task) {
 	// to take one.
 	mark, ok := s.awaitReady(t, cancelled)
 	if !ok {
-		return // cancelled while waiting
+		return // cancelled while waiting, or failed with a dialog in the way
 	}
 
 	// Resolved again here rather than reused from the wait above, because the
@@ -126,8 +126,9 @@ func (s *Server) stampTurnOf(t *Task) {
 const unknownMark = -1
 
 // awaitReady waits until a prompt can actually be sent, and returns how many
-// transcript lines exist at that moment. ok=false means the caller cancelled
-// while waiting.
+// transcript lines exist at that moment. ok=false means the turn ends here:
+// the caller cancelled while waiting, or a dialog is in the way and the task
+// has been failed.
 //
 // It waits on the PANE and not on the transcript, and the distinction is the
 // whole function. The obvious version waited for @claude_transcript to point
@@ -166,6 +167,20 @@ func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 		// so they arrive as literal text glued to the front of the message.
 		// Nothing is on that input line to clear either, which is what makes
 		// dropping the prelude safe here and only here.
+		//
+		// Except over a dialog. A pane that never settled may be one showing
+		// a menu, and the Enter would pick its highlighted row: measured live
+		// on 2026-10-02, a message sent this way approved a permission
+		// prompt nobody had approved (dialogguard.go). So with any sign of
+		// a dialog the message is not sent at all.
+		if now, ferr := s.find(t.OSUser, t.ConversationID); ferr == nil {
+			if why := s.dialogInTheWay(t.OSUser, now.Name, strings.TrimSpace(now.State)); why != "" {
+				s.fail(t, "conversation %s is waiting on a dialog (%s), and typing into it would answer it, "+
+					"so the message was not sent. Answer the task that is waiting on it, or answer it in the lobby, "+
+					"then send the message again", t.ConversationID, why)
+				return 0, false
+			}
+		}
 		t.uncleared = true
 		logf("agent-api: %s never settled at its prompt (%v); sending without "+
 			"the line-clearing prelude, which it could not interpret yet",
@@ -273,6 +288,16 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 		state := strings.TrimSpace(live.State)
 		if state == "" {
 			state = s.stateFromTranscript(t, live.Name, mark)
+			// A dialog writes no turn-end record, so the transcript reads a
+			// turn blocked on one as running, for as long as the six-hour
+			// ceiling. Measured live on 2026-10-02 (rv-mf7-nomod). With no mod
+			// to report it, the pane is the witness: a menu there is the
+			// dialog, and the awaiting branch reports it with the pane's text.
+			if state == sessionio.StateRunning {
+				if pane, err := s.Sessions.Pane(t.OSUser, live.Name); err == nil && sessionio.ClaudeMenuOpen(pane) {
+					state = sessionio.StateAwaiting
+				}
+			}
 		}
 		switch state {
 		case sessionio.StateRunning:

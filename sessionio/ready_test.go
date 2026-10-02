@@ -258,3 +258,34 @@ func TestAwaitInputReadyWaitsOutTheTrustDialog(t *testing.T) {
 		t.Fatal("the trust dialog read as ready for a prompt")
 	}
 }
+
+// A Claude menu is up when Claude's cursor marks a numbered row anywhere but
+// the input box. Measured live on 2026-10-02: a cancelled turn left the mod's
+// permission dialog drawn (testdata/claude-mod-permission-dialog.txt), the
+// next message never saw a settled prompt, was typed anyway, and its Enter
+// picked "1. Allow". The agent API reads this before typing into a pane that
+// never settled.
+func TestClaudeMenuOpen(t *testing.T) {
+	b, err := os.ReadFile("testdata/claude-mod-permission-dialog.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		pane string
+		want bool
+	}{
+		{"the mod's permission dialog", string(b), true},
+		{"Claude's native permission prompt", " Do you want to proceed?\n ❯ 1. Yes\n   2. No, and tell Claude what to do differently (esc)\n", true},
+		{"a menu inside a border", "│ ❯ 1. Yes │\n│   2. No  │\n", true},
+		{"an idle prompt", "\n────────\n❯ \n────────\n", false},
+		{"a numbered prompt typed into the input box", "\n────────\n❯ 1. do the thing\n────────\n", false},
+		{"a numbered line nobody marked", "  1. Allow\n  2. Deny\n", false},
+		{"an echo of an earlier prompt under a drawn input box", "❯ 1. do the thing\n\n────────\n❯ \n────────\n", false},
+		{"a codex menu", "› 2. Cancel\n", false},
+	} {
+		if got := ClaudeMenuOpen(c.pane); got != c.want {
+			t.Errorf("%s: ClaudeMenuOpen = %v, want %v", c.name, got, c.want)
+		}
+	}
+}

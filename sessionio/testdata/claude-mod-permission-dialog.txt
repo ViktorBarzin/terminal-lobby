@@ -1,0 +1,16 @@
+
+● Bash(touch /var/tmp/claude-1000/rv-fx1-probe && echo FX1-OK)
+  ⎿  Waiting…
+────────────────────────────────────────────────────────────────────────────────
+ ☐ Permission
+
+Allow Bash: touch /var/tmp/claude-1000/rv-fx1-probe && echo FX1-OK?
+
+❯ 1. Allow
+  2. Deny
+  3. Type something.
+────────────────────────────────────────────────────────────────────────────────
+  4. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
