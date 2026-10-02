@@ -40,6 +40,11 @@ const modExpiry = 90 * time.Second
 // conversation's text, which runs to megabytes on a long session.
 const modEventsLimit = 64 << 20
 
+// modFollowWait bounds how long opening a renamed session's stream waits for
+// its mod to say hello under the new name. The mod's held poll answers at
+// once, so the hello normally lands in well under a second.
+const modFollowWait = 5 * time.Second
+
 // modAckWait bounds how long a route waits for the mod to act on a command.
 const modAckWait = 10 * time.Second
 
@@ -129,7 +134,11 @@ type modHub struct {
 	// session from its first turn and the mod only notices at its next
 	// turn start.
 	paneSession func(osUser, pane string) string
-	now         func() time.Time
+	// sessionPanes lists the panes in a tmux session; nil in tests that do
+	// not care. A stream opened on a name no mod said hello with asks it, so
+	// a session renamed after its last turn is followed (follow).
+	sessionPanes func(osUser, session string) []string
+	now          func() time.Time
 
 	mu        sync.Mutex
 	byToken   map[string]*modConn
@@ -187,6 +196,68 @@ func (h *modHub) live(osUser, session string) (*liveSource, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.ls, c.ls != nil
+}
+
+// follow is live for a session no mod said hello with yet, when the Claude
+// in one of its panes said hello under another name: tmux-api's autotitle
+// renamed the session after the mod's last write, and the mod learns new
+// names only at a turn start or a refused request. Its token is revoked so its
+// held poll is refused and it says hello under the new name, and follow waits
+// up to `wait` for that. A session no mod's pane is in returns at once.
+func (h *modHub) follow(ctx context.Context, osUser, session string, wait time.Duration) (*liveSource, bool) {
+	if ls, ok := h.live(osUser, session); ok {
+		return ls, true
+	}
+	if h.sessionPanes == nil {
+		return nil, false
+	}
+	panes := h.sessionPanes(osUser, session)
+	if len(panes) == 0 {
+		return nil, false
+	}
+	in := make(map[string]bool, len(panes))
+	for _, p := range panes {
+		in[p] = true
+	}
+	type found struct {
+		c             *modConn
+		session, pane string
+	}
+	var cands []found
+	h.mu.Lock()
+	for _, c := range h.bySID {
+		if c.user != osUser {
+			continue
+		}
+		c.mu.Lock()
+		if in[c.pane] && c.session != session {
+			cands = append(cands, found{c, c.session, c.pane})
+		}
+		c.mu.Unlock()
+	}
+	h.mu.Unlock()
+	if len(cands) == 0 {
+		return nil, false
+	}
+	hello, stop := h.awaitHello(osUser, session)
+	defer stop()
+	asked := false
+	for _, f := range cands {
+		if f.c.followRename(osUser, f.session, f.pane) == session {
+			asked = true
+		}
+	}
+	if !asked {
+		return h.live(osUser, session)
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-hello:
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	return h.live(osUser, session)
 }
 
 // awaitHello returns a channel closed once a mod says hello for the session,

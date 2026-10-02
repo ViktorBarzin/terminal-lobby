@@ -78,6 +78,13 @@ func main() {
 		}
 		return strings.TrimSpace(string(out))
 	}
+	rg.mods.sessionPanes = func(osUser, session string) []string {
+		out, err := injector.Command(osUser, "list-panes", "-s", "-t", "="+session, "-F", "#{pane_id}").Output()
+		if err != nil {
+			return nil
+		}
+		return strings.Fields(string(out))
+	}
 	go rg.sweepEvery(ctx, SweepInterval)
 	// Claudes started before the mod existed are restarted once they are safe
 	// to, so each gets a stream (rollout.go).
@@ -86,7 +93,9 @@ func main() {
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
 	web.HandleFunc("GET /events/{session}", func(w http.ResponseWriter, r *http.Request) {
-		ls, ok := rg.live(osUserFrom(r.Context()), r.PathValue("session"))
+		// A session renamed after its mod's last turn is followed: the mod
+		// in its pane is asked to say hello under the new name (mod.go).
+		ls, ok := rg.mods.follow(r.Context(), osUserFrom(r.Context()), r.PathValue("session"), modFollowWait)
 		if !ok {
 			// A Claude that started before the lobby's mod existed has no
 			// stream. It is restarted once it is safe to (rollout.go), and the
