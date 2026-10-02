@@ -109,6 +109,53 @@ type ResumeOps struct {
 	// StampDriven moves the session's last-used clocks to at.
 	StampDriven func(osUser, name string, at int64)
 	Now         func() time.Time
+	// FileExists answers whether a path names a file, for the agent rules
+	// move (MigrateResumeArgv). nil asks os.Stat.
+	FileExists func(path string) bool
+}
+
+// The agent rules file agent-api passes to a Caller's Claude with
+// --append-system-prompt-file. It lived in /tmp/agent-api until 2026-10-02,
+// a directory any account on the box could create first after a reboot and
+// then redirect or replace the file in. It now lives in agent-api's
+// StateDirectory=, which only that account can write. A suspend copies
+// Claude's argv into @tl_resume_cmd, so a conversation started before the
+// move still names the old path, and a resume moves it.
+const (
+	LegacyAgentRulesPath = "/tmp/agent-api/agent-rules.md"
+	AgentRulesPath       = "/var/lib/agent-api/agent-rules.md"
+)
+
+// MigrateResumeArgv points a resume command that names LegacyAgentRulesPath
+// at AgentRulesPath, in a bare argv word or inside a shell line alike. It
+// leaves the command alone while nothing is at the new path: Claude exits on
+// a rules file it cannot read, and the session would go with it.
+func MigrateResumeArgv(argv []string, exists func(path string) bool) []string {
+	var out []string
+	for i, a := range argv {
+		if !strings.Contains(a, LegacyAgentRulesPath) {
+			continue
+		}
+		if out == nil {
+			if !exists(AgentRulesPath) {
+				return argv
+			}
+			out = append([]string(nil), argv...)
+		}
+		out[i] = strings.ReplaceAll(a, LegacyAgentRulesPath, AgentRulesPath)
+	}
+	if out == nil {
+		return argv
+	}
+	return out
+}
+
+func (ops ResumeOps) fileExists(path string) bool {
+	if ops.FileExists != nil {
+		return ops.FileExists(path)
+	}
+	fi, err := os.Stat(path)
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // ResumeResult is what a caller reports about a resume, whether or not it
@@ -169,6 +216,7 @@ func Resume(ops ResumeOps, osUser, name string) (ResumeResult, error) {
 	if !ok || len(argv) == 0 {
 		return res, ErrResumeCmdUnreadable
 	}
+	argv = MigrateResumeArgv(argv, ops.fileExists)
 	if facts.PaneID == "" {
 		return res, ErrSessionGone
 	}

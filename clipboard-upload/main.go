@@ -88,6 +88,8 @@ func main() {
 	// instead of dying.
 	if err := os.MkdirAll(storeRoot, 0755); err != nil {
 		log.Printf("WARNING: cannot create store root %s (%v) — store writes will fail until it exists", storeRoot, err)
+	} else if err := clipstore.SecureOwnStore(storeRoot); err != nil {
+		log.Printf("WARNING: cannot make this account's store private under %s: %v", storeRoot, err)
 	}
 
 	http.HandleFunc("/upload", handleUpload)

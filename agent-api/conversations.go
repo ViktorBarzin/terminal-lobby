@@ -246,7 +246,7 @@ func (s *Server) createConversation(c *call) (any, error) {
 		OSUser:  c.id.OSUser,
 		Name:    name,
 		Dir:     cwd,
-		Command: []string{claudeCommandLine(s.ClaudeBin, req, sessionID, s.uploadsDir(c.id.OSUser))},
+		Command: []string{claudeCommandLine(s.ClaudeBin, req, sessionID, s.uploadsDir(c.id.OSUser), s.rulesFile(c.id.OSUser))},
 		// The credential's name, so the lobby can say WHICH caller opened
 		// this rather than only that a person did not. On a bearer request
 		// authuser puts that name in Identity.Header; it is never the token.
@@ -348,7 +348,10 @@ const callerSettings = `{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}`
 // uploads is the caller's clipboard store, given to Claude as a working
 // directory (--add-dir) so reading the files a message carries never raises a
 // permission prompt. "" leaves it out.
-func claudeCommandLine(bin string, req createRequest, sessionID, uploads string) string {
+//
+// rules is the agent rules file (Server.rulesFile); "" passes the rules
+// inline instead.
+func claudeCommandLine(bin string, req createRequest, sessionID, uploads, rules string) string {
 	args := []string{bin}
 	if sessionID != "" {
 		args = append(args, "--session-id", sessionID)
@@ -364,8 +367,8 @@ func claudeCommandLine(bin string, req createRequest, sessionID, uploads string)
 	// makes the agent useful, and this only adds the rules that come from
 	// being driven by a program instead of a person. Via a file when one can
 	// be written, so the command line stays short enough to read.
-	if p := agentRulesPath(); p != "" {
-		args = append(args, "--append-system-prompt-file", p)
+	if rules != "" {
+		args = append(args, "--append-system-prompt-file", rules)
 	} else {
 		args = append(args, "--append-system-prompt", agentSystemPrompt)
 	}
@@ -554,7 +557,8 @@ func (s *Server) stampTurn(osUser, session string) {
 // Only the Caller that owns the conversation may delete it, by the rule that
 // governs writing. The tmux session goes, and the transcript stays on disk,
 // where a person can still read or resume it; this API stops answering to the
-// id, because the id names a tmux session and there no longer is one.
+// id, because the id names a tmux session and there no longer is one. The
+// files sent with its messages are removed from the store.
 //
 // Open tasks are cancelled FIRST, so no queued message is pasted into a
 // session that is about to go and no watcher reports the kill as a failed
@@ -575,6 +579,13 @@ func (s *Server) deleteConversation(c *call) (any, error) {
 			return nil, notFound("no conversation %q", id)
 		}
 		return nil, serverError("deleting conversation %s: %v (its open tasks were cancelled)", id, err)
+	}
+	// The files its messages carried go with it: a Caller deleting a
+	// conversation means it is done, and nothing restores a killed Caller
+	// session. The session is already gone, so a failure here is logged
+	// rather than reported as a failed delete.
+	if err := clipstore.RemoveSession(s.storeRoot(), c.id.OSUser, clipstore.Bucket(live.Name)); err != nil {
+		logf("agent-api: removing the attachments of %s: %v", live.ID(), err)
 	}
 	return map[string]any{
 		"conversation_id": live.ID(),

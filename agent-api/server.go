@@ -102,6 +102,13 @@ type Server struct {
 	// defaultUploadTimeout when zero. See attach.go.
 	UploadTimeout time.Duration
 
+	// RulesDir holds the agent rules file a conversation reads
+	// (systemprompt.go): the unit's StateDirectory= in production. Empty, the
+	// rules go inline. RulesUser is the account that may read it, this
+	// service's own; a conversation run as anyone else gets them inline.
+	RulesDir  string
+	RulesUser string
+
 	// Delegations is the store behind /v1/delegations (delegation.go).
 	Delegations *DelegationStore
 	// DelegationCreators names the Callers that may create a delegation, from

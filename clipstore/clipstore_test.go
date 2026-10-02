@@ -348,3 +348,107 @@ func TestStoreDirReplacesALinkLeftByARename(t *testing.T) {
 		t.Errorf("the other session's file was touched: %v", err)
 	}
 }
+
+// asSelf makes the store treat name as the account this process runs as.
+func asSelf(t *testing.T, name string) {
+	t.Helper()
+	was := selfUser
+	selfUser = func() string { return name }
+	t.Cleanup(func() { selfUser = was })
+}
+
+// The live finding (2026-10-02): files a Caller uploaded, payslips and
+// tickets among them, sat 0644 under 0755 directories, readable by every
+// account on the devvm. The service account's own store is now private: a
+// session of that account reads it as its owner, and nothing else needs to.
+func TestTheServiceAccountsOwnStoreIsPrivate(t *testing.T) {
+	asSelf(t, "wizard")
+	root := t.TempDir()
+	path, err := SaveToStore(root, "wizard", "s1", "file-x.pdf", strings.NewReader("payslip"))
+	if err != nil {
+		t.Fatalf("SaveToStore: %v", err)
+	}
+	for _, d := range []string{filepath.Join(root, "wizard"), filepath.Join(root, "wizard", "s1")} {
+		if fi, _ := os.Stat(d); fi.Mode().Perm() != 0o700 {
+			t.Errorf("%s is %v, want 0700", d, fi.Mode().Perm())
+		}
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm() != 0o600 {
+		t.Errorf("file is %v, want 0600", fi.Mode().Perm())
+	}
+}
+
+// Another account's store stays as ADR-0005 has it: its files are written by
+// the service account, and that account's own sessions have to read them.
+func TestAnotherAccountsStoreKeepsTheSharedModes(t *testing.T) {
+	asSelf(t, "wizard")
+	root := t.TempDir()
+	path, err := SaveToStore(root, "emo", "s1", "pasted-x.png", bytes.NewReader(pngHead))
+	if err != nil {
+		t.Fatalf("SaveToStore: %v", err)
+	}
+	if fi, _ := os.Stat(filepath.Join(root, "emo")); fi.Mode().Perm()&0o005 != 0o005 {
+		t.Errorf("emo's directory is %v; emo's sessions could not read it", fi.Mode().Perm())
+	}
+	if fi, _ := os.Stat(path); fi.Mode().Perm()&0o004 == 0 {
+		t.Errorf("file is %v; emo's sessions could not read it", fi.Mode().Perm())
+	}
+}
+
+// A store directory made before this change is narrowed on its next use.
+func TestUserDirNarrowsAnExistingOpenDirectory(t *testing.T) {
+	asSelf(t, "wizard")
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "wizard"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(root, "wizard"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := UserDir(root, "wizard")
+	if err != nil {
+		t.Fatalf("UserDir: %v", err)
+	}
+	if fi, _ := os.Stat(dir); fi.Mode().Perm() != 0o700 {
+		t.Fatalf("%s is %v, want 0700", dir, fi.Mode().Perm())
+	}
+}
+
+// Deleting a conversation removes its attachments: its directory under the
+// name it has now, and every link a rename left under an older name.
+func TestRemoveSessionTakesTheDirectoryAndTheLinksToIt(t *testing.T) {
+	root := t.TempDir()
+	user := filepath.Join(root, "wizard")
+	if _, err := SaveToStore(root, "wizard", "titled-name", "file-a.pdf", strings.NewReader("a")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := SaveToStore(root, "wizard", "other", "file-b.pdf", strings.NewReader("b")); err != nil {
+		t.Fatal(err)
+	}
+	// Two renames: born -> middle -> titled-name, each leaving a link.
+	for _, l := range [][2]string{{"middle", "titled-name"}, {"born", "middle"}, {"unrelated", "other"}} {
+		if err := os.Symlink(l[1], filepath.Join(user, l[0])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := RemoveSession(root, "wizard", "titled-name"); err != nil {
+		t.Fatalf("RemoveSession: %v", err)
+	}
+	for _, gone := range []string{"titled-name", "middle", "born"} {
+		if _, err := os.Lstat(filepath.Join(user, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s is still there (%v)", gone, err)
+		}
+	}
+	for _, kept := range []string{"other", "unrelated"} {
+		if _, err := os.Lstat(filepath.Join(user, kept)); err != nil {
+			t.Errorf("%s was removed (%v)", kept, err)
+		}
+	}
+	// Nothing to remove is not an error, and a bad name is refused.
+	if err := RemoveSession(root, "wizard", "never-existed"); err != nil {
+		t.Errorf("RemoveSession of nothing: %v", err)
+	}
+	if err := RemoveSession(root, "wizard", "../wizard"); err == nil {
+		t.Error("RemoveSession accepted a path")
+	}
+}

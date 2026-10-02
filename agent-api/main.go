@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"terminal-lobby/authuser"
+	"terminal-lobby/clipstore"
 	"terminal-lobby/sessionio"
 	"terminal-lobby/telemetry"
 )
@@ -131,6 +132,19 @@ func main() {
 		Models:    modelList,
 	}
 	srv.Runner = NewRunner(srv.runTurn)
+
+	// The agent rules live beside the delegations, in a directory only this
+	// account can write. Written once now as well as on every create, so a
+	// suspended conversation resumed before the next create finds the file.
+	srv.RulesDir, srv.RulesUser = stateDir(os.Getenv), self.Username
+	if p := srv.rulesFile(self.Username); p != "" {
+		log.Printf("agent-api: agent rules at %s", p)
+	}
+	// What a Caller sends lands in this account's store, which is private
+	// (clipstore.storeModes); a store made before that is narrowed now.
+	if err := clipstore.SecureOwnStore(clipstore.DefaultRoot); err != nil {
+		log.Printf("agent-api: cannot make the attachment store private: %v", err)
+	}
 
 	// Delegations are kept on disk, under the unit's StateDirectory=. A store
 	// that could not be loaded still serves reads of nothing and refuses

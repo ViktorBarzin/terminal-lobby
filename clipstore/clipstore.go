@@ -23,9 +23,11 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -233,7 +235,11 @@ func OpenStoreDir(root, osUser, session string) (*Dir, error) {
 	if !safeElement(osUser) || !SessionNameRe.MatchString(session) {
 		return nil, fmt.Errorf("%w: user %q, session %q", errUnsafeElement, osUser, session)
 	}
-	dir := filepath.Join(root, osUser, session)
+	userDir, err := UserDir(root, osUser)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(userDir, session)
 	// A link here is one tmux-api's rename cascade left under a session's
 	// old name, so paths handed out before the rename still open. The
 	// session asking now has taken that name and owns nothing behind it, so
@@ -244,15 +250,155 @@ func OpenStoreDir(root, osUser, session string) (*Dir, error) {
 			return nil, err
 		}
 	}
-	// 0755 (and 0644 files, via the services' UMask=0022) is a decision, not a
-	// default: docs/adr/0005-session-image-store.md argues it from the org's
-	// shared-workstation read policy, and show-image has to keep working for a
-	// user who is not the account the services run as. Tightening it is an ADR
-	// change first.
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	// Modes per storeModes: the service account's own store is private, and
+	// another account's keeps ADR-0005's 0755 so its sessions can read it.
+	private := isPrivate(osUser)
+	dirMode, _ := storeModes(private)
+	if err := os.MkdirAll(dir, dirMode); err != nil {
 		return nil, err
 	}
-	return openDir(dir)
+	d, err := openDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	d.private = private
+	return d, nil
+}
+
+// selfUser is the name of the account this process runs as, "" when it
+// cannot be read. A var so a test can stand in another name.
+var selfUser = sync.OnceValue(func() string {
+	u, err := user.Current()
+	if err != nil {
+		return ""
+	}
+	return u.Username
+})
+
+// isPrivate reports whether osUser's store is the service account's own.
+func isPrivate(osUser string) bool {
+	self := selfUser()
+	return self != "" && osUser == self
+}
+
+// storeModes are a store directory's and file's modes.
+//
+// docs/adr/0005-session-image-store.md made the whole tree 0755 with 0644
+// files, so show-image keeps working for a user who is not the account the
+// services run as: that user's sessions read files the service account
+// wrote. That reason holds for every other account's store and still sets
+// its modes.
+//
+// It does not hold for the service account's own store, whose sessions run
+// as its owner. That store also holds what a Caller sends (agent-api), which
+// is personal documents: payslips and tickets were in it when this was
+// measured on 2026-10-02, readable by every account on the devvm. So it is
+// 0700 with 0600 files.
+func storeModes(private bool) (dir, file os.FileMode) {
+	if private {
+		return 0o700, 0o600
+	}
+	return 0o755, 0o644
+}
+
+// UserDir returns <root>/<osUser>, creating it as needed with storeModes.
+// The service account's own directory is narrowed to 0700 when it is found
+// wider, so a store made before 2026-10-02 is closed on its next use.
+func UserDir(root, osUser string) (string, error) {
+	if !safeElement(osUser) {
+		return "", fmt.Errorf("%w: user %q", errUnsafeElement, osUser)
+	}
+	dir := filepath.Join(root, osUser)
+	private := isPrivate(osUser)
+	mode, _ := storeModes(private)
+	if err := os.MkdirAll(dir, mode); err != nil {
+		return "", err
+	}
+	if private {
+		fi, err := os.Lstat(dir)
+		if err != nil {
+			return "", err
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("clipstore: %s is not a directory", dir)
+		}
+		if fi.Mode().Perm() != mode {
+			if err := os.Chmod(dir, mode); err != nil {
+				return "", err
+			}
+		}
+	}
+	return dir, nil
+}
+
+// SecureOwnStore narrows the service account's own store directory to 0700
+// at startup, rather than on its first use after an upgrade.
+func SecureOwnStore(root string) error {
+	self := selfUser()
+	if self == "" {
+		return errors.New("clipstore: cannot tell which account this is")
+	}
+	_, err := UserDir(root, self)
+	return err
+}
+
+// RemoveSession deletes a session's store directory and every link a rename
+// left pointing at it, directly or through another such link. Nothing there
+// is not an error.
+//
+// For agent-api's DELETE /v1/conversations: a Caller deleting a conversation
+// is a deliberate end with no restore behind it, so its attachments go with
+// it rather than riding the 30-day grace a session that died gets (ADR-0005).
+func RemoveSession(root, osUser, session string) error {
+	if !safeElement(osUser) || !SessionNameRe.MatchString(session) {
+		return fmt.Errorf("%w: user %q, session %q", errUnsafeElement, osUser, session)
+	}
+	userDir := filepath.Join(root, osUser)
+	entries, err := os.ReadDir(userDir)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	// Links name their target by its bare name (tmux-api's renameImageDir).
+	links := map[string]string{}
+	for _, e := range entries {
+		if e.Type()&os.ModeSymlink == 0 {
+			continue
+		}
+		if target, err := os.Readlink(filepath.Join(userDir, e.Name())); err == nil {
+			links[e.Name()] = target
+		}
+	}
+	gone := map[string]bool{session: true}
+	for grew := true; grew; {
+		grew = false
+		for name, target := range links {
+			if !gone[name] && gone[target] {
+				gone[name], grew = true, true
+			}
+		}
+	}
+	var first error
+	for name := range gone {
+		p := filepath.Join(userDir, name)
+		fi, err := os.Lstat(p)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				err = os.Remove(p)
+			} else {
+				err = os.RemoveAll(p)
+			}
+		}
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // Save copies src into dir/name and returns the path.

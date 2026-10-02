@@ -9,7 +9,10 @@ import (
 
 // Dir is an open store directory. Off Linux it is addressed by path, so a
 // directory moved during a write is not followed; the devvm runs Linux.
-type Dir struct{ path string }
+type Dir struct {
+	path    string
+	private bool
+}
 
 func openDir(path string) (*Dir, error) {
 	if _, err := os.Stat(path); err != nil {
@@ -19,10 +22,15 @@ func openDir(path string) (*Dir, error) {
 }
 
 func (d *Dir) create(name string) (*os.File, error) {
-	return os.OpenFile(filepath.Join(d.path, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	return os.OpenFile(filepath.Join(d.path, name), os.O_WRONLY|os.O_CREATE|os.O_EXCL, d.fileMode())
 }
 
 func (d *Dir) unlink(name string) error { return os.Remove(filepath.Join(d.path, name)) }
 
 // Close releases the directory.
 func (d *Dir) Close() error { return nil }
+
+func (d *Dir) fileMode() os.FileMode {
+	_, m := storeModes(d.private)
+	return m
+}

@@ -28,7 +28,6 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -117,11 +116,11 @@ func (s *Server) uploadsDir(osUser string) string {
 	if !clipstore.SessionNameRe.MatchString(osUser) {
 		return ""
 	}
-	dir := filepath.Join(s.storeRoot(), osUser)
-	// 0755 for the same reason OpenStoreDir gives a session directory 0755
-	// (ADR-0005).
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		logf("agent-api: cannot create the store directory %s (%v); reading an upload will ask permission", dir, err)
+	// clipstore decides the mode: private for this service's own account,
+	// ADR-0005's 0755 for another's.
+	dir, err := clipstore.UserDir(s.storeRoot(), osUser)
+	if err != nil {
+		logf("agent-api: cannot create the store directory for %s (%v); reading an upload will ask permission", osUser, err)
 		return ""
 	}
 	return dir

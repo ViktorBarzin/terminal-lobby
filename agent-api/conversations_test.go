@@ -700,7 +700,7 @@ func TestListFormatCarriesTheSuspendMark(t *testing.T) {
 // is nobody at the pane, so an ask is not a refusal, it is a hang: the turn
 // never finishes and the caller sees no reason.
 func TestOmittingPermissionModeGivesBypass(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "")
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "", "")
 	if !strings.Contains(got, "--permission-mode bypassPermissions") {
 		t.Fatalf("command line %q, want --permission-mode bypassPermissions", got)
 	}
@@ -710,7 +710,7 @@ func TestOmittingPermissionModeGivesBypass(t *testing.T) {
 // matters: look without touching, on a box where the default now touches.
 func TestAnExplicitPermissionModeWins(t *testing.T) {
 	for _, m := range []string{"plan", "default", "acceptEdits", "bypassPermissions"} {
-		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m}, testSessionID, "")
+		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m}, testSessionID, "", "")
 		if !strings.Contains(got, "--permission-mode "+m) {
 			t.Errorf("mode %q: command line %q did not carry it", m, got)
 		}
@@ -736,7 +736,7 @@ func TestTheDocumentDeclaresTheBypassDefault(t *testing.T) {
 // Appended, not replacing: the Claude Code preset is most of what makes the
 // agent useful, and --system-prompt would throw it away.
 func TestEverySessionCarriesTheAgentRules(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "")
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "", "")
 	if !strings.Contains(got, "--append-system-prompt-file") &&
 		!strings.Contains(got, "--append-system-prompt ") {
 		t.Fatal("no system prompt was appended")
@@ -744,13 +744,7 @@ func TestEverySessionCarriesTheAgentRules(t *testing.T) {
 	if strings.Contains(got, "--system-prompt ") {
 		t.Error("used --system-prompt, which discards the Claude Code preset")
 	}
-	// The file must actually hold them, or the flag points at nothing.
-	if p := agentRulesPath(); p != "" {
-		b, err := os.ReadFile(p)
-		if err != nil || !strings.Contains(string(b), "Never ask a clarifying question") {
-			t.Errorf("the rules file at %s does not carry the rules (%v)", p, err)
-		}
-	}
+	// Where the file goes and when it is used: systemprompt_test.go.
 	// The two things Viktor asked for, by substance rather than by wording, so
 	// the test survives an edit to the prose but not a deletion of a rule.
 	for _, want := range []string{
@@ -952,7 +946,7 @@ func TestUploadPathsSitInsideTheAddedDirectory(t *testing.T) {
 // for it, so agent teams are off and the Agent tool only launches subagents,
 // whose completion notices this service already follows.
 func TestCallerSessionsRunWithoutAgentTeams(t *testing.T) {
-	args := shellWords(t, claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, ""))
+	args := shellWords(t, claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "", ""))
 	raw, ok := flagValue(args, "--settings")
 	if !ok {
 		t.Fatalf("no --settings in %q", args)
