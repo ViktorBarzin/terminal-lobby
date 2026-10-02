@@ -1,13 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -15,49 +16,8 @@ import (
 	"terminal-lobby/sessionio/siotest"
 )
 
-func TestRegistrySourceRequiresSessionStart(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	opts := siotest.NewFakeOptions("wizard/demo")
-	rg := newRegistry(ctx, time.Millisecond, "/root", opts, "wizard")
-
-	if _, ok := rg.source("wizard", "demo"); ok {
-		t.Fatal("unregistered session must not resolve")
-	}
-
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-		strings.NewReader(`{"user":"wizard","session_id":"s1","cwd":"/home/wizard/x","tmux_session":"demo"}`)))
-	if w.Code != 204 {
-		t.Fatalf("session-start: want 204, got %d (%s)", w.Code, w.Body.String())
-	}
-
-	fs, ok := rg.source("wizard", "demo")
-	if !ok || fs == nil {
-		t.Fatal("session should resolve after SessionStart")
-	}
-	if fs.Path() != "/root/wizard/.claude/projects/-home-wizard-x/s1.jsonl" {
-		t.Fatalf("transcript path = %q", fs.Path())
-	}
-}
-
-// A SessionStart that cannot be recorded must not answer 204: the hook would
-// then have every reason to believe the session is watchable when it is not.
-func TestRegistrySessionStartFailsWhenItCannotRecord(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions(), "wizard") // no live sessions
-
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-		strings.NewReader(`{"user":"wizard","session_id":"s1","cwd":"/home/wizard/x","tmux_session":"ghost"}`)))
-	if w.Code != 500 {
-		t.Fatalf("unrecordable session-start: want 500, got %d (%s)", w.Code, w.Body.String())
-	}
-}
-
 // writeTranscript lays down a one-line transcript whose single user message
-// carries `marker`, at the path sessionMap will derive for (cwd, claudeID).
+// carries `marker`, at the path Claude files it under for (cwd, claudeID).
 func writeTranscript(t *testing.T, homeBase, osUser, cwd, claudeID, marker string) string {
 	t.Helper()
 	root := filepath.Join(homeBase, osUser, ".claude", "projects")
@@ -72,7 +32,7 @@ func writeTranscript(t *testing.T, homeBase, osUser, cwd, claudeID, marker strin
 	return path
 }
 
-// waitForMarker polls the source's replay log until an event body carries want.
+// waitForMarker polls the source's log until an event body carries want.
 func waitForMarker(t *testing.T, fs *sessionio.FileSource, want string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
@@ -84,7 +44,7 @@ func waitForMarker(t *testing.T, fs *sessionio.FileSource, want string) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatalf("source tailing %s never produced %q; got %+v", fs.Path(), want, fs.Replay(0))
+	t.Fatalf("source for %s never produced %q; got %+v", fs.Path(), want, fs.Replay(0))
 }
 
 func bodies(fs *sessionio.FileSource) []string {
@@ -95,841 +55,331 @@ func bodies(fs *sessionio.FileSource) []string {
 	return out
 }
 
-// register drives the SessionStart hook endpoint the way claude-se-hook does.
+// register connects a mod for the session the way a Claude's mod does, and
+// feeds it whatever the transcript at (cwd, claudeID) already holds, row by
+// row, as the mod would have forwarded it.
 func register(t *testing.T, rg *registry, osUser, claudeID, cwd, tmuxSession string) {
 	t.Helper()
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-		strings.NewReader(`{"user":"`+osUser+`","session_id":"`+claudeID+
-			`","cwd":"`+cwd+`","tmux_session":"`+tmuxSession+`"}`)))
-	if w.Code != 204 {
-		t.Fatalf("session-start %s: want 204, got %d (%s)", claudeID, w.Code, w.Body.String())
+	path := sessionio.TranscriptPath(sessionio.ProjectsRoot(rg.homeBase, osUser), cwd, claudeID)
+	rg.mods.hello(osUser, modHello{SID: claudeID, Session: tmuxSession, Pane: "%1", CWD: cwd, Transcript: path})
+	c := rg.mods.conn(osUser, tmuxSession)
+	if c == nil {
+		t.Fatalf("hello for %s/%s registered nothing", osUser, tmuxSession)
 	}
+	c.apply(transcriptEvents(t, path))
 }
 
-// THE restart defect: every deploy restarts this service, and a registry that
-// lives only in the process's memory turns each restart into
-// "404 session not registered" for every Claude session already running —
-// measured 2026-08-06 as 9 of 9 live sessions rendering an empty Text view.
-// The mapping has to be recovered by a process that never saw the hook fire.
-func TestRegistryResolvesSessionsRegisteredBeforeARestart(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-restart"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-SURVIVES-RESTART")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctxA, cancelA := context.WithCancel(context.Background())
-	before := newRegistry(ctxA, time.Millisecond, homeBase, opts, osUser)
-	register(t, before, osUser, "aaaa-1111", cwd, tmux)
-	if _, ok := before.source(osUser, tmux); !ok {
-		t.Fatal("session should resolve in the process that received the hook")
-	}
-	cancelA() // the service exits — deploy, crash, restart, all the same
-
-	after := newRegistry(context.Background(), time.Millisecond, homeBase, opts, osUser)
-	fs, ok := after.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve after a restart — the Text view renders NO TRANSCRIPT")
-	}
-	waitForMarker(t, fs, "MARKER-SURVIVES-RESTART")
-}
-
-// The other half: a mapping must not outlive the tmux session it describes.
-// Kill a registered Claude session, start a plain shell under the same name,
-// and the pane must stop serving the dead conversation — and the tail that was
-// reading it has to stop with it.
-func TestRegistryStopsServingAfterTheTmuxSessionIsReplaced(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-vstale"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-DEAD-SESSION")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session should resolve after SessionStart")
-	}
-	waitForMarker(t, fs, "MARKER-DEAD-SESSION")
-
-	us := rg.user(osUser)
-	us.mu.Lock()
-	live := us.srcs[tmux]
-	us.mu.Unlock()
-
-	opts.Kill(osUser, tmux)  // tmux kill-session
-	opts.Start(osUser, tmux) // same name, a plain shell this time
-
-	if _, ok := rg.source(osUser, tmux); ok {
-		t.Fatal("the reused tmux name still serves the dead Claude session's transcript")
-	}
-	select {
-	case <-live.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the dead session's tail goroutine is still running — leaked")
-	}
-}
-
-// Reusing a tmux session name — kill a Claude session, start a new one in the
-// same tmux window — must re-resolve the transcript. fileSource.path is fixed at
-// construction, so a source cached under the tmux name keeps serving the DEAD
-// session's transcript for the rest of the process lifetime unless source()
-// re-checks it against the registry.
-func TestRegistrySourceRebuildsWhenTmuxNameIsReused(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-verify-reuse"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-TRANSCRIPT-A")
-	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-TRANSCRIPT-B")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	first, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session should resolve after SessionStart")
-	}
-	waitForMarker(t, first, "MARKER-TRANSCRIPT-A")
-
-	// Grab the live entry so the eviction can be checked for a leaked tail.
-	us := rg.user(osUser)
-	us.mu.Lock()
-	stale := us.srcs[tmux]
-	us.mu.Unlock()
-	if stale == nil {
-		t.Fatal("no live source cached under the tmux name")
-	}
-
-	register(t, rg, osUser, "bbbb-2222", cwd, tmux) // same tmux name, a brand-new Claude session
-
-	second, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session should still resolve after re-registration")
-	}
-	if second.Path() != pathB {
-		t.Fatalf("source still tails %q; want the re-registered transcript %q", second.Path(), pathB)
-	}
-	waitForMarker(t, second, "MARKER-TRANSCRIPT-B")
-	for _, b := range bodies(second) {
-		if b == "MARKER-TRANSCRIPT-A" {
-			t.Fatalf("the dead session's transcript is still being served: %v", bodies(second))
-		}
-	}
-
-	select {
-	case <-stale.done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the evicted source's tail goroutine is still running — leaked")
-	}
-}
-
-// The common case must not churn: re-registering the SAME transcript (a hook
-// firing twice for one session) keeps the running source, so live SSE
-// subscribers are not silently orphaned and the log is not replayed from zero.
-func TestRegistrySourceKeptWhenTranscriptUnchanged(t *testing.T) {
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, "wizard", "/home/wizard/qa", "aaaa-1111", "MARKER-TRANSCRIPT-A")
-	opts := siotest.NewFakeOptions("wizard/qa-stable")
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, "wizard")
-
-	for i := 0; i < 2; i++ {
-		register(t, rg, "wizard", "aaaa-1111", "/home/wizard/qa", "qa-stable")
-	}
-
-	first, _ := rg.source("wizard", "qa-stable")
-	second, _ := rg.source("wizard", "qa-stable")
-	if first != second {
-		t.Fatal("source() rebuilt an unchanged session; live subscribers would be orphaned")
-	}
-}
-
-func TestRegistryMissingSessionStartFields(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, "/root", siotest.NewFakeOptions(), "wizard")
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/x", strings.NewReader(`{"user":"wizard"}`)))
-	if w.Code != 400 {
-		t.Fatalf("missing fields: want 400, got %d", w.Code)
-	}
-}
-
-// A source must be readable the moment it is handed out. Left to the tail
-// goroutine, a client that opened the stream first replayed an empty log and
-// then received the whole transcript live, bypassing the replay window.
-func TestSourceIsHydratedBeforeItIsReturned(t *testing.T) {
-	dir := t.TempDir()
-	home := filepath.Join(dir, "home")
-	user := "someone"
-	root := filepath.Join(home, user, ".claude", "projects", "-x")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	transcript := filepath.Join(root, "sess.jsonl")
-	lines := []string{
-		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"hello"}]}}`,
-		`{"type":"assistant","message":{"role":"assistant","id":"m1","stop_reason":"end_turn","content":[{"type":"text","text":"hi"}]}}`,
-	}
-	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"), user)
-	if err := rg.user(user).sm.Put(sessionio.SessionInfo{
-		TmuxSession: "s", CWD: "/x", ClaudeID: "sess",
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	fs, ok := rg.source(user, "s")
-	if !ok {
-		t.Fatal("source not registered")
-	}
-	// No sleep, no poll: the transcript must already be readable.
-	if got := len(fs.Replay(0)); got == 0 {
-		t.Fatal("the source was handed out before its transcript was read")
-	}
-}
-
-// fakeStamps stands in for the tmux option read the registry does when it
-// builds a source.
-type fakeStamps map[string]string
-
-func (f fakeStamps) Option(_, _, name string) (string, bool) {
-	v, ok := f[name]
-	return v, ok
-}
-
-// Deployed review round 1 (2026-09-28): a prompt a Stop took back came back as
-// a sent bubble under an endless "Working…" row once session-events restarted,
-// because the marker lived only in the old process. A fresh source reads the
-// cancel route's stamp and streams the marker again.
-func TestSourceRestoresARewoundPromptFromTheSessionStamp(t *testing.T) {
-	dir := t.TempDir()
-	home := filepath.Join(dir, "home")
-	user := "someone"
-	root := filepath.Join(home, user, ".claude", "projects", "-x")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	transcript := filepath.Join(root, "sess.jsonl")
-	lines := []string{
-		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Run sleep 20 then say finished"}]},"timestamp":"2026-09-28T08:30:48Z"}`,
-	}
-	if err := os.WriteFile(transcript, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	stopped := time.Date(2026, 9, 28, 8, 30, 50, 0, time.UTC).UnixMilli()
-
-	for name, stamps := range map[string]fakeStamps{
-		"stamped":   {sessionio.OptionRewound: sessionio.RewoundStamp("Run sleep 20 then say finished", stopped)},
-		"unstamped": {},
-	} {
-		ctx, cancel := context.WithCancel(context.Background())
-		rg := newRegistry(ctx, time.Hour, home, siotest.NewFakeOptions(user+"/s"), user)
-		rg.stamps = stamps
-		if err := rg.user(user).sm.Put(sessionio.SessionInfo{
-			TmuxSession: "s", CWD: "/x", ClaudeID: "sess",
-		}); err != nil {
-			t.Fatal(err)
-		}
-		fs, ok := rg.source(user, "s")
-		if !ok {
-			t.Fatal("source not registered")
-		}
-		rewound, ended := false, false
-		for _, e := range fs.Replay(0) {
-			if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaRewound {
-				rewound = true
-			}
-			if e.Kind == sessionio.KindTurnEnd {
-				ended = true
-			}
-		}
-		if want := name == "stamped"; rewound != want || ended != want {
-			t.Errorf("%s: rewound=%v ended=%v, want both %v", name, rewound, ended, want)
-		}
-		cancel()
-	}
-}
-
-// The regression this whole path exists for. session-events runs as one user
-// and serves several; a home is 0750, so reading another user's transcript with
-// this process's own file access fails — and it failed SILENTLY, as an empty
-// stream the text view drew as an empty conversation. Every user who was not
-// the service's own saw a blank session.
-func TestRegistryReadsAForeignUserThroughAChildAndItsOwnUserDirectly(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, t.TempDir(), siotest.NewFakeOptions(), "wizard")
-
-	own := rg.user("wizard")
-	if own.priv != nil {
-		t.Fatal("the service's own user must be read directly, not through sudo")
-	}
-	if _, ok := own.reader.(sessionio.LocalReader); !ok {
-		t.Fatalf("own user reader is %T, want sessionio.LocalReader", own.reader)
-	}
-
-	foreign := rg.user("bob")
-	if foreign.priv == nil {
-		t.Fatal("another user must be read through a child running as them")
-	}
-	if foreign.reader != sessionio.Reader(foreign.priv) {
-		t.Fatal("the foreign user's source must read through that same child")
-	}
-}
-
-// The hook reports BOTH where the session is working and which file the harness
-// is writing. Only the second one locates the transcript: Claude Code files a
-// session under the directory it was STARTED in, so a session that cds — into a
-// worktree, into a sub-project — and re-registers used to be stamped with a path
-// that does not exist, and its Text view tailed an empty file for good.
-func TestRegistryUsesTheTranscriptPathTheHookReports(t *testing.T) {
-	const (
-		osUser  = "wizard"
-		started = "/home/wizard/code" // where claude was launched
-		working = "/home/wizard/code/.worktrees/topic"
-		tmux    = "qa-cd-away"
-	)
-	homeBase := t.TempDir()
-	path := writeTranscript(t, homeBase, osUser, started, "aaaa-1111", "MARKER-WHERE-IT-STARTED")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-		strings.NewReader(`{"user":"`+osUser+`","session_id":"aaaa-1111","cwd":"`+working+
-			`","tmux_session":"`+tmux+`","transcript_path":"`+path+`"}`)))
-	if w.Code != 204 {
-		t.Fatalf("session-start: want 204, got %d (%s)", w.Code, w.Body.String())
-	}
-
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve after SessionStart")
-	}
-	if fs.Path() != path {
-		t.Fatalf("tailing %q, but the harness is writing %q", fs.Path(), path)
-	}
-	waitForMarker(t, fs, "MARKER-WHERE-IT-STARTED")
-}
-
-// A path the hook supplies is untrusted input like any other — the endpoint is
-// loopback, but everything on the box can reach loopback.
-func TestRegistryRefusesATranscriptPathOutsideTheUsersProjects(t *testing.T) {
-	const (
-		osUser = "wizard"
-		tmux   = "qa-escape"
-	)
-	homeBase := t.TempDir()
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest("POST", "/hooks/session-start",
-		strings.NewReader(`{"user":"`+osUser+`","session_id":"aaaa-1111","cwd":"/home/wizard/x",`+
-			`"tmux_session":"`+tmux+`","transcript_path":"/etc/shadow.jsonl"}`)))
-	if w.Code != 500 {
-		t.Fatalf("a transcript outside the projects root was accepted: %d (%s)", w.Code, w.Body.String())
-	}
-}
-
-// A source is retired when the tmux name it is keyed by starts pointing
-// somewhere else, and until 2026-08-28 that only ever happened because some
-// OTHER request asked for the session. A browser sitting on an open stream
-// makes no such request: it kept its subscription to the retired source and
-// received nothing more, so the transcript froze at the moment of the swap.
-// With a question dialog on screen at that moment, the answer card stayed
-// docked over a dialog that had been answered in the terminal minutes earlier.
-func TestRegistrySweepEndsStreamsOnASourceThatMoved(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-sweep"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
-	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-B")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve after SessionStart")
-	}
-	ch, release := fs.Subscribe() // a browser watching the Text view
-	defer release()
-	waitForMarker(t, fs, "MARKER-A")
-
-	// A new Claude claims the same tmux window. Nothing asks the registry for
-	// this session — the only reader is the stream already open.
-	if err := opts.SetOption(osUser, tmux, sessionio.OptionTranscript, pathB); err != nil {
-		t.Fatal(err)
-	}
-	rg.sweep()
-
-	select {
-	case _, open := <-ch:
-		if open {
-			t.Fatal("the retired source is still delivering its own events")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the stream stayed open on a source that moved — the reader freezes for good")
-	}
-
-	next, ok := rg.source(osUser, tmux)
-	if !ok || next.Path() != pathB {
-		t.Fatalf("after the sweep the session resolves to %v/%q, want %q", ok, next.Path(), pathB)
-	}
-}
-
-// The sweep is a background job on a shared box, so it only looks at sources
-// somebody is actually reading. One with no subscribers can wait for the next
-// request to notice it moved, and checking it costs a tmux round trip per
-// session per tick for nobody's benefit.
-func TestRegistrySweepLeavesUnwatchedSourcesAlone(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-sweep-idle"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
-	pathB := writeTranscript(t, homeBase, osUser, cwd, "bbbb-2222", "MARKER-B")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	if _, ok := rg.source(osUser, tmux); !ok {
-		t.Fatal("session does not resolve after SessionStart")
-	}
-	if err := opts.SetOption(osUser, tmux, sessionio.OptionTranscript, pathB); err != nil {
-		t.Fatal(err)
-	}
-
-	before := opts.Reads()
-	rg.sweep()
-	if got := opts.Reads() - before; got != 0 {
-		t.Fatalf("the sweep read the session map %d times for a source nobody is watching", got)
-	}
-}
-
-// fakePane stands in for the tmux pane read.
-type fakePane struct {
-	mu    sync.Mutex
-	text  string
-	reads int
-}
-
-func (f *fakePane) CapturePane(osUser, session string) (string, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.reads++
-	return f.text, nil
-}
-func (f *fakePane) set(text string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.text = text
-}
-func (f *fakePane) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.reads
-}
-
-const paneWithQuestion = `
- ☐ Colour
-Which colour should the badge be?
-❯ 1. Red
-     Make it red.
-  2. Blue
-     Make it blue.
-  3. Type something.
-  4. Chat about this
-Enter to select · ↑/↓ to navigate · Esc to cancel
-`
-
-// Claude Code does not always write the AskUserQuestion record while its dialog
-// is up — measured 2026-08-28, two of five consecutive calls in one session were
-// written only when the question was ANSWERED, 112 seconds later in one case.
-// For that window the transcript says "working" and the Text view has nothing to
-// show, while the terminal sits on a dialog. The pane is the only other place
-// the question exists, so it is read while a watched session is mid-turn.
-func TestRegistryWatchesThePaneOfAWatchedSessionMidTurn(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-asking"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-ASKING")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	pane := &fakePane{}
-	rg.panes = pane
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve")
-	}
-	waitForMarker(t, fs, "MARKER-ASKING")
-
-	// Nobody is reading it yet: no pane round trip.
-	rg.watchPanes()
-	if pane.count() != 0 {
-		t.Fatalf("the pane of an unwatched session was read %d times", pane.count())
-	}
-
-	ch, release := fs.Subscribe()
-	defer release()
-	go func() {
-		for range ch {
-		}
-	}()
-	// A question is not read off the pane any more: the lobby's hook holds it
-	// and publishes it as `held` (hold.go, ADR-0034).
-	pane.set(paneWithQuestion)
-	rg.watchPanes()
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking && e.Body != "" {
-			t.Fatalf("a question on the pane was published: %q", e.Body)
-		}
-	}
-
-	pane.set(planCapture(t))
-	rg.watchPanes()
-
-	var asking *sessionio.Event
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
-			ev := e
-			asking = &ev
-		}
-	}
-	if asking == nil {
-		t.Fatalf("the dialog on the pane was not reported; events = %+v", fs.Replay(0))
-	}
-	if !strings.Contains(asking.Body, `"kind":"plan"`) {
-		t.Fatalf("asking event = %q", asking.Body)
-	}
-
-	// The dialog goes away — answered in the terminal — and that is reported too,
-	// or the card would stay docked over nothing.
-	pane.set("❯ \n")
-	rg.watchPanes()
-	last := ""
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
-			last = e.Body
-		}
-	}
-	if last != "" {
-		t.Fatalf("the dialog going away left %q behind", last)
-	}
-}
-
-// The plan approval is published the way a question is: the reading goes out
-// as the body of an `asking` event, and its kind says which dialog it is. The
-// capture is a real one (CLI 2.1.281), so this is the reading of a screen the
-// CLI drew rather than a Dialog assembled by hand.
-func TestRegistryPublishesThePlanApproval(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-plan"
-	)
-	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "plan-first.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-PLAN")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	pane := &fakePane{text: string(raw)}
-	rg.panes = pane
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve")
-	}
-	waitForMarker(t, fs, "MARKER-PLAN")
-	ch, release := fs.Subscribe()
-	defer release()
-	go func() {
-		for range ch {
-		}
-	}()
-
-	rg.watchPanes()
-
-	body := ""
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
-			body = e.Body
-		}
-	}
-	var got sessionio.Dialog
-	if err := json.Unmarshal([]byte(body), &got); err != nil {
-		t.Fatalf("the plan approval was not reported (%v): %q", err, body)
-	}
-	if got.Kind != sessionio.DialogKindPlan || got.FeedbackRow != 4 || len(got.Options) != 3 ||
-		got.PlanPath != "~/.claude/plans/plan-how-to-create-calm-starfish.md" {
-		t.Fatalf("asking event = %s", body)
-	}
-	if got.Options[2] != (sessionio.PlanOption{Number: 3, Label: "Yes, manually approve edits"}) {
-		t.Errorf("option 3 = %+v", got.Options[2])
-	}
-}
-
-// A tool permission prompt is published the same way, as its own kind. The
-// capture is a real Bash prompt from CLI 2.1.283 in manual mode. Until
-// 2026-09-27 nothing read it, and the Text view said "Working" with Stop over a
-// session waiting on a person.
-func TestRegistryPublishesThePermissionPrompt(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-permission"
-	)
-	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "permission-bash.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-PERMISSION")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	rg.panes = &fakePane{text: string(raw)}
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve")
-	}
-	waitForMarker(t, fs, "MARKER-PERMISSION")
-	ch, release := fs.Subscribe()
-	defer release()
-	go func() {
-		for range ch {
-		}
-	}()
-
-	rg.watchPanes()
-
-	body := ""
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
-			body = e.Body
-		}
-	}
-	var got sessionio.Dialog
-	if err := json.Unmarshal([]byte(body), &got); err != nil {
-		t.Fatalf("the permission prompt was not reported (%v): %q", err, body)
-	}
-	if got.Kind != sessionio.DialogKindPermission || got.Title != "Bash command" || len(got.Options) != 4 {
-		t.Fatalf("asking event = %s", body)
-	}
-}
-
-// Answering in the terminal ENDS the turn, and a watcher that only looks at
-// working sessions would stop looking at exactly that moment — leaving the last
-// reading, the one with the dialog in it, standing for good. Measured in the
-// browser on 2026-08-28: the question was answered in the terminal, the
-// transcript caught up, and the card stayed docked over nothing.
-func TestRegistryClearsTheDialogWhenASessionStopsWorking(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-asking-done"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-ASKING-DONE")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	pane := &fakePane{text: planCapture(t)}
-	rg.panes = pane
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve")
-	}
-	waitForMarker(t, fs, "MARKER-ASKING-DONE")
-	ch, release := fs.Subscribe()
-	defer release()
-	go func() {
-		for range ch {
-		}
-	}()
-	rg.watchPanes()
-
-	// The answer goes in at the terminal: the turn settles, and the pane no
-	// longer shows a dialog.
-	fs.Append(sessionio.Event{Kind: sessionio.KindTurnEnd})
-	pane.set("❯ \n")
-	rg.watchPanes()
-
-	last := "«none»"
-	for _, e := range fs.Replay(0) {
-		if e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaAsking {
-			last = e.Body
-		}
-	}
-	if last != "" {
-		t.Fatalf("a settled session still reports a dialog: %q", last)
-	}
-	// …and it costs no pane read to say so.
-	before := pane.count()
-	rg.watchPanes()
-	if pane.count() != before {
-		t.Fatalf("a settled session is still being polled (%d reads)", pane.count()-before)
-	}
-}
-
-// A source with no readers used to live for the life of the process: sweep
-// skipped it, and only a request that found the transcript moved would ever
-// retire it. Closing the Text view drops the subscription and nothing else, so
-// every session ever opened kept a tail goroutine re-opening its transcript
-// five times a second and held its whole event buffer — measured at 3,396
-// events and 3.9 MB for one 20.8 MB transcript.
-func TestRegistrySweepClosesASourceNobodyHasReadForAWhile(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-sweep-abandoned"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	now := time.Unix(1000, 0)
-	rg.now = func() time.Time { return now }
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve after SessionStart")
-	}
-	_, release := fs.Subscribe()
-	release() // the reader closed the Text view
-
-	// The first sweep only notes that nobody is reading — a reconnect within
-	// the grace finds the source still warm.
-	rg.sweep()
-	if !sourceCached(rg, osUser, tmux) {
-		t.Fatal("the source was dropped the instant its last reader left")
-	}
-
-	now = now.Add(idleGrace + time.Second)
-	rg.sweep()
-	if sourceCached(rg, osUser, tmux) {
-		t.Fatal("a source nobody has read for longer than the grace is still tailing")
-	}
-}
-
-// Losing a reader for a moment must not cost the next one its warm buffer: a
-// page reload drops the subscription and takes it again.
-func TestRegistrySweepKeepsASourceThatIsReadAgainWithinTheGrace(t *testing.T) {
-	const (
-		osUser = "wizard"
-		cwd    = "/home/wizard/qa"
-		tmux   = "qa-sweep-reconnect"
-	)
-	homeBase := t.TempDir()
-	writeTranscript(t, homeBase, osUser, cwd, "aaaa-1111", "MARKER-A")
-	opts := siotest.NewFakeOptions(osUser + "/" + tmux)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	rg := newRegistry(ctx, time.Millisecond, homeBase, opts, osUser)
-	now := time.Unix(1000, 0)
-	rg.now = func() time.Time { return now }
-	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
-
-	fs, ok := rg.source(osUser, tmux)
-	if !ok {
-		t.Fatal("session does not resolve after SessionStart")
-	}
-	_, release := fs.Subscribe()
-	release()
-	rg.sweep() // marked idle
-
-	_, release2 := fs.Subscribe() // the browser is back
-	defer release2()
-	rg.sweep()
-
-	now = now.Add(idleGrace + time.Second)
-	rg.sweep()
-	if !sourceCached(rg, osUser, tmux) {
-		t.Fatal("a source that regained a reader was retired on its old idle mark")
-	}
-}
-
-// sourceCached reports whether the registry still holds a live source, without
-// asking source() for one (which would build a new one).
-func sourceCached(rg *registry, osUser, session string) bool {
-	us := rg.user(osUser)
-	us.mu.Lock()
-	defer us.mu.Unlock()
-	_, ok := us.srcs[session]
-	return ok
-}
-
-// planCapture is a real capture of Claude Code's plan approval (CLI 2.1.281).
-func planCapture(t *testing.T) string {
+// transcriptEvents reads a transcript into the events a mod sends for it: a
+// result ahead of each row carrying a structured tool result, then the row.
+func transcriptEvents(t *testing.T, path string) []sessionio.ModEvent {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "sessionio", "testdata", "plan-first.txt"))
+	f, err := os.Open(path)
 	if err != nil {
-		t.Fatal(err)
+		return nil
 	}
-	return string(raw)
+	defer f.Close()
+	var evs []sessionio.ModEvent
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		rec, ok := sessionio.DecodeRecord(sc.Bytes())
+		if !ok || (rec.Type != sessionio.RecordUser && rec.Type != sessionio.RecordAssistant) {
+			continue
+		}
+		content := rec.Message.Content
+		if len(content) > 0 && content[0] == '"' {
+			var s string
+			_ = json.Unmarshal(content, &s)
+			content, _ = json.Marshal([]map[string]string{{"type": "text", "text": s}})
+		}
+		if len(rec.ToolUseResult) > 0 {
+			for _, bl := range rec.Blocks() {
+				if bl.Type == "tool_result" {
+					evs = append(evs, sessionio.ModEvent{Type: sessionio.ModResultEvent, ToolID: bl.ToolUseID, Result: rec.ToolUseResult})
+				}
+			}
+		}
+		door := "response"
+		if rec.Role() == "user" {
+			door = "prompt"
+			if rec.HasBlock("tool_result") {
+				door = "tool-result"
+			}
+		}
+		evs = append(evs, sessionio.ModEvent{
+			Type: sessionio.ModRowEvent, UUID: rec.UUID, Door: door, AgentID: rec.AgentID,
+			Message: &sessionio.ModMessage{Type: string(rec.Type), Role: rec.Role(), IsMeta: rec.IsMeta, Content: content},
+		})
+	}
+	return evs
+}
+
+func newTestRegistry(t *testing.T, sessions ...string) (*registry, *siotest.FakeOptions) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	opts := siotest.NewFakeOptions(sessions...)
+	return newRegistry(ctx, time.Millisecond, t.TempDir(), opts, "wizard"), opts
+}
+
+func TestRegistryResolvesOnlySessionsWithAMod(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	if _, ok := rg.source("wizard", "demo"); ok {
+		t.Fatal("a session no mod said hello for resolved")
+	}
+	rg.mods.hello("wizard", modHello{SID: "11111111-2222-3333-4444-555555555555", Session: "demo", Pane: "%3"})
+	if _, ok := rg.source("wizard", "demo"); !ok {
+		t.Fatal("the session did not resolve after its mod said hello")
+	}
+	if _, ok := rg.source("emo", "demo"); ok {
+		t.Fatal("another user's session of the same name resolved")
+	}
+}
+
+func TestHelloStampsTheTranscriptForTheRestOfTheLobby(t *testing.T) {
+	rg, opts := newTestRegistry(t, "wizard/demo")
+	path := sessionio.TranscriptPath(sessionio.ProjectsRoot(rg.homeBase, "wizard"), "/w", "sid1")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", CWD: "/w", Transcript: path})
+	if got, _ := opts.Option("wizard", "demo", sessionio.OptionTranscript); got != path {
+		t.Fatalf("@claude_transcript = %q, want %q", got, path)
+	}
+}
+
+func TestHelloRefusesATranscriptOutsideTheUsersProjects(t *testing.T) {
+	rg, opts := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3", Transcript: "/etc/passwd"})
+	if got, _ := opts.Option("wizard", "demo", sessionio.OptionTranscript); got != "" {
+		t.Fatalf("@claude_transcript = %q for a path outside the projects root", got)
+	}
+	fs, ok := rg.source("wizard", "demo")
+	if !ok || fs.Path() != "" {
+		t.Fatalf("source path = %q, want none", fs.Path())
+	}
+}
+
+func TestHelloAgainKeepsTheLogAndAsksForNoHistory(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	tok1, hist1 := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	if !hist1 {
+		t.Fatal("a first hello did not ask for history")
+	}
+	fs1, _ := rg.source("wizard", "demo")
+	tok2, hist2 := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	fs2, _ := rg.source("wizard", "demo")
+	if hist2 || fs1 != fs2 {
+		t.Fatalf("a reload's hello rebuilt the log (history %v)", hist2)
+	}
+	if tok1 == tok2 || rg.mods.byTokenOf(tok1) != nil {
+		t.Fatal("the old token still works after a fresh hello")
+	}
+}
+
+func TestARenamedSessionMovesItsMod(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/old", "wizard/new")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "old", Pane: "%3"})
+	fs, _ := rg.source("wizard", "old")
+	ch, cancel := fs.Subscribe()
+	defer cancel()
+	if _, hist := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "new", Pane: "%3"}); !hist {
+		t.Fatal("the renamed session's fresh log did not ask for history")
+	}
+	if _, ok := rg.source("wizard", "old"); ok {
+		t.Fatal("the old name still resolves")
+	}
+	if _, ok := rg.source("wizard", "new"); !ok {
+		t.Fatal("the new name does not resolve")
+	}
+	if _, open := <-ch; open {
+		t.Fatal("a stream on the old name was left open")
+	}
+}
+
+func TestANewClaudeInTheSameSessionReplacesTheOld(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	tok, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	rg.mods.hello("wizard", modHello{SID: "sid2", Session: "demo", Pane: "%3"})
+	if rg.mods.byTokenOf(tok) != nil {
+		t.Fatal("the replaced Claude's token still works")
+	}
+	if c := rg.mods.conn("wizard", "demo"); c == nil || c.sid != "sid2" {
+		t.Fatal("the session does not belong to the new Claude")
+	}
+}
+
+func TestEventsFeedTheLogAndStampTheSession(t *testing.T) {
+	rg, opts := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{promptRow(), {Type: sessionio.ModTurnEndEvent, Answer: "ok"}})
+	fs, _ := rg.source("wizard", "demo")
+	if got := strings.Join(bodies(fs), "|"); got != "hi|" {
+		t.Fatalf("log bodies = %q", got)
+	}
+	if st, _ := opts.Option("wizard", "demo", sessionio.OptionState); st != "done" {
+		t.Fatalf("@claude_state = %q, want done", st)
+	}
+}
+
+func TestByeDropsTheConnection(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	rg.mods.conn("wizard", "demo").apply([]sessionio.ModEvent{{Type: sessionio.ModByeEvent}})
+	if rg.mods.conn("wizard", "demo") != nil {
+		t.Fatal("the connection survived its bye")
+	}
+}
+
+func TestAQuietModIsDropped(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	now := time.Now()
+	rg.mods.now = func() time.Time { return now }
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	now = now.Add(modExpiry + time.Second)
+	rg.sweep()
+	if rg.mods.conn("wizard", "demo") != nil {
+		t.Fatal("a mod silent past modExpiry is still connected")
+	}
+}
+
+func TestPollHandsOverACommandAndTheAckReachesTheSender(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	tok, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	got := make(chan modAck, 1)
+	go func() {
+		a, _ := c.send(context.Background(), modCommand{Op: "prompt", Text: "hello"})
+		got <- a
+	}()
+	rec := httptest.NewRecorder()
+	rg.mods.handlePoll()(rec, httptest.NewRequest("GET", "/mod/v1/poll?token="+tok, nil))
+	var body struct {
+		Commands []modCommand `json:"commands"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil || len(body.Commands) != 1 || body.Commands[0].Text != "hello" {
+		t.Fatalf("poll = %s (%v)", rec.Body.String(), err)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModAckEvent, ID: body.Commands[0].ID, OK: true}})
+	select {
+	case a := <-got:
+		if !a.OK {
+			t.Fatalf("ack = %+v", a)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the sender never saw the ack")
+	}
+}
+
+func TestPollAndEventsRefuseAnUnknownToken(t *testing.T) {
+	rg, _ := newTestRegistry(t)
+	rec := httptest.NewRecorder()
+	rg.mods.handlePoll()(rec, httptest.NewRequest("GET", "/mod/v1/poll?token=nope", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("poll: %d, want 409", rec.Code)
+	}
+	rec = httptest.NewRecorder()
+	rg.mods.handleEvents()(rec, httptest.NewRequest("POST", "/mod/v1/events", strings.NewReader(`{"token":"nope","events":[]}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("events: %d, want 409", rec.Code)
+	}
+}
+
+// answered runs c.answer against a mod stand-in that acks every command, and
+// returns the commands it was sent.
+func answered(t *testing.T, c *modConn, req sessionio.AnswerRequest) (sessionio.AnswerResponse, []modCommand) {
+	t.Helper()
+	var sent []modCommand
+	done := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		defer close(done)
+		for {
+			c.mu.Lock()
+			cmds := c.cmds
+			c.cmds = nil
+			c.mu.Unlock()
+			for _, cmd := range cmds {
+				sent = append(sent, cmd)
+				c.deliver(cmd.ID, modAck{OK: true})
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+	}()
+	resp := c.answer(context.Background(), req)
+	cancel()
+	<-done
+	return resp, sent
+}
+
+func TestAQuestionIsAnsweredThroughTheMod(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModAskEvent, ToolID: "toolu_q",
+		Questions: json.RawMessage(`[{"question":"Pick?","multiSelect":true,"options":[{"label":"A"},{"label":"B"}]}]`)}})
+	fs, _ := rg.source("wizard", "demo")
+	if held := lastMeta(fs, sessionio.MetaHeld); !strings.Contains(held, "Pick?") {
+		t.Fatalf("the held question is not on the wire: %q", held)
+	}
+	resp, sent := answered(t, c, sessionio.AnswerRequest{Answers: map[string][]string{"Pick?": {"A", "B"}}})
+	if !resp.Applied || len(sent) != 1 || sent[0].Op != "answer" || sent[0].Answers["Pick?"] != "A, B" || sent[0].ToolID != "toolu_q" {
+		t.Fatalf("resp %+v, sent %+v", resp, sent)
+	}
+	if resp, _ := answered(t, c, sessionio.AnswerRequest{Answers: map[string][]string{"Other?": {"A"}}}); resp.Reason != sessionio.AnswerIncomplete {
+		t.Fatalf("an answer missing the question: %+v", resp)
+	}
+}
+
+func TestAPlanIsApprovedOrSentBackThroughTheMod(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModPlanEvent, ToolID: "toolu_p", Plan: "do it"}})
+	_, sent := answered(t, c, sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Option: 1, Label: "Yes, approve the plan"}})
+	if len(sent) != 1 || sent[0].Decision != "allow" {
+		t.Fatalf("approve sent %+v", sent)
+	}
+	_, sent = answered(t, c, sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Feedback: "smaller"}})
+	if len(sent) != 1 || sent[0].Decision != "deny" || sent[0].Reason != "smaller" {
+		t.Fatalf("feedback sent %+v", sent)
+	}
+	_, sent = answered(t, c, sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Feedback: "and test it", Approve: true}})
+	if len(sent) != 2 || sent[0].Decision != "allow" || sent[1].Op != "prompt" || sent[1].Text != "and test it" {
+		t.Fatalf("approve with feedback sent %+v", sent)
+	}
+}
+
+func TestAPermissionPromptIsDecidedThroughTheMod(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModPermissionEvent, ToolID: "toolu_b", Tool: "Bash",
+		Input: json.RawMessage(`{"command":"rm -rf build","description":"Clean"}`)}})
+	fs, _ := rg.source("wizard", "demo")
+	if st := lastMeta(fs, sessionio.MetaAsking); !strings.Contains(st, "rm -rf build") || !strings.Contains(st, "Bash command") {
+		t.Fatalf("the permission prompt is not on the wire: %s", st)
+	}
+	_, sent := answered(t, c, sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Decline: "use make clean"}})
+	if len(sent) != 1 || sent[0].Decision != "deny" || sent[0].Reason != "use make clean" {
+		t.Fatalf("decline sent %+v", sent)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModSettledEvent, ToolID: "toolu_b", By: "web"}})
+	if resp, _ := answered(t, c, sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Option: 1}}); resp.Reason != sessionio.AnswerNotDrawn {
+		t.Fatalf("answering a settled prompt: %+v", resp)
+	}
+}
+
+// lastMeta is the body of the newest meta event of kind m in the log.
+func lastMeta(fs *sessionio.FileSource, m sessionio.Meta) string {
+	body := ""
+	for _, e := range fs.Replay(0) {
+		if e.Kind == sessionio.KindMeta && e.Meta == m {
+			body = e.Body
+		}
+	}
+	return body
 }

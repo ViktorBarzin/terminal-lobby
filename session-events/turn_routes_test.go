@@ -4,11 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -192,7 +189,7 @@ func turnMux(t *testing.T, f *fakeTurns) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
 	mux.HandleFunc("POST /cancel/{session}", handleCancel(rg, f))
-	mux.HandleFunc("POST /model/{session}", handleModel(f))
+	mux.HandleFunc("POST /model/{session}", handleModel(rg, f))
 	return mux
 }
 
@@ -206,150 +203,6 @@ func postTurn(t *testing.T, h http.Handler, path, body string) *httptest.Respons
 }
 
 // --- POST /prompt -------------------------------------------------------------
-
-// The first prompt of a session waits for the pane to be able to take it. A
-// session tmux has created accepts send-keys seconds before the harness in it
-// reads them, and text sent into that window is lost with every layer reporting
-// success (measured 2026-09-04: lost at +0s and +1s, landed at +2s and +3s).
-func TestPromptCanWaitForThePaneToBeReady(t *testing.T) {
-	f := &fakeTurns{awaitErr: errors.New("no prompt drawn")}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello","awaitReady":true}`)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status %d, want 503 while the pane is not ready", rec.Code)
-	}
-	if !f.called("AwaitInputReady") || f.called("Prompt") {
-		t.Fatalf("calls = %q, want the wait and no injection", f.calls)
-	}
-
-	f = &fakeTurns{}
-	if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello","awaitReady":true}`); rec.Code != http.StatusNoContent {
-		t.Fatalf("status %d, want 204 once ready", rec.Code)
-	}
-	if f.prompted != "hello" {
-		t.Fatalf("prompted %q", f.prompted)
-	}
-}
-
-// A prompt the pane kept on its input line did not reach Claude, so the sender
-// is told so, by name, and nothing records it as sent (sessionio.Prompt
-// confirms the Enter; measured 2026-09-27, a send answered OK while its text
-// sat unsubmitted).
-func TestAPromptLeftOnTheInputLineIsNotReportedAsSent(t *testing.T) {
-	f := &fakeTurns{promptErr: fmt.Errorf("wrapped: %w", sessionio.ErrPromptNotSubmitted)}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`)
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status %d, want 502", rec.Code)
-	}
-	if !strings.Contains(rec.Body.String(), "not submitted") {
-		t.Fatalf("body %q, want it to say the prompt was not submitted", rec.Body.String())
-	}
-}
-
-// Off by default: every caller but the first prompt of a session is talking to
-// a pane someone is already looking at.
-func TestWaitingIsOptIn(t *testing.T) {
-	f := &fakeTurns{awaitErr: errors.New("would refuse")}
-	if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`); rec.Code != http.StatusNoContent {
-		t.Fatalf("status %d, want 204", rec.Code)
-	}
-	if f.called("AwaitInputReady") || f.called("AwaitPiReady") {
-		t.Fatalf("a request that did not ask for the wait waited: %q", f.calls)
-	}
-}
-
-// A mid-turn send queues in Claude, so the lobby's turn gate went away and must
-// not come back by reflex: a prompt that arrives mid-turn belongs in Claude's
-// own queue, and a 409 loses it. The driver POST /prompt is handed cannot even
-// read the turn state. The prompt guard reads OptionAsk, but only to name a
-// dialog the transcript holds open (plan.go promptRefusal), so a marker with no
-// such call behind it refuses nothing.
-func TestPromptDoesNotGateOnTheTurnState(t *testing.T) {
-	f := &fakeTurns{state: sessionio.StateRunning, options: map[string]string{sessionio.OptionAsk: "toolu_1"}}
-	if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"queue this"}`); rec.Code != http.StatusNoContent {
-		t.Fatalf("status %d, want 204 whatever the turn is doing", rec.Code)
-	}
-	if f.called("State") {
-		t.Fatalf("POST /prompt read the turn state: %q", f.calls)
-	}
-}
-
-// The plan approval is the one screen a prompt must never reach: its Enter
-// picks the highlighted row, which approves the plan. The refusal names the
-// reason so the sender keeps its text, and nothing is typed.
-func TestPromptRefusesWhileThePlanIsOpen(t *testing.T) {
-	f := &fakeTurns{pane: capture(t, "plan-first.txt")}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"do it differently"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 while the plan is drawn", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"plan-open"}` {
-		t.Errorf("body = %s", got)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a prompt was typed into the plan approval")
-	}
-}
-
-// A tool permission prompt is the same kind of screen: a paste lands on its
-// menu, a digit in the text picks a row, and the Enter picks the highlighted
-// one, which is "Yes". So it refuses the same way, with a reason of its own.
-func TestPromptRefusesWhileAPermissionPromptIsOpen(t *testing.T) {
-	f := &fakeTurns{pane: capture(t, "permission-bash.txt")}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"actually, don't"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 while the permission prompt is drawn", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"permission-open"}` {
-		t.Errorf("body = %s", got)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a prompt was typed into the permission prompt")
-	}
-}
-
-// A question is refused the same way: the Enter at the end of a prompt picks
-// its highlighted row, and the words are lost.
-func TestPromptRefusesWhileAQuestionIsOpen(t *testing.T) {
-	f := &fakeTurns{pane: capture(t, "dialog-single.txt")}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"my queued follow-up note"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 while a question is drawn", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"question-open"}` {
-		t.Errorf("body = %s", got)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a prompt was typed into the question")
-	}
-}
-
-// A pane with no plan on it takes the prompt as before.
-func TestPromptPassesWhenNoPlanIsDrawn(t *testing.T) {
-	f := &fakeTurns{pane: "❯ \n"}
-	if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`); rec.Code != http.StatusNoContent {
-		t.Fatalf("status %d, want 204", rec.Code)
-	}
-	if f.prompted != "hello" {
-		t.Fatalf("prompted %q", f.prompted)
-	}
-}
-
-// A SUSPENDED session is the one thing refused: there is no Claude in it to
-// queue anything, and every layer below reports success anyway (measured on
-// tmux 3.4, 2026-09-19).
-func TestPromptRefusesASuspendedSession(t *testing.T) {
-	f := &fakeTurns{options: map[string]string{sessionio.OptionSuspended: "1790000000"}}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409", rec.Code)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a suspended session was typed into")
-	}
-	if !strings.Contains(rec.Body.String(), "demo") {
-		t.Errorf("the refusal does not name the session: %s", rec.Body.String())
-	}
-}
 
 func TestPromptNeedsText(t *testing.T) {
 	for _, body := range []string{``, `{}`, `{"text":""}`, `not json`} {
@@ -434,20 +287,6 @@ func TestPromptAnswers503UntilCodexIsReady(t *testing.T) {
 	}
 	if f.called("Prompt") {
 		t.Fatal("a codex that was not ready was typed into")
-	}
-}
-
-// Claude's route is untouched when the tool is absent or claude: its own wait,
-// and no pi check at all.
-func TestPromptKeepsClaudesPath(t *testing.T) {
-	for _, body := range []string{`{"text":"hi","awaitReady":true}`, `{"text":"hi","awaitReady":true,"tool":"claude"}`} {
-		f := &fakeTurns{trustPending: true}
-		if rec := postTurn(t, turnMux(t, f), "/prompt/demo", body); rec.Code != http.StatusNoContent {
-			t.Fatalf("body %s: status %d, want 204", body, rec.Code)
-		}
-		if !f.called("AwaitInputReady") || f.called("AwaitPiReady") || f.called("PiTrustPending") {
-			t.Fatalf("body %s: calls = %q, want Claude's wait and nothing of pi's", body, f.calls)
-		}
 	}
 }
 
@@ -657,42 +496,6 @@ func TestCancelReturnsOnlyClaudesPrompt(t *testing.T) {
 	}
 }
 
-// Found in the round 7 check (2026-09-28): a prompt sent 300 ms after an early
-// Stop was typed onto the input line while the cancel was still taking the
-// stopped prompt off it. The reclaim's Backspaces erased the new text, the
-// Enter landed on an empty line, and the route answered 204 for a prompt the
-// CLI never saw. A prompt now waits for a Stop that holds the line.
-func TestPromptWaitsForAStopTakingThePromptBack(t *testing.T) {
-	entered, release := make(chan struct{}), make(chan struct{})
-	f := &fakeTurns{reclaimTook: true}
-	f.inReclaim = func() {
-		close(entered)
-		<-release
-	}
-	mux := turnMux(t, f)
-	stopped := make(chan *httptest.ResponseRecorder, 1)
-	go func() { stopped <- postTurn(t, mux, "/cancel/demo", `{"returnPrompt":"first"}`) }()
-	<-entered
-
-	sent := make(chan *httptest.ResponseRecorder, 1)
-	go func() { sent <- postTurn(t, mux, "/prompt/demo", `{"text":"second"}`) }()
-	select {
-	case <-sent:
-		t.Fatal("the prompt went in while the Stop was still clearing the input line")
-	case <-time.After(150 * time.Millisecond):
-	}
-	if f.called("Prompt") {
-		t.Fatal("Prompt typed onto the line the Stop was clearing")
-	}
-	close(release)
-	if rec := <-stopped; rec.Code != http.StatusOK {
-		t.Fatalf("cancel status %d", rec.Code)
-	}
-	if rec := <-sent; rec.Code != http.StatusNoContent || !f.called("Prompt") {
-		t.Fatalf("prompt status %d, calls %q: want it sent once the Stop let go", rec.Code, f.calls)
-	}
-}
-
 // The other order: a Stop pressed while a prompt is still being typed waits
 // for it, so the interrupt cannot land between its paste and its Enter.
 func TestStopWaitsForAPromptBeingTyped(t *testing.T) {
@@ -704,10 +507,10 @@ func TestStopWaitsForAPromptBeingTyped(t *testing.T) {
 	}
 	mux := turnMux(t, f)
 	sent := make(chan *httptest.ResponseRecorder, 1)
-	go func() { sent <- postTurn(t, mux, "/prompt/demo", `{"text":"hello"}`) }()
+	go func() { sent <- postTurn(t, mux, "/prompt/demo", `{"text":"hello","tool":"codex"}`) }()
 	<-entered
 	stopped := make(chan *httptest.ResponseRecorder, 1)
-	go func() { stopped <- postTurn(t, mux, "/cancel/demo", ``) }()
+	go func() { stopped <- postTurn(t, mux, "/cancel/demo", `{"tool":"codex"}`) }()
 	select {
 	case <-stopped:
 		t.Fatal("the Stop went in while a prompt was being typed")
@@ -733,7 +536,7 @@ func TestInputLineLockIsPerSession(t *testing.T) {
 	go postTurn(t, mux, "/cancel/demo", `{"returnPrompt":"first"}`)
 	<-entered
 	done := make(chan *httptest.ResponseRecorder, 1)
-	go func() { done <- postTurn(t, mux, "/prompt/other", `{"text":"hi"}`) }()
+	go func() { done <- postTurn(t, mux, "/prompt/other", `{"text":"hi","tool":"codex"}`) }()
 	select {
 	case rec := <-done:
 		if rec.Code != http.StatusNoContent {
@@ -912,38 +715,6 @@ func TestModelRefusesAModeWithAModel(t *testing.T) {
 	}
 }
 
-// Deployed review round 4 (2026-09-28): a prompt sent as Claude drew a
-// permission dialog was answered 204 and never reached Claude, and its Enter
-// approved the Bash call. The guard read the pane once, before the paste.
-// sessionio now stops a prompt whose input box has gone (ErrInputGone), and
-// the route refuses it the way it refuses one sent while the dialog is up, so
-// the sender keeps its text.
-func TestPromptThatMetADialogIsRefusedWithItsReason(t *testing.T) {
-	f := &fakeTurns{pane: "❯ \n", promptErr: fmt.Errorf("wrapped: %w", sessionio.ErrInputGone)}
-	f.inPrompt = func() { f.pane = capture(t, "permission-bash.txt") }
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"queued note 12"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 for a prompt that met a dialog", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"permission-open"}` {
-		t.Errorf("body = %s", got)
-	}
-}
-
-// A dialog the pane readers do not know yet, or one still drawing, is refused
-// all the same, under a reason of its own.
-func TestPromptThatMetAnUnknownDialogIsRefused(t *testing.T) {
-	f := &fakeTurns{pane: "❯ \n", promptErr: sessionio.ErrInputGone}
-	f.inPrompt = func() { f.pane = "Something is drawing\n" }
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"queued note 12"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"dialog-open"}` {
-		t.Errorf("body = %s", got)
-	}
-}
-
 // Deployed review round 4 (2026-09-28): the first prompt from the new-session
 // box, in a git repository Claude had not been told to trust, met Claude's
 // folder-trust dialog. Its Enter picked "❯ No, exit", Claude quit, the
@@ -963,126 +734,3 @@ const claudeTrustPane = `
 
  Enter to confirm · Esc to cancel
 `
-
-func TestPromptNeverTypesIntoClaudesTrustDialog(t *testing.T) {
-	f := &fakeTurns{pane: claudeTrustPane}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say hi"}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 while Claude asks about trust", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"trust-open"}` {
-		t.Errorf("body = %s", got)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a prompt was typed into the trust dialog")
-	}
-}
-
-// The first prompt waits for the input box, which the dialog never draws, so
-// the wait gives up; the sender is told why at once rather than retrying a
-// wait that cannot end until someone answers in the Terminal.
-func TestPromptWaitingOnTheTrustDialogSaysSo(t *testing.T) {
-	f := &fakeTurns{pane: claudeTrustPane, awaitErr: errors.New("no input box")}
-	rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"say hi","awaitReady":true}`)
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("status %d, want 409 while Claude asks about trust", rec.Code)
-	}
-	if got := strings.TrimSpace(rec.Body.String()); got != `{"applied":false,"reason":"trust-open"}` {
-		t.Errorf("body = %s", got)
-	}
-	if f.called("Prompt") {
-		t.Fatal("a prompt was typed into the trust dialog")
-	}
-}
-
-// The live check of the fix (2026-09-28) lost one prompt in 6 trials another
-// way: the text showed in the box, its Enter went, and a dialog stood in the
-// box's place by the next read, with the prompt neither submitted nor on show.
-// The pane cannot tell that from a prompt submitted just before the dialog
-// drew (sessionio.ErrSubmitUnconfirmed), so the route asks the transcript.
-func TestPromptWhoseBoxWentAtTheEnterIsCheckedInTheTranscript(t *testing.T) {
-	for _, c := range []struct {
-		name   string
-		record func(ts string) string
-		want   int
-	}{
-		{"queued", func(ts string) string {
-			return `{"type":"queue-operation","operation":"enqueue","content":"queued  note 12","timestamp":"` + ts + `"}`
-		}, http.StatusNoContent},
-		{"a turn of its own", func(ts string) string {
-			return `{"type":"user","message":{"role":"user","content":"queued note 12"},"timestamp":"` + ts + `"}`
-		}, http.StatusNoContent},
-		{"not recorded", nil, http.StatusConflict},
-		{"recorded before this send", func(string) string {
-			return `{"type":"queue-operation","operation":"enqueue","content":"queued note 12","timestamp":"2026-09-28T10:00:00.000Z"}`
-		}, http.StatusConflict},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			f := &fakeTurns{pane: "❯ \n", promptErr: sessionio.ErrSubmitUnconfirmed}
-			mux, transcript := turnMuxWithTranscript(t, f)
-			f.inPrompt = func() {
-				f.pane = capture(t, "permission-bash.txt")
-				if c.record != nil {
-					appendLine(t, transcript, c.record(time.Now().UTC().Format("2006-01-02T15:04:05.000Z")))
-				}
-			}
-			rec := postTurn(t, mux, "/prompt/demo", `{"text":"queued note 12"}`)
-			if rec.Code != c.want {
-				t.Fatalf("status %d, want %d (%s)", rec.Code, c.want, rec.Body.String())
-			}
-		})
-	}
-}
-
-// turnMuxWithTranscript is turnMux over a registry that knows "demo", whose
-// transcript the returned path names.
-func turnMuxWithTranscript(t *testing.T, f *fakeTurns) (http.Handler, string) {
-	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	home := t.TempDir()
-	path := sessionio.TranscriptPath(sessionio.ProjectsRoot(home, "wizard"), "/home/wizard/x", "s1")
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	appendLine(t, path, `{"type":"user","message":{"role":"user","content":"hello"},"timestamp":"2026-09-28T09:00:00.000Z"}`)
-	rg := newRegistry(ctx, time.Millisecond, home, siotest.NewFakeOptions("wizard/demo"), "wizard")
-	w := httptest.NewRecorder()
-	rg.handleSessionStart()(w, httptest.NewRequest(http.MethodPost, "/hooks/session-start",
-		strings.NewReader(`{"user":"wizard","session_id":"s1","cwd":"/home/wizard/x","tmux_session":"demo"}`)))
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("session-start: %d (%s)", w.Code, w.Body.String())
-	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
-	return mux, path
-}
-
-func appendLine(t *testing.T, path, line string) {
-	t.Helper()
-	fh, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer fh.Close()
-	if _, err := fh.WriteString(line + "\n"); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// The guard's read of the pane goes with the prompt: a dialog can take the
-// box's place before sessionio's own first read, and a pane with no box reads
-// like a shell's, whose Enter goes unchecked. The live check of the dialog
-// race fix lost a prompt that way on 2026-09-28.
-func TestPromptSaysWhetherTheGuardSawClaudesBox(t *testing.T) {
-	box := "\n────────\n❯ \n────────\n"
-	for pane, want := range map[string]bool{box: true, "$ \n": false} {
-		f := &fakeTurns{pane: pane}
-		if rec := postTurn(t, turnMux(t, f), "/prompt/demo", `{"text":"hello"}`); rec.Code != http.StatusNoContent {
-			t.Fatalf("status %d", rec.Code)
-		}
-		if f.promptedBox != want {
-			t.Errorf("pane %q: PromptInto box = %v, want %v", pane, f.promptedBox, want)
-		}
-	}
-}

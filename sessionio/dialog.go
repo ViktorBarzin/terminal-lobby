@@ -79,6 +79,10 @@ type Dialog struct {
 	Prompt string   `json:"prompt,omitempty"`
 }
 
+// DialogKindPermission is Dialog.Kind for the tool permission prompt, which
+// the lobby's Claude mod reports before Claude draws it (ADR-0036).
+const DialogKindPermission = "permission"
+
 // DialogQuestion mirrors one question of an AskUserQuestion call.
 //
 // The last three fields are the pane's alone: the tool's recorded input never

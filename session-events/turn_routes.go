@@ -125,6 +125,13 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			http.Error(w, "bad body (need text)", http.StatusBadRequest)
 			return
 		}
+		// Claude takes its prompts through its mod (ADR-0036): submitted inside
+		// the process, so nothing is typed, no dialog can catch the Enter, and
+		// a prompt sent mid-turn waits for the turn to end.
+		if h := sessionio.Harness(body.Tool); h == "" || h == sessionio.HarnessClaude {
+			servePromptViaMod(w, r, rg, drv, osUser, session, body.Text, body.AwaitReady)
+			return
+		}
 		pi := sessionio.Harness(body.Tool) == sessionio.HarnessPi
 		if body.AwaitReady {
 			// Not distinguished from "no such session": both mean the caller
@@ -170,41 +177,26 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 			http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
 			return
 		}
-		// The plan approval is the one screen a prompt must never reach: the
-		// Enter at its end would select the menu's highlighted row, which
-		// approves the plan (plan.go). The Text view sends feedback there
-		// through POST /answer instead; this refuses everything else, with the
-		// reason, so the sender keeps its text. A tool permission prompt is
-		// refused the same way. Claude Code draws both, so a pi session is not
-		// read for them.
+		// A codex menu is the screen a typed prompt must not reach: the Enter at
+		// its end would pick the menu's highlighted row (refusal.go). Pi draws
+		// none of codex's menus, so a pi session is not read for them.
 		box := false
 		if !pi {
 			var reason string
-			if reason, box = paneRefusal(rg, drv, osUser, session); reason != "" {
+			if reason, box = paneRefusal(drv, osUser, session); reason != "" {
 				writePromptRefusal(w, reason)
 				return
 			}
 		}
-		sentAt := time.Now()
 		err = drv.PromptInto(osUser, session, body.Text, box)
-		// The Enter went and a dialog stood in the box's place by the next
-		// read, so the pane cannot say whether Claude took the prompt first
-		// (sessionio.ErrSubmitUnconfirmed). The transcript can.
-		if errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
-			if recordedSince(r.Context(), rg, osUser, session, body.Text, sentAt) {
-				err = nil
-			} else {
-				writePromptRefusal(w, metDialogReason(r.Context(), rg, drv, osUser, session))
-				return
-			}
-		}
 		if err != nil {
-			// Claude drew a dialog between the guard above and the Enter, and
-			// the prompt stopped short of it (sessionio.ErrInputGone). Refused
-			// as though the dialog had been up all along, so the sender keeps
-			// its text and says where to answer.
-			if errors.Is(err, sessionio.ErrInputGone) {
-				writePromptRefusal(w, metDialogReason(r.Context(), rg, drv, osUser, session))
+			// A menu took the input line's place between the guard above and
+			// the Enter (sessionio.ErrInputGone), or stood there by the read
+			// after it (sessionio.ErrSubmitUnconfirmed). Refused as though it
+			// had been up all along, so the sender keeps its text and says
+			// where to answer.
+			if errors.Is(err, sessionio.ErrInputGone) || errors.Is(err, sessionio.ErrSubmitUnconfirmed) {
+				writePromptRefusal(w, metDialogReason(r.Context(), drv, osUser, session))
 				return
 			}
 			// The paste landed and no Enter took it: the text is on Claude's
@@ -227,6 +219,56 @@ func handlePrompt(rg *registry, drv promptDriver) http.HandlerFunc {
 	}
 }
 
+// servePromptViaMod sends a prompt to a Claude session through its mod.
+//
+// A session the lobby has just created has no mod yet: Claude takes a couple
+// of seconds to start, and its mod says hello as it does. With awaitReady the
+// route waits for that, as it used to wait for the input line. A Claude asking
+// whether to trust its folder loads no mod until it is answered, so that is
+// said by name.
+func servePromptViaMod(w http.ResponseWriter, r *http.Request, rg *registry, drv promptDriver, osUser, session, text string, awaitReady bool) {
+	c := rg.mods.conn(osUser, session)
+	if c == nil && awaitReady {
+		hello, stop := rg.mods.awaitHello(osUser, session)
+		if c = rg.mods.conn(osUser, session); c == nil {
+			t := time.NewTimer(PromptReadyWait)
+			select {
+			case <-hello:
+			case <-t.C:
+			case <-r.Context().Done():
+			}
+			t.Stop()
+			c = rg.mods.conn(osUser, session)
+		}
+		stop()
+	}
+	if c == nil {
+		if pane, err := drv.CapturePane(osUser, session); err == nil && sessionio.ClaudeTrustPending(pane) {
+			writePromptRefusal(w, trustOpenReason)
+			return
+		}
+		http.Error(w, "session is not ready for input: its Claude has not connected to the lobby", http.StatusServiceUnavailable)
+		return
+	}
+	if at, _ := drv.Option(osUser, session, sessionio.OptionSuspended); at != "" {
+		http.Error(w, "session "+session+" is suspended — resume it before sending", http.StatusConflict)
+		return
+	}
+	ack, err := c.send(r.Context(), modCommand{Op: "prompt", Text: text})
+	if err != nil {
+		http.Error(w, "the session's Claude did not take the prompt", http.StatusBadGateway)
+		return
+	}
+	if !ack.OK {
+		http.Error(w, "the session's Claude refused the prompt: "+ack.Error, http.StatusBadGateway)
+		return
+	}
+	events.Emit("claude.prompt_sent", osUser, telemetry.Attrs{
+		"tl.session": session, "tl.count": len(text), "tl.client": "mod",
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // metDialogWait bounds how long metDialogReason reads the pane for the
 // dialog a prompt met. It had taken the box's place already, so it is mostly
 // drawn; the bound is for one still finishing its first frames.
@@ -235,10 +277,10 @@ const metDialogWait = 600 * time.Millisecond
 // metDialogReason names the dialog a prompt met (sessionio.ErrInputGone):
 // the guard's own reason once the pane reads as one, or dialogOpenReason for
 // one it does not know, or not by metDialogWait.
-func metDialogReason(ctx context.Context, rg *registry, drv promptDriver, osUser, session string) string {
+func metDialogReason(ctx context.Context, drv promptDriver, osUser, session string) string {
 	deadline := time.Now().Add(metDialogWait)
 	for {
-		if reason := promptRefusal(rg, drv, osUser, session); reason != "" {
+		if reason := promptRefusal(drv, osUser, session); reason != "" {
 			return reason
 		}
 		if !time.Now().Before(deadline) {
@@ -247,45 +289,6 @@ func metDialogReason(ctx context.Context, rg *registry, drv promptDriver, osUser
 		select {
 		case <-ctx.Done():
 			return dialogOpenReason
-		case <-time.After(100 * time.Millisecond):
-		}
-	}
-}
-
-// recordedWait bounds how long recordedSince reads the transcript for a
-// prompt whose submit the pane could not confirm. Claude records a queued
-// prompt or a new turn's prompt within a few hundred ms; the tail reads every
-// 200 ms.
-const recordedWait = 2 * time.Second
-
-// recordedTail is how many of the newest events recordedSince looks through.
-const recordedTail = 200
-
-// recordedSince reports whether the transcript recorded `text` as a prompt,
-// queued or opening a turn, at or after `since` (less a second for the
-// transcript's own clock rounding), within recordedWait.
-func recordedSince(ctx context.Context, rg *registry, osUser, session, text string, since time.Time) bool {
-	fs, ok := rg.source(osUser, session)
-	if !ok {
-		return false
-	}
-	want := strings.Join(strings.Fields(text), "")
-	from := since.Add(-time.Second).UnixMilli()
-	deadline := time.Now().Add(recordedWait)
-	for {
-		head, _ := fs.Head()
-		for _, e := range fs.Replay(max(0, head-recordedTail)) {
-			prompt := e.Kind == sessionio.KindUser || (e.Kind == sessionio.KindMeta && e.Meta == sessionio.MetaQueued)
-			if prompt && e.At >= from && strings.Join(strings.Fields(e.Body), "") == want {
-				return true
-			}
-		}
-		if !time.Now().Before(deadline) {
-			return false
-		}
-		select {
-		case <-ctx.Done():
-			return false
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -363,6 +366,26 @@ func handleCancel(rg *registry, drv cancelDriver) http.HandlerFunc {
 		h := sessionio.Harness(body.Tool)
 		if h == "" {
 			h = drv.HarnessOf(osUser, session)
+		}
+		// A Claude with a mod is stopped inside the process (ADR-0036): the
+		// turn ends cleanly and its turn_end settles the stream. Its queue is
+		// not popped: Claude submits queued prompts as the next turn and no mod
+		// API takes them back, so the reply says nothing came back and the
+		// caller leaves its ghosts in place.
+		if c := rg.mods.conn(osUser, session); c != nil && (h == "" || h == sessionio.HarnessClaude) {
+			if _, err := c.send(r.Context(), modCommand{Op: "abort"}); err != nil {
+				http.Error(w, "cancel failed", http.StatusBadGateway)
+				return
+			}
+			events.Emit("claude.cancelled", osUser, telemetry.Attrs{"tl.session": session, "tl.client": "mod"})
+			if len(body.RestoreQueue) == 0 && strings.TrimSpace(body.ReturnPrompt) == "" {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			writeJSON(w, struct {
+				Restored bool `json:"restored"`
+			}{false})
+			return
 		}
 		restoring := len(body.RestoreQueue) > 0
 		restored := false
@@ -458,7 +481,7 @@ type modelDriver interface {
 // (sessionio/setmodel.go, sessionio/pi.go). The reply is what the session
 // reports AFTERWARDS, not an echo of the request: a change can be refused
 // silently, and the caller has to be able to see that it was.
-func handleModel(drv modelDriver) http.HandlerFunc {
+func handleModel(rg *registry, drv modelDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
@@ -545,6 +568,23 @@ func handleModel(drv modelDriver) http.HandlerFunc {
 		// pane, for a pi running without the extension, which stamps nothing.
 		if h == sessionio.HarnessPi && (state == sessionio.StateAwaiting || drv.PiTrustPending(osUser, session)) {
 			http.Error(w, "the session is asking something — answer it first", http.StatusConflict)
+			return
+		}
+		// Claude switches through its mod's `/model` and `/effort` (ADR-0036)
+		// rather than by driving the picker. The reply is the pair asked for;
+		// the session's own model marker follows on the stream with its next
+		// turn.
+		if c := rg.mods.conn(osUser, session); c != nil && h == sessionio.HarnessClaude {
+			ack, err := c.send(r.Context(), modCommand{Op: "model", Model: body.Model, Effort: body.Effort})
+			if err != nil || !ack.OK {
+				http.Error(w, "the session's Claude did not switch", http.StatusBadGateway)
+				return
+			}
+			events.Emit("claude.model_set", osUser, telemetry.Attrs{
+				"tl.session": session, "tl.tool": body.Tool,
+				"tl.model": body.Model, "tl.effort": body.Effort, "tl.client": "mod",
+			})
+			writeJSON(w, sessionio.ModelState{Model: body.Model, Effort: body.Effort})
 			return
 		}
 		st, err := drv.SetModel(r.Context(), osUser, session, h,

@@ -9,6 +9,23 @@ import (
 	"time"
 )
 
+// planSession starts the stand-in on its plan approval (fakeDialogPy,
+// FAKEDIALOG_CALL=plan).
+func planSession(t *testing.T, env string) (*Injector, string) {
+	t.Helper()
+	return standIn(t, "FAKEDIALOG_CALL=plan "+env, "Would you like to proceed?")
+}
+
+// paneOf reads the stand-in's pane.
+func paneOf(t *testing.T, in *Injector, osUser string) string {
+	t.Helper()
+	pane, err := in.CapturePane(osUser, "demo")
+	if err != nil {
+		t.Fatalf("CapturePane: %v", err)
+	}
+	return pane
+}
+
 // The permission-mode driver: Shift+Tab one stop at a time, the status line
 // read back after every press, and a walk that would pass through bypass or
 // don't ask while Claude works refused before it starts.

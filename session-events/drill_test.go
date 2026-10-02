@@ -363,17 +363,22 @@ func TestADrillInKeepsItsSessionAlive(t *testing.T) {
 		t.Fatalf("the drill-in source did not survive the sweep: %v", err)
 	}
 
+	// Once nobody reads the agent, its drill-in is let go. The session stays:
+	// its mod is still connected and feeding it.
 	release()
 	for i := 0; i < 3; i++ {
 		f.rg.sweep()
 		now = now.Add(idleGrace)
 	}
-	for _, ch := range []<-chan struct{}{ls.done, d.done} {
-		select {
-		case <-ch:
-		case <-time.After(2 * time.Second):
-			t.Fatal("an unread session and its drill-in were not let go")
-		}
+	select {
+	case <-d.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("an unread drill-in was not let go")
+	}
+	select {
+	case <-ls.ctx.Done():
+		t.Fatal("the session was retired while its mod is connected")
+	default:
 	}
 }
 

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"log"
 	"net"
@@ -67,22 +66,27 @@ func main() {
 
 	injector := sessionio.NewInjector(self.Username)
 	rg := newRegistry(ctx, *poll, *homeBase, injector, self.Username)
-	// A watched session whose transcript is swapped underneath it — a new Claude
-	// in the same tmux window — has to be noticed without waiting for a request
-	// that may never come while a browser sits on an open stream.
+	// The mod hub clears options in one tmux call; drill-ins nobody reads and
+	// connections whose mod went quiet are swept on a ticker.
+	rg.mods.unset = injector.UnsetOptions
 	go rg.sweepEvery(ctx, SweepInterval)
-	// A blocking question is not always in the transcript while its dialog is up
-	// (see registry.watchPanes), so the pane of a watched, working session is
-	// read for one.
-	rg.panes = injector
-	rg.stamps = injector
-	go rg.watchPanesEvery(ctx, PaneWatchInterval)
+	// Claudes started before the mod existed are restarted once they are safe
+	// to, so each gets a stream (rollout.go).
+	go newRollout(rg.mods, injector, mapUsers(*mapPath)).run(ctx, RolloutInterval)
 
 	// Authed web surface (mounted behind authMiddleware).
 	web := http.NewServeMux()
 	web.HandleFunc("GET /events/{session}", func(w http.ResponseWriter, r *http.Request) {
 		ls, ok := rg.live(osUserFrom(r.Context()), r.PathValue("session"))
 		if !ok {
+			// A Claude that started before the lobby's mod existed has no
+			// stream. It is restarted once it is safe to (rollout.go), and the
+			// stream says so until then, ending the moment the mod says hello
+			// so the reader reconnects onto it.
+			if claudeSession(injector, osUserFrom(r.Context()), r.PathValue("session")) {
+				serveNoMod(w, r, rg, *hb)
+				return
+			}
 			http.Error(w, "session not registered", http.StatusNotFound)
 			return
 		}
@@ -278,14 +282,14 @@ func main() {
 	// on screen instead of latching with Send disabled and telling the reader
 	// to open the Terminal. Non-200 is kept for the two failures no reading
 	// can fix — a session nobody registered, and a pane that cannot be read.
-	web.HandleFunc("POST /answer/{session}", handleAnswer(rg, injector))
+	web.HandleFunc("POST /answer/{session}", handleAnswer(rg))
 	// Interrupting the turn with the harness's own key, Escape for pi and Ctrl-C
 	// for the rest (turn_routes.go).
 	web.HandleFunc("POST /cancel/{session}", handleCancel(rg, injector))
 
 	// Which model the session answers on, and how hard it thinks, applied to a
 	// running session through the harness's own commands (turn_routes.go).
-	web.HandleFunc("POST /model/{session}", handleModel(injector))
+	web.HandleFunc("POST /model/{session}", handleModel(rg, injector))
 
 	// The browser a session's agent drives (browser.go, ADR-0035): its state,
 	// and a WebSocket relaying the viewer protocol to the host's socket. Attach
@@ -296,17 +300,14 @@ func main() {
 	web.HandleFunc("GET /browser/{session}/stream", browser.handleStream())
 	root := http.NewServeMux()
 	root.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) { w.Write([]byte("ok")) })
-	// The session-start hook runs as the OS user on THIS box, so it is hard-gated
-	// to loopback (defense in depth alongside the ingress not routing /hooks/*
-	// publicly) and, on top of that, to the account that opened the connection:
-	// loopback authenticates a host, and every lobby user has a shell on this
-	// host, so the "user" in the body was previously anyone's to choose.
-	root.HandleFunc("POST /hooks/session-start", localhostOnly(peerOwnsClaim(rg.handleSessionStart())))
-	// An AskUserQuestion held by the PermissionRequest hook until the question
-	// card or the terminal answers it (hold.go, ADR-0034). The request stays
-	// open for as long as the question does. Same two gates as its neighbour:
-	// the hook runs as the session's owner, and the held question is theirs.
-	root.HandleFunc("POST /hooks/question", localhostOnly(peerOwnsClaim(rg.handleQuestionHook())))
+	// The lobby's Claude mod (mod.go, ADR-0036). It runs inside each Claude as
+	// the session's OS user on THIS box, so the routes are hard-gated to
+	// loopback (the ingress does not route /mod/* publicly either). Hello
+	// identifies the account that opened the connection by peer credentials;
+	// the token it hands back is what authenticates the rest.
+	root.HandleFunc("POST /mod/v1/hello", localhostOnly(rg.mods.handleHello()))
+	root.HandleFunc("POST /mod/v1/events", localhostOnly(rg.mods.handleEvents()))
+	root.HandleFunc("GET /mod/v1/poll", localhostOnly(rg.mods.handlePoll()))
 	// What a Claude Code session has spent, posted by devvm/tl-usage-record from
 	// the statusLine slot (usage.go). Same two gates as its neighbour, for the
 	// same reason. The readings land in /var/lib/tmux-api/spend/<user>.json,
@@ -354,19 +355,6 @@ func main() {
 	}
 }
 
-// answerDriver is the half of sessionio.Injector that POST /answer uses.
-//
-// An interface for the same reason paneReader is one (registry.go): the route
-// is worth testing on a box with no tmux server, and production passes the
-// Injector. It is also what keeps the answering rules out of this file —
-// which question is drawn, which keys press it, how long to wait for the
-// screen to move — all of which live in sessionio/answerdrive.go beside the
-// parser that reads the same screens.
-type answerDriver interface {
-	Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest,
-	) (sessionio.AnswerResponse, error)
-}
-
 // answerBodyLimit bounds one AnswerRequest.
 //
 // The largest legitimate one is a free-text answer: sessionio.MaxAnswerText
@@ -380,16 +368,6 @@ type answerDriver interface {
 // close a JSON object would decode and be acted on as though it had arrived
 // whole. This makes the decode fail instead.
 const answerBodyLimit = 8 << 10
-
-// answerKnownTurns is how far back the transcript is read for the call a
-// request answers. A pending call belongs to the turn that is still running, so
-// one turn would do and two is slack for a turn boundary that lands awkwardly.
-// Folding the whole log instead would copy every event of a transcript that
-// reaches 28.9 MB on this box, per request.
-const answerKnownTurns = 2
-
-// askQuestionTool is the tool whose recorded input carries the question list.
-const askQuestionTool = "AskUserQuestion"
 
 // answerUnreadable is the reason for a pane that could not be read at all.
 //
@@ -418,74 +396,43 @@ const answerNoSession = "no-session"
 // Named rather than inline like its neighbours because it is the one web route
 // here with a test of its own, and a closure inside main() cannot be handed a
 // stand-in driver (answer_test.go).
-func handleAnswer(rg *registry, drv answerDriver) http.HandlerFunc {
+func handleAnswer(rg *registry) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		// The body is read BEFORE the session is placed, so that the record of
 		// a session this box does not have can still say what was attempted
-		// (tl.action). Reading it first costs nothing: it is bounded, and
-		// nothing is typed until both checks have passed.
+		// (tl.action). Reading it first costs nothing: it is bounded.
 		var req sessionio.AnswerRequest
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, answerBodyLimit)).Decode(&req) != nil {
-			// Over the cap and unparseable are one refusal on purpose: nothing
-			// reached a pane in either case, and a client can do nothing
-			// different about them. The cap is in the message because it is
-			// the one of the two a caller might be surprised by.
+			// Over the cap and unparseable are one refusal on purpose: a
+			// client can do nothing different about them. The cap is in the
+			// message because it is the one of the two a caller might be
+			// surprised by.
 			http.Error(w, "bad body (an AnswerRequest under "+strconv.Itoa(answerBodyLimit)+" bytes)",
 				http.StatusBadRequest)
 			return
 		}
-		fs, ok := rg.source(osUser, session)
-		if !ok {
+		// A CLAUDE DIALOG IS ANSWERED THROUGH ITS MOD (ADR-0036): the question,
+		// the plan approval and the permission prompt all go to the mod as
+		// data, which settles the dialog inside Claude. Nothing is typed.
+		c := rg.mods.conn(osUser, session)
+		if c == nil {
 			http.Error(w, "session not registered", http.StatusNotFound)
-			// RECORDED, not merely refused. rg.source answers false when the
-			// tmux→transcript mapping has gone — the session was killed, or
-			// its name now points at a different transcript — which is a card
-			// still on a reader's screen with nothing behind it, and the
-			// client shows them nothing (sendAnswer returns null, and
-			// session.ts deliberately raises no toast). The walk this route
-			// replaces counted the same failure: any POST the lobby did not
-			// answer 2xx became `refused` (answer.logic.ts:330). Silence here
-			// would take that class to zero at the cutover and read as a
-			// failure that had stopped happening.
+			// RECORDED, not merely refused: a card still on a reader's screen
+			// with nothing behind it, which the client shows nothing for.
 			emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerNoSession},
 				sessionio.AnswerAction(req))
 			return
 		}
-		// A HELD CALL IS ANSWERED AS DATA (ADR-0034). The whole call's answers,
-		// or "Chat about this", go to the hook that is holding it, and nothing
-		// is typed. With no hold there is nothing else to try: the terminal
-		// is the only place left to answer it.
-		if req.Answers != nil || req.Chat != nil {
-			held := rg.heldQuestions(osUser, fs.Path(), req)
-			resp := rg.settleHeld(osUser, fs.Path(), req)
-			action := sessionio.AnswerAction(req)
-			emitAnswer(osUser, session, held, resp, action)
-			if resp.Applied {
-				emitAnswered(osUser, session, req)
+		var held []sessionio.DialogQuestion
+		if d := c.dialogNow(); d != nil && d.kind == "ask" {
+			for _, q := range d.questions {
+				held = append(held, sessionio.DialogQuestion{Question: q.Question, MultiSelect: q.MultiSelect})
 			}
-			writeJSON(w, resp)
-			return
 		}
-		// The plan approval, answered by keys (ADR-0010), and the permission
-		// prompt declined with words. The driver refuses anything else as
-		// not-held without reading the pane.
-		resp, err := drv.Answer(r.Context(), osUser, session, req)
-		if err != nil {
-			// The pane could not be read at all, which is a session that has
-			// gone away, the same 502 GET /pane answers for the same failure.
-			http.Error(w, "cannot read the pane", http.StatusBadGateway)
-			// A reader who navigated away mid-request is not a failure of this
-			// route, so it is not recorded. The request's own context is
-			// checked as well as the error, because a cancel can reach us as
-			// whatever the killed tmux subprocess reported.
-			if r.Context().Err() == nil && !errors.Is(err, context.Canceled) {
-				emitAnswer(osUser, session, nil, sessionio.AnswerResponse{Reason: answerUnreadable},
-					sessionio.AnswerAction(req))
-			}
-			return
-		}
-		emitAnswer(osUser, session, nil, resp, resp.Action)
+		resp := c.answer(r.Context(), req)
+		resp.Action = sessionio.AnswerAction(req)
+		emitAnswer(osUser, session, held, resp, resp.Action)
 		if resp.Applied {
 			emitAnswered(osUser, session, req)
 		}

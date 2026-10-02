@@ -59,6 +59,10 @@ type FileSource struct {
 	// How this source reaches the transcript. Fixed at construction and never
 	// reassigned, so the Run goroutine reads it without a lock.
 	reader Reader
+
+	// mod is set on a source fed by the lobby's Claude mod rather than a
+	// tail (modsource.go); nil otherwise.
+	mod *modState
 }
 
 // NewFileSource builds a source over one transcript. session is the tmux
@@ -427,6 +431,12 @@ func (f *FileSource) TailOnce() {
 func (f *FileSource) FullResult(toolID string) (string, json.RawMessage, error) {
 	if toolID == "" {
 		return "", nil, errors.New("full result: no tool id")
+	}
+	if s, ok := f.modFullResult(toolID); ok {
+		return s, nil, nil
+	}
+	if f.mod != nil && f.path == "" {
+		return "", nil, errNoResult
 	}
 	return f.reader.FullResult(f.path, toolID)
 }

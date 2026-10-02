@@ -2,6 +2,12 @@ package main
 
 import "net/http"
 
+// paneReader reads what a session's pane is showing. An interface so a route
+// is tested without tmux; production passes the Injector.
+type paneReader interface {
+	CapturePane(osUser, session string) (string, error)
+}
+
 // paneStateReader is what GET /pane needs from the injector: the pane, and
 // the session's hook state.
 type paneStateReader interface {
