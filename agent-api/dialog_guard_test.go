@@ -143,6 +143,13 @@ func TestAMessageIsNeverTypedIntoAnOpenDialog(t *testing.T) {
 			if v.Status != StatusFailed || !strings.Contains(v.Error, "dialog") {
 				t.Fatalf("status %q error %q, want failed naming the dialog", v.Status, v.Error)
 			}
+			// The runner holds one turn per conversation, so a task waiting on
+			// the dialog would have queued this message rather than reached
+			// here. Measured live on 2026-10-02 (rv-r2l-2): the error sent the
+			// caller to "the task that is waiting on it", and none was.
+			if strings.Contains(v.Error, "Answer the task that is waiting") || !strings.Contains(v.Error, "no task") {
+				t.Fatalf("error %q, want it to say no task is waiting on the dialog", v.Error)
+			}
 			if p := h.sessions.promptCalls(); len(p) != 0 {
 				t.Fatalf("typed %+v into a session showing a dialog", p)
 			}
@@ -201,5 +208,69 @@ func TestCancelEscapesAMenuThatCtrlCLeaves(t *testing.T) {
 	h.decodeJSON(h.call("POST", "/v1/tasks/"+task+"/cancel", ""), http.StatusOK, &got)
 	if !got.Interrupted || got.Warning != "" || escapes != 2 {
 		t.Fatalf("got %+v after %d escapes, want interrupted after two", got, escapes)
+	}
+}
+
+// Measured live on 2026-10-02 (rv-r2l-6): a suspended conversation resumed
+// with no mod, and the resume put back the @claude_state=done it was suspended
+// with. Nothing updated it after that, so a 45 s turn was reported failed
+// ("finished without an assistant message") after the 15 s grace while it was
+// still working, and the pane later showed it had succeeded. With no mod the
+// transcript decides, whatever the stale stamp says.
+func TestAModlessTurnUnderAStaleDoneFollowsTheTranscript(t *testing.T) {
+	h := newHarness(t)
+	h.srv.TurnTimeout = time.Minute
+	h.sessions.start(testOSUser, LiveSession{Name: "resumed", Owner: testActor, State: "done"})
+	h.sessions.setTranscript(testOSUser, "resumed", userLine("earlier", "2026-09-16T10:00:00Z"),
+		assistantLine("PONG", "2026-09-16T10:00:01Z"), turnEndLine("2026-09-16T10:00:01Z"))
+	toolUse := `{"type":"assistant","timestamp":"2026-09-16T11:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_7","name":"Bash","input":{"command":"sleep 45"}}]}}`
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.appendTranscriptLocked(k, userLine("sleep", "2026-09-16T11:00:00Z"), toolUse)
+	}
+
+	task := h.sendMessage("resumed", "sleep")
+	defer h.stop(task)
+	// Well past the start grace (150ms here), the turn is still running.
+	time.Sleep(4 * h.srv.StartGrace)
+	if v, _ := h.srv.Tasks.Get(task); v.Status != StatusRunning {
+		t.Fatalf("status %q error %q while the transcript shows the turn working, want running", v.Status, v.Error)
+	}
+	if st, _ := h.sessions.Option(testOSUser, "resumed", "@claude_state"); st != "running" {
+		t.Fatalf("@claude_state = %q while the turn works, want running so the lobby stops showing done", st)
+	}
+
+	h.sessions.appendTranscript(testOSUser, "resumed",
+		assistantLine("SLEPT-OK", "2026-09-16T11:00:48Z"), turnEndLine("2026-09-16T11:00:48Z"))
+	v := h.waitStatus(task, StatusDone, StatusFailed, StatusNeedsInput)
+	if v.Status != StatusDone || v.Result != "SLEPT-OK" {
+		t.Fatalf("status %q result %q error %q, want done with SLEPT-OK", v.Status, v.Result, v.Error)
+	}
+}
+
+// The same resumed, mod-less session at a permission prompt (rv-r2l-2): it was
+// failed after about 20 s with the dialog still open, which then refused every
+// later message while no task was waiting on it. It is a needs_input task the
+// caller can cancel.
+func TestAModlessDialogUnderAStaleDoneReportsNeedsInput(t *testing.T) {
+	h := newHarness(t)
+	h.srv.TurnTimeout = time.Minute
+	h.sessions.start(testOSUser, LiveSession{Name: "resumed", Owner: testActor, State: "done"})
+	h.sessions.setTranscript(testOSUser, "resumed", userLine("earlier", "2026-09-16T10:00:00Z"),
+		assistantLine("PONG", "2026-09-16T10:00:01Z"), turnEndLine("2026-09-16T10:00:01Z"))
+	toolUse := `{"type":"assistant","timestamp":"2026-09-16T11:00:02Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_9","name":"Bash","input":{"command":"touch /tmp/probe"}}]}}`
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.appendTranscriptLocked(k, userLine("touch it", "2026-09-16T11:00:00Z"), toolUse)
+		f.panes[k] = menuPane
+	}
+
+	task := h.sendMessage("resumed", "touch it")
+	defer h.stop(task)
+	v := h.waitStatus(task, StatusNeedsInput, StatusDone, StatusFailed)
+	if v.Status != StatusNeedsInput || !strings.Contains(v.Question, "1. Allow") {
+		t.Fatalf("status %q kind %q question %q error %q, want needs_input with the pane's menu",
+			v.Status, v.Kind, v.Question, v.Error)
+	}
+	if st, _ := h.sessions.Option(testOSUser, "resumed", "@claude_state"); st != "awaiting" {
+		t.Fatalf("@claude_state = %q at the dialog, want awaiting", st)
 	}
 }

@@ -175,9 +175,13 @@ func (s *Server) awaitReady(t *Task, cancelled <-chan struct{}) (int, bool) {
 		// a dialog the message is not sent at all.
 		if now, ferr := s.find(t.OSUser, t.ConversationID); ferr == nil {
 			if why := s.dialogInTheWay(t.OSUser, now.Name, strings.TrimSpace(now.State)); why != "" {
+				// No task is waiting on it: the runner holds one turn per
+				// conversation, so one that was would have queued this
+				// message. An earlier turn ended with the dialog still open.
 				s.fail(t, "conversation %s is waiting on a dialog (%s), and typing into it would answer it, "+
-					"so the message was not sent. Answer the task that is waiting on it, or answer it in the lobby, "+
-					"then send the message again", t.ConversationID, why)
+					"so the message was not sent. There is no task waiting on it, because an earlier turn ended "+
+					"while it was still open. Answer it in the lobby, or delete the conversation and start a new one",
+					t.ConversationID, why)
 				return 0, false
 			}
 		}
@@ -286,18 +290,8 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 		}
 
 		state := strings.TrimSpace(live.State)
-		if state == "" {
-			state = s.stateFromTranscript(t, live.Name, mark)
-			// A dialog writes no turn-end record, so the transcript reads a
-			// turn blocked on one as running, for as long as the six-hour
-			// ceiling. Measured live on 2026-10-02 (rv-mf7-nomod). With no mod
-			// to report it, the pane is the witness: a menu there is the
-			// dialog, and the awaiting branch reports it with the pane's text.
-			if state == sessionio.StateRunning {
-				if pane, err := s.Sessions.Pane(t.OSUser, live.Name); err == nil && sessionio.ClaudeMenuOpen(pane) {
-					state = sessionio.StateAwaiting
-				}
-			}
+		if state == "" || !s.modConnected(t.OSUser, live.Name) {
+			state = s.modlessState(t, live.Name, state, mark)
 		}
 		switch state {
 		case sessionio.StateRunning:
@@ -439,6 +433,57 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			return
 		}
 	}
+}
+
+// modConnected reports whether session-events has the lobby's mod connected
+// for the session, which is the only writer that keeps @claude_state current.
+// A session-events that cannot be reached counts as no mod: nothing is
+// stamping the state then either.
+func (s *Server) modConnected(osUser, session string) bool {
+	_, err := s.Sessions.Dialog(osUser, session)
+	return err == nil || errors.Is(err, errNoDialog)
+}
+
+// modlessState is the turn's state for a session with no mod to stamp it,
+// read from the transcript and the pane rather than from @claude_state.
+//
+// The stamp cannot be trusted here even when it is set. Measured live on
+// 2026-10-02 (rv-r2l-2, rv-r2l-6): a suspended conversation resumed with no
+// mod, sessionio.Resume put back the "done" it was suspended with, and nothing
+// changed it after that. A 45 s turn was then failed after the 15 s grace with
+// "finished without an assistant message" while it was still working, and a
+// turn at a permission prompt was failed with the dialog left open.
+//
+// A leftover "done" is kept while the transcript shows nothing of this turn
+// yet, because the done branch's start grace is what reports a message that
+// never started a turn. The state read here is written back to @claude_state,
+// so the lobby's sidebar and GET /v1/conversations stop showing that "done"
+// while the turn works or waits on a dialog.
+func (s *Server) modlessState(t *Task, session, stamped string, mark int) string {
+	state := s.stateFromTranscript(t, session, mark)
+	if state == "" {
+		if stamped != sessionio.StateDone {
+			return ""
+		}
+		return stamped
+	}
+	// A dialog writes no turn-end record, so the transcript reads a turn
+	// blocked on one as running, for as long as the six-hour ceiling.
+	// Measured live on 2026-10-02 (rv-mf7-nomod). With no mod to report it,
+	// the pane is the witness: a menu there is the dialog, and the awaiting
+	// branch reports it with the pane's text.
+	if state == sessionio.StateRunning {
+		if pane, err := s.Sessions.Pane(t.OSUser, session); err == nil && sessionio.ClaudeMenuOpen(pane) {
+			state = sessionio.StateAwaiting
+		}
+	}
+	if state != stamped {
+		if err := s.Sessions.SetOption(t.OSUser, session, sessionio.OptionState, state); err != nil {
+			logf("agent-api: %s: stamping %s=%s for a session with no mod: %v",
+				t.ConversationID, sessionio.OptionState, state, err)
+		}
+	}
+	return state
 }
 
 // stateFromTranscript stands in for @claude_state while nothing has stamped

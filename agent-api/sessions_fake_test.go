@@ -119,9 +119,16 @@ func (f *fakeSessions) setState(osUser, session, state string) {
 	f.setStateLocked(key(osUser, session), state)
 }
 
+// setStateLocked is the mod stamping the state, so the session reads as
+// having a mod connected from then on (a dialogs entry, nil when nothing is
+// open). Only the mod writes @claude_state in production; a session with no
+// mod is followed from its transcript instead (modlessState).
 func (f *fakeSessions) setStateLocked(k, state string) {
 	if s := f.live[k]; s != nil {
 		s.State = state
+		if _, ok := f.dialogs[k]; !ok {
+			f.dialogs[k] = nil
+		}
 	}
 }
 

@@ -35,6 +35,10 @@ func (h *harness) readyConversation(name string) {
 	h.sessions.start(testOSUser, LiveSession{Name: name, Owner: testActor, State: "done"})
 	h.sessions.setTranscript(testOSUser, name, userLine("earlier", "2026-09-16T10:00:00Z"),
 		assistantLine("the previous turn's answer", "2026-09-16T10:00:01Z"))
+	// The lobby's mod is connected with nothing open: it is what stamps the
+	// state these tests drive. A session with no mod is followed from its
+	// transcript instead (modlessState).
+	h.sessions.setDialog(testOSUser, name, nil)
 }
 
 // A whole turn, through the API a caller sees.
@@ -747,6 +751,8 @@ func TestTurnMarksHistoryUnderTheNameTheSessionHasNow(t *testing.T) {
 	h.sessions.setTranscript(testOSUser, "agent-work",
 		userLine("the turn before", "2026-09-16T10:00:00Z"),
 		assistantLine("THE PREVIOUS ANSWER", "2026-09-16T10:00:01Z"))
+	// The mod is connected: its "done" is the stale state under test.
+	h.sessions.setDialog(testOSUser, "agent-work", nil)
 	// Room for the watcher to poll while the test holds the turn open, rather
 	// than failing the task for a turn that never visibly started.
 	h.srv.StartGrace = 5 * time.Second
