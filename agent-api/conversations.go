@@ -246,7 +246,7 @@ func (s *Server) createConversation(c *call) (any, error) {
 		OSUser:  c.id.OSUser,
 		Name:    name,
 		Dir:     cwd,
-		Command: []string{claudeCommandLine(s.ClaudeBin, req, sessionID)},
+		Command: []string{claudeCommandLine(s.ClaudeBin, req, sessionID, s.uploadsDir(c.id.OSUser))},
 		// The credential's name, so the lobby can say WHICH caller opened
 		// this rather than only that a person did not. On a bearer request
 		// authuser puts that name in Identity.Header; it is never the token.
@@ -327,14 +327,35 @@ func (s *Server) createConversation(c *call) (any, error) {
 // is on the request and "plan" is the useful one.
 const defaultPermissionMode = "bypassPermissions"
 
+// callerSettings is passed with --settings, which outranks the user's own
+// settings.json, to turn agent teams off in every session this service starts.
+//
+// With teams on, Claude Code 2.1.287 answered "start a background subagent"
+// with a TEAMMATE (toolUseResult status "teammate_spawned"). A teammate goes
+// idle and wakes on messages for the life of the session, and no record marks
+// it finished, so a turn waiting on one cannot tell its interim words from its
+// answer: rv-r2b-bg settled on "Agent is running; ending this turn" and its
+// answer came two minutes later (measured live on 2026-10-02). With teams off
+// the Agent tool only launches subagents, whose <task-notification> this
+// service already follows (backgroundOutstanding).
+const callerSettings = `{"env":{"CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS":"0"}}`
+
 // sessionID is pinned with --session-id, so the transcript is
 // <projects>/<slug of cwd>/<sessionID>.jsonl from the first line. tmux-api's
 // suspend swaps it for --resume when it puts the session back, because Claude
 // refuses the two together.
-func claudeCommandLine(bin string, req createRequest, sessionID string) string {
+//
+// uploads is the caller's clipboard store, given to Claude as a working
+// directory (--add-dir) so reading the files a message carries never raises a
+// permission prompt. "" leaves it out.
+func claudeCommandLine(bin string, req createRequest, sessionID, uploads string) string {
 	args := []string{bin}
 	if sessionID != "" {
 		args = append(args, "--session-id", sessionID)
+	}
+	args = append(args, "--settings", callerSettings)
+	if uploads != "" {
+		args = append(args, "--add-dir", uploads)
 	}
 	if req.PermissionMode == "" {
 		req.PermissionMode = defaultPermissionMode

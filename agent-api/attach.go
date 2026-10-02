@@ -28,6 +28,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -97,6 +98,33 @@ func (s *Server) storeRoot() string {
 		return s.StoreRoot
 	}
 	return clipstore.DefaultRoot
+}
+
+// uploadsDir is the caller's directory in the store, which holds every
+// session's subdirectory under whatever name it has now. A session gets the
+// whole of it as a working directory rather than its own subdirectory,
+// because tmux-api's title rename moves that subdirectory during the first
+// turn and leaves a link under the old name (renameImageDir): a Read waiting
+// on a permission prompt while it moved was refused as a changed symlink
+// (rv-r2ui-i/j/k, measured live on 2026-10-02). The user's directory is never
+// renamed, and every path handed out resolves inside it before and after.
+//
+// Created here because Claude refuses a working directory that does not
+// exist, and a user's first conversation can come before their first paste.
+// "" when it cannot be made: the session then starts without it and a Read of
+// an upload asks, which is how every session behaved before.
+func (s *Server) uploadsDir(osUser string) string {
+	if !clipstore.SessionNameRe.MatchString(osUser) {
+		return ""
+	}
+	dir := filepath.Join(s.storeRoot(), osUser)
+	// 0755 for the same reason OpenStoreDir gives a session directory 0755
+	// (ADR-0005).
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		logf("agent-api: cannot create the store directory %s (%v); reading an upload will ask permission", dir, err)
+		return ""
+	}
+	return dir
 }
 
 func tooLarge(format string, args ...any) error {

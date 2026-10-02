@@ -700,7 +700,7 @@ func TestListFormatCarriesTheSuspendMark(t *testing.T) {
 // is nobody at the pane, so an ask is not a refusal, it is a hang: the turn
 // never finishes and the caller sees no reason.
 func TestOmittingPermissionModeGivesBypass(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID)
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "")
 	if !strings.Contains(got, "--permission-mode bypassPermissions") {
 		t.Fatalf("command line %q, want --permission-mode bypassPermissions", got)
 	}
@@ -710,7 +710,7 @@ func TestOmittingPermissionModeGivesBypass(t *testing.T) {
 // matters: look without touching, on a box where the default now touches.
 func TestAnExplicitPermissionModeWins(t *testing.T) {
 	for _, m := range []string{"plan", "default", "acceptEdits", "bypassPermissions"} {
-		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m}, testSessionID)
+		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m}, testSessionID, "")
 		if !strings.Contains(got, "--permission-mode "+m) {
 			t.Errorf("mode %q: command line %q did not carry it", m, got)
 		}
@@ -736,7 +736,7 @@ func TestTheDocumentDeclaresTheBypassDefault(t *testing.T) {
 // Appended, not replacing: the Claude Code preset is most of what makes the
 // agent useful, and --system-prompt would throw it away.
 func TestEverySessionCarriesTheAgentRules(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID)
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, "")
 	if !strings.Contains(got, "--append-system-prompt-file") &&
 		!strings.Contains(got, "--append-system-prompt ") {
 		t.Fatal("no system prompt was appended")
@@ -822,7 +822,10 @@ func TestCreatePinsTheClaudeSessionAndStampsItsTranscript(t *testing.T) {
 // checking. The session id has its own test above.
 func stripRules(cmd string) string {
 	cmd = regexp.MustCompile(` --session-id [0-9a-f-]{36}`).ReplaceAllString(cmd, "")
-	for _, flag := range []string{" --append-system-prompt-file ", " --append-system-prompt "} {
+	// --settings and --add-dir are asserted on their own too, in
+	// TestCallerSessionsRunWithoutAgentTeams and
+	// TestCallerSessionsReadTheirOwnUploadsWithoutAsking.
+	for _, flag := range []string{" --append-system-prompt-file ", " --append-system-prompt ", " --settings ", " --add-dir "} {
 		i := strings.Index(cmd, flag)
 		if i < 0 {
 			continue
@@ -837,7 +840,133 @@ func stripRules(cmd string) string {
 		} else if j := strings.Index(rest, " "); j >= 0 {
 			end = j
 		}
-		return cmd[:i] + rest[end:]
+		cmd = cmd[:i] + rest[end:]
 	}
 	return cmd
+}
+
+// shellWords splits a command line built by claudeCommandLine back into its
+// arguments: plain words, and single-quoted runs joined by the '\” escape.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	var out []string
+	var cur strings.Builder
+	inWord, inQuote := false, false
+	for i := 0; i < len(line); i++ {
+		ch := line[i]
+		switch {
+		case inQuote && ch == '\'':
+			inQuote = false
+		case inQuote:
+			cur.WriteByte(ch)
+		case ch == '\'':
+			inQuote, inWord = true, true
+		case ch == '\\' && i+1 < len(line):
+			i++
+			cur.WriteByte(line[i])
+			inWord = true
+		case ch == ' ':
+			if inWord {
+				out = append(out, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		default:
+			cur.WriteByte(ch)
+			inWord = true
+		}
+	}
+	if inQuote {
+		t.Fatalf("unterminated quote in %q", line)
+	}
+	if inWord {
+		out = append(out, cur.String())
+	}
+	return out
+}
+
+// flagValue returns the value after the first occurrence of flag.
+func flagValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
+
+// Measured live on 2026-10-02 (rv-r2ui-i/j/k, acceptEdits): a first message
+// with files raised a permission prompt for Claude's Read of its own upload,
+// because the store sits outside the working directory. Answering it took
+// long enough for the title rename to move the directory under the pending
+// Read, which Claude then refused as a changed symlink, and asked again. The
+// caller's whole store is added as a working directory, so reading an upload
+// never asks, in any permission mode, under whatever name the session has
+// moved to since.
+func TestCallerSessionsReadTheirOwnUploadsWithoutAsking(t *testing.T) {
+	for _, mode := range []string{"", "default", "acceptEdits", "plan", "bypassPermissions"} {
+		t.Run("mode="+mode, func(t *testing.T) {
+			h := newHarness(t)
+			cwd := filepath.Join(h.homeBase, testOSUser, "code")
+			body := `{"cwd":` + jsonString(cwd)
+			if mode != "" {
+				body += `,"permission_mode":` + jsonString(mode)
+			}
+			h.decodeJSON(h.call("POST", "/v1/conversations", body+`}`), http.StatusCreated, nil)
+
+			args := shellWords(t, h.sessions.createCalls()[0].Command[0])
+			got, ok := flagValue(args, "--add-dir")
+			want := filepath.Join(h.srv.StoreRoot, testOSUser)
+			if !ok || got != want {
+				t.Fatalf("--add-dir %q (present %v), want %q in %q", got, ok, want, args)
+			}
+			// Claude refuses a working directory that does not exist, and a
+			// user's first conversation may come before their first paste.
+			if fi, err := os.Stat(want); err != nil || !fi.IsDir() {
+				t.Fatalf("the store directory %s was not created: %v", want, err)
+			}
+		})
+	}
+}
+
+// Every file a message writes lands inside the directory the session was
+// given, under the name the session has at that moment.
+func TestUploadPathsSitInsideTheAddedDirectory(t *testing.T) {
+	h := uploadHarness(t)
+	w := h.postMultipart("c1", textPart("look"), filePart("note.txt", "text/plain", []byte("OTTER-19")))
+	if w.Code != http.StatusAccepted && w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body.String())
+	}
+	prompt := h.promptOnce()
+	added := filepath.Join(h.srv.StoreRoot, testOSUser) + string(filepath.Separator)
+	if !strings.Contains(prompt, added) {
+		t.Fatalf("prompt %q names no file under %s", prompt, added)
+	}
+}
+
+// Measured live on 2026-10-02 (rv-r2b-bg, Claude Code 2.1.287): asked for a
+// background subagent, Claude started an agent-team TEAMMATE instead, whose
+// launch answers status "teammate_spawned" and whose end no record marks.
+// The task settled on "Agent is running; ending this turn" while the real
+// answer came two minutes later. A Caller session has nobody to manage a team
+// for it, so agent teams are off and the Agent tool only launches subagents,
+// whose completion notices this service already follows.
+func TestCallerSessionsRunWithoutAgentTeams(t *testing.T) {
+	args := shellWords(t, claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID, ""))
+	raw, ok := flagValue(args, "--settings")
+	if !ok {
+		t.Fatalf("no --settings in %q", args)
+	}
+	var settings struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal([]byte(raw), &settings); err != nil {
+		t.Fatalf("--settings %q is not JSON: %v", raw, err)
+	}
+	// Flag settings outrank the user's settings.json, which sets it to "1"
+	// on this box. Checked 2026-10-02 with claude -p: with "0" here the
+	// Agent tool loses its name and team_name parameters.
+	if v, ok := settings.Env["CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS"]; !ok || v != "0" {
+		t.Fatalf("CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = %q (set %v), want \"0\"", v, ok)
+	}
 }

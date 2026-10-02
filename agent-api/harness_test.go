@@ -110,6 +110,10 @@ func newHarness(t *testing.T) *harness {
 		HomeBase:  base,
 		ClaudeBin: "/usr/local/bin/claude",
 		Now:       h.now,
+		// Never the real store: creating a conversation makes the caller's
+		// store directory, and this box's tests run as the account that owns
+		// /var/lib/clipboard-store.
+		StoreRoot: t.TempDir(),
 		// Fast enough that a turn test finishes in milliseconds, slow enough
 		// that a poll loop does not spin.
 		PollInterval: time.Millisecond,
