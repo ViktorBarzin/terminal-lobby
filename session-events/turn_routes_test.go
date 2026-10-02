@@ -189,7 +189,7 @@ func turnMux(t *testing.T, f *fakeTurns) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
 	mux.HandleFunc("POST /cancel/{session}", handleCancel(rg, f))
-	mux.HandleFunc("POST /model/{session}", handleModel(rg, f))
+	mux.HandleFunc("POST /model/{session}", handleModel(f))
 	return mux
 }
 

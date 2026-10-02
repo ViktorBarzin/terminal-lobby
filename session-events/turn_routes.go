@@ -481,7 +481,7 @@ type modelDriver interface {
 // (sessionio/setmodel.go, sessionio/pi.go). The reply is what the session
 // reports AFTERWARDS, not an echo of the request: a change can be refused
 // silently, and the caller has to be able to see that it was.
-func handleModel(rg *registry, drv modelDriver) http.HandlerFunc {
+func handleModel(drv modelDriver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		osUser, session := osUserFrom(r.Context()), r.PathValue("session")
 		var body struct {
@@ -568,23 +568,6 @@ func handleModel(rg *registry, drv modelDriver) http.HandlerFunc {
 		// pane, for a pi running without the extension, which stamps nothing.
 		if h == sessionio.HarnessPi && (state == sessionio.StateAwaiting || drv.PiTrustPending(osUser, session)) {
 			http.Error(w, "the session is asking something — answer it first", http.StatusConflict)
-			return
-		}
-		// Claude switches through its mod's `/model` and `/effort` (ADR-0036)
-		// rather than by driving the picker. The reply is the pair asked for;
-		// the session's own model marker follows on the stream with its next
-		// turn.
-		if c := rg.mods.conn(osUser, session); c != nil && h == sessionio.HarnessClaude {
-			ack, err := c.send(r.Context(), modCommand{Op: "model", Model: body.Model, Effort: body.Effort})
-			if err != nil || !ack.OK {
-				http.Error(w, "the session's Claude did not switch", http.StatusBadGateway)
-				return
-			}
-			events.Emit("claude.model_set", osUser, telemetry.Attrs{
-				"tl.session": session, "tl.tool": body.Tool,
-				"tl.model": body.Model, "tl.effort": body.Effort, "tl.client": "mod",
-			})
-			writeJSON(w, sessionio.ModelState{Model: body.Model, Effort: body.Effort})
 			return
 		}
 		st, err := drv.SetModel(r.Context(), osUser, session, h,

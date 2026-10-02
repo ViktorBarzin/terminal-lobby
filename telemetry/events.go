@@ -70,9 +70,17 @@ var knownEvents = map[string]bool{
 	// A question the PermissionRequest hook held for the card (ADR-0034):
 	// tl.outcome is held when it begins, then answered, terminal, hung-up,
 	// replaced, gone, expired or already; tl.questions and tl.held_ms.
-	"question.hold":    true,
-	"session.detached": true,
-	"session.renamed":  true,
+	// Retired with the hook on 2026-10-02 (ADR-0036); kept so the series
+	// stays queryable.
+	"question.hold": true,
+	// A Claude's mod said hello to session-events (ADR-0036): tl.version is
+	// the CLI's, tl.mod the mod's, tl.history whether its log was rebuilt.
+	"mod.hello": true,
+	// session-events restarted a Claude that predates the mod, on the same
+	// conversation, once it was safe to (ADR-0036).
+	"mod.rollout_restart": true,
+	"session.detached":    true,
+	"session.renamed":     true,
 	// A title someone chose, replacing whatever the session had. Emitted
 	// server-side at POST /sessions/{n}/title, so tl.client says which surface
 	// asked. One arriving soon after a session.autonamed is how a rejected

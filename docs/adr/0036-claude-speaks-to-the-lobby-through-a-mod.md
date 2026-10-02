@@ -26,7 +26,7 @@ pi and codex sessions are unchanged. Mods exist only in Claude Code.
 | `claude-se-hook question` holding AskUserQuestion (ADR-0034) | The mod races the drawn dialog against the web answer |
 | 2 s pane scrape for plan and permission dialogs | `tool.check` reports them before they draw |
 | Key injection to approve a plan or a permission prompt | The mod draws its own dialog and races it against the web answer |
-| Key injection to send a prompt, interrupt, or pick a model | `$.prompt.submit`, `$.turn.abort`, `$.command.run` |
+| Key injection to send a prompt or interrupt | `$.prompt.submit`, `$.turn.abort` |
 | A nested `claude -p` firing hooks against its parent's pane | A non-interactive Claude's mod stays inert |
 
 ## Decisions
@@ -112,11 +112,11 @@ arrive in order. Every event has `type` and `t` (epoch ms).
 
 | type | fields | from |
 |---|---|---|
-| `history` | `messages` (as `$.session.messages()` returns them) | answer to hello |
+| `history` | `messages` (as `$.session.messages()` returns them), `running` (a main-thread turn is in flight) | answer to hello |
 | `row` | `uuid`, `door`, `origin`, `agentId?`, `message` {`type`, `name?`, `role?`, `isMeta?`, `content`} | `session.append` |
 | `result` | `toolId`, `tool`, `agentId?`, `result`, `text`, `isError?` | `tool.call` after `next` |
 | `turn_start` | `turnId`, `agentId?`, `text?` | `turn.start` |
-| `delta` | `turnId`, `agentId?`, `index`, `kind` (`text`/`thinking`), `text` | `turn.step` |
+| `delta` | `turnId`, `agentId?`, `step` (the request in the turn), `index` (the block in the response), `kind` (`text`/`thinking`), `text` | `turn.step` |
 | `turn_end` | `turnId`, `agentId?`, `aborted`, `answer?`, `usage?`, `durationMs?` | `turn.complete` |
 | `prompt` | `text`, `origin` | `prompt.submit` |
 | `ask` | `toolId`, `questions` | `tool.call` on AskUserQuestion |
@@ -139,7 +139,7 @@ Held for up to 25 s. Answer: `{"commands": [ … ]}`, possibly empty.
 |---|---|---|
 | `prompt` | `id`, `text` | `$.prompt.submit({text, asUser: true})` |
 | `abort` | `id` | `$.turn.abort` on the running main-thread turn |
-| `answer` | `id`, `toolId`, `answers`, `annotations?` | resolves AskUserQuestion with `{result}` |
+| `answer` | `id`, `toolId`, `answers` or `chat`, `annotations?` | resolves AskUserQuestion with `{result}`, or with `{deny: chat}` for "Chat about this" |
 | `decide` | `id`, `toolId`, `decision` (`allow`/`deny`), `reason?` | resolves a held `tool.check` |
 | `model` | `id`, `model`, `effort?` | `$.command.run({command: "model", args})`, then `effort` |
 | `history` | `id` | sends a fresh `history` event |
@@ -147,21 +147,47 @@ Held for up to 25 s. Answer: `{"commands": [ … ]}`, possibly empty.
 Every command is answered with an `ack` event.
 
 ## Consequences
-
-- `claude-tmux-state` and `claude-se-hook` leave Claude's managed hooks. pi still
-  calls `claude-tmux-state` from its extension, so the script stays installed.
-- The permission-mode chip still walks Shift+Tab through the pane: no mod API
-  sets the live permission mode.
+- `claude-tmux-state` and `claude-se-hook` leave Claude's managed hooks, except
+  SessionEnd, which keeps `claude-tmux-state clear`: it records a deliberate
+  exit for tl-session-watch, which nothing in the mod can write for another
+  user. pi still calls `claude-tmux-state` from its extension, so the script
+  stays installed.
+- The permission-mode chip still walks Shift+Tab through the pane. The spike
+  measured `$.config.set({key: "permissionMode"})` writing only the default for
+  new sessions and leaving the live mode alone.
+- The model chip still drives Claude's `/model` picker through the pane. The
+  mod's `model` command works, but `/model` asks Claude's own "Switch model?"
+  once a conversation is cached, which only the terminal can answer, so the
+  route does not use it.
 - Prompts sent from the web show in the pane as "Prompt from the terminal-lobby
   plugin" followed by the text, and a prompt sent mid-turn waits for the turn to
-  end instead of being folded into it.
-- If session-events is down, the mod keeps retrying hello every few seconds and
-  Claude itself is unaffected.
+  end instead of being folded into it. Stop does not hand queued prompts back:
+  no mod API takes them off Claude's queue.
+- If session-events is down, the mod keeps retrying hello with backoff and
+  Claude itself is unaffected; what happened meanwhile is delivered in order
+  once it is back.
+- Mods were served off by a rollout switch for some Claude processes on this
+  box even on 2.1.287 (measured 2026-10-02 by the mod's live test), and loaded
+  once `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` was in Claude's environment. The
+  managed settings set it.
+- A reload of the mod can take a module away with a command in hand. A newer
+  hello supersedes the older token, whose polls are refused, and commands that
+  were handed out but never acked go to the module that says hello next. The
+  mod ignores a command id it has already run.
+- Pressing Esc on the mod's own dialog lets Claude draw its native prompt, which
+  the web cannot answer; the card goes away and the terminal answers it.
+
+## What the live test settled
+
+- `$.ui.ask` can be taken down. It runs as an AskUserQuestion tool call that
+  passes through the mod's own `tool.call` hook, so the mod races its own
+  dialog and returns the web's answer as the result. The dialog leaves the
+  screen at once.
 
 ## Open questions
 
-- Whether `$.ui.ask` can be taken down when the web answers first. If it cannot,
-  the mod's dialog stays drawn until someone presses a key, and the key is then
-  ignored.
 - How a mod built against 2.1.287's types behaves on the next Claude release;
+  the API is marked as moving between releases.
+- Whether subagent events render well in the Text view: the wire carries them
+  and the unit tests cover them, but the live test did not run a subagent.
   the API is marked as moving between releases.

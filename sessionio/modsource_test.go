@@ -2,20 +2,25 @@ package sessionio
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 )
 
-// modRow builds a session.append row the way the mod forwards it.
+var modRowN int
+
+// modRow builds a session.append row the way the mod forwards it, each with a
+// uuid of its own.
 func modRow(t *testing.T, typ, role, door string, content any) ModEvent {
 	t.Helper()
 	b, err := json.Marshal(content)
 	if err != nil {
 		t.Fatal(err)
 	}
+	modRowN++
 	return ModEvent{
-		Type: ModRowEvent, T: 1790900000000, UUID: "u-" + door, Door: door,
+		Type: ModRowEvent, T: 1790900000000, UUID: fmt.Sprintf("u-%s-%d", door, modRowN), Door: door,
 		Message: &ModMessage{Type: typ, Role: role, Content: b},
 	}
 }
@@ -63,6 +68,16 @@ func TestModFeedTurnFromPromptToTurnEnd(t *testing.T) {
 	}
 	if got[0].At != 1790900000000 {
 		t.Errorf("At = %d, want the mod's timestamp", got[0].At)
+	}
+}
+
+func TestModFeedDropsARowItAlreadyHas(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	row := modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "once"}})
+	fs.Feed(row)
+	fs.Feed(row)
+	if got := modKinds(fs.Replay(0)); len(got) != 1 {
+		t.Fatalf("a re-sent row was logged twice: %v", got)
 	}
 }
 
@@ -150,6 +165,17 @@ func TestModFeedQueuedPromptWhileTurnRuns(t *testing.T) {
 	want := "user,meta:queued,turn_end,meta:unqueued,user"
 	if strings.Join(got, ",") != want {
 		t.Fatalf("kinds = %v, want %s", got, want)
+	}
+}
+
+// A prompt the mod submitted is reported when its turn starts, after the row
+// that opened the turn: it is that turn's prompt, not one waiting behind it.
+func TestModFeedTheTurnsOwnPromptIsNotQueued(t *testing.T) {
+	fs := NewModSource("s", "", nil)
+	fs.Feed(modRow(t, "user", "user", "prompt", []map[string]any{{"type": "text", "text": "from the lobby"}}))
+	fs.Feed(ModEvent{Type: ModPromptEvent, Text: "from the lobby", Origin: json.RawMessage(`{"kind":"plugin"}`)})
+	if got := modKinds(fs.Replay(0)); strings.Join(got, ",") != "user" {
+		t.Fatalf("kinds = %v, want the prompt alone", got)
 	}
 }
 

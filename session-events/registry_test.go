@@ -269,6 +269,44 @@ func TestPollHandsOverACommandAndTheAckReachesTheSender(t *testing.T) {
 	}
 }
 
+// A reload takes the module that held a poll away. Its token is superseded, so
+// its poll is refused, and a command it took but never acked goes to the
+// module that says hello next.
+func TestACommandTheReloadedModuleTookGoesToTheNextOne(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	old, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	acked := make(chan modAck, 1)
+	go func() {
+		a, _ := c.send(context.Background(), modCommand{Op: "abort"})
+		acked <- a
+	}()
+	poll := func(tok string) (int, []modCommand) {
+		rec := httptest.NewRecorder()
+		rg.mods.handlePoll()(rec, httptest.NewRequest("GET", "/mod/v1/poll?token="+tok, nil))
+		var body struct {
+			Commands []modCommand `json:"commands"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &body)
+		return rec.Code, body.Commands
+	}
+	if code, cmds := poll(old); code != 200 || len(cmds) != 1 {
+		t.Fatalf("first poll: %d %+v", code, cmds)
+	}
+	fresh, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	if code, _ := poll(old); code != http.StatusConflict {
+		t.Fatalf("the superseded token's poll: %d, want 409", code)
+	}
+	code, cmds := poll(fresh)
+	if code != 200 || len(cmds) != 1 || cmds[0].Op != "abort" {
+		t.Fatalf("the new module was not sent the unacked command: %d %+v", code, cmds)
+	}
+	c.apply([]sessionio.ModEvent{{Type: sessionio.ModAckEvent, ID: cmds[0].ID, OK: true}})
+	if a := <-acked; !a.OK {
+		t.Fatalf("ack = %+v", a)
+	}
+}
+
 func TestPollAndEventsRefuseAnUnknownToken(t *testing.T) {
 	rg, _ := newTestRegistry(t)
 	rec := httptest.NewRecorder()
@@ -370,6 +408,25 @@ func TestAPermissionPromptIsDecidedThroughTheMod(t *testing.T) {
 	c.apply([]sessionio.ModEvent{{Type: sessionio.ModSettledEvent, ToolID: "toolu_b", By: "web"}})
 	if resp, _ := answered(t, c, sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Option: 1}}); resp.Reason != sessionio.AnswerNotDrawn {
 		t.Fatalf("answering a settled prompt: %+v", resp)
+	}
+}
+
+// The mod draws its own Allow / Deny dialog as an AskUserQuestion call of its
+// own. That call must not turn the permission card into a question card.
+func TestTheModsOwnDialogIsNotAQuestion(t *testing.T) {
+	rg, opts := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{
+		{Type: sessionio.ModPermissionEvent, ToolID: "toolu_01b", Tool: "Bash", Input: json.RawMessage(`{"command":"ls"}`)},
+		{Type: sessionio.ModAskEvent, ToolID: "toolu_plugin_530e", Questions: json.RawMessage(`[{"question":"Allow Bash: ls?","options":[{"label":"Allow"},{"label":"Deny"}]}]`)},
+		{Type: sessionio.ModSettledEvent, ToolID: "toolu_plugin_530e", By: "web"},
+	})
+	if d := c.dialogNow(); d == nil || d.kind != "permission" {
+		t.Fatalf("dialog = %+v, want the permission prompt", d)
+	}
+	if ask, _ := opts.Option("wizard", "demo", sessionio.OptionAsk); ask != "toolu_01b" {
+		t.Fatalf("@claude_ask = %q, want the tool call waiting on permission", ask)
 	}
 }
 

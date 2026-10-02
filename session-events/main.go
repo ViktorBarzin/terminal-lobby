@@ -289,7 +289,7 @@ func main() {
 
 	// Which model the session answers on, and how hard it thinks, applied to a
 	// running session through the harness's own commands (turn_routes.go).
-	web.HandleFunc("POST /model/{session}", handleModel(rg, injector))
+	web.HandleFunc("POST /model/{session}", handleModel(injector))
 
 	// The browser a session's agent drives (browser.go, ADR-0035): its state,
 	// and a WebSocket relaying the viewer protocol to the host's socket. Attach

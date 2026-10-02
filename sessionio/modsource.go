@@ -161,6 +161,14 @@ type modState struct {
 	size    int
 	queued  []string // prompts typed while a turn ran, oldest first
 	model   ModelState
+	// rows are the uuids already in the log. A mod re-sends a batch after a
+	// failed request and history after a fresh hello, so a row can arrive
+	// twice.
+	rows map[string]bool
+	// opened is the text of the prompt row that opened the current turn. A
+	// prompt the mod submitted itself is reported when its turn starts, after
+	// its row, and must not then read as one waiting behind that same turn.
+	opened string
 }
 
 // NewModSource builds a source fed by the mod. transcript is the file Claude
@@ -170,7 +178,7 @@ func NewModSource(session, transcript string, r Reader) *FileSource {
 	f := NewFileSourceWith(session, transcript, time.Second, r)
 	// Every id this log assigns is its own: nothing replays a mod stream.
 	f.diverged = true
-	f.mod = &modState{pending: map[string]modResult{}, full: map[string]string{}}
+	f.mod = &modState{pending: map[string]modResult{}, full: map[string]string{}, rows: map[string]bool{}}
 	return f
 }
 
@@ -222,6 +230,15 @@ func (f *FileSource) feedRow(ev ModEvent) {
 	if ev.Message == nil {
 		return
 	}
+	if ev.UUID != "" {
+		f.mu.Lock()
+		seen := f.mod.rows[ev.UUID]
+		f.mod.rows[ev.UUID] = true
+		f.mu.Unlock()
+		if seen {
+			return
+		}
+	}
 	rec := Record{
 		Type:        RecordType(ev.Message.Type),
 		IsMeta:      ev.Message.IsMeta,
@@ -251,6 +268,7 @@ func (f *FileSource) feedRow(ev ModEvent) {
 	if ev.Door == "prompt" && rec.Role() == "user" && ev.AgentID == "" {
 		text := strings.TrimSpace(rec.Text())
 		f.mu.Lock()
+		f.mod.opened = text
 		for i, q := range f.mod.queued {
 			if q == text {
 				f.mod.queued = append(f.mod.queued[:i], f.mod.queued[i+1:]...)
@@ -321,6 +339,10 @@ func (f *FileSource) feedPrompt(ev ModEvent) {
 		return
 	}
 	f.mu.Lock()
+	if text == f.mod.opened {
+		f.mu.Unlock()
+		return
+	}
 	f.mod.queued = append(f.mod.queued, text)
 	f.mu.Unlock()
 	f.appendLive(Event{Kind: KindMeta, Meta: MetaQueued, Body: text, TurnID: f.TurnID(), At: ev.T})

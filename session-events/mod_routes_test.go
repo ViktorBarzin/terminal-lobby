@@ -22,7 +22,7 @@ func modTurnMux(t *testing.T, f *fakeTurns) (*registry, http.Handler) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /prompt/{session}", handlePrompt(rg, f))
 	mux.HandleFunc("POST /cancel/{session}", handleCancel(rg, f))
-	mux.HandleFunc("POST /model/{session}", handleModel(rg, f))
+	mux.HandleFunc("POST /model/{session}", handleModel(f))
 	return rg, mux
 }
 
@@ -145,23 +145,6 @@ func TestStopGoesThroughTheMod(t *testing.T) {
 	}
 	if f.called("Cancel") || f.called("CancelHarness") || f.called("ClearQueue") {
 		t.Fatalf("keys were sent: %q", f.calls)
-	}
-}
-
-func TestAModelSwitchGoesThroughTheMod(t *testing.T) {
-	f := &fakeTurns{}
-	rg, mux := modTurnMux(t, f)
-	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
-	sent := fakeMod(t, rg.mods.conn("wizard", "demo"))
-	rec := postTurn(t, mux, "/model/demo", `{"tool":"claude","model":"claude-sonnet-5-5","effort":"high"}`)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status %d (%s)", rec.Code, rec.Body.String())
-	}
-	if cmds := sent(); len(cmds) != 1 || cmds[0].Op != "model" || cmds[0].Model != "claude-sonnet-5-5" || cmds[0].Effort != "high" {
-		t.Fatalf("mod got %+v", cmds)
-	}
-	if f.called("SetModel") {
-		t.Fatal("the picker was driven")
 	}
 }
 

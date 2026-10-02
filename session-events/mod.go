@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,12 +104,16 @@ type modConn struct {
 	token      string
 	ls         *liveSource
 	cmds       []modCommand
-	wake       chan struct{}
-	acks       map[string]chan modAck
-	dialog     *modDialog
-	st         stampState
-	lastSeen   time.Time
-	nextID     int
+	// inflight are commands a poll has handed over and the mod has not acked.
+	// A reload can take a module away with a command in hand, so they go out
+	// again to the module that says hello next.
+	inflight map[string]modCommand
+	wake     chan struct{}
+	acks     map[string]chan modAck
+	dialog   *modDialog
+	st       stampState
+	lastSeen time.Time
+	nextID   int
 }
 
 // modHub holds every connection, by token, by Claude session and by tmux
@@ -243,7 +248,8 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	history := false
 	var retired *liveSource
 	if c == nil {
-		c = &modConn{hub: h, user: osUser, sid: b.SID, wake: make(chan struct{}, 1), acks: map[string]chan modAck{}}
+		c = &modConn{hub: h, user: osUser, sid: b.SID, wake: make(chan struct{}, 1),
+			acks: map[string]chan modAck{}, inflight: map[string]modCommand{}}
 		h.bySID[hubKey(osUser, b.SID)] = c
 		history = true
 	}
@@ -253,6 +259,23 @@ func (h *modHub) hello(osUser string, b modHello) (string, bool) {
 	}
 	c.token = newToken()
 	h.byToken[c.token] = c
+	// Commands the previous module took and never acked go to this one,
+	// ahead of anything queued since. Only those a route still waits on.
+	var again []modCommand
+	for id, cmd := range c.inflight {
+		if _, waiting := c.acks[id]; waiting {
+			again = append(again, cmd)
+		}
+	}
+	sort.Slice(again, func(i, j int) bool { return cmdSeq(again[i].ID) < cmdSeq(again[j].ID) })
+	c.inflight = map[string]modCommand{}
+	if len(again) > 0 {
+		c.cmds = append(again, c.cmds...)
+		select {
+		case c.wake <- struct{}{}:
+		default:
+		}
+	}
 	if c.session != b.Session {
 		if c.session != "" && h.bySession[hubKey(osUser, c.session)] == c {
 			delete(h.bySession, hubKey(osUser, c.session))
@@ -372,6 +395,9 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 	first := true
 	bye := false
 	for _, ev := range evs {
+		if modOwnDialog(ev) {
+			continue
+		}
 		switch ev.Type {
 		case sessionio.ModHistoryEvent:
 			fs.FeedHistory(ev.Messages, ev.Running)
@@ -411,6 +437,22 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		h.dropLocked(c)
 		h.mu.Unlock()
 	}
+}
+
+// pluginToolPrefix starts the id of a tool call a plugin made rather than the
+// model: the mod's own Allow / Deny and plan dialogs are AskUserQuestion calls
+// of this kind, drawn by $.ui.ask.
+const pluginToolPrefix = "toolu_plugin_"
+
+// modOwnDialog reports an event about the mod's own dialog. The dialog stands
+// for a plan approval or a permission prompt the session already has on the
+// wire, so it is not a question of its own.
+func modOwnDialog(ev sessionio.ModEvent) bool {
+	switch ev.Type {
+	case sessionio.ModAskEvent, sessionio.ModSettledEvent, sessionio.ModResultEvent:
+		return strings.HasPrefix(ev.ToolID, pluginToolPrefix)
+	}
+	return false
 }
 
 // mergeWrites folds b over a: a later set or unset of a name wins.
@@ -594,7 +636,8 @@ func capLines(lines []string) []string {
 // open until there is one or modPollHold passes.
 func (h *modHub) handlePoll() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		c := h.byTokenOf(r.URL.Query().Get("token"))
+		token := r.URL.Query().Get("token")
+		c := h.byTokenOf(token)
 		if c == nil {
 			http.Error(w, "unknown token", http.StatusConflict)
 			return
@@ -603,8 +646,18 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 		defer t.Stop()
 		for {
 			c.mu.Lock()
+			// A newer hello replaced this token: the module that holds it was
+			// reloaded away, and a command handed to it would never run.
+			if c.token != token {
+				c.mu.Unlock()
+				http.Error(w, "superseded by a newer hello", http.StatusConflict)
+				return
+			}
 			cmds := c.cmds
 			c.cmds = nil
+			for _, cmd := range cmds {
+				c.inflight[cmd.ID] = cmd
+			}
 			wake := c.wake
 			c.mu.Unlock()
 			if len(cmds) > 0 {
@@ -649,14 +702,23 @@ func (c *modConn) send(ctx context.Context, cmd modCommand) (modAck, error) {
 	case <-t.C:
 		c.mu.Lock()
 		delete(c.acks, cmd.ID)
+		delete(c.inflight, cmd.ID)
 		c.mu.Unlock()
 		return modAck{}, context.DeadlineExceeded
 	case <-ctx.Done():
 		c.mu.Lock()
 		delete(c.acks, cmd.ID)
+		delete(c.inflight, cmd.ID)
 		c.mu.Unlock()
 		return modAck{}, ctx.Err()
 	}
+}
+
+// cmdSeq is a command id's sequence number ("c12" is 12), which orders
+// commands sent again after a hello.
+func cmdSeq(id string) int {
+	n, _ := strconv.Atoi(strings.TrimPrefix(id, "c"))
+	return n
 }
 
 // deliver hands an ack to the route waiting for it. A second ack for the same
@@ -665,6 +727,7 @@ func (c *modConn) deliver(id string, a modAck) {
 	c.mu.Lock()
 	ch, ok := c.acks[id]
 	delete(c.acks, id)
+	delete(c.inflight, id)
 	c.mu.Unlock()
 	if ok {
 		ch <- a
