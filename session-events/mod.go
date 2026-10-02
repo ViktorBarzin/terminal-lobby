@@ -36,6 +36,12 @@ const modPollHold = 25 * time.Second
 // (killed, or the pane closed) without a bye.
 const modExpiry = 90 * time.Second
 
+// modLiveGap is how long a mod holding no poll can stay silent and still count
+// as connected for the agent API (modConn.alive). A live mod polls again the
+// moment a poll returns, so a gap this long means its Claude is gone, well
+// before modExpiry drops the connection.
+const modLiveGap = 10 * time.Second
+
 // modEventsLimit bounds one events request. A history event carries a whole
 // conversation's text, which runs to megabytes on a long session.
 const modEventsLimit = 64 << 20
@@ -127,6 +133,24 @@ type modConn struct {
 	st       stampState
 	lastSeen time.Time
 	nextID   int
+	// polls is how many of this mod's polls are held right now. A poll ends
+	// with its connection when the Claude dies, so a held poll is the one
+	// reading that says the process is still there.
+	polls int
+}
+
+// alive reports whether the mod is still there to keep the session's state
+// current: a poll is held, or it was heard from within modLiveGap.
+//
+// Registered is not enough. Measured live on 2026-10-02 (rv-par-6): the idle
+// sweep killed a Claude, its mod said a last hello on the way out, and the
+// connection stayed registered for over a minute while the resumed Claude in
+// the same session had no mod at all. The agent API read that as a mod with
+// nothing open and trusted the stale "done" the resume put back.
+func (c *modConn) alive(now time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.polls > 0 || now.Sub(c.lastSeen) < modLiveGap
 }
 
 // modHub holds every connection, by token, by Claude session and by tmux
@@ -871,6 +895,19 @@ func (h *modHub) handlePoll() http.HandlerFunc {
 			http.Error(w, "unknown token", http.StatusConflict)
 			return
 		}
+		c.mu.Lock()
+		c.polls++
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			c.polls--
+			// A poll answered is a mod about to poll again; one that ended
+			// with its connection is not heard from, so alive lapses.
+			if r.Context().Err() == nil {
+				c.lastSeen = h.now()
+			}
+			c.mu.Unlock()
+		}()
 		t := time.NewTimer(modPollHold)
 		defer t.Stop()
 		for {

@@ -1,12 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -129,4 +132,59 @@ func TestTheAnswerRouteAnswersTheNamedDialog(t *testing.T) {
 	if rec := serve(mux, internalReq("POST", "/internal/v1/answer/wizard/nosuch", `{"toolId":"toolu_b","permission":{"option":1}}`)); rec.Code != http.StatusNotFound {
 		t.Fatalf("a session with no mod: %d, want 404", rec.Code)
 	}
+}
+
+// Measured live on 2026-10-02 (rv-par-6): the idle sweep killed a Claude, its
+// mod said one last hello on the way out, and the connection stayed registered
+// for up to modExpiry after the process was gone. The resumed Claude had no
+// mod, but this route answered 204 ("a mod with nothing open") for it, so the
+// agent API trusted the stale "done" the resume put back and failed a 45 s
+// turn 18 s in. A mod holding no poll and silent past modLiveGap is gone.
+func TestTheDialogRouteSaysNoModOnceTheModHasGoneQuiet(t *testing.T) {
+	rg, _, mux := internalMux(t, true)
+	var mu sync.Mutex
+	clock := time.Now()
+	rg.mods.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return clock }
+	advance := func(d time.Duration) { mu.Lock(); clock = clock.Add(d); mu.Unlock() }
+	code := func() int {
+		return serve(mux, internalReq("GET", "/internal/v1/dialog/wizard/demo", "")).Code
+	}
+	token, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	if got := code(); got != http.StatusNoContent {
+		t.Fatalf("a mod that just said hello: %d, want 204", got)
+	}
+
+	// A held poll is a live mod, however long it has been held.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r := httptest.NewRequest("GET", "/mod/v1/poll?token="+token, nil).WithContext(ctx)
+		rg.mods.handlePoll()(httptest.NewRecorder(), r)
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for !rg.mods.conn("wizard", "demo").alive(rg.mods.now()) || pollsOf(rg.mods.conn("wizard", "demo")) == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the poll never registered")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	advance(2 * modLiveGap)
+	if got := code(); got != http.StatusNoContent {
+		t.Fatalf("a mod holding a poll: %d, want 204", got)
+	}
+
+	// The process dies: its poll ends with the connection, and nothing more
+	// is heard from it.
+	cancel()
+	<-done
+	if got := code(); got != http.StatusNotFound {
+		t.Fatalf("a mod whose poll ended with its connection, silent for %s: %d, want 404", 2*modLiveGap, got)
+	}
+}
+
+func pollsOf(c *modConn) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.polls
 }

@@ -128,7 +128,7 @@ func (d *modDialog) internal() internalDialog {
 func (rg *registry) handleInternalDialog() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c := rg.mods.connFollow(r.Context(), r.PathValue("user"), r.PathValue("session"))
-		if c == nil {
+		if c == nil || !c.alive(rg.mods.now()) {
 			http.Error(w, "no mod for that session", http.StatusNotFound)
 			return
 		}
@@ -152,7 +152,7 @@ func (rg *registry) handleInternalAnswer() http.HandlerFunc {
 			return
 		}
 		c := rg.mods.connFollow(r.Context(), osUser, session)
-		if c == nil {
+		if c == nil || !c.alive(rg.mods.now()) {
 			http.Error(w, "no mod for that session", http.StatusNotFound)
 			return
 		}
