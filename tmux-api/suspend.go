@@ -110,12 +110,12 @@ const (
 	// resumeCmdOption is the argv respawn-pane will run, shell-quoted by
 	// shellQuoteArgv and read back by shellSplitArgv. Quoted rather than stored
 	// as a list because an option is one string and an operator reads this one.
-	resumeCmdOption = "@tl_resume_cmd"
+	resumeCmdOption = sessionio.OptionResumeCmd
 	// suspendStateOption is the @claude_state the session had when it was
 	// suspended, put back on resume. Without it a resumed session would come
 	// back stateless until its next hook fired, which for a conversation
 	// waiting on an answer could be never.
-	suspendStateOption = "@tl_suspend_state"
+	suspendStateOption = sessionio.OptionSuspendState
 
 	// agentOwnerOption is agent-api's stamp, and the one option here this
 	// service only ever READS. It names the credential that opened a
@@ -378,67 +378,11 @@ func shellQuoteArgv(argv []string) string {
 	return strings.Join(parts, " ")
 }
 
-// shellSplitArgv is shellQuoteArgv's inverse. ok=false on anything it cannot
-// read — an unterminated quote, a trailing backslash — because a half-parsed
-// command is worse than no resume at all: it would respawn the pane running
-// something nobody wrote.
-func shellSplitArgv(s string) ([]string, bool) {
-	out := []string{}
-	var cur strings.Builder
-	inWord := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case isSpaceByte(c):
-			if inWord {
-				out = append(out, cur.String())
-				cur.Reset()
-				inWord = false
-			}
-		case c == '\'':
-			inWord = true
-			j := strings.IndexByte(s[i+1:], '\'')
-			if j < 0 {
-				return nil, false
-			}
-			cur.WriteString(s[i+1 : i+1+j])
-			i += j + 1
-		case c == '"':
-			inWord = true
-			i++
-			closed := false
-			for ; i < len(s); i++ {
-				if s[i] == '\\' && i+1 < len(s) {
-					i++
-					cur.WriteByte(s[i])
-					continue
-				}
-				if s[i] == '"' {
-					closed = true
-					break
-				}
-				cur.WriteByte(s[i])
-			}
-			if !closed {
-				return nil, false
-			}
-		case c == '\\':
-			if i+1 >= len(s) {
-				return nil, false
-			}
-			i++
-			inWord = true
-			cur.WriteByte(s[i])
-		default:
-			inWord = true
-			cur.WriteByte(c)
-		}
-	}
-	if inWord {
-		out = append(out, cur.String())
-	}
-	return out, true
-}
+// shellSplitArgv is shellQuoteArgv's inverse, and lives in sessionio
+// (SplitArgv) because the resume that reads the option back is shared with
+// agent-api. ok=false on anything it cannot read, because a half-parsed
+// command is worse than no resume at all.
+func shellSplitArgv(s string) ([]string, bool) { return sessionio.SplitArgv(s) }
 
 // ---------------------------------------------------------------------------
 // Reading the process tree.
@@ -526,26 +470,10 @@ func procRSSPages(procDir string, pid int) (int64, bool) {
 }
 
 // transcriptProbeCommand is the shell test if-shell runs to answer whether a
-// transcript stamp names a file there is something to resume from.
-//
-// `-f` as well as `-s`, because `test -s` is true for a directory (measured on
-// this box), and a directory is not a conversation. The path is single-quoted
-// with the standard `'\”` escape: it comes from the session's own
-// @claude_transcript stamp, which SessionMap.Get has already confined to that
-// user's projects root, but the directory component is derived from a working
-// directory and a quote in one must not become shell syntax.
-func transcriptProbeCommand(path string) string {
-	q := "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
-	return "test -f " + q + " && test -s " + q
-}
-
-// transcriptProbeYes and transcriptProbeNo are what if-shell prints back. Two
-// distinct words rather than a truthy test, so a tmux error that produces no
-// output cannot read as yes.
-const (
-	transcriptProbeYes = "tl-transcript-yes"
-	transcriptProbeNo  = "tl-transcript-no"
-)
+// transcript stamp names a file there is something to resume from. It lives in
+// sessionio (TranscriptProbeCommand), which has the quoting rule, because the
+// resume that runs it is shared with agent-api.
+func transcriptProbeCommand(path string) string { return sessionio.TranscriptProbeCommand(path) }
 
 // transcriptHasAConversation answers whether a transcript stamp names a file
 // there is actually something to resume.
@@ -576,17 +504,7 @@ const (
 //
 // A var so tests can answer without a tmux server.
 var transcriptHasAConversation = func(osUser, path string) bool {
-	if path == "" {
-		return false
-	}
-	out, err := tmuxCmd(osUser, "if-shell", transcriptProbeCommand(path),
-		"display-message -p "+transcriptProbeYes,
-		"display-message -p "+transcriptProbeNo).Output()
-	if err != nil {
-		log.Printf("suspend: probing the transcript for %s (%q): %v", osUser, path, err)
-		return false
-	}
-	return strings.TrimSpace(string(out)) == transcriptProbeYes
+	return apiInjector().HasConversation(osUser, path)
 }
 
 // ---------------------------------------------------------------------------
