@@ -259,3 +259,19 @@ func TestAttachStampsTheClaimTime(t *testing.T) {
 			createdStampOption, flagged)
 	}
 }
+
+// The lobby starts Claude with permission checks off, as start-claude.sh and
+// a user's own override do (sessionio/setmode.go's mode walk assumes it). The
+// builtin `claude` key used to start a plain `claude`, which opens in auto
+// mode, so an account with no override (emo, 2026-10-02) got a permission
+// check on every other tool call in every new lobby session.
+func TestAttachStartsClaudeWithoutPermissionChecks(t *testing.T) {
+	for _, args := range [][]string{
+		{"bypasscase", "/tmp", "claude"},
+		{"bypasscase", "/tmp", "claude", "claude-opus-5", "max"},
+	} {
+		if got := runAttach(t, args...); !strings.Contains(got, "claude --dangerously-skip-permissions") {
+			t.Errorf("attach %v does not start Claude with --dangerously-skip-permissions:\n%s", args, got)
+		}
+	}
+}
