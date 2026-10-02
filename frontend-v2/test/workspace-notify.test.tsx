@@ -53,7 +53,13 @@ const world = vi.hoisted(() => {
     requestPermission: () => Promise.resolve("granted"),
   });
   return {
-    sessions: [] as { name: string; attached: number; created: number; state: string }[],
+    sessions: [] as {
+      name: string;
+      attached: number;
+      created: number;
+      state: string;
+      origin: string;
+    }[],
     doc: {
       version: 1,
       workspaces: [] as { id: string; members: { name: string; owner?: string }[] }[],
@@ -184,6 +190,8 @@ const running = (name: string) => ({
   attached: 1,
   created: 1_700_000_000,
   state: "running",
+  // A person's session: a Caller's or System's raises no banner.
+  origin: "user",
 });
 
 beforeEach(() => {

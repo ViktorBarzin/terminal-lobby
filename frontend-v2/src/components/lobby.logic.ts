@@ -33,6 +33,7 @@ import {
   type LayoutProject,
   type Session,
 } from "../types/lobby";
+import type { TitleSession } from "../notify/title";
 
 export type GroupKind = "project" | "ungrouped" | "caller" | "system";
 
@@ -200,6 +201,31 @@ export function isCallerSession(s: Session): boolean {
  */
 export function isSystemSession(s: Session): boolean {
   return s.origin !== ORIGIN_USER && !isCallerSession(s);
+}
+
+/**
+ * The notification system's view of one session (notify/notifications.ts): the
+ * fields the tab title, the badges and the foreground banner read, and `quiet`
+ * for a session that raises no OS notification. That is a Caller's or System's,
+ * the same rule as the push sender (tmux-api isUserSession). Measured live on
+ * 2026-10-02: an open tab raised a banner for a turn Muse's session finished.
+ */
+export function notifySnapshotOf(s: Session): TitleSession {
+  return {
+    name: s.name,
+    // tmux's session id, so the visit store survives a rename made anywhere.
+    id: s.id,
+    // The tab title and the OS notification body speak in titles like every
+    // other surface; the name still identifies the session underneath.
+    title: s.title,
+    state: s.state,
+    pane_current_command: s.pane_current_command,
+    // Which harness, so a page-fired banner names pi as pi.
+    tool: s.tool,
+    // Only set for a session shared with you. The badge leaves those out.
+    owner: s.owner,
+    quiet: isCallerSession(s) || isSystemSession(s),
+  };
 }
 
 /**

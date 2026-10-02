@@ -86,7 +86,7 @@ import { createPaletteController, type PaletteAction } from "../keybindings/pale
 import { createRunAppCommand } from "../keybindings/commands";
 import { refocusTerminal } from "../keybindings/refocus";
 import { flatSessionOrder } from "../keybindings/navigation.logic";
-import { opensOnContent, sessionBarOnScreen } from "./lobby.logic";
+import { notifySnapshotOf, opensOnContent, sessionBarOnScreen } from "./lobby.logic";
 import { CommandPalette } from "./CommandPalette";
 import { ShortcutsHelp, createHelpController } from "./ShortcutsHelp";
 import { createNotificationSystem } from "../notify/notifications";
@@ -800,22 +800,9 @@ export const App: Component = () => {
   // A plain snapshot of the poll list feeds the tab title/favicon badge + the
   // foreground transition notifications. The system owns the header bell, web
   // push, and the attention latch the terminal feeds (terminal/attention.ts).
-  const sessionSnapshot = createMemo<TitleSession[]>(() =>
-    store.sessions.map((s) => ({
-      name: s.name,
-      // tmux's session id, so the visit store survives a rename made anywhere.
-      id: s.id,
-      // The tab title and the OS notification body speak in titles like every
-      // other surface; the name still identifies the session underneath.
-      title: s.title,
-      state: s.state,
-      pane_current_command: s.pane_current_command,
-      // Which harness, so a page-fired banner names pi as pi.
-      tool: s.tool,
-      // Only set for a session shared with you. The badge leaves those out.
-      owner: s.owner,
-    })),
-  );
+  // A Caller's and System's sessions are marked quiet: no banner for them, as
+  // the push sender sends none (notifySnapshotOf).
+  const sessionSnapshot = createMemo<TitleSession[]>(() => store.sessions.map(notifySnapshotOf));
   const notifications = createNotificationSystem({
     sessions: sessionSnapshot,
     selected: () => store.selected()?.name ?? null,

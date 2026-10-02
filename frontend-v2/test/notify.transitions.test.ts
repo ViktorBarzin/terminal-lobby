@@ -50,9 +50,7 @@ describe("computeTransitions", () => {
   });
 
   it("does NOT re-fire awaiting→awaiting (the tag would merely re-fire)", () => {
-    expect(
-      computeTransitions(prevOf(["a", "awaiting"]), [S("a", "awaiting")], gate()),
-    ).toEqual([]);
+    expect(computeTransitions(prevOf(["a", "awaiting"]), [S("a", "awaiting")], gate())).toEqual([]);
   });
 
   it("does NOT announce a freshly-seen done (strict running→done only)", () => {
@@ -60,14 +58,16 @@ describe("computeTransitions", () => {
   });
 
   it("does NOT fire done from a non-running prior state (e.g. awaiting→done)", () => {
-    expect(
-      computeTransitions(prevOf(["a", "awaiting"]), [S("a", "done")], gate()),
-    ).toEqual([]);
+    expect(computeTransitions(prevOf(["a", "awaiting"]), [S("a", "done")], gate())).toEqual([]);
   });
 
   it("respects onAwaiting=false / onDone=false", () => {
     expect(
-      computeTransitions(prevOf(["a", "running"]), [S("a", "awaiting")], gate({ onAwaiting: false })),
+      computeTransitions(
+        prevOf(["a", "running"]),
+        [S("a", "awaiting")],
+        gate({ onAwaiting: false }),
+      ),
     ).toEqual([]);
     expect(
       computeTransitions(prevOf(["a", "running"]), [S("a", "done")], gate({ onDone: false })),
@@ -130,5 +130,32 @@ describe("computeTransitions", () => {
         ),
       ).toEqual([{ session: "a", kind: "done" }]);
     });
+  });
+});
+
+/**
+ * Measured live on 2026-10-02: an open lobby tab raised "Sleep command test
+ * finished" for a session Muse had opened through agent-api. The push sender
+ * keeps a Caller's and System's sessions quiet (tmux-api isUserSession), and the
+ * page's own notifier follows the same rule.
+ */
+describe("quiet sessions (a Caller's, System's)", () => {
+  const quiet = (name: string, state?: string): SessionLike => ({ name, state, quiet: true });
+
+  it("raises nothing for a quiet session finishing or blocking", () => {
+    expect(computeTransitions(prevOf(["m", "running"]), [quiet("m", "done")], gate())).toEqual([]);
+    expect(computeTransitions(prevOf(["m", "running"]), [quiet("m", "awaiting")], gate())).toEqual(
+      [],
+    );
+    expect(computeTransitions(prevOf(), [quiet("m", "awaiting")], gate())).toEqual([]);
+  });
+
+  it("still raises the person's sessions on the same poll", () => {
+    const fires = computeTransitions(
+      prevOf(["m", "running"], ["a", "running"]),
+      [quiet("m", "done"), S("a", "done")],
+      gate(),
+    );
+    expect(fires).toEqual([{ session: "a", kind: "done" }]);
   });
 });

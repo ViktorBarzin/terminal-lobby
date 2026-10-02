@@ -22,6 +22,8 @@ import { sessionLabel, type SessionTool } from "../types/lobby";
 
 export type TitleSession = {
   name: string;
+  /** Never raises an OS notification: a Caller's or System's session. */
+  quiet?: boolean;
   /** tmux's session id, the one identifier a rename does not change. */
   id?: string;
   /** The display title, when the session has one. */

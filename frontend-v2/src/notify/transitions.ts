@@ -42,8 +42,12 @@
  * poll regardless of the gates, so opting in later doesn't replay a backlog.
  */
 
-/** The state discriminator per session; "" when no live Claude. */
-export type SessionLike = { name: string; state?: string };
+/**
+ * The state discriminator per session; "" when no live Claude. `quiet` marks a
+ * session that never raises an OS notification: a Caller's or System's, the
+ * sessions the server's push sender leaves out too (tmux-api isUserSession).
+ */
+export type SessionLike = { name: string; state?: string; quiet?: boolean };
 
 /** name → state ("" when none) at a poll. */
 export type StateMap = Map<string, string>;
@@ -114,6 +118,10 @@ export function computeTransitions(
   if (gate.pushDelivers) return [];
   const out: Transition[] = [];
   for (const s of sessions) {
+    // A Caller's or System's session: nobody is paged for a robot's turn, on
+    // this path or the push one. Still snapshotted, so a rescue that makes it
+    // a person's does not replay its last edge.
+    if (s.quiet) continue;
     const was = prev.get(s.name);
     const cur = s.state || "";
     // Focused + this session is on screen → the user is watching it happen; no

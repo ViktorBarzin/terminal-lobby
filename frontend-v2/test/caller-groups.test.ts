@@ -8,6 +8,7 @@ import {
   isCallerSession,
   isGroupVisible,
   isSystemSession,
+  notifySnapshotOf,
   SYSTEM_GROUP_NAME,
   visibleGroupSeqTokens,
 } from "../src/components/lobby.logic";
@@ -78,6 +79,22 @@ describe("isCallerSession / isSystemSession", () => {
     // from the raw word; tmux-api is the one place that decides.
     expect(isCallerSession(sess("session-ready", { origin: "muse" }))).toBe(false);
     expect(isSystemSession(sess("session-ready", { origin: "muse" }))).toBe(true);
+  });
+});
+
+describe("notifySnapshotOf", () => {
+  // The page notifier's input: a Caller's and System's sessions are marked
+  // quiet, as the push sender keeps them (tmux-api isUserSession).
+  it("marks a Caller's and System's sessions quiet, and a person's not", () => {
+    expect(notifySnapshotOf(muse("sleep-command-test", { state: "done" })).quiet).toBe(true);
+    expect(notifySnapshotOf(sess("qa-slug", { origin: "test" })).quiet).toBe(true);
+    expect(notifySnapshotOf(stray("shell-2")).quiet).toBe(true);
+    expect(notifySnapshotOf(sess("deploy", { state: "done", title: "Deploy" }))).toMatchObject({
+      name: "deploy",
+      title: "Deploy",
+      state: "done",
+      quiet: false,
+    });
   });
 });
 
