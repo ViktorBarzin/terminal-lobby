@@ -14,6 +14,19 @@ drivers for dialogs.
 
 pi and codex sessions are unchanged. Mods exist only in Claude Code.
 
+```mermaid
+flowchart TD
+  subgraph claude["Claude Code process (each session)"]
+    mod["terminal-lobby mod<br/>(claude-mod/)"]
+  end
+  mod -- "POST /mod/v1/hello<br/>POST /mod/v1/events<br/>rows, results, turns, deltas, dialogs" --> se["session-events"]
+  se -- "GET /mod/v1/poll (held 25 s)<br/>prompt, abort, answer, decide" --> mod
+  se -- "SSE /events: stored rows + live deltas" --> tv["Text view"]
+  tv -- "POST /prompt, /answer, /cancel" --> se
+  se -- "@claude_state, @claude_ask, @claude_bg, ..." --> tmux["tmux session options"]
+  tmux --> sidebar["Sidebar, push, tmux-persist"]
+```
+
 ## What it replaces
 
 | Before | With the mod |
