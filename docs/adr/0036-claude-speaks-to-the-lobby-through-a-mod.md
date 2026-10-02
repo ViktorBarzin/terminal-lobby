@@ -81,6 +81,14 @@ Measured on 2.1.287 on this box, 2026-10-02:
   fire normally.
 - Text deltas arrive one to three words at a time, 20 to 30 ms apart. A loopback
   POST from the mod lands in 2 to 5 ms.
+- `$.http.fetch` refuses a request body over 4,194,304 characters, inside
+  Claude, before anything is sent (measured 2026-10-02: 4 MiB went through,
+  6 MiB threw). A long session's history is bigger than that, and a refused
+  batch goes back on the queue ahead of everything else, so the first long
+  session had an empty Text view and no streaming. The mod now sends history
+  in chunks of about 800 KB, caps a batch at 1 MB, and drops an event that
+  could never fit; session-events skips an event it cannot decode rather than
+  refusing the batch.
 - `$.prompt.submit` starts a turn at once when idle and queues behind a running
   turn.
 - `$.turn.abort` stops the turn cleanly; `turn.complete` fires with
