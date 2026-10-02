@@ -123,7 +123,13 @@ type modHub struct {
 	stamp sessionio.Options
 	// unset clears tmux options; nil in tests that do not care.
 	unset func(osUser, session string, names []string) error
-	now   func() time.Time
+	// paneSession names the tmux session a pane is in now, "" when the pane
+	// is gone; nil in tests that do not care. A write that fails on the
+	// name the mod said hello with asks it, because tmux-api renames a
+	// session from its first turn and the mod only notices at its next
+	// turn start.
+	paneSession func(osUser, pane string) string
+	now         func() time.Time
 
 	mu        sync.Mutex
 	byToken   map[string]*modConn
@@ -489,24 +495,45 @@ func containsStr(list []string, s string) bool {
 
 // write applies option changes to the tmux session and records a state
 // transition the way the hook script did.
+//
+// A write that fails because the session was renamed under the mod is made
+// again under the name the mod's pane has now, and the mod is asked to say
+// hello again so everything else moves too (followRename).
 func (c *modConn) write(w stampWrite) {
 	if w.empty() {
 		return
 	}
 	h := c.hub
 	c.mu.Lock()
-	user, session := c.user, c.session
+	user, session, pane := c.user, c.session, c.pane
 	c.mu.Unlock()
-	if h.stamp != nil {
-		for name, v := range w.set {
-			if err := h.stamp.SetOption(user, session, name, v); err != nil {
-				log.Printf("mod %s/%s: set %s: %v", user, session, name, err)
-				break // the session is gone; the rest would fail the same way
-			}
+	followed := false
+	follow := func() bool {
+		if followed {
+			return false
+		}
+		followed = true
+		if moved := c.followRename(user, session, pane); moved != "" {
+			session = moved
+			return true
+		}
+		return false
+	}
+	if h.stamp != nil && len(w.set) > 0 {
+		name, err := c.setAll(user, session, w.set)
+		if err != nil && follow() {
+			name, err = c.setAll(user, session, w.set)
+		}
+		if err != nil {
+			log.Printf("mod %s/%s: set %s: %v", user, session, name, err)
 		}
 	}
 	if h.unset != nil && len(w.unset) > 0 {
-		if err := h.unset(user, session, w.unset); err != nil {
+		err := h.unset(user, session, w.unset)
+		if err != nil && follow() {
+			err = h.unset(user, session, w.unset)
+		}
+		if err != nil {
 			log.Printf("mod %s/%s: unset %v: %v", user, session, w.unset, err)
 		}
 	}
@@ -515,6 +542,53 @@ func (c *modConn) write(w stampWrite) {
 			"tl.session": session, "tl.from": orNone(w.from), "tl.to": st, "tl.client": "mod",
 		})
 	}
+}
+
+// setAll stamps every option, stopping at the first failure: a session that
+// cannot take one cannot take the rest. It returns the name that failed.
+func (c *modConn) setAll(user, session string, set map[string]string) (string, error) {
+	for name, v := range set {
+		if err := c.hub.stamp.SetOption(user, session, name, v); err != nil {
+			return name, err
+		}
+	}
+	return "", nil
+}
+
+// followRename finds the session the mod's pane is in now, and returns its
+// name when that is not the one the mod said hello with. The mod's token is
+// revoked so its next request is refused and it says hello again; the hello
+// then moves the connection, its stream and its transcript stamp to the new
+// name, which is the path a rename noticed at turn start already takes. ""
+// when the pane is gone or the name has not changed.
+func (c *modConn) followRename(user, session, pane string) string {
+	h := c.hub
+	if h.paneSession == nil || pane == "" {
+		return ""
+	}
+	now := h.paneSession(user, pane)
+	if now == "" || now == session || !modSessionRe.MatchString(now) {
+		return ""
+	}
+	h.mu.Lock()
+	c.mu.Lock()
+	revoked := false
+	if c.session == session && c.token != "" {
+		delete(h.byToken, c.token)
+		c.token = ""
+		revoked = true
+	}
+	wake := c.wake
+	c.mu.Unlock()
+	h.mu.Unlock()
+	if revoked {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+		log.Printf("mod %s/%s: the session is now %s; asking the mod to say hello again", user, session, now)
+	}
+	return now
 }
 
 func orNone(s string) string {

@@ -82,3 +82,13 @@ func (f *FakeOptions) Start(osUser, session string) {
 	defer f.mu.Unlock()
 	f.sessions[osUser+"/"+session] = map[string]string{}
 }
+
+// Rename models `tmux rename-session`: the options move with the session.
+func (f *FakeOptions) Rename(osUser, from, to string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if opts, ok := f.sessions[osUser+"/"+from]; ok {
+		delete(f.sessions, osUser+"/"+from)
+		f.sessions[osUser+"/"+to] = opts
+	}
+}

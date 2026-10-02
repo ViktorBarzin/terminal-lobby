@@ -71,6 +71,13 @@ func main() {
 	// The mod hub clears options in one tmux call; drill-ins nobody reads and
 	// connections whose mod went quiet are swept on a ticker.
 	rg.mods.unset = injector.UnsetOptions
+	rg.mods.paneSession = func(osUser, pane string) string {
+		out, err := injector.Command(osUser, "display-message", "-p", "-t", pane, "#{session_name}").Output()
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(out))
+	}
 	go rg.sweepEvery(ctx, SweepInterval)
 	// Claudes started before the mod existed are restarted once they are safe
 	// to, so each gets a stream (rollout.go).
