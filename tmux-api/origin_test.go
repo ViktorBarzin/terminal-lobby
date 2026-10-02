@@ -57,11 +57,24 @@ func TestIsSystemSession(t *testing.T) {
 			want:    true,
 		},
 		{
-			// A value nothing in this repo writes. Anything that is not
-			// exactly `user` is system, so a typo in a stamper fails closed:
-			// the session goes quiet rather than pushing to a phone.
+			// A reserved word in the wrong case is a typo in a stamper, not a
+			// Caller called "User", so it stays a stray: quiet, and in System.
 			name:    "an origin nobody recognises",
 			session: Session{Name: "work", Origin: "User"},
+			want:    true,
+		},
+		{
+			// agent-api stamps the credential's name. A Caller's session is
+			// filed under the Caller now, not under System.
+			name:    "a Caller's session",
+			session: Session{Name: "session-ready", Origin: "muse"},
+			want:    false,
+		},
+		{
+			// The reserved prefixes still win over a Caller stamp, as they
+			// win over a user one.
+			name:    "a reserved prefix beats a Caller stamp",
+			session: Session{Name: "qa-slug", Origin: "muse"},
 			want:    true,
 		},
 	}
@@ -71,6 +84,44 @@ func TestIsSystemSession(t *testing.T) {
 				t.Errorf("isSystemSession(%+v) = %v, want %v", tc.session, got, tc.want)
 			}
 		})
+	}
+}
+
+// Every session is exactly one of three kinds: a person's, a Caller's, or
+// System's. The three predicates are read by different consumers — the push
+// sender and the suspend fuse ask isUserSession, the telemetry drop asks
+// isSystemSession, the sidebar and the telemetry tag read callerOf — so the
+// table checks they partition every case rather than overlap or leave a gap.
+func TestSessionKindsPartition(t *testing.T) {
+	cases := []struct {
+		session    Session
+		wantUser   bool
+		wantCaller string
+	}{
+		{Session{Name: "work", Origin: originUser}, true, ""},
+		{Session{Name: "work", Origin: originTest}, false, ""},
+		{Session{Name: "kbfix-probe"}, false, ""},
+		{Session{Name: "qa-slug", Origin: originUser}, false, ""},
+		{Session{Name: "session-ready", Origin: "muse"}, false, "muse"},
+		{Session{Name: "tlp-t1", Origin: "muse"}, false, ""},
+		{Session{Name: "work", Origin: "agent-api"}, false, "agent-api"},
+		{Session{Name: "work", Origin: "User"}, false, ""},
+	}
+	for _, tc := range cases {
+		s := tc.session
+		user, caller, system := isUserSession(s), callerOf(s), isSystemSession(s)
+		if user != tc.wantUser || caller != tc.wantCaller {
+			t.Errorf("%+v: user=%v caller=%q, want user=%v caller=%q", s, user, caller, tc.wantUser, tc.wantCaller)
+		}
+		kinds := 0
+		for _, k := range []bool{user, caller != "", system} {
+			if k {
+				kinds++
+			}
+		}
+		if kinds != 1 {
+			t.Errorf("%+v is %d kinds at once (user=%v caller=%q system=%v), want exactly one", s, kinds, user, caller, system)
+		}
 	}
 }
 

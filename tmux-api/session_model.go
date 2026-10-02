@@ -104,9 +104,10 @@ type Session struct {
 	// (Viktor, 2026-09-20). The hook script stopped recording one, which is
 	// where the decision and its reasoning live.
 	Background *Background `json:"bg,omitempty"`
-	// Origin is WHO made this session, read from @tl_origin. Three states:
+	// Origin is WHO made this session, read from @tl_origin. Four states:
 	// "user" when the lobby's own create path made it, "test" when a harness
-	// stamped it, and EMPTY when nobody said.
+	// stamped it, a Caller's name when agent-api made it for that Caller, and
+	// EMPTY when nobody said.
 	//
 	// Empty is not a synonym for "user", and that is the inversion the whole
 	// feature rests on. Before the lobby's create path started stamping, an
@@ -115,13 +116,19 @@ type Session struct {
 	// lobby: a hand-run `tmux new`, a script that is not in this repo, or
 	// something written after this was. Measured on 2026-09-06, three of the
 	// four machine-made sessions in the list were exactly that. So empty reads
-	// as system, and isSystemSession (origin.go) is the one place that decides
-	// it — never a comparison written out at a call site.
+	// as system, and the predicates in origin.go are the one place that
+	// decides it — never a comparison written out at a call site.
 	//
 	// omitempty keeps the old wire shape for consumers that predate the field,
 	// and it means the unstamped state arrives at the frontend as an absent key
 	// rather than as "".
 	Origin string `json:"origin,omitempty"`
+	// Caller is the Caller that made this session (callerOf, origin.go), and
+	// empty for every session no Caller made. It is Origin read through the
+	// one rule that says which origins are Callers, sent beside the raw value
+	// so the sidebar files a session under its Caller's group without a copy
+	// of that rule of its own. omitempty for the reason Origin has it.
+	Caller string `json:"caller,omitempty"`
 	// Cols and Rows are the session's GRID: the size of its tmux window, as
 	// #{window_width} and #{window_height} report it for the session's current
 	// window. Zero when tmux gave a size this could not read, which reads as

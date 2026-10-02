@@ -109,7 +109,7 @@ type liveStater struct{}
 func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]agentWords) {
 	sessions, activity := userSessionsAndActivity(osUser)
 	states, titles, tools := statesTitlesAndTools(sessions)
-	return states, titles, activity, systemNames(sessions), tools, wordsOf(sessions)
+	return states, titles, activity, quietNames(sessions), tools, wordsOf(sessions)
 }
 
 // wordsOf is each session's notice and reply, leaving out the sessions that
@@ -124,18 +124,20 @@ func wordsOf(sessions []Session) map[string]agentWords {
 	return out
 }
 
-// systemNames is the set of a user's sessions that belong to tooling rather
-// than to a person, read off the list the sender already has in hand.
+// quietNames is the set of a user's sessions that are not a person's, read
+// off the list the sender already has in hand: System sessions, and a Caller's,
+// which have their own sidebar group but are still not allowed to page anyone
+// (CONTEXT.md: Origin).
 //
-// Only system sessions appear, and the map is nil when there are none, which is
-// the ordinary case on this box: the sender then allocates nothing and the
-// filter below is a range over an empty map. It answers both halves of the rule
-// at once (isSystemSession): the stamp, and the reserved-name prefixes that
-// force system whatever the stamp says.
-func systemNames(sessions []Session) map[string]bool {
+// The map is nil when there are none, which is the ordinary case on this box:
+// the sender then allocates nothing and the filter below is a range over an
+// empty map. It answers every half of the rule at once (isUserSession): the
+// stamp, and the reserved-name prefixes that force a session quiet whatever
+// the stamp says.
+func quietNames(sessions []Session) map[string]bool {
 	var out map[string]bool
 	for _, s := range sessions {
-		if !isSystemSession(s) {
+		if isUserSession(s) {
 			continue
 		}
 		if out == nil {

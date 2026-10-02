@@ -54,6 +54,41 @@ func TestDropRuleReadsTheServedList(t *testing.T) {
 	}
 }
 
+// A Caller's session is recorded and tagged (CONTEXT.md: Origin). It used to
+// be dropped with System, which made Muse's work invisible in the usage
+// record; now the drop rule keeps it and the caller rule names the Caller.
+func TestCallerSessionEventsAreWrittenAndTagged(t *testing.T) {
+	const u = "droprule-caller"
+	primeSessionList(t, u, `[
+		{"name":"k7m2q9x4tp0v","origin":"user"},
+		{"name":"session-ready","origin":"muse"},
+		{"name":"qa-muse","origin":"muse"}
+	]`)
+
+	out := captureLog(t, func() {
+		events.Emit("session.killed", u, telemetry.Attrs{"tl.session": "session-ready", "tl.client": "api"})
+	})
+	if !strings.Contains(out, telemetry.Marker) || !strings.Contains(out, `"tl.caller":"muse"`) {
+		t.Errorf("a Caller's session event should be written with tl.caller=muse:\n%s", out)
+	}
+
+	out = captureLog(t, func() {
+		events.Emit("session.killed", u, telemetry.Attrs{"tl.session": "k7m2q9x4tp0v", "tl.client": "api"})
+	})
+	if !strings.Contains(out, telemetry.Marker) || strings.Contains(out, "tl.caller") {
+		t.Errorf("a person's session event should be written untagged:\n%s", out)
+	}
+
+	// A reserved name is System whatever the stamp says, so it is still
+	// dropped rather than tagged.
+	out = captureLog(t, func() {
+		events.Emit("session.killed", u, telemetry.Attrs{"tl.session": "qa-muse", "tl.client": "api"})
+	})
+	if strings.Contains(out, telemetry.Marker) {
+		t.Errorf("a reserved-name session stamped by a Caller was written:\n%s", out)
+	}
+}
+
 // The mutating handlers invalidate the cache and THEN emit, so the events that
 // matter most arrive while it is cold. A memo read seconds ago still describes
 // the box correctly, and answering from it is the difference between the rule

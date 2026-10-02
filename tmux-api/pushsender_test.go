@@ -1215,7 +1215,7 @@ func TestSendBuildsOnePayloadPerSubscriptionOrigin(t *testing.T) {
 
 // setSystem tells the stub which of its sessions belong to tooling. Production
 // answers this from Session.Origin and the reserved-name prefixes
-// (isSystemSession); the stub is handed the verdict directly, so a sender test
+// (isUserSession); the stub is handed the verdict directly, so a sender test
 // needs no tmux.
 func (s *stubStater) setSystem(names ...string) {
 	s.mu.Lock()
@@ -1330,20 +1330,23 @@ func TestPushSenderDoesNotFireOnAStaleEdgeAfterARescue(t *testing.T) {
 }
 
 // The production stater's half of the same rule: the verdict comes off the
-// session list it already reads, at no extra fork, and covers both halves of
-// isSystemSession — the stamp and the reserved name.
-func TestSystemNamesReadsBothHalvesOfTheRule(t *testing.T) {
-	got := systemNames([]Session{
+// session list it already reads, at no extra fork, and covers every session
+// that is not a person's — both halves of isUserSession (the stamp and the
+// reserved name), and a Caller's sessions, which have their own sidebar group
+// now but still raise no push (CONTEXT.md: Origin).
+func TestQuietNamesCoversEverySessionThatIsNotAPersons(t *testing.T) {
+	got := quietNames([]Session{
 		{Name: "k7m2q9x4tp0v", Origin: originUser},
 		{Name: "b3n8h1x5r2wq", Origin: originTest},
 		{Name: "q4m8vwx2rt5n"},
 		{Name: "qa-slug", Origin: originUser},
+		{Name: "session-ready", Origin: "muse"},
 	})
-	want := map[string]bool{"b3n8h1x5r2wq": true, "q4m8vwx2rt5n": true, "qa-slug": true}
+	want := map[string]bool{"b3n8h1x5r2wq": true, "q4m8vwx2rt5n": true, "qa-slug": true, "session-ready": true}
 	if !reflect.DeepEqual(got, want) {
-		t.Errorf("systemNames = %v, want %v", got, want)
+		t.Errorf("quietNames = %v, want %v", got, want)
 	}
-	if systemNames([]Session{{Name: "k7m2q9x4tp0v", Origin: originUser}}) != nil {
-		t.Error("a list with nothing system in it should produce no map at all")
+	if quietNames([]Session{{Name: "k7m2q9x4tp0v", Origin: originUser}}) != nil {
+		t.Error("a list with nothing quiet in it should produce no map at all")
 	}
 }

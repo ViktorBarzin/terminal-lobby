@@ -261,16 +261,18 @@ func setSessionTitle(w http.ResponseWriter, r *http.Request, osUser, name string
 // setSessionOrigin is POST /sessions/{name}/origin — the rescue
 // (docs/plans/2026-09-06-test-session-origin-design.md).
 //
-// One caller: dropping a card out of the System group. The drop already writes
-// the layout, and this is how it says the same thing on the SERVER, so the
-// session stops being a system session for the push sender and the telemetry
-// rule too rather than only in the browser that moved it. Without it, a
+// One caller: dropping a card out of the System group, or out of a Caller's
+// group (CONTEXT.md: Origin). The drop already writes the layout, and this is
+// how it says the same thing on the SERVER, so the session becomes a person's
+// for the push sender and the telemetry rules too rather than only in the
+// browser that moved it. Without it, a
 // rescued session would sit in a project in the sidebar and still be silent.
 //
-// Only `user` and `test` are accepted. Those are the only two values anything
-// writes (origin.go); the third state is the ABSENCE of the option, and no
-// caller has a reason to ask for it, because a session with no origin already
-// reads as system and that is exactly what the drag is undoing.
+// Only `user` and `test` are accepted. Those are the only two values the lobby
+// itself writes (origin.go). A Caller's name is agent-api's to stamp, and the
+// absence of the option is a state no caller has a reason to ask for, because
+// a session with no origin already reads as system and that is exactly what
+// the drag is undoing.
 //
 // The shape is setSessionTitle's, and so are the reasons behind each part of
 // it: the pane target form so a name cannot resolve by prefix onto a sibling,

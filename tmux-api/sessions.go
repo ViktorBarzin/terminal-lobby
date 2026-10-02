@@ -290,8 +290,8 @@ func parseSessions(out []byte) []Session {
 			// @last_drive is: an unset option renders EMPTY, which is what
 			// every session alive on the deploy that introduces it reports,
 			// and rejecting the row for it would empty the sidebar. The parser
-			// does not judge the value either — isSystemSession (origin.go) is
-			// the single place that decides what a stamp means, so a value
+			// does not judge the value either — origin.go is the single place
+			// that decides what a stamp means, so a value
 			// nothing in this repo writes reaches it intact rather than being
 			// quietly normalised to "" here and read as a different kind of
 			// unknown.
@@ -316,6 +316,10 @@ func parseSessions(out []byte) []Session {
 			// protects the columns above from a pane that prints one.
 			PaneTitle: parts[listFields-1],
 		})
+		// Read off the two fields it depends on once the record holds both,
+		// so the rule stays callerOf's alone (origin.go).
+		last := &sessions[len(sessions)-1]
+		last.Caller = callerOf(*last)
 	}
 	return sessions
 }

@@ -46,8 +46,12 @@ var (
 // The browser leg of the same question is answered elsewhere: an event like
 // app.loaded or theme.changed carries no tl.session, so a session-keyed rule
 // cannot see it, and the qa-harness proxy refuses POST /telemetry outright.
+//
+// A Caller's session is recorded, and the second rule tags each of its events
+// with tl.caller (CONTEXT.md: Origin), out of the same memo.
 func init() {
 	events.SetDropRule(systemSessionRule.isSystem)
+	events.SetCallerRule(systemSessionRule.callerOf)
 }
 
 // How long one parse of the cached list answers for, and how stale that answer
@@ -86,7 +90,14 @@ type systemSessionMemo struct {
 // person's.
 type systemSessionSnapshot struct {
 	at      time.Time
-	verdict map[string]bool
+	verdict map[string]sessionVerdict
+}
+
+// sessionVerdict is what the two telemetry rules need to know about one
+// session: whether it is System, and which Caller made it if one did.
+type sessionVerdict struct {
+	system bool
+	caller string
 }
 
 var systemSessionRule = &systemSessionMemo{now: time.Now, seen: map[string]systemSessionSnapshot{}}
@@ -101,6 +112,24 @@ var systemSessionRule = &systemSessionMemo{now: time.Now, seen: map[string]syste
 // the direction telemetry has to fail in: a wrongly-kept event is noise in a
 // query, a wrongly-dropped one is invisible.
 func (m *systemSessionMemo) isSystem(osUser, session string) bool {
+	if v, known := m.lookup(osUser, session); known {
+		return v.system
+	}
+	return reservedName(session)
+}
+
+// callerOf is the caller rule the emitter consults: the Caller whose session
+// this is, or "". With no list to answer from it says "", which records the
+// event untagged rather than guessing; the drop rule's fallback already keeps
+// it, and a missing tag is the smaller loss.
+func (m *systemSessionMemo) callerOf(osUser, session string) string {
+	v, _ := m.lookup(osUser, session)
+	return v.caller
+}
+
+// lookup answers from the cached list when it can, refreshing the memo from it
+// at most once per window, and reports whether it had an answer at all.
+func (m *systemSessionMemo) lookup(osUser, session string) (sessionVerdict, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := m.now()
@@ -113,11 +142,11 @@ func (m *systemSessionMemo) isSystem(osUser, session string) bool {
 		}
 	}
 	if have && now.Sub(snap.at) <= systemSessionMaxAge {
-		if sys, known := snap.verdict[session]; known {
-			return sys
+		if v, known := snap.verdict[session]; known {
+			return v, true
 		}
 	}
-	return reservedName(session)
+	return sessionVerdict{}, false
 }
 
 // systemSessionVerdicts reads the served list back into one verdict per
@@ -125,7 +154,7 @@ func (m *systemSessionMemo) isSystem(osUser, session string) bool {
 // makes this free of the list-building path: the bytes are already there, and
 // this runs at most once per user per refresh window however many events
 // arrive in it.
-func systemSessionVerdicts(body []byte) map[string]bool {
+func systemSessionVerdicts(body []byte) map[string]sessionVerdict {
 	var sessions []Session
 	if err := json.Unmarshal(body, &sessions); err != nil {
 		// "[]" is the historic tmux-is-down body and parses fine; anything
@@ -133,9 +162,12 @@ func systemSessionVerdicts(body []byte) map[string]bool {
 		log.Printf("telemetry drop rule: the cached session list would not parse: %v", err)
 		return nil
 	}
-	out := make(map[string]bool, len(sessions))
+	out := make(map[string]sessionVerdict, len(sessions))
 	for _, s := range sessions {
-		out[s.Name] = isSystemSession(s)
+		// From the origin and the name rather than the body's own caller
+		// field, so the verdict is the rule's even for a body written by a
+		// build that predates the field.
+		out[s.Name] = sessionVerdict{system: isSystemSession(s), caller: callerOf(s)}
 	}
 	return out
 }

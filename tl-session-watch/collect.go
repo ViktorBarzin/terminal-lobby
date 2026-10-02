@@ -190,6 +190,12 @@ var sessionIdentityRe = regexp.MustCompile(`^\$[0-9]+:[0-9]+$`)
 // The cost of a wrong answer here is small in both directions. A user session
 // wrongly called system loses its death alert, which the sidebar still shows;
 // a harness session wrongly kept pages someone for a robot.
+//
+// A Caller's session (an origin naming the Caller, CONTEXT.md: Origin) answers
+// true here too, although tmux-api now files it in a group of its own rather
+// than in System. That split was about the sidebar and the usage record; this
+// watcher pages a person, and a Caller's conversation ending is the Caller's
+// business, so the question this asks is still "did a person make it".
 func isSystemSession(name, origin string) bool {
 	if origin != originUser {
 		return true

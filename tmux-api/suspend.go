@@ -71,9 +71,11 @@ const (
 	// well past the 4h6m median gap measured between drives on this box.
 	suspendIdleAfter = 72 * time.Hour
 
-	// suspendSystemIdleAfter is the same fuse for a session tooling made
-	// (isSystemSession, origin.go). Nobody is coming back to a harness run, and
-	// a QA session that outlived its harness is pure cost.
+	// suspendSystemIdleAfter is the same fuse for a session a person did not
+	// make (!isUserSession, origin.go). Nobody is coming back to a harness
+	// run, and a QA session that outlived its harness is pure cost. A Caller's
+	// conversation would fall under it too, but declineNow holds every
+	// agent-api conversation whatever its age.
 	suspendSystemIdleAfter = 4 * time.Hour
 
 	// suspendSweepInterval is how often the sweep runs. The thresholds are in
@@ -175,7 +177,7 @@ func sessionsToSuspend(sessions []Session, now int64) []string {
 			continue
 		}
 		after := suspendIdleAfter
-		if isSystemSession(s) {
+		if !isUserSession(s) {
 			after = suspendSystemIdleAfter
 		}
 		if now-s.LastDrive < int64(after/time.Second) {
@@ -637,7 +639,7 @@ type paneFacts struct {
 // (lastdrive.go) never moves their @last_drive: seeded once from Created, it
 // says the session has been idle since the moment it was made, however busy
 // the caller has been. It also stamps the CALLER's name as the origin, so
-// isSystemSession puts it on the 4h fuse. Together that suspends a conversation
+// isUserSession is false and it goes on the 4h fuse. Together that suspends a conversation
 // four hours after it was created however recently it was used — and agent-api
 // exposes no resume verb, so its caller could not bring it back. Measured on
 // this box 2026-09-19: `session-ready` (@agent_owner=muse, state done, 34h by

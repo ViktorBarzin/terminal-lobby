@@ -116,9 +116,10 @@ type CreateSpec struct {
 	Dir     string
 	Command []string
 	// Origin names whoever asked for this session, and it is the caller's
-	// CREDENTIAL, not this service. The lobby files anything that is not
-	// "user" under System, so this is what keeps a conversation an agent
-	// opened out of the list of sessions the owner opened themselves.
+	// CREDENTIAL, not this service. The lobby files a session under a group
+	// named after its Caller (sessionio.CallerOf), so this is what keeps a
+	// conversation an agent opened out of the list of sessions the owner
+	// opened themselves.
 	Origin string
 }
 
@@ -288,11 +289,12 @@ func noTmuxServer(stderr string) bool {
 }
 
 func (t *tmuxSessions) Create(spec CreateSpec) error {
-	// Origin is the CREDENTIAL's name, not a constant: the lobby files
-	// anything that is not OriginUser under System, so this is what keeps a
-	// conversation an agent opened out of the owner's own list, and naming the
-	// caller rather than "agent-api" means two external callers stay apart.
-	// Empty would silently read as a person having made it.
+	// Origin is the CREDENTIAL's name, not a constant: the lobby files a
+	// session under a group named after its Caller (sessionio.CallerOf), so
+	// this is what keeps a conversation an agent opened out of the owner's own
+	// list, and naming the caller rather than "agent-api" is what gives two
+	// external callers a group each. Empty would silently read as a person
+	// having made it.
 	origin := spec.Origin
 	if origin == "" {
 		origin = "agent-api"

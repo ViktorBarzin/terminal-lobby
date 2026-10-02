@@ -355,9 +355,10 @@ func TestParseSessionsFields(t *testing.T) {
 // would empty the sidebar.
 func TestParseSessionsReadsOrigin(t *testing.T) {
 	cases := []struct {
-		name   string
-		origin string
-		want   string
+		name       string
+		origin     string
+		want       string
+		wantCaller string
 	}{
 		{
 			name:   "stamped by the lobby's create path",
@@ -380,6 +381,15 @@ func TestParseSessionsReadsOrigin(t *testing.T) {
 			// isSystemSession judge it.
 			name:   "a value nothing writes is carried through, not dropped",
 			origin: "somebody-elses-harness", want: "somebody-elses-harness",
+			// Any word in the credential-name charset that is not one of
+			// the lobby's own reads as a Caller (sessionio.CallerOf).
+			wantCaller: "somebody-elses-harness",
+		},
+		{
+			// agent-api's stamp. The record carries the Caller beside the raw
+			// origin, so the sidebar files it without repeating the rule.
+			name:   "stamped by a Caller",
+			origin: "muse", want: "muse", wantCaller: "muse",
 		},
 	}
 	for _, tc := range cases {
@@ -391,6 +401,7 @@ func TestParseSessionsReadsOrigin(t *testing.T) {
 				ID: "$3", Name: "work", LastActivity: 1700000000, Created: 1690000000,
 				State: "running", PanePID: 4242, Command: "claude",
 				Title: "Deploy the thing", PaneTitle: "~/code", Origin: tc.want,
+				Caller: tc.wantCaller,
 			}}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("parseSessions with origin %q:\n got %+v\nwant %+v", tc.origin, got, want)
