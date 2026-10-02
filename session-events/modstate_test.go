@@ -133,3 +133,29 @@ func TestBgTokensRejectsIdsOutsideTheCharset(t *testing.T) {
 		t.Fatalf("bgTokens = %q", got)
 	}
 }
+
+// $.agent.list() names a subagent's TYPE by its agent definition
+// (general-purpose, Explore, a plugin's own), not "subagent" as the Stop
+// hook's registry does. Measured live on 2026-10-02: a turn that launched a
+// background general-purpose agent stamped done at its turn_end while the
+// agent worked for another 46 s.
+func TestStampBackgroundSubagentOfAnyDefinitionKeepsTheSessionRunning(t *testing.T) {
+	var s stampState
+	s.apply(promptRow(), stampNow)
+	s.apply(sessionio.ModEvent{Type: sessionio.ModTurnEndEvent, Answer: "Waiting for it to finish."}, stampNow)
+	w := s.apply(sessionio.ModEvent{Type: sessionio.ModAgentsEvent, Agents: []sessionio.ModAgent{
+		{ID: "a50611dc2ef8e57df", Type: "general-purpose", Status: "running", Description: "Run sleep and echo command"},
+		{ID: "aexp1", Type: "Explore", Status: "running"},
+		{ID: "aplug1", Type: "myplugin:reviewer", Status: "running"},
+		{ID: "aold", Type: "general-purpose", Status: "completed"},
+	}}, stampNow)
+	if s.state != "running" || s.bg != "a:a50611dc2ef8e57df a:aexp1 a:aplug1" {
+		t.Fatalf("state %s bg %q with background agents running (writes %v)", s.state, s.bg, w.set)
+	}
+	w = s.apply(sessionio.ModEvent{Type: sessionio.ModAgentsEvent, Agents: []sessionio.ModAgent{
+		{ID: "a50611dc2ef8e57df", Type: "general-purpose", Status: "completed"},
+	}}, stampNow)
+	if got := writeKeys(w); got != "-@claude_bg @claude_state=done" {
+		t.Fatalf("agents finishing writes %q", got)
+	}
+}

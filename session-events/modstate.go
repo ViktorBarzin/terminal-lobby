@@ -189,6 +189,13 @@ func (s *stampState) idleState() string {
 // bgTokens is @claude_bg for an agent list: the running background subagents
 // and workflows by id, and the teammates whose loop is active by name. Sorted
 // so an unchanged set reads the same and writes nothing.
+//
+// $.agent.list() gives a subagent's type as its agent definition
+// (general-purpose, Explore, a plugin's `<plugin>:<name>`), an open set, not
+// the "subagent" of the Stop hook's registry. Until 2026-10-02 only the
+// registry's words were matched here, so a background general-purpose agent
+// counted for nothing and the session read done while it worked. Every type
+// but a teammate and a workflow is a subagent.
 func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 	var out []string
 	for _, a := range agents {
@@ -197,8 +204,8 @@ func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 		}
 		var tok string
 		switch a.Type {
-		case "subagent", "local_agent", "agent":
-			tok = "a:" + a.ID
+		case "":
+			continue
 		case "workflow":
 			tok = "w:" + a.ID
 		case "teammate":
@@ -211,7 +218,7 @@ func bgTokens(agents []sessionio.ModAgent, active map[string]bool) string {
 			}
 			tok = "t:" + name
 		default:
-			continue
+			tok = "a:" + a.ID
 		}
 		if idOK(strings.SplitN(tok, ":", 2)[1]) {
 			out = append(out, tok)
