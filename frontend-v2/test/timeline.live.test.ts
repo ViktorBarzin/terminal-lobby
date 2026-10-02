@@ -79,6 +79,7 @@ describe("liveGroupState", () => {
       kind: "working",
       tool: "Bash",
       label: "sleep 6 && echo b",
+      itemType: "command_execution",
       done: 1,
       since: 2_000,
       groupKey: group.key,

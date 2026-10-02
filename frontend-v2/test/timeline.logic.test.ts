@@ -950,6 +950,7 @@ describe("work groups", () => {
     expect(groups(rows)[0]!.live).toEqual({
       tool: "Bash",
       label: "sleep 6 && echo b",
+      itemType: "command_execution",
       startedAt: 1000,
       callStartedAt: 2500,
       done: 1,

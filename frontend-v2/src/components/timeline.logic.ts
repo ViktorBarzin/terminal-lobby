@@ -317,6 +317,8 @@ export interface WorkGroupLive {
   /** The call in flight. Absent while Claude is between calls. */
   tool?: string;
   label?: string;
+  itemType?: ItemType;
+  detail?: string;
   /** When the group began: its first row. The row's clock counts from here. */
   startedAt?: number;
   /** When the call in flight began. */
@@ -362,6 +364,8 @@ export interface WorkingRow {
   /** The call currently in flight, if the turn is inside one. */
   tool?: string;
   toolLabel?: string;
+  toolItemType?: ItemType;
+  toolDetail?: string;
   /** When the thing this row is about began: the call in flight, or the wait. */
   toolStartedAt?: number;
   /**
@@ -1460,7 +1464,14 @@ function liveOf(group: WorkGroupRow, waiting: boolean): WorkGroupLive {
   }
   const startedAt = group.calls[0]!.at;
   return {
-    ...(current ? { tool: current.tool, label: current.label } : {}),
+    ...(current
+      ? {
+          tool: current.tool,
+          label: current.label,
+          itemType: current.itemType,
+          ...(current.detail ? { detail: current.detail } : {}),
+        }
+      : {}),
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(current?.at !== undefined ? { callStartedAt: current.at } : {}),
     done,
@@ -1694,7 +1705,14 @@ function workingRowFor(turn: Turn, work: LeafRow[]): WorkingRow {
     turnKey: turn.key,
     steps: work.length,
     ...(turn.events[0]?.at !== undefined ? { startedAt: turn.events[0]!.at } : {}),
-    ...(live ? { tool: live.tool, toolLabel: live.label } : {}),
+    ...(live
+      ? {
+          tool: live.tool,
+          toolLabel: live.label,
+          toolItemType: live.itemType,
+          ...(live.detail ? { toolDetail: live.detail } : {}),
+        }
+      : {}),
     ...(anchor !== undefined ? { toolStartedAt: anchor } : {}),
     ...(waitingFor || paneAsking || panePermission ? { waiting: true } : {}),
   };
@@ -2078,6 +2096,8 @@ export type LiveGroupState =
       /** The call in flight. Absent before the first call and between calls. */
       tool?: string;
       label?: string;
+      itemType?: ItemType;
+      detail?: string;
       /** How many of the running group's calls have come back. */
       done: number;
       since?: number;
@@ -2128,6 +2148,8 @@ export function liveGroupState(o: {
       kind: "working",
       ...(g.tool !== undefined ? { tool: g.tool } : {}),
       ...(g.label !== undefined ? { label: g.label } : {}),
+      ...(g.itemType !== undefined ? { itemType: g.itemType } : {}),
+      ...(g.detail !== undefined ? { detail: g.detail } : {}),
       done: g.done,
       ...(g.startedAt !== undefined ? { since: g.startedAt } : {}),
       ...groupKey,
@@ -2138,9 +2160,82 @@ export function liveGroupState(o: {
     kind: "working",
     ...(live.tool !== undefined ? { tool: live.tool } : {}),
     ...(live.toolLabel !== undefined ? { label: live.toolLabel } : {}),
+    ...(live.toolItemType !== undefined ? { itemType: live.toolItemType } : {}),
+    ...(live.toolDetail !== undefined ? { detail: live.toolDetail } : {}),
     done: 0,
     ...(since !== undefined ? { since } : {}),
   };
+}
+
+/** The icons a live call can wear: the work group's own set (rows.tsx). */
+export type LiveIcon = "command" | "edit" | "read" | "search" | "picture" | "tools";
+
+/** What the live row says about the call in flight. */
+export interface LiveCall {
+  icon: LiveIcon;
+  verb: string;
+  /** The call's headline, as `describe` gave it: a command, a file name, a pattern. */
+  target: string;
+  /** Its second line where Claude gave one, first line only: a command's
+   *  description, where a search looks, a subagent's task. */
+  detail: string;
+}
+
+/**
+ * The call in flight in words: "Editing session.ts", "Searching for
+ * liveGroupState in src/", "Running npm test · Run the card tests".
+ *
+ * It used to be "Running <label>" for every tool, so an edit read "Running
+ * session.ts". The verb follows the kind of call, as T3 Code's live row does.
+ * A Read or an Edit gets no detail: its detail is the target's full path,
+ * which the target's title already carries.
+ */
+export function liveCall(c: {
+  tool?: string;
+  itemType?: ItemType;
+  label?: string;
+  detail?: string;
+}): LiveCall | null {
+  if (!c.tool) return null;
+  const target = c.label || c.tool;
+  const second = (c.detail ?? "").trim().split("\n")[0]?.trim() ?? "";
+  const call = (icon: LiveIcon, verb: string, detail = second): LiveCall => ({
+    icon,
+    verb,
+    target,
+    detail,
+  });
+  switch (c.tool) {
+    case "Edit":
+    case "NotebookEdit":
+      return call("edit", "Editing", "");
+    case "Write":
+      return call("edit", "Writing", "");
+    case "Read":
+    case "NotebookRead":
+      return call("read", "Reading", "");
+    case "Grep":
+      return call("search", "Searching for", second && `in ${second}`);
+    case "Glob":
+      return call("search", "Finding", second && `in ${second}`);
+    case "WebSearch":
+      return call("search", "Searching the web for");
+    case "WebFetch":
+      return call("search", "Fetching");
+    case "Skill":
+      return call("tools", "Loading skill");
+  }
+  switch (c.itemType) {
+    case "command_execution":
+      return call("command", "Running");
+    case "image_view":
+      return call("picture", "Viewing");
+    case "collab_agent_tool_call":
+      return call("tools", "Agent:");
+    case "mcp_tool_call":
+      return call("tools", "Using");
+  }
+  return call("tools", "Running");
 }
 
 /**
