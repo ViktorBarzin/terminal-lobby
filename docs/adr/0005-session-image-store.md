@@ -1,5 +1,17 @@
 # Session images persist in a per-user store served back as a gallery
 
+> **Amended 2026-10-02 (later)**: the store of the account the lobby services
+> run as is now private, 0700 directories and 0600 files, and the services
+> narrow an existing one at startup. The read-policy argument below still sets
+> the modes of every other account's store, whose files that account's own
+> sessions have to read. It does not apply to the service account's store,
+> whose sessions run as its owner, and that store holds what a Caller sends,
+> which on the day this was measured included payslips and tickets readable by
+> every account on the box. Deleting a Caller's conversation
+> (`DELETE /v1/conversations/{id}`) now removes its session directory and the
+> links a title rename left to it, since nothing restores a deleted Caller
+> session; a session that dies any other way keeps the 30-day grace.
+
 > **Amended 2026-10-02** by
 > `infra/docs/plans/2026-10-02-muse-homelab-integration-design.md` (phase 2): the
 > store has a second writer. agent-api writes the images and files a Caller sends

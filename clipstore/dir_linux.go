@@ -13,6 +13,9 @@ import (
 type Dir struct {
 	path string
 	fd   int
+	// private says the directory is the service account's own store, whose
+	// files are 0600 (storeModes).
+	private bool
 }
 
 func openDir(path string) (*Dir, error) {
@@ -26,7 +29,7 @@ func openDir(path string) (*Dir, error) {
 func (d *Dir) create(name string) (*os.File, error) {
 	path := filepath.Join(d.path, name)
 	fd, err := syscall.Openat(d.fd, name,
-		syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, 0o644)
+		syscall.O_WRONLY|syscall.O_CREAT|syscall.O_EXCL|syscall.O_CLOEXEC|syscall.O_NOFOLLOW, uint32(d.fileMode()))
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: path, Err: err}
 	}
@@ -42,3 +45,8 @@ func (d *Dir) unlink(name string) error {
 
 // Close releases the directory.
 func (d *Dir) Close() error { return syscall.Close(d.fd) }
+
+func (d *Dir) fileMode() os.FileMode {
+	_, m := storeModes(d.private)
+	return m
+}

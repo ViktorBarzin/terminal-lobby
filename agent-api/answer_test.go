@@ -500,3 +500,54 @@ func TestAnUnclearedDialogComesBack(t *testing.T) {
 		t.Fatalf("the dialog still up was not read back: %+v", v)
 	}
 }
+
+// The mod stamps awaiting when Claude asks, and its dialog is drawn a moment
+// later. A pane read in that moment shows the spinner, not a question.
+// Measured live on 2026-10-02 (rv-r3reg-b): ?wait returned needs_input with
+// kind unknown, no options and "✢ Calculating…" as the question, and the
+// task never read the pane again. An unrecognised pane is read again on the
+// next poll while the start grace runs, and the task stays running meanwhile.
+func TestAnAwaitingPaneWithNoDialogYetIsReadAgain(t *testing.T) {
+	h := newHarness(t)
+	h.readyConversation("c1")
+	h.sessions.setPane(testOSUser, "c1", "✢ Calculating… (12s · ↓ 300 tokens)\n\n❯ \n")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.setStateLocked(k, "running")
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.setState(testOSUser, "c1", "awaiting")
+		}()
+	}
+	task := h.sendMessage("c1", "start a background agent")
+	defer h.stop(task)
+	time.Sleep(40 * time.Millisecond)
+	if v, _ := h.srv.Tasks.Get(task); v.Status != StatusRunning {
+		t.Fatalf("status %q kind %q question %q over a pane with no dialog yet", v.Status, v.Kind, v.Question)
+	}
+	h.sessions.setPane(testOSUser, "c1", permissionPane)
+	v := h.waitStatus(task, StatusNeedsInput)
+	if v.Kind != KindPermission || len(v.Options) == 0 {
+		t.Fatalf("the dialog drawn after the spinner was not read: %+v", v)
+	}
+}
+
+// A dialog no parser knows is still reported once the grace has run, so a
+// caller is not left holding a running task over a session that waits.
+func TestAnUnknownDialogIsReportedAfterTheGrace(t *testing.T) {
+	h := newHarness(t)
+	h.readyConversation("c1")
+	h.sessions.setPane(testOSUser, "c1", "Some dialog in a shape nobody parses\n")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		f.setStateLocked(k, "running")
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.setState(testOSUser, "c1", "awaiting")
+		}()
+	}
+	task := h.sendMessage("c1", "go")
+	defer h.stop(task)
+	v := h.waitStatus(task, StatusNeedsInput)
+	if v.Kind != KindUnknown || !strings.Contains(v.Question, "nobody parses") {
+		t.Fatalf("got %+v", v)
+	}
+}

@@ -94,6 +94,13 @@ LogsDirectoryMode=0700
 # directory as User= and passes it as $STATE_DIRECTORY, which the service
 # reads. 0700 for the trace directory's reason: a delegation's task and result
 # are a person's words, and other people have shells on this box.
+#
+# It also holds agent-rules.md, the system prompt every Caller conversation
+# reads through --append-system-prompt-file. It lived in /tmp/agent-api until
+# 2026-10-02, and /tmp is shared: another account could create that directory
+# first after a reboot and redirect or replace the file. Here only this
+# account can write it, and the conversations that read it run as this
+# account too.
 StateDirectory=agent-api
 StateDirectoryMode=0700
 

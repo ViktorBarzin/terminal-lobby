@@ -3,6 +3,8 @@ package main
 import (
 	"errors"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -253,6 +255,37 @@ func TestDeleteKillsTheLiveName(t *testing.T) {
 	h.decodeJSON(h.call("DELETE", "/v1/conversations/c1", ""), http.StatusOK, nil)
 	if k := h.sessions.killCalls(); !reflect.DeepEqual(k, []string{testOSUser + "/pong-response"}) {
 		t.Fatalf("kills = %v, want the live name", k)
+	}
+}
+
+// Deleting a conversation removes the files sent with its messages: the
+// directory under the name the session has now, and the link the title
+// rename left under the name it was born with. Measured live on 2026-10-02
+// (rv-r3-upload): after DELETE all five files and the link were still there.
+func TestDeleteRemovesTheConversationsAttachments(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{Name: "c1", Owner: testActor, State: "done", BornAs: "c1"})
+	h.sessions.rename(testOSUser, "c1", "pong-response")
+	user := filepath.Join(h.srv.StoreRoot, testOSUser)
+	for _, d := range []string{"pong-response", "someone-else"} {
+		if err := os.MkdirAll(filepath.Join(user, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(user, d, "file-x.pdf"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("pong-response", filepath.Join(user, "c1")); err != nil {
+		t.Fatal(err)
+	}
+	h.decodeJSON(h.call("DELETE", "/v1/conversations/c1", ""), http.StatusOK, nil)
+	for _, gone := range []string{"pong-response", "c1"} {
+		if _, err := os.Lstat(filepath.Join(user, gone)); !os.IsNotExist(err) {
+			t.Errorf("%s is still in the store (%v)", gone, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(user, "someone-else", "file-x.pdf")); err != nil {
+		t.Errorf("another session's file went too: %v", err)
 	}
 }
 

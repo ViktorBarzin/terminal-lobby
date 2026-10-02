@@ -303,3 +303,55 @@ func TestLiveResumeBringsBackADeadPane(t *testing.T) {
 		t.Fatal("the resume did not stamp the drive clock")
 	}
 }
+
+// Until 2026-10-02 agent-api passed its rules as a file in /tmp/agent-api,
+// a directory any account on the box could create first after a reboot, and
+// a suspend copies Claude's argv, that path included, into @tl_resume_cmd.
+// A resume points such a command at the file's new home, which only
+// agent-api's account can write, once that file is there.
+func TestResumeMovesTheAgentRulesOutOfTmp(t *testing.T) {
+	r := suspendedRecorder()
+	r.facts.ResumeCmd = "/usr/local/bin/claude --resume e99b --append-system-prompt-file " +
+		LegacyAgentRulesPath + " --permission-mode bypassPermissions"
+	ops := r.ops()
+	ops.FileExists = func(p string) bool { return p == AgentRulesPath }
+	if _, err := Resume(ops, "u", "s"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := []string{"/usr/local/bin/claude", "--resume", "e99b", "--append-system-prompt-file",
+		AgentRulesPath, "--permission-mode", "bypassPermissions"}
+	if !reflect.DeepEqual(r.respawned, want) {
+		t.Fatalf("respawned %q, want %q", r.respawned, want)
+	}
+}
+
+// The same inside a shell command line, the shape a wrapped launch has.
+func TestResumeMovesTheAgentRulesOutOfTmpInsideAShellLine(t *testing.T) {
+	r := suspendedRecorder()
+	r.facts.ResumeCmd = `/bin/sh -c 'claude --resume e99b --append-system-prompt-file ` + LegacyAgentRulesPath + `; exec bash -l'`
+	ops := r.ops()
+	ops.FileExists = func(p string) bool { return p == AgentRulesPath }
+	if _, err := Resume(ops, "u", "s"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if len(r.respawned) != 3 || strings.Contains(r.respawned[2], LegacyAgentRulesPath) ||
+		!strings.Contains(r.respawned[2], "--append-system-prompt-file "+AgentRulesPath+";") {
+		t.Fatalf("respawned %q", r.respawned)
+	}
+}
+
+// With no file at the new home yet, the command is left as it was: pointing
+// Claude at a missing file would end the resume with Claude exiting and the
+// session gone.
+func TestResumeLeavesTheRulesPathWhenTheNewFileIsMissing(t *testing.T) {
+	r := suspendedRecorder()
+	r.facts.ResumeCmd = "claude --append-system-prompt-file " + LegacyAgentRulesPath
+	ops := r.ops()
+	ops.FileExists = func(string) bool { return false }
+	if _, err := Resume(ops, "u", "s"); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	if want := []string{"claude", "--append-system-prompt-file", LegacyAgentRulesPath}; !reflect.DeepEqual(r.respawned, want) {
+		t.Fatalf("respawned %q, want %q", r.respawned, want)
+	}
+}
