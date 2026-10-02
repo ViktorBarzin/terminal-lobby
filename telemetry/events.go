@@ -117,6 +117,11 @@ var knownEvents = map[string]bool{
 	// spent suspended, tl.resumeMs for the respawn call itself — Claude's own
 	// boot happens after the pane exists and is the client's to measure.
 	"session.resumed": true,
+	// A person's Restart from the session menu: the same stop and resume, on
+	// demand, so the session's Claude loads a new binary or new settings on
+	// the same conversation (tmux-api/restart.go). tl.session, tl.from (the
+	// state it was in), tl.restartMs for stop plus respawn, tl.client.
+	"session.restarted": true,
 
 	// -- skills & plugins (skills-api) --------------------------------------
 	"skill.installed":          true, // took a peer's skill (tl.key, tl.from, tl.kind=new|replace)

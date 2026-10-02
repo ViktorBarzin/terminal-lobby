@@ -33,6 +33,7 @@ import { ApiError, lobbyApi, ORIGIN_USER, type LobbyApi } from "../lib/lobby-api
 import {
   emptyLayout,
   NAME_RE,
+  sessionLabel,
   type DockState,
   type Layout,
   type RestoreSelection,
@@ -191,6 +192,15 @@ export interface LobbyStore {
    * and a card that assumes the first will never send a second request.
    */
   resume(name: string): Promise<boolean>;
+  /**
+   * Restart a session's Claude on the same conversation (the ⋯ menu's
+   * Restart), so it picks up a new binary or new settings.
+   *
+   * TRUE when the server restarted it and the list has been refreshed. FALSE
+   * when it was refused and a toast has given the server's reason, or when the
+   * server has no restart route.
+   */
+  restart(name: string): Promise<boolean>;
   /**
    * Correct a session's state dot by hand (the ⋯ menu's Status rows).
    *
@@ -1032,6 +1042,34 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
       }
     }
     quickRefreshBurst();
+    return true;
+  }
+
+  /**
+   * Restart a session's Claude, and get the list looking right quickly.
+   *
+   * The server answers once the new Claude has been started, and that Claude
+   * takes 1.7-3.1s to load the conversation, so the refresh here shows the
+   * stop and the burst after it catches the boot.
+   */
+  async function restart(name: string): Promise<boolean> {
+    if (!api.restartSession) return false;
+    const found = sessions.find((s) => s.name === name);
+    const label = found ? sessionLabel(found) : name;
+    try {
+      await api.restartSession(name);
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists", "error");
+      else
+        showToast(
+          `Couldn't restart ${label}: ${e instanceof Error ? e.message : String(e)}`,
+          "error",
+        );
+      return false;
+    }
+    await refresh();
+    quickRefreshBurst();
+    showToast(`Restarted ${label}`, "success");
     return true;
   }
 
@@ -2010,6 +2048,7 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     prewarm,
     releasePrewarm,
     resume,
+    restart,
     setState,
     renameProjectAction,
     deleteProjectAction,

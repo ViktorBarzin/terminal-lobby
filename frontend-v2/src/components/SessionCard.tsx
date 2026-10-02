@@ -546,6 +546,33 @@ export const SessionCard: Component<{
     menu.close();
     await props.store.kill(s().name);
   };
+  /**
+   * Restart: stop this session's Claude and start it again on the same
+   * conversation, so it loads a new binary or new settings. Only a live Claude
+   * session has one to restart; a suspended one loads the new binary just by
+   * being opened.
+   */
+  const restartable = () => s().tool === "claude" && !suspended();
+  /**
+   * An idle session restarts on the press. A busy one asks first, because the
+   * restart cuts the turn in flight or dismisses the question on screen; the
+   * conversation up to that point comes back either way.
+   */
+  const restart = async () => {
+    menu.close();
+    const st = s().state;
+    if (
+      st === "running" &&
+      !window.confirm(`Restart ${label()}? This stops the turn that is running.`)
+    )
+      return;
+    if (
+      st === "awaiting" &&
+      !window.confirm(`Restart ${label()}? The question on screen will be dismissed.`)
+    )
+      return;
+    await props.store.restart(s().name);
+  };
   const moveTo = async (group: string) => {
     menu.close();
     await props.store.move(s().name, group);
@@ -1050,6 +1077,11 @@ export const SessionCard: Component<{
           <button class="tl-menu-item tl-menu-danger" role="menuitem" onClick={() => void kill()}>
             Kill
           </button>
+          <Show when={restartable()}>
+            <button class="tl-menu-item" role="menuitem" onClick={() => void restart()}>
+              Restart
+            </button>
+          </Show>
           {/* Status. The dot is stamped by hooks and has a history of reading
               wrong — an interrupt typed at the pty, a dialog taken down with
               nothing reporting it, a background id nobody retired — and until

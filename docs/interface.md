@@ -85,6 +85,17 @@ clears whatever it was still counted as waiting on, and none of this notifies
 your phone. The rows are absent on a suspended session, whose dot means
 something else, and on a session no Claude has run in.
 
+**Restart** in the same menu stops the session's Claude and starts it again
+on the same conversation, in the same tmux session. A Claude reads its binary,
+settings and plugins when it starts, so this is how a session picks up a new
+Claude Code version or a settings change without losing its history. It keeps
+the flags the session started with, the model included. An idle session
+restarts straight away; a session that is working, or waiting on an answer,
+asks first, because the restart stops that turn or dismisses that question.
+The item is on Claude sessions only, and not on a suspended one, which loads
+the new version just by being opened. A session nobody has typed into yet has
+no conversation to come back to, and says so rather than restarting.
+
 The `⋯` menus in the sidebar, on a session card and on a project header, open
 where you can read them. One near the bottom of the list opens upwards instead
 of downwards and keeps its edges on screen, so the options at the end of it are

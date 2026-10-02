@@ -434,6 +434,30 @@ export async function resumeSession(name: string): Promise<void> {
   if (!res.ok) throw new ApiError(res.status, `HTTP ${res.status}`);
 }
 
+/** How long a restart may take: tmux-api gives the old Claude up to 30s to
+ *  flush its transcript and exit before it respawns the pane. */
+const RESTART_TIMEOUT_MS = 45000;
+
+/**
+ * POST /api/sessions/{name}/restart — stop the session's Claude and start it
+ * again on the same conversation, so it loads a new binary or new settings.
+ *
+ * Throws an ApiError carrying the status and the server's own reason: the 409s
+ * mean different things (no conversation yet, suspended, a Caller's turn in
+ * flight) and only the server can say which.
+ */
+export async function restartSession(name: string): Promise<void> {
+  const res = await req(
+    `/sessions/${encodeURIComponent(name)}/restart`,
+    { method: "POST" },
+    RESTART_TIMEOUT_MS,
+  );
+  if (!res.ok) {
+    const reason = (await res.text().catch(() => "")).trim();
+    throw new ApiError(res.status, reason || `HTTP ${res.status}`);
+  }
+}
+
 /** Release a guess that came to nothing, so its ~530MB is not held until the
  *  server's TTL collects it. Called when the create input closes without
  *  creating; the TTL remains the backstop for a closed tab. */
@@ -518,6 +542,10 @@ export interface LobbyApi {
    *  satisfies this interface unchanged, and the store treats an absent one as
    *  a server that predates the sweep. */
   resumeSession?(name: string): Promise<void>;
+  /** Restart a session's Claude on its conversation. Optional for the same
+   *  reason `resumeSession` is; the store treats an absent one as a server
+   *  that predates the route. */
+  restartSession?(name: string): Promise<void>;
 }
 
 export const lobbyApi: LobbyApi = {
@@ -536,6 +564,7 @@ export const lobbyApi: LobbyApi = {
   prewarm,
   releasePrewarm,
   resumeSession,
+  restartSession,
 };
 
 // --- workspaces (which sessions sit on screen together) -----------------------

@@ -89,6 +89,14 @@ func handleSessionByName(w http.ResponseWriter, r *http.Request) {
 		resumeSession(w, osUser, name)
 		return
 	}
+	if len(parts) == 2 && parts[1] == "restart" {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		restartSession(w, osUser, name)
+		return
+	}
 	if len(parts) == 2 && parts[1] == "capture" {
 		if r.Method != http.MethodGet {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

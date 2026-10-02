@@ -52,6 +52,7 @@ package main
 //     without parsing anything.
 
 import (
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -730,7 +731,32 @@ type suspendOps struct {
 	emit   func(event, osUser string, attrs telemetry.Attrs)
 }
 
-// suspendSession suspends one session and reports whether it did.
+// stopPolicy is what differs between the sweep's suspend and a person's
+// restart (restart.go): the word the log lines lead with, and which of the
+// live readings refuse the stop.
+type stopPolicy struct {
+	verb    string
+	decline func(paneFacts, time.Time) (string, bool)
+}
+
+// sweepPolicy is the idle sweep's: every exclusion declineNow re-applies.
+var sweepPolicy = stopPolicy{verb: "suspend", decline: declineNow}
+
+// Why stopClaude left a session alone. The first four are refusals made
+// before anything was written; errStopFailed is everything after, where the
+// session may be carrying a resume command and remain-on-exit.
+var (
+	errNoConversation = errors.New("no conversation to resume")
+	errNoPane         = errors.New("no readable pane")
+	errDeclined       = errors.New("declined")
+	errNoClaude       = errors.New("no claude under the pane")
+	errNotResumable   = errors.New("runs no claude command that can be resumed")
+	errStopFailed     = errors.New("claude did not stop")
+)
+
+// stopClaude stops one session's claude and leaves the session marked
+// suspended, ready for sessionio.Resume. It returns what /proc said about the
+// claude it stopped.
 //
 // Best-effort and ORDERED around one invariant: A SESSION WEARS @tl_suspended
 // ONLY ONCE ITS CLAUDE IS GONE. The resume path acts on that mark with
@@ -747,13 +773,13 @@ type suspendOps struct {
 // the timestamp lands only after the process is confirmed gone. A failure
 // anywhere leaves the session live and reading live, with remain-on-exit put
 // back the way it was found.
-func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) bool {
+func stopClaude(ops suspendOps, p stopPolicy, osUser string, s Session, now time.Time) (procFacts, error) {
 	// (a) The transcript, first, because a session that cannot be resumed must
 	// never be suspended and this is the only thing that says so.
 	path, ok := ops.transcript(osUser, s.Name)
 	if !ok || path == "" {
-		log.Printf("suspend: %s/%s has no resolvable transcript — leaving it alone", osUser, s.Name)
-		return false
+		log.Printf(p.verb+": %s/%s has no resolvable transcript — leaving it alone", osUser, s.Name)
+		return procFacts{}, errNoConversation
 	}
 	// (b) The uuid comes from the stamp's base name, never from argv.
 	uuid := sessionio.ClaudeIDFromTranscript(path)
@@ -770,21 +796,21 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	// failed set-option and a miss the next sweep repeats.
 	pane, ok := ops.pane(osUser, s.Name)
 	if !ok || pane.pid <= 0 {
-		log.Printf("suspend: %s/%s has no readable pane — leaving it alone", osUser, s.Name)
-		return false
+		log.Printf(p.verb+": %s/%s has no readable pane — leaving it alone", osUser, s.Name)
+		return procFacts{}, errNoPane
 	}
 	// (c2) …and the policy, re-applied to what that same call said about the
 	// session NOW. The list this candidate came from can be minutes old
 	// (paneFacts has the arithmetic), and nothing below this line is reversible
 	// once the signal is away.
-	if why, no := declineNow(pane, now); no {
-		log.Printf("suspend: %s/%s %s — leaving it alone", osUser, s.Name, why)
-		return false
+	if why, no := p.decline(pane, now); no {
+		log.Printf(p.verb+": %s/%s %s — leaving it alone", osUser, s.Name, why)
+		return procFacts{}, fmt.Errorf("%w: %s", errDeclined, why)
 	}
 	facts, ok := ops.inspect(pane.pid)
 	if !ok {
-		log.Printf("suspend: %s/%s has no claude under pane %d — leaving it alone", osUser, s.Name, pane.pid)
-		return false
+		log.Printf(p.verb+": %s/%s has no claude under pane %d — leaving it alone", osUser, s.Name, pane.pid)
+		return procFacts{}, errNoClaude
 	}
 
 	// (d) The resume command, built and PROVEN to survive the option before
@@ -792,46 +818,46 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	// as something nobody wrote, so the session is left live instead.
 	next, ok := resumeArgv(facts.argv, uuid)
 	if !ok {
-		log.Printf("suspend: %s/%s runs no claude command this can resume (%q)", osUser, s.Name, facts.argv)
-		return false
+		log.Printf(p.verb+": %s/%s runs no claude command this can resume (%q)", osUser, s.Name, facts.argv)
+		return procFacts{}, errNotResumable
 	}
 	line := shellQuoteArgv(next)
 	if back, ok := shellSplitArgv(line); !ok || !sameArgv(back, next) {
-		log.Printf("suspend: %s/%s resume command does not survive the option (%q)", osUser, s.Name, line)
-		return false
+		log.Printf(p.verb+": %s/%s resume command does not survive the option (%q)", osUser, s.Name, line)
+		return procFacts{}, errNotResumable
 	}
 
 	// (e) What the resume will need, written first. Neither option changes
 	// how the session reads, so a failure here costs nothing.
 	if err := ops.setOption(osUser, s.Name, resumeCmdOption, line); err != nil {
-		log.Printf("suspend: stamping %s on %s/%s: %v", resumeCmdOption, osUser, s.Name, err)
-		return false
+		log.Printf(p.verb+": stamping %s on %s/%s: %v", resumeCmdOption, osUser, s.Name, err)
+		return procFacts{}, errStopFailed
 	}
 	if err := ops.setOption(osUser, s.Name, suspendStateOption, s.State); err != nil {
-		log.Printf("suspend: stamping %s on %s/%s: %v", suspendStateOption, osUser, s.Name, err)
-		return false
+		log.Printf(p.verb+": stamping %s on %s/%s: %v", suspendStateOption, osUser, s.Name, err)
+		return procFacts{}, errStopFailed
 	}
 
 	// (f) remain-on-exit, on THIS SESSION ONLY. Globally it would stop an
 	// ordinary `exit` from closing anybody's session.
 	if err := ops.remainOn(osUser, s.Name); err != nil {
-		log.Printf("suspend: remain-on-exit on %s/%s: %v — not signalling", osUser, s.Name, err)
-		return false
+		log.Printf(p.verb+": remain-on-exit on %s/%s: %v — not signalling", osUser, s.Name, err)
+		return procFacts{}, errStopFailed
 	}
 
 	// (g) SIGTERM the claude process itself, not the shell wrapping it, so
 	// claude runs its own shutdown and flushes the transcript.
 	if err := ops.signal(osUser, facts.claudePID); err != nil {
-		log.Printf("suspend: signalling claude %d for %s/%s: %v — remain-on-exit stays on", facts.claudePID, osUser, s.Name, err)
-		return false
+		log.Printf(p.verb+": signalling claude %d for %s/%s: %v — remain-on-exit stays on", facts.claudePID, osUser, s.Name, err)
+		return procFacts{}, errStopFailed
 	}
 	if !ops.exited(facts.claudePID, suspendGrace) {
 		// Deliberately no SIGKILL. An unflushed transcript is the one thing
 		// that makes a resume come back wrong, and the next sweep retries in
 		// five minutes.
-		log.Printf("suspend: claude %d for %s/%s did not exit within %s — left alone, remain-on-exit stays on",
+		log.Printf(p.verb+": claude %d for %s/%s did not exit within %s — left alone, remain-on-exit stays on",
 			facts.claudePID, osUser, s.Name, suspendGrace)
-		return false
+		return procFacts{}, errStopFailed
 	}
 
 	// (h) The pane, now that the process is gone, because the two shapes on
@@ -853,9 +879,9 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	// session is left for the next sweep.
 	if dead, ok := ops.paneDead(osUser, s.Name); !ok || !dead {
 		if _, running := ops.inspect(pane.pid); running {
-			log.Printf("suspend: %s/%s still has a claude under pane %d after the kill — leaving it unmarked",
+			log.Printf(p.verb+": %s/%s still has a claude under pane %d after the kill — leaving it unmarked",
 				osUser, s.Name, pane.pid)
-			return false
+			return procFacts{}, errStopFailed
 		}
 	}
 
@@ -867,8 +893,18 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	// which is a session no sweep would look at again and no click could
 	// resume. repairHalfSuspended (below) is what finds it on the next pass.
 	if err := ops.setOption(osUser, s.Name, suspendedOption, strconv.FormatInt(now.Unix(), 10)); err != nil {
-		log.Printf("suspend: claude for %s/%s is gone but %s would not stamp: %v — the next sweep's repair pass picks it up",
+		log.Printf(p.verb+": claude for %s/%s is gone but %s would not stamp: %v — the next sweep's repair pass picks it up",
 			osUser, s.Name, suspendedOption, err)
+		return procFacts{}, errStopFailed
+	}
+	return facts, nil
+}
+
+// suspendSession suspends one session and reports whether it did: stopClaude
+// under the sweep's policy, and the event that says what it cost.
+func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) bool {
+	facts, err := stopClaude(ops, sweepPolicy, osUser, s, now)
+	if err != nil {
 		return false
 	}
 

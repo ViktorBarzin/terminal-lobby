@@ -170,6 +170,23 @@ func notSuspended(w http.ResponseWriter) {
 // sessionTitleOption has (main.go).
 const sessionStateOption = sessionio.OptionState
 
+// liveResumeOps is sessionio.ResumeOps over this package's seams. Built per
+// call, so a test that swaps one is the one the request runs against. The
+// resume and the restart (restart.go) both use it.
+func liveResumeOps() sessionio.ResumeOps {
+	return sessionio.ResumeOps{
+		Read: func(u, n string) (sessionio.SuspendedFacts, bool) {
+			f, ok := readSuspended(u, n)
+			return f.shared(), ok
+		},
+		ClaudeUnderPane: func(pid int) (bool, bool) { return claudeUnderPane(pid) },
+		HasConversation: func(u, path string) bool { return transcriptHasAConversation(u, path) },
+		Respawn:         func(u, pane string, argv []string) (string, error) { return respawnPane(u, pane, argv) },
+		ClearMarks:      func(u, n, saved string) { clearSuspendMarks(u, n, saved) },
+		StampDriven:     func(u, n string, at int64) { stampResumeDrive(u, n, at) },
+	}
+}
+
 // resumeResponse is the body of a successful POST /sessions/{name}/resume.
 type resumeResponse struct {
 	Resumed bool `json:"resumed"`
@@ -181,20 +198,7 @@ type resumeResponse struct {
 //	404                          no such session
 //	409 {"error":"not suspended"} it is live
 func resumeSession(w http.ResponseWriter, osUser, name string) {
-	// Built per call from the package seams, so a test that swaps one is the
-	// one this request runs against.
-	ops := sessionio.ResumeOps{
-		Read: func(u, n string) (sessionio.SuspendedFacts, bool) {
-			f, ok := readSuspended(u, n)
-			return f.shared(), ok
-		},
-		ClaudeUnderPane: func(pid int) (bool, bool) { return claudeUnderPane(pid) },
-		HasConversation: func(u, path string) bool { return transcriptHasAConversation(u, path) },
-		Respawn:         func(u, pane string, argv []string) (string, error) { return respawnPane(u, pane, argv) },
-		ClearMarks:      func(u, n, saved string) { clearSuspendMarks(u, n, saved) },
-		StampDriven:     func(u, n string, at int64) { stampResumeDrive(u, n, at) },
-	}
-	res, err := sessionio.Resume(ops, osUser, name)
+	res, err := sessionio.Resume(liveResumeOps(), osUser, name)
 	switch {
 	case err == nil:
 	case errors.Is(err, sessionio.ErrSessionGone):
