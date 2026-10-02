@@ -64,6 +64,8 @@ import {
   WorkingRowView,
 } from "./rows";
 import { browsingRuns, cardAnchors, type BrowsingRun } from "./browser.logic";
+import { StreamBody, useRowBody } from "./stream-body";
+import { NO_STREAM, streamBody, type StreamState } from "../store/stream";
 import { BrowserCard, type BrowserCardHost } from "./BrowserCard";
 
 const USER_COLLAPSE_CHARS = 600;
@@ -185,16 +187,27 @@ const GhostRowsView: Component<{
   </>
 );
 
-const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => (
-  <div class="tl-row tl-row-message" data-eid={props.row.id}>
-    <Show when={props.row.body.trim()} fallback={<span class="tl-empty">(empty response)</span>}>
-      {/* `me` makes this a conversation: a picture Claude names by its path is
-          drawn under the text naming it, and fenced code stays code — see
-          Markdown.tsx (2026-09-24, revising design 2026-08-17 decision 8). */}
-      <Markdown text={props.row.body} attachAs={props.me} />
-    </Show>
-  </div>
-);
+const MessageRowView: Component<{ row: MessageRow; me?: string }> = (props) => {
+  // The stored reply, or the words so far while Claude is still writing it.
+  const body = useRowBody(() => props.row);
+  return (
+    <div
+      class="tl-row tl-row-message"
+      data-eid={props.row.id}
+      data-streaming={props.row.streaming ? "" : undefined}
+    >
+      <Show
+        when={body().trim() || props.row.streaming}
+        fallback={<span class="tl-empty">(empty response)</span>}
+      >
+        {/* `me` makes this a conversation: a picture Claude names by its path is
+            drawn under the text naming it, and fenced code stays code — see
+            Markdown.tsx (2026-09-24, revising design 2026-08-17 decision 8). */}
+        <Markdown text={body()} attachAs={props.me} streaming={props.row.streaming} />
+      </Show>
+    </div>
+  );
+};
 
 /** What a permission row says happened: the reader's answer, or that Claude asked. */
 const PERMISSION_NOTE: Record<string, string> = {
@@ -476,6 +489,14 @@ export const MessagesTimeline: Component<{
    * any caller with no session to stream from.
    */
   browser?: BrowserCardHost;
+  /**
+   * The reply Claude is still writing (store/stream.ts). The rows hold its
+   * blocks with empty bodies (TextView adds them); the words are read from
+   * here, so only the streaming row re-renders as they arrive.
+   */
+  stream?: StreamState;
+  /** What an empty timeline says instead of "No messages yet." */
+  empty?: JSX.Element;
 }> = (props) => {
   const [expandedTurns, setExpandedTurns] = createSignal<Set<string>>(new Set());
   /** Split from `rows` so the scroll pin can follow the TRANSCRIPT alone. */
@@ -807,6 +828,9 @@ export const MessagesTimeline: Component<{
   const liveRowState = createMemo((): LiveGroupState | undefined => {
     const s = shownLive();
     if (s.kind === "idle") return undefined;
+    // The reply streaming in at the end says the turn is moving; a "Working…"
+    // under it would say the same thing twice.
+    if (s.kind === "working" && s.streaming) return undefined;
     if (s.kind !== "clearing" && s.groupKey !== undefined) return undefined;
     return s;
   });
@@ -1168,6 +1192,8 @@ export const MessagesTimeline: Component<{
     // A queued prompt is drawn after the last row too, so a ghost arriving
     // keeps a pinned reader at the bottom the same way a new row does.
     void props.queued?.length;
+    // A reply streaming in grows its row without a new derivation.
+    void props.stream;
     // A hidden box has no geometry and takes no scroll, so this waits, and
     // runs again the moment the timeline shows: a reader who left it at the
     // live end comes back to the live end, however far the session has gone.
@@ -1328,6 +1354,8 @@ export const MessagesTimeline: Component<{
     void loadEarlier();
   });
 
+  const readStream = (id: number): string => streamBody(props.stream ?? NO_STREAM, id);
+
   return (
     <div
       class="tl-timeline"
@@ -1348,9 +1376,11 @@ export const MessagesTimeline: Component<{
       <Show
         when={allKeys().length > 0}
         fallback={
-          <div class="tl-empty-state">
-            {props.opening ? "Loading the conversation…" : "No messages yet."}
-          </div>
+          props.empty ?? (
+            <div class="tl-empty-state">
+              {props.opening ? "Loading the conversation…" : "No messages yet."}
+            </div>
+          )
         }
       >
         {/* The top of what is held, and its own status line. Scrolling into it
@@ -1381,7 +1411,9 @@ export const MessagesTimeline: Component<{
             </span>
           </div>
         </Show>
-        <For each={shownKeys()}>{(key) => renderRow(key)}</For>
+        <StreamBody.Provider value={readStream}>
+          <For each={shownKeys()}>{(key) => renderRow(key)}</For>
+        </StreamBody.Provider>
         <Show when={liveRowState()}>{(s) => <LiveRowView state={s()} now={now()} />}</Show>
         <GhostRowsView
           queued={props.queued ?? []}

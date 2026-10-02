@@ -2,82 +2,61 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"log"
-	"net/http"
 	"sync"
 	"time"
 
 	"terminal-lobby/sessionio"
 )
 
-// userState holds one OS user's session map and live sources. The service runs
-// as a privileged user but isolates each mapped user's transcripts by absolute
-// path under their home; there is no cross-user access path.
+// userState holds one OS user's session map and the readers for their files.
+// The service runs as a privileged user but isolates each mapped user's files
+// by absolute path under their home; there is no cross-user access path.
 type userState struct {
 	osUser string
 	root   string // /home/<osUser>/.claude/projects
 	sm     *sessionio.SessionMap
 	mu     sync.Mutex
-	srcs   map[string]*liveSource // key: tmux session name
-
-	// Sessions whose first read is in flight, so a second caller for the SAME
-	// session waits for that read rather than starting its own. The channel is
-	// closed when the read finishes. Callers for any OTHER session do not
-	// consult this at all — that is the point of it (see source).
-	building map[string]chan struct{}
 
 	// How this user's files are read. The service's own user is read directly;
 	// everyone else goes through a child running as them, because a home is
 	// 0750 and this process cannot open what is inside one. priv is nil for the
 	// former and is the same object as reader for the latter — it is kept
 	// separately because the slash-command catalogue is not a sessionio read.
+	//
+	// Since the mod (ADR-0036) no transcript is tailed. What is still read off
+	// disk is read on demand: a picture by its row id, the agent files the
+	// agent panel lists, and an agent's transcript a reader drills into.
 	reader sessionio.Reader
 	priv   *privReader
 	// agents reaches the agent files beside each transcript, the same two ways:
-	// LocalReader for the service's own user, priv for everyone else. A field
-	// of its own rather than a wider reader, so a test can swap the transcript
-	// reader for one that reads only transcripts.
+	// LocalReader for the service's own user, priv for everyone else.
 	agents sessionio.AgentReader
 }
 
-// liveSource is a running FileSource plus the handle that stops its tail. A
-// source is evicted when the tmux name it is keyed by starts pointing at a
-// different transcript, and eviction has to stop the goroutine or every reused
-// session name leaks one tailer for the life of the process. done is closed
-// once that goroutine has returned, which is what makes the stop observable.
+// liveSource is a session's event log plus the agent watch and drill-ins that
+// run beside it. Its log is fed by the session's mod (mod.go); stopping it
+// ends the watch and the drill-ins, and done is closed once they have
+// returned.
 type liveSource struct {
 	fs *sessionio.FileSource
 	// agents follows the session's subagents for the agent panel, under the
-	// same context as the tail, so retiring the source stops both.
+	// same context, so retiring the source stops it.
 	agents *agentWatch
 	// drills are the agent transcripts somebody opened from the panel
 	// (drill.go), tailed under ctx like the rest.
 	drills *drills
 	ctx    context.Context
 	stop   context.CancelFunc
-	done   <-chan struct{} // closed once the tail and the agent watch have both returned
-
-	// idleSince is when the sweep first found this source with no readers,
-	// zero while somebody is reading it. Two sweeps rather than one so a
-	// reader who drops and comes straight back — a page reload — finds the
-	// buffer still warm.
-	idleSince time.Time
+	done   <-chan struct{} // closed once the agent watch has returned
 }
 
-// paneReader reads what a session's pane is showing. An interface so the pane
-// watcher is tested without tmux; production passes the Injector.
-type paneReader interface {
-	CapturePane(osUser, session string) (string, error)
-}
-
-// stampReader reads a tmux session option: the rewound stamp a Stop leaves
-// (sessionio.OptionRewound), which a source built after a restart needs.
+// stampReader reads a tmux session option.
 type stampReader interface {
 	Option(osUser, session, name string) (string, bool)
 }
 
-// registry lazily manages per-user state and per-session sources.
+// registry holds per-user state and finds a session's source through the mod
+// hub.
 type registry struct {
 	mu       sync.Mutex
 	users    map[string]*userState
@@ -86,29 +65,27 @@ type registry struct {
 	homeBase string // "/home" (overridable for tests)
 	opts     sessionio.Options
 	self     string // the OS user this process runs as
-	// How the pane watcher reads a pane. nil disables it, which is what a test
-	// that does not care about panes gets.
-	panes paneReader
-	// How a new source reads the session's rewound stamp
-	// (sessionio.OptionRewound). nil skips it.
-	stamps stampReader
 
-	// now is the clock the idle sweep measures against. A seam so a test can
-	// age a source without waiting; production leaves it as time.Now.
+	// mods holds every Claude session's mod connection; the sources live
+	// there.
+	mods *modHub
+
+	// now is the clock the drill sweep measures against. A seam so a test can
+	// age a drill without waiting; production leaves it as time.Now.
 	now func() time.Time
 	// agentEvery is how often a watched session's agent files are listed,
 	// AgentScanInterval outside tests.
 	agentEvery time.Duration
-	// holds are the questions the lobby's hook is waiting on (hold.go).
-	holds *holdSet
 }
 
 func newRegistry(ctx context.Context, poll time.Duration, homeBase string, opts sessionio.Options, self string) *registry {
-	return &registry{
+	rg := &registry{
 		users: map[string]*userState{}, ctx: ctx,
 		poll: poll, homeBase: homeBase, opts: opts, self: self,
-		now: time.Now, agentEvery: AgentScanInterval, holds: newHoldSet(),
+		now: time.Now, agentEvery: AgentScanInterval,
 	}
+	rg.mods = newModHub(rg, opts)
+	return rg
 }
 
 func (rg *registry) user(osUser string) *userState {
@@ -119,9 +96,7 @@ func (rg *registry) user(osUser string) *userState {
 		root := sessionio.ProjectsRoot(rg.homeBase, osUser)
 		us = &userState{
 			osUser: osUser, root: root,
-			sm:       sessionio.NewSessionMap(osUser, root, rg.opts),
-			srcs:     map[string]*liveSource{},
-			building: map[string]chan struct{}{},
+			sm: sessionio.NewSessionMap(osUser, root, rg.opts),
 		}
 		if osUser == rg.self {
 			us.reader = sessionio.LocalReader{}
@@ -136,26 +111,8 @@ func (rg *registry) user(osUser string) *userState {
 	return us
 }
 
-// source returns the live FileSource for a registered session, lazily creating +
-// starting its tail. ok=false if the session was never registered (SessionStart).
-//
-// The cache is keyed by tmux session name, but a name outlives the Claude
-// session that claimed it: kill a session and start another in the same window
-// and SessionStart re-registers the name against a new transcript. A
-// FileSource's path is fixed at construction, so the cached entry is only still
-// valid while it points at the transcript the sessionMap currently holds —
-// otherwise it is a tailer on a dead session's file and has to be replaced.
-// The first read of a transcript happens in start(), synchronously, and it is
-// the expensive one: the whole file, one JSON parse per line. This function
-// therefore does NOT hold us.mu across it. Holding it meant one session's first
-// read froze every other session of the same user — measured on emo, 16
-// sessions and a 39 MB transcript that took 85 s to read while the box was IO
-// saturated, against a browser that abandons a request after 8 s. Sessions are
-// independent and the lock only ever protected the maps.
-//
-// Two callers asking for the SAME session still read it once: the first records
-// a channel in us.building and the others wait on that, then loop and find the
-// finished source in the cache. That is the only thing serialized here.
+// source returns the event log of a session whose mod is connected.
+// ok=false when no mod has said hello for it.
 func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool) {
 	ls, ok := rg.live(osUser, session)
 	if !ok {
@@ -165,153 +122,36 @@ func (rg *registry) source(osUser, session string) (*sessionio.FileSource, bool)
 }
 
 // live is source with everything the session's entry holds, for a handler that
-// needs more than the transcript: the event stream takes the agent watch too,
-// and serving one agent's transcript resolves it through the watch's listing.
+// needs more than the log: the event stream takes the agent watch too, and
+// serving one agent's transcript resolves it through the watch's listing.
 func (rg *registry) live(osUser, session string) (*liveSource, bool) {
-	us := rg.user(osUser)
-	for {
-		us.mu.Lock()
-		info, ok := us.sm.Get(session)
-		if !ok {
-			// The mapping is gone (the tmux session was killed, or a plain shell
-			// took its name). Anything still tailing the old transcript is reading
-			// a dead session's file — stop it rather than leak the goroutine.
-			if ls, cached := us.srcs[session]; cached {
-				us.retire(session, ls)
-			}
-			us.mu.Unlock()
-			return nil, false
-		}
-		if ls, ok := us.srcs[session]; ok {
-			if ls.fs.Path() == info.Transcript {
-				us.mu.Unlock()
-				return ls, true
-			}
-			us.retire(session, ls)
-		}
-		if wait, inFlight := us.building[session]; inFlight {
-			us.mu.Unlock()
-			<-wait
-			continue // the builder has published it, or failed and left nothing
-		}
-		done := make(chan struct{})
-		us.building[session] = done
-		reader, agents := us.reader, us.agents
-		us.mu.Unlock()
-
-		rewound := ""
-		if rg.stamps != nil {
-			rewound, _ = rg.stamps.Option(osUser, session, sessionio.OptionRewound)
-		}
-		ls := rg.start(session, info.Transcript, reader, agents, rewound)
-
-		us.mu.Lock()
-		delete(us.building, session)
-		// The tmux name may have been re-registered against a different
-		// transcript while this one was being read. The source just built is
-		// then already stale, so it is dropped rather than cached, and the loop
-		// builds the one the map now names.
-		cur, still := us.sm.Get(session)
-		if !still || cur.Transcript != info.Transcript {
-			us.mu.Unlock()
-			close(done)
-			ls.stop()
-			ls.fs.Close()
-			continue
-		}
-		if prev, cached := us.srcs[session]; cached {
-			us.retire(session, prev)
-		}
-		us.srcs[session] = ls
-		us.mu.Unlock()
-		close(done)
-		return ls, true
-	}
+	return rg.mods.live(osUser, session)
 }
 
-// retire drops a source: the tail goroutine is stopped, the cache entry goes,
-// and every stream reading it is ENDED. Caller holds us.mu.
-//
-// Closing the subscriptions is the part that matters to a reader. A retired
-// source is one whose tmux name now points at a different transcript, and a
-// browser left subscribed to it simply stops receiving: the transcript freezes
-// mid-conversation, and a question that was on screen at that moment keeps its
-// answer card docked over a dialog that no longer exists. Ending the stream
-// makes the browser reconnect onto the live source, which is the whole recovery.
-func (us *userState) retire(session string, ls *liveSource) {
-	ls.stop()
-	ls.fs.Close()
-	ls.drills.close()
-	delete(us.srcs, session)
-}
-
-// SweepInterval is how often live sources are re-checked against the session
-// map. Fast enough that a reader watching a session that gets replaced — a new
-// Claude in the same tmux window — reconnects within a few seconds, slow enough
-// that the tmux round trip it costs per WATCHED session is nothing.
-const SweepInterval = 5 * time.Second
-
-// idleGrace is how long a source with no readers is kept before its tail is
-// stopped and its buffer released.
-//
-// Long enough to cover a reader coming back — a reload, a laptop lid, an SSE
-// reconnect — since rebuilding costs a full re-read of the transcript. Short
-// enough that a session opened once in the morning is not still polling its
-// file five times a second at the end of the day.
+// idleGrace is how long a drill-in with no readers is kept before its tail is
+// stopped and its buffer released: long enough to cover a reload, short enough
+// that an agent opened once is not still being read at the end of the day.
 const idleGrace = 2 * time.Minute
 
-// sweep retires every source whose tmux session has moved on since it was
-// built, without waiting for a request to ask for it.
-//
-// Only sources somebody is READING are checked. That is the case where staying
-// stale is visible — a request would notice the swap for any other source — and
-// it bounds the cost to the sessions actually being watched, which on this box
-// is one or two. Each check is a tmux option read, a subprocess for any user
-// but the service's own.
-func (rg *registry) sweep() {
-	rg.mu.Lock()
-	users := make([]*userState, 0, len(rg.users))
-	for _, us := range rg.users {
-		users = append(users, us)
-	}
-	rg.mu.Unlock()
+// SweepInterval is how often the drill-ins and the mod connections are
+// checked for readers and for life.
+const SweepInterval = 5 * time.Second
 
-	for _, us := range users {
-		us.mu.Lock()
-		for name, ls := range us.srcs {
-			// A drill-in stream reads the session too: it is one of the
-			// session's agents, and resolving another agent from it needs the
-			// session's watch. So it keeps the source as a stream of the
-			// transcript does.
-			if ls.fs.Subscribers()+ls.drills.readers() == 0 {
-				// Nobody is reading. Retire it once it has been that way for
-				// idleGrace: the tail re-opens the transcript at the poll
-				// interval and the buffer holds every event it has seen, so an
-				// abandoned source is pure cost. Rebuilding is what the first
-				// reader after a restart already pays.
-				if ls.idleSince.IsZero() {
-					ls.idleSince = rg.now()
-					continue
-				}
-				if rg.now().Sub(ls.idleSince) < idleGrace {
-					continue
-				}
-				log.Printf("sweep %s/%s: no reader for %s, stopping the tail and the agent watch",
-					us.osUser, name, idleGrace)
-				us.retire(name, ls)
-				continue
-			}
-			ls.idleSince = time.Time{}
-			ls.drills.sweep(rg.now())
-			info, ok := us.sm.Get(name)
-			if ok && info.Transcript == ls.fs.Path() {
-				continue
-			}
-			log.Printf("sweep %s/%s: transcript moved to %q, ending %d stream(s)",
-				us.osUser, name, info.Transcript, ls.fs.Subscribers())
-			us.retire(name, ls)
+// sweep retires drill-ins nobody reads and connections whose mod went quiet.
+func (rg *registry) sweep() {
+	rg.mods.sweep()
+	rg.mods.mu.Lock()
+	var lives []*liveSource
+	for _, c := range rg.mods.bySID {
+		c.mu.Lock()
+		if c.ls != nil {
+			lives = append(lives, c.ls)
 		}
-		us.mu.Unlock()
+		c.mu.Unlock()
+	}
+	rg.mods.mu.Unlock()
+	for _, ls := range lives {
+		ls.drills.sweep(rg.now())
 	}
 }
 
@@ -329,194 +169,26 @@ func (rg *registry) sweepEvery(ctx context.Context, every time.Duration) {
 	}
 }
 
-// PaneWatchInterval is how often a watched session's pane is read for a
-// blocking question the transcript has not caught up with.
-//
-// The window it covers is measured in minutes, so this could be slower; two
-// seconds keeps the card's arrival close enough to the dialog's that the two
-// views feel like one session.
-const PaneWatchInterval = 2 * time.Second
-
-// watchPanes reads the pane of every session worth watching and records what it
-// says about a blocking dialog: a question, or since 2026-09-24 the plan
-// approval (paneDialog).
-//
-// It exists because Claude Code does not always write the AskUserQuestion record
-// while its dialog is up: measured 2026-08-28, two of five consecutive calls in
-// one session were written only when the question was ANSWERED, one of them 112
-// seconds later. Through that window the Text view has nothing to render and the
-// reader sees "Working…" while the terminal sits on a dialog. The plan approval
-// needs the pane for a second reason: its options, "(6% used)" and all, exist
-// only there, since the transcript records the plan and not the menu.
-//
-// FileSource.WorthWatching bounds the cost to sessions somebody has open and
-// whose turn is still running — a tmux subprocess per session per tick, and a
-// sudo one for another user's session, is not something to spend on a session
-// nobody is reading.
-func (rg *registry) watchPanes() {
-	if rg.panes == nil {
-		return
-	}
-	type target struct {
-		osUser  string
-		session string
-		fs      *sessionio.FileSource
-	}
-	var want []target
-
-	rg.mu.Lock()
-	users := make([]*userState, 0, len(rg.users))
-	for _, us := range rg.users {
-		users = append(users, us)
-	}
-	rg.mu.Unlock()
-
-	for _, us := range users {
-		us.mu.Lock()
-		for name, ls := range us.srcs {
-			if ls.fs.WorthWatching() {
-				want = append(want, target{us.osUser, name, ls.fs})
-				continue
-			}
-			// Not worth reading — but if the last reading said a dialog was up,
-			// that has to be withdrawn. Answering in the TERMINAL is what settles
-			// the turn, so a session stops being worth watching at the very
-			// moment its dialog goes away, and leaving the reading standing docks
-			// the answer card over a question that has been answered.
-			ls.fs.SetAsking("")
-		}
-		us.mu.Unlock()
-	}
-
-	for _, t := range want {
-		text, err := rg.panes.CapturePane(t.osUser, t.session)
-		if err != nil {
-			continue // the session may have gone; the sweep deals with that
-		}
-		body := ""
-		if d := paneDialog(text); d != nil {
-			if b, err := json.Marshal(d); err == nil {
-				body = string(b)
-			}
-		}
-		t.fs.SetAsking(body)
-	}
-}
-
-// paneDialog is the blocking dialog a pane shows that the Text view answers
-// from the pane: Claude Code's plan approval or a tool permission prompt, or
-// nil. An AskUserQuestion is not read here any more: the lobby's hook holds it
-// and publishes it as a `held` event (hold.go, ADR-0034).
-//
-// Both parsers are anchored to the bottom of the pane, footer last, where the
-// dialog replaces the input box, and their footers differ, so the two cannot
-// both match.
-func paneDialog(pane string) *sessionio.Dialog {
-	if d := sessionio.ParsePlanDialog(pane); d != nil {
-		return d
-	}
-	return sessionio.ParsePermissionDialog(pane)
-}
-
-// watchPanesEvery runs watchPanes on a ticker until ctx is done.
-func (rg *registry) watchPanesEvery(ctx context.Context, every time.Duration) {
-	t := time.NewTicker(every)
-	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
-			rg.watchPanes()
-		}
-	}
-}
-
-// start builds a FileSource and the session's agent watch, and runs both under
-// a context of their own, so this one source can be stopped without taking down
-// the rest of the process.
-//
-// The FIRST read of the transcript happens here, synchronously, before the
-// source is handed to anyone. Left to the tail goroutine it raced every caller:
-// a client that opened the stream in that window replayed an EMPTY log and then
-// received the entire transcript through the live subscription instead — which
-// is not a slow path but a wrong one, because the replay window (the last N
-// turns) only governs the replay. Measured on a 20.8 MB transcript: 3,396
-// events and 3.9 MB arrived on an open that should have carried 20 turns.
-//
-// The cost is that the first request for a session waits for its transcript to
-// be parsed, once per session per process — the same work, moved to where its
-// result is actually used.
-//
-// The agent watch is the exception, and deliberately so: it starts before that
-// read and scans on its own goroutine. Nothing about opening a stream waits on
-// agent files, and a watch started first has usually published its set by the
-// time the state frame goes out.
-//
-// `rewound` is the session's OptionRewound stamp, "" for none: a prompt a Stop
-// took back before this process started, which the first read cannot tell
-// from a turn still running (sessionio.Normalizer.RestoreRewound).
-func (rg *registry) start(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader, rewound string) *liveSource {
+// startMod builds the source a mod feeds and the session's agent watch, under
+// a context of their own so this one session can be stopped without taking
+// down the rest of the process. transcript is where Claude is writing, which
+// the agent watch lists beside and pictures are read back from; "" when the
+// mod could not find it, which leaves both without a directory to read.
+func (rg *registry) startMod(session, transcript string, reader sessionio.Reader, agents sessionio.AgentReader) *liveSource {
 	ctx, stop := context.WithCancel(rg.ctx)
-	aw := newAgentWatch(sessionio.SessionDir(transcript), agents)
-	aw.every = rg.agentEvery
-	var running sync.WaitGroup
-	running.Add(2)
-	go func() {
-		defer running.Done()
-		aw.run(ctx)
-	}()
-	fs := sessionio.NewFileSourceWith(session, transcript, rg.poll, reader)
-	fs.TailOnce()
-	if rewound != "" {
-		fs.RestoreRewound(rewound)
-	}
-	go func() {
-		defer running.Done()
-		fs.Run(ctx)
-	}()
 	done := make(chan struct{})
-	go func() {
-		running.Wait()
+	var aw *agentWatch
+	if transcript != "" {
+		aw = newAgentWatch(sessionio.SessionDir(transcript), agents)
+		aw.every = rg.agentEvery
+		go func() {
+			defer close(done)
+			aw.run(ctx)
+		}()
+	} else {
+		aw = newAgentWatch("", agents)
 		close(done)
-	}()
-	return &liveSource{fs: fs, agents: aw, drills: newDrills(), ctx: ctx, stop: stop, done: done}
-}
-
-// sessionStartBody is the SessionStart hook's payload.
-//
-// TranscriptPath is what the harness says it is writing, and it is the field
-// that locates the file. CWD is kept because a hook older than the field sends
-// only that, and because it is what the fallback derivation needs.
-type sessionStartBody struct {
-	User           string `json:"user"`
-	SessionID      string `json:"session_id"`
-	CWD            string `json:"cwd"`
-	TmuxSession    string `json:"tmux_session"`
-	TranscriptPath string `json:"transcript_path"`
-}
-
-// handleSessionStart records the (user, tmux session) → transcript mapping from
-// the SessionStart hook. Localhost only (hooks run as the OS user on the box),
-// and wrapped in peerOwnsClaim, which is what makes b.User the account that
-// actually opened the connection rather than a name the body chose. Everything
-// downstream depends on that: rg.user() keys state on it and sessionio hands it
-// to `sudo -n -u`.
-func (rg *registry) handleSessionStart() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		var b sessionStartBody
-		if json.NewDecoder(r.Body).Decode(&b) != nil || b.User == "" || b.SessionID == "" || b.TmuxSession == "" {
-			http.Error(w, "bad body (need user, session_id, tmux_session)", http.StatusBadRequest)
-			return
-		}
-		if err := rg.user(b.User).sm.Put(sessionio.SessionInfo{
-			TmuxSession: b.TmuxSession, CWD: b.CWD, ClaudeID: b.SessionID,
-			Transcript: b.TranscriptPath,
-		}); err != nil {
-			log.Printf("session-start %s/%s: %v", b.User, b.TmuxSession, err)
-			http.Error(w, "cannot record session", http.StatusInternalServerError)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
 	}
+	fs := sessionio.NewModSource(session, transcript, reader)
+	return &liveSource{fs: fs, agents: aw, drills: newDrills(), ctx: ctx, stop: stop, done: done}
 }

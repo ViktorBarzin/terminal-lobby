@@ -1798,6 +1798,8 @@ export const SessionView: Component<{
             onPinned={store.setPinnedToBottom}
             pinned={store.pinned()}
             onOpenTerminal={() => setMode("terminal")}
+            stream={store.stream}
+            noMod={store.noMod()}
             sessionState={store.state()}
             onListDir={listDir}
             session={session}

@@ -718,6 +718,25 @@ func (in *Injector) SetOption(osUser, session, name, value string) error {
 	return in.Command(osUser, "set-option", "-t", exactPane(session), "--", name, value).Run()
 }
 
+// UnsetOptions clears session options in one tmux call. Like SetOption it
+// fails when the session is gone.
+func (in *Injector) UnsetOptions(osUser, session string, names []string) error {
+	var args []string
+	for i, name := range names {
+		if !optionNameRe.MatchString(name) {
+			return fmt.Errorf("sessionio: %q is not a tmux option name", name)
+		}
+		if i > 0 {
+			args = append(args, ";")
+		}
+		args = append(args, "set-option", "-u", "-t", exactPane(session), name)
+	}
+	if len(args) == 0 {
+		return nil
+	}
+	return in.Command(osUser, args...).Run()
+}
+
 // HasSession reports whether the named session is live on this user's tmux
 // server. It leans on the same self-validating read as Option rather than
 // `has-session`, because that is the check whose behaviour against a missing

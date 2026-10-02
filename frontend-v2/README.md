@@ -524,6 +524,11 @@ src/
                          a paste and Enter would pick a menu row) resolves
                          false, so the text stays in the field, and says the
                          message box answers the plan now
+    stream.ts            The reply Claude is still writing, from the mod's
+                         `delta` frames (ADR-0036): held per content block,
+                         dropped when the stored row, a tool call or the turn
+                         end supersedes it, and when the connection is lost.
+                         Pure; the session store folds and publishes it
     agent-stream.ts      One agent's own transcript for the drill-in: the
                          session store's read path over that agent's stream
                          (history behind a cursor, live after it, paging
@@ -1021,6 +1026,9 @@ src/
     SidebarGrip.tsx      The seam between the list and the session, dragged with
                          a pointer or the arrow keys; double-click resets
     BellIcon.tsx         Header notification-bell glyph (on/off)
+    stream-body.ts       The context a streaming row reads its words through,
+                         so a growing reply re-renders its own row and never
+                         re-derives the timeline
     Sparkline.tsx        One polyline over a series of numbers, drawn as inline
                          SVG because this project carries no charting library.
                          Draws the hour of machine stall under Settings →

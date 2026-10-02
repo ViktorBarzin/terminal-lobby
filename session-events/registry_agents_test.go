@@ -73,6 +73,7 @@ func TestRegistryStopsWatchingAgentsWithTheSource(t *testing.T) {
 	rg.agentEvery = 2 * time.Millisecond
 	now := time.Unix(1000, 0)
 	rg.now = func() time.Time { return now }
+	rg.mods.now = rg.now
 	counter := newCountingReader()
 	rg.user(osUser).agents = counter
 	register(t, rg, osUser, "aaaa-1111", cwd, tmux)
@@ -87,8 +88,8 @@ func TestRegistryStopsWatchingAgentsWithTheSource(t *testing.T) {
 	defer releaseAgents()
 	waitFor(t, "the watch to scan", func() bool { return counter.listings() > 2 })
 
-	rg.sweep()
-	now = now.Add(idleGrace + time.Second)
+	// The mod goes quiet (its Claude was killed), and the session is dropped.
+	now = now.Add(modExpiry + time.Second)
 	rg.sweep()
 	select {
 	case <-ls.done:

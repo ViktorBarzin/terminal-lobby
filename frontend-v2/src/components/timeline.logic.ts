@@ -76,6 +76,12 @@ export interface MessageRow {
   body: string;
   turnKey: string;
   at?: number;
+  /**
+   * A block Claude is still writing (store/stream.ts). `body` is empty: the
+   * view reads the words live by `id`, so a growing reply does not re-derive
+   * the timeline.
+   */
+  streaming?: true;
 }
 /** Claude's reasoning. Folded by default, kept in full on expand. */
 export interface ThinkingRow {
@@ -85,6 +91,8 @@ export interface ThinkingRow {
   body: string;
   turnKey: string;
   at?: number;
+  /** Still being written; read live by `id`, as a streaming MessageRow is. */
+  streaming?: true;
 }
 export interface ToolRow {
   kind: "tool";
@@ -547,8 +555,8 @@ function answersFrom(payload: unknown, questions: readonly Question[]): string[]
 
 /**
  * The words a declined question carries, when the reader declined it through
- * the card's "Chat about this": session-events' hold denies the call with a
- * message saying so (session-events/hold.go chatMessage), and the CLI records
+ * the card's "Chat about this": the lobby's Claude mod denies the call with a
+ * message saying so (session-events/mod.go chatMessage), and the CLI records
  * it as an error result with no answers. "" when the reader sent no words,
  * undefined for any other result. Deployed review round 1 of the T3 pass
  * (2026-09-29): the words reached Claude and the record showed only the
@@ -860,6 +868,7 @@ function collectTurnRows(turn: Turn): {
             body: e.body ?? "",
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
+            ...(e.streaming ? { streaming: true as const } : {}),
           },
           e,
         );
@@ -873,6 +882,7 @@ function collectTurnRows(turn: Turn): {
             body: e.body ?? "",
             turnKey: turn.key,
             ...(e.at !== undefined ? { at: e.at } : {}),
+            ...(e.streaming ? { streaming: true as const } : {}),
           },
           e,
         );
@@ -2110,6 +2120,12 @@ export type LiveGroupState =
       done: number;
       since?: number;
       groupKey?: string;
+      /**
+       * The open turn ends on a block Claude is still writing. Streaming text
+       * is its own sign of life, so no row of its own is drawn beside it; a
+       * group whose newest step is streaming thinking says "Thinking…".
+       */
+      streaming?: "text" | "thinking";
     };
 
 /**
@@ -2143,6 +2159,8 @@ export function liveGroupState(o: {
   const group =
     last?.kind === "work-group" && last.live && last.turnKey === live.turnKey ? last : undefined;
   const groupKey = group ? { groupKey: group.key } : {};
+  const writing = streamingOf(group?.calls.at(-1) ?? last);
+  const streaming = writing ? { streaming: writing } : {};
   if (live.waiting) {
     return {
       kind: "waiting",
@@ -2161,6 +2179,7 @@ export function liveGroupState(o: {
       done: g.done,
       ...(g.startedAt !== undefined ? { since: g.startedAt } : {}),
       ...groupKey,
+      ...streaming,
     };
   }
   const since = live.toolStartedAt ?? live.startedAt;
@@ -2172,7 +2191,15 @@ export function liveGroupState(o: {
     ...(live.toolDetail !== undefined ? { detail: live.toolDetail } : {}),
     done: 0,
     ...(since !== undefined ? { since } : {}),
+    ...streaming,
   };
+}
+
+/** Which kind of block a row is still writing, if it is one. */
+function streamingOf(row: TimelineRow | undefined): "text" | "thinking" | undefined {
+  if (row?.kind === "message" && row.streaming) return "text";
+  if (row?.kind === "thinking" && row.streaming) return "thinking";
+  return undefined;
 }
 
 /** The icons a live call can wear: the work group's own set (rows.tsx). */
@@ -2326,7 +2353,7 @@ const DIALOG_KIND_PERMISSION = "permission";
  * The tool permission prompt the PANE is showing, or null.
  *
  * The transcript holds the tool call and nothing about the prompt, so the pane
- * is the only source (sessionio permdialog.go). The newest reading wins, and
+ * is the only source (session-events mod.go openDialog). The newest reading wins, and
  * only while nothing has happened since, the rule the held question follows: the
  * call's result, or anything else Claude writes, means the prompt was
  * answered. A reading whose rows do not count up from 1 is refused whole,

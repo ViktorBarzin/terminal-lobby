@@ -425,6 +425,14 @@ func streamSSE(sink *sseSink, r *http.Request, src Source, agents agentFeed, hb 
 			if !ok {
 				return
 			}
+			// New words of a reply still being written (ADR-0036). No id: a
+			// delta is never stored, so it must not move the client's
+			// Last-Event-ID cursor.
+			if e.Kind == sessionio.KindDelta {
+				sink.printf("data: %s\n\n", e.JSON())
+				sink.flush()
+				continue
+			}
 			if e.ID <= lastID {
 				continue // already delivered via replay
 			}

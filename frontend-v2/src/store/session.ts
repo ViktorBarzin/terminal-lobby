@@ -29,6 +29,7 @@ import { fetchWithDeadline } from "../lib/http";
 import { TRUST_NOTICE } from "../lib/first-prompt";
 import { sendAnswer, type AnswerRequest, type AnswerResponse } from "../lib/answer-api";
 import { snapshotOf, type AgentSnapshot } from "../components/agents.logic";
+import { NO_STREAM, afterEvent, applyDelta, type StreamState } from "./stream";
 
 /**
  * Transcript reads move real bytes — loadEarlier asks for up to 400KB
@@ -178,6 +179,19 @@ export interface SessionStore {
    */
   agents: Accessor<AgentSnapshot | null>;
   /**
+   * The reply Claude is writing right now, from the mod's `delta` frames
+   * (store/stream.ts). Published once per frame, in the same write as the
+   * stored event that supersedes a block, and emptied whenever the stream is
+   * lost: deltas are never replayed, so a gap could not be filled.
+   */
+  stream: Accessor<StreamState>;
+  /**
+   * The session started before the lobby's mod, so there is no event stream
+   * for it yet (the `nomod` frame). Cleared by the `ready` that follows once
+   * the mod connects.
+   */
+  noMod: Accessor<boolean>;
+  /**
    * Close the stream because nobody is reading this session, keeping every
    * event, cursor and pending prompt held.
    *
@@ -317,7 +331,7 @@ export function mergeById(held: Event[], arrived: Event[]): Event[] {
  * false, "reason": "plan-open"}`, "permission-open" for a tool permission
  * prompt, "question-open" for a question, "menu-open" for a codex menu,
  * "trust-open" for Claude's folder-trust dialog, or "dialog-open" for a dialog
- * drawn as the prompt went (session-events plan.go). "" for a 409 with any other body, JSON or
+ * drawn as the prompt went (session-events refusal.go). "" for a 409 with any other body, JSON or
  * not, and for a body that fails to read.
  */
 /**
@@ -396,6 +410,15 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
   const [hasEarlier, setHasEarlier] = createSignal(true);
   const [sessionState, setSessionState] = createSignal<SessionState | null>(null);
   const [agents, setAgents] = createSignal<AgentSnapshot | null>(null);
+  const [stream, setStream] = createSignal<StreamState>(NO_STREAM);
+  /**
+   * The stream as the deltas and events received so far leave it, ahead of
+   * what is published. Folded in arrival order as each one comes in, and
+   * published by the frame's flush, in the same batch as the events, so a
+   * stored reply and the streamed one it replaces trade places in one write.
+   */
+  let streamWork: StreamState = NO_STREAM;
+  const [noMod, setNoMod] = createSignal(false);
   /**
    * Where the next step back begins.
    *
@@ -632,6 +655,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       // batch() so the derivation runs once for the whole group rather than once
       // per index write.
       batch(() => {
+        publishStream();
         // Ordered merge rather than a bare append: with a reverse backfill in
         // flight, a live event and a history frame can land in the same batch.
         const newest = events.length > 0 ? events[events.length - 1]!.id : 0;
@@ -696,10 +720,22 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
         }
       });
     }
+    // A frame that carried only deltas.
+    publishStream();
     // Outside the batch above, and run even when nothing arrived: the other
     // caller is the `ready` frame, whose own flush has no events in it and
     // whose byte-bounded opening window is routinely wider than 20 turns.
     trimWindow();
+  };
+
+  const publishStream = (): void => {
+    if (untrack(stream) !== streamWork) setStream(streamWork);
+  };
+
+  /** Let go of the reply being streamed: the stream it came on is gone. */
+  const dropStream = (): void => {
+    streamWork = NO_STREAM;
+    setStream(NO_STREAM);
   };
 
   const scheduleFlush = (): void => {
@@ -737,6 +773,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     seen.clear();
     cursor = 0;
     step = 0;
+    dropStream();
+    setNoMod(false);
     // Nothing has been dropped from a transcript that no longer exists, and the
     // new one opens at its newest end the way any first open does.
     droppedBelow = 0;
@@ -764,8 +802,20 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     url: eventsUrl,
     onReset: reset,
     onEvent: (e: Event) => {
+      streamWork = afterEvent(streamWork, e);
       pending.push(e);
       scheduleFlush();
+    },
+    onDelta: (d) => {
+      streamWork = applyDelta(streamWork, d);
+      scheduleFlush();
+    },
+    // No history is coming, so the opening hold is let go now rather than
+    // after its timeout, and a resume has nothing more to catch up on.
+    onNoMod: () => {
+      setNoMod(true);
+      setCatchingUp(false);
+      release();
     },
     onBackfill: (e: Event) => {
       backfill.push(e);
@@ -786,10 +836,16 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
       // session no Claude ever ran in, and `closed` is a stream that has been
       // stopped for the last time.
       if (s === "no-transcript" || s === "closed") setCatchingUp(false);
+      // Deltas are live only: whatever streams while the connection is down is
+      // lost, and appending after the gap would garble the reply. The stored
+      // rows arrive on the replay instead.
+      if (s !== "open") dropStream();
       setStatus(s);
     },
     onReady: (r: ReadyFrame) => {
       setCatchingUp(false);
+      setNoMod(false);
+      dropStream();
       // A reverse open names where the next step back begins; a resume does
       // not, because the client's own cursor is the correct one and clobbering
       // it with a backfill cursor would strand the history already held.
@@ -933,6 +989,7 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     setParked(true);
     flushNow();
     client.close();
+    dropStream();
   };
 
   /**
@@ -1323,6 +1380,8 @@ export function createSessionStore(session: string, opts: SessionStoreOptions = 
     hasEarlier,
     state: sessionState,
     agents,
+    stream,
+    noMod,
     park,
     unpark,
     parked,

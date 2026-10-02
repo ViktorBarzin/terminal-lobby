@@ -331,6 +331,52 @@ function rehypeAttachments(options: { me: string }) {
   };
 }
 
+/**
+ * Close a code fence the text leaves open, for a reply still being written.
+ *
+ * CommonMark already runs an unclosed fence to the end of the document, so
+ * this changes nothing about what is code. It makes the fence the last thing
+ * in the text explicitly, so a block streaming in reads as code from its
+ * first line rather than depending on where the parser gives up.
+ */
+export function closeOpenFence(text: string): string {
+  let open: string | null = null;
+  for (const line of text.split("\n")) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!m) continue;
+    const fence = m[1]!;
+    const rest = m[2]!;
+    if (open === null) {
+      // A backtick fence's info string cannot hold a backtick; that line is
+      // inline code, not a fence.
+      if (fence[0] === "`" && rest.includes("`")) continue;
+      open = fence;
+    } else if (fence[0] === open[0] && fence.length >= open.length && rest.trim() === "") {
+      open = null;
+    }
+  }
+  return open === null ? text : `${text}\n${open}`;
+}
+
+/** A code span or block. `diagrams` false draws a mermaid fence as its source. */
+function codeBlock(raw: unknown, inline: boolean, diagrams: boolean) {
+  const node = raw as HastNode;
+  const text = hastText(node).replace(/\n$/, "");
+  if (inline) return <code class="tl-inline-code">{text}</code>;
+  const lang = hastLang(node);
+  if (lang === "mermaid" && diagrams) return <Mermaid code={text} />;
+  // An untagged fence is shown as written: auto-detection coloured prose in
+  // one as if it were code (CodeView's PLAIN).
+  return (
+    <div class="tl-code-block" data-lang={lang || undefined}>
+      <CodeView code={text} language={lang && lang !== "mermaid" ? lang : "plaintext"} />
+    </div>
+  );
+}
+
+const streamingCode: SolidMarkdownComponents["code"] = (props) =>
+  codeBlock(props.node, props.inline === true, false);
+
 const components: SolidMarkdownComponents = {
   // solid-markdown renders every code block through its own default `pre` and
   // puts the `code` component inside it — but the `code` override below returns
@@ -342,20 +388,7 @@ const components: SolidMarkdownComponents = {
   // reaches this component: raw HTML never becomes elements here (no
   // rehype-raw), so nothing else can lose its <pre>.
   pre: (props) => <>{props.children}</>,
-  code: (props) => {
-    const node = props.node as unknown as HastNode;
-    const text = hastText(node).replace(/\n$/, "");
-    if (props.inline) return <code class="tl-inline-code">{text}</code>;
-    const lang = hastLang(node);
-    if (lang === "mermaid") return <Mermaid code={text} />;
-    // An untagged fence is shown as written: auto-detection coloured prose in
-    // one as if it were code (CodeView's PLAIN).
-    return (
-      <div class="tl-code-block" data-lang={lang || undefined}>
-        <CodeView code={text} language={lang || "plaintext"} />
-      </div>
-    );
-  },
+  code: (props) => codeBlock(props.node, props.inline === true, true),
   img: imgFor(undefined, false),
   // A table gets its own scroller, and the reason is a shape CSS cannot express
   // on one element: the scrollport has to stay the width of the phone while the
@@ -394,13 +427,21 @@ export const Markdown: Component<{
   text: string;
   base?: string;
   attachAs?: string;
+  /**
+   * Still being written (store/stream.ts). An open fence is closed, and a
+   * mermaid fence stays its source: a diagram drawn from half its lines fails
+   * to parse, or draws and redraws as each line lands.
+   */
+  streaming?: boolean;
 }> = (props) => {
   const conversation = () => props.attachAs !== undefined;
-  const comps = createMemo<SolidMarkdownComponents>(() =>
-    props.base || conversation()
-      ? { ...components, img: imgFor(props.base, conversation()) }
-      : components,
-  );
+  const comps = createMemo<SolidMarkdownComponents>(() => {
+    const base =
+      props.base || conversation()
+        ? { ...components, img: imgFor(props.base, conversation()) }
+        : components;
+    return props.streaming ? { ...base, code: streamingCode } : base;
+  });
   // Rebuilt only when the user changes, so an ordinary re-render does not
   // re-create the plugin list and make solid-markdown re-parse.
   const rehype = createMemo<PluggableList>(() =>
@@ -411,7 +452,7 @@ export const Markdown: Component<{
   return (
     <div class="tl-markdown">
       <SolidMarkdown
-        children={props.text}
+        children={props.streaming ? closeOpenFence(props.text) : props.text}
         remarkPlugins={remarkPlugins}
         rehypePlugins={rehype()}
         components={comps()}

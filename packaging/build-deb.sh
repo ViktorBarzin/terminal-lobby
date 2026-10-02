@@ -66,6 +66,29 @@ assert d["initialize"]["serverInfo"], "no serverInfo"
 assert any(t["name"] == "browser_close" for t in d["tools"]["tools"]), "no browser_close tool"
 ' || { echo "build: the staged browser host does not describe itself" >&2; exit 1; }
 
+# --- the lobby's Claude mod (ADR-0036) --------------------------------------
+# Staged as a directory marketplace: the manifest under .claude-plugin/ and the
+# plugin itself under plugins/terminal-lobby/. Only what Claude loads goes in:
+# the plugin manifest and hooks/. The tests, the generated types and the dev
+# package file stay behind.
+echo "==> staging the Claude mod"
+MODS="$STAGE/claude-plugins"
+mkdir -p "$MODS/.claude-plugin" "$MODS/plugins/terminal-lobby/.claude-plugin"
+cp claude-mod/marketplace.json "$MODS/.claude-plugin/marketplace.json"
+cp claude-mod/.claude-plugin/plugin.json "$MODS/plugins/terminal-lobby/.claude-plugin/plugin.json"
+cp -a claude-mod/hooks "$MODS/plugins/terminal-lobby/hooks"
+python3 - "$MODS" <<'PY' || { echo "build: the staged Claude mod is malformed" >&2; exit 1; }
+import json, os, sys
+root = sys.argv[1]
+market = json.load(open(os.path.join(root, ".claude-plugin/marketplace.json")))
+for p in market["plugins"]:
+    plugin = os.path.join(root, p["source"])
+    json.load(open(os.path.join(plugin, ".claude-plugin/plugin.json")))
+    hooks = json.load(open(os.path.join(plugin, "hooks/hooks.json")))
+    for m in hooks["modules"]:
+        assert os.path.isfile(os.path.join(plugin, "hooks", m)), m
+PY
+
 # --- the package's own tooling ---------------------------------------------
 (cd release && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
   go build -trimpath -o "$TOOLS/tl-apply" ./cmd/tl-apply)

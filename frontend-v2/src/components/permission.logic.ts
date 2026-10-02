@@ -157,7 +157,7 @@ const HOSTS = new Set(["Agent", "Task"]);
 /**
  * The preview for a prompt taller than the pane, whose rule, title and first
  * lines have scrolled off, so the pane reader has no title or detail to match
- * (sessionio/permdialog.go). Found in deployed review round 3 (2026-09-28): a
+ * (session-events/mod.go permissionDetail). Found in deployed review round 3 (2026-09-28): a
  * 25-line heredoc drew a card with no command at all. A prompt is always for a
  * call still waiting on its result, so when exactly one such call is waiting,
  * leaving aside an agent that is running others, that call is the one asked

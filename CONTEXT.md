@@ -778,6 +778,25 @@ _Avoid_: remove, delete
 
 ### The text view
 
+**Lobby mod**:
+The Claude Code mod every interactive Claude on the box loads. It tells the
+lobby what happens in the session as it happens, and carries the lobby's
+prompts, stops and answers back into Claude. A Claude without one has no Text
+view until it is restarted.
+_Avoid_: plugin, hook, extension
+
+**Streaming reply**:
+Claude's answer drawn word by word in the Text view while Claude is still
+writing it. It is replaced by the stored reply once Claude finishes the block,
+and history only ever holds the stored one.
+_Avoid_: typing effect, partial message
+
+**Safe restart**:
+Restarting a Claude that started before the **Lobby mod** existed, on the same
+conversation, so it gets one. Done only while Claude is idle, with no
+background work, no dialog up and nothing typed on its input line.
+_Avoid_: forced restart, reload
+
 **Prompt field**:
 The surface a prompt is written on: multi-line, Enter to send and Shift+Enter
 for a newline, `/` and `@` completion, attachments written into the message as

@@ -1,13 +1,26 @@
 import {
   parseAgentSet,
   parseEvent,
+  parseLive,
   type AgentSet,
   type Event,
   type ReadyFrame,
   type SessionState,
+  type StreamDelta,
 } from "../types/events";
 
 export type { ReadyFrame, SessionState };
+
+/**
+ * The `nomod` frame: a Claude session that started before the lobby's mod
+ * existed, so the server has no event stream for it yet (ADR-0036). It sends
+ * this instead of history, keeps the stream open, and closes it once the mod
+ * connects, which reconnects the client onto the ordinary exchange.
+ */
+export interface NoModFrame {
+  /** When the server restarts the session onto the mod: "when-idle". */
+  restart?: string;
+}
 
 /**
  * Connection status.
@@ -150,6 +163,14 @@ export interface SseClientOptions {
    * server that predates it simply never calls this.
    */
   onAgents?: (a: AgentSet) => void;
+  /**
+   * Part of the reply Claude is still writing (a `delta` payload on the live
+   * lane). Outside the id space: it never moves the cursor, and a reconnect
+   * never replays it.
+   */
+  onDelta?: (d: StreamDelta) => void;
+  /** The session has no mod connection yet (the `nomod` frame). */
+  onNoMod?: (n: NoModFrame) => void;
   /** injectable for tests; defaults to the browser EventSource. */
   createSource?: (url: string) => EventSourceLike;
   /** reads the stream URL's HTTP status (null = unreachable). Injectable so
@@ -202,6 +223,8 @@ export class SseClient {
       | "onReset"
       | "onEpoch"
       | "onAgents"
+      | "onDelta"
+      | "onNoMod"
     >
   > &
     Pick<
@@ -214,6 +237,8 @@ export class SseClient {
       | "onReset"
       | "onEpoch"
       | "onAgents"
+      | "onDelta"
+      | "onNoMod"
     >;
   private source: EventSourceLike | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -246,6 +271,8 @@ export class SseClient {
       onReset: opts.onReset,
       onEpoch: opts.onEpoch,
       onAgents: opts.onAgents,
+      onDelta: opts.onDelta,
+      onNoMod: opts.onNoMod,
       createSource: opts.createSource,
       probeStatus: opts.probeStatus ?? probeViaFetch,
       setTimer: opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms)),
@@ -298,8 +325,14 @@ export class SseClient {
       // Anything the socket delivered is proof of life — including a frame this
       // client then throws away, so record it before the parse and dedup gates.
       this.markAlive();
-      const e = parseEvent(ev.data);
+      const e = parseLive(ev.data);
       if (!e) return;
+      // A delta carries no id (it is sent without an `id:` line), so it is
+      // handed on before the dedup, which would drop every one of them.
+      if (e.kind === "delta") {
+        this.o.onDelta?.(e);
+        return;
+      }
       if (e.id <= this.lastEventId) return; // already delivered via replay
       this.lastEventId = e.id;
       this.o.onEvent(e);
@@ -324,6 +357,10 @@ export class SseClient {
       this.markAlive();
       const a = parseAgentSet(ev.data);
       if (a) this.o.onAgents?.(a);
+    });
+    es.addEventListener?.("nomod", (ev) => {
+      this.markAlive();
+      this.o.onNoMod?.(parseJSON<NoModFrame>(ev.data) ?? {});
     });
     es.addEventListener?.("epoch", (ev) => {
       this.markAlive();

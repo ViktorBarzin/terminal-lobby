@@ -20,6 +20,11 @@ const (
 	KindPermissionResolved Kind = "permission_resolved"
 	KindError              Kind = "error"
 	KindTurnEnd            Kind = "turn_end"
+	// KindDelta is new words of a reply Claude is still writing, from the
+	// lobby's Claude mod (ADR-0036). Live only: it carries no id, is never
+	// stored or replayed, and the row Claude stores for the same block
+	// supersedes it.
+	KindDelta Kind = "delta"
 )
 
 // Meta is the subtype of a KindMeta event — the session's own lifecycle, as
@@ -154,6 +159,10 @@ type Event struct {
 	// resolved on this side because the link the tool prints is relative to a
 	// directory the browser never learns (see shotFiles).
 	Files []string `json:"files,omitempty"`
+	// Stream and Block are set on a KindDelta: which kind of block the words
+	// belong to ("text" or "thinking") and its index in the response.
+	Stream string `json:"stream,omitempty"`
+	Block  int    `json:"block,omitempty"`
 }
 
 // ImageRef is one picture block a user prompt or a tool result carried. The

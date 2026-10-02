@@ -1,0 +1,11 @@
+{
+  "name": "terminal-lobby",
+  "owner": { "name": "terminal-lobby" },
+  "plugins": [
+    {
+      "name": "terminal-lobby",
+      "source": "./plugins/terminal-lobby",
+      "description": "Streams each Claude session to the lobby's Text view and carries the lobby's prompts and answers back"
+    }
+  ]
+}
