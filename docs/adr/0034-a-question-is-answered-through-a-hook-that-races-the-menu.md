@@ -110,6 +110,23 @@ session, whose Claude started on 22 September, asked 3 questions after
 cases that remain: `session-events` unreachable for longer than the hook's
 10-minute retry window, or a hold withdrawn while its menu is still up.
 
+## Amendment, 2026-10-02: the gap after the card's own answer
+
+Viktor, 2026-10-02: after submitting the last question in text mode, the card
+showed the Terminal fallback briefly, until the answer reached the transcript.
+
+`session-events` withdraws the hold as the answer goes in, and the transcript
+writes the call's result a moment later. Through that gap the page had the
+call's record and no hold, which is how a call nothing holds looks, so the card
+offered the Terminal. Measured on 0.90.1: "Answer sent." for 13 ms, the fallback
+for 426 ms, then the card went.
+
+The text view now remembers the call it answered and shows the card as sent
+until the result lands (`QuestionCardState` `sent`). A request still in flight
+also keeps the card off the fallback, since the withdrawal can reach the page
+before the reply. Shipped in 0.91.0 (e6932fa3); the same check on that build
+showed "Answer sent." and then no card.
+
 ## Considered options
 
 - **Fix the parser for clipped multi-select.** The narrowest change for the
