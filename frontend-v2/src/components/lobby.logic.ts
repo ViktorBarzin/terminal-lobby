@@ -16,11 +16,13 @@
  *    slot (the sentinel stays in the sequence for reordering/capture) — so the
  *    reorder CONTROLS must measure `visibleGroupSeqTokens`, not the raw token
  *    sequence, or they offer the user a step onto a slot nobody can see.
- *  - a session the lobby's own create path did not make (`origin` ≠ "user")
- *    collects in the System group, which is pinned after every other group and
- *    hides while empty. That holds wherever the layout lists it, a project
- *    included: dragging a card out of System stamps it `user`, so a session
- *    somebody rescued is no longer a system session at all.
+ *  - a session a Caller made (tmux-api sends its name as `caller`) collects in
+ *    a group named after that Caller, and any other session the lobby's own
+ *    create path did not make (`origin` ≠ "user") collects in the System group.
+ *    The Caller groups are pinned just above System, System after every other
+ *    group, and all of them hide while empty. That holds wherever the layout
+ *    lists the session, a project included: dragging a card out of either
+ *    stamps it `user`, so a session somebody rescued is a person's from then on.
  *  - foreign sessions (owner ≠ me) are a separate Shared-with-me list, owner-major.
  *  - the dock session (hidden scratch shell) is never rendered and never touched.
  */
@@ -32,7 +34,7 @@ import {
   type Session,
 } from "../types/lobby";
 
-export type GroupKind = "project" | "ungrouped" | "system";
+export type GroupKind = "project" | "ungrouped" | "caller" | "system";
 
 /**
  * What `@tl_origin` reads on a session the lobby's own create path made. Every
@@ -58,10 +60,50 @@ export const SYSTEM_GROUP_NAME = ":system";
 /** The token the System group occupies. Pinned last — see groupSeqTokens. */
 const SYSTEM_TOKEN = "s";
 
+/**
+ * The prefix of a Caller group's `name`, which is also its collapse-store key.
+ * A leading ':' keeps it clear of every project name for the reason
+ * SYSTEM_GROUP_NAME gives, and the Caller's own name after it keeps two Callers
+ * apart. Kept in step with `CALLER_KEY_PREFIX` in store/collapse.ts, which is
+ * what makes these groups start collapsed.
+ */
+const CALLER_GROUP_PREFIX = ":caller:";
+
+/** The `name` of the group a Caller's sessions collect in. */
+export function callerGroupName(caller: string): string {
+  return CALLER_GROUP_PREFIX + caller;
+}
+
+/** The title a Caller's group shows: the Caller's name, capitalised ("Muse"
+ *  for `muse`). The credential name is the only name a Caller has. */
+export function callerGroupTitle(caller: string): string {
+  return caller.charAt(0).toUpperCase() + caller.slice(1);
+}
+
+/**
+ * Is this a group whose members come from each session's origin rather than
+ * from the layout — System, or a Caller's group? Such a group is pinned, has no
+ * slot in the layout, and cannot be dropped into; dragging out of it is the
+ * rescue. Every place that treats System specially asks this instead, so a
+ * Caller's group never needs a branch of its own.
+ */
+export function isOriginGroup(g: RenderGroup): boolean {
+  return g.kind === "system" || g.kind === "caller";
+}
+
+/** The same question asked of a group's name, for callers holding only that
+ *  (a drop target, a collapse key). */
+export function isOriginGroupName(name: string): boolean {
+  return name === SYSTEM_GROUP_NAME || name.startsWith(CALLER_GROUP_PREFIX);
+}
+
 export interface RenderGroup {
   kind: GroupKind;
-  /** project name; "" for ungrouped; ":system" for System. */
+  /** project name; "" for ungrouped; ":system" for System; ":caller:<name>"
+   *  for a Caller's group. */
   name: string;
+  /** the Caller's name, on a Caller's group only. */
+  caller?: string;
   /** the layout project (undefined for ungrouped). */
   project?: LayoutProject;
   /** live sessions in render order. */
@@ -69,7 +111,8 @@ export interface RenderGroup {
 }
 
 export interface SidebarModel {
-  /** ordered groups: the ungrouped sentinel at its slot, System pinned last. */
+  /** ordered groups: the ungrouped sentinel at its slot, the Caller groups
+   *  pinned in name order just above System, System pinned last. */
   groups: RenderGroup[];
   /** shared-with-me (foreign) sessions, owner-major then name. */
   foreign: Session[];
@@ -126,16 +169,28 @@ export function groupSeqTokens(layout: Layout): string[] {
 export function groupToken(g: RenderGroup): string {
   if (g.kind === "ungrouped") return "u";
   if (g.kind === "system") return SYSTEM_TOKEN;
+  if (g.kind === "caller") return "c:" + (g.caller ?? "");
   return "p:" + g.name;
 }
 
 /**
- * Is this session one the lobby's own create path did NOT make?
+ * Did a Caller make this session? tmux-api answers that as `caller`
+ * (sessionio.CallerOf, read with its reserved name prefixes), so this reads the
+ * field rather than judging the origin a second time. A session stamped `user`
+ * is a person's whatever else it carries, which is what a rescue leaves behind.
+ */
+export function isCallerSession(s: Session): boolean {
+  return !!s.caller && s.origin !== ORIGIN_USER;
+}
+
+/**
+ * Is this session one the lobby's own create path did NOT make, and no Caller
+ * made either?
  *
- * Only `user` is a person's session. `test` is a harness (qa-harness,
- * qa_driver), and an absent origin is anything else that reached the tmux
- * server without saying who it was — three of the four tooling sessions
- * measured on 2026-09-06 looked exactly like that.
+ * Only `user` is a person's session, and a Caller's has a group of its own.
+ * `test` is a harness (qa-harness, qa_driver), and an absent origin is anything
+ * else that reached the tmux server without saying who it was — three of the
+ * four tooling sessions measured on 2026-09-06 looked exactly like that.
  *
  * The reserved-prefix half of the rule (`reservedName` over "qa-", "tlp-t" and
  * the pool prefix) is the SERVER's, and it is already baked into
@@ -144,13 +199,13 @@ export function groupToken(g: RenderGroup): string {
  * into System the moment somebody dragged it out.
  */
 export function isSystemSession(s: Session): boolean {
-  return s.origin !== ORIGIN_USER;
+  return s.origin !== ORIGIN_USER && !isCallerSession(s);
 }
 
 /**
  * Does this group render? Projects always do (so they can be seen and dropped
- * into); the synthesised groups — the Ungrouped sentinel and System — hide
- * while empty. The sidebar's filter and the move-up/down bounds read this one
+ * into); the synthesised groups — the Ungrouped sentinel, the Caller groups and
+ * System — hide while empty. The sidebar's filter and the move-up/down bounds read this one
  * predicate deliberately — measuring the menu in token space while the user
  * reads visible space is what made an edge group's Move item enabled and its
  * first click a no-op.
@@ -161,7 +216,7 @@ export function isGroupVisible(g: RenderGroup): boolean {
 
 /**
  * The group sequence as the REORDER CONTROLS see it: tokens minus the hidden
- * sentinel, and minus System.
+ * sentinel, and minus System and the Caller groups.
  *
  * System is on screen when it has members, so this is not quite "what the user
  * sees" any more — it is what a Move item may step onto, which is the only
@@ -170,10 +225,11 @@ export function isGroupVisible(g: RenderGroup): boolean {
  * neighbour that no reorder can honour: the item comes up enabled, the click
  * writes a layout identical to the one it started from, and the group has not
  * moved. That is the same failure the empty sentinel used to cause, arriving by
- * a different route.
+ * a different route. The Caller groups are pinned the same way and left out for
+ * the same reason.
  */
 export function visibleGroupSeqTokens(model: SidebarModel): string[] {
-  return model.groups.filter((g) => g.kind !== "system" && isGroupVisible(g)).map(groupToken);
+  return model.groups.filter((g) => !isOriginGroup(g) && isGroupVisible(g)).map(groupToken);
 }
 
 /** Rebuild {projects order, ungroupedIndex} from a reordered token sequence. */
@@ -222,20 +278,35 @@ export function deriveSidebar(layout: Layout, sessions: Session[], me: string): 
   // sitting in the main list, which is the thing this group exists to stop.
   // The rescue needs no layout entry to survive: adoptSystemSession stamps the
   // session `user` before anything is written.
+  // A Caller's session is filed the same way into its Caller's group, for the
+  // same reason: agent-api's sessions never pass through the layout at all,
+  // but a rescued one that is restamped later must not be read back by a
+  // stale entry either.
   const systemMembers: Session[] = [];
+  const callerMembers = new Map<string, Session[]>();
   const ungroupedMembers: Session[] = [];
+  /** The origin group a session belongs in, or undefined for a person's. */
+  const originBucket = (s: Session): Session[] | undefined => {
+    if (isCallerSession(s)) {
+      const caller = s.caller!;
+      let list = callerMembers.get(caller);
+      if (!list) callerMembers.set(caller, (list = []));
+      return list;
+    }
+    return isSystemSession(s) ? systemMembers : undefined;
+  };
 
   // Resolve project members first so referenced is populated before ungrouped
   // sweeps up the leftovers.
   const projectMembers = new Map<string, Session[]>();
   for (const p of layout.projects) {
     const members: Session[] = [];
-    for (const s of resolve(p.sessions)) (isSystemSession(s) ? systemMembers : members).push(s);
+    for (const s of resolve(p.sessions)) (originBucket(s) ?? members).push(s);
     projectMembers.set(p.name, members);
   }
 
   for (const s of resolve(layout.ungrouped)) {
-    (isSystemSession(s) ? systemMembers : ungroupedMembers).push(s);
+    (originBucket(s) ?? ungroupedMembers).push(s);
   }
   // Live own sessions referenced by no group, in a stable order (creation time
   // asc, then name) so the sidebar doesn't jitter.
@@ -248,13 +319,14 @@ export function deriveSidebar(layout: Layout, sessions: Session[], me: string): 
   // opinion — but a session it has never placed used to fall through to
   // Ungrouped even while the project it named sat beside it reading 0.
   //
-  // A system leftover goes to System ahead of both, its own `project` included:
-  // that field is where tmux-api found the session, not somewhere anybody put
-  // it, so a harness run started inside a project directory would otherwise
-  // deal its sessions straight into that project.
+  // A system or Caller leftover goes to its origin group ahead of both, its own
+  // `project` included: that field is where tmux-api found the session, not
+  // somewhere anybody put it, so a harness run started inside a project
+  // directory would otherwise deal its sessions straight into that project.
   for (const s of leftovers) {
-    if (isSystemSession(s)) {
-      systemMembers.push(s);
+    const bucket = originBucket(s);
+    if (bucket) {
+      bucket.push(s);
       continue;
     }
     const claimed = s.project ? projectMembers.get(s.project) : undefined;
@@ -266,6 +338,17 @@ export function deriveSidebar(layout: Layout, sessions: Session[], me: string): 
     if (t === "u") {
       groups.push({ kind: "ungrouped", name: "", sessions: ungroupedMembers });
     } else if (t === SYSTEM_TOKEN) {
+      // The Caller groups ride System's pinned slot rather than holding tokens
+      // of their own: the layout cannot place them either, and a Caller with
+      // nothing live has no group to place.
+      for (const caller of [...callerMembers.keys()].sort()) {
+        groups.push({
+          kind: "caller",
+          name: callerGroupName(caller),
+          caller,
+          sessions: callerMembers.get(caller)!,
+        });
+      }
       groups.push({ kind: "system", name: SYSTEM_GROUP_NAME, sessions: systemMembers });
     } else {
       const name = t.slice(2);

@@ -11,13 +11,14 @@ import {
 } from "solid-js";
 import type { LobbyStore } from "../store/lobby";
 import type { PrefsStore } from "../store/prefs";
-import { SHARED_KEY, SYSTEM_KEY } from "../store/collapse";
+import { SHARED_KEY } from "../store/collapse";
 import {
+  callerGroupTitle,
   groupSeqTokens,
   groupToken,
   isGroupVisible,
+  isOriginGroup,
   sessionsByName,
-  SYSTEM_GROUP_NAME,
   type RenderGroup,
 } from "./lobby.logic";
 import {
@@ -211,12 +212,11 @@ export const Sidebar: Component<{
   // bounds — the two reading different predicates is what let a group's Move
   // item offer a step onto a slot that renders nothing.
   //
-  // System is drawn by hand at the foot instead, so it is filtered out here for
-  // the same reason `visibleGroupSeqTokens` drops it: this list is also the
-  // token space the group sortable measures, and a slot the layout cannot store
-  // is a slot no drag may land on.
-  const onScreen = () =>
-    store.model().groups.filter((g) => g.kind !== "system" && isGroupVisible(g));
+  // System and the Caller groups are drawn by hand at the foot instead, so they
+  // are filtered out here for the same reason `visibleGroupSeqTokens` drops
+  // them: this list is also the token space the group sortable measures, and a
+  // slot the layout cannot store is a slot no drag may land on.
+  const onScreen = () => store.model().groups.filter((g) => !isOriginGroup(g) && isGroupVisible(g));
   /** The groups to draw: the model's sequence, or the one a header being
    *  dragged has now (dnd/sidebar.ts holds it for the length of the drag). */
   const visibleGroups = (): RenderGroup[] => {
@@ -242,28 +242,98 @@ export const Sidebar: Component<{
 
   const sharedCollapsed = () => store.collapse.isCollapsed(SHARED_KEY);
 
-  // The System group, or undefined while nothing has landed in it. Hand-rolled
-  // below rather than drawn by <ProjectGroup>, for the same reason "Shared with
-  // me" is: what it shares with a project is a header, a chevron and a count.
-  // It cannot be renamed, deleted, added to, dragged, or moved in the sequence,
+  // The Caller groups and System, each only while something has landed in it,
+  // in the model's order (Callers by name, then System). Hand-rolled below
+  // rather than drawn by <ProjectGroup>, for the same reason "Shared with me"
+  // is: what they share with a project is a header, a chevron and a count. They
+  // cannot be renamed, deleted, added to, dragged, or moved in the sequence,
   // and every one of those controls would have needed a branch of its own.
-  const systemGroup = (): RenderGroup | undefined => {
-    const g = store.model().groups.find((x) => x.kind === "system");
-    return g && isGroupVisible(g) ? g : undefined;
-  };
-  const systemCollapsed = () => store.collapse.isCollapsed(SYSTEM_KEY);
-  const toggleSystem = () => store.collapse.toggle(SYSTEM_KEY);
+  const originGroups = (): RenderGroup[] =>
+    store.model().groups.filter((g) => isOriginGroup(g) && isGroupVisible(g));
   /** The cards to draw: the model's order, or the one the pointer has now —
-   *  the same swap ProjectGroup makes, so a card dragged OUT of System leaves
-   *  the list under the finger instead of snapping back until the drop lands. */
-  const systemCards = (g: RenderGroup): Session[] => {
-    const order = liveOrder(SYSTEM_GROUP_NAME);
+   *  the same swap ProjectGroup makes, so a card dragged OUT of the group
+   *  leaves the list under the finger instead of snapping back until the drop
+   *  lands. */
+  const originCards = (g: RenderGroup): Session[] => {
+    const order = liveOrder(g.name);
     if (!order) return g.sessions;
     const all = sessionsByName(store.model());
     return order.flatMap((n) => {
       const s = all.get(n);
       return s ? [s] : [];
     });
+  };
+
+  /** One origin group: System, or a Caller's. The group's name is also its
+   *  collapse key, the way a project's is. */
+  const OriginGroup: Component<{ group: RenderGroup }> = (p) => {
+    const key = () => p.group.name;
+    const collapsed = () => store.collapse.isCollapsed(key());
+    const toggle = () => store.collapse.toggle(key());
+    const title = () =>
+      p.group.kind === "caller" ? callerGroupTitle(p.group.caller ?? "") : "System";
+    const hint = () =>
+      p.group.kind === "caller"
+        ? `Sessions ${title()} started. They attach and kill like any other. They do not notify.`
+        : "Sessions the lobby did not create. They attach and kill like any other. They do not notify.";
+    return (
+      <div class="tl-group" classList={{ "tl-group-collapsed": collapsed() }}>
+        <div
+          class="tl-group-header"
+          role="button"
+          tabindex={0}
+          aria-expanded={!collapsed()}
+          aria-label={`${title()} group`}
+          title={hint()}
+          onClick={toggle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              toggle();
+            }
+          }}
+        >
+          <span class="tl-chev">▾</span>
+          <span class="tl-group-title">{title()}</span>
+          <span class="tl-group-badges">
+            <span class="tl-group-count">{p.group.sessions.length}</span>
+          </span>
+        </div>
+        <Show when={!collapsed()}>
+          <div
+            class="tl-group-body"
+            // A sortable like any other group's, so a card can be dragged
+            // OUT — which is the rescue (store.move stamps the session
+            // `user` on the server before it writes the layout). A drop
+            // back IN reads this name, and the store refuses it: the
+            // layout has no slot to write.
+            {...{ [GROUP_ATTR]: key() }}
+            ref={(el) =>
+              attachSessionList(el, {
+                group: key,
+                names: () => p.group.sessions.map((s) => s.name),
+                move: (name, group, anchor) => store.move(name, group, anchor),
+                hold: () => store.hold(),
+              })
+            }
+          >
+            <For each={originCards(p.group)}>
+              {(s) => (
+                <SessionCard
+                  isUnseen={unseenOf}
+                  store={store}
+                  session={s}
+                  groupName={key()}
+                  tick={tick}
+                  badge={badge}
+                  showLastActive={showLastActive}
+                />
+              )}
+            </For>
+          </div>
+        </Show>
+      </div>
+    );
   };
 
   return (
@@ -441,72 +511,21 @@ export const Sidebar: Component<{
             </div>
           </Show>
 
-          {/* System, at the very foot: the sessions the lobby's own create path
-            did not make — harness fleets, and whatever else reached the tmux
-            server without saying who it was. Collapsed by default, which is the
-            point of it, so the COUNT is the whole of the evidence that
-            something landed here wrongly and has to be readable without
-            opening the group. Hand-rolled for the reasons at `systemGroup`. */}
-          <Show when={systemGroup()}>
-            {(g) => (
-              <div class="tl-group" classList={{ "tl-group-collapsed": systemCollapsed() }}>
-                <div
-                  class="tl-group-header"
-                  role="button"
-                  tabindex={0}
-                  aria-expanded={!systemCollapsed()}
-                  aria-label="System group"
-                  title="Sessions the lobby did not create. They attach and kill like any other. They do not notify."
-                  onClick={toggleSystem}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      toggleSystem();
-                    }
-                  }}
-                >
-                  <span class="tl-chev">▾</span>
-                  <span class="tl-group-title">System</span>
-                  <span class="tl-group-badges">
-                    <span class="tl-group-count">{g().sessions.length}</span>
-                  </span>
-                </div>
-                <Show when={!systemCollapsed()}>
-                  <div
-                    class="tl-group-body"
-                    // A sortable like any other group's, so a card can be dragged
-                    // OUT — which is the rescue (store.move stamps the session
-                    // `user` on the server before it writes the layout). A drop
-                    // back IN reads this name, and the store refuses it: the
-                    // layout has no slot to write.
-                    {...{ [GROUP_ATTR]: SYSTEM_GROUP_NAME }}
-                    ref={(el) =>
-                      attachSessionList(el, {
-                        group: () => SYSTEM_GROUP_NAME,
-                        names: () => g().sessions.map((s) => s.name),
-                        move: (name, group, anchor) => store.move(name, group, anchor),
-                        hold: () => store.hold(),
-                      })
-                    }
-                  >
-                    <For each={systemCards(g())}>
-                      {(s) => (
-                        <SessionCard
-                          isUnseen={unseenOf}
-                          store={store}
-                          session={s}
-                          groupName={SYSTEM_GROUP_NAME}
-                          tick={tick}
-                          badge={badge}
-                          showLastActive={showLastActive}
-                        />
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </div>
+          {/* The Caller groups, then System, at the very foot. A Caller's group
+            holds what that program started through agent-api; System holds
+            the sessions the lobby's own create path did not make — harness
+            fleets, and whatever else reached the tmux server without saying
+            who it was. All collapsed by default, which is the point of them,
+            so the COUNT is the whole of the evidence that something landed
+            here and has to be readable without opening the group. Keyed by
+            name so a poll does not remount an open group. */}
+          <For each={originGroups().map((g) => g.name)}>
+            {(name) => (
+              <Show when={originGroups().find((g) => g.name === name)}>
+                {(g) => <OriginGroup group={g()} />}
+              </Show>
             )}
-          </Show>
+          </For>
         </div>
 
         <div class="tl-sidebar-foot">

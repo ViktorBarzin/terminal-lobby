@@ -8,7 +8,8 @@ import type { UndoStore } from "./undo";
  * a view preference, not layout — see CONTEXT.md "Layout"): the vanilla app
  * keyed it `tmux-collapsed-<user>` in localStorage. Group keys are project names
  * plus three sentinels that can't collide with a project name (a project name
- * matches [a-zA-Z0-9_-]{1,32}, so a leading ':' is safe).
+ * matches [a-zA-Z0-9_-]{1,32}, so a leading ':' is safe), and one key per
+ * Caller group under CALLER_KEY_PREFIX.
  */
 export const UNGROUPED_KEY = ":ungrouped";
 export const SHARED_KEY = ":shared";
@@ -16,6 +17,10 @@ export const SHARED_KEY = ":shared";
  *  (SYSTEM_GROUP_NAME in components/lobby.logic.ts), so every caller that keys
  *  the store by group name already lands here. */
 export const SYSTEM_KEY = ":system";
+/** The prefix of every Caller group's key (`callerGroupName` in
+ *  components/lobby.logic.ts builds the whole key as this plus the Caller's
+ *  name), kept in step with CALLER_GROUP_PREFIX there. */
+const CALLER_KEY_PREFIX = ":caller:";
 
 /**
  * The keys that start CLOSED. Everything else starts open, which is what the
@@ -25,6 +30,11 @@ export const SYSTEM_KEY = ":system";
  * opens closed and the count in its header is what says it is not empty. That
  * default cuts both ways and it is deliberate: a session that lands there
  * wrongly is behind one click rather than in front of you.
+ *
+ * Every Caller's group starts closed too (`startsCollapsed`), for the same
+ * reason: it holds work a program asked for, and its count says it is there.
+ * They are matched by prefix because a new Caller's group appears with no
+ * change here.
  */
 const CLOSED_BY_DEFAULT = new Set<string>([SYSTEM_KEY]);
 
@@ -34,12 +44,13 @@ const CLOSED_BY_DEFAULT = new Set<string>([SYSTEM_KEY]);
  *
  * For every key with the old default the two readings are the same set, so
  * every device's existing file keeps meaning exactly what it meant. It is only
- * :system where membership reads the other way round — and since no stored file
- * has ever contained that key, absent correctly reads as collapsed on the first
- * boot after the upgrade with nothing to migrate.
+ * :system and the :caller: keys where membership reads the other way round —
+ * and since no stored file had ever contained those keys when each arrived,
+ * absent correctly reads as collapsed on the first boot after the upgrade with
+ * nothing to migrate.
  */
 function startsCollapsed(key: string): boolean {
-  return CLOSED_BY_DEFAULT.has(key);
+  return CLOSED_BY_DEFAULT.has(key) || key.startsWith(CALLER_KEY_PREFIX);
 }
 
 function storageKey(user: string): string {

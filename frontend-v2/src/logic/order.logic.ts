@@ -22,7 +22,7 @@
  *    have to change is handed back as the same object.
  */
 import type { Layout, Session } from "../types/lobby";
-import type { SidebarModel } from "../components/lobby.logic";
+import { isOriginGroup, type SidebarModel } from "../components/lobby.logic";
 
 /** Which order the session list is in. */
 export type SessionOrder = "manual" | "created" | "active";
@@ -156,11 +156,13 @@ export function applySessionOrder(model: SidebarModel, order: SessionOrder): Sid
  * harness drives the ordinary create flow, so its sessions ARE listed in
  * layout.ungrouped while rendering in System, and reading that as a stale
  * duplicate would delete the entry from under a session that is still running.
+ * A Caller's group is the same kind of group (isOriginGroup) and is skipped for
+ * the same reasons.
  */
 export function captureVisibleOrder(layout: Layout, model: SidebarModel): Layout {
   const rendered = new Map<string, string[]>();
   for (const g of model.groups) {
-    if (g.kind === "system") continue;
+    if (isOriginGroup(g)) continue;
     rendered.set(
       g.kind === "ungrouped" ? "" : g.name,
       g.sessions.map((s) => s.name),

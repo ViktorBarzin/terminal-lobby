@@ -7,6 +7,8 @@ import {
   deleteProject,
   deriveSidebar,
   groupSeqTokens,
+  isCallerSession,
+  isOriginGroupName,
   isSystemSession,
   materializeGroup,
   moveSession,
@@ -16,7 +18,6 @@ import {
   reorderGroups,
   sameLayout,
   stabilizeModel,
-  SYSTEM_GROUP_NAME,
   type DropAnchor,
   type SidebarModel,
 } from "../components/lobby.logic";
@@ -1547,8 +1548,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
 
   /**
    * Adopt a session the lobby did not make, because somebody has just dragged
-   * it out of System. Answers false when the adoption did not land, and the
-   * caller then writes no layout at all.
+   * it out of System or out of a Caller's group. Answers false when the
+   * adoption did not land, and the caller then writes no layout at all.
    *
    * The order matters and it is the opposite of the usual optimistic one.
    * deriveSidebar files a session by its origin wherever the layout lists it,
@@ -1560,19 +1561,22 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
    */
   async function adoptSystemSession(name: string): Promise<boolean> {
     const s = sessions.find((x) => x.name === name);
-    if (!s || !isSystemSession(s)) return true;
+    if (!s || !(isSystemSession(s) || isCallerSession(s))) return true;
     try {
       await api.setSessionOrigin(name, ORIGIN_USER);
     } catch (e) {
       if (e instanceof ApiError && e.status === 404) showToast("Session no longer exists");
-      else showToast("Couldn't take this session out of System");
+      else showToast("Couldn't take this session out of its group");
       return false;
     }
     // The origin the next poll would have brought back, applied now. Without
     // it the card springs straight back into System for the rest of the poll
     // interval: a system session is filed there whatever layout.ungrouped says,
     // which is the whole reason a harness's sessions do not sit in the list.
+    // The caller field goes with it, as tmux-api drops it once the origin
+    // reads `user`.
     setSessions((x) => x.name === name, "origin", ORIGIN_USER);
+    setSessions((x) => x.name === name, "caller", undefined);
     return true;
   }
 
@@ -1581,8 +1585,8 @@ export function createLobbyStore(opts: LobbyStoreOptions = {}): LobbyStore {
     // each session's origin, and ":system" is a name no project has. Writing it
     // would strip every reference to the card and file it nowhere, so a session
     // dropped back in would reappear in Ungrouped having quietly lost the
-    // project it was in.
-    if (group === SYSTEM_GROUP_NAME) return;
+    // project it was in. A Caller's group is derived the same way.
+    if (isOriginGroupName(group)) return;
     // The rescue (design doc §Rescue), before anything is written down.
     if (!(await adoptSystemSession(name))) return;
     // A drop that names a POSITION cannot be honoured while a timestamp is

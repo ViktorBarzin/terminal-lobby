@@ -180,7 +180,8 @@ export interface Session {
    *  (`@tl_pi_levels`), which is what its chip offers. Same terms. */
   piLevels?: string;
   /** Who made this session, from its `@tl_origin` tmux option: `user` when the
-   *  lobby's own create path made it, `test` when a harness stamped it.
+   *  lobby's own create path made it, `test` when a harness stamped it, a
+   *  Caller's name when agent-api made it for that Caller.
    *
    *  Absent means nobody said, and that is deliberately NOT the same as `user`:
    *  a mark can only mean something once the path a person uses leaves one, so
@@ -190,6 +191,13 @@ export interface Session {
    *  start — without that pass an upgrade would sweep the whole list into
    *  System. */
   origin?: string;
+  /** The Caller that made this session (CONTEXT.md: Caller), e.g. `muse`.
+   *  tmux-api reads it off `origin` with the one rule that says which origins
+   *  are Callers and sends it beside the raw value, so the sidebar files the
+   *  session in the Caller's group without a copy of that rule. Absent for
+   *  every session no Caller made, and from a server that predates the field,
+   *  where such a session stays in System as it always did. */
+  caller?: string;
 }
 
 /** What a pi session stamped about itself, as the session list carries it. */
