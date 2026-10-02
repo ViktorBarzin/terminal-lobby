@@ -279,6 +279,25 @@ test('rehello sends a fresh hello and keeps events flowing', async () => {
   assert.deepEqual((server.of('events').at(-1)?.body as { events: unknown[] }).events, [row('b')]);
 });
 
+// Measured live 2026-10-02: eight conversations created at once, and three
+// never got @claude_transcript. Their first hello went out before Claude had
+// written the file, the file appeared while that hello was still in flight,
+// and the rehello asked for then was overwritten by the slow hello's token.
+test('a rehello asked for while a hello is in flight sends another hello', async () => {
+  const { clock, server, link } = setup();
+  let release!: (r: Reply) => void;
+  server.replies.hello = [() => new Promise<Reply>((resolve) => { release = resolve; })];
+  link.start();
+  await clock.advance(100);
+  assert.equal(server.of('hello').length, 1);
+  link.rehello();
+  release({ status: 200, body: { token: 'tok1', history: false } });
+  await clock.advance(100);
+  const hellos = server.of('hello');
+  assert.equal(hellos.length, 2, 'the rehello asked for mid-hello must not be lost');
+  assert.deepEqual(hellos[1].body, { sid: 's1', n: 2 });
+});
+
 test('drain resolves once the queue is posted, or at its deadline', async () => {
   const { clock, server, link } = setup();
   link.start();

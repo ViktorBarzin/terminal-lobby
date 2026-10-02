@@ -37,6 +37,9 @@ export class Link {
   #busy = false;
   #lastFlush = -Infinity;
   #helloFails = 0;
+  // Bumped by every rehello, so a hello that was already in flight when one
+  // was asked for knows it answered the wrong question (see #hello).
+  #helloAsks = 0;
   #sendFails = 0;
   #retryAt = 0;
   #tokenWaiters: (() => void)[] = [];
@@ -68,6 +71,7 @@ export class Link {
   // Forget the token and say hello again, e.g. after the tmux session was
   // renamed or the conversation was cleared.
   rehello(): void {
+    this.#helloAsks++;
     this.#token = null;
     if (this.#started) this.#schedule(0);
   }
@@ -123,6 +127,7 @@ export class Link {
   }
 
   async #hello(): Promise<void> {
+    const asked = this.#helloAsks;
     let reply: Reply | null = null;
     try {
       reply = await this.#deps.post('/mod/v1/hello', await this.#deps.hello());
@@ -136,6 +141,12 @@ export class Link {
     }
     this.#helloFails = 0;
     this.#retryAt = 0;
+    // A rehello asked for while this one was in flight: the body went out
+    // with what was true before it (the old session name, no transcript yet),
+    // so the token is dropped and #pump says hello again. Keeping it lost the
+    // second hello, and with it the transcript stamp, for 3 of 8 conversations
+    // created together on 2026-10-02.
+    if (this.#helloAsks !== asked) return;
     const resent: ModEvent[] = [];
     if (body.history === true) {
       try {
