@@ -392,12 +392,16 @@ class Lobby:
         cdp: CDPSession,
         registration_id: str,
         origin: str,
+        pushes_done: list[str],
     ):
         self.context = context
         self.page = page
         self.cdp = cdp
         self.registration_id = registration_id
         self.origin = origin
+        # The Status of every push event the browser has finished handling, in
+        # order, as DevTools' background-service log reports it. See push().
+        self.pushes_done = pushes_done
 
     # -- the worker -------------------------------------------------------
     def worker(self) -> Worker:
@@ -445,9 +449,33 @@ class Lobby:
                 )
             self.page.wait_for_timeout(100)
 
-    def deliver_push(self, session: str, title: str, shape: str) -> None:
-        """A real push, through the browser's own push plumbing."""
-        payload = PAYLOADS[shape](session, title, self.origin)
+    def push(self, payload: dict[str, Any]) -> None:
+        """Deliver a real push and return once sw.js has finished handling it.
+
+        Nothing may read the shade while the push handler's showNotification is
+        still in flight, because Chromium's getNotifications DELETES it. The read
+        takes the time, asks the display service which notifications are on
+        screen, and drops every stored notification created before that time
+        that the answer leaves out (DoReadAllNotificationDataForServiceWorker-
+        Registration in content/browser/notifications/
+        platform_notification_context_impl.cc). showNotification stores the
+        notification first and hands it to the display service after, so a read
+        landing between the two erases it for good: the banner is drawn, yet
+        getNotifications never lists it again, and no amount of waiting brings
+        it back. Measured 2026-10-02 on Chromium 1243: a getNotifications issued
+        in the same tick as showNotification lost the notification 20 times in
+        20, and 0 in 20 without that read.
+
+        This suite used to poll the shade every 100 ms from the moment the push
+        was sent, which is a read inside that window whenever the runner is slow
+        enough. That was the release-gate flake of 2026-10-02: a different case
+        failed on each run with "the shade holds []", while the worker's own
+        telemetry said the push had been handled. Waiting for the browser to
+        report the push event finished removes the window: the handler awaits
+        showNotification, which resolves only after the display service has the
+        notification, so every read after this point sees it.
+        """
+        done = len(self.pushes_done)
         self.cdp.send(
             "ServiceWorker.deliverPushMessage",
             {
@@ -456,6 +484,24 @@ class Lobby:
                 "data": json.dumps(payload),
             },
         )
+        deadline = time.monotonic() + REACT_MS / 1000
+        while len(self.pushes_done) <= done:
+            if time.monotonic() > deadline:
+                raise AssertionError(
+                    f"the browser did not finish the push event within {REACT_MS} ms; "
+                    f"telemetry: {self.telemetry()}"
+                )
+            # Waits on the page so Playwright keeps dispatching CDP events.
+            self.page.wait_for_timeout(20)
+        status = self.pushes_done[done]
+        assert status == "Success", (
+            f"the push event finished with status {status!r}; "
+            f"telemetry: {self.telemetry()}"
+        )
+
+    def deliver_push(self, session: str, title: str, shape: str) -> None:
+        """A real push, through the browser's own push plumbing."""
+        self.push(PAYLOADS[shape](session, title, self.origin))
         # The banner is the proof the push landed and the handoff for the click.
         self._wait_for_banner("tl-" + session)
 
@@ -577,7 +623,17 @@ def browser() -> Iterator[Browser]:
         # after grant_permissions, and showNotification threw "No notification
         # permission has been granted for this origin". The full Chromium in new
         # headless mode grants it and keeps a real shade.
-        instance = pw.chromium.launch(channel="chromium")
+        #
+        # SystemNotifications is off so the shade is Chromium's own notification
+        # centre rather than whatever the host's desktop session offers over
+        # D-Bus. Without it the result depended on the machine: on a box with a
+        # session bus and no notification daemon, Chromium's first display
+        # waited about 23 s on D-Bus before falling back, and the first case of
+        # every run failed (measured 2026-10-02, 3 runs in 3). sw.js sees the same
+        # Notification objects and the same getNotifications either way.
+        instance = pw.chromium.launch(
+            channel="chromium", args=["--disable-features=SystemNotifications"]
+        )
         try:
             yield instance
         finally:
@@ -604,27 +660,31 @@ def lobby(browser: Browser, origin: str) -> Iterator[Lobby]:
         lambda params: registrations.extend(params["registrations"]),
     )
     cdp.send("ServiceWorker.enable")
-    page.wait_for_timeout(300)
-    # Read the shade once before any case pushes. Every case gets a fresh
-    # browser context, and a fresh profile's notification store is opened on
-    # first use. Without this read, the first push could race the page's own
-    # first read of the shade: showNotification resolved, yet the banner never
-    # reached getNotifications. Measured 2026-10-02 on Chromium 1243 (Playwright
-    # 1.63.0): the worker's first getNotifications took 2.6 s and, when a push
-    # landed in that window, the worker stalled for ~24 s and came back with an
-    # empty shade. Locally 1 case in 8 failed on every run; with this read, 24
-    # of 24 passed. In CI a different case failed on each of four release runs.
-    # A browser that has shown notifications before has most likely opened
-    # this store already, so the read should remove only the cold first use.
-    # That is inferred, not measured on a real device.
-    page.evaluate(
-        "() => navigator.serviceWorker.getRegistration()"
-        ".then((r) => r.getNotifications()).then((l) => l.length)"
+    # The browser's own record of each push event it has finished, which is how
+    # Lobby.push knows the handler's showNotification has resolved without
+    # reading the shade to find out.
+    pushes_done: list[str] = []
+
+    def on_background_event(params: dict[str, Any]) -> None:
+        event = params["backgroundServiceEvent"]
+        if event.get("eventName") != "Push event completed":
+            return
+        meta = {m["key"]: m["value"] for m in event.get("eventMetadata", [])}
+        pushes_done.append(meta.get("Status", "unknown"))
+
+    cdp.on("BackgroundService.backgroundServiceEventReceived", on_background_event)
+    cdp.send("BackgroundService.startObserving", {"service": "pushMessaging"})
+    cdp.send(
+        "BackgroundService.setRecording",
+        {"shouldRecord": True, "service": "pushMessaging"},
     )
+    page.wait_for_timeout(300)
     live = [r for r in registrations if not r.get("isDeleted")]
     assert live, "CDP reported no service worker registration for the origin"
     try:
-        yield Lobby(context, page, cdp, live[0]["registrationId"], origin)
+        yield Lobby(
+            context, page, cdp, live[0]["registrationId"], origin, pushes_done
+        )
     finally:
         context.close()
 
@@ -720,20 +780,13 @@ def test_a_session_less_test_push_never_switches_session(lobby: Lobby) -> None:
     the handler must not default to one either.
     """
     lobby.open_session(TITLE_B)
-    lobby.cdp.send(
-        "ServiceWorker.deliverPushMessage",
+    lobby.push(
         {
-            "origin": lobby.origin,
-            "registrationId": lobby.registration_id,
-            "data": json.dumps(
-                {
-                    "title": "Test notification",
-                    "body": "If you can read this, push delivery works on this device.",
-                    "tag": "tl-test",
-                    "session": "",
-                }
-            ),
-        },
+            "title": "Test notification",
+            "body": "If you can read this, push delivery works on this device.",
+            "tag": "tl-test",
+            "session": "",
+        }
     )
     lobby.page.wait_for_function(
         "() => navigator.serviceWorker.getRegistration()"
