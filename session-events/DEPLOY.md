@@ -63,7 +63,7 @@ resolve route through the ingress. Do not follow that from the history:
 
 Gone with the broker: its hook and resolve routes, `registry.permResolve`,
 `fileSource.subscriberCount`, and the ingress route that fronted them.
-`claude-se-hook` is session-start-only. The `permission_request` /
+`claude-se-hook` was retired on 2026-10-02 with the mod (ADR-0036). The `permission_request` /
 `permission_resolved` event kinds survive in `event.go` as unused vocabulary,
 as does the client-side `PermissionPanel.tsx` in frontend-v2 (annotated as
 inert, kept for a possible gated re-enable). The URL builder it posted to,
