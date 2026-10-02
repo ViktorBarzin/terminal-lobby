@@ -8,6 +8,7 @@ import type { ModEvent } from './lib/queue.ts';
 import { Pending } from './lib/pending.ts';
 import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
+import { Decided } from './lib/decided.ts';
 import {
   decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
@@ -28,6 +29,8 @@ let tmuxSession = '';
 // Where this session's transcript will be, and whether the last hello named it.
 let transcriptFile = async (): Promise<string> => '';
 const stamp = new TranscriptStamp();
+// Answers already given, for a tool call whose permission is checked again.
+const decided = new Decided();
 // Web answers for dialogs on screen, keyed by tool_use_id.
 const webAnswers = new Pending<Command>();
 // The mod's own terminal dialogs ($.ui.ask), keyed by question text. Each
@@ -269,11 +272,14 @@ async function holdDecision($: EngineInterface, e: { tool: string; input: unknow
       const decision = decisionFromWeb(e.tool, winner.c.decision, winner.c.reason);
       takedown(decision.decision === 'allow' ? dialog.options[0] : dialog.options[1]);
       send({ type: 'settled', toolId, by: 'web' });
+      decided.remember(e.tool_use_id ?? '', decision);
       return decision;
     }
     if (winner.by === 'terminal') {
       send({ type: 'settled', toolId, by: 'terminal' });
-      return decisionFromLabel(e.tool, winner.label);
+      const decision = decisionFromLabel(e.tool, winner.label);
+      decided.remember(e.tool_use_id ?? '', decision);
+      return decision;
     }
     // No dialog could be drawn (or it was dismissed): Claude draws its own.
     send({ type: 'settled', toolId, by: 'gone' });
@@ -418,6 +424,8 @@ export const register: Register = (on) => {
     // AskUserQuestion's own menu is its permission prompt: let Claude draw it
     // (tool.call races it against the web). The mod's $.ui.ask comes here too.
     if (!link || r.decision !== 'ask' || e.tool === 'AskUserQuestion') return r;
+    const prior = decided.recall(e.tool_use_id ?? '');
+    if (prior) return prior;
     try {
       return await holdDecision($, e, r);
     } catch {
