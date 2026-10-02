@@ -338,27 +338,34 @@ var suspendedFormat = strings.Join([]string{
 	"#{session_name}", "#{pane_id}",
 	"#{" + OptionSuspended + "}", "#{" + OptionSuspendState + "}",
 	"#{pane_dead}", "#{pane_pid}",
-	"#{" + OptionTranscript + "}", "#{" + OptionResumeCmd + "}",
+	"#{" + OptionTranscript + "}", "#{" + OptionAgentTranscript + "}", "#{" + OptionResumeCmd + "}",
 }, "\t")
 
 // parseSuspended decodes one suspendedFormat line, checking it is the
 // session that was asked for: tmux does NOT fail an unknown target, so the
 // answer has to say whose it is.
 func parseSuspended(out, name string) (SuspendedFacts, bool) {
-	parts := strings.SplitN(strings.TrimRight(out, "\n"), "\t", 8)
-	if len(parts) != 8 || parts[0] != name {
+	parts := strings.SplitN(strings.TrimRight(out, "\n"), "\t", 9)
+	if len(parts) != 9 || parts[0] != name {
 		return SuspendedFacts{}, false
 	}
 	at, _ := strconv.ParseInt(strings.TrimSpace(parts[2]), 10, 64)
 	pid, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
+	// The mod's stamp, or agent-api's hint for a Caller conversation the mod
+	// never stamped: the same order SessionMap.Get resolves in, which is what
+	// let the sweep suspend it.
+	transcript := strings.TrimSpace(parts[6])
+	if transcript == "" {
+		transcript = strings.TrimSpace(parts[7])
+	}
 	return SuspendedFacts{
 		PaneID:      parts[1],
 		SuspendedAt: at,
 		SavedState:  strings.TrimSpace(parts[3]),
 		PaneDead:    strings.TrimSpace(parts[4]) == "1",
 		PanePID:     pid,
-		Transcript:  strings.TrimSpace(parts[6]),
-		ResumeCmd:   parts[7],
+		Transcript:  transcript,
+		ResumeCmd:   parts[8],
 	}, true
 }
 

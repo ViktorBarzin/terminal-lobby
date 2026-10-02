@@ -312,9 +312,23 @@ func (s *SessionMap) Put(info SessionInfo) error {
 
 // Get resolves a live tmux session to its transcript. ok=false when the session
 // is gone, was never registered, or carries a stamp outside the projects root.
+//
+// With no mod stamp it falls back to agent-api's hint (OptionAgentTranscript),
+// held to the same containment rule. Measured 2026-10-02: 3 of 8 Caller
+// conversations created together never got the mod's stamp, and the suspend
+// sweep, which resolves through here, refused each of them on every pass.
 func (s *SessionMap) Get(tmux string) (SessionInfo, bool) {
 	path, ok := s.opts.Option(s.osUser, tmux, OptionTranscript)
-	if !ok || path == "" || !WithinProjects(s.projectsRoot, path) {
+	if !ok {
+		return SessionInfo{}, false
+	}
+	if path == "" {
+		path, ok = s.opts.Option(s.osUser, tmux, OptionAgentTranscript)
+		if !ok {
+			return SessionInfo{}, false
+		}
+	}
+	if path == "" || !WithinProjects(s.projectsRoot, path) {
 		return SessionInfo{}, false
 	}
 	return SessionInfo{TmuxSession: tmux, Transcript: path}, true

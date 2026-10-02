@@ -82,7 +82,7 @@ const OptionSuspended = sessionio.OptionSuspended
 // the caller was told the message reached a plain shell). Read through the
 // same containment rule as the mod's stamp, because the session's OS user can
 // rewrite either.
-const OptionTranscriptHint = "@agent_transcript"
+const OptionTranscriptHint = sessionio.OptionAgentTranscript
 
 // LiveSession is one tmux session as agent-api needs to see it: the name, and
 // the four options that answer every question the conversation endpoints ask.
@@ -457,11 +457,9 @@ func (t *tmuxSessions) AnswerDialog(ctx context.Context, osUser, session string,
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {
 	root := sessionio.ProjectsRoot(t.homeBase, osUser)
 	path := ""
+	// Get falls back to OptionTranscriptHint itself, under the same rule.
 	if info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session); ok {
 		path = info.Transcript
-	} else if hint, ok := t.optionStore().Option(osUser, session, OptionTranscriptHint); ok &&
-		hint != "" && sessionio.WithinProjects(root, hint) {
-		path = hint
 	}
 	if path == "" {
 		return nil, errNoTranscript

@@ -32,6 +32,12 @@ const (
 	// OptionTranscript holds the absolute path of the transcript the session's
 	// Claude is writing. Stamped by the SessionStart hook (see SessionMap).
 	OptionTranscript = "@claude_transcript"
+	// OptionAgentTranscript is agent-api's hint: where a Caller conversation's
+	// transcript will be, stamped once at create from the --session-id it pins.
+	// OptionTranscript wins whenever it is set, because only the mod knows when
+	// a /clear has moved Claude to a new file. The hint covers a conversation
+	// whose mod never stamped (SessionMap.Get, parseSuspended).
+	OptionAgentTranscript = "@agent_transcript"
 	// OptionState holds running/awaiting/done (ADR-0001).
 	OptionState = "@claude_state"
 	// OptionBackground holds the session's OUTSTANDING WORK: space-separated

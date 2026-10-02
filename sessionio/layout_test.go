@@ -238,6 +238,50 @@ func TestWithinProjectsFollowsALinkOutOfTheRoot(t *testing.T) {
 	}
 }
 
+// A Caller conversation whose mod never stamped @claude_transcript still
+// carries agent-api's hint, written at create from the --session-id it pins.
+// Without the fallback the suspend sweep refused such a session on every pass
+// (3 of 8 conversations created together on 2026-10-02), and each held about
+// 750 MiB past the 24h Caller fuse.
+func TestSessionMapFallsBackToTheAgentHint(t *testing.T) {
+	root := "/home/wizard/.claude/projects"
+	opts := siotest.NewFakeOptions("wizard/hello-2")
+	sm := NewSessionMap("wizard", root, opts)
+	hint := root + "/-home-wizard-code-scratch/0b7c.jsonl"
+	if err := opts.SetOption("wizard", "hello-2", OptionAgentTranscript, hint); err != nil {
+		t.Fatal(err)
+	}
+	info, ok := sm.Get("hello-2")
+	if !ok || info.Transcript != hint {
+		t.Fatalf("Get = %+v, %v; want the hint %s", info, ok, hint)
+	}
+
+	// The mod's stamp wins once it is there: only the mod knows a /clear moved
+	// Claude to a new file.
+	stamped := root + "/-home-wizard-code-scratch/after-clear.jsonl"
+	if err := opts.SetOption("wizard", "hello-2", OptionTranscript, stamped); err != nil {
+		t.Fatal(err)
+	}
+	if info, _ := sm.Get("hello-2"); info.Transcript != stamped {
+		t.Fatalf("Get = %s, want the mod's stamp %s", info.Transcript, stamped)
+	}
+}
+
+// The hint is written by agent-api but lives on a session its OS user can
+// rewrite, so it is held to the same containment rule as the mod's stamp.
+func TestSessionMapRefusesAHintOutsideTheProjectsRoot(t *testing.T) {
+	opts := siotest.NewFakeOptions("wizard/hello-2")
+	sm := NewSessionMap("wizard", "/home/wizard/.claude/projects", opts)
+	for _, bad := range []string{"/etc/shadow", "/home/wizard/.claude/projects/../x.jsonl", "/home/wizard/.claude/projects/a/b.txt"} {
+		if err := opts.SetOption("wizard", "hello-2", OptionAgentTranscript, bad); err != nil {
+			t.Fatal(err)
+		}
+		if info, ok := sm.Get("hello-2"); ok {
+			t.Fatalf("hint %q resolved to %+v", bad, info)
+		}
+	}
+}
+
 func TestSessionMapUnstampedSessionDoesNotResolve(t *testing.T) {
 	opts := siotest.NewFakeOptions("wizard/plain-shell")
 	sm := NewSessionMap("wizard", "/home/wizard/.claude/projects", opts)

@@ -208,7 +208,7 @@ func TestSplitArgv(t *testing.T) {
 
 func TestParseSuspendedKeepsTheCommandInTheLastField(t *testing.T) {
 	cmd := "/bin/sh -c 'a\tb'"
-	line := strings.Join([]string{"s", "%3", "1700", "awaiting", "1", "99", "/t.jsonl", cmd}, "\t") + "\n"
+	line := strings.Join([]string{"s", "%3", "1700", "awaiting", "1", "99", "/t.jsonl", "/hint.jsonl", cmd}, "\t") + "\n"
 	f, ok := parseSuspended(line, "s")
 	if !ok {
 		t.Fatal("parseSuspended refused a well-formed line")
@@ -220,6 +220,17 @@ func TestParseSuspendedKeepsTheCommandInTheLastField(t *testing.T) {
 	}
 	if _, ok := parseSuspended(line, "other"); ok {
 		t.Fatal("a line for another session was taken as this one's")
+	}
+}
+
+// A suspended Caller conversation whose mod never stamped @claude_transcript
+// resumes from agent-api's hint. Without it HasConversation saw "" and the
+// resume refused with "no transcript to resume".
+func TestParseSuspendedFallsBackToTheAgentHint(t *testing.T) {
+	line := strings.Join([]string{"s", "%3", "1700", "done", "1", "99", "", "/hint.jsonl", "claude --resume x"}, "\t") + "\n"
+	f, ok := parseSuspended(line, "s")
+	if !ok || f.Transcript != "/hint.jsonl" {
+		t.Fatalf("parsed %+v, %v; want Transcript from the hint", f, ok)
 	}
 }
 
