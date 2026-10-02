@@ -63,6 +63,58 @@ export function capStrings(value: unknown, max = TEXT_CAP): unknown {
   return out;
 }
 
+// The most JSON one `history` event carries. A long session's history runs past
+// the 4,194,304 characters Claude Code allows a mod's request body (an 11 MB
+// transcript did on 2026-10-02), and a refused batch blocks everything queued
+// behind it, so history goes out in chunks of this size.
+export const HISTORY_CHUNK_CHARS = 800_000;
+
+// How long one string in a history message may stay. The Text view shows 8 KiB
+// of a tool result inline, so history carries enough to render and no more.
+const HISTORY_STRING_CAP = 32 * 1024;
+
+// A structured tool result bigger than this is dropped from history; its text
+// still renders.
+const HISTORY_RESULT_CAP = 64 * 1024;
+
+type HistoryMessage = { toolUses?: Array<{ result?: unknown; [k: string]: unknown }>; [k: string]: unknown };
+
+function trimHistoryMessage(m: unknown): unknown {
+  const capped = capStrings(stripMedia(m), HISTORY_STRING_CAP) as HistoryMessage;
+  if (!Array.isArray(capped?.toolUses)) return capped;
+  return {
+    ...capped,
+    toolUses: capped.toolUses.map((u) =>
+      u && u.result !== undefined && JSON.stringify(u.result ?? null).length > HISTORY_RESULT_CAP ? { ...u, result: null } : u),
+  };
+}
+
+// The `history` events for what $.session.messages() returned: messages in
+// order, trimmed, split into chunks under HISTORY_CHUNK_CHARS. Every chunk but
+// the last carries `more: true`, and only the last says whether a main-thread
+// turn is running, which is what lets the server close the last turn.
+export function historyEvents(t: number, messages: unknown, running: boolean): ModEvent[] {
+  const list = Array.isArray(messages) ? messages.map(trimHistoryMessage) : [];
+  const chunks: unknown[][] = [];
+  let cur: unknown[] = [];
+  let chars = 0;
+  for (const m of list) {
+    const n = JSON.stringify(m).length + 1;
+    if (cur.length > 0 && chars + n > HISTORY_CHUNK_CHARS) {
+      chunks.push(cur);
+      cur = [];
+      chars = 0;
+    }
+    cur.push(m);
+    chars += n;
+  }
+  chunks.push(cur);
+  return chunks.map((c, i) =>
+    i < chunks.length - 1
+      ? { type: 'history', t, messages: c, running, more: true }
+      : { type: 'history', t, messages: c, running });
+}
+
 type AppendIn = { door: string; origin: unknown; uuid: string; agentId?: string };
 type StoredRow = {
   uuid: string;

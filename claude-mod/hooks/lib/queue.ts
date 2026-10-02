@@ -3,6 +3,21 @@
 
 export type ModEvent = { type: string; t: number; [field: string]: unknown };
 
+// Claude Code refuses a mod's request body over 4,194,304 characters (measured
+// on 2.1.287, 2026-10-02). A refused batch goes back on the queue and every
+// event behind it waits, so batches stay far below that, and an event that
+// could never fit in one is dropped rather than resent forever.
+export const MAX_EVENT_CHARS = 3_500_000;
+export const BATCH_CHARS = 1_000_000;
+
+function charsOf(ev: ModEvent): number {
+  try {
+    return JSON.stringify(ev).length;
+  } catch {
+    return Infinity;
+  }
+}
+
 // Events the server can rebuild from later ones: dropped before anything else
 // once the queue is over its cap. Rows, turn events and dialogs never go.
 const SHEDDABLE_AFTER_DELTAS = new Set(['agents', 'model']);
@@ -36,16 +51,31 @@ export class EventQueue {
     this.#shed();
   }
 
-  prepend(ev: ModEvent): void {
-    this.#items.unshift(ev);
+  prepend(...evs: ModEvent[]): void {
+    this.#items.unshift(...evs);
   }
 
   requeue(batch: ModEvent[]): void {
     this.#items.unshift(...batch);
   }
 
-  take(limit = 200): ModEvent[] {
-    return this.#items.splice(0, limit);
+  // The next batch, oldest first: at most `limit` events and, past the first,
+  // at most `maxChars` of JSON.
+  take(limit = 200, maxChars = BATCH_CHARS): ModEvent[] {
+    const out: ModEvent[] = [];
+    let chars = 0;
+    while (this.#items.length > 0 && out.length < limit) {
+      const n = charsOf(this.#items[0]);
+      if (n > MAX_EVENT_CHARS) {
+        this.#items.shift();
+        this.dropped++;
+        continue;
+      }
+      if (out.length > 0 && chars + n > maxChars) break;
+      out.push(this.#items.shift() as ModEvent);
+      chars += n;
+    }
+    return out;
   }
 
   #shed(): void {

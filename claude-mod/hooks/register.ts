@@ -10,7 +10,7 @@ import { SeenCommands } from './lib/seen.ts';
 import { TranscriptStamp } from './lib/stamp.ts';
 import { Decided } from './lib/decided.ts';
 import {
-  decisionFromLabel, decisionFromWeb, dialogFor, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
+  decisionFromLabel, decisionFromWeb, dialogFor, historyEvents, isOwnDialog, shapeResult, shapeRow, transcriptPath, webAnswer,
 } from './lib/shape.ts';
 
 const MOD_VERSION = '0.1.0';
@@ -69,6 +69,30 @@ async function tmuxSessionName($: EngineInterface, pane: string): Promise<string
   }
 }
 
+// Where this conversation's transcript is, '' until Claude has written one.
+// Claude files a conversation under the folder it STARTED in, which the mod
+// cannot always know: a mod that loads into a running Claude (the managed
+// settings changing under it) starts wherever that Claude has cd'd to. So the
+// guess from the start folder is tried first and the projects folder searched
+// for the conversation's id after it. The answer is kept once found.
+let foundTranscript = '';
+async function findTranscript($: EngineInterface, configDir: string, startCwd: string, sid: string): Promise<string> {
+  if (foundTranscript.endsWith(`/${sid}.jsonl`)) return foundTranscript;
+  const guess = transcriptPath(configDir, startCwd, sid);
+  if (await $.fs.exists(guess)) return (foundTranscript = guess);
+  try {
+    const root = `${configDir}/projects`;
+    for (const d of await $.fs.list(root)) {
+      if (d.type !== 'dir') continue;
+      const p = `${root}/${d.name}/${sid}.jsonl`;
+      if (await $.fs.exists(p)) return (foundTranscript = p);
+    }
+  } catch {
+    // An unreadable projects folder names nothing.
+  }
+  return '';
+}
+
 async function startLink($: EngineInterface, startCwd: string, pane: string): Promise<void> {
   const base = ((await $.env.get('TL_MOD_URL')) || DEFAULT_URL).replace(/\/+$/, '');
   const home = (await $.env.get('HOME')) || '';
@@ -107,8 +131,8 @@ async function startLink($: EngineInterface, startCwd: string, pane: string): Pr
         session: tmuxSession,
         cwd: await $.session.cwd(),
       };
-      const transcript = transcriptPath(configDir, startCwd, sid);
-      const named = await $.fs.exists(transcript);
+      const transcript = await findTranscript($, configDir, startCwd, sid);
+      const named = transcript !== '';
       if (named) hello.transcript = transcript;
       stamp.hello(named);
       hello.model = await $.session.model();
@@ -182,9 +206,11 @@ async function runCommand($: EngineInterface, c: Command): Promise<void> {
         }
         break;
       }
-      case 'history':
-        send({ type: 'history', ...(await historyFields($)) });
+      case 'history': {
+        const h = await historyFields($);
+        for (const ev of historyEvents(await $.clock.now(), h.messages, h.running)) send(ev);
         break;
+      }
       default:
         ok = false;
         error = `unknown op ${String(c.op)}`;

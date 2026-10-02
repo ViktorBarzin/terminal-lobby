@@ -307,6 +307,47 @@ func TestACommandTheReloadedModuleTookGoesToTheNextOne(t *testing.T) {
 	}
 }
 
+// The mod resends a refused batch until it is taken, and every later event
+// waits behind it. One event this build cannot decode must not refuse the
+// batch, or the session's log stays empty for good.
+func TestAnEventThatDoesNotDecodeDoesNotRefuseItsBatch(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	tok, _ := rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	body := `{"token":"` + tok + `","events":[` +
+		`{"type":"history","messages":[{"role":"user","text":{"not":"a string"}}]},` +
+		`{"type":"row","uuid":"u1","door":"prompt","message":{"type":"user","role":"user","content":[{"type":"text","text":"still here"}]}}` +
+		`]}`
+	rec := httptest.NewRecorder()
+	rg.mods.handleEvents()(rec, httptest.NewRequest("POST", "/mod/v1/events", strings.NewReader(body)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status %d (%s), want 204", rec.Code, rec.Body.String())
+	}
+	fs, _ := rg.source("wizard", "demo")
+	if got := strings.Join(bodies(fs), "|"); got != "still here" {
+		t.Fatalf("log bodies = %q, want the row that decoded", got)
+	}
+}
+
+// A long session's history arrives in chunks; only the last one may close the
+// last turn, or a turn split across two chunks would end halfway.
+func TestHistoryInChunksClosesTheTurnOnce(t *testing.T) {
+	rg, _ := newTestRegistry(t, "wizard/demo")
+	rg.mods.hello("wizard", modHello{SID: "sid1", Session: "demo", Pane: "%3"})
+	c := rg.mods.conn("wizard", "demo")
+	c.apply([]sessionio.ModEvent{
+		{Type: sessionio.ModHistoryEvent, More: true, Messages: []sessionio.ModHistoryMessage{{Role: "user", Text: "first"}}},
+		{Type: sessionio.ModHistoryEvent, Messages: []sessionio.ModHistoryMessage{{Role: "assistant", Text: "answer"}}},
+	})
+	fs, _ := rg.source("wizard", "demo")
+	var kinds []string
+	for _, e := range fs.Replay(0) {
+		kinds = append(kinds, string(e.Kind))
+	}
+	if got := strings.Join(kinds, ","); got != "user,text,turn_end" {
+		t.Fatalf("kinds = %s, want user,text,turn_end", got)
+	}
+}
+
 func TestPollAndEventsRefuseAnUnknownToken(t *testing.T) {
 	rg, _ := newTestRegistry(t)
 	rec := httptest.NewRecorder()
