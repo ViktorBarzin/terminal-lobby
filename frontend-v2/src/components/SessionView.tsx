@@ -1954,7 +1954,7 @@ export const SessionView: Component<{
             session={session}
             owner={browserOwner()}
             state={() => props.browser?.()}
-            active={() => onScreen() && !store.parked()}
+            onScreen={onScreen}
             canControl={canControlBrowser}
             phone={flip}
             full={() => browserLayout() === "full"}

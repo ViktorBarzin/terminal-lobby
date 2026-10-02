@@ -229,6 +229,93 @@ describe("the browser stream", () => {
     dispose();
   });
 
+  it("says it is greeted only between the host's hello and the socket closing", () => {
+    const { stream, dispose } = mount({ active: () => true, wake: true });
+    const ws = FakeSocket.all[0]!;
+    expect(stream.greeted()).toBe(false);
+    ws.open();
+    expect(stream.greeted()).toBe(false);
+    ws.host(hello("live"));
+    expect(stream.greeted()).toBe(true);
+    ws.drop();
+    expect(stream.greeted()).toBe(false);
+    dispose();
+  });
+
+  /**
+   * Control is held by a connection (design, "The viewer protocol"), so a
+   * reconnect used to drop it: the new socket has a new `you`, and the panel
+   * showed someone else in control. Since tl-browser acc9709f the host moves
+   * it when the new connection names the old one.
+   */
+  it("names its previous connection right after every reconnect's hello", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    expect(first.sent.some((m) => m.t === "resume")).toBe(false);
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    second.host({ ...hello("live"), you: "c2" });
+    expect(second.sent[0]).toEqual({ t: "resume", prev: "c1" });
+    expect(second.sent[1]).toEqual({ t: "subscribe", tab: null });
+    second.drop();
+    vi.advanceTimersByTime(2_000);
+    const third = FakeSocket.all[2]!;
+    third.open();
+    third.host({ ...hello("live"), you: "c3" });
+    expect(third.sent[0]).toEqual({ t: "resume", prev: "c2" });
+    dispose();
+  });
+
+  it("names it again while the host still holds control for the old connection", () => {
+    // The host refuses a resume while it still has the old connection open,
+    // which a phone that changed networks can leave behind for a while.
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    const held = { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
+    second.host({ ...hello("live"), you: "c2", control: held });
+    const resumes = () => second.sent.filter((m) => m.t === "resume").length;
+    expect(resumes()).toBe(1);
+    vi.advanceTimersByTime(2_500);
+    expect(resumes()).toBe(2);
+    second.host({ t: "control", ...held, holderId: "c2" });
+    vi.advanceTimersByTime(60_000);
+    expect(resumes()).toBe(2);
+    dispose();
+  });
+
+  it("gives up naming it once control has gone elsewhere", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    second.host({
+      ...hello("live"),
+      you: "c2",
+      control: { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 },
+    });
+    second.host({ t: "control", holder: "emo", holderId: "c9", since: 2, lapseAt: 600_002 });
+    vi.advanceTimersByTime(60_000);
+    expect(second.sent.filter((m) => m.t === "resume")).toHaveLength(1);
+    dispose();
+  });
+
   it("holds the popups the host shows the person in control, one per tab", () => {
     const { stream, dispose } = mount({ active: () => true, wake: true });
     const ws = FakeSocket.all[0]!;

@@ -383,11 +383,11 @@ export function listPlacement(anchor: Box, bounds: Box): ListPlacement {
 // ---- when to stream -------------------------------------------------------
 
 /**
- * Whether a card or the panel may ask for frames now. Frames cost the host a
+ * Whether a Browser card may ask for frames now. Frames cost the host a
  * screencast and the page a decode each, so they flow only while somebody can
- * see them: the surface wants them (a current card, an open panel), it is
- * intersecting the viewport, the tab is visible, and the session's stream is
- * not parked (docs/plans/2026-09-11-client-cpu-parking-design.md).
+ * see them: the card wants them (it is current), it is intersecting the
+ * viewport, the tab is visible, and the session's stream is not parked
+ * (docs/plans/2026-09-11-client-cpu-parking-design.md).
  */
 export function streamWanted(o: {
   wanted: boolean;
@@ -396,6 +396,26 @@ export function streamWanted(o: {
   parked: boolean;
 }): boolean {
   return o.wanted && o.intersecting && o.documentVisible && !o.parked;
+}
+
+/**
+ * Whether the open Browser panel may ask for frames now: while the lobby's
+ * page is visible and its session is on screen, and for the person in control
+ * whenever the page is visible at all.
+ *
+ * Not the card's rule. An open panel is what is on screen, so the card's
+ * IntersectionObserver and the text stream's parking are left out: on the
+ * lobby added to an iPhone's home screen, that gate turned the panel's stream
+ * off about 3s after it opened, and the taps that followed went nowhere
+ * (telemetry, 2026-10-02). Holding control keeps it on through anything but a
+ * hidden page, so the stream under a person's hands never lingers out.
+ */
+export function panelStreamWanted(o: {
+  documentVisible: boolean;
+  onScreen: boolean;
+  inControl: boolean;
+}): boolean {
+  return o.documentVisible && (o.onScreen || o.inControl);
 }
 
 // ---- where the panel goes ---------------------------------------------------

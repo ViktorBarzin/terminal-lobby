@@ -54,7 +54,7 @@ browser and hand playwright-mcp the context to drive.
 | Whose browser | One per session, started on the first browser action by a small launcher that answers Claude's startup handshake itself (ADR-0035) |
 | Where it shows | Text view: a **Browser card** per **Browsing run**. Both views: a **Browser panel** inside that session's own pane |
 | Opening | Only when someone opens it. The card stays in the conversation as a record |
-| Live | Streams whenever a live card or an open panel is on screen. Pauses when scrolled away, in a background tab, or when the session is parked |
+| Live | Streams whenever a live card or an open panel is on screen. A card pauses when scrolled away, in a background tab, or when the session is parked; the panel pauses in a background tab or when its session leaves the screen, and for the person in control only in a background tab |
 | Last frame | Kept in the page's memory only. A reload loses the picture, the card keeps its text |
 | Tabs | The panel follows the tab the agent last acted on, with a tab strip to look at others |
 | Taking control | The agent's browser calls are refused with "the user has control, don't retry, end your turn and wait" |
@@ -387,9 +387,16 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   browser, in both views. It opens the panel.
 - **Phone**. The panel takes the full screen. Taps become clicks, the soft
   keyboard types into the focused field, pinch zooms the scaled page.
-- **Pausing**. Frames are requested only while the card or panel is
-  intersecting the viewport, the document is visible, and the session is not
-  parked (`docs/plans/2026-09-11-client-cpu-parking-design.md`).
+- **Pausing**. A card requests frames only while it is intersecting the
+  viewport, the document is visible, and the session is not parked
+  (`docs/plans/2026-09-11-client-cpu-parking-design.md`). An open panel is
+  what is on screen, so it asks only that the document is visible and its
+  session is on screen, and while its connection holds control only that the
+  document is visible. On the lobby added to an iPhone's home screen, the
+  card's rule turned the panel's stream off about 3s after it opened
+  (telemetry, 2026-10-02). Take control and Hand back wait, reading
+  "Connecting…", until the host has greeted the panel's stream, and after a
+  reconnect the panel sends `resume` with its previous `you`.
 
 ## Rollout
 

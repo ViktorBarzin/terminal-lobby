@@ -93,6 +93,7 @@ export type ViewerMessage =
   | { t: "copy" }
   | { t: "takeControl" }
   | { t: "handBack" }
+  | { t: "resume"; prev: string }
   | { t: "choose"; value: string; tab: string }
   | { t: "choose"; values: string[]; tab: string }
   | { t: "dialog"; accept: boolean; text?: string; tab: string };
@@ -121,6 +122,15 @@ const RETRY_FIRST_MS = 1_000;
 const RETRY_MAX_MS = 15_000;
 /** How long the host's latest complaint stays on screen. */
 const ERROR_SHOWN_MS = 5_000;
+/**
+ * A resume names the previous connection, and the host refuses it while that
+ * connection is still open on its side, which a phone that changed networks
+ * can leave behind until the relay's next ping fails. So while the host still
+ * says the old connection holds control, the resume is sent again: doubling
+ * from the first wait, this many times (about a minute in all).
+ */
+const RESUME_RETRY_FIRST_MS = 2_000;
+const RESUME_TRIES = 5;
 
 // ---- the last frame of each card ------------------------------------------
 //
@@ -273,6 +283,9 @@ export interface BrowserStream {
   agentTab: Accessor<string | null>;
   /** This connection's id, from the host's hello; null between connections. */
   you: Accessor<string | null>;
+  /** The host has said hello on the open socket, so what is sent now reaches
+   *  it. False while connecting and between connections. */
+  greeted: Accessor<boolean>;
   control: Accessor<BrowserControl>;
   viewport: Accessor<Size>;
   frame: Accessor<BrowserFrame | null>;
@@ -327,6 +340,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   const [tabs, setTabs] = createSignal<BrowserTab[]>([]);
   const [agentTab, setAgentTab] = createSignal<string | null>(null);
   const [you, setYou] = createSignal<string | null>(null);
+  const [greeted, setGreeted] = createSignal(false);
   const [control, setControl] = createSignal<BrowserControl>(NOBODY);
   const [viewport, setViewport] = createSignal<Size>(DEFAULT_VIEWPORT);
   const [frame, setFrame] = createSignal<BrowserFrame | null>(null);
@@ -338,9 +352,14 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   };
 
   let ws: WebSocketLike | null = null;
-  /** The host has said hello on the current socket. */
-  let greeted = false;
   let subscribed = false;
+  /** The `you` of the last connection the host greeted, kept across
+   *  reconnects so the next one can name it in a resume. */
+  let lastYou: string | null = null;
+  /** The previous connection a resume on this socket named, while the host
+   *  still says that one holds control. */
+  let resuming: string | null = null;
+  let resumeTimer: ReturnType<typeof setTimeout> | undefined;
   let retryMs = RETRY_FIRST_MS;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let lingerTimer: ReturnType<typeof setTimeout> | undefined;
@@ -361,7 +380,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
 
   /** Subscribe if the surface is active and the browser may be woken. */
   const maybeSubscribe = (): void => {
-    if (!greeted || subscribed || !untrack(opts.active)) return;
+    if (!untrack(greeted) || subscribed || !untrack(opts.active)) return;
     if (untrack(state) === "closed") return;
     if (untrack(state) === "frozen" && !opts.wake) return;
     subscribed = true;
@@ -377,14 +396,47 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     }
   };
 
+  const stopResuming = (): void => {
+    clearTimeout(resumeTimer);
+    resumeTimer = undefined;
+    resuming = null;
+  };
+
+  /** The socket is gone: nothing sent now would reach the host. */
+  const forget = (): void => {
+    setGreeted(false);
+    subscribed = false;
+    setYou(null);
+    stopResuming();
+  };
+
+  /**
+   * Ask the host to move control held by `prev`, this viewer's previous
+   * connection, to this one; again later while the host still names `prev`.
+   */
+  const resume = (prev: string, holderId: string | null): void => {
+    send({ t: "resume", prev });
+    if (holderId !== prev) return;
+    resuming = prev;
+    let wait = RESUME_RETRY_FIRST_MS;
+    let tries = 1;
+    const again = (): void => {
+      resumeTimer = undefined;
+      if (resuming !== prev || untrack(control).holderId !== prev) return;
+      send({ t: "resume", prev });
+      if (++tries >= RESUME_TRIES) return;
+      wait *= 2;
+      resumeTimer = setTimeout(again, wait);
+    };
+    resumeTimer = setTimeout(again, wait);
+  };
+
   const disconnect = (): void => {
     clearTimeout(lingerTimer);
     lingerTimer = undefined;
     if (ws) drop(ws);
     ws = null;
-    greeted = false;
-    subscribed = false;
-    setYou(null);
+    forget();
   };
 
   const scheduleRetry = (): void => {
@@ -405,13 +457,21 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     if (!isObj(msg)) return;
     switch (msg.t) {
       case "hello": {
-        greeted = true;
+        setGreeted(true);
         retryMs = RETRY_FIRST_MS;
         setState(msg.state === "frozen" ? "frozen" : "live");
         setTabs(tabsOf(msg.tabs));
         setAgentTab(strOrNull(msg.agentTab));
-        setYou(strOrNull(msg.you));
-        setControl(controlOf(msg.control));
+        const me = strOrNull(msg.you);
+        setYou(me);
+        const ctl = controlOf(msg.control);
+        setControl(ctl);
+        // Right after the hello, before anything else: control this viewer
+        // held on its last connection moves here (tl-browser acc9709f). The
+        // host checks the rest, so this goes whether or not control was held.
+        stopResuming();
+        if (lastYou !== null && me !== null && lastYou !== me) resume(lastYou, ctl.holderId);
+        if (me !== null) lastYou = me;
         // The host sends a new connection the popups it should draw.
         setPopups([]);
         if (isObj(msg.viewport)) {
@@ -446,6 +506,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
         // holder what is still open.
         if (next.holderId !== untrack(control).holderId) setPopups([]);
         setControl(next);
+        if (resuming !== null && next.holderId !== resuming) stopResuming();
         return;
       }
       case "popup": {
@@ -504,9 +565,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     sock.onclose = () => {
       if (ws !== sock) return;
       ws = null;
-      greeted = false;
-      subscribed = false;
-      setYou(null);
+      forget();
       setStatus(opened ? "idle" : "unavailable");
       scheduleRetry();
     };
@@ -561,6 +620,7 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     tabs,
     agentTab,
     you,
+    greeted,
     control,
     viewport,
     frame,
@@ -591,17 +651,8 @@ export function createVisibility(el: Accessor<Element | undefined>): {
   intersecting: Accessor<boolean>;
   documentVisible: Accessor<boolean>;
 } {
-  const docVisible = (): boolean =>
-    typeof document === "undefined" || document.visibilityState !== "hidden";
-  const [documentVisible, setDocumentVisible] = createSignal(docVisible());
+  const documentVisible = createDocumentVisible();
   const [intersecting, setIntersecting] = createSignal(typeof IntersectionObserver === "undefined");
-  if (typeof document !== "undefined") {
-    const onVis = (): void => {
-      setDocumentVisible(docVisible());
-    };
-    document.addEventListener("visibilitychange", onVis);
-    onCleanup(() => document.removeEventListener("visibilitychange", onVis));
-  }
   if (typeof IntersectionObserver !== "undefined") {
     createEffect(() => {
       const node = el();
@@ -615,4 +666,23 @@ export function createVisibility(el: Accessor<Element | undefined>): {
     });
   }
   return { intersecting, documentVisible };
+}
+
+/**
+ * Whether the lobby's page is visible (document.visibilityState), the one
+ * input the Browser panel takes from the page besides its session being on
+ * screen (browser.logic `panelStreamWanted`).
+ */
+export function createDocumentVisible(): Accessor<boolean> {
+  const docVisible = (): boolean =>
+    typeof document === "undefined" || document.visibilityState !== "hidden";
+  const [visible, setVisible] = createSignal(docVisible());
+  if (typeof document !== "undefined") {
+    const onVis = (): void => {
+      setVisible(docVisible());
+    };
+    document.addEventListener("visibilitychange", onVis);
+    onCleanup(() => document.removeEventListener("visibilitychange", onVis));
+  }
+  return visible;
 }

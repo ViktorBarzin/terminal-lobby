@@ -16,6 +16,7 @@ import {
   listPlacement,
   pagePoint,
   panelLayout,
+  panelStreamWanted,
   runStatus,
   streamWanted,
 } from "../src/components/browser.logic";
@@ -292,6 +293,30 @@ describe("when frames are asked for", () => {
     expect(streamWanted({ ...on, intersecting: false })).toBe(false);
     expect(streamWanted({ ...on, documentVisible: false })).toBe(false);
     expect(streamWanted({ ...on, parked: true })).toBe(false);
+  });
+});
+
+/**
+ * The panel's own rule (Viktor's iPhone, 2026-10-02). On the lobby added to
+ * the home screen, the panel's stream went quiet about 3s after it opened and
+ * closed 15s later, and every Take control after that went nowhere. Its gate
+ * had the card's IntersectionObserver and the text stream's parking in it, and
+ * neither is a reason to stop an open panel: it is the thing on screen.
+ */
+describe("when the open panel asks for frames", () => {
+  const on = { documentVisible: true, onScreen: true, inControl: false };
+
+  it("streams while the page is visible and the session is on screen", () => {
+    expect(panelStreamWanted(on)).toBe(true);
+    expect(panelStreamWanted({ ...on, onScreen: false })).toBe(false);
+    expect(panelStreamWanted({ ...on, documentVisible: false })).toBe(false);
+  });
+
+  it("keeps streaming for the person in control until the page itself is hidden", () => {
+    expect(panelStreamWanted({ ...on, inControl: true, onScreen: false })).toBe(true);
+    expect(panelStreamWanted({ documentVisible: false, onScreen: true, inControl: true })).toBe(
+      false,
+    );
   });
 });
 

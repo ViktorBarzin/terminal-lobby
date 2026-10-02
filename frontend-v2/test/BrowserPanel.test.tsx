@@ -6,7 +6,14 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, fireEvent } from "@solidjs/testing-library";
+import { createSignal } from "solid-js";
 import { BrowserPanel } from "../src/components/BrowserPanel";
+import { track } from "../src/telemetry/track";
+
+vi.mock("../src/telemetry/track", async (original) => ({
+  ...(await original<typeof import("../src/telemetry/track")>()),
+  track: vi.fn(),
+}));
 
 class FakeSocket {
   static last: FakeSocket | null = null;
@@ -52,9 +59,10 @@ const mine = { t: "control", holder: "viktor", holderId: "c1", since: 1, lapseAt
 afterEach(() => {
   FakeSocket.last = null;
   vi.unstubAllGlobals();
+  vi.mocked(track).mockClear();
 });
 
-function mount(canControl: boolean, phone = false) {
+function mount(canControl: boolean, phone = false, onScreen: () => boolean = () => true) {
   vi.stubGlobal("WebSocket", FakeSocket);
   const onStop = vi.fn();
   const onClose = vi.fn();
@@ -62,7 +70,7 @@ function mount(canControl: boolean, phone = false) {
     <BrowserPanel
       session="work"
       state={() => "live"}
-      active={() => true}
+      onScreen={onScreen}
       canControl={() => canControl}
       phone={() => phone}
       onStop={onStop}
@@ -161,6 +169,125 @@ describe("<BrowserPanel>", () => {
     const { getByText, ws } = mount(true);
     ws.host({ t: "state", state: "closed" });
     expect(getByText("The browser closed.")).toBeInTheDocument();
+  });
+});
+
+/**
+ * The panel's stream on Viktor's iPhone (telemetry 2026-10-02): it opened,
+ * went quiet about 3s later, closed when the 15s linger ran out, and four Take
+ * control presses after that went nowhere. The panel no longer asks an
+ * IntersectionObserver or the text stream's parking, and a press cannot be
+ * made on a stream that is not there to carry it.
+ */
+describe("<BrowserPanel> stream", () => {
+  const hide = (state: "hidden" | "visible") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+  afterEach(() => {
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  it("keeps streaming when an IntersectionObserver says the page is out of sight", () => {
+    class Unseen {
+      constructor(private readonly cb: IntersectionObserverCallback) {}
+      observe(): void {
+        this.cb(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
+      }
+      disconnect(): void {}
+    }
+    vi.stubGlobal("IntersectionObserver", Unseen);
+    const { ws } = mount(true);
+    expect(ws.sent).toContainEqual({ t: "subscribe", tab: null });
+    expect(ws.sent.some((m) => m.t === "unsubscribe")).toBe(false);
+  });
+
+  it("stops the frames when its session leaves the screen", () => {
+    const [onScreen, setOnScreen] = createSignal(true);
+    const { ws } = mount(true, false, onScreen);
+    setOnScreen(false);
+    expect(ws.sent.at(-1)).toEqual({ t: "unsubscribe" });
+  });
+
+  it("keeps streaming for the person in control until the page is hidden", () => {
+    const [onScreen, setOnScreen] = createSignal(true);
+    const { ws } = mount(true, false, onScreen);
+    ws.host(mine);
+    setOnScreen(false);
+    expect(ws.sent.some((m) => m.t === "unsubscribe")).toBe(false);
+    hide("hidden");
+    expect(ws.sent.at(-1)).toEqual({ t: "unsubscribe" });
+    hide("visible");
+    expect(ws.sent.at(-1)).toEqual({ t: "subscribe", tab: null });
+  });
+
+  it("says Connecting… on a disabled button until the host has said hello", () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const { getByRole } = render(() => (
+      <BrowserPanel
+        session="work"
+        state={() => "live"}
+        onScreen={() => true}
+        canControl={() => true}
+        phone={() => false}
+        onStop={() => undefined}
+        onClose={() => undefined}
+      />
+    ));
+    const ws = FakeSocket.last!;
+    const button = () => getByRole("button", { name: /Connecting|Take control/ });
+    expect(button()).toHaveTextContent("Connecting…");
+    expect(button()).toBeDisabled();
+    ws.open();
+    expect(button()).toBeDisabled();
+    fireEvent.click(button());
+    expect(ws.sent.some((m) => m.t === "takeControl")).toBe(false);
+    expect(track).not.toHaveBeenCalled();
+    ws.host(hello);
+    expect(button()).toHaveTextContent("Take control");
+    expect(button()).toBeEnabled();
+  });
+
+  it("goes back to Connecting… when the stream drops, Hand back included", () => {
+    const { getByText, ws } = mount(true);
+    ws.host(mine);
+    expect(getByText("Hand back")).toBeEnabled();
+    ws.readyState = 3;
+    ws.onclose?.();
+    expect(getByText("Connecting…")).toBeDisabled();
+  });
+
+  it("records one take_control per press, and sends one takeControl", () => {
+    const { getByText, ws } = mount(true);
+    fireEvent.click(getByText("Take control"));
+    // A second tap before the host answers is the same press: nothing more.
+    fireEvent.click(getByText("Taking control…"));
+    expect(track).toHaveBeenCalledTimes(1);
+    expect(track).toHaveBeenCalledWith("browser.take_control");
+    expect(ws.sent.filter((m) => m.t === "takeControl")).toHaveLength(1);
+    ws.host(mine);
+    fireEvent.click(getByText("Hand back"));
+    ws.host({ t: "control", holder: null, holderId: null, since: null, lapseAt: null });
+    fireEvent.click(getByText("Take control"));
+    expect(vi.mocked(track).mock.calls.filter(([e]) => e === "browser.take_control")).toHaveLength(
+      2,
+    );
+  });
+
+  it("lets Take control be pressed again when the host does not answer", () => {
+    vi.useFakeTimers();
+    try {
+      const { getByText, ws } = mount(true);
+      fireEvent.click(getByText("Take control"));
+      vi.advanceTimersByTime(5_000);
+      fireEvent.click(getByText("Take control"));
+      expect(ws.sent.filter((m) => m.t === "takeControl")).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

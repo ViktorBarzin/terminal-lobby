@@ -13,14 +13,14 @@ import {
   clientBox,
   listPlacement,
   pagePoint,
-  streamWanted,
+  panelStreamWanted,
   type ListPlacement,
   type PageRect,
 } from "./browser.logic";
 import { BrowserPopups } from "./BrowserPopups";
 import {
   createBrowserStream,
-  createVisibility,
+  createDocumentVisible,
   type BrowserPopup,
   type BrowserState,
   type ViewerMessage,
@@ -36,6 +36,9 @@ const TAP_SLOP_PX = 10;
 const TAP_MS = 600;
 /** A wheel in lines or pages, in pixels, for a host that scrolls in pixels. */
 const LINE_PX = 16;
+/** How long a Take control press waits for the host before another press
+ *  counts: the host answers with `control` in well under a second. */
+const TAKE_WAIT_MS = 4_000;
 /** Keys a keyboard reports that are not keys the page can be sent. */
 const NOT_KEYS = new Set(["Unidentified", "Dead", "Process"]);
 
@@ -63,8 +66,10 @@ export const BrowserPanel: Component<{
   owner?: string;
   /** The session list's word on the session's browser. */
   state: () => BrowserState | undefined;
-  /** The session is on screen and its stream is not parked. */
-  active: () => boolean;
+  /** The session is on screen. Not the text stream's parking, and not an
+   *  IntersectionObserver: an open panel is what is on screen
+   *  (browser.logic `panelStreamWanted`). */
+  onScreen: () => boolean;
   /** This viewer may take control: rw, not a ro share and not a Lens. */
   canControl: () => boolean;
   /** Full screen, with taps for clicks and the soft keyboard for typing. */
@@ -81,7 +86,7 @@ export const BrowserPanel: Component<{
   let pagebox: HTMLDivElement | undefined;
   let img: HTMLImageElement | undefined;
   let ime: HTMLInputElement | undefined;
-  const seen = createVisibility(stage);
+  const documentVisible = createDocumentVisible();
   /** The tab the viewer picked, or null to follow the agent's. */
   const [picked, setPicked] = createSignal<string | null>(null);
 
@@ -90,12 +95,12 @@ export const BrowserPanel: Component<{
     owner: props.owner,
     wake: true,
     tab: picked,
+    // Read by the stream's own effects, which run once `stream` is set.
     active: () =>
-      streamWanted({
-        wanted: true,
-        intersecting: seen.intersecting(),
-        documentVisible: seen.documentVisible(),
-        parked: !props.active(),
+      panelStreamWanted({
+        documentVisible: documentVisible(),
+        onScreen: props.onScreen(),
+        inControl: inControl(),
       }),
     onCopied: (text) => {
       void navigator.clipboard?.writeText(text).catch(() => undefined);
@@ -131,15 +136,40 @@ export const BrowserPanel: Component<{
   const someoneElse = () => stream.control().holderId !== null && !inControl();
   const holderName = () => stream.control().holder ?? "Someone";
 
+  // A press goes only on a stream the host has greeted, so it cannot vanish
+  // into a socket that is still connecting or lingering out (the iPhone's
+  // four presses, 2026-10-02). From the press until the host answers with
+  // `control`, further presses are the same press: one takeControl, one
+  // take_control event.
+  const [taking, setTaking] = createSignal(false);
+  let takeTimer: ReturnType<typeof setTimeout> | undefined;
+  const doneTaking = (): void => {
+    clearTimeout(takeTimer);
+    setTaking(false);
+  };
+  createEffect(on(() => stream.control().holderId, doneTaking, { defer: true }));
+  createEffect(on(stream.greeted, doneTaking, { defer: true }));
+  onCleanup(() => clearTimeout(takeTimer));
+
   const takeControl = (): void => {
+    if (!stream.greeted() || taking()) return;
     takenAt = Date.now();
     stream.send({ t: "takeControl" });
     track("browser.take_control");
+    setTaking(true);
+    clearTimeout(takeTimer);
+    takeTimer = setTimeout(() => setTaking(false), TAKE_WAIT_MS);
     stage()?.focus();
   };
   const handBack = (): void => {
+    if (!stream.greeted()) return;
     stream.send({ t: "handBack" });
     track("browser.hand_back", { "tl.ms": takenAt ? Date.now() - takenAt : null });
+  };
+  const controlLabel = (): string => {
+    if (!stream.greeted()) return "Connecting…";
+    if (inControl()) return "Hand back";
+    return taking() ? "Taking control…" : "Take control";
   };
   /** Send a message that drives the page, only while this viewer holds control. */
   const drive = (msg: ViewerMessage): void => {
@@ -499,10 +529,11 @@ export const BrowserPanel: Component<{
             type="button"
             class="tl-btn tl-browser-take"
             classList={{ "tl-btn-approve": inControl() }}
-            disabled={stream.status() !== "open"}
+            disabled={!stream.greeted() || (taking() && !inControl())}
+            aria-busy={!stream.greeted() || (taking() && !inControl())}
             onClick={() => (inControl() ? handBack() : takeControl())}
           >
-            {inControl() ? "Hand back" : "Take control"}
+            {controlLabel()}
           </button>
         </Show>
         <button
