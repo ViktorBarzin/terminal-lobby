@@ -70,6 +70,20 @@ const OptionLastTurn = "@agent_last_turn"
 // as its state until then rather than the `done` its last Claude left behind.
 const OptionSuspended = sessionio.OptionSuspended
 
+// OptionTranscriptHint is where this service expects a conversation's
+// transcript to be, stamped once at create from the --session-id it pins
+// (claudeCommandLine).
+//
+// @claude_transcript is the authoritative stamp and wins whenever it is
+// there: session-events writes it from the lobby's mod, and only the mod knows
+// when a /clear has moved Claude to a new file. The hint covers the session
+// whose mod never says hello, which happened live on 2026-10-02 (rv-me-upload:
+// the turn ran and answered, neither of the mod's stamps was ever written, and
+// the caller was told the message reached a plain shell). Read through the
+// same containment rule as the mod's stamp, because the session's OS user can
+// rewrite either.
+const OptionTranscriptHint = "@agent_transcript"
+
 // LiveSession is one tmux session as agent-api needs to see it: the name, and
 // the four options that answer every question the conversation endpoints ask.
 // Read in one `list-sessions` rather than one option read per field, because
@@ -443,13 +457,19 @@ func (t *tmuxSessions) AnswerText(osUser, session, text string) error {
 
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {
 	root := sessionio.ProjectsRoot(t.homeBase, osUser)
-	info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session)
-	if !ok {
+	path := ""
+	if info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session); ok {
+		path = info.Transcript
+	} else if hint, ok := t.optionStore().Option(osUser, session, OptionTranscriptHint); ok &&
+		hint != "" && sessionio.WithinProjects(root, hint) {
+		path = hint
+	}
+	if path == "" {
 		return nil, errNoTranscript
 	}
-	lines, _, err := sessionio.ReadFrom(info.Transcript, 0)
+	lines, _, err := sessionio.ReadFrom(path, 0)
 	if err != nil {
-		return nil, transcriptReadError(info.Transcript, err)
+		return nil, transcriptReadError(path, err)
 	}
 	out := make([][]byte, 0, len(lines))
 	for _, l := range lines {

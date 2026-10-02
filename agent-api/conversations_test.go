@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 func TestListConversations(t *testing.T) {
@@ -697,7 +700,7 @@ func TestListFormatCarriesTheSuspendMark(t *testing.T) {
 // is nobody at the pane, so an ask is not a refusal, it is a hang: the turn
 // never finishes and the caller sees no reason.
 func TestOmittingPermissionModeGivesBypass(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{})
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID)
 	if !strings.Contains(got, "--permission-mode bypassPermissions") {
 		t.Fatalf("command line %q, want --permission-mode bypassPermissions", got)
 	}
@@ -707,7 +710,7 @@ func TestOmittingPermissionModeGivesBypass(t *testing.T) {
 // matters: look without touching, on a box where the default now touches.
 func TestAnExplicitPermissionModeWins(t *testing.T) {
 	for _, m := range []string{"plan", "default", "acceptEdits", "bypassPermissions"} {
-		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m})
+		got := claudeCommandLine("/usr/local/bin/claude", createRequest{PermissionMode: m}, testSessionID)
 		if !strings.Contains(got, "--permission-mode "+m) {
 			t.Errorf("mode %q: command line %q did not carry it", m, got)
 		}
@@ -733,7 +736,7 @@ func TestTheDocumentDeclaresTheBypassDefault(t *testing.T) {
 // Appended, not replacing: the Claude Code preset is most of what makes the
 // agent useful, and --system-prompt would throw it away.
 func TestEverySessionCarriesTheAgentRules(t *testing.T) {
-	got := claudeCommandLine("/usr/local/bin/claude", createRequest{})
+	got := claudeCommandLine("/usr/local/bin/claude", createRequest{}, testSessionID)
 	if !strings.Contains(got, "--append-system-prompt-file") &&
 		!strings.Contains(got, "--append-system-prompt ") {
 		t.Fatal("no system prompt was appended")
@@ -775,9 +778,50 @@ func TestACallerCannotSetTheSystemPrompt(t *testing.T) {
 	}
 }
 
-// stripRules removes the appended-rules flag so a command-line expectation can
-// stay about the part the test is actually checking.
+// testSessionID is a Claude session id in the shape --session-id takes.
+const testSessionID = "4cc16eef-bf39-4474-9e80-1edec7e6f71f"
+
+// The session id this service pins is what lets it read a conversation's
+// transcript when the lobby's mod never says hello: measured live on
+// 2026-10-02, rv-me-upload's Claude answered PELICAN while @claude_state and
+// @claude_transcript stayed unset for its whole life, and the caller was told
+// the message reached a plain shell. Pinning the id at launch makes the path
+// known before Claude has written a line.
+func TestCreatePinsTheClaudeSessionAndStampsItsTranscript(t *testing.T) {
+	h := newHarness(t)
+	cwd := filepath.Join(h.homeBase, testOSUser, "code")
+	var got Conversation
+	h.decodeJSON(h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(cwd)+`,"name":"pinned"}`),
+		http.StatusCreated, &got)
+
+	cmd := h.sessions.createCalls()[0].Command[0]
+	m := regexp.MustCompile(` --session-id ([0-9a-f-]{36})(?: |$)`).FindStringSubmatch(cmd)
+	if m == nil {
+		t.Fatalf("command %q pins no --session-id", cmd)
+	}
+	sid := m[1]
+	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(sid) {
+		t.Fatalf("session id %q is not a v4 uuid", sid)
+	}
+	want := sessionio.TranscriptPath(sessionio.ProjectsRoot(h.homeBase, testOSUser), cwd, sid)
+	if stamp, _ := h.sessions.Option(testOSUser, got.ID, OptionTranscriptHint); stamp != want {
+		t.Fatalf("%s = %q, want %q", OptionTranscriptHint, stamp, want)
+	}
+
+	// A second conversation gets its own id: two Claudes asked for one id
+	// would have the second refuse to start.
+	h.decodeJSON(h.call("POST", "/v1/conversations", `{"cwd":`+jsonString(cwd)+`,"name":"pinned-2"}`),
+		http.StatusCreated, nil)
+	if strings.Contains(h.sessions.createCalls()[1].Command[0], sid) {
+		t.Fatal("two conversations were given the same session id")
+	}
+}
+
+// stripRules removes the appended-rules flag and the pinned session id so a
+// command-line expectation can stay about the part the test is actually
+// checking. The session id has its own test above.
 func stripRules(cmd string) string {
+	cmd = regexp.MustCompile(` --session-id [0-9a-f-]{36}`).ReplaceAllString(cmd, "")
 	for _, flag := range []string{" --append-system-prompt-file ", " --append-system-prompt "} {
 		i := strings.Index(cmd, flag)
 		if i < 0 {

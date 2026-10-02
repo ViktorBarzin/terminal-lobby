@@ -28,6 +28,8 @@ type fakeSessions struct {
 	transcripts map[string][][]byte
 	// panes are what capture-pane would return.
 	panes map[string]string
+	// hints are the OptionTranscriptHint stamps, keyed like live.
+	hints map[string]string
 
 	// Recordings, for assertions.
 	prompts          []promptCall
@@ -94,6 +96,7 @@ func newFakeSessions() *fakeSessions {
 		live:         map[string]*LiveSession{},
 		transcripts:  map[string][][]byte{},
 		panes:        map[string]string{},
+		hints:        map[string]string{},
 		noTranscript: map[string]bool{},
 	}
 }
@@ -337,6 +340,8 @@ func (f *fakeSessions) Option(osUser, session, name string) (string, bool) {
 		return s.Title, true
 	case "@tl_born":
 		return s.BornAs, true
+	case OptionTranscriptHint:
+		return f.hints[key(osUser, session)], true
 	case OptionLastTurn:
 		if n := len(f.lastTurns); n > 0 {
 			return f.lastTurns[n-1], true
@@ -362,6 +367,8 @@ func (f *fakeSessions) SetOption(osUser, session, name, value string) error {
 		s.Title = value
 	case "@tl_born":
 		s.BornAs = value
+	case OptionTranscriptHint:
+		f.hints[key(osUser, session)] = value
 	case OptionLastTurn:
 		f.lastTurns = append(f.lastTurns, value)
 		f.events = append(f.events, "stamp "+session)

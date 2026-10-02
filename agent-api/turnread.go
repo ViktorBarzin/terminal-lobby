@@ -64,6 +64,37 @@ func turnAnswer(lines [][]byte) (answer string, settled bool) {
 	return answer, answer != "" && !waiting
 }
 
+// turnEnded reports whether the last thing these records hold is the end of
+// a turn: Claude Code's turn-end record (system "turn_duration") with nothing
+// said to or by Claude after it. A prompt or a <task-notification> after it
+// means another turn is starting, and an answer after it belongs to one.
+func turnEnded(lines [][]byte) bool {
+	ended := false
+	for _, l := range lines {
+		var r struct {
+			Type    string `json:"type"`
+			Subtype string `json:"subtype"`
+		}
+		if json.Unmarshal(l, &r) == nil && r.Type == "system" && r.Subtype == "turn_duration" {
+			ended = true
+			continue
+		}
+		rec, ok := sessionio.DecodeRecord(l)
+		if !ok || rec.IsMeta || rec.IsSidechain || strings.TrimSpace(rec.Text()) == "" {
+			continue
+		}
+		switch rec.Role() {
+		case "assistant":
+			ended = false
+		case "user":
+			if rec.Conversational() {
+				ended = false
+			}
+		}
+	}
+	return ended
+}
+
 var (
 	noticeRe       = regexp.MustCompile(`(?s)<task-notification>.*?</task-notification>`)
 	noticeTaskRe   = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)

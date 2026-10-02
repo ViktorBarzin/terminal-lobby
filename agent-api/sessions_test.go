@@ -122,6 +122,75 @@ func TestTmuxSessionsTranscriptLines(t *testing.T) {
 	}
 }
 
+// When the mod never says hello, @claude_transcript is never written, and
+// the path agent-api stamped at create is the only way to the turn's answer.
+// The hint is held to the same containment rule as the mod's stamp, and the
+// mod's stamp wins when both are there: a /clear moves Claude to a new file,
+// and only the mod knows which.
+func TestTmuxSessionsTranscriptLinesFallsBackToTheCreateHint(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, testOSUser, ".claude", "projects", "-home-wizard-code")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	write := func(name string, lines int) string {
+		p := filepath.Join(root, name)
+		body := strings.Repeat(assistantLine("x", "2026-09-16T11:00:00Z")+"\n", lines)
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		return p
+	}
+	hinted := write("hinted.jsonl", 2)
+	stamped := write("stamped.jsonl", 3)
+	outside := filepath.Join(base, "secret.jsonl")
+	if err := os.WriteFile(outside, []byte(assistantLine("private", "2026-09-16T11:00:00Z")), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for _, c := range []struct {
+		name        string
+		stamp, hint string
+		want        int // lines, or -1 for errNoTranscript
+	}{
+		{"only the create hint", "", hinted, 2},
+		{"the mod's stamp wins over the hint", stamped, hinted, 3},
+		{"a hint outside the projects root", "", outside, -1},
+		{"a hint naming a file not written yet", "", filepath.Join(root, "later.jsonl"), -1},
+		{"neither", "", "", -1},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			opts := optionMap{
+				"@claude_transcript": c.stamp,
+				OptionTranscriptHint: c.hint,
+			}
+			ts := &tmuxSessions{in: nil, homeBase: base, options: opts}
+			lines, err := ts.TranscriptLines(testOSUser, "c1")
+			if c.want < 0 {
+				if !errors.Is(err, errNoTranscript) {
+					t.Fatalf("got %d lines, err %v; want errNoTranscript", len(lines), err)
+				}
+				return
+			}
+			if err != nil || len(lines) != c.want {
+				t.Fatalf("got %d lines, err %v; want %d", len(lines), err, c.want)
+			}
+		})
+	}
+}
+
+// optionMap is a sessionio.Options for one session, by option name.
+type optionMap map[string]string
+
+func (m optionMap) Option(osUser, session, name string) (string, bool) {
+	if osUser != testOSUser || session != "c1" {
+		return "", false
+	}
+	return m[name], true
+}
+
+func (m optionMap) SetOption(osUser, session, name, value string) error { return nil }
+
 // stampStore is a sessionio.Options holding one session's @claude_transcript.
 type stampStore struct{ osUser, session, stamp string }
 

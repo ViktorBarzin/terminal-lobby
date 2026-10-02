@@ -264,7 +264,11 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			return
 		}
 
-		switch strings.TrimSpace(live.State) {
+		state := strings.TrimSpace(live.State)
+		if state == "" {
+			state = s.stateFromTranscript(t, live.Name, mark)
+		}
+		switch state {
 		case sessionio.StateRunning:
 			sawRunning, asked = true, false
 			doneSince = time.Time{}
@@ -364,9 +368,10 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			return
 
 		default:
-			// Unstamped. sessionio is firm that this is not "finished" — it
-			// means no Claude ever ran here, which for a session that was
-			// just prompted means the text went to a shell.
+			// Unstamped, and the transcript shows no turn either. sessionio
+			// is firm that this is not "finished" — it means no Claude ever
+			// ran here, which for a session that was just prompted means the
+			// text went to a shell.
 			if s.now().After(graceEnd) {
 				s.fail(t, "conversation %s has no Claude in it (@claude_state is unset), "+
 					"so the message reached a plain shell", t.ConversationID)
@@ -381,6 +386,42 @@ func (s *Server) watchTurn(t *Task, mark int, cancelled <-chan struct{}) {
 			return
 		}
 	}
+}
+
+// stateFromTranscript stands in for @claude_state while nothing has stamped
+// it, reading this turn's records instead: "" when they show no turn, running
+// while one is under way, done once it has ended.
+//
+// @claude_state is written by session-events when the lobby's mod reports,
+// and a mod can be late or never come at all. Measured live on 2026-10-02:
+// of 172 conversations created that day, 21 took more than 10 s to say hello
+// and five near 60 s, each of those failed its first message after the 15 s
+// start grace; rv-me-upload's mod never said hello in its 3 min 20 s life.
+// Every one of those Claudes ran its turn and wrote the answer to its
+// transcript. So the transcript decides, and the grace below only fails a
+// session that shows no sign of a turn in either place.
+//
+// The end of a turn is Claude Code's own turn-end record (system
+// "turn_duration"), never the last assistant line: a turn says "Let me look"
+// before its first tool call, and settling there would hand the caller the
+// turn's opening words as its answer.
+func (s *Server) stateFromTranscript(t *Task, session string, mark int) string {
+	lines, err := s.Sessions.TranscriptLines(t.OSUser, session)
+	if err != nil {
+		return ""
+	}
+	if mark != unknownMark && mark > len(lines) {
+		// Replaced under us; the done branch reports it.
+		return sessionio.StateDone
+	}
+	turn := turnLines(lines, mark, t.sentAt)
+	if len(turn) == 0 {
+		return ""
+	}
+	if turnEnded(turn) {
+		return sessionio.StateDone
+	}
+	return sessionio.StateRunning
 }
 
 // settle records this turn's answer.

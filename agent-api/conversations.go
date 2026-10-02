@@ -239,11 +239,14 @@ func (s *Server) createConversation(c *call) (any, error) {
 		}
 	}
 
+	// The Claude session id is chosen here rather than by Claude, so the
+	// transcript's path is known before Claude has written a line of it.
+	sessionID := newSessionID()
 	if err := s.Sessions.Create(CreateSpec{
 		OSUser:  c.id.OSUser,
 		Name:    name,
 		Dir:     cwd,
-		Command: []string{claudeCommandLine(s.ClaudeBin, req)},
+		Command: []string{claudeCommandLine(s.ClaudeBin, req, sessionID)},
 		// The credential's name, so the lobby can say WHICH caller opened
 		// this rather than only that a person did not. On a bearer request
 		// authuser puts that name in Identity.Header; it is never the token.
@@ -274,6 +277,19 @@ func (s *Server) createConversation(c *call) (any, error) {
 	if err := s.Sessions.SetOption(c.id.OSUser, name, OptionOwner, c.id.Header); err != nil {
 		return nil, serverError("conversation %s was created but could not be stamped as yours "+
 			"(%v); it is live and readable, and messages to it will be refused", name, err)
+	}
+
+	// Where the transcript will be, for when the lobby's mod never says
+	// hello and so never stamps @claude_transcript. Measured live on
+	// 2026-10-02: rv-me-upload's Claude ran its turn and answered while both
+	// of the mod's stamps stayed unset for the session's whole life, and with
+	// nothing to read the turn from, the caller was told its message reached
+	// a plain shell. A failure here costs only that fallback, so it is logged
+	// rather than refused.
+	hint := sessionio.TranscriptPath(sessionio.ProjectsRoot(s.HomeBase, c.id.OSUser), cwd, sessionID)
+	if err := s.Sessions.SetOption(c.id.OSUser, name, OptionTranscriptHint, hint); err != nil {
+		logf("agent-api: %s: stamping %s failed (%v); its turns can only be followed "+
+			"once the lobby's mod connects", name, OptionTranscriptHint, err)
 	}
 
 	c.status = 201
@@ -311,8 +327,15 @@ func (s *Server) createConversation(c *call) (any, error) {
 // is on the request and "plan" is the useful one.
 const defaultPermissionMode = "bypassPermissions"
 
-func claudeCommandLine(bin string, req createRequest) string {
+// sessionID is pinned with --session-id, so the transcript is
+// <projects>/<slug of cwd>/<sessionID>.jsonl from the first line. tmux-api's
+// suspend swaps it for --resume when it puts the session back, because Claude
+// refuses the two together.
+func claudeCommandLine(bin string, req createRequest, sessionID string) string {
 	args := []string{bin}
+	if sessionID != "" {
+		args = append(args, "--session-id", sessionID)
+	}
 	if req.PermissionMode == "" {
 		req.PermissionMode = defaultPermissionMode
 	}

@@ -893,3 +893,110 @@ func TestAnUnreadyPaneIsSentWithoutTheClearingPrelude(t *testing.T) {
 		})
 	}
 }
+
+// turnEndLine is the record Claude Code writes when a turn ends, whether or
+// not anything is listening (the system "turn_duration" row).
+func turnEndLine(at string) string {
+	return `{"type":"system","subtype":"turn_duration","durationMs":2696,"timestamp":"` + at + `"}`
+}
+
+// The lobby's mod never said hello, so nothing ever stamps @claude_state, and
+// Claude runs the turn anyway. Measured live on 2026-10-02 (rv-me-upload):
+// the pane and the transcript held the right answer while the caller was told
+// "has no Claude in it (@claude_state is unset), so the message reached a
+// plain shell". The transcript is the evidence the turn ran, and its
+// turn-end record is the evidence it finished.
+func TestTurnFollowsTheTranscriptWhenTheModNeverConnects(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{Name: "fresh", Owner: testActor})
+	h.sessions.noTranscript[key(testOSUser, "fresh")] = true
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.mu.Lock()
+			delete(f.noTranscript, k)
+			f.mu.Unlock()
+			f.appendTranscript(testOSUser, "fresh", userLine("read the image", "2026-09-16T11:00:00Z"))
+			// Past the start grace, still working, state never stamped.
+			time.Sleep(250 * time.Millisecond)
+			f.appendTranscript(testOSUser, "fresh", assistantLine("Let me look at the image.", "2026-09-16T11:00:05Z"))
+			time.Sleep(50 * time.Millisecond)
+			f.appendTranscript(testOSUser, "fresh",
+				assistantLine("PELICAN", "2026-09-16T11:00:09Z"),
+				turnEndLine("2026-09-16T11:00:09Z"))
+		}()
+	}
+
+	task := h.sendMessage("fresh", "read the image")
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone {
+		t.Fatalf("status %q error %q: the transcript shows a turn that ran", v.Status, v.Error)
+	}
+	if v.Result != "PELICAN" {
+		t.Fatalf("result %q, want the turn's final message, not its first words", v.Result)
+	}
+}
+
+// A mod that connects late stamps the state mid-turn, and the watcher takes
+// over from the transcript without failing the turn in between.
+func TestTurnSurvivesTheModConnectingAfterTheStartGrace(t *testing.T) {
+	h := newHarness(t)
+	h.sessions.start(testOSUser, LiveSession{Name: "late", Owner: testActor})
+	h.sessions.noTranscript[key(testOSUser, "late")] = true
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.mu.Lock()
+			delete(f.noTranscript, k)
+			f.mu.Unlock()
+			f.appendTranscript(testOSUser, "late", userLine("go", "2026-09-16T11:00:00Z"))
+			time.Sleep(250 * time.Millisecond)
+			f.setState(testOSUser, "late", "running")
+			time.Sleep(20 * time.Millisecond)
+			f.appendTranscript(testOSUser, "late", assistantLine("the late answer", "2026-09-16T11:00:09Z"))
+			f.setState(testOSUser, "late", "done")
+		}()
+	}
+
+	task := h.sendMessage("late", "go")
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone || v.Result != "the late answer" {
+		t.Fatalf("status %q result %q error %q", v.Status, v.Result, v.Error)
+	}
+}
+
+// With no state, a turn that ended with background work outstanding is held
+// for the turn that work's notice starts, as it is with one.
+func TestTurnWithoutStateHoldsForBackgroundWork(t *testing.T) {
+	h := newHarness(t)
+	h.srv.BackgroundHold = 5 * time.Second
+	h.sessions.start(testOSUser, LiveSession{Name: "bg", Owner: testActor})
+	h.sessions.noTranscript[key(testOSUser, "bg")] = true
+	launch := `{"type":"user","timestamp":"2026-09-16T11:00:02Z","toolUseResult":{"status":"async_launched","agentId":"a1"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"launched"}]}}`
+	notice := userLine("<task-notification><task-id>a1</task-id><status>completed</status></task-notification>", "2026-09-16T11:00:50Z")
+	h.sessions.onPrompt = func(f *fakeSessions, k string) {
+		go func() {
+			time.Sleep(5 * time.Millisecond)
+			f.mu.Lock()
+			delete(f.noTranscript, k)
+			f.mu.Unlock()
+			f.appendTranscript(testOSUser, "bg",
+				userLine("run it in the background", "2026-09-16T11:00:00Z"),
+				launch,
+				assistantLine("Waiting for the background agent.", "2026-09-16T11:00:03Z"),
+				turnEndLine("2026-09-16T11:00:03Z"))
+			time.Sleep(250 * time.Millisecond)
+			f.appendTranscript(testOSUser, "bg", notice)
+			time.Sleep(20 * time.Millisecond)
+			f.appendTranscript(testOSUser, "bg",
+				assistantLine("MANGO-58", "2026-09-16T11:00:51Z"),
+				turnEndLine("2026-09-16T11:00:51Z"))
+		}()
+	}
+
+	task := h.sendMessage("bg", "run it in the background")
+	v := h.waitStatus(task, StatusDone, StatusFailed)
+	if v.Status != StatusDone || v.Result != "MANGO-58" {
+		t.Fatalf("status %q result %q error %q", v.Status, v.Result, v.Error)
+	}
+}
