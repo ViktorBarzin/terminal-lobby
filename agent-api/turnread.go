@@ -65,6 +65,7 @@ func turnAnswer(lines [][]byte) (answer string, settled bool) {
 }
 
 var (
+	noticeRe       = regexp.MustCompile(`(?s)<task-notification>.*?</task-notification>`)
 	noticeTaskRe   = regexp.MustCompile(`<task-id>([^<]+)</task-id>`)
 	noticeStatusRe = regexp.MustCompile(`<status>([a-z_]+)</status>`)
 )
@@ -88,8 +89,22 @@ func backgroundOutstanding(lines [][]byte) []string {
 		var r struct {
 			Type          string          `json:"type"`
 			ToolUseResult json.RawMessage `json:"toolUseResult"`
+			Attachment    struct {
+				Type   string `json:"type"`
+				Prompt string `json:"prompt"`
+			} `json:"attachment"`
 		}
-		if json.Unmarshal(l, &r) != nil || r.Type != "user" {
+		if json.Unmarshal(l, &r) != nil {
+			continue
+		}
+		// A notice that arrives while a turn runs is absorbed into it as a
+		// queued_command attachment, never as a user record of its own
+		// (measured live on 2026-10-02).
+		if r.Type == "attachment" && r.Attachment.Type == "queued_command" {
+			closeNoticed(open, r.Attachment.Prompt)
+			continue
+		}
+		if r.Type != "user" {
 			continue
 		}
 		var tur struct {
@@ -119,14 +134,7 @@ func backgroundOutstanding(lines [][]byte) []string {
 		if !ok {
 			continue
 		}
-		text := rec.Text()
-		if !strings.Contains(text, "<task-notification>") {
-			continue
-		}
-		id, status := noticeTaskRe.FindStringSubmatch(text), noticeStatusRe.FindStringSubmatch(text)
-		if id != nil && status != nil && noticeEnds[status[1]] {
-			delete(open, strings.TrimSpace(id[1]))
-		}
+		closeNoticed(open, rec.Text())
 	}
 	var out []string
 	for _, id := range order {
@@ -135,4 +143,15 @@ func backgroundOutstanding(lines [][]byte) []string {
 		}
 	}
 	return out
+}
+
+// closeNoticed retires every task a text's <task-notification> blocks say has
+// ended.
+func closeNoticed(open map[string]bool, text string) {
+	for _, n := range noticeRe.FindAllString(text, -1) {
+		id, status := noticeTaskRe.FindStringSubmatch(n), noticeStatusRe.FindStringSubmatch(n)
+		if id != nil && status != nil && noticeEnds[status[1]] {
+			delete(open, strings.TrimSpace(id[1]))
+		}
+	}
 }

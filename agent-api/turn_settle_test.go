@@ -178,6 +178,9 @@ func TestBackgroundTasksOutstanding(t *testing.T) {
 	launch := bgLaunchLines("b1", "2026-09-16T11:00:02Z")
 	stopped := `{"type":"user","timestamp":"2026-09-16T11:00:04Z","message":{"role":"user","content":[{"tool_use_id":"toolu_x","type":"tool_result","content":"Successfully stopped task: b1 (sleep 240)"}]},"toolUseResult":{"message":"Successfully stopped task: b1 (sleep 240)","task_id":"b1","task_type":"local_bash"}}`
 	monitor := `{"type":"user","timestamp":"2026-09-16T11:00:03Z","message":{"role":"user","content":[{"tool_use_id":"toolu_m","type":"tool_result","content":"Monitor started (task m1)"}]},"toolUseResult":{"taskId":"m1","timeoutMs":120000,"persistent":false}}`
+	absorbedText := "<task-notification>\\n<task-id>m1</task-id>\\n<tool-use-id>toolu_m</tool-use-id>\\n<status>completed</status>\\n<summary>Monitor stream ended</summary>\\n<event>Task completed</event>\\n</task-notification>"
+	absorbed := `{"isSidechain":false,"attachment":{"type":"queued_command","prompt":"` + absorbedText + `","commandMode":"task-notification","origin":{"kind":"task-notification"}},"type":"attachment","timestamp":"2026-10-02T06:56:26.177Z"}`
+	enqueued := `{"type":"queue-operation","operation":"enqueue","timestamp":"2026-10-02T06:56:26.177Z","content":"` + absorbedText + `"}`
 	persistent := `{"type":"user","timestamp":"2026-09-16T11:00:03Z","message":{"role":"user","content":[{"tool_use_id":"toolu_p","type":"tool_result","content":"Monitor started (task p1)"}]},"toolUseResult":{"taskId":"p1","persistent":true}}`
 	for _, c := range []struct {
 		name  string
@@ -189,6 +192,14 @@ func TestBackgroundTasksOutstanding(t *testing.T) {
 		{"failed", append(append([]string{}, launch...), bgNoticeLine("b1", "failed", "2026-09-16T11:00:05Z")), 0},
 		{"stopped with TaskStop", append(append([]string{}, launch...), stopped), 0},
 		{"a monitor", []string{monitor}, 1},
+		// Measured live on 2026-10-02: a notice that arrives while a turn is
+		// running is absorbed into it as a queued_command attachment, and
+		// is never written as a user record of its own.
+		{"a monitor whose notice was absorbed mid-turn", []string{monitor, absorbed}, 0},
+		// Queued is not yet delivered: the turn it starts writes the
+		// notice as a user record, and settling before that would hand
+		// back the interim answer.
+		{"a notice queued but not yet delivered", []string{monitor, enqueued}, 1},
 		{"a persistent monitor never ends on its own", []string{persistent}, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
