@@ -9,6 +9,7 @@ import {
   Show,
   untrack,
   useContext,
+  type Accessor,
   type Component,
 } from "solid-js";
 import type {
@@ -70,6 +71,7 @@ import {
 } from "./plan.logic";
 import type { BrowserCardHost } from "./BrowserCard";
 import { MessagesTimeline } from "./MessagesTimeline";
+import { NO_STREAM, sameShape, withStreaming, type StreamState } from "../store/stream";
 import { backgroundLabel } from "./lobby.logic";
 import type { BackgroundWork, ClaudeState, SessionTool } from "../types/lobby";
 import { AgentPanel } from "./AgentPanel";
@@ -121,7 +123,7 @@ const modelKey = (m: ModelState | undefined): string => `${m?.model ?? ""}/${m?.
  * pick from the sheet's Mode list does not wait on the pane from here: the
  * server walks and reads in one local sequence and replies with the mode it
  * read (lib/mode-api.ts), and answering a dialog works the same way
- * (sessionio/answerdrive.go).
+ * (session-events/mod.go answer).
  */
 const PANE_READ_DELAYS_MS = [150, 600];
 /**
@@ -483,6 +485,14 @@ export const TextView: Component<{
   /** show the Terminal view — where a question the pane can only half show has
    *  to be answered until the transcript catches up. */
   onOpenTerminal?: () => void;
+  /** The reply Claude is still writing (store/session.ts `stream`). */
+  stream?: Accessor<StreamState>;
+  /**
+   * The session started before the lobby's mod, so nothing streams it yet
+   * (store/session.ts `noMod`). session-events restarts it onto the mod once
+   * it is idle; until then the view says so and offers the Terminal.
+   */
+  noMod?: boolean;
 }> = (props) => {
   const queued = createMemo(() => queuedPrompts(props.events, props.sessionState));
   // What the transcript says, plus what it has not caught up with. A prompt
@@ -530,6 +540,22 @@ export const TextView: Component<{
    *  nothing is in flight, so the common case reuses the fold above rather than
    *  repeating it; an unsent prompt is rare and short-lived. */
   const shownRows = createMemo(() => (sent().length === 0 ? baseRows() : deriveRows(shown())));
+  /**
+   * Which blocks are streaming, whatever they hold so far. The derivation
+   * below follows this rather than the words, so it re-runs when a block
+   * starts or is stored, never per delta; the rows read the words themselves.
+   */
+  const streamShape = createMemo(() => props.stream?.() ?? NO_STREAM, NO_STREAM, {
+    equals: sameShape,
+  });
+  /** What the timeline draws: the rows above with the streaming blocks at the
+   *  end of the open turn. Everything that reasons about the turn (the live
+   *  row, the cards) keeps reading the rows above, the stored record. */
+  const drawnRows = createMemo(() =>
+    streamShape().blocks.length === 0
+      ? shownRows()
+      : deriveRows(withStreaming(shown(), streamShape())),
+  );
   /**
    * The open turn's live row, off the rows the timeline draws: with a prompt
    * pending that is the pending turn, whose row reads "Working" with no tool,
@@ -820,7 +846,7 @@ export const TextView: Component<{
    * Pick a permission row. Where this view can answer, the row goes through
    * the answer route with its number and the label the reader saw, and the
    * server walks the cursor off the No row's open field before the digit
-   * (sessionio permdrive.go permPick): with the cursor in that field a bare
+   * (session-events mod.go answer): with the cursor in that field a bare
    * digit is typed into it. Found in deployed review round 2 (2026-09-28),
    * after a failed typed decline left the field open and "1 Yes" made the row
    * read "No, 1". Without the answer route the digit goes as a key.
@@ -850,7 +876,7 @@ export const TextView: Component<{
   /**
    * Decline the permission prompt with the reader's words (the card's "Type
    * your own answer"). The server drives the prompt's No row and reads the
-   * words back before its Enter (sessionio permdrive.go). The CLI's field is
+   * words back before its Enter (session-events mod.go answer). The CLI's field is
    * one line, so line breaks go out as spaces, as plan feedback does.
    */
   const declinePermission = async (raw: string): Promise<boolean> => {
@@ -2108,6 +2134,25 @@ export const TextView: Component<{
     }),
   );
 
+  /**
+   * A Claude session that started before the lobby's mod: nothing streams it
+   * until session-events restarts it, which it does once Claude is idle. The
+   * Terminal is live meanwhile, so the note offers it.
+   */
+  const noModNote = (cls: string) => (
+    <div class={cls} role="note">
+      <span>
+        This session started before the lobby could stream it. It restarts on its own when it's
+        idle; the terminal works meanwhile.
+      </span>
+      <Show when={props.onOpenTerminal}>
+        <button type="button" class="tl-linkbtn" onClick={() => props.onOpenTerminal?.()}>
+          Open the Terminal
+        </button>
+      </Show>
+    </div>
+  );
+
   return (
     <div
       class="tl-textview"
@@ -2132,11 +2177,14 @@ export const TextView: Component<{
         ref={observeWidth}
       >
         <MessagesTimeline
-          // A session with no transcript here has no stream to open (404).
-          opening={props.noTranscript ? false : props.opening}
+          // A session with no transcript here has no stream to open (404), and
+          // one that started before the mod sends no history to wait for.
+          opening={props.noTranscript || props.noMod ? false : props.opening}
+          empty={props.noMod ? noModNote("tl-empty-state tl-nomod-note") : undefined}
           owns={props.onScreen !== false}
           events={shown()}
-          rows={shownRows()}
+          rows={drawnRows()}
+          stream={props.stream?.()}
           onOpenPreview={props.onOpenPreview}
           onLoadFull={props.onLoadFull}
           onLoadEarlier={props.onLoadEarlier}
@@ -2200,6 +2248,12 @@ export const TextView: Component<{
           )}
         </Show>
       </div>
+      {/* The notice above, for a timeline that is not empty: what this device
+          held from before stays readable, and the note says why nothing new
+          arrives. */}
+      <Show when={props.noMod && props.events.length > 0}>
+        {noModNote("tl-terminal-note tl-nomod-note")}
+      </Show>
       {/* Where a session with no transcript here answers: the Terminal view.
           Deployed review round 1 (2026-09-28) found a Codex session's Text
           view reading "No messages yet" while Codex answered in the pane. */}

@@ -111,7 +111,7 @@ export interface DeliverFirstPromptOptions {
   /** injectable for tests; defaults to a deadlined same-origin fetch. */
   fetchImpl?: typeof fetch;
   /** Told the reason of a 409 refusal ("trust-open", session-events
-   *  plan.go), which ends the delivery. */
+   *  refusal.go), which ends the delivery. */
   onRefused?: (reason: string) => void;
 }
 

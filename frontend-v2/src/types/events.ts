@@ -103,6 +103,35 @@ export interface Event {
    * browser that the session has not taken yet, which draws dimmed.
    */
   sending?: boolean;
+  /**
+   * Never on the wire. Set by `withStreaming` (store/stream.ts) on the stand-in
+   * for a content block Claude is still writing. Its body is read live from the
+   * stream, not from here.
+   */
+  streaming?: boolean;
+}
+
+/**
+ * Part of a reply Claude is still writing: the new text of one content block,
+ * coalesced to about 50 ms by the mod (ADR-0036 `turn.step`).
+ *
+ * Live only. It arrives as a plain `data:` line with no `id:`, so it never
+ * moves the resume cursor, and no backfill or replay carries it. The stored
+ * `text` or `thinking` event for the same block follows with a real id and
+ * supersedes it.
+ */
+export interface StreamDelta {
+  kind: "delta";
+  session: string;
+  turnId: string;
+  stream: "text" | "thinking";
+  /** The content block's index within the current model response. */
+  block: number;
+  /** The text to append. */
+  body: string;
+  /** Set when the delta belongs to a subagent. */
+  agentId?: string;
+  at?: number;
 }
 
 /**
@@ -221,14 +250,50 @@ const KINDS: ReadonlySet<string> = new Set<EventKind>([
 ]);
 
 export function parseEvent(data: string): Event | null {
+  const o = parseObject(data);
+  return o ? eventFrom(o) : null;
+}
+
+/**
+ * Parse one live `data:` payload: a stored event, or a streaming delta. One
+ * JSON parse for both, since every live frame goes through here.
+ */
+export function parseLive(data: string): Event | StreamDelta | null {
+  const o = parseObject(data);
+  if (!o) return null;
+  return o.kind === "delta" ? deltaFrom(o) : eventFrom(o);
+}
+
+function parseObject(data: string): Record<string, unknown> | null {
   let raw: unknown;
   try {
     raw = JSON.parse(data);
   } catch {
     return null;
   }
-  if (!raw || typeof raw !== "object") return null;
-  const o = raw as Record<string, unknown>;
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+}
+
+function deltaFrom(o: Record<string, unknown>): StreamDelta | null {
+  if (typeof o.session !== "string" || typeof o.body !== "string") return null;
+  if (o.stream !== "text" && o.stream !== "thinking") return null;
+  // sessionio marks `block` and `turnId` omitempty, so the first block of a
+  // response arrives with no `block` at all.
+  if (o.block !== undefined && typeof o.block !== "number") return null;
+  const d: StreamDelta = {
+    kind: "delta",
+    session: o.session,
+    turnId: typeof o.turnId === "string" ? o.turnId : "",
+    stream: o.stream,
+    block: typeof o.block === "number" ? o.block : 0,
+    body: o.body,
+  };
+  if (typeof o.agentId === "string" && o.agentId) d.agentId = o.agentId;
+  if (typeof o.at === "number") d.at = o.at;
+  return d;
+}
+
+function eventFrom(o: Record<string, unknown>): Event | null {
   if (typeof o.id !== "number" || typeof o.kind !== "string") return null;
   if (!KINDS.has(o.kind)) return null;
   if (typeof o.session !== "string") return null;

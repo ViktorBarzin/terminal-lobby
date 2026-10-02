@@ -40,6 +40,7 @@ import {
   type WorkPicture,
 } from "./timeline.logic";
 import { basename } from "../store/preview.logic";
+import { useRowBody } from "./stream-body";
 
 /**
  * The row views for text mode. Each maps ONE canonical item type to the shape
@@ -119,10 +120,20 @@ export function clockTime(atMs: number): string {
 
 export const ThinkingRowView: Component<{ row: ThinkingRow }> = (props) => {
   const [open, setOpen] = createSignal(false);
-  // A one-line preview is enough to decide whether to read the rest.
-  const preview = () => props.row.body.trim().split("\n")[0] ?? "";
+  const body = useRowBody(() => props.row);
+  // A one-line preview is enough to decide whether to read the rest. While
+  // the thinking streams it is the newest line, which is where it has got to.
+  const preview = () => {
+    const lines = body().trim().split("\n");
+    return (props.row.streaming ? lines.at(-1) : lines[0]) ?? "";
+  };
   return (
-    <div class="tl-row tl-row-thinking" data-eid={props.row.id} classList={{ "tl-open": open() }}>
+    <div
+      class="tl-row tl-row-thinking"
+      data-eid={props.row.id}
+      data-streaming={props.row.streaming ? "" : undefined}
+      classList={{ "tl-open": open() }}
+    >
       <button
         type="button"
         class="tl-thinking-head"
@@ -130,7 +141,7 @@ export const ThinkingRowView: Component<{ row: ThinkingRow }> = (props) => {
         onClick={() => setOpen((v) => !v)}
       >
         <span class="tl-thinking-glyph">✳</span>
-        <span class="tl-thinking-label">Thought</span>
+        <span class="tl-thinking-label">{props.row.streaming ? "Thinking…" : "Thought"}</span>
         <Show when={!open()}>
           <span class="tl-thinking-preview">{preview()}</span>
         </Show>
@@ -139,7 +150,7 @@ export const ThinkingRowView: Component<{ row: ThinkingRow }> = (props) => {
           here on expand, which is the one place we deliberately beat it. */}
       <Show when={open()}>
         <div class="tl-thinking-body">
-          <Markdown text={props.row.body} />
+          <Markdown text={body()} streaming={props.row.streaming} />
         </div>
       </Show>
     </div>
@@ -961,9 +972,12 @@ const WorkCallRow: Component<{
   const [open, setOpen] = createSignal(false);
   const kind = () => callKind(props.leaf);
   const call = () => (props.leaf.kind === "tool" ? props.leaf : null);
+  const thought = useRowBody(() =>
+    props.leaf.kind === "thinking" ? props.leaf : { id: props.leaf.id, body: "" },
+  );
   const status = () => {
     const c = call();
-    if (!c) return "ok";
+    if (!c) return props.leaf.kind === "thinking" && props.leaf.streaming ? "running" : "ok";
     if (!c.done) return "running";
     if (stoppedCall(c)) return "stopped";
     if (declinedCall(c)) return "declined";
@@ -975,7 +989,10 @@ const WorkCallRow: Component<{
   };
   const label = () => {
     const leaf = props.leaf;
-    if (leaf.kind === "thinking") return leaf.body.trim().split("\n")[0] ?? "";
+    if (leaf.kind === "thinking") {
+      const lines = thought().trim().split("\n");
+      return (leaf.streaming ? lines.at(-1) : lines[0]) ?? "";
+    }
     return leaf.label || leaf.tool || "tool";
   };
   const stat = createMemo(() => {
@@ -1107,6 +1124,9 @@ const LiveWords: Component<{ state: LiveGroupState }> = (props) => {
             Running <code title={w()}>{shortTarget(w())}</code>
           </>
         )}
+      </Match>
+      <Match when={props.state.kind === "working" && props.state.streaming === "thinking"}>
+        Thinking…
       </Match>
       <Match when={props.state.kind === "working"}>Working…</Match>
     </Switch>

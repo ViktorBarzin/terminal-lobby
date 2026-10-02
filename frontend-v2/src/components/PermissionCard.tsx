@@ -44,7 +44,7 @@ const scrollToChange = (el: HTMLPreElement): void => {
  * composer's place while Claude waits (the T3 pass, prototype 6-permission).
  *
  * The rows are the prompt's own, numbered and worded as the Terminal draws
- * them (sessionio permdialog.go): what "Yes, and always allow" covers changes
+ * them (session-events mod.go openDialog): what "Yes, and always allow" covers changes
  * with the tool and the directory, so the card shows the CLI's words rather
  * than its own. A tap picks the row by its number, which picks it with no
  * Enter (measured on CLI 2.1.283, 2026-09-27); the caller sends it through
@@ -53,7 +53,7 @@ const scrollToChange = (el: HTMLPreElement): void => {
  * The last row is "Type your own answer" (`OwnAnswer`), under the CLI's own
  * rows, No included. Its words decline the tool call and tell Claude what to
  * do instead: the server drives the prompt's No row, whose Tab opens a field
- * the CLI hands Claude as "the user said: <words>" (sessionio permdrive.go).
+ * the mod hands Claude as the reason it declined (session-events mod.go answer).
  * It is offered only when the prompt draws a No row to drive.
  *
  * One press per prompt, a row or the words. The caller keys the card on the

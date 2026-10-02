@@ -598,3 +598,83 @@ describe("the agents frame", () => {
     expect(h.sources).toHaveLength(1);
   });
 });
+
+/**
+ * The mod streams the reply as it is written (ADR-0036): `delta` payloads on
+ * the live lane with no `id:` line. They are not events, never move the
+ * cursor, and must not be swallowed by the id dedup (their id is 0).
+ */
+describe("delta frames", () => {
+  const delta = {
+    id: 0,
+    kind: "delta",
+    session: "sess",
+    turnId: "t7",
+    stream: "text",
+    block: 1,
+    body: "one to a few words",
+    at: 1_790_900_000_000,
+  };
+
+  it("hands a delta to onDelta and leaves the cursor alone", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onDelta: (d) => got.push(d) });
+    h.client.connect();
+    h.sources[0]!.onmessage?.({ data: line({ id: 7, kind: "text", body: "a" }) });
+    h.sources[0]!.onmessage?.({ data: JSON.stringify(delta) });
+    expect(got).toEqual([
+      {
+        kind: "delta",
+        session: "sess",
+        turnId: "t7",
+        stream: "text",
+        block: 1,
+        body: "one to a few words",
+        at: 1_790_900_000_000,
+      },
+    ]);
+    expect(h.received.map((e) => e.id)).toEqual([7]);
+    expect(h.client.cursor).toBe(7);
+  });
+
+  // sessionio's Event marks `block` omitempty, so block 0 has no field.
+  it("reads a delta with no block as the response's first block", () => {
+    const got: { block: number }[] = [];
+    const h = harness(() => 200, { onDelta: (d) => got.push(d) });
+    h.client.connect();
+    h.sources[0]!.onmessage?.({ data: JSON.stringify({ ...delta, block: undefined }) });
+    expect(got.map((d) => d.block)).toEqual([0]);
+  });
+
+  it("drops a delta for a stream it does not know", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onDelta: (d) => got.push(d) });
+    h.client.connect();
+    h.sources[0]!.onmessage?.({ data: JSON.stringify({ ...delta, stream: "tool" }) });
+    h.sources[0]!.onmessage?.({ data: JSON.stringify({ ...delta, block: "1" }) });
+    expect(got).toEqual([]);
+  });
+});
+
+/**
+ * A Claude session that started before the mod has no event stream yet: the
+ * server says so with a `nomod` frame instead of history, holds the stream
+ * open, and closes it once the mod connects.
+ */
+describe("the nomod frame", () => {
+  it("hands the restart policy to onNoMod", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onNoMod: (n) => got.push(n) });
+    h.client.connect();
+    h.sources[0]!.emit("nomod", { restart: "when-idle" });
+    expect(got).toEqual([{ restart: "when-idle" }]);
+  });
+
+  it("reads a frame with no usable payload as no policy", () => {
+    const got: unknown[] = [];
+    const h = harness(() => 200, { onNoMod: (n) => got.push(n) });
+    h.client.connect();
+    h.sources[0]!.emit("nomod", "x");
+    expect(got).toEqual([{}]);
+  });
+});

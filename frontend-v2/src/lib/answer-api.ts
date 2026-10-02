@@ -38,7 +38,7 @@ export interface DialogView {
   feedbackRow?: number;
   /** The plan file the footer names, "~/.claude/plans/<slug>.md". */
   planPath?: string;
-  /** A permission prompt's first line, "Bash command" (sessionio permdialog.go). */
+  /** A permission prompt's first line, "Bash command" (session-events mod.go permissionTitle). */
   title?: string;
   /** What the tool will do, as the permission prompt draws it. */
   detail?: string[];
