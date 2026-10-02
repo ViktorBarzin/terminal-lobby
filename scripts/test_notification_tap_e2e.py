@@ -605,6 +605,22 @@ def lobby(browser: Browser, origin: str) -> Iterator[Lobby]:
     )
     cdp.send("ServiceWorker.enable")
     page.wait_for_timeout(300)
+    # Read the shade once before any case pushes. Every case gets a fresh
+    # browser context, and a fresh profile's notification store is opened on
+    # first use. Without this read, the first push could race the page's own
+    # first read of the shade: showNotification resolved, yet the banner never
+    # reached getNotifications. Measured 2026-10-02 on Chromium 1243 (Playwright
+    # 1.63.0): the worker's first getNotifications took 2.6 s and, when a push
+    # landed in that window, the worker stalled for ~24 s and came back with an
+    # empty shade. Locally 1 case in 8 failed on every run; with this read, 24
+    # of 24 passed. In CI a different case failed on each of four release runs.
+    # A browser that has shown notifications before has most likely opened
+    # this store already, so the read should remove only the cold first use.
+    # That is inferred, not measured on a real device.
+    page.evaluate(
+        "() => navigator.serviceWorker.getRegistration()"
+        ".then((r) => r.getNotifications()).then((l) => l.length)"
+    )
     live = [r for r in registrations if not r.get("isDeleted")]
     assert live, "CDP reported no service worker registration for the origin"
     try:
