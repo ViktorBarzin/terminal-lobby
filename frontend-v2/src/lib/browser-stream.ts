@@ -142,12 +142,14 @@ const ERROR_SHOWN_MS = 5_000;
 /**
  * A resume names the previous connection, and the host refuses it while that
  * connection is still open on its side, which a phone that changed networks
- * can leave behind until the relay's next ping fails. So while the host still
- * says the old connection holds control, the resume is sent again: doubling
- * from the first wait, this many times (about a minute in all).
+ * can leave behind until the relay notices it is dead. The relay pings every
+ * 25s and gives up after 60s without an answer (session-events/browser.go), so
+ * that can take about 85s. While the host still says the old connection holds
+ * control, the resume is sent again every few seconds for this long, which
+ * covers that window with room to spare.
  */
-const RESUME_RETRY_FIRST_MS = 2_000;
-const RESUME_TRIES = 5;
+const RESUME_RETRY_MS = 5_000;
+const RESUME_FOR_MS = 120_000;
 
 // ---- the last frame of each card ------------------------------------------
 //
@@ -477,17 +479,16 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     send({ t: "resume", prev });
     if (holderId !== prev) return;
     resuming = prev;
-    let wait = RESUME_RETRY_FIRST_MS;
-    let tries = 1;
+    let left = RESUME_FOR_MS;
     const again = (): void => {
       resumeTimer = undefined;
       if (resuming !== prev || untrack(control).holderId !== prev) return;
       send({ t: "resume", prev });
-      if (++tries >= RESUME_TRIES) return;
-      wait *= 2;
-      resumeTimer = setTimeout(again, wait);
+      left -= RESUME_RETRY_MS;
+      if (left <= 0) return;
+      resumeTimer = setTimeout(again, RESUME_RETRY_MS);
     };
-    resumeTimer = setTimeout(again, wait);
+    resumeTimer = setTimeout(again, RESUME_RETRY_MS);
   };
 
   const disconnect = (): void => {

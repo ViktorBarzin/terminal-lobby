@@ -291,11 +291,38 @@ describe("the browser stream", () => {
     second.host({ ...hello("live"), you: "c2", control: held });
     const resumes = () => second.sent.filter((m) => m.t === "resume").length;
     expect(resumes()).toBe(1);
-    vi.advanceTimersByTime(2_500);
+    vi.advanceTimersByTime(5_000);
     expect(resumes()).toBe(2);
     second.host({ t: "control", ...held, holderId: "c2" });
     vi.advanceTimersByTime(60_000);
     expect(resumes()).toBe(2);
+    dispose();
+  });
+
+  // The relay only closes a phone socket that died without a FIN after its
+  // 60s read deadline, up to 85s after the last pong, so the resume has to
+  // still be going by then (review 2026-10-02: it stopped at 30s).
+  it("keeps naming it for as long as the relay may hold a dead socket open", () => {
+    vi.useFakeTimers();
+    const { dispose } = mount({ active: () => true, wake: true });
+    const first = FakeSocket.all[0]!;
+    first.open();
+    first.host({ ...hello("live"), you: "c1" });
+    first.drop();
+    vi.advanceTimersByTime(2_000);
+    const second = FakeSocket.all[1]!;
+    second.open();
+    const held = { holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
+    second.host({ ...hello("live"), you: "c2", control: held });
+    const resumes = () => second.sent.filter((m) => m.t === "resume").length;
+    vi.advanceTimersByTime(85_000);
+    const by85 = resumes();
+    vi.advanceTimersByTime(5_000);
+    expect(resumes()).toBeGreaterThan(by85);
+    vi.advanceTimersByTime(120_000);
+    const after = resumes();
+    vi.advanceTimersByTime(60_000);
+    expect(resumes()).toBe(after);
     dispose();
   });
 
