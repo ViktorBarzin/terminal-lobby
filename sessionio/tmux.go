@@ -94,11 +94,13 @@ const (
 	// that made opening a session count as using it.
 	OptionLastActivity = "@last_activity"
 	// OptionOrigin says what created the session: "user" when a person asked
-	// for it, absent when nothing said. terminal-lobby's tmux-api reads it to
-	// decide whether a session belongs in somebody's list or in the System
-	// group, and a session with no origin is treated as system — so anything
-	// here that creates a session on a PERSON's behalf has to stamp it, or
-	// their work is filed away as tooling's. See NewSession.
+	// for it, a Caller's name when agent-api made it for that Caller (see
+	// CallerOf), absent when nothing said. terminal-lobby's tmux-api reads it
+	// to decide whether a session belongs in somebody's list, in its Caller's
+	// group or in the System group, and a session with no origin is treated as
+	// system — so anything here that creates a session on a PERSON's behalf
+	// has to stamp it, or their work is filed away as tooling's. See
+	// NewSession.
 	OptionOrigin = "@tl_origin"
 	// OriginUser is this package's DEFAULT. A caller naming itself in
 	// NewSessionSpec.Origin overrides it. A harness stamps
@@ -806,8 +808,9 @@ type NewSessionSpec struct {
 	//
 	// A harness or an API that creates sessions on someone else's behalf
 	// should name ITSELF here, because the lobby reads this to decide whether
-	// a person made the session: anything other than OriginUser files it under
-	// System, away from the sessions the owner opened themselves, and the
+	// a person made the session: a Caller's name (CallerOf) files it under that
+	// Caller's own group, anything else other than OriginUser under System,
+	// both away from the sessions the owner opened themselves, and the
 	// sidebar's rescue path can hand it back with setSessionOrigin.
 	Origin string
 }

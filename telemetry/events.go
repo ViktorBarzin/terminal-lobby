@@ -12,7 +12,8 @@ package telemetry
 // the catalog table in docs/adr/0006-usage-telemetry.md.
 //
 // Attribute conventions: tl.session, tl.project, tl.from, tl.to, tl.key,
-// tl.kind, tl.count, tl.ms, tl.reason, tl.client, tl.device. NEVER conversation
+// tl.kind, tl.count, tl.ms, tl.reason, tl.client, tl.device, and tl.caller,
+// which the emitter adds itself (SetCallerRule). NEVER conversation
 // content, prompt text, file contents or keystrokes — an event says WHICH
 // feature ran, not what was typed into it.
 //

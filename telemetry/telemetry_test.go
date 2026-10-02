@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -245,5 +246,74 @@ func TestDropRuleIsConcurrencySafe(t *testing.T) {
 
 	if got := c.count(); got != 64 {
 		t.Fatalf("want the 64 allowed emits and none of the dropped ones, got %d", got)
+	}
+}
+
+// A Caller's session is recorded, and says whose it is: the caller rule names
+// the Caller and Emit adds it as tl.caller, so a query can count Muse's turns
+// apart from Viktor's without a second event name.
+func TestEmitTagsEventsNamingACallerSession(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	e.SetCallerRule(func(osUser, session string) string {
+		if osUser == "wizard" && session == "session-ready" {
+			return "muse"
+		}
+		return ""
+	})
+
+	in := Attrs{"tl.session": "session-ready", "tl.client": "api"}
+	e.Emit("session.killed", "wizard", in)
+	e.Emit("session.killed", "wizard", Attrs{"tl.session": "worktree"})
+	if len(c.lines) != 2 {
+		t.Fatalf("want both events written, got %d: %q", len(c.lines), c.lines)
+	}
+	attrs, _ := decode(t, c.lines[0])["attrs"].(map[string]any)
+	if attrs[CallerAttr] != "muse" || attrs["tl.client"] != "api" {
+		t.Errorf("a Caller's event should carry %s=muse beside its own attrs, got %v", CallerAttr, attrs)
+	}
+	if _, ok := in[CallerAttr]; ok {
+		t.Error("the tag was written into the caller's own map, which a call site may reuse")
+	}
+	attrs, _ = decode(t, c.lines[1])["attrs"].(map[string]any)
+	if _, ok := attrs[CallerAttr]; ok {
+		t.Errorf("a person's event was tagged: %v", attrs)
+	}
+}
+
+// The tag survives the attribute cap. bound() keeps keys in sorted order and
+// tl.caller sorts early, but the guarantee should not rest on the alphabet:
+// a record at the cap still says whose session it was.
+func TestCallerTagSurvivesTheAttrCap(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	e.SetCallerRule(func(string, string) string { return "muse" })
+	attrs := Attrs{"tl.session": "s"}
+	for i := 0; i < MaxAttrs+5; i++ {
+		attrs[fmt.Sprintf("tl.a%02d", i)] = i
+	}
+	e.Emit("session.killed", "wizard", attrs)
+	got, _ := decode(t, c.lines[0])["attrs"].(map[string]any)
+	if got[CallerAttr] != "muse" {
+		t.Errorf("tl.caller was lost to the cap: %d attrs, caller %v", len(got), got[CallerAttr])
+	}
+}
+
+// The rule only judges events that name a session, and a nil rule tags
+// nothing, which is every service that never installs one.
+func TestCallerRuleIgnoresSessionlessEventsAndNil(t *testing.T) {
+	c := &capture{}
+	e := New("tmux-api", "v1", c)
+	asked := false
+	e.SetCallerRule(func(string, string) string { asked = true; return "muse" })
+	e.Emit("app.loaded", "wizard", Attrs{"tl.client": "web"})
+	if asked {
+		t.Error("the caller rule was consulted for an event naming no session")
+	}
+	e.SetCallerRule(nil)
+	e.Emit("session.killed", "wizard", Attrs{"tl.session": "s"})
+	got, _ := decode(t, c.lines[1])["attrs"].(map[string]any)
+	if _, ok := got[CallerAttr]; ok {
+		t.Errorf("a nil rule tagged an event: %v", got)
 	}
 }

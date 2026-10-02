@@ -61,6 +61,12 @@ type Attrs map[string]any
 // whether the event is recorded at all (see SetDropRule).
 const SessionAttr = "tl.session"
 
+// CallerAttr names the Caller whose session an event happened in (CONTEXT.md:
+// Caller). Emit adds it from the caller rule (see SetCallerRule) rather than
+// each call site passing it, so no event name changes and no call site has to
+// know which sessions are a Caller's.
+const CallerAttr = "tl.caller"
+
 // Writer is where finished lines go. Production uses the service logger;
 // tests capture instead.
 type Writer interface{ Write(line string) }
@@ -85,13 +91,14 @@ type Emitter struct {
 	known   func(string) bool
 	limit   func(key string) int
 
-	// mu guards drop and nothing else. Every other field is written once by
-	// New or NewDiag and only read afterwards, so none of them needs a lock;
-	// drop is installed after construction by a service that is already
-	// serving requests from many goroutines, which makes it the one piece of
-	// mutable state here.
-	mu   sync.RWMutex
-	drop func(osUser, session string) bool
+	// mu guards drop and caller and nothing else. Every other field is
+	// written once by New or NewDiag and only read afterwards, so none of them
+	// needs a lock; the two rules are installed after construction by a
+	// service that is already serving requests from many goroutines, which
+	// makes them the only mutable state here.
+	mu     sync.RWMutex
+	drop   func(osUser, session string) bool
+	caller func(osUser, session string) string
 }
 
 // New builds an Emitter for a service. version is the deployed build id, so a
@@ -148,6 +155,43 @@ func (e *Emitter) dropped(osUser string, attrs Attrs) bool {
 	return drop != nil && drop(osUser, session)
 }
 
+// SetCallerRule installs a function the Emitter consults before writing an
+// event carrying a tl.session attribute. A non-empty answer is the Caller that
+// made the session, and the event is written with tl.caller set to it. A nil
+// rule tags nothing.
+//
+// This is how a Caller's sessions are told apart in the usage record
+// (CONTEXT.md: Origin). They used to be dropped with the System sessions; they
+// are recorded now, and the tag is what keeps a query over a person's usage
+// from counting a program's turns. Supplied by the service for the reason
+// SetDropRule is: this package knows nothing about tmux.
+//
+// A call site that already set tl.caller keeps its own value.
+func (e *Emitter) SetCallerRule(caller func(osUser, session string) string) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.caller = caller
+}
+
+// callerOf asks the installed caller rule about one event, "" when there is no
+// rule, no session, or no Caller.
+func (e *Emitter) callerOf(osUser string, attrs Attrs) string {
+	session, ok := attrs[SessionAttr].(string)
+	if !ok {
+		return ""
+	}
+	e.mu.RLock()
+	caller := e.caller
+	e.mu.RUnlock()
+	if caller == nil {
+		return ""
+	}
+	return caller(osUser, session)
+}
+
 // Emit records one event for one OS user. It is deliberately forgiving: a nil
 // Emitter, an unknown event name, or a hostile attribute value is dropped or
 // neutered rather than failing the request that triggered it — telemetry is
@@ -160,6 +204,14 @@ func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 	// rather than one truncated at MaxValueLen.
 	if e.dropped(osUser, attrs) {
 		return
+	}
+	bounded := e.bound(attrs)
+	// After bound(), so the tag cannot be the key the cap drops: a record at
+	// MaxAttrs still says whose session it was, at the cost of one key over.
+	if name := e.callerOf(osUser, attrs); name != "" {
+		if _, set := bounded[CallerAttr]; !set {
+			bounded[CallerAttr] = name
+		}
 	}
 	rec := struct {
 		TS      string `json:"ts"`
@@ -174,7 +226,7 @@ func (e *Emitter) Emit(name, osUser string, attrs Attrs) {
 		Service: e.service,
 		Version: e.version,
 		User:    osUser,
-		Attrs:   e.bound(attrs),
+		Attrs:   bounded,
 	}
 	// Marshal (not Encode): one line, every control character escaped.
 	payload, err := json.Marshal(rec)
