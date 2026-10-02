@@ -25,8 +25,9 @@
 # tmux-api's kill path, so they are never tombstoned and the crash recovery
 # this whole feature exists for is untouched.
 #
-# Invoked ONLY by the tmux-api service (running as wizard) through the
-# passwordless grant in /etc/sudoers.d/ttyd-users:
+# Invoked by the tmux-api service, and by agent-api when a Caller deletes its
+# own conversation (DELETE /v1/conversations/<id>), both running as wizard,
+# through the passwordless grant in /etc/sudoers.d/ttyd-users:
 #     wizard ALL=(root) NOPASSWD: /usr/local/bin/tmux-persist-forget
 #
 # Why root: the tombstone file is root-owned 0600.

@@ -2,12 +2,17 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"os"
+	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"terminal-lobby/sessionio"
 )
 
 // A stamped transcript whose file is not there is an ordinary state, not a
@@ -158,5 +163,57 @@ func TestParseLiveSessionsReadsTheSuspendMark(t *testing.T) {
 	// The columns ahead of it still land where they did.
 	if got[0].Owner != "muse" || got[0].BornAs != "napping" || got[0].State != "done" {
 		t.Errorf("the mark shifted the row: %+v", got[0])
+	}
+}
+
+// The production Kill against an ISOLATED tmux server (its own -L socket, so
+// it cannot reach a real session): the session goes, and the tombstone is
+// written for the name it has now and the name it was born with, because a
+// snapshot taken before tmux-api renamed it recorded the first.
+func TestTmuxSessionsKillTombstonesBothNames(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	u, err := user.Current()
+	if err != nil {
+		t.Skip("no current user")
+	}
+	sock := fmt.Sprintf("agent-api-test-%d", os.Getpid())
+	tmux := func(args ...string) error {
+		return exec.Command("tmux", append([]string{"-L", sock}, args...)...).Run()
+	}
+	t.Cleanup(func() {
+		tmux("kill-server")
+		// tmux leaves the socket file behind; one per run adds up.
+		dir := os.Getenv("TMUX_TMPDIR")
+		if dir == "" {
+			dir = "/tmp"
+		}
+		os.Remove(filepath.Join(dir, fmt.Sprintf("tmux-%d", os.Getuid()), sock))
+	})
+	if err := tmux("new-session", "-d", "-s", "pong-response", "sh"); err != nil {
+		t.Fatalf("new-session: %v", err)
+	}
+	if err := tmux("set-option", "-t", "=pong-response:", sessionio.OptionBornAs, "agent-01"); err != nil {
+		t.Fatalf("set-option: %v", err)
+	}
+
+	var forgot []string
+	ts := &tmuxSessions{
+		in:     sessionio.NewInjectorOnSocket(u.Username, sock),
+		forget: func(osUser, name string) error { forgot = append(forgot, osUser+"/"+name); return nil },
+	}
+	if err := ts.Kill(u.Username, "pong-response"); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+	if tmux("has-session", "-t", "=pong-response") == nil {
+		t.Fatal("the session is still there")
+	}
+	want := []string{u.Username + "/pong-response", u.Username + "/agent-01"}
+	if strings.Join(forgot, ",") != strings.Join(want, ",") {
+		t.Fatalf("forgot %v, want %v", forgot, want)
+	}
+	if err := ts.Kill(u.Username, "pong-response"); !errors.Is(err, sessionio.ErrSessionGone) {
+		t.Fatalf("a second kill answered %v, want ErrSessionGone", err)
 	}
 }

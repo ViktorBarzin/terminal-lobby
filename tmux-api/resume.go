@@ -11,13 +11,17 @@ package main
 // The pane's frozen scrollback is left exactly as it was until respawn-pane
 // replaces it. A suspended session shows the last thing it said, which is what
 // a person scrolling the sidebar wants to see.
+//
+// The sequence itself, every check and its order, is sessionio.Resume, shared
+// with agent-api, which resumes a Caller's conversation when the Caller sends
+// it a message. What stays here is the HTTP answer, the cache, the event, and
+// the seams this package's tests swap.
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 
 	"terminal-lobby/sessionio"
@@ -58,35 +62,32 @@ type suspendedFacts struct {
 // session could not be read at all, which is a 404; a session that reads fine
 // with no timestamp is live, which is a 409.
 var readSuspended = func(osUser, name string) (suspendedFacts, bool) {
-	out, err := tmuxCmd(osUser, "display-message", "-p", "-t", exactPane(name),
-		"#{session_name}"+listSep+"#{pane_id}"+listSep+
-			"#{"+suspendedOption+"}"+listSep+
-			"#{"+suspendStateOption+"}"+listSep+
-			"#{pane_dead}"+listSep+
-			"#{pane_pid}"+listSep+
-			"#{"+sessionio.OptionTranscript+"}"+listSep+
-			// Last, and addressed as last: the resume command is the one field
-			// here that can hold anything, so it gets whatever separators are
-			// left over rather than shifting the fields ahead of it.
-			"#{"+resumeCmdOption+"}").Output()
-	if err != nil {
+	f, ok := apiInjector().ReadSuspended(osUser, name)
+	if !ok {
 		return suspendedFacts{}, false
 	}
-	parts := strings.SplitN(strings.TrimRight(string(out), "\n"), listSep, 8)
-	if len(parts) != 8 || parts[0] != name {
-		return suspendedFacts{}, false
-	}
-	at, _ := strconv.ParseInt(parts[2], 10, 64)
-	pid, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
 	return suspendedFacts{
-		paneID:      parts[1],
-		suspendedAt: at,
-		savedState:  parts[3],
-		paneDead:    strings.TrimSpace(parts[4]) == "1",
-		panePID:     pid,
-		transcript:  parts[6],
-		resumeCmd:   parts[7],
+		paneID:      f.PaneID,
+		panePID:     f.PanePID,
+		suspendedAt: f.SuspendedAt,
+		resumeCmd:   f.ResumeCmd,
+		savedState:  f.SavedState,
+		transcript:  f.Transcript,
+		paneDead:    f.PaneDead,
 	}, true
+}
+
+// shared is the same facts in sessionio's spelling, for the shared sequence.
+func (f suspendedFacts) shared() sessionio.SuspendedFacts {
+	return sessionio.SuspendedFacts{
+		PaneID:      f.paneID,
+		PanePID:     f.panePID,
+		SuspendedAt: f.suspendedAt,
+		ResumeCmd:   f.resumeCmd,
+		SavedState:  f.savedState,
+		Transcript:  f.transcript,
+		PaneDead:    f.paneDead,
+	}
 }
 
 // claudeUnderPane answers whether a claude is running under a pane, from
@@ -114,9 +115,7 @@ var claudeUnderPane = func(pid int) (bool, bool) {
 // single string would be re-split by tmux's own parser, whose rules are not the
 // shell's (suspend.go, fact 4).
 var respawnPane = func(osUser, paneID string, argv []string) (string, error) {
-	args := append([]string{"respawn-pane", "-k", "-t", paneID}, argv...)
-	out, err := tmuxCmd(osUser, args...).CombinedOutput()
-	return string(out), err
+	return apiInjector().RespawnPane(osUser, paneID, argv)
 }
 
 // clearSuspendMarks puts the session back the way it was. Best-effort on
@@ -125,34 +124,36 @@ var respawnPane = func(osUser, paneID string, argv []string) (string, error) {
 // "already suspended" check skips and an operator can clear by hand. Failing
 // the request here would tell the lobby the resume did not work when it did.
 var clearSuspendMarks = func(osUser, name, savedState string) {
-	unset := func(option string) {
-		if out, err := tmuxCmd(osUser, "set-option", "-u", "-t", exactPane(name), option).CombinedOutput(); err != nil {
-			log.Printf("resume: unsetting %s on %s/%s: %v: %s", option, osUser, name, err, strings.TrimSpace(string(out)))
-		}
+	// remain-on-exit goes back off first, then the marks, then the state the
+	// session had when it was suspended (sessionio.ClearSuspendMarks has the
+	// order and why). Worth being honest about what restoring the state buys:
+	// a resumed pane has no claude under it until the boot finishes (1.7-3.1
+	// s), and clearDeadStates blanks the state of a session in that
+	// condition, so a poll landing inside the window still shows nothing.
+	// Claude's own SessionStart hook re-stamps a few seconds later, which is
+	// the answer that lasts.
+	if err := apiInjector().ClearSuspendMarks(osUser, name, savedState); err != nil {
+		log.Printf("resume: clearing the suspend marks on %s/%s: %v", osUser, name, err)
 	}
-	// remain-on-exit goes back off first. It was set for one kill; leaving it
-	// on would keep the pane as a corpse the next time claude exits normally,
-	// and the session would never close again.
-	if out, err := tmuxCmd(osUser, "set-option", "-u", "-t", exactPane(name), "remain-on-exit").CombinedOutput(); err != nil {
-		log.Printf("resume: unsetting remain-on-exit on %s/%s: %v: %s", osUser, name, err, strings.TrimSpace(string(out)))
+}
+
+// stampResumeDrive moves both last-used clocks to now. An explicit resume IS a
+// drive, and without saying so the reaper undoes it within five minutes:
+// @last_drive still holds the stamp that made the session a candidate, and
+// stampDrives (lastdrive.go) only moves it for a session with a read-write
+// client attached. The lobby's own click happens to attach one a moment later,
+// so this covers the gap before that lands and every caller that never
+// attaches at all. A session that reports its own activity is timed by
+// sessionio.OptionLastActivity instead, and a resumed claude reports none
+// until its first prompt, so the resume writes that stamp too.
+//
+// Through apiInjector rather than setDriveOption for the reason apiInjector
+// exists (suspend.go): the package-level gridInjector was built at init and
+// ignores the binary seams, so a write through it never reaches a test's tmux.
+var stampResumeDrive = func(osUser, name string, at int64) {
+	if err := apiInjector().StampDriven(osUser, name, at); err != nil {
+		log.Printf("resume: stamping the drive clocks on %s/%s: %v", osUser, name, err)
 	}
-	unset(suspendedOption)
-	unset(resumeCmdOption)
-	// The state the session had when it was suspended, back where it was, so
-	// the sidebar dot does not blink through empty on the way back.
-	//
-	// Worth being honest about what this buys: a resumed pane has no claude
-	// under it until the boot finishes (1.7-3.1 s), and clearDeadStates blanks
-	// the state of a session in that condition, so a poll landing inside the
-	// window still shows nothing. Claude's own SessionStart hook re-stamps a
-	// few seconds later, which is the answer that lasts. This covers the gap
-	// before the first poll and no more.
-	if savedState != "" && knownStates[savedState] && savedState != stateSuspended {
-		if err := apiInjector().SetOption(osUser, name, sessionStateOption, savedState); err != nil {
-			log.Printf("resume: restoring %s on %s/%s: %v", sessionStateOption, osUser, name, err)
-		}
-	}
-	unset(suspendStateOption)
 }
 
 // notSuspended is the 409 body, written from the two places that decide a
@@ -180,121 +181,62 @@ type resumeResponse struct {
 //	404                          no such session
 //	409 {"error":"not suspended"} it is live
 func resumeSession(w http.ResponseWriter, osUser, name string) {
-	facts, ok := readSuspended(osUser, name)
-	if !ok {
+	// Built per call from the package seams, so a test that swaps one is the
+	// one this request runs against.
+	ops := sessionio.ResumeOps{
+		Read: func(u, n string) (sessionio.SuspendedFacts, bool) {
+			f, ok := readSuspended(u, n)
+			return f.shared(), ok
+		},
+		ClaudeUnderPane: func(pid int) (bool, bool) { return claudeUnderPane(pid) },
+		HasConversation: func(u, path string) bool { return transcriptHasAConversation(u, path) },
+		Respawn:         func(u, pane string, argv []string) (string, error) { return respawnPane(u, pane, argv) },
+		ClearMarks:      func(u, n, saved string) { clearSuspendMarks(u, n, saved) },
+		StampDriven:     func(u, n string, at int64) { stampResumeDrive(u, n, at) },
+	}
+	res, err := sessionio.Resume(ops, osUser, name)
+	switch {
+	case err == nil:
+	case errors.Is(err, sessionio.ErrSessionGone):
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
-	}
-	if facts.suspendedAt <= 0 {
+	case errors.Is(err, sessionio.ErrNotSuspended):
+		if res.StaleMarkCleared {
+			log.Printf("resume: %s/%s is marked suspended but a claude is running under its pane — cleared the mark instead of respawning", osUser, name)
+			sessionsCacheInstance.invalidate(osUser)
+		}
 		notSuspended(w)
 		return
-	}
-	if !facts.paneDead {
-		// A live pane under a suspended mark is one of two different things,
-		// and respawning the wrong one destroys a conversation.
-		//
-		// A session restored by tmux-persist runs `…; claude …; exec bash -l`,
-		// so the suspend's kill leaves the pane ALIVE holding a bash — measured
-		// on tmux 3.4, 2026-09-19, and two of this box's sessions have that
-		// shape today. That mark is good, that bash holds nothing, and
-		// `respawn-pane -k` is exactly what should replace it.
-		//
-		// A CLAUDE under that live pane is the other thing: a mark that no
-		// longer describes the session, and respawning over it would kill the
-		// conversation somebody is in the middle of. So the claude is what is
-		// asked about, not the pane.
-		busy, ok := claudeUnderPane(facts.panePID)
-		if !ok {
-			// Nothing is cleared and nothing is respawned: an unreadable /proc
-			// is not evidence either way, and clearing the marks would take the
-			// resume command with them and leave the session unresumable.
-			log.Printf("resume: %s/%s has a live pane and /proc would not say whether a claude is under it", osUser, name)
-			http.Error(w, "cannot tell whether the pane is busy", http.StatusServiceUnavailable)
-			return
-		}
-		if busy {
-			log.Printf("resume: %s/%s is marked suspended but a claude is running under its pane — clearing the mark instead of respawning", osUser, name)
-			clearSuspendMarks(osUser, name, facts.savedState)
-			sessionsCacheInstance.invalidate(osUser)
-			notSuspended(w)
-			return
-		}
-	}
-	argv, ok := shellSplitArgv(facts.resumeCmd)
-	if !ok || len(argv) == 0 {
+	case errors.Is(err, sessionio.ErrPaneUnknown):
+		log.Printf("resume: %s/%s has a live pane and /proc would not say whether a claude is under it", osUser, name)
+		http.Error(w, "cannot tell whether the pane is busy", http.StatusServiceUnavailable)
+		return
+	case errors.Is(err, sessionio.ErrResumeCmdUnreadable):
 		// Only this service writes the option, and it writes it through
 		// shellQuoteArgv — so reaching here means the mark was edited by hand
-		// or truncated. Respawning a half-read command would run something
-		// nobody wrote, so the session stays suspended.
-		log.Printf("resume: %s/%s carries a %s this cannot read: %q", osUser, name, resumeCmdOption, facts.resumeCmd)
+		// or truncated. The session stays suspended.
+		log.Printf("resume: %s/%s carries a %s this cannot read", osUser, name, resumeCmdOption)
 		http.Error(w, "resume command unreadable", http.StatusInternalServerError)
 		return
-	}
-	if facts.paneID == "" {
-		http.Error(w, "session not found", http.StatusNotFound)
-		return
-	}
-	// The conversation still has to be on disk. `respawn-pane -k` replaces the
-	// frozen pane with the resume command and there is no way back from it: if
-	// claude then finds nothing to resume it exits, the shell's -c list ends,
-	// the pane exits, and the session goes with it, because the marks are
-	// cleared — remain-on-exit with them — as soon as the respawn is issued.
-	// Refusing here keeps the session suspended and clickable instead.
-	if !transcriptHasAConversation(osUser, facts.transcript) {
-		log.Printf("resume: %s/%s has no transcript to resume (%q) — leaving it suspended rather than respawning into a session that would exit",
-			osUser, name, facts.transcript)
+	case errors.Is(err, sessionio.ErrNothingToResume):
+		log.Printf("resume: %s/%s has no transcript to resume — leaving it suspended rather than respawning into a session that would exit",
+			osUser, name)
 		http.Error(w, "no transcript to resume", http.StatusInternalServerError)
 		return
-	}
-
-	started := time.Now()
-	if out, err := respawnPane(osUser, facts.paneID, argv); err != nil {
-		msg := strings.TrimSpace(out)
-		if tmuxTargetMissing(msg) {
-			http.Error(w, "session not found", http.StatusNotFound)
-			return
-		}
-		log.Printf("resume: respawn-pane %s for %s/%s: %v: %s", facts.paneID, osUser, name, err, msg)
+	default:
+		log.Printf("resume: %s/%s: %v", osUser, name, err)
 		http.Error(w, "respawn-pane failed", http.StatusInternalServerError)
 		return
-	}
-	resumeMs := time.Since(started).Milliseconds()
-
-	// Only after the respawn landed. A failed resume leaves every mark where
-	// it was, so the session still reads as suspended and the click can be
-	// tried again.
-	clearSuspendMarks(osUser, name, facts.savedState)
-	// An explicit resume IS a drive, and without saying so the reaper undoes it
-	// within five minutes: @last_drive still holds the stamp that made the
-	// session a candidate, and stampDrives (lastdrive.go) only moves it for a
-	// session with a read-write client attached. The lobby's own click happens
-	// to attach one a moment later, so this covers the gap before that lands
-	// and every caller that never attaches at all — which makes this the
-	// second writer of the option, after stampDrives.
-	//
-	// Through apiInjector rather than setDriveOption for the reason apiInjector
-	// exists (suspend.go): the package-level gridInjector was built at init and
-	// ignores the binary seams, so a write through it never reaches a test's
-	// tmux.
-	//
-	// A session that reports its own activity is timed by
-	// sessionio.OptionLastActivity instead, and a resumed claude reports none
-	// until its first prompt, so the resume writes that stamp too.
-	now := strconv.FormatInt(time.Now().Unix(), 10)
-	for _, opt := range []string{lastDriveOption, sessionio.OptionLastActivity} {
-		if err := apiInjector().SetOption(osUser, name, opt, now); err != nil {
-			log.Printf("resume: stamping %s on %s/%s: %v", opt, osUser, name, err)
-		}
 	}
 	sessionsCacheInstance.invalidate(osUser)
 
 	events.Emit("session.resumed", osUser, telemetry.Attrs{
 		"tl.session":          name,
-		"tl.suspendedSeconds": time.Now().Unix() - facts.suspendedAt,
+		"tl.suspendedSeconds": time.Now().Unix() - res.SuspendedAt,
 		// How long the respawn call itself took, which is the part this
 		// service owns. Claude's own boot happens after the pane exists and is
 		// measured by the client, not here.
-		"tl.resumeMs": resumeMs,
+		"tl.resumeMs": res.RespawnMs,
 		"tl.client":   "api",
 	})
 	w.Header().Set("Content-Type", "application/json")

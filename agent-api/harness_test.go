@@ -30,6 +30,10 @@ const (
 	testOtherToken = "Z9CkTmE1bXyU4wV6nR0pS5jH8aL2dG7f"
 	testActor      = "muse"
 	testOSUser     = "wizard"
+
+	// The Caller that hands out Delegations, as the homelab CLI will.
+	testCreatorToken = "H7nQ2wErT5yU8iOpAsDfGhJkL3zXcVbN"
+	testCreator      = "homelab"
 )
 
 type harness struct {
@@ -39,6 +43,8 @@ type harness struct {
 	sessions *fakeSessions
 	trace    *bytes.Buffer
 	homeBase string
+	// statePath is the delegation store's file, so a test can reopen it.
+	statePath string
 
 	// clockMu guards clock. The runner reads the clock from its own
 	// goroutines while a request writes it, which the race detector is right
@@ -64,7 +70,8 @@ func newHarness(t *testing.T) *harness {
 	tokens := filepath.Join(t.TempDir(), "tokens")
 	body := "# the caller that is under test\n" +
 		testActor + "  " + authuser.BearerDigest(testToken) + "  " + testOSUser + "\n" +
-		"scratch  " + authuser.BearerDigest(testOtherToken) + "  " + testOSUser + "\n"
+		"scratch  " + authuser.BearerDigest(testOtherToken) + "  " + testOSUser + "\n" +
+		testCreator + "  " + authuser.BearerDigest(testCreatorToken) + "  " + testOSUser + "\n"
 	if err := os.WriteFile(tokens, []byte(body), 0o640); err != nil {
 		t.Fatalf("write tokens: %v", err)
 	}
@@ -114,8 +121,22 @@ func newHarness(t *testing.T) *harness {
 		WaitUnit: 10 * time.Millisecond,
 	}
 	h.srv.Runner = NewRunner(h.srv.runTurn)
+	h.statePath = filepath.Join(t.TempDir(), "state", delegationsFile)
+	store, err := OpenDelegationStore(h.statePath, h.now)
+	if err != nil {
+		t.Fatalf("open the delegation store: %v", err)
+	}
+	h.srv.Delegations = store
+	h.srv.DelegationCreators = map[string]bool{testCreator: true}
 	h.handler = h.srv.Routes()
 	return h
+}
+
+// advance moves the harness clock forward, for expiry.
+func (h *harness) advance(d time.Duration) {
+	h.clockMu.Lock()
+	defer h.clockMu.Unlock()
+	h.clock = h.clock.Add(d)
 }
 
 // now advances a millisecond per call, so updated_at moves without any sleep.

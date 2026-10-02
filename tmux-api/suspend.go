@@ -78,6 +78,17 @@ const (
 	// agent-api conversation whatever its age.
 	suspendSystemIdleAfter = 4 * time.Hour
 
+	// defaultCallerIdleAfter is the fuse for a Caller's conversation (one
+	// agent-api opened, carrying @agent_owner), timed by the Caller's own turns
+	// rather than either human clock. Longer than the system fuse because a
+	// Caller does come back, on its own schedule; short enough that a
+	// conversation it has finished with stops holding memory on a box whose
+	// disk was around 90% full when this was decided (design doc
+	// 2026-10-02-muse-homelab-integration). agent-api resumes one on the
+	// Caller's next message, so the cost of being early is a cold start of a
+	// few seconds.
+	defaultCallerIdleAfter = 24 * time.Hour
+
 	// suspendSweepInterval is how often the sweep runs. The thresholds are in
 	// hours, so five minutes is the granularity of "a bit over 72 hours" and
 	// costs one session list per user per tick — the same call the sessions
@@ -106,30 +117,126 @@ const (
 	// State from it. That is why it is stamped LAST of the three.
 	//
 	// Named through sessionio, the way sessionStateOption is (resume.go): this
-	// service writes it, and agent-api and session-events both refuse to write
-	// a session wearing it, so one spelling has to serve all three.
+	// service writes it, agent-api resumes a session wearing it before a
+	// turn, and session-events refuses to inject into one, so one spelling has
+	// to serve all three.
 	suspendedOption = sessionio.OptionSuspended
 	// resumeCmdOption is the argv respawn-pane will run, shell-quoted by
 	// shellQuoteArgv and read back by shellSplitArgv. Quoted rather than stored
 	// as a list because an option is one string and an operator reads this one.
-	resumeCmdOption = "@tl_resume_cmd"
+	resumeCmdOption = sessionio.OptionResumeCmd
 	// suspendStateOption is the @claude_state the session had when it was
 	// suspended, put back on resume. Without it a resumed session would come
 	// back stateless until its next hook fired, which for a conversation
 	// waiting on an answer could be never.
-	suspendStateOption = "@tl_suspend_state"
+	suspendStateOption = sessionio.OptionSuspendState
 
-	// agentOwnerOption is agent-api's stamp, and the one option here this
-	// service only ever READS. It names the credential that opened a
-	// conversation over HTTP (agent-api/sessions.go), and a session wearing it
-	// is never suspended — see declineNow.
+	// agentOwnerOption is agent-api's stamp, which this service only ever
+	// READS. It names the Caller that opened a conversation over HTTP
+	// (agent-api/sessions.go), and a session wearing it is timed by the
+	// Caller's turns and the Caller fuse — see sessionsToSuspend.
 	//
 	// Spelled as a literal for the reason originOption is (origin.go): the
 	// writer is a different Go module, so a shared constant would mean one of
 	// them importing the other for one string. TestAgentOwnerOptionMatchesAgentAPI
 	// is what keeps the two spellings together.
 	agentOwnerOption = "@agent_owner"
+
+	// agentLastTurnOption is agent-api's other stamp: the unix second it last
+	// ran a turn in the conversation (agent-api/sessions.go OptionLastTurn).
+	// It is the Caller session's clock. @last_drive does not move for a
+	// session driven over HTTP, because no tmux client is ever attached, and
+	// @last_activity depends on the Claude hook being installed for that
+	// user; this one is written by the service that runs the turn.
+	agentLastTurnOption = "@agent_last_turn"
 )
+
+// callerIdleAfter is the Caller fuse this process runs with: 24 hours, or
+// TL_CALLER_SUSPEND_AFTER (a Go duration) when that is set, which is how a
+// live test on the box watches a suspend happen in minutes rather than a day.
+// Read once at startup (runSuspendReaper); a var so the unit tests can rely on
+// the default.
+var callerIdleAfter = defaultCallerIdleAfter
+
+// callerIdleAfterFrom reads the override. Anything that is not a positive
+// duration keeps the default and says so, because a typo here should not make
+// every Caller conversation suspend on the next sweep.
+func callerIdleAfterFrom(getenv func(string) string) time.Duration {
+	raw := strings.TrimSpace(getenv("TL_CALLER_SUSPEND_AFTER"))
+	if raw == "" {
+		return defaultCallerIdleAfter
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Printf("suspend: TL_CALLER_SUSPEND_AFTER=%q is not a positive duration; keeping %s", raw, defaultCallerIdleAfter)
+		return defaultCallerIdleAfter
+	}
+	return d
+}
+
+// callerClock is what the sweep reads about one session beyond the list:
+// whose Caller conversation it is, and when that Caller last ran a turn.
+type callerClock struct {
+	owner    string
+	lastTurn int64
+}
+
+// parseCallerClocks reads readCallerClocks' format. Only rows with an owner
+// are kept: everything else is a person's or a tool's session, and leaving it
+// out of the map is what keeps their behaviour exactly as it was.
+func parseCallerClocks(out []byte) map[string]callerClock {
+	m := map[string]callerClock{}
+	for _, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		// The owner is last and gets every leftover separator: agent-api
+		// writes the credential's name, and nothing here should shift because
+		// of what a name contains.
+		parts := strings.SplitN(line, listSep, 3)
+		if len(parts) != 3 || parts[0] == "" {
+			continue
+		}
+		owner := strings.TrimSpace(parts[2])
+		if owner == "" {
+			continue
+		}
+		at, _ := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+		m[parts[0]] = callerClock{owner: owner, lastTurn: at}
+	}
+	return m
+}
+
+// readCallerClocks lists one user's sessions' Caller stamps: one fork per user
+// per sweep, beside the list the sweep already builds, rather than two more
+// columns on the session list every poll pays for. A var for the tests.
+var readCallerClocks = func(osUser string) map[string]callerClock {
+	out, err := tmuxCmd(osUser, "list-sessions", "-F",
+		"#{session_name}"+listSep+"#{"+agentLastTurnOption+"}"+listSep+"#{"+agentOwnerOption+"}").Output()
+	if err != nil {
+		return nil
+	}
+	return parseCallerClocks(out)
+}
+
+// annotateCallers copies the Caller stamps onto the sessions they belong to.
+func annotateCallers(sessions []Session, clocks map[string]callerClock) {
+	for i := range sessions {
+		if c, ok := clocks[sessions[i].Name]; ok {
+			sessions[i].AgentOwner = c.owner
+			sessions[i].AgentLastTurn = c.lastTurn
+		}
+	}
+}
+
+// idleSince is the clock a session's Idle age is measured from. A person's or
+// a tool's session: LastDrive, as it always was. A Caller's: the later of its
+// last turn and LastDrive, so a person who opens a Caller's conversation in
+// the lobby and drives it keeps it awake too, and a conversation that predates
+// the turn stamp is timed by the clock it already had.
+func idleSince(s Session) int64 {
+	if s.AgentOwner != "" && s.AgentLastTurn > s.LastDrive {
+		return s.AgentLastTurn
+	}
+	return s.LastDrive
+}
 
 // sessionsToSuspend picks the names to suspend out of the list tmux-api has
 // already built. Pure: every tmux call lives in suspendSession.
@@ -153,6 +260,11 @@ const (
 //     a list is built it should be non-zero; treating zero as "do not suspend"
 //     fails safe rather than reading an unstamped session as infinitely idle.
 //
+// A CALLER'S CONVERSATION (AgentOwner set) is under every exclusion above, and
+// differs in its clock and its fuse: idleSince and callerIdleAfter, in place
+// of LastDrive and the human or system fuse. agent-api resumes one on the
+// Caller's next message, which is what makes suspending it safe.
+//
 // A stamp in the FUTURE (a clock that moved) reads as not yet idle for the same
 // reason: the arithmetic says "driven recently", which is the harmless answer.
 func sessionsToSuspend(sessions []Session, now int64) []string {
@@ -173,14 +285,18 @@ func sessionsToSuspend(sessions []Session, now int64) []string {
 		if reservedName(s.Name) {
 			continue
 		}
-		if s.LastDrive <= 0 {
+		since := idleSince(s)
+		if since <= 0 {
 			continue
 		}
 		after := suspendIdleAfter
-		if !isUserSession(s) {
+		switch {
+		case s.AgentOwner != "":
+			after = callerIdleAfter
+		case !isUserSession(s):
 			after = suspendSystemIdleAfter
 		}
-		if now-s.LastDrive < int64(after/time.Second) {
+		if now-since < int64(after/time.Second) {
 			continue
 		}
 		out = append(out, s.Name)
@@ -380,67 +496,11 @@ func shellQuoteArgv(argv []string) string {
 	return strings.Join(parts, " ")
 }
 
-// shellSplitArgv is shellQuoteArgv's inverse. ok=false on anything it cannot
-// read — an unterminated quote, a trailing backslash — because a half-parsed
-// command is worse than no resume at all: it would respawn the pane running
-// something nobody wrote.
-func shellSplitArgv(s string) ([]string, bool) {
-	out := []string{}
-	var cur strings.Builder
-	inWord := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		switch {
-		case isSpaceByte(c):
-			if inWord {
-				out = append(out, cur.String())
-				cur.Reset()
-				inWord = false
-			}
-		case c == '\'':
-			inWord = true
-			j := strings.IndexByte(s[i+1:], '\'')
-			if j < 0 {
-				return nil, false
-			}
-			cur.WriteString(s[i+1 : i+1+j])
-			i += j + 1
-		case c == '"':
-			inWord = true
-			i++
-			closed := false
-			for ; i < len(s); i++ {
-				if s[i] == '\\' && i+1 < len(s) {
-					i++
-					cur.WriteByte(s[i])
-					continue
-				}
-				if s[i] == '"' {
-					closed = true
-					break
-				}
-				cur.WriteByte(s[i])
-			}
-			if !closed {
-				return nil, false
-			}
-		case c == '\\':
-			if i+1 >= len(s) {
-				return nil, false
-			}
-			i++
-			inWord = true
-			cur.WriteByte(s[i])
-		default:
-			inWord = true
-			cur.WriteByte(c)
-		}
-	}
-	if inWord {
-		out = append(out, cur.String())
-	}
-	return out, true
-}
+// shellSplitArgv is shellQuoteArgv's inverse, and lives in sessionio
+// (SplitArgv) because the resume that reads the option back is shared with
+// agent-api. ok=false on anything it cannot read, because a half-parsed
+// command is worse than no resume at all.
+func shellSplitArgv(s string) ([]string, bool) { return sessionio.SplitArgv(s) }
 
 // ---------------------------------------------------------------------------
 // Reading the process tree.
@@ -528,26 +588,10 @@ func procRSSPages(procDir string, pid int) (int64, bool) {
 }
 
 // transcriptProbeCommand is the shell test if-shell runs to answer whether a
-// transcript stamp names a file there is something to resume from.
-//
-// `-f` as well as `-s`, because `test -s` is true for a directory (measured on
-// this box), and a directory is not a conversation. The path is single-quoted
-// with the standard `'\”` escape: it comes from the session's own
-// @claude_transcript stamp, which SessionMap.Get has already confined to that
-// user's projects root, but the directory component is derived from a working
-// directory and a quote in one must not become shell syntax.
-func transcriptProbeCommand(path string) string {
-	q := "'" + strings.ReplaceAll(path, "'", `'\''`) + "'"
-	return "test -f " + q + " && test -s " + q
-}
-
-// transcriptProbeYes and transcriptProbeNo are what if-shell prints back. Two
-// distinct words rather than a truthy test, so a tmux error that produces no
-// output cannot read as yes.
-const (
-	transcriptProbeYes = "tl-transcript-yes"
-	transcriptProbeNo  = "tl-transcript-no"
-)
+// transcript stamp names a file there is something to resume from. It lives in
+// sessionio (TranscriptProbeCommand), which has the quoting rule, because the
+// resume that runs it is shared with agent-api.
+func transcriptProbeCommand(path string) string { return sessionio.TranscriptProbeCommand(path) }
 
 // transcriptHasAConversation answers whether a transcript stamp names a file
 // there is actually something to resume.
@@ -578,17 +622,7 @@ const (
 //
 // A var so tests can answer without a tmux server.
 var transcriptHasAConversation = func(osUser, path string) bool {
-	if path == "" {
-		return false
-	}
-	out, err := tmuxCmd(osUser, "if-shell", transcriptProbeCommand(path),
-		"display-message -p "+transcriptProbeYes,
-		"display-message -p "+transcriptProbeNo).Output()
-	if err != nil {
-		log.Printf("suspend: probing the transcript for %s (%q): %v", osUser, path, err)
-		return false
-	}
-	return strings.TrimSpace(string(out)) == transcriptProbeYes
+	return apiInjector().HasConversation(osUser, path)
 }
 
 // ---------------------------------------------------------------------------
@@ -623,39 +657,37 @@ type paneFacts struct {
 	// agentOwner is @agent_owner: the credential that opened this conversation
 	// over HTTP (agentOwnerOption).
 	agentOwner string
+	// agentLastTurn is @agent_last_turn: when that Caller last ran a turn in
+	// it (agentLastTurnOption).
+	agentLastTurn int64
 }
 
 // declineNow re-applies the policy to what tmux says now, and returns the
 // reason to leave the session alone.
 //
-// Four of the five exclusions sessionsToSuspend applies can change between the
-// list and the kill, and this is where that is caught. The fifth — an agent-api
-// conversation — cannot change, and is checked here rather than there for a
-// different reason: @agent_owner does not ride tmuxListFmt, and the sweep is
-// the only reader that needs it.
+// Every exclusion sessionsToSuspend applies that can change between the list
+// and the kill is caught here: a client attaching, a turn starting, a question
+// appearing, an overlapping pass marking it, and — for a Caller's conversation
+// — the Caller sending it a turn. agent-api stamps @agent_last_turn when it
+// accepts a message, before the turn reaches the pane, so a message that
+// arrives while the pass is walking the list keeps its conversation awake.
 //
-// WHY AN AGENT-API CONVERSATION IS NEVER SUSPENDED. agent-api drives its
-// conversations over HTTP and never attaches a tmux client, so stampDrives
-// (lastdrive.go) never moves their @last_drive: seeded once from Created, it
-// says the session has been idle since the moment it was made, however busy
-// the caller has been. It also stamps the CALLER's name as the origin, so
-// isUserSession is false and it goes on the 4h fuse. Together that suspends a conversation
-// four hours after it was created however recently it was used — and agent-api
-// exposes no resume verb, so its caller could not bring it back. Measured on
-// this box 2026-09-19: `session-ready` (@agent_owner=muse, state done, 34h by
-// @last_drive) would have gone on the first sweep. Until agent-api can resume
-// one, the memory stays held.
-func declineNow(f paneFacts) (string, bool) {
+// A Caller's conversation used to be declined here outright, because agent-api
+// had no way to bring one back and its caller could not reach the lobby's
+// resume. agent-api now resumes it on the next message (sessionio.Resume), so
+// it is suspended like anything else, on its own clock.
+func declineNow(f paneFacts, now time.Time) (string, bool) {
 	switch {
-	case f.agentOwner != "":
-		return fmt.Sprintf("is an agent-api conversation (%s=%q), which has no way back if it is suspended",
-			agentOwnerOption, f.agentOwner), true
 	case f.attached > 0:
 		return "has a client attached", true
 	case f.state == stateRunning || f.state == stateAwaiting:
 		return "reads " + f.state + " now", true
 	case f.suspendedAt > 0:
 		return "is already suspended", true
+	case f.agentOwner != "" && f.agentLastTurn > 0 &&
+		now.Unix()-f.agentLastTurn < int64(callerIdleAfter/time.Second):
+		return fmt.Sprintf("had a turn from %s %s ago", f.agentOwner,
+			time.Duration(now.Unix()-f.agentLastTurn)*time.Second), true
 	}
 	return "", false
 }
@@ -745,7 +777,7 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	// session NOW. The list this candidate came from can be minutes old
 	// (paneFacts has the arithmetic), and nothing below this line is reversible
 	// once the signal is away.
-	if why, no := declineNow(pane); no {
+	if why, no := declineNow(pane, now); no {
 		log.Printf("suspend: %s/%s %s — leaving it alone", osUser, s.Name, why)
 		return false
 	}
@@ -841,13 +873,20 @@ func suspendSession(ops suspendOps, osUser string, s Session, now time.Time) boo
 	}
 
 	// (j) …and what it cost, so the threshold can be argued from numbers.
-	ops.emit("session.suspended", osUser, telemetry.Attrs{
+	idle := now.Unix() - idleSince(s)
+	attrs := telemetry.Attrs{
 		"tl.session":     s.Name,
-		"tl.idleSeconds": now.Unix() - s.LastDrive,
+		"tl.idleSeconds": idle,
 		"tl.rssBytes":    facts.rssBytes,
-	})
+	}
+	if s.AgentOwner != "" {
+		// Which Caller's conversation it was, so a query can tell the 24h
+		// Caller fuse's suspends from the human and system ones.
+		attrs["tl.caller"] = s.AgentOwner
+	}
+	ops.emit("session.suspended", osUser, attrs)
 	log.Printf("suspend: %s/%s idle %s, reclaimed %d MiB",
-		osUser, s.Name, time.Duration(now.Unix()-s.LastDrive)*time.Second, facts.rssBytes>>20)
+		osUser, s.Name, time.Duration(idle)*time.Second, facts.rssBytes>>20)
 	return true
 }
 
@@ -946,6 +985,7 @@ var liveSuspendOps = suspendOps{
 				"#{session_attached}"+listSep+
 				"#{"+suspendedOption+"}"+listSep+
 				"#{@claude_state}"+listSep+
+				"#{"+agentLastTurnOption+"}"+listSep+
 				// Last, and addressed as last: an option a caller chose the
 				// value of gets whatever separators are left over rather than
 				// shifting the fields ahead of it.
@@ -953,24 +993,26 @@ var liveSuspendOps = suspendOps{
 		if err != nil {
 			return paneFacts{}, false
 		}
-		parts := strings.SplitN(strings.TrimRight(string(out), "\n"), listSep, 6)
-		if len(parts) != 6 || parts[0] != name {
+		parts := strings.SplitN(strings.TrimRight(string(out), "\n"), listSep, 7)
+		if len(parts) != 7 || parts[0] != name {
 			return paneFacts{}, false
 		}
 		pid, err := strconv.Atoi(parts[1])
 		if err != nil {
 			return paneFacts{}, false
 		}
-		// Leniently, all three: an unset option renders EMPTY, and an
+		// Leniently, all of them: an unset option renders EMPTY, and an
 		// unreadable count is not evidence of anybody being attached.
 		attached, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
 		suspendedAt, _ := strconv.ParseInt(strings.TrimSpace(parts[3]), 10, 64)
+		lastTurn, _ := strconv.ParseInt(strings.TrimSpace(parts[5]), 10, 64)
 		return paneFacts{
-			pid:         pid,
-			attached:    attached,
-			suspendedAt: suspendedAt,
-			state:       strings.TrimSpace(parts[4]),
-			agentOwner:  strings.TrimSpace(parts[5]),
+			pid:           pid,
+			attached:      attached,
+			suspendedAt:   suspendedAt,
+			state:         strings.TrimSpace(parts[4]),
+			agentLastTurn: lastTurn,
+			agentOwner:    strings.TrimSpace(parts[6]),
 		}, true
 	},
 	paneDead: func(osUser, name string) (bool, bool) {
@@ -1193,6 +1235,7 @@ func repairHalfSuspended(osUser string, now time.Time) bool {
 func sweepSuspendableSessions(now time.Time) {
 	for _, osUser := range mappedOSUsers() {
 		sessions := userSessions(osUser)
+		annotateCallers(sessions, readCallerClocks(osUser))
 		by := map[string]Session{}
 		for _, s := range sessions {
 			by[s.Name] = s
@@ -1254,6 +1297,8 @@ func sweepSuspendableSessions(now time.Time) {
 // the prewarm reaper: with nothing old enough it is one session list per mapped
 // user every five minutes.
 func runSuspendReaper(stop <-chan struct{}) {
+	callerIdleAfter = callerIdleAfterFrom(os.Getenv)
+	log.Printf("suspend: a Caller's conversation is suspended after %s without a turn", callerIdleAfter)
 	t := time.NewTicker(suspendSweepInterval)
 	defer t.Stop()
 	for {

@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"terminal-lobby/sessionio"
 )
@@ -60,11 +61,18 @@ func TestOpenAPIDescribesExactlyTheRealRoutes(t *testing.T) {
 		"GET /v1/conversations":                 true,
 		"POST /v1/conversations":                true,
 		"GET /v1/conversations/{id}":            true,
+		"DELETE /v1/conversations/{id}":         true,
 		"GET /v1/conversations/{id}/transcript": true,
 		"POST /v1/conversations/{id}/messages":  true,
 		"GET /v1/tasks/{id}":                    true,
 		"POST /v1/tasks/{id}/cancel":            true,
 		"POST /v1/tasks/{id}/answer":            true,
+		"GET /v1/delegations":                   true,
+		"POST /v1/delegations":                  true,
+		"GET /v1/delegations/{id}":              true,
+		"POST /v1/delegations/{id}/sent":        true,
+		"POST /v1/delegations/{id}/undelivered": true,
+		"POST /v1/delegations/{id}/result":      true,
 	}
 	// The v1 half of that list must match the auth test's list exactly, so
 	// the two cannot drift apart.
@@ -144,29 +152,34 @@ func TestOpenAPIEveryRequestBodyHasAnExample(t *testing.T) {
 			bodies++
 			where := strings.ToUpper(method) + " " + path
 			content, _ := body["content"].(map[string]any)
-			media, _ := content["application/json"].(map[string]any)
-			if media == nil {
+			if content["application/json"] == nil {
 				t.Errorf("%s request body is not application/json", where)
 				continue
 			}
-			_, single := media["example"]
-			examples, multiple := media["examples"].(map[string]any)
-			if !single && (!multiple || len(examples) == 0) {
-				t.Errorf("%s request body carries no example", where)
-			}
-			for name, ex := range examples {
-				e, _ := ex.(map[string]any)
-				if _, has := e["value"]; !has {
-					t.Errorf("%s example %q has no value", where, name)
+			// Every media type a body takes, so the multipart form of the
+			// send route is held to the same bar as its JSON form.
+			for mediaType, raw := range content {
+				media, _ := raw.(map[string]any)
+				_, single := media["example"]
+				examples, multiple := media["examples"].(map[string]any)
+				if !single && (!multiple || len(examples) == 0) {
+					t.Errorf("%s %s request body carries no example", where, mediaType)
 				}
-				if s, _ := e["summary"].(string); strings.TrimSpace(s) == "" {
-					t.Errorf("%s example %q has no summary saying what it shows", where, name)
+				for name, ex := range examples {
+					e, _ := ex.(map[string]any)
+					if _, has := e["value"]; !has {
+						t.Errorf("%s %s example %q has no value", where, mediaType, name)
+					}
+					if s, _ := e["summary"].(string); strings.TrimSpace(s) == "" {
+						t.Errorf("%s %s example %q has no summary saying what it shows", where, mediaType, name)
+					}
 				}
 			}
 		}
 	}
-	if bodies != 3 {
-		t.Fatalf("%d request bodies found, want 3 (create, send and answer) — the check may be looking in the wrong place", bodies)
+	if bodies != 6 {
+		t.Fatalf("%d request bodies found, want 6 (create, send, answer, and a delegation's create, undelivered "+
+			"and result) — the check may be looking in the wrong place", bodies)
 	}
 }
 
@@ -459,6 +472,7 @@ func TestOpenAPIServerNamesTheRealPort(t *testing.T) {
 // auth test's list carries concrete ids, because it makes real requests.
 func (r request) path2() string {
 	p := strings.ReplaceAll(r.path, "/conversations/c1", "/conversations/{id}")
+	p = strings.ReplaceAll(p, "/delegations/d1", "/delegations/{id}")
 	return strings.ReplaceAll(p, "/tasks/t1", "/tasks/{id}")
 }
 
@@ -515,5 +529,142 @@ func TestOpenAPIWaitAnswerAndKindMatchTheCode(t *testing.T) {
 		if !found {
 			t.Errorf("%s %s does not document ?wait", c.method, c.path)
 		}
+	}
+}
+
+// The send route documents its multipart form: the two field names the
+// handler reads, the 413 it answers past a limit, and the limits themselves in
+// the words a caller reads, matching the numbers the code enforces.
+func TestOpenAPIDocumentsUploads(t *testing.T) {
+	doc := loadOpenAPI(t)
+	paths, _ := doc["paths"].(map[string]any)
+	item, _ := paths["/v1/conversations/{id}/messages"].(map[string]any)
+	op, _ := item["post"].(map[string]any)
+	body, _ := op["requestBody"].(map[string]any)
+	content, _ := body["content"].(map[string]any)
+	media, _ := content["multipart/form-data"].(map[string]any)
+	if media == nil {
+		t.Fatal("the send route does not document multipart/form-data")
+	}
+
+	schema, _ := media["schema"].(map[string]any)
+	if ref, _ := schema["$ref"].(string); ref != "" {
+		components, _ := doc["components"].(map[string]any)
+		schemas, _ := components["schemas"].(map[string]any)
+		schema, _ = schemas[strings.TrimPrefix(ref, "#/components/schemas/")].(map[string]any)
+	}
+	props, _ := schema["properties"].(map[string]any)
+	if text, _ := props["text"].(map[string]any); text["type"] != "string" {
+		t.Errorf("the multipart text field is not documented as a string: %v", props["text"])
+	}
+	file, _ := props["file"].(map[string]any)
+	items, _ := file["items"].(map[string]any)
+	if file["type"] != "array" || items["contentMediaType"] != "application/octet-stream" {
+		t.Errorf("file is not documented as repeatable binary parts: %v", file)
+	}
+	if len(props) != 2 {
+		t.Errorf("the multipart form documents %d fields; the handler reads exactly text and file", len(props))
+	}
+
+	responses, _ := op["responses"].(map[string]any)
+	if responses["413"] == nil {
+		t.Error("the send route does not document 413")
+	}
+
+	desc, _ := op["description"].(string)
+	l := defaultUploadLimits
+	for _, mb := range []int64{l.Image >> 20, l.File >> 20, l.Request >> 20} {
+		if !strings.Contains(desc, fmt.Sprintf("%d MB", mb)) {
+			t.Errorf("the send route's description does not state the %d MB limit", mb)
+		}
+	}
+}
+
+// The Delegation vocabulary and limits in the document are the code's. A
+// generated client that validated against a stale limit would refuse a task
+// the service takes, or send a result the service refuses.
+func TestOpenAPIDelegationsMatchTheCode(t *testing.T) {
+	doc := loadOpenAPI(t)
+	components, _ := doc["components"].(map[string]any)
+	schemas, _ := components["schemas"].(map[string]any)
+	prop := func(schema, field string) map[string]any {
+		s, _ := schemas[schema].(map[string]any)
+		props, _ := s["properties"].(map[string]any)
+		p, _ := props[field].(map[string]any)
+		if p == nil {
+			t.Fatalf("%s.%s is not documented", schema, field)
+		}
+		return p
+	}
+
+	var documented []string
+	for _, v := range prop("Delegation", "status")["enum"].([]any) {
+		documented = append(documented, v.(string))
+	}
+	var code []string
+	for _, s := range delegationStatuses {
+		code = append(code, string(s))
+	}
+	sort.Strings(documented)
+	sort.Strings(code)
+	if strings.Join(documented, ",") != strings.Join(code, ",") {
+		t.Errorf("documented delegation statuses %v, the code's %v", documented, code)
+	}
+
+	for _, c := range []struct {
+		schema, field, key string
+		want               int
+	}{
+		{"CreateDelegationRequest", "task", "maxLength", maxDelegationTask},
+		{"CreateDelegationRequest", "task", "minLength", 1},
+		{"CreateDelegationRequest", "from_session", "maxLength", maxFromSession},
+		{"CreateDelegationRequest", "expires_in_s", "maximum", maxDelegationExpirySeconds},
+		{"CreateDelegationRequest", "expires_in_s", "minimum", 1},
+		{"CreateDelegationRequest", "expires_in_s", "default", int(defaultDelegationExpiry / time.Second)},
+		{"DelegationResultRequest", "result", "maxLength", maxDelegationResult},
+		{"UndeliveredRequest", "reason", "maxLength", maxDelegationReason},
+	} {
+		if got := prop(c.schema, c.field)[c.key]; got != float64(c.want) {
+			t.Errorf("%s.%s %s = %v, the code's %d", c.schema, c.field, c.key, got, c.want)
+		}
+	}
+	var results []string
+	for _, v := range prop("DelegationResultRequest", "status")["enum"].([]any) {
+		results = append(results, v.(string))
+	}
+	if strings.Join(results, ",") != "done,failed" {
+		t.Errorf("result statuses %v, want done and failed", results)
+	}
+
+	// The worked example of a message is the one the code renders.
+	d, _ := schemas["Delegation"].(map[string]any)
+	ex, _ := d["example"].(map[string]any)
+	expires, err := time.Parse(time.RFC3339, ex["expires_at"].(string))
+	if err != nil {
+		t.Fatalf("example expires_at: %v", err)
+	}
+	want := renderDelegationMessage(ex["delegation_id"].(string), ex["from_session"].(string), expires,
+		ex["task"].(string), defaultPublicURL)
+	if ex["message"] != want {
+		t.Errorf("the example message is not what the code renders:\n%v\nwant:\n%s", ex["message"], want)
+	}
+
+	// The read and the list document their queries, and the create its 429.
+	paths, _ := doc["paths"].(map[string]any)
+	get, _ := paths["/v1/delegations/{id}"].(map[string]any)["get"].(map[string]any)
+	found := false
+	for _, p := range get["parameters"].([]any) {
+		found = found || p.(map[string]any)["$ref"] == "#/components/parameters/Wait"
+	}
+	if !found {
+		t.Error("GET /v1/delegations/{id} does not document ?wait")
+	}
+	post, _ := paths["/v1/delegations"].(map[string]any)["post"].(map[string]any)
+	if r, _ := post["responses"].(map[string]any); r["429"] == nil || r["403"] == nil || r["201"] == nil {
+		t.Errorf("POST /v1/delegations responses %v lack 201, 403 or 429", r)
+	}
+	result, _ := paths["/v1/delegations/{id}/result"].(map[string]any)["post"].(map[string]any)
+	if r, _ := result["responses"].(map[string]any); r["410"] == nil || r["409"] == nil || r["403"] == nil {
+		t.Errorf("POST .../result responses lack 403, 409 or 410")
 	}
 }

@@ -232,3 +232,33 @@ func TestLogsDirectoryIsWhereTheTraceIsWritten(t *testing.T) {
 		t.Errorf("the unit creates %s and the service writes to %s", got, want)
 	}
 }
+
+// Delegations are kept in a file under the unit's StateDirectory=, which
+// systemd creates as User= and hands over as $STATE_DIRECTORY. Without it the
+// service account cannot create a directory under /var/lib, and every
+// delegation write would fail with a 500. Owner-only, for the trace
+// directory's reason: a delegation's task and result are a person's words.
+func TestTheStateDirectoryIsDeclaredAndOwnerOnly(t *testing.T) {
+	unit := repoFile(t, "devvm", "agent-api.service")
+	src := repoFile(t, "agent-api", "delegations.go")
+	m := regexp.MustCompile(`defaultStateDir\s*=\s*"([^"]+)"`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("no defaultStateDir constant in agent-api/delegations.go")
+	}
+	name := unitKey(unit, "StateDirectory")
+	if name == "" {
+		t.Fatal("devvm/agent-api.service declares no StateDirectory; delegations would have nowhere to be written")
+	}
+	// StateDirectory= is relative to /var/lib for a system unit.
+	if got := filepath.Join("/var/lib", name); got != m[1] {
+		t.Errorf("the unit creates %s and the service's default is %s", got, m[1])
+	}
+	mode := unitKey(unit, "StateDirectoryMode")
+	bits, err := strconv.ParseUint(mode, 8, 32)
+	if err != nil {
+		t.Fatalf("StateDirectoryMode=%q is not an octal mode: %v", mode, err)
+	}
+	if bits&0o077 != 0 {
+		t.Errorf("StateDirectoryMode=%s opens /var/lib/%s to group or other", mode, name)
+	}
+}

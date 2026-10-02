@@ -382,6 +382,31 @@ func (s *TaskStore) Cancel(id string) (cancelled, wasLive bool) {
 	return true, wasLive
 }
 
+// CancelOpen cancels every unfinished task on one conversation of one OS
+// user's, and returns their ids in the order they were sent. Never nil, so an
+// empty answer is an empty list on the wire.
+func (s *TaskStore) CancelOpen(osUser, conversationID string) []string {
+	s.mu.Lock()
+	var ids []string
+	for _, id := range s.order {
+		t := s.byID[id]
+		if t != nil && t.OSUser == osUser && t.ConversationID == conversationID && t.Status.canGo(StatusCancelled) {
+			ids = append(ids, id)
+		}
+	}
+	s.mu.Unlock()
+	out := []string{}
+	for _, id := range ids {
+		// Through Cancel, so the channel a runner watches is closed the one
+		// way it is everywhere else. A task that finished in between is
+		// simply not reported.
+		if ok, _ := s.Cancel(id); ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
 // Cancelled is the channel a task's runner watches. Closed means give up.
 func (s *TaskStore) Cancelled(id string) <-chan struct{} {
 	s.mu.Lock()

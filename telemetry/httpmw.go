@@ -152,6 +152,12 @@ func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return conn, brw, err
 }
 
+// Unwrap hands http.ResponseController the writer underneath, which is how it
+// reaches the connection to set a per-request read or write deadline. Without
+// it every such call answers ErrNotSupported; agent-api's upload route is the
+// first handler that needs one.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Wrap returns next instrumented with request timing.
 func (t *Timing) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

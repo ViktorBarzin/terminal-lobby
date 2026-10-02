@@ -13,9 +13,11 @@ package main
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
+	"terminal-lobby/clipstore"
 	"terminal-lobby/sessionio"
 )
 
@@ -64,9 +66,9 @@ type Conversation struct {
 }
 
 // stateSuspendedName is this service's word for a conversation the idle sweep
-// has put to sleep: its Claude was killed to give the memory back, its
-// transcript is on disk, and someone has to bring it back from the lobby
-// before it can take another message.
+// has put to sleep: its Claude was killed to give the memory back and its
+// transcript is on disk. The owning Caller's next message resumes it before
+// the turn runs (turn.go wake), so to that Caller it is still writable.
 const stateSuspendedName = "suspended"
 
 // stateName maps @claude_state onto the API's vocabulary.
@@ -91,9 +93,8 @@ func (s *Server) conversationFrom(live LiveSession, actor string) Conversation {
 	}
 	// The mark WINS over @claude_state, for the reason tmux-api's own parser
 	// gives it the same precedence: the state on the session describes a
-	// Claude that no longer exists, and reporting that `done` would tell a
-	// caller the conversation is idle and ready when it cannot take a message
-	// at all.
+	// Claude that no longer exists, and a caller deciding whether a reply will
+	// be quick deserves to know a cold start comes first.
 	state := stateName(live.State)
 	if live.Suspended {
 		state = stateSuspendedName
@@ -104,10 +105,9 @@ func (s *Server) conversationFrom(live LiveSession, actor string) Conversation {
 		CWD:       live.Dir,
 		State:     state,
 		CreatedBy: live.Owner,
-		// Ownership AND a Claude to write to. A suspended conversation is
-		// still this caller's, which `created_by` says; what it is not is
-		// writable, and answering true here would send a caller into a 409.
-		Writable:    live.Owner != "" && live.Owner == actor && !live.Suspended,
+		// Ownership alone. A suspended conversation is still writable by
+		// the Caller that owns it, because a message resumes it first.
+		Writable:    live.Owner != "" && live.Owner == actor,
 		QueuedTurns: s.Runner.Ahead(live.ID()),
 	}
 }
@@ -374,22 +374,49 @@ func (s *Server) postMessage(c *call) (any, error) {
 		return nil, err
 	}
 
-	var req messageRequest
-	if err := c.decode(&req); err != nil {
-		return nil, err
-	}
-	text := strings.TrimSpace(req.Text)
-	if text == "" {
-		return nil, badRequest("text is required")
+	var (
+		text string
+		live LiveSession
+	)
+	if c.multipart {
+		// Existence and ownership first, so a message this caller may not
+		// send costs it a 404 or 403 and never a file on disk.
+		if live, err = s.find(c.id.OSUser, id); err != nil {
+			return nil, err
+		}
+		if err := s.mayWrite(live, c.id.Header); err != nil {
+			return nil, err
+		}
+		// The CURRENT name, because that is what the store's cleaner checks
+		// for liveness and what the lobby's own uploads for this session use.
+		msg, err := s.readMultipartMessage(c, c.id.OSUser, clipstore.Bucket(live.Name))
+		if err != nil {
+			return nil, err
+		}
+		c.traceRequest = msg
+		if text = composePrompt(msg.Text, msg.Files); text == "" {
+			return nil, badRequest("a message needs text, at least one file part, or both")
+		}
+	} else {
+		var req messageRequest
+		if err := c.decode(&req); err != nil {
+			return nil, err
+		}
+		if text = strings.TrimSpace(req.Text); text == "" {
+			return nil, badRequest("text is required")
+		}
+		if live, err = s.find(c.id.OSUser, id); err != nil {
+			return nil, err
+		}
+		if err := s.mayWrite(live, c.id.Header); err != nil {
+			return nil, err
+		}
 	}
 
-	live, err := s.find(c.id.OSUser, id)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.mayWrite(live, c.id.Header); err != nil {
-		return nil, err
-	}
+	// Before the turn is queued, so a suspend sweep already walking its list
+	// sees this conversation as used the moment the message is taken
+	// (tmux-api/suspend.go declineNow re-reads it at the kill).
+	s.stampTurn(c.id.OSUser, live.Name)
 
 	task := &Task{
 		ID:             s.IDs.New(),
@@ -426,25 +453,20 @@ func (s *Server) postMessage(c *call) (any, error) {
 	}, nil
 }
 
-// mayWrite decides whether a caller may send messages to a conversation.
+// mayWrite decides whether a caller may write to a conversation: send it a
+// message, or delete it.
 //
 // The rule the design doc set: a conversation this caller created is readable
 // and writable; one a person started is readable and NOT writable. Ownership
 // is read from the tmux session option rather than from any state this process
 // holds, so a restart of agent-api does not change who owns what, and a tmux
 // name reused after a session dies starts unowned.
+//
+// Suspension is not part of it. A suspended conversation of this caller's is
+// resumed by the turn that a message starts (turn.go wake), and deleting one
+// needs nothing running in it.
 func (s *Server) mayWrite(live LiveSession, actor string) error {
 	switch {
-	case live.Suspended:
-		// Accepting this would answer 202 and then fail inside the runner,
-		// where the caller sees a turn that never started: `paste-buffer`
-		// against a dead pane answers "target pane has exited" (measured on
-		// tmux 3.4), and against a restored session whose wrapper shell
-		// outlived its Claude the message is typed at a bash prompt instead.
-		// Refusing up front, with the reason, is the only honest answer this
-		// service can give until it can resume a conversation itself.
-		return conflict("conversation %q was suspended after sitting idle: its Claude was stopped to give the memory back "+
-			"and the transcript is on disk, so it has to be resumed from the lobby before it can take a message", live.Name)
 	case live.Owner == "":
 		return forbidden("conversation %q was not created through this API, so it is readable but not writable "+
 			"(it belongs to whoever started it in the terminal)", live.Name)
@@ -453,6 +475,51 @@ func (s *Server) mayWrite(live LiveSession, actor string) error {
 			live.Name, live.Owner, actor)
 	}
 	return nil
+}
+
+// stampTurn records that this service ran, or is about to run, a turn in a
+// conversation (OptionLastTurn). Best-effort: a missed stamp makes a
+// conversation look a little older to the suspend sweep, whose worst case is a
+// resume on the next message, and must never fail the turn it describes.
+func (s *Server) stampTurn(osUser, session string) {
+	at := strconv.FormatInt(s.now().Unix(), 10)
+	if err := s.Sessions.SetOption(osUser, session, OptionLastTurn, at); err != nil {
+		logf("agent-api: stamping %s on %s: %v", OptionLastTurn, session, err)
+	}
+}
+
+// deleteConversation serves DELETE /v1/conversations/{id}.
+//
+// Only the Caller that owns the conversation may delete it, by the rule that
+// governs writing. The tmux session goes, and the transcript stays on disk,
+// where a person can still read or resume it; this API stops answering to the
+// id, because the id names a tmux session and there no longer is one.
+//
+// Open tasks are cancelled FIRST, so no queued message is pasted into a
+// session that is about to go and no watcher reports the kill as a failed
+// turn. No interrupt is sent: the kill ends whatever was running.
+func (s *Server) deleteConversation(c *call) (any, error) {
+	id := c.r.PathValue("id")
+	c.conversationID = id
+	live, err := s.find(c.id.OSUser, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.mayWrite(live, c.id.Header); err != nil {
+		return nil, err
+	}
+	cancelled := s.Tasks.CancelOpen(c.id.OSUser, live.ID())
+	if err := s.Sessions.Kill(c.id.OSUser, live.Name); err != nil {
+		if errors.Is(err, sessionio.ErrSessionGone) {
+			return nil, notFound("no conversation %q", id)
+		}
+		return nil, serverError("deleting conversation %s: %v (its open tasks were cancelled)", id, err)
+	}
+	return map[string]any{
+		"conversation_id": live.ID(),
+		"deleted":         true,
+		"cancelled_tasks": cancelled,
+	}, nil
 }
 
 // getTranscript serves GET /v1/conversations/{id}/transcript.

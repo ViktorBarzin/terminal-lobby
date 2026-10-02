@@ -76,7 +76,9 @@
 #                                      first, only one save runs at a time, and
 #                                      it is abandoned after
 #                                      preKillSnapshotBudget.
-#   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>: writes
+#   /usr/local/bin/tmux-persist-forget tmux-api DELETE /sessions/<name>, and
+#                                      agent-api DELETE /v1/conversations/<id>
+#                                      (also User=wizard): writes
 #                                      a TOMBSTONE for the killed session into
 #                                      the root-owned 0600
 #                                      <user>.forgotten.tsv, so Restore cannot

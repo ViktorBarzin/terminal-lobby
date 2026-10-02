@@ -3,6 +3,7 @@ package main
 // The task endpoints: the poll, the cancel, and the answer.
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -207,6 +208,19 @@ func (s *Server) answerTask(c *call) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if live.Suspended && live.Owner == c.id.Header {
+		// The sweep never suspends a session waiting on an answer, so this is
+		// a mark that arrived some other way. Resumed for the reason a message
+		// resumes one; the fresh Claude draws no dialog, so the comparison
+		// below then reports, truthfully, that the question has gone.
+		if err := s.Sessions.Resume(osUser, live.Name); err != nil && !errors.Is(err, sessionio.ErrNotSuspended) {
+			return nil, serverError("conversation %s was suspended and could not be resumed: %v", v.ConversationID, err)
+		}
+		if live, err = s.find(osUser, v.ConversationID); err != nil {
+			return nil, err
+		}
+	}
+	s.stampTurn(osUser, live.Name)
 	now := s.readQuestion(osUser, live.Name)
 	asked := questionReading{Kind: v.Kind, Text: v.Question, Options: v.Options, AnswerWith: v.AnswerWith}
 	if now.Kind == asked.Kind {

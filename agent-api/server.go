@@ -82,6 +82,28 @@ type Server struct {
 	// in milliseconds.
 	WaitUnit time.Duration
 	Now      func() time.Time
+
+	// StoreRoot is the clipboard store a message's files are written to;
+	// clipstore.DefaultRoot in production, a temp dir in tests.
+	StoreRoot string
+	// Limits bounds a multipart message; zero fields take
+	// defaultUploadLimits. A test shrinks them so it moves kilobytes.
+	Limits UploadLimits
+	// UploadTimeout is how long an authenticated upload may take to arrive;
+	// defaultUploadTimeout when zero. See attach.go.
+	UploadTimeout time.Duration
+
+	// Delegations is the store behind /v1/delegations (delegation.go).
+	Delegations *DelegationStore
+	// DelegationCreators names the Callers that may create a delegation, from
+	// TL_DELEGATION_CREATORS. Empty, nobody can, and the feature is off.
+	DelegationCreators map[string]bool
+	// PublicURL is the base the callback in a delegation's message names,
+	// from TL_AGENT_PUBLIC_URL; defaultPublicURL when empty.
+	PublicURL string
+	// DelegationCaps overrides defaultDelegationCaps field by field; a test
+	// shrinks it so a cap is reached in three requests rather than twenty.
+	DelegationCaps delegationCaps
 }
 
 func (s *Server) now() time.Time {
@@ -132,24 +154,27 @@ func (s *Server) turnTimeout() time.Duration {
 type apiError struct {
 	Status int
 	Msg    string
+	// RetryAfter, when set, is sent as a Retry-After header: the one refusal
+	// that comes with a time it stops applying.
+	RetryAfter time.Duration
 }
 
 func (e *apiError) Error() string { return e.Msg }
 
 func badRequest(format string, args ...any) error {
-	return &apiError{http.StatusBadRequest, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusBadRequest, Msg: fmt.Sprintf(format, args...)}
 }
 
 func notFound(format string, args ...any) error {
-	return &apiError{http.StatusNotFound, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusNotFound, Msg: fmt.Sprintf(format, args...)}
 }
 
 func forbidden(format string, args ...any) error {
-	return &apiError{http.StatusForbidden, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusForbidden, Msg: fmt.Sprintf(format, args...)}
 }
 
 func conflict(format string, args ...any) error {
-	return &apiError{http.StatusConflict, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusConflict, Msg: fmt.Sprintf(format, args...)}
 }
 
 // unprocessable is a well-formed request this service will not carry out
@@ -157,31 +182,62 @@ func conflict(format string, args ...any) error {
 // answer. Kept apart from 409, which says the state is wrong NOW and may be
 // right later, because a caller retrying this one would be retrying forever.
 func unprocessable(format string, args ...any) error {
-	return &apiError{http.StatusUnprocessableEntity, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusUnprocessableEntity, Msg: fmt.Sprintf(format, args...)}
+}
+
+// gone is a request about something that has ended for good: a delegation
+// result posted after its expiry. Kept apart from 409 because the caller's
+// right move differs: a conflict may be retried after a read, this may not.
+func gone(format string, args ...any) error {
+	return &apiError{Status: http.StatusGone, Msg: fmt.Sprintf(format, args...)}
+}
+
+// tooManyRequests is a refusal by a rate cap, with when it lifts.
+func tooManyRequests(retryAfter time.Duration, format string, args ...any) error {
+	return &apiError{Status: http.StatusTooManyRequests, Msg: fmt.Sprintf(format, args...), RetryAfter: retryAfter}
 }
 
 func serverError(format string, args ...any) error {
-	return &apiError{http.StatusInternalServerError, fmt.Sprintf(format, args...)}
+	return &apiError{Status: http.StatusInternalServerError, Msg: fmt.Sprintf(format, args...)}
 }
 
 // call is one authenticated request, plus the half-built trace line it will
 // produce. A handler reads id and body and fills the trace fields it knows
 // about; everything else the wrapper does.
 type call struct {
-	r  *http.Request
+	r *http.Request
+	// w is here for the one handler that streams: an upload needs it for
+	// http.MaxBytesReader and to lift the connection's deadlines. Every
+	// handler still answers by returning, never by writing to it.
+	w  http.ResponseWriter
 	id authuser.Identity
 	// body is the raw request body, verbatim, for a write route. The trace
 	// carries these exact bytes, which is what makes a replay a replay.
 	body []byte
+	// multipart is set when a route that takes uploads was sent
+	// multipart/form-data. The body is then left unread for the handler to
+	// stream, and body is nil.
+	multipart bool
 
-	// The three fields a handler contributes to the trace.
+	// The fields a handler contributes to the trace.
 	conversationID string
 	taskID         string
+	delegationID   string
+	// event names what a write did, for a log query to match without parsing
+	// verbs and statuses: "delegation.undelivered" is the one infra alerts on.
+	event string
+	// reason travels with an undelivered event, so the alert can say why.
+	reason string
 	// traceResponse overrides what the trace records as the response. Set it
 	// where the response body is unbounded — a transcript, a session list —
 	// so one request cannot write a megabyte into trace.jsonl. Left nil, the
 	// response body itself is recorded, which is right for everything small.
 	traceResponse any
+	// traceRequest overrides what the trace records as the request, for the
+	// same reason in the other direction: a multipart body can be 200 MB, so
+	// an upload records its text and the files' names and stored paths
+	// instead of the bytes.
+	traceRequest any
 	// status is the success status; 200 unless a handler says otherwise.
 	status int
 }
@@ -220,11 +276,18 @@ func (s *Server) Routes() http.Handler {
 	v1.Handle("GET /v1/conversations", s.handle("GET /v1/conversations", s.listConversations))
 	v1.Handle("POST /v1/conversations", s.handle("POST /v1/conversations", s.createConversation))
 	v1.Handle("GET /v1/conversations/{id}", s.handle("GET /v1/conversations/{id}", s.getConversation))
+	v1.Handle("DELETE /v1/conversations/{id}", s.handle("DELETE /v1/conversations/{id}", s.deleteConversation))
 	v1.Handle("GET /v1/conversations/{id}/transcript", s.handle("GET /v1/conversations/{id}/transcript", s.getTranscript))
-	v1.Handle("POST /v1/conversations/{id}/messages", s.handle("POST /v1/conversations/{id}/messages", s.postMessage))
+	v1.Handle("POST /v1/conversations/{id}/messages", s.handleUploads("POST /v1/conversations/{id}/messages", s.postMessage))
 	v1.Handle("GET /v1/tasks/{id}", s.handle("GET /v1/tasks/{id}", s.getTask))
 	v1.Handle("POST /v1/tasks/{id}/cancel", s.handle("POST /v1/tasks/{id}/cancel", s.cancelTask))
 	v1.Handle("POST /v1/tasks/{id}/answer", s.handle("POST /v1/tasks/{id}/answer", s.answerTask))
+	v1.Handle("GET /v1/delegations", s.handle("GET /v1/delegations", s.listDelegations))
+	v1.Handle("POST /v1/delegations", s.handle("POST /v1/delegations", s.createDelegation))
+	v1.Handle("GET /v1/delegations/{id}", s.handle("GET /v1/delegations/{id}", s.getDelegation))
+	v1.Handle("POST /v1/delegations/{id}/sent", s.handle("POST /v1/delegations/{id}/sent", s.markDelegationSent))
+	v1.Handle("POST /v1/delegations/{id}/undelivered", s.handle("POST /v1/delegations/{id}/undelivered", s.markDelegationUndelivered))
+	v1.Handle("POST /v1/delegations/{id}/result", s.handle("POST /v1/delegations/{id}/result", s.postDelegationResult))
 
 	root := http.NewServeMux()
 	root.Handle("/v1/", s.requireAuth(v1))
@@ -301,11 +364,23 @@ func bearerPresented(r *http.Request) bool {
 // handle wraps one handler: body capture, dispatch, JSON encoding, and the
 // trace line.
 func (s *Server) handle(verb string, h apiHandler) http.Handler {
+	return s.wrap(verb, h, false)
+}
+
+// handleUploads is handle for a route that also takes multipart/form-data.
+// Such a body is not read here: it can be 200 MB, so the handler streams it
+// to disk itself (attach.go). Any other body is read exactly as handle reads
+// it, so the JSON form of the route is unchanged.
+func (s *Server) handleUploads(verb string, h apiHandler) http.Handler {
+	return s.wrap(verb, h, true)
+}
+
+func (s *Server) wrap(verb string, h apiHandler, uploads bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := s.now()
 		id, _ := identityFrom(r.Context())
 
-		c := &call{r: r, id: id, status: http.StatusOK}
+		c := &call{r: r, w: w, id: id, status: http.StatusOK}
 		entry := TraceEntry{
 			TraceID: s.IDs.New(),
 			// The credential's NAME. authuser puts the token nowhere on the
@@ -314,15 +389,25 @@ func (s *Server) handle(verb string, h apiHandler) http.Handler {
 			Verb:  verb,
 		}
 
-		body, err := readBody(r)
-		if err != nil {
-			s.reply(w, c, entry, start, nil, err)
-			return
+		if uploads && isMultipart(r) {
+			c.multipart = true
+			// Replaced by the handler once it has read the parts; this is
+			// what a refusal before that point records.
+			entry.Request = marshalOrNote(map[string]string{"multipart": "not read"})
+		} else {
+			body, err := readBody(r)
+			if err != nil {
+				s.reply(w, c, entry, start, nil, err)
+				return
+			}
+			c.body = body
+			entry.Request = requestRecord(r, body)
 		}
-		c.body = body
-		entry.Request = requestRecord(r, body)
 
 		out, herr := h(c)
+		if c.traceRequest != nil {
+			entry.Request = marshalOrNote(c.traceRequest)
+		}
 		s.reply(w, c, entry, start, out, herr)
 	})
 }
@@ -335,6 +420,9 @@ func (s *Server) reply(w http.ResponseWriter, c *call, entry TraceEntry, start t
 		var ae *apiError
 		if errors.As(herr, &ae) {
 			status = ae.Status
+			if ae.RetryAfter > 0 {
+				w.Header().Set("Retry-After", retryAfterSeconds(ae.RetryAfter))
+			}
 		} else {
 			status = http.StatusInternalServerError
 		}
@@ -346,6 +434,12 @@ func (s *Server) reply(w http.ResponseWriter, c *call, entry TraceEntry, start t
 	entry.TS = traceTime(start)
 	entry.TaskID = c.taskID
 	entry.ConversationID = c.conversationID
+	entry.DelegationID = c.delegationID
+	// An event names a change that happened, so a refused write has none.
+	if herr == nil {
+		entry.Event = c.event
+		entry.Reason = c.reason
+	}
 	entry.Status = status
 	entry.Duration = float64(s.now().Sub(start)) / float64(time.Millisecond)
 	recorded := payload

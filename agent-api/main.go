@@ -31,6 +31,8 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -129,6 +131,31 @@ func main() {
 	}
 	srv.Runner = NewRunner(srv.runTurn)
 
+	// Delegations are kept on disk, under the unit's StateDirectory=. A store
+	// that could not be loaded still serves reads of nothing and refuses
+	// writes with the reason, so one bad file costs this feature and not the
+	// service.
+	delegationsPath := filepath.Join(stateDir(os.Getenv), delegationsFile)
+	store, err := OpenDelegationStore(delegationsPath, nil)
+	if err != nil {
+		log.Printf("agent-api: delegation store: %v", err)
+	}
+	srv.Delegations = store
+	srv.DelegationCreators = delegationCreators(os.Getenv)
+	srv.PublicURL = publicURL(os.Getenv)
+	go store.SweepEvery(delegationSweepInterval)
+	if len(srv.DelegationCreators) == 0 {
+		log.Printf("agent-api: delegations are off: TL_DELEGATION_CREATORS names no Caller (store %s)", delegationsPath)
+	} else {
+		names := make([]string, 0, len(srv.DelegationCreators))
+		for n := range srv.DelegationCreators {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		log.Printf("agent-api: delegations may be created by %s; stored in %s; callbacks name %s",
+			strings.Join(names, ", "), delegationsPath, srv.PublicURL)
+	}
+
 	log.Printf("agent-api: listening on %s (selfUser=%s, claude=%s, trace=%v)",
 		strings.Join(addrs, ", "), self.Username, srv.ClaudeBin, trace.Enabled())
 	go timing.Run(nil)
@@ -139,8 +166,11 @@ func main() {
 		// The one thing a handler may do for minutes is WAIT on that
 		// goroutine, when a caller asks with ?wait= (wait.go), so the write
 		// side is sized to the longest wait; serverWriteTimeout has the
-		// arithmetic. The read side stays short: every body here is a small
-		// JSON object.
+		// arithmetic. The read side stays short, because every body but one is
+		// a small JSON object. The one is a multipart message with files,
+		// which lifts both deadlines for its own request after the bearer
+		// check (liftDeadlines, attach.go), so a 200 MB upload over a slow
+		// link is not cut at 30 s and an unauthenticated client still is.
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      serverWriteTimeout,

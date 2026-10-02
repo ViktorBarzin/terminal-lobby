@@ -20,6 +20,9 @@ on:
       - "session-events/**"
       - "skills-api/**"
       - "clipboard-upload/**"
+      # clipboard-upload replaces terminal-lobby/clipstore, the store's naming
+      # and write rules it shares with agent-api.
+      - "clipstore/**"
       - "authuser/**"
       - "sessionio/**"
       # session-events writes the spend store and tmux-api reads it, so a

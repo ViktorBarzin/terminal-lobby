@@ -1,5 +1,18 @@
 # Session images persist in a per-user store served back as a gallery
 
+> **Amended 2026-10-02** by
+> `infra/docs/plans/2026-10-02-muse-homelab-integration-design.md` (phase 2): the
+> store has a second writer. agent-api writes the images and files a Caller sends
+> with a message into the same `<osUser>/<session>/` directory, as the account the
+> lobby services run as, under the same `pasted-`/`file-` names and 0755/0644
+> modes. Both writers share `clipstore/`, which also makes every store write
+> exclusive, so an existing name is refused rather than overwritten; `displayed-`
+> names gained the random token the other prefixes already had, so registering
+> the same file twice in one second still succeeds. Caller files may be up to
+> 100 MB (images 25 MB, 200 MB per message), Viktor's numbers for that design,
+> which is past the 25MB bound this ADR names for browser uploads. Retention is
+> unchanged: they ride the session's 30-day grace like everything else here.
+
 > **Amended 2026-08-17** by
 > `docs/plans/2026-08-17-text-view-attachments-design.md`: decision 1 below said
 > non-image drops stay ephemeral `/tmp` transfers because they are "arbitrary
