@@ -81,6 +81,13 @@ const (
 	// connection.
 	browserPingEvery = 25 * time.Second
 	browserWriteWait = 30 * time.Second
+	// browserReadWait is how long a stream waits to hear anything from the
+	// lobby, a pong included, before it counts the client gone. A phone that
+	// vanished without a FIN leaves the socket looking open; the host refuses
+	// a resume while the old connection is open, so a stream left hanging
+	// would keep the person's control from their reconnected tab. It is more
+	// than two pings, so one late pong does not end a live stream.
+	browserReadWait = 60 * time.Second
 
 	// browserRecheckEvery is how often an open stream re-reads the share that
 	// let it in, and browserRecheckMin the least gap between the re-reads a
@@ -509,6 +516,10 @@ type browserRelay struct {
 	recheckMin   time.Duration
 	// grantLinger is browserGrantLinger, a field only as a test seam.
 	grantLinger time.Duration
+	// pingEvery and readWait are browserPingEvery and browserReadWait, fields
+	// only as test seams.
+	pingEvery time.Duration
+	readWait  time.Duration
 
 	grantMu  sync.Mutex
 	grants   map[controlGrant]*grantState
@@ -533,6 +544,8 @@ func newBrowserRelay(opts stampReader, self string) *browserRelay {
 		recheckEvery: browserRecheckEvery,
 		recheckMin:   browserRecheckMin,
 		grantLinger:  browserGrantLinger,
+		pingEvery:    browserPingEvery,
+		readWait:     browserReadWait,
 	}
 }
 
@@ -772,7 +785,7 @@ func (b *browserRelay) handleStream() http.HandlerFunc {
 				}
 			}
 		}
-		relayBrowser(conn, host, guard)
+		relayBrowser(conn, host, guard, streamTiming{ping: b.pingEvery, readWait: b.readWait})
 		events.Emit("browser.stream_closed", acc.viewer, telemetry.Attrs{
 			"tl.session": session, "tl.ms": time.Since(start).Milliseconds(),
 		})
@@ -814,11 +827,27 @@ func (g *streamGuard) holds() bool {
 	return acc.canControl || !g.canControl
 }
 
-// relayBrowser pipes one viewer connection until either end goes, or the
-// guard stops holding: host lines out as WebSocket text messages, lobby
-// messages in through the filter.
-func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGuard) {
+// streamTiming paces a stream's liveness check: a ping every ping, and the
+// stream ends when nothing, a pong included, arrives within readWait.
+type streamTiming struct {
+	ping     time.Duration
+	readWait time.Duration
+}
+
+// relayBrowser pipes one viewer connection until either end goes, the client
+// stops answering pings, or the guard stops holding: host lines out as
+// WebSocket text messages, lobby messages in through the filter.
+func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGuard, timing streamTiming) {
 	conn.SetReadLimit(maxViewerMessage)
+	// Every message and every pong pushes the deadline on; a client that has
+	// gone without closing its socket lets it pass, the read fails, and the
+	// host connection closes with the stream.
+	alive := func() { conn.SetReadDeadline(time.Now().Add(timing.readWait)) }
+	alive()
+	conn.SetPongHandler(func(string) error {
+		alive()
+		return nil
+	})
 	done := make(chan struct{})
 	var once sync.Once
 	stop := func() {
@@ -888,7 +917,7 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGu
 		}
 	}()
 	go func() {
-		t := time.NewTicker(browserPingEvery)
+		t := time.NewTicker(timing.ping)
 		defer t.Stop()
 		for {
 			select {
@@ -924,6 +953,7 @@ func relayBrowser(conn *websocket.Conn, host io.ReadWriteCloser, guard *streamGu
 		if err != nil {
 			return
 		}
+		alive()
 		if typ != websocket.TextMessage {
 			continue
 		}

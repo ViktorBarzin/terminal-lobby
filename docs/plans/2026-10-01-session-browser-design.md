@@ -204,7 +204,10 @@ broadcasts `control`. `since` and the lapse stay as they were, so reconnecting
 does not extend control. A watch-only connection's `resume` is dropped by the
 relay's filter and ignored by the host. While the previous connection is
 still open, `resume` changes nothing: that is a second device, which takes
-control with `takeControl`.
+control with `takeControl`. A phone that drops off the network without
+closing its socket would leave the previous connection looking open, so the
+relay pings each stream every 25 seconds and ends one that has sent nothing,
+a pong included, for 60 seconds, closing its host connection with it.
 
 session-events frees a user's control, for example when their share is revoked
 after their holding connection has already closed, by opening a connection of
