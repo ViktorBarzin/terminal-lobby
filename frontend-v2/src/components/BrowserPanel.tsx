@@ -32,6 +32,7 @@ import {
   type ViewerMessage,
 } from "../lib/browser-stream";
 import { closeOnBack } from "../lib/back-closes";
+import { sessionStorageOrNull } from "../lib/storage";
 import { track } from "../telemetry/track";
 import { ArrowLeftGlyph, ArrowRightGlyph, BrowserGlyph, ReloadGlyph } from "./Icons";
 
@@ -105,6 +106,9 @@ export const BrowserPanel: Component<{
     owner: props.owner,
     wake: true,
     tab: picked,
+    // The panel may hold control, so its next stream instance (the panel
+    // opened again, or the page reloaded) resumes what this one held.
+    remember: sessionStorageOrNull(),
     // Read by the stream's own effects, which run once `stream` is set.
     active: () =>
       panelStreamWanted({

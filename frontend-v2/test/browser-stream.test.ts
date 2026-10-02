@@ -12,6 +12,7 @@ import {
   type BrowserStream,
   type WebSocketLike,
 } from "../src/lib/browser-stream";
+import type { MinStorage } from "../src/lib/storage";
 
 class FakeSocket implements WebSocketLike {
   static all: FakeSocket[] = [];
@@ -67,14 +68,17 @@ function mount(opts: {
   tab?: () => string | null;
   keep?: string;
   owner?: string;
+  session?: string;
+  remember?: MinStorage | null;
 }): { stream: BrowserStream; dispose: () => void } {
   let stream!: BrowserStream;
   let dispose!: () => void;
   createRoot((d) => {
     dispose = d;
     stream = createBrowserStream({
-      session: "work",
+      session: opts.session ?? "work",
       owner: opts.owner,
+      remember: opts.remember,
       active: opts.active,
       tab: opts.tab,
       wake: opts.wake,
@@ -314,6 +318,94 @@ describe("the browser stream", () => {
     vi.advanceTimersByTime(60_000);
     expect(second.sent.filter((m) => m.t === "resume")).toHaveLength(1);
     dispose();
+  });
+
+  /**
+   * A fresh stream remembered no "you": closing and reopening the panel, or
+   * iOS reloading a backgrounded home-screen lobby, lost control and showed
+   * the person their own name as the one in control. A stream given a store
+   * keeps its last "you" there, per owner and session.
+   */
+  describe("remembering its connection across stream instances", () => {
+    const memoryStore = (): MinStorage & { map: Map<string, string> } => {
+      const map = new Map<string, string>();
+      return {
+        map,
+        getItem: (k) => map.get(k) ?? null,
+        setItem: (k, v) => void map.set(k, v),
+        removeItem: (k) => void map.delete(k),
+      };
+    };
+    const greet = (you: string) => {
+      const ws = FakeSocket.all.at(-1)!;
+      ws.open();
+      ws.host({ ...hello("live"), you });
+      return ws;
+    };
+
+    it("names the last instance's connection right after its first hello", () => {
+      const store = memoryStore();
+      const a = mount({ active: () => true, wake: true, remember: store });
+      greet("c1");
+      a.dispose();
+      const b = mount({ active: () => true, wake: true, remember: store });
+      const ws = greet("c2");
+      expect(ws.sent[0]).toEqual({ t: "resume", prev: "c1" });
+      expect(ws.sent[1]).toEqual({ t: "subscribe", tab: null });
+      b.dispose();
+      const c = mount({ active: () => true, wake: true, remember: store });
+      expect(greet("c3").sent[0]).toEqual({ t: "resume", prev: "c2" });
+      c.dispose();
+    });
+
+    it("keeps one per owner and session", () => {
+      const store = memoryStore();
+      const once = (you: string, more: { owner?: string; session?: string } = {}) => {
+        const m = mount({ active: () => true, wake: true, remember: store, ...more });
+        const ws = greet(you);
+        m.dispose();
+        return ws;
+      };
+      once("mine");
+      once("emos", { owner: "emo" });
+      once("play", { session: "play" });
+      expect(once("next", { owner: "emo" }).sent[0]).toEqual({ t: "resume", prev: "emos" });
+      expect(store.map.size).toBe(3);
+    });
+
+    it("sends no resume on a first-ever hello, nor without a store", () => {
+      const store = memoryStore();
+      const a = mount({ active: () => true, wake: true, remember: store });
+      expect(greet("c1").sent.some((m) => m.t === "resume")).toBe(false);
+      a.dispose();
+      // A card is given no store: it never held control, and a card that
+      // named the panel's connection would take control away from it.
+      const b = mount({ active: () => true, wake: false });
+      expect(greet("c2").sent.some((m) => m.t === "resume")).toBe(false);
+      b.dispose();
+    });
+
+    it("works the same in memory when every store access throws", () => {
+      vi.useFakeTimers();
+      const refusing: MinStorage = {
+        getItem: () => {
+          throw new Error("SecurityError");
+        },
+        setItem: () => {
+          throw new Error("QuotaExceededError");
+        },
+        removeItem: () => {
+          throw new Error("SecurityError");
+        },
+      };
+      const { stream, dispose } = mount({ active: () => true, wake: true, remember: refusing });
+      const first = greet("c1");
+      expect(stream.you()).toBe("c1");
+      first.drop();
+      vi.advanceTimersByTime(2_000);
+      expect(greet("c2").sent[0]).toEqual({ t: "resume", prev: "c1" });
+      dispose();
+    });
   });
 
   it("holds where the host says the cursor is, numbering each report", () => {

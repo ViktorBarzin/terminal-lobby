@@ -1,7 +1,8 @@
-import { createEffect, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js";
+import { batch, createEffect, createSignal, on, onCleanup, untrack, type Accessor } from "solid-js";
 import { browserStreamUrl } from "./config";
 import { wsScheme } from "../terminal/wire";
 import type { PageRect, Size } from "../components/browser.logic";
+import type { MinStorage } from "./storage";
 
 /**
  * The lobby's end of a Session browser's viewer stream
@@ -286,6 +287,15 @@ export interface BrowserStreamOptions {
   wake: boolean;
   /** Keep the newest frame under this key for after the stream is gone. */
   keep?: string;
+  /**
+   * Where to keep this viewer's last `you`, per owner and session, so the
+   * next stream instance names it in a resume: the panel's sessionStorage,
+   * which outlives closing the panel and a reload of the page. Absent or
+   * null, the stream remembers it only while it lives. Only a surface that
+   * may hold control passes one: a card that named the panel's connection
+   * would move control off the panel.
+   */
+  remember?: MinStorage | null;
   /** The host answered a `copy` with the page's selected text. */
   onCopied?: (text: string) => void;
   /** Opens the socket. Tests pass a fake; the page uses WebSocket. */
@@ -356,8 +366,31 @@ function socketUrl(session: string, owner: string | undefined): string {
   return url.toString();
 }
 
+/** The key a stream keeps its last `you` under (BrowserStreamOptions.remember). */
+function rememberKey(session: string, owner: string | undefined): string {
+  return `tl.browser.you:${owner ?? ""}/${session}`;
+}
+
 export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   const open = opts.socket ?? browserSocket;
+  const store = opts.remember ?? null;
+  const storeKey = rememberKey(opts.session, opts.owner);
+  // A store can throw on any access (Safari with site data blocked, a full
+  // quota), and then this stream remembers in memory only.
+  const recall = (): string | null => {
+    try {
+      return store?.getItem(storeKey) ?? null;
+    } catch {
+      return null;
+    }
+  };
+  const remember = (id: string): void => {
+    try {
+      store?.setItem(storeKey, id);
+    } catch {
+      /* blocked or full: this instance still has it */
+    }
+  };
   const [status, setStatus] = createSignal<"idle" | "connecting" | "open" | "unavailable">("idle");
   const [state, setState] = createSignal<BrowserState | "closed" | null>(null);
   const [tabs, setTabs] = createSignal<BrowserTab[]>([]);
@@ -379,8 +412,9 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
   let ws: WebSocketLike | null = null;
   let subscribed = false;
   /** The `you` of the last connection the host greeted, kept across
-   *  reconnects so the next one can name it in a resume. */
-  let lastYou: string | null = null;
+   *  reconnects so the next one can name it in a resume, and across stream
+   *  instances in `opts.remember`. */
+  let lastYou: string | null = recall();
   /** The previous connection a resume on this socket named, while the host
    *  still says that one holds control. */
   let resuming: string | null = null;
@@ -471,6 +505,39 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
   };
 
+  /** The host's hello: a new connection's whole picture. */
+  const greet = (msg: Record<string, unknown>): void => {
+    setGreeted(true);
+    retryMs = RETRY_FIRST_MS;
+    setState(msg.state === "frozen" ? "frozen" : "live");
+    setTabs(tabsOf(msg.tabs));
+    setAgentTab(strOrNull(msg.agentTab));
+    const me = strOrNull(msg.you);
+    setYou(me);
+    const ctl = controlOf(msg.control);
+    setControl(ctl);
+    // Right after the hello, before anything else: control this viewer
+    // held on its last connection moves here (tl-browser acc9709f). The
+    // host checks the rest, so this goes whether or not control was held.
+    stopResuming();
+    if (lastYou !== null && me !== null && lastYou !== me) resume(lastYou, ctl.holderId);
+    if (me !== null) {
+      lastYou = me;
+      remember(me);
+    }
+    // The host sends a new connection the popups it should draw, and the
+    // cursor of the tab it subscribes to.
+    setPopups([]);
+    setCursor(null);
+    if (isObj(msg.viewport)) {
+      const w = numOrNull(msg.viewport.w);
+      const h = numOrNull(msg.viewport.h);
+      if (w && h) setViewport({ w, h });
+    }
+    setError(null);
+    maybeSubscribe();
+  };
+
   const onMessage = (data: unknown): void => {
     if (typeof data !== "string") return;
     let msg: unknown;
@@ -481,35 +548,11 @@ export function createBrowserStream(opts: BrowserStreamOptions): BrowserStream {
     }
     if (!isObj(msg)) return;
     switch (msg.t) {
-      case "hello": {
-        setGreeted(true);
-        retryMs = RETRY_FIRST_MS;
-        setState(msg.state === "frozen" ? "frozen" : "live");
-        setTabs(tabsOf(msg.tabs));
-        setAgentTab(strOrNull(msg.agentTab));
-        const me = strOrNull(msg.you);
-        setYou(me);
-        const ctl = controlOf(msg.control);
-        setControl(ctl);
-        // Right after the hello, before anything else: control this viewer
-        // held on its last connection moves here (tl-browser acc9709f). The
-        // host checks the rest, so this goes whether or not control was held.
-        stopResuming();
-        if (lastYou !== null && me !== null && lastYou !== me) resume(lastYou, ctl.holderId);
-        if (me !== null) lastYou = me;
-        // The host sends a new connection the popups it should draw, and the
-        // cursor of the tab it subscribes to.
-        setPopups([]);
-        setCursor(null);
-        if (isObj(msg.viewport)) {
-          const w = numOrNull(msg.viewport.w);
-          const h = numOrNull(msg.viewport.h);
-          if (w && h) setViewport({ w, h });
-        }
-        setError(null);
-        maybeSubscribe();
+      case "hello":
+        // One batch: a surface's `active` can read `you` and `control` (the
+        // panel's does), and its effect must not subscribe before the resume.
+        batch(() => greet(msg));
         return;
-      }
       case "frame": {
         if (typeof msg.tab !== "string" || typeof msg.jpeg !== "string") return;
         const f: BrowserFrame = {

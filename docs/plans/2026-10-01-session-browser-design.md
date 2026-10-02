@@ -204,10 +204,15 @@ broadcasts `control`. `since` and the lapse stay as they were, so reconnecting
 does not extend control. A watch-only connection's `resume` is dropped by the
 relay's filter and ignored by the host. While the previous connection is
 still open, `resume` changes nothing: that is a second device, which takes
-control with `takeControl`. A phone that drops off the network without
-closing its socket would leave the previous connection looking open, so the
-relay pings each stream every 25 seconds and ends one that has sent nothing,
-a pong included, for 60 seconds, closing its host connection with it.
+control with `takeControl`. The panel keeps its last `you` in the tab's
+sessionStorage, per owner and session, so the same holds when the panel is
+closed and opened again or the page reloads, as iOS does to a backgrounded
+lobby on the home screen. A card keeps none: it never holds control, and a
+card naming the panel's connection would move control off the panel. A
+phone that drops off the network without closing its socket would leave the
+previous connection looking open, so the relay pings each stream every 25
+seconds and ends one that has sent nothing, a pong included, for 60 seconds,
+closing its host connection with it.
 
 session-events frees a user's control, for example when their share is revoked
 after their holding connection has already closed, by opening a connection of
@@ -403,8 +408,10 @@ releases no memory, so freezing alone would let abandoned browsers accumulate.
   document is visible. On the lobby added to an iPhone's home screen, the
   card's rule turned the panel's stream off about 3s after it opened
   (telemetry, 2026-10-02). Take control and Hand back wait, reading
-  "Connecting…", until the host has greeted the panel's stream, and after a
-  reconnect the panel sends `resume` with its previous `you`.
+  "Connecting…", until the host has greeted the panel's stream. After every
+  hello on a new connection, including the first of a panel opened again or a
+  reloaded page, the panel sends `resume` with the `you` it last had, kept in
+  sessionStorage, so a person in control keeps it.
 - **Cursor**. The panel draws the **Browser cursor** over the page at the
   position the host's `cursor` messages give, through the same page-to-screen
   mapping the popups use. It glides to each new position, with no glide when

@@ -57,6 +57,7 @@ const hello = {
 const mine = { t: "control", holder: "viktor", holderId: "c1", since: 1, lapseAt: 600_001 };
 
 afterEach(() => {
+  sessionStorage.clear();
   FakeSocket.last = null;
   vi.unstubAllGlobals();
   vi.mocked(track).mockClear();
@@ -564,6 +565,87 @@ describe("<BrowserPanel> popups", () => {
     });
     expect(queryByRole("listbox")).toBeNull();
     expect(queryByRole("alertdialog")).toBeNull();
+  });
+});
+
+/**
+ * Control across a new stream instance. Closing and reopening the panel, or
+ * iOS reloading a backgrounded home-screen lobby, made a fresh stream that
+ * remembered no "you", so the person lost control and saw their own name as
+ * the one in control. The panel keeps its last "you" in sessionStorage.
+ */
+describe("<BrowserPanel> resuming control in a new stream", () => {
+  const held = (id: string) => ({ holder: "viktor", holderId: id, since: 1, lapseAt: 600_001 });
+  const openPanel = () => {
+    vi.stubGlobal("WebSocket", FakeSocket);
+    const r = render(() => (
+      <BrowserPanel
+        session="work"
+        state={() => "live"}
+        onScreen={() => true}
+        canControl={() => true}
+        phone={() => false}
+        onStop={() => undefined}
+        onClose={() => undefined}
+      />
+    ));
+    const ws = FakeSocket.last!;
+    ws.open();
+    return { ...r, ws };
+  };
+  const realStorage = Object.getOwnPropertyDescriptor(window, "sessionStorage");
+  afterEach(() => {
+    if (realStorage) Object.defineProperty(window, "sessionStorage", realStorage);
+    sessionStorage.clear();
+  });
+
+  it("names the closed panel's connection when it opens again, and keeps control", () => {
+    const first = openPanel();
+    first.ws.host({ ...hello, you: "c1", control: held("c1") });
+    expect(first.getByText("Hand back")).toBeInTheDocument();
+    first.unmount();
+
+    const again = openPanel();
+    again.ws.host({ ...hello, you: "c2", control: held("c1") });
+    expect(again.ws.sent[0]).toEqual({ t: "resume", prev: "c1" });
+    // Until the host moves it, the old connection holds control.
+    expect(again.getByText("viktor has control")).toBeInTheDocument();
+    again.ws.host({ t: "control", ...held("c2") });
+    expect(again.getByText("Hand back")).toBeInTheDocument();
+    expect(again.queryByText(/has control/)).toBeNull();
+  });
+
+  it("names it after a reload, from what the tab kept", () => {
+    // A reload keeps sessionStorage and nothing else this panel held.
+    sessionStorage.setItem("tl.browser.you:/work", "c1");
+    const { ws } = openPanel();
+    ws.host({ ...hello, you: "c2", control: held("c1") });
+    expect(ws.sent[0]).toEqual({ t: "resume", prev: "c1" });
+  });
+
+  it("works without sessionStorage, resuming within its own stream", () => {
+    vi.useFakeTimers();
+    try {
+      Object.defineProperty(window, "sessionStorage", {
+        configurable: true,
+        get: () => {
+          throw new DOMException("blocked", "SecurityError");
+        },
+      });
+      const { ws, getByText } = openPanel();
+      ws.host({ ...hello, you: "c1", control: held("c1") });
+      expect(getByText("Hand back")).toBeInTheDocument();
+      ws.readyState = 3;
+      ws.onclose?.();
+      vi.advanceTimersByTime(2_000);
+      const next = FakeSocket.last!;
+      expect(next).not.toBe(ws);
+      next.open();
+      next.host({ ...hello, you: "c2", control: held("c1") });
+      expect(next.sent[0]).toEqual({ t: "resume", prev: "c1" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
