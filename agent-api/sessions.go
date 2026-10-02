@@ -183,6 +183,9 @@ type Sessions interface {
 	// replies with a reading taken afterwards. The error is a pane that could
 	// not be read at all.
 	Answer(ctx context.Context, osUser, session string, req sessionio.AnswerRequest) (sessionio.AnswerResponse, error)
+	// Keys presses answer keys in the session's pane (sessionio.Injector.Keys),
+	// which refuses anything that is not an answer key before sending any.
+	Keys(osUser, session string, keys []string) error
 }
 
 // errNoTranscript — the session has no transcript to read yet.
@@ -426,6 +429,10 @@ func (t *tmuxSessions) Answer(ctx context.Context, osUser, session string, req s
 // which is what applies the containment rule: the stamp is written by the
 // session's own OS user, so it is untrusted input, and only a .jsonl inside
 // that user's own projects root is opened.
+func (t *tmuxSessions) Keys(osUser, session string, keys []string) error {
+	return t.in.Keys(osUser, session, keys)
+}
+
 func (t *tmuxSessions) TranscriptLines(osUser, session string) ([][]byte, error) {
 	root := sessionio.ProjectsRoot(t.homeBase, osUser)
 	info, ok := sessionio.NewSessionMap(osUser, root, t.optionStore()).Get(session)

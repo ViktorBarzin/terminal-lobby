@@ -5,6 +5,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -242,6 +243,10 @@ func (s *Server) answerTask(c *call) (any, error) {
 			"The task now shows what is on screen (a %s question); read it and answer again", now.Kind)
 	}
 
+	if now.Mod {
+		return s.answerModDialog(c, id, osUser, live.Name, now, req)
+	}
+
 	areq, err := answerFor(now, req, text)
 	if err != nil {
 		return nil, err
@@ -349,4 +354,55 @@ func answerFor(q questionReading, req answerRequest, text string) (sessionio.Ans
 		return sessionio.AnswerRequest{Plan: &sessionio.PlanAnswer{Feedback: text}}, nil
 	}
 	return sessionio.AnswerRequest{Permission: &sessionio.PermissionAnswer{Decline: text}}, nil
+}
+
+// modAnswerVerify is how long the mod's dialog gets to leave the screen after
+// its row is pressed. The live press on 2026-10-02 took it down within a
+// second; the bound only decides whether the reply carries a warning.
+const modAnswerVerify = 1500 * time.Millisecond
+
+// answerModDialog answers the mod's own permission or plan dialog by pressing
+// its row's digit, which the mod reads as the decision made in the terminal.
+// Words have nowhere to go: the dialog's free-text row is the mod's, and an
+// option is the whole answer.
+func (s *Server) answerModDialog(c *call, id, osUser, session string, q questionReading, req answerRequest) (any, error) {
+	if req.Option == nil {
+		return nil, unprocessable("this %s question is answered with an option: %s", q.Kind, rowList(q.Options))
+	}
+	found := false
+	for _, o := range q.Options {
+		found = found || o.Index == *req.Option
+	}
+	if !found {
+		return nil, badRequest("option %d is not one of the rows on offer: %s", *req.Option, rowList(q.Options))
+	}
+	if err := s.Sessions.Keys(osUser, session, []string{strconv.Itoa(*req.Option)}); err != nil {
+		return nil, serverError("tmux did not take the answer for %s (%v); read the task again before retrying",
+			c.conversationID, err)
+	}
+	var warning string
+	for deadline := time.Now().Add(modAnswerVerify); ; {
+		if !sameQuestion(s.readQuestion(osUser, session), q) {
+			break
+		}
+		if time.Now().After(deadline) {
+			warning = "the answer was typed but the dialog had not cleared when this request returned. " +
+				"If it is still up, the task goes back to needs_input within a few seconds; " +
+				"read the task again before answering again"
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	s.Tasks.Update(id, StatusRunning, nil)
+	out, _ := s.Tasks.Get(id)
+	return answerResult{TaskView: out, Warning: warning}, nil
+}
+
+// rowList names a question's rows for a refusal.
+func rowList(opts []TaskOption) string {
+	var rows []string
+	for _, o := range opts {
+		rows = append(rows, fmt.Sprintf("%d (%s)", o.Index, o.Label))
+	}
+	return strings.Join(rows, ", ")
 }

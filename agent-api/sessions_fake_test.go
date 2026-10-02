@@ -61,6 +61,9 @@ type fakeSessions struct {
 	// onAnswer runs (holding the lock) after an answer is recorded, so a test
 	// can take the dialog off the pane the way a real answer does.
 	onAnswer func(f *fakeSessions, key string)
+	// keys records Keys calls; onKeys runs (holding the lock) after one.
+	keys   [][]string
+	onKeys func(f *fakeSessions, key string)
 
 	// resumes and kills record the lifecycle verbs by "<osUser>/<session>".
 	// resumeErr and killErr are faults a test can arm.
@@ -455,4 +458,20 @@ func (f *fakeSessions) Answer(_ context.Context, osUser, session string, req ses
 		return *f.answerResp, nil
 	}
 	return sessionio.AnswerResponse{Applied: true, Done: true}, nil
+}
+
+func (f *fakeSessions) Keys(osUser, session string, keys []string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.keys = append(f.keys, append([]string(nil), keys...))
+	if f.onKeys != nil {
+		f.onKeys(f, key(osUser, session))
+	}
+	return nil
+}
+
+func (f *fakeSessions) keyCalls() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][]string(nil), f.keys...)
 }

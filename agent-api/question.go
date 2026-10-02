@@ -11,6 +11,13 @@ package main
 // service calls no other service's port (main.go), so an AskUserQuestion is
 // reported here with its options and refused by the answer route rather than
 // typed into.
+//
+// The terminal-lobby mod (claude-mod/) holds plan approvals and permission
+// prompts itself and draws its own dialog in their place, which the pane
+// shows as an AskUserQuestion menu with fixed rows. Those two are recognised
+// by their header and rows and reported as permission and plan questions,
+// and a digit answers them: the mod reads the row picked in the terminal as
+// the decision (checked on a live pane on 2026-10-02).
 
 import (
 	"strings"
@@ -55,6 +62,9 @@ type questionReading struct {
 	Text       string
 	Options    []TaskOption
 	AnswerWith []string
+	// Mod says the dialog is the terminal-lobby mod's own Allow / Deny or
+	// plan approval, answered by pressing its row's digit.
+	Mod bool
 }
 
 // setQuestion stamps a reading on a task. Called with the store's lock held.
@@ -98,6 +108,9 @@ func parseQuestion(pane string) questionReading {
 		}
 		if r.Text == "" {
 			r.Text = paneTail(pane, paneQuestionLimit)
+		}
+		if kind, ok := modDialogKind(d); ok {
+			r.Kind, r.Mod, r.AnswerWith = kind, true, []string{answerOption}
 		}
 		return r
 	}
@@ -147,4 +160,43 @@ func (s *Server) readQuestion(osUser, session string) questionReading {
 		return questionReading{Kind: KindUnknown}
 	}
 	return parseQuestion(pane)
+}
+
+// modDialogs are the mod's own dialogs, with the header, the rows and the
+// shape of the question each draws (claude-mod/hooks/lib/shape.ts, dialogFor).
+var modDialogs = []struct {
+	kind, header string
+	rows         [2]string
+	asks         func(question string) bool
+}{
+	{KindPermission, "Permission", [2]string{"Allow", "Deny"},
+		func(q string) bool { return strings.HasPrefix(q, "Allow ") && strings.HasSuffix(q, "?") }},
+	{KindPlan, "Plan", [2]string{"Approve plan", "Keep planning"},
+		func(q string) bool { return strings.HasSuffix(q, "Approve the plan?") }},
+}
+
+// modDialogKind reports whether a menu is one of the mod's dialogs: a single
+// question with exactly its two rows, asked the way the mod asks it, under
+// its header. The header can sit above the pane's view of a long plan, so a
+// header the parser could not see is not held against it; one that says
+// something else is.
+func modDialogKind(d *sessionio.Dialog) (string, bool) {
+	if len(d.Questions) != 1 || d.Count > 1 {
+		return "", false
+	}
+	q := d.Questions[0]
+	question := strings.TrimSpace(q.Question)
+	for _, m := range modDialogs {
+		if q.MultiSelect || len(q.Options) != len(m.rows) || (q.Header != "" && q.Header != m.header) || !m.asks(question) {
+			continue
+		}
+		match := true
+		for i, o := range q.Options {
+			match = match && o.Label == m.rows[i]
+		}
+		if match {
+			return m.kind, true
+		}
+	}
+	return "", false
 }
