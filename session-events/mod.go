@@ -435,11 +435,15 @@ func (h *modHub) byTokenOf(token string) *modConn {
 // handleEvents serves POST /mod/v1/events.
 func (h *modHub) handleEvents() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Events are decoded one at a time. The mod resends a refused batch
+		// until it is taken and holds everything after it, so one event this
+		// build cannot read would otherwise stop the session's log for good.
 		var b struct {
-			Token  string               `json:"token"`
-			Events []sessionio.ModEvent `json:"events"`
+			Token  string            `json:"token"`
+			Events []json.RawMessage `json:"events"`
 		}
 		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, modEventsLimit)).Decode(&b); err != nil {
+			log.Printf("mod events: refused a batch: %v", err)
 			http.Error(w, "bad body", http.StatusBadRequest)
 			return
 		}
@@ -450,7 +454,23 @@ func (h *modHub) handleEvents() http.HandlerFunc {
 			http.Error(w, "unknown token", http.StatusConflict)
 			return
 		}
-		c.apply(b.Events)
+		evs := make([]sessionio.ModEvent, 0, len(b.Events))
+		for _, raw := range b.Events {
+			var ev sessionio.ModEvent
+			if err := json.Unmarshal(raw, &ev); err != nil {
+				var head struct {
+					Type string `json:"type"`
+				}
+				_ = json.Unmarshal(raw, &head)
+				c.mu.Lock()
+				who := c.user + "/" + c.session
+				c.mu.Unlock()
+				log.Printf("mod %s: skipped a %q event this build cannot read (%d bytes): %v", who, head.Type, len(raw), err)
+				continue
+			}
+			evs = append(evs, ev)
+		}
+		c.apply(evs)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -477,7 +497,8 @@ func (c *modConn) apply(evs []sessionio.ModEvent) {
 		}
 		switch ev.Type {
 		case sessionio.ModHistoryEvent:
-			fs.FeedHistory(ev.Messages, ev.Running)
+			// Only the last chunk of a long history may close the last turn.
+			fs.FeedHistory(ev.Messages, ev.Running || ev.More)
 			continue
 		case sessionio.ModAckEvent:
 			c.deliver(ev.ID, modAck{OK: ev.OK, Error: ev.Error})

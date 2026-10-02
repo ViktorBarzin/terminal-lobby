@@ -4,7 +4,7 @@
 
 import { EventQueue } from './queue.ts';
 import type { ModEvent } from './queue.ts';
-import { backoffMs } from './shape.ts';
+import { backoffMs, historyEvents } from './shape.ts';
 
 export type Reply = { status: number; body: unknown };
 
@@ -134,7 +134,8 @@ export class Link {
     this.#retryAt = 0;
     if (body.history === true) {
       try {
-        this.#queue.prepend({ type: 'history', t: this.#deps.now(), ...(await this.#deps.history()) });
+        const h = await this.#deps.history();
+        this.#queue.prepend(...historyEvents(this.#deps.now(), h.messages, h.running));
       } catch {
         // No history to offer; the server keeps what it has.
       }

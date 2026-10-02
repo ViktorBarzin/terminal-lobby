@@ -97,6 +97,8 @@ type ModEvent struct {
 	// history
 	Messages []ModHistoryMessage `json:"messages,omitempty"`
 	Running  bool                `json:"running,omitempty"`
+	// More is set on every chunk of a long history but the last (ADR-0036).
+	More bool `json:"more,omitempty"`
 
 	// ack
 	ID    string `json:"id,omitempty"`
