@@ -71,6 +71,45 @@ describe("while a call runs", () => {
     expect(meta(container)).toBe("1 done · 14s");
   });
 
+  it.each([
+    [
+      "an edit by its verb and file name",
+      {
+        tool: "Edit",
+        input: { file_path: "/w/src/store/session.ts", old_string: "a", new_string: "b" },
+      },
+      "Editing session.ts",
+      "edit",
+    ],
+    [
+      "a command with Claude's description of it, muted",
+      { tool: "Bash", input: { command: "npm test", description: "Run the card tests" } },
+      "Running npm test · Run the card tests",
+      "command",
+    ],
+    [
+      "a search and where it looks",
+      { tool: "Grep", input: { pattern: "liveGroupState", path: "src" } },
+      "Searching for liveGroupState · in src",
+      "search",
+    ],
+  ])("says %s, with the call's icon", (_name, call, words, icon) => {
+    const events = [
+      ev({ id: 1, kind: "user", body: "go", at: 1_000 }),
+      ev({
+        id: 2,
+        kind: "tool_use",
+        tool: call.tool,
+        toolId: "c1",
+        body: JSON.stringify(call.input),
+        at: 2_000,
+      }),
+    ];
+    const { container } = render(() => <MessagesTimeline events={events} />);
+    expect(sum(container)).toBe(words);
+    expect(liveBox(container).querySelector(".tl-group-ico")?.getAttribute("data-icon")).toBe(icon);
+  });
+
   it("shows a path by its file name, with the call's whole label in the title", () => {
     const events = [
       ev({ id: 1, kind: "user", body: "go", at: 1_000 }),

@@ -22,6 +22,8 @@ import {
   planHeader,
   planSummary,
   shortTarget,
+  liveCall,
+  type LiveCall,
   shownPlanOutcome,
   pickedIn,
   type ContinuationRow,
@@ -828,6 +830,7 @@ type GroupIcon = keyof typeof GROUP_ICON;
 const GroupIconSvg: Component<{ icon: GroupIcon; class: string }> = (props) => (
   <svg
     class={props.class}
+    data-icon={props.icon}
     viewBox="0 0 16 16"
     fill="none"
     stroke="currentColor"
@@ -1089,29 +1092,42 @@ const LiveMark: Component<{ kind: LiveGroupState["kind"] }> = (props) => (
   </Show>
 );
 
-/** What a live head says: "Running <code>ls</code>", "Working…", "Waiting for you". */
-const LiveWords: Component<{ state: LiveGroupState }> = (props) => {
-  const what = () => {
-    const s = props.state;
-    return s.kind === "working" ? s.label || s.tool : undefined;
-  };
-  return (
-    <Switch>
-      <Match when={props.state.kind === "clearing"}>
-        Clearing the context and starting the plan…
-      </Match>
-      <Match when={props.state.kind === "waiting"}>Waiting for you</Match>
-      <Match when={what()}>
-        {(w) => (
-          <>
-            Running <code title={w()}>{shortTarget(w())}</code>
-          </>
-        )}
-      </Match>
-      <Match when={props.state.kind === "working"}>Working…</Match>
-    </Switch>
-  );
-};
+/** The call in flight, when the live state names one (timeline.logic `liveCall`). */
+const callOf = (s: LiveGroupState | undefined): LiveCall | null =>
+  s?.kind === "working" ? liveCall(s) : null;
+
+/** The icon a live head wears: the call in flight's kind, or the group's tools. */
+const liveIcon = (s: LiveGroupState | undefined): GroupIcon => callOf(s)?.icon ?? "tools";
+
+/**
+ * What a live head says: "Editing <code>session.ts</code>", "Running
+ * <code>npm test</code> · Run the card tests", "Working…", "Waiting for you".
+ * The detail is muted and gives way first when the row runs out of room.
+ */
+const LiveWords: Component<{ state: LiveGroupState }> = (props) => (
+  <Switch>
+    <Match when={props.state.kind === "clearing"}>
+      Clearing the context and starting the plan…
+    </Match>
+    <Match when={props.state.kind === "waiting"}>Waiting for you</Match>
+    <Match when={callOf(props.state)}>
+      {(c) => (
+        <>
+          {c().verb} <code title={c().target}>{shortTarget(c().target)}</code>
+          <Show when={c().detail}>
+            {(d) => (
+              <span class="tl-live-detail" title={d()}>
+                {" "}
+                · {d()}
+              </span>
+            )}
+          </Show>
+        </>
+      )}
+    </Match>
+    <Match when={props.state.kind === "working"}>Working…</Match>
+  </Switch>
+);
 
 /**
  * The meta on the right of a live head: "2 done · 14s" on the running group,
@@ -1138,7 +1154,7 @@ export const LiveRowView: Component<{ state: LiveGroupState; now: number }> = (p
       <div class="tl-group-head tl-live-head">
         <LiveMark kind={props.state.kind} />
         <Show when={props.state.kind !== "clearing"}>
-          <GroupIconSvg icon="tools" class="tl-group-ico" />
+          <GroupIconSvg icon={liveIcon(props.state)} class="tl-group-ico" />
         </Show>
         <span class="tl-group-sum">
           <LiveWords state={props.state} />
@@ -1213,7 +1229,7 @@ export const WorkGroupRowView: Component<{
           <Show when={live()} fallback={<span class="tl-group-dot" data-status={status()} />}>
             {(l) => <LiveMark kind={l().kind} />}
           </Show>
-          <GroupIconSvg icon="tools" class="tl-group-ico" />
+          <GroupIconSvg icon={liveIcon(live())} class="tl-group-ico" />
           <span class="tl-group-sum">
             <Show when={live()} fallback={summary()}>
               {(l) => <LiveWords state={l()} />}
