@@ -125,18 +125,18 @@ func rowPi(bg, born, created, origin, cols, rows, suspended, piModel, piThinking
 
 // spliceActivity fills @last_activity (sessionio.OptionLastActivity) at
 // activityColumn, the pane's working directory at cwdColumn, @claude_notice at
-// noticeColumn and @tl_browser at browserColumn, the last four columns before
-// pane_title, spliced for the reason rowCreated gives. EMPTY is what every
-// session reports until its Claude next sees a prompt or finishes a turn, the
-// directory is left empty, as a dead pane reports it, and so are the notice
-// and the browser, which most sessions never send or open.
+// noticeColumn, @claude_reply at replyColumn and @tl_browser at browserColumn,
+// the last five columns before pane_title, spliced for the reason rowCreated
+// gives. EMPTY is what every session reports until its Claude next sees a
+// prompt or finishes a turn, the directory is left empty, as a dead pane
+// reports it, and so are the notice, the reply and the browser.
 func spliceActivity(cols []string, activity string) string {
 	if len(cols) < activityColumn {
 		return strings.Join(cols, listSep)
 	}
-	out := make([]string, 0, len(cols)+4)
+	out := make([]string, 0, len(cols)+5)
 	out = append(out, cols[:activityColumn]...)
-	out = append(out, activity, "", "", "")
+	out = append(out, activity, "", "", "", "")
 	out = append(out, cols[activityColumn:]...)
 	return strings.Join(out, listSep)
 }
@@ -163,12 +163,16 @@ func TestParseSessionsReadsTheNotice(t *testing.T) {
 	line := row("$1", "work", "0", "1800000000", "1800000000", "1800000100", "done", "4242", "claude", "", "t")
 	cols := strings.Split(line, listSep)
 	cols[noticeColumn] = `1800000200 build \"auth\" failed`
+	cols[replyColumn] = `1800000300 **Done.** all green`
 	got := parseSessions([]byte(strings.Join(cols, listSep) + "\n"))
 	if len(got) != 1 {
 		t.Fatalf("parsed %d rows, want 1", len(got))
 	}
 	if want := (sessionio.Notice{At: 1800000200, Text: `build "auth" failed`}); got[0].Notice != want || got[0].PaneTitle != "t" {
 		t.Fatalf("Notice %+v, PaneTitle %q", got[0].Notice, got[0].PaneTitle)
+	}
+	if want := (sessionio.Notice{At: 1800000300, Text: "Done. all green"}); got[0].Reply != want {
+		t.Fatalf("Reply %+v, want %+v", got[0].Reply, want)
 	}
 }
 

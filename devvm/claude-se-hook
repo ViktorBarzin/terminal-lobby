@@ -166,9 +166,15 @@ question)
     trap 'rm -f "$out" "$code"' EXIT
     # A restarting session-events refuses connections for a few seconds; ask
     # again until it is back, but give up on one that stays away, since the CLI
-    # does not stop this hook when the terminal answers first.
-    give_up=$(( $(date +%s) + 600 ))
+    # does not stop this hook when the terminal answers first. The window runs
+    # from when the service went away: a request that was held for a while
+    # starts it afresh. Counted from the first ask instead, a question waiting
+    # over ten minutes lost its card to the next deploy (2026-10-02).
+    # TL_SE_RECONNECT_S is the test harness's override.
+    window="${TL_SE_RECONNECT_S:-600}"
+    give_up=$(( $(date +%s) + window ))
     while :; do
+        asked=$(date +%s)
         printf '%s' "$body" | curl -s --connect-timeout 2 -o "$out" -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' --data-binary @- \
             "$SE/hooks/question" >"$code" 2>/dev/null &
@@ -178,7 +184,10 @@ question)
         case "$(cat "$code" 2>/dev/null)" in
         200) cat "$out"; exit 0 ;;
         000|502|503|504)
-            [ "$(date +%s)" -lt "$give_up" ] || exit 0
+            now=$(date +%s)
+            # Longer than a refused or timed-out connect: it was held.
+            [ $(( now - asked )) -lt 3 ] || give_up=$(( now + window ))
+            [ "$now" -lt "$give_up" ] || exit 0
             sleep 2 ;;
         *) exit 0 ;; # 204, or a service without the route: the menu stays
         esac

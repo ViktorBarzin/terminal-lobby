@@ -310,6 +310,7 @@ func parseSessions(out []byte) []Session {
 			Browser:    browserStateOf(parts[browserColumn]),
 			// An unset option, or one this cannot read, is no notice at all.
 			Notice: noticeOf(parts[noticeColumn]),
+			Reply:  noticeOf(parts[replyColumn]),
 			// Last, and addressed as last: SplitN hands the final field every
 			// separator the row had left over, which is the whole of what
 			// protects the columns above from a pane that prints one.

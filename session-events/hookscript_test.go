@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -98,8 +100,8 @@ func newScriptEnv(t *testing.T) *scriptEnv {
 }
 
 // run starts the hook the way the CLI does and returns its stdout once it
-// exits.
-func (e *scriptEnv) run(t *testing.T, url string) (<-chan string, *exec.Cmd) {
+// exits. env adds to the hook's environment.
+func (e *scriptEnv) run(t *testing.T, url string, env ...string) (<-chan string, *exec.Cmd) {
 	t.Helper()
 	payload, err := os.ReadFile(filepath.Join("testdata", "permissionrequest_askuserquestion.json"))
 	if err != nil {
@@ -108,6 +110,7 @@ func (e *scriptEnv) run(t *testing.T, url string) (<-chan string, *exec.Cmd) {
 	cmd := exec.Command(e.script, "question")
 	cmd.Stdin = strings.NewReader(strings.Replace(string(payload), "TRANSCRIPT", e.path, 1))
 	cmd.Env = append(os.Environ(), "TMUX="+e.tmuxVar, "TMUX_PANE="+e.pane, "TL_SE_URL="+url, "USER="+e.osUser)
+	cmd.Env = append(cmd.Env, env...)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	if err := cmd.Start(); err != nil {
@@ -207,5 +210,72 @@ func TestTheHookScriptWithdrawsTheQuestionWhenStopped(t *testing.T) {
 			t.Fatal("the question is still held after the hook was stopped")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// A question can wait far longer than the hook's reconnect window before a
+// deploy restarts session-events. Reported 2026-10-02: a question asked at
+// 23:55 lost its card in the 00:06 restart, because the window was counted
+// from when the question was asked, so the first refused reconnect was
+// already past it and the hook left. The window counts from when the service
+// went away.
+func TestTheHookScriptHoldsAgainAfterALateRestart(t *testing.T) {
+	e := newScriptEnv(t)
+	hold := e.rg.handleQuestionHook()
+	var first atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if first.CompareAndSwap(false, true) {
+			// Held past the window, then the service dies mid-hold.
+			io.Copy(io.Discard, r.Body)
+			time.Sleep(4 * time.Second)
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err == nil {
+				conn.Close()
+			}
+			return
+		}
+		localhostOnly(peerOwnsClaim(hold))(w, r)
+	}))
+	defer srv.Close()
+	done, cmd := e.run(t, srv.URL, "TL_SE_RECONNECT_S=1")
+	// Stopped the way the CLI stops it, so its request goes too and the
+	// server can close.
+	defer func() {
+		cmd.Process.Signal(os.Interrupt)
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+		}
+	}()
+
+	deadline := time.Now().Add(10 * time.Second)
+	for e.rg.holds.find(holdKey(e.osUser, e.path), sessionio.AnswerRequest{}) == nil {
+		select {
+		case out := <-done:
+			t.Fatalf("the hook left after the restart (printed %q) instead of asking again", out)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the hook never held the question again after the restart")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A service that stays away still lets the hook go, since the CLI does not
+// stop it when the terminal answers first.
+func TestTheHookScriptGivesUpOnAServiceThatStaysAway(t *testing.T) {
+	e := newScriptEnv(t)
+	srv := httptest.NewServer(http.NotFoundHandler())
+	url := srv.URL
+	srv.Close()
+	done, _ := e.run(t, url, "TL_SE_RECONNECT_S=1")
+	select {
+	case out := <-done:
+		if strings.TrimSpace(out) != "" {
+			t.Fatalf("printed %q", out)
+		}
+	case <-time.After(8 * time.Second):
+		t.Fatal("the hook kept asking a service that never came back")
 	}
 }

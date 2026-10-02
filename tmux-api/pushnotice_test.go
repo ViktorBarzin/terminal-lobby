@@ -213,3 +213,61 @@ func TestWorstCaseNoticeFitsTheEncryptedBudget(t *testing.T) {
 		}
 	}
 }
+
+// Viktor, 2026-10-01, after the notice shipped: "I still see 'Claude finished
+// its turn'". A finished push whose turn left a reply shows the reply.
+func TestAFinishedPushCarriesTheReply(t *testing.T) {
+	var got struct {
+		Title        string `json:"title"`
+		Body         string `json:"body"`
+		Notification struct {
+			Title string `json:"title"`
+			Body  string `json:"body"`
+		} `json:"notification"`
+	}
+	b := buildReplyPayload("Tashkent trip", "tashkent-trip", "Done. 3 tests pass, 1 skipped", 1, nil, testPushOrigin)
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Title != "Tashkent trip finished" || got.Body != "Done. 3 tests pass, 1 skipped" {
+		t.Fatalf("title/body = %q / %q", got.Title, got.Body)
+	}
+	if got.Notification.Title != got.Title || got.Notification.Body != got.Body {
+		t.Fatalf("declarative title/body = %q / %q", got.Notification.Title, got.Notification.Body)
+	}
+
+	long := strings.Repeat("a", noticeBodyRunes*3)
+	_ = json.Unmarshal(buildReplyPayload("t", "s", long, 0, nil, ""), &got)
+	if n := utf8.RuneCountInString(got.Body); n != noticeBodyRunes || !strings.HasSuffix(got.Body, "…") {
+		t.Fatalf("a long reply is %d runes (%q...), want cut to %d with an ellipsis", n, got.Body[:10], noticeBodyRunes)
+	}
+}
+
+// A reply alone is not a push: it only changes what the finished edge says, so
+// a session sitting done with a reply never rings on its own, and the edge
+// still rings exactly once.
+func TestAReplyDoesNotRingWithoutTheFinishedEdge(t *testing.T) {
+	sender, stub, rec := noticeSender(t, stubPrefs{})
+	stub.setReplies(map[string]sessionio.Notice{"main": {At: 100, Text: "Done."}})
+	sender.tick()
+	if rec.total() != 0 {
+		t.Fatalf("a reply with no edge sent %d, want 0", rec.total())
+	}
+	stub.set(map[string]string{"main": stateDone})
+	sender.tick()
+	sender.tick()
+	if rec.hit("/d") != 1 {
+		t.Fatalf("finished edge with a reply: got %d pushes, want 1", rec.hit("/d"))
+	}
+}
+
+func TestWorstCaseReplyFitsTheEncryptedBudget(t *testing.T) {
+	w, names := fullWaitingSet()
+	title := strings.Repeat("<", slug.MaxTitleRunes)
+	body := strings.Repeat("&", noticeBodyRunes*2)
+	for _, origin := range []string{testPushOrigin, ""} {
+		if got := len(buildReplyPayload(title, names[0], body, 999, w, origin)); got > maxPushPayloadBytes {
+			t.Fatalf("worst-case reply push is %d bytes, over the %d-byte budget (origin %q)", got, maxPushPayloadBytes, origin)
+		}
+	}
+}

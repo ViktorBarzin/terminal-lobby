@@ -80,6 +80,7 @@ type stubStater struct {
 	system  map[string]bool
 	tools   map[string]string
 	notices map[string]sessionio.Notice
+	replies map[string]sessionio.Notice
 }
 
 func (s *stubStater) set(m map[string]string) {
@@ -100,7 +101,13 @@ func (s *stubStater) setNotices(m map[string]sessionio.Notice) {
 	s.notices = m
 }
 
-func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]sessionio.Notice) {
+func (s *stubStater) setReplies(m map[string]sessionio.Notice) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.replies = m
+}
+
+func (s *stubStater) read(string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]agentWords) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cp := make(map[string]string, len(s.m))
@@ -123,11 +130,18 @@ func (s *stubStater) read(string) (map[string]string, map[string]string, map[str
 	for k, v := range s.tools {
 		tools[k] = v
 	}
-	notices := make(map[string]sessionio.Notice, len(s.notices))
+	words := make(map[string]agentWords, len(s.notices)+len(s.replies))
 	for k, v := range s.notices {
-		notices[k] = v
+		w := words[k]
+		w.notice = v
+		words[k] = w
 	}
-	return cp, titles, act, system, tools, notices
+	for k, v := range s.replies {
+		w := words[k]
+		w.reply = v
+		words[k] = w
+	}
+	return cp, titles, act, system, tools, words
 }
 
 func (s *stubStater) setAct(m map[string]int64) {

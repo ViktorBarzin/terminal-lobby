@@ -1195,3 +1195,37 @@ func TestAPushNotificationEndingInASemicolonKeepsIt(t *testing.T) {
 		t.Fatalf("notice text = %q, want the trailing semicolon kept", n.Text)
 	}
 }
+
+// The reply that ended a turn is what a "finished" push shows. Stop carries it
+// as last_assistant_message (captured on 2.1.286, 2026-10-01, with bold, code,
+// a quote, a backslash, a list line and an em dash).
+func TestStopRecordsTheReplyThatEndedTheTurn(t *testing.T) {
+	e := newHookEnv(t)
+	e.fire(t, "running", "userprompt_human.json")
+
+	e.fire(t, "done", "stop_reply.json")
+
+	n, ok := ParseNotice(e.opt(t, OptionReply))
+	if !ok {
+		t.Fatalf("%s = %q, want a parseable reply", OptionReply, e.opt(t, OptionReply))
+	}
+	if want := `Done. Fixed the "auth" bug in C:\src\app.go. 3 tests pass — 1 skipped`; n.Text != want {
+		t.Fatalf("reply text = %q, want %q", n.Text, want)
+	}
+	if got := e.opt(t, OptionState); got != StateDone {
+		t.Fatalf("%s = %q, want %q", OptionState, got, StateDone)
+	}
+}
+
+// A Stop with no reply clears the last one, so a "finished" push never shows
+// the turn before's words.
+func TestAStopWithoutAReplyClearsTheLastOne(t *testing.T) {
+	e := newHookEnv(t)
+	e.set(t, OptionReply, "1790894512 the previous turn")
+
+	e.fireRaw(t, "done", `{"hook_event_name":"Stop","stop_hook_active":false,"last_assistant_message":"","background_tasks":[],"session_crons":[]}`)
+
+	if got := e.opt(t, OptionReply); got != "" {
+		t.Fatalf("%s = %q, want it unset", OptionReply, got)
+	}
+}

@@ -75,14 +75,22 @@ type sessionStater interface {
 	// in the push's wording: "Pi is awaiting your input" rather than calling
 	// every harness Claude.
 	//
-	// The sixth return is each session's newest PushNotification message
-	// (sessionio.OptionNotice), absent for a session that has sent none. A new
-	// stamp is a push whose body is the message.
+	// The sixth return is each session's own words: its newest
+	// PushNotification message (sessionio.OptionNotice), which is a push of
+	// its own whenever the stamp is new, and the reply that ended its last
+	// turn (sessionio.OptionReply), which is the body of its "finished" push.
+	// A session with neither is absent.
 	//
 	// One method rather than six because they all come out of the same tmux
 	// reads, and asking separately forked `list-clients` twice per user per
 	// tick.
-	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool, tools map[string]string, notices map[string]sessionio.Notice)
+	read(osUser string) (states map[string]string, titles map[string]string, activity map[string]int64, system map[string]bool, tools map[string]string, words map[string]agentWords)
+}
+
+// agentWords is what a session's agent last said, for a push to quote.
+type agentWords struct {
+	notice sessionio.Notice // newest PushNotification message
+	reply  sessionio.Notice // the reply that ended the last turn
 }
 
 // prefsLoader reads a user's raw roamed prefs document. *prefsStore satisfies
@@ -98,19 +106,19 @@ type prefsLoader interface {
 // claude — so the server-side edge rule matches the browser's.
 type liveStater struct{}
 
-func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]sessionio.Notice) {
+func (liveStater) read(osUser string) (map[string]string, map[string]string, map[string]int64, map[string]bool, map[string]string, map[string]agentWords) {
 	sessions, activity := userSessionsAndActivity(osUser)
 	states, titles, tools := statesTitlesAndTools(sessions)
-	return states, titles, activity, systemNames(sessions), tools, noticesOf(sessions)
+	return states, titles, activity, systemNames(sessions), tools, wordsOf(sessions)
 }
 
-// noticesOf is each session's newest PushNotification message, leaving out
-// the sessions that have sent none.
-func noticesOf(sessions []Session) map[string]sessionio.Notice {
-	out := make(map[string]sessionio.Notice)
+// wordsOf is each session's notice and reply, leaving out the sessions that
+// have neither.
+func wordsOf(sessions []Session) map[string]agentWords {
+	out := make(map[string]agentWords)
 	for _, s := range sessions {
-		if s.Notice.At > 0 {
-			out[s.Name] = s.Notice
+		if s.Notice.At > 0 || s.Reply.At > 0 {
+			out[s.Name] = agentWords{notice: s.Notice, reply: s.Reply}
 		}
 	}
 	return out
@@ -668,10 +676,22 @@ func buildDonePayloadFor(tool, label, session string, badge int, waiting *waitLi
 // label as the title and the message as the body, cut at noticeBodyRunes. Same
 // tag as every other push for the session (marshalPayload).
 func buildNoticePayload(label, session, text string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label, cutBody(text), session, badge, waiting, origin)
+}
+
+// buildReplyPayload is the "finished" push for a turn whose reply is known:
+// the same title as buildDonePayloadFor, and the reply as the body in place
+// of "Claude finished its turn.", cut at noticeBodyRunes.
+func buildReplyPayload(label, session, reply string, badge int, waiting *waitList, origin string) []byte {
+	return marshalPayload(label+" finished", cutBody(reply), session, badge, waiting, origin)
+}
+
+// cutBody keeps a body to noticeBodyRunes, ending a cut one in an ellipsis.
+func cutBody(text string) string {
 	if r := []rune(text); len(r) > noticeBodyRunes {
-		text = strings.TrimRight(string(r[:noticeBodyRunes-1]), " ") + "…"
+		return strings.TrimRight(string(r[:noticeBodyRunes-1]), " ") + "…"
 	}
-	return marshalPayload(label, text, session, badge, waiting, origin)
+	return text
 }
 
 // pushHarnessName is what a push calls the agent in a session, from the
@@ -715,12 +735,12 @@ func (p *pushSender) tick() {
 	for _, u := range users {
 		seen[u] = true
 		prev := p.last[u]
-		cur, titles, act, system, tools, notices := p.stater.read(u)
+		cur, titles, act, system, tools, words := p.stater.read(u)
 		p.absorbManualStates(u, cur)
 		p.forgetSystemSessions(u, system, cur, titles, act)
 		p.last[u] = cur
 		p.observeActivity(u, act)
-		fresh := p.freshNotices(u, cur, notices)
+		fresh := p.freshNotices(u, cur, words)
 		if prev == nil {
 			continue // first observation of this user seeds silently
 		}
@@ -763,7 +783,7 @@ func (p *pushSender) tick() {
 					}
 					p.markPushed(u, name)
 					p.markSent(u, name)
-					p.notify(u, name, titles[name], tools[name], kindDone, badge, waiting)
+					p.notifyDone(u, name, titles[name], tools[name], words[name].reply.Text, badge, waiting)
 				}
 			}
 		}
@@ -790,15 +810,16 @@ func (p *pushSender) tick() {
 // live sessions. A reading with no sessions at all leaves it alone: that is
 // what a failed tmux read looks like, and forgetting there would resend every
 // session's last message when the next read succeeds.
-func (p *pushSender) freshNotices(u string, cur map[string]string, notices map[string]sessionio.Notice) map[string]sessionio.Notice {
+func (p *pushSender) freshNotices(u string, cur map[string]string, words map[string]agentWords) map[string]sessionio.Notice {
 	if len(cur) == 0 {
 		return nil
 	}
 	handled := p.noticeAt[u]
-	next := make(map[string]int64, len(notices))
+	next := make(map[string]int64, len(words))
 	var fresh map[string]sessionio.Notice
-	for name, n := range notices {
-		if _, live := cur[name]; !live {
+	for name, w := range words {
+		n := w.notice
+		if _, live := cur[name]; !live || n.At == 0 {
 			continue
 		}
 		next[name] = n.At
@@ -925,6 +946,22 @@ func (p *pushSender) notify(osUser, session, title, tool, kind string, badge int
 		return buildPushPayloadFor(tool, label, session, badge, waiting, origin)
 	}
 	p.send(osUser, session, build, kind)
+}
+
+// notifyDone is the "finished" push. With the turn's reply in hand
+// (sessionio.OptionReply) the body is the reply, so the phone shows what
+// Claude said rather than that it stopped (Viktor, 2026-10-01). Without one,
+// a harness that writes no reply or a Stop that carried none, it is the
+// generic wording.
+func (p *pushSender) notifyDone(osUser, session, title, tool, reply string, badge int, waiting *waitList) {
+	if reply == "" {
+		p.notify(osUser, session, title, tool, kindDone, badge, waiting)
+		return
+	}
+	label := pushLabel(session, title)
+	p.send(osUser, session, func(origin string) []byte {
+		return buildReplyPayload(label, session, reply, badge, waiting, origin)
+	}, kindDone)
 }
 
 // payloadBuilder renders the wire payload for ONE subscription, given the page
