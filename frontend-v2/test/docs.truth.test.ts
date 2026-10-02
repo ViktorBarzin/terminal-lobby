@@ -926,12 +926,18 @@ describe("docs/interface.md — the undo it documents is the undo that ships", (
     // kill, which is why docs/interface.md no longer offers one.)
     // ProjectGroup.tsx is deliberately not on this list: deleting a PROJECT
     // still asks, and that question is about a different action.
-    const killPaths = [
-      "src/components/SessionCard.tsx",
-      "src/components/Sidebar.tsx",
-      "src/keybindings/commands.ts",
+    // SessionCard is read down to its `kill` function, which the menu and the
+    // swipe both call: the card's Restart asks before cutting a busy turn, and
+    // that question is about a different action, like the project delete.
+    const card = readFileSync(FE("src/components/SessionCard.tsx"), "utf8");
+    const cardKill = /\n  const kill = async \(\) => \{\n[\s\S]*?\n  \};\n/.exec(card)?.[0] ?? "";
+    expect(cardKill, "SessionCard has no `const kill = async () => {…}` to read").not.toBe("");
+    const killPaths: [string, string][] = [
+      ["src/components/SessionCard.tsx", cardKill],
+      ["src/components/Sidebar.tsx", readFileSync(FE("src/components/Sidebar.tsx"), "utf8")],
+      ["src/keybindings/commands.ts", readFileSync(FE("src/keybindings/commands.ts"), "utf8")],
     ];
-    const askers = killPaths.filter((rel) => /\bconfirm\s*\(/.test(readFileSync(FE(rel), "utf8")));
+    const askers = killPaths.filter(([, src]) => /\bconfirm\s*\(/.test(src)).map(([rel]) => rel);
     expect(askers, "a kill path asks again; the doc below assumes none do").toEqual([]);
 
     const claims = INTERFACE.split(/\n\s*\n/)

@@ -6,6 +6,7 @@ import {
   listSessions,
   putLayout,
   restoreSessions,
+  restartSession,
   resumeSession,
   withDeadline,
   REQUEST_TIMEOUT_MS,
@@ -275,5 +276,28 @@ describe("resumeSession", () => {
     vi.stubGlobal("fetch", answering(404));
     const gone = await resumeSession("a").catch((e: unknown) => e);
     expect((gone as ApiError).status).toBe(404);
+  });
+});
+
+describe("restartSession", () => {
+  const answering = (status: number, body = "") =>
+    vi.fn(() => Promise.resolve(new Response(status === 200 ? "{}" : body, { status })));
+
+  it("posts to the session's own restart route", async () => {
+    const f = answering(200);
+    vi.stubGlobal("fetch", f);
+    await restartSession("deploy thing/2");
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(apiUrl("/sessions/deploy%20thing%2F2/restart"));
+    expect(init.method).toBe("POST");
+  });
+
+  it("throws the status and the server's own reason", async () => {
+    // The 409s differ in what a person should do next (wait for a first
+    // message, open a suspended session), and only the server knows which.
+    vi.stubGlobal("fetch", answering(409, "the session has no conversation to restart yet\n"));
+    const e = (await restartSession("a").catch((x: unknown) => x)) as ApiError;
+    expect(e.status).toBe(409);
+    expect(e.message).toBe("the session has no conversation to restart yet");
   });
 });

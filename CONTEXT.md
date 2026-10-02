@@ -339,6 +339,22 @@ _Avoid_: wake, unsuspend, reopen; and do not say restore, which is taken by the
 Session that is GONE from a tmux-persist snapshot. A resume needs the tmux
 session still standing.
 
+**Restart** (a Session):
+Stopping a live Session's Claude and starting it again on the same conversation,
+from the card's ⋯ menu, so it loads a new Claude Code binary, settings or
+plugins. It is a suspend's stop followed at once by a **Resume**
+(`tmux-api/restart.go`): SIGTERM so the transcript flushes, remain-on-exit so the
+one-pane Session survives, then `claude --resume <uuid>` with the flags it
+started with. Asked for by a person, so being attached, running or awaiting does
+not refuse it; the card asks before cutting a turn or a question. Refused for a
+**Suspended session**, a Session with no conversation yet, and a turn a
+**Caller** is running.
+_Compare_: the skill manager's restart (skills-api), which respawns with
+`claude --continue`, and the mod rollout's (session-events), which restarts idle
+Sessions on its own.
+_Avoid_: reload (the `/reload-skills` and `/reload-plugins` commands reload in
+place without a new process), respawn (the tmux verb underneath).
+
 **Channel**:
 One of the six things whose health a client can report: its **terminal** socket,
 its **transcript** stream, the **session list** poll, **notifications**, the
